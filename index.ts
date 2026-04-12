@@ -18,8 +18,6 @@ interface SensorConfig {
   device: number;
 }
 
-const POLL_INTERVAL_MS = 5_000;
-
 const SENSORS: SensorConfig[] = [
   { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (CE0)
   // { name: 'sensor_1', bus: 0, device: 1 },  // /dev/spidev0.1 (CE1) — uncomment when wired
@@ -58,7 +56,7 @@ for (const cfg of SENSORS) {
   sensors.push({ name: cfg.name, sensor });
 }
 
-console.log(`Polling ${sensors.length} sensor(s) every ${POLL_INTERVAL_MS / 1000}s — Ctrl+C to stop`);
+console.log(`Polling ${sensors.length} sensor(s) continuously — Ctrl+C to stop`);
 
 // --- Graceful shutdown ---
 
@@ -74,18 +72,26 @@ process.on('SIGTERM', shutdown);
 // --- Poll loop ---
 
 async function poll() {
-  for (const { name, sensor } of sensors) {
-    try {
-      const celsius = await sensor.getTemperature();
-      insert.run(name, celsius);
-      console.log(`${new Date().toISOString()}  ${name}: ${celsius.toFixed(2)} °C`);
-    } catch (err) {
-      console.error(`${name} read failed:`, err);
+  const results = await Promise.all(
+    sensors.map(async ({ name, sensor }) => {
+      try {
+        const celsius = await sensor.getTemperature();
+        return { name, celsius };
+      } catch (err) {
+        console.error(`${name} read failed:`, err);
+        return null;
+      }
+    })
+  );
+
+  for (const result of results) {
+    if (result) {
+      insert.run(result.name, result.celsius);
+      console.log(`${new Date().toISOString()}  ${result.name}: ${result.celsius.toFixed(2)} °C`);
     }
   }
 }
 
 while (true) {
   await poll();
-  await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
 }
