@@ -1,4 +1,6 @@
 temperatures.db
+temperatures.db-shm
+temperatures.db-wal
 
 # Logs
 logs
