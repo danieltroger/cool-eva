@@ -12,7 +12,9 @@
   "type": "module",
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/ws": "^8.18.1",
     "better-sqlite3": "^12.8.0",
-    "max31865": "^1.0.3"
+    "max31865": "^1.0.3",
+    "ws": "^8.20.0"
   }
 }

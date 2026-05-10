@@ -1,5 +1,10 @@
 import MAX31865 from 'max31865';
 import Database from 'better-sqlite3';
+import { WebSocketServer, WebSocket } from 'ws';
+import { createServer } from 'http';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 interface SensorOptions {
   rtdNominal: number;
@@ -19,8 +24,8 @@ interface SensorConfig {
 }
 
 const SENSORS: SensorConfig[] = [
-  { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (CE0)
-  // { name: 'sensor_1', bus: 0, device: 1 },  // /dev/spidev0.1 (CE1) — uncomment when wired
+  { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (SPI0)
+  // { name: 'sensor_1', bus: 1, device: 0 },  // /dev/spidev1.0 (SPI1) — uncomment when wired
 ];
 
 const SENSOR_OPTIONS: SensorOptions = {
@@ -58,10 +63,54 @@ for (const cfg of SENSORS) {
 
 console.log(`Polling ${sensors.length} sensor(s) continuously — Ctrl+C to stop`);
 
+// --- HTTP + WebSocket server ---
+
+const PORT = 80;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const indexHtml = readFileSync(join(__dirname, 'index.html'), 'utf-8');
+const dbPath = join(__dirname, 'temperatures.db');
+
+const server = createServer((req, res) => {
+  if (req.url === '/db') {
+    const file = readFileSync(dbPath);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': 'attachment; filename="temperatures.db"',
+      'Content-Length': file.byteLength,
+    });
+    res.end(file);
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(indexHtml);
+});
+
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws: WebSocket) => {
+  console.log(`WebSocket client connected (${wss.clients.size} total)`);
+  ws.on('close', () => console.log(`WebSocket client disconnected (${wss.clients.size} total)`));
+});
+
+function broadcast(data: object) {
+  const json = JSON.stringify(data);
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(json);
+    }
+  }
+}
+
+server.listen(PORT, () => {
+  console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);
+});
+
 // --- Graceful shutdown ---
 
 function shutdown() {
   console.log('\nShutting down…');
+  server.close();
+  wss.close();
   db.close();
   process.exit(0);
 }
@@ -86,8 +135,10 @@ async function poll() {
 
   for (const result of results) {
     if (result) {
+      const timestamp = new Date().toISOString();
       insert.run(result.name, result.celsius);
-      console.log(`${new Date().toISOString()}  ${result.name}: ${result.celsius.toFixed(2)} °C`);
+      broadcast({ timestamp, sensor: result.name, celsius: result.celsius });
+      console.log(`${timestamp}  ${result.name}: ${result.celsius.toFixed(2)} °C`);
     }
   }
 }
