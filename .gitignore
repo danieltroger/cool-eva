@@ -1,3 +1,4 @@
+.DS_Store
 temperatures.db
 temperatures.db-shm
 temperatures.db-wal

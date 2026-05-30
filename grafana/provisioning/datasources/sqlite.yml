@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: cool-eva
+    type: frser-sqlite-datasource
+    uid: cool-eva-sqlite
+    access: proxy
+    isDefault: true
+    jsonData:
+      path: "file:/data/temperatures.db?mode=ro&immutable=1"
