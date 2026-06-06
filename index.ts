@@ -2,7 +2,7 @@ import MAX31865 from 'max31865';
 import Database from 'better-sqlite3';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
-import { readFileSync } from 'fs';
+import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -67,12 +67,12 @@ console.log(`Polling ${sensors.length} sensor(s) continuously — Ctrl+C to stop
 
 const PORT = 80;
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const indexHtml = readFileSync(join(__dirname, 'index.html'), 'utf-8');
+const indexHtml = await readFile(join(__dirname, 'index.html'), 'utf-8');
 const dbPath = join(__dirname, 'temperatures.db');
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   if (req.url === '/db') {
-    const file = readFileSync(dbPath);
+    const file = await readFile(dbPath);
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
       'Content-Disposition': 'attachment; filename="temperatures.db"',
