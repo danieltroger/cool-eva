@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -16,5 +17,8 @@
     "better-sqlite3": "^12.8.0",
     "max31865": "^1.0.3",
     "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   }
 }
