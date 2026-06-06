@@ -7,4 +7,4 @@ datasources:
     access: proxy
     isDefault: true
     jsonData:
-      path: "file:/data/temperatures.db?mode=ro&immutable=1"
+      path: "/repo/temperatures.db"
