@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { handleDbEndpoint } from './db-endpoint.js';
+import { handleDbEndpoint } from './db-endpoint';
 
 interface SensorOptions {
   rtdNominal: number;
