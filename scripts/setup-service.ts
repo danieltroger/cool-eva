@@ -4,7 +4,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectDir = resolve(__dirname);
+const projectDir = resolve(__dirname, '..');
 const nodePath = execSync('which node').toString().trim();
 
 const unit = `[Unit]
