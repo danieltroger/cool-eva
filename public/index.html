@@ -2,162 +2,168 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Thermometer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cool Eva</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root { --bg:#0f172a; --tile:#1e293b; --muted:#64748b; --dim:#334155; --fg:#e2e8f0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0f172a;
-    color: #e2e8f0;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    background: var(--bg); color: var(--fg);
+    min-height: 100vh; padding: env(safe-area-inset-top) 0.6rem 1rem;
+    -webkit-font-smoothing: antialiased;
   }
-  .sensors {
-    display: flex;
-    gap: 4rem;
-    flex-wrap: wrap;
-    justify-content: center;
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.6rem 0.3rem 0.8rem;
   }
-  .sensor {
-    text-align: center;
+  header .title { font-size: 1rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+  .status { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; transition: background .3s; }
+  .dot.connected { background: #22c55e; }
+
+  .banner {
+    display: none; text-align: center; padding: 0.7rem; margin: 0 0.3rem 0.8rem;
+    border-radius: 0.8rem; background: linear-gradient(90deg,#0c4a6e,#155e75);
+    font-size: 1.1rem; font-weight: 500; letter-spacing: .04em;
   }
-  .sensor .name {
-    font-size: 1.2rem;
-    color: #94a3b8;
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
+  .banner.show { display: block; }
+  .banner b { font-weight: 700; }
+
+  .grid {
+    display: grid; gap: 0.6rem;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
-  .sensor .temp {
-    font-size: 8rem;
-    font-weight: 200;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-    transition: color 0.3s;
+  .tile {
+    background: var(--tile); border-radius: 0.9rem; padding: 0.9rem 0.8rem;
+    display: flex; flex-direction: column; gap: 0.25rem; min-height: 104px;
+    transition: opacity .3s;
   }
-  .sensor .unit {
-    font-size: 2rem;
-    color: #64748b;
-    vertical-align: super;
+  .tile.span2 { grid-column: span 2; }
+  .tile.stale { opacity: 0.4; }
+  .tile .label {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
   }
-  .sensor .ago {
-    margin-top: 0.5rem;
-    font-size: 0.9rem;
-    color: #475569;
+  .tile .value {
+    font-size: 2.6rem; font-weight: 250; line-height: 1; font-variant-numeric: tabular-nums;
+    margin-top: auto;
   }
-  .status {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8rem;
-    color: #475569;
-  }
-  .status .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #ef4444;
-    transition: background 0.3s;
-  }
-  .status .dot.connected { background: #22c55e; }
+  .tile.big .value { font-size: 3.6rem; }
+  .tile .unit { font-size: 1rem; color: var(--muted); margin-left: 0.15rem; }
+  .tile .sub { font-size: 0.72rem; color: var(--dim); }
 </style>
 </head>
 <body>
-  <div class="status">
-    <span class="dot" id="dot"></span>
-    <span id="status-text">connecting</span>
-  </div>
-  <div class="sensors" id="sensors"></div>
+  <header>
+    <span class="title">Cool&nbsp;Eva</span>
+    <span class="status"><span class="dot" id="dot"></span><span id="status">connecting</span></span>
+  </header>
+
+  <div class="banner" id="banner"></div>
+  <div class="grid" id="grid"></div>
 
 <script>
-const sensorsEl = document.getElementById('sensors');
-const dotEl = document.getElementById('dot');
-const statusEl = document.getElementById('status-text');
-const sensorEls = {};
-let lastMessageAt = 0;
+// Tile config. `charge` tiles only show while charging. `color(v)` -> CSS color.
+const tempColor = c => c == null ? null : c < 5 ? '#38bdf8' : c < 20 ? '#67e8f9' : c < 35 ? '#4ade80' : c < 45 ? '#facc15' : c < 55 ? '#fb923c' : '#f87171';
+const spreadColor = mv => mv < 15 ? '#4ade80' : mv < 30 ? '#facc15' : mv < 50 ? '#fb923c' : '#f87171';
+const auxColor = v => v < 11.8 ? '#f87171' : v < 12.4 ? '#facc15' : '#4ade80';
+const socColor = v => v < 15 ? '#f87171' : v < 30 ? '#facc15' : '#4ade80';
+const powerColor = kw => { const a = Math.abs(kw); return a < 3 ? '#e2e8f0' : a < 15 ? '#facc15' : a < 40 ? '#fb923c' : '#f87171'; };
 
-function getOrCreateSensor(name) {
-  if (sensorEls[name]) return sensorEls[name];
+const TILES = [
+  { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
+  { key:'pack_kw', label:'Power', unit:'kW', big:true, span2:true, fmt:v=>(v>0?'+':'')+v.toFixed(1), color:powerColor },
+  { key:'pack_a', label:'Current', unit:'A', fmt:v=>(v>0?'+':'')+v.toFixed(1) },
+  { key:'pack_v', label:'Pack', unit:'V', fmt:v=>v.toFixed(1) },
+  { key:'batt_temp_hi', label:'Batt max', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
+  { key:'batt_temp_lo', label:'Batt min', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
+  { key:'coolant_in', label:'Coolant in', unit:'°C', fmt:v=>v.toFixed(1), color:tempColor },
+  { key:'coolant_out', label:'Coolant out', unit:'°C', fmt:v=>v.toFixed(1), color:tempColor },
+  { key:'bike_coolant_temp', label:'Motor', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
+  { key:'oil_temp', label:'Oil', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
+  { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:v=>v.toFixed(0), color:spreadColor },
+  { key:'soh', label:'SOH', unit:'%', fmt:v=>v.toFixed(0) },
+  { key:'aux_12v', label:'12V aux', unit:'V', fmt:v=>v.toFixed(2), color:auxColor },
+  { key:'dc_v', label:'Charge', unit:'V', fmt:v=>v.toFixed(0), charge:true },
+  { key:'dc_a', label:'Charge', unit:'A', fmt:v=>v.toFixed(1), charge:true },
+  { key:'mains_v', label:'Mains', unit:'V', fmt:v=>v.toFixed(0), charge:true },
+  { key:'mains_a', label:'Mains', unit:'A', fmt:v=>v.toFixed(1), charge:true },
+];
+
+const STALE_MS = 8000;
+const grid = document.getElementById('grid');
+const dot = document.getElementById('dot');
+const statusEl = document.getElementById('status');
+const banner = document.getElementById('banner');
+const els = {};
+
+function tile(cfg) {
+  if (els[cfg.key]) return els[cfg.key];
   const div = document.createElement('div');
-  div.className = 'sensor';
-  div.innerHTML = `
-    <div class="name">${name}</div>
-    <div class="temp">--.-<span class="unit">&deg;C</span></div>
-    <div class="ago">waiting</div>
-  `;
-  sensorsEl.appendChild(div);
-  sensorEls[name] = {
-    tempEl: div.querySelector('.temp'),
-    agoEl: div.querySelector('.ago'),
-    lastUpdate: 0,
-  };
-  return sensorEls[name];
+  div.className = 'tile' + (cfg.big ? ' big' : '') + (cfg.span2 ? ' span2' : '');
+  div.innerHTML = `<div class="label">${cfg.label}</div><div class="value">--</div>`;
+  grid.appendChild(div);
+  els[cfg.key] = { div, valueEl: div.querySelector('.value') };
+  return els[cfg.key];
 }
 
-function tempColor(c) {
-  if (c < 5) return '#38bdf8';
-  if (c < 15) return '#67e8f9';
-  if (c < 25) return '#4ade80';
-  if (c < 35) return '#facc15';
-  return '#f87171';
+function chargeLabel(state) {
+  if (state === 2) return 'AC charging';
+  if (state === 10) return 'DC charging';
+  if (state === 16) return 'Charge ending…';
+  return null;
 }
 
+function render(snap) {
+  const serverNow = snap.ts || Date.now();
+  const sig = snap.signals || {};
+  const state = sig.charge_state ? sig.charge_state.value : 1;
+  const charging = state !== undefined && state !== 1;
+
+  const cl = chargeLabel(state);
+  if (cl && charging) {
+    const kw = sig.dc_v && sig.dc_a ? (sig.dc_v.value * sig.dc_a.value / 1000) : null;
+    banner.innerHTML = `<b>${cl}</b>${kw != null ? ' · ' + kw.toFixed(1) + ' kW' : ''}`;
+    banner.classList.add('show');
+  } else {
+    banner.classList.remove('show');
+  }
+
+  for (const cfg of TILES) {
+    const s = sig[cfg.key];
+    const show = s && (!cfg.charge || charging);
+    if (!show) { if (els[cfg.key]) els[cfg.key].div.style.display = 'none'; continue; }
+    const t = tile(cfg);
+    t.div.style.display = '';
+    const stale = (serverNow - s.ts) > STALE_MS;
+    t.div.classList.toggle('stale', stale);
+    t.valueEl.innerHTML = `${cfg.fmt(s.value)}<span class="unit">${cfg.unit}</span>`;
+    t.valueEl.style.color = cfg.color ? (cfg.color(s.value) || '') : '';
+  }
+}
+
+let lastMessageAt = 0;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}`);
-
-  ws.onopen = () => {
-    dotEl.classList.add('connected');
-    statusEl.textContent = 'connected';
-  };
-
-  ws.onclose = () => {
-    dotEl.classList.remove('connected');
-    statusEl.textContent = 'reconnecting';
-    setTimeout(connect, 2000);
-  };
-
-  ws.onerror = () => ws.close();
-
-  ws.onmessage = (e) => {
+  ws.onopen = () => { dot.classList.add('connected'); statusEl.textContent = 'live'; };
+  ws.onmessage = e => {
     lastMessageAt = Date.now();
-    const msg = JSON.parse(e.data);
-    const s = getOrCreateSensor(msg.sensor);
-    s.tempEl.innerHTML = `${msg.celsius.toFixed(1)}<span class="unit">&deg;C</span>`;
-    s.tempEl.style.color = tempColor(msg.celsius);
-    s.lastUpdate = Date.now();
+    try { render(JSON.parse(e.data)); } catch (err) { console.error(err); }
   };
-
-  // Reconnect if no data for 10 seconds
-  const watchdog = setInterval(() => {
-    if (lastMessageAt && Date.now() - lastMessageAt > 10000) {
-      clearInterval(watchdog);
-      ws.close();
-    }
-  }, 5000);
+  ws.onerror = () => ws.close();
   ws.onclose = () => {
-    clearInterval(watchdog);
-    dotEl.classList.remove('connected');
-    statusEl.textContent = 'reconnecting';
+    dot.classList.remove('connected'); statusEl.textContent = 'reconnecting';
     setTimeout(connect, 2000);
   };
 }
 
-// Update "ago" times
+// Watchdog: force-reconnect if the stream goes quiet.
 setInterval(() => {
-  for (const s of Object.values(sensorEls)) {
-    if (!s.lastUpdate) continue;
-    const sec = Math.round((Date.now() - s.lastUpdate) / 1000);
-    s.agoEl.textContent = sec < 2 ? 'just now' : `${sec}s ago`;
+  if (lastMessageAt && Date.now() - lastMessageAt > 10000) {
+    dot.classList.remove('connected'); statusEl.textContent = 'reconnecting';
   }
-}, 1000);
+}, 3000);
 
 connect();
 </script>

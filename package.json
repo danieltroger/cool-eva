@@ -18,6 +18,9 @@
     "max31865": "^1.0.3",
     "ws": "^8.20.0"
   },
+  "optionalDependencies": {
+    "socketcan": "^4.2.1"
+  },
   "devDependencies": {
     "typescript": "^6.0.3"
   }

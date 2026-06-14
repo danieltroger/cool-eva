@@ -1,75 +1,89 @@
-import MAX31865 from 'max31865';
-import Database from 'better-sqlite3';
-import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { handleDbEndpoint } from './db-endpoint.ts';
+import { initDb, closeDb } from './db.ts';
+import { defineSignals, record } from './can/signals.ts';
+import { SIGNALS } from './can/registry.ts';
+import { startCoolantSensors } from './sensors/max31865.ts';
+import { bringUpCan, openChannel } from './can/socket.ts';
+import { decodeFrame, STREAM_IDS } from './can/decode.ts';
+import { initObd, isObdResponse, handleResponse, startObdPoller } from './can/obd.ts';
+import { setupWs } from './ws.ts';
+import type { RawChannel } from 'socketcan';
 
-interface SensorOptions {
-  rtdNominal: number;
-  refResistor: number;
-  wires: 2 | 3 | 4;
+// Thin orchestrator: wire DB + coolant probes + CAN decode/OBD + HTTP/WS together.
+// See obd-garage/INTEGRATION_PLAN.md.
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(__dirname, '..');
+const PORT = 80;
+const CAN_IFACE = 'can0';
+
+// Config (env overrides):
+//   CAN_ENABLED=0 → skip CAN entirely (coolant only)
+//   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
+const CAN_ENABLED = process.env.CAN_ENABLED !== '0';
+const OBD_ENABLED = process.env.OBD_ENABLED !== '0';
+
+// --- DB + signal registry ---
+initDb(join(ROOT, 'temperatures.db'));
+defineSignals(SIGNALS);
+
+// --- Coolant probes (MAX31865) ---
+try {
+  await startCoolantSensors();
+} catch (err) {
+  console.error('coolant: init failed — continuing without coolant probes:', err);
 }
 
-interface Sensor {
-  init(): Promise<void>;
-  getTemperature(): Promise<number>;
+// --- CAN: broadcast decode + OBD-II polling ---
+let channel: RawChannel | undefined;
+let stopObd: (() => void) | undefined;
+
+if (CAN_ENABLED) {
+  try {
+    bringUpCan(CAN_IFACE, OBD_ENABLED); // ACTIVE only when we intend to TX OBD reads
+    channel = openChannel(CAN_IFACE);
+
+    try {
+      channel.setRxFilters([
+        ...STREAM_IDS.map((id) => ({ id, mask: 0x7ff })),
+        { id: 0x7e0, mask: 0x7f0 }, // OBD responses 0x7E0–0x7EF
+      ]);
+    } catch (err) {
+      console.warn('can: setRxFilters failed, accepting all frames:', err);
+    }
+
+    channel.addListener('onMessage', (msg) => {
+      const data = msg.data;
+      if (isObdResponse(msg.id)) {
+        handleResponse(msg.id, data);
+        return;
+      }
+      for (const { key, value } of decodeFrame(msg.id, data)) record(key, value);
+    });
+    channel.start();
+    console.log('can: channel started, decoding broadcasts');
+
+    if (OBD_ENABLED) {
+      initObd(channel);
+      stopObd = startObdPoller(1000);
+      console.log('obd: polling PIDs 05/5C/42/5B @1Hz');
+    } else {
+      console.log('obd: disabled (OBD_ENABLED=0) — passive decode only');
+    }
+  } catch (err) {
+    console.error('can: init failed — continuing with coolant only:', err);
+  }
+} else {
+  console.log('can: disabled (CAN_ENABLED=0)');
 }
-
-interface SensorConfig {
-  name: string;
-  bus: number;
-  device: number;
-}
-
-const SENSORS: SensorConfig[] = [
-  { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (SPI0 CE0, pin 24)
-  { name: 'sensor_1', bus: 0, device: 1 },  // /dev/spidev0.1 (SPI0 CE1, pin 26)
-];
-
-const SENSOR_OPTIONS: SensorOptions = {
-  rtdNominal: 100,   // PT100
-  refResistor: 430,  // Adafruit board
-  wires: 4,
-};
-
-// --- Database setup ---
-
-const db = new Database('temperatures.db');
-db.pragma('journal_mode = WAL');
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS readings (
-    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    sensor    TEXT NOT NULL,
-    celsius   REAL NOT NULL
-  )
-`);
-
-const insert = db.prepare(
-  'INSERT INTO readings (sensor, celsius) VALUES (?, ?)'
-);
-
-// --- Sensor init ---
-
-const sensors: { name: string; sensor: Sensor }[] = [];
-
-for (const cfg of SENSORS) {
-  const sensor: Sensor = new MAX31865(cfg.bus, cfg.device, SENSOR_OPTIONS);
-  await sensor.init();
-  sensors.push({ name: cfg.name, sensor });
-}
-
-console.log(`Polling ${sensors.length} sensor(s) continuously — Ctrl+C to stop`);
 
 // --- HTTP + WebSocket server ---
-
-const PORT = 80;
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const indexHtml = await readFile(join(__dirname, '..', 'public', 'index.html'), 'utf-8');
-const dbPath = join(__dirname, '..', 'temperatures.db');
+const indexHtml = await readFile(join(ROOT, 'public', 'index.html'), 'utf-8');
+const dbPath = join(ROOT, 'temperatures.db');
 
 const server = createServer(async (req, res) => {
   if (req.url === '/db') {
@@ -80,64 +94,29 @@ const server = createServer(async (req, res) => {
   res.end(indexHtml);
 });
 
-const wss = new WebSocketServer({ server });
-
-wss.on('connection', (ws: WebSocket) => {
-  console.log(`WebSocket client connected (${wss.clients.size} total)`);
-  ws.on('close', () => console.log(`WebSocket client disconnected (${wss.clients.size} total)`));
-});
-
-function broadcast(data: object) {
-  const json = JSON.stringify(data);
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(json);
-    }
-  }
-}
+const ws = setupWs(server, 1000);
 
 server.listen(PORT, () => {
   console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);
 });
 
 // --- Graceful shutdown ---
-
-function shutdown() {
+let shuttingDown = false;
+function shutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('\nShutting down…');
+  stopObd?.();
+  try {
+    channel?.stop();
+  } catch {
+    // ignore
+  }
+  ws.stop();
   server.close();
-  wss.close();
-  db.close();
+  closeDb();
   process.exit(0);
 }
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-
-// --- Poll loop ---
-
-async function poll() {
-  const results = await Promise.all(
-    sensors.map(async ({ name, sensor }) => {
-      try {
-        const celsius = await sensor.getTemperature();
-        return { name, celsius };
-      } catch (err) {
-        console.error(`${name} read failed:`, err);
-        return null;
-      }
-    })
-  );
-
-  for (const result of results) {
-    if (result) {
-      const timestamp = new Date().toISOString();
-      insert.run(result.name, result.celsius);
-      broadcast({ timestamp, sensor: result.name, celsius: result.celsius });
-      console.log(`${timestamp}  ${result.name}: ${result.celsius.toFixed(2)} °C`);
-    }
-  }
-}
-
-while (true) {
-  await poll();
-}
