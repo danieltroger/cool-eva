@@ -71,32 +71,26 @@ const socColor = v => v < 15 ? '#f87171' : v < 30 ? '#facc15' : '#4ade80';
 const powerColor = kw => { const a = Math.abs(kw); return a < 3 ? '#e2e8f0' : a < 15 ? '#facc15' : a < 40 ? '#fb923c' : '#f87171'; };
 
 // The array order below IS the on-screen order — reorder these lines to taste.
-// `charge` tiles only show while charging; `big`/`span2` make a tile larger.
+// A tile is either a single `key`, or a paired `keys:[a,b]` shown as "a / b".
+// `charge` tiles only show while charging; `sub(sigs)` adds a small 2nd line.
+// Speed / SOC / power / current / pack-V / RPM / SOH are intentionally NOT shown
+// here (they're on the bike's own dash) — but they're still logged to sqlite + Grafana.
 const TILES = [
-  // Temperatures on top
-  { key:'batt_temp_hi', label:'Batt max', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
-  { key:'batt_temp_lo', label:'Batt min', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
-  { key:'coolant_in', label:'Coolant in', unit:'°C', fmt:v=>v.toFixed(1), color:tempColor },
-  { key:'coolant_out', label:'Coolant out', unit:'°C', fmt:v=>v.toFixed(1), color:tempColor },
+  // Temperatures — paired tiles, grouped for glanceability
+  { keys:['batt_temp_lo','batt_temp_hi'], label:'Battery', unit:'°C', span2:true, fmt:v=>v.toFixed(0), color:tempColor, sub:()=>'min / max' },
+  { keys:['coolant_in','coolant_out'], label:'Coolant', unit:'°C', span2:true, fmt:v=>v.toFixed(1), color:tempColor, sub:()=>'in / out' },
   { key:'bike_coolant_temp', label:'Motor', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'oil_temp', label:'Oil', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
-  { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:v=>v.toFixed(0), color:spreadColor },
-  // Key riding metrics (Power first — SOC is already prominent on the bike's own dash)
-  { key:'pack_kw', label:'Power', unit:'kW', big:true, span2:true, fmt:v=>(v>0?'+':'')+v.toFixed(1), color:powerColor },
-  { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
-  { key:'speed_kmh', label:'Speed', unit:'km/h', fmt:v=>v.toFixed(0) },
-  { key:'motor_rpm', label:'Motor RPM', unit:'rpm', fmt:v=>v.toFixed(0) },
+  { key:'ambient_temp', label:'Ambient', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
+  // Cell balance — spread + which cells are weakest/strongest
+  { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:v=>v.toFixed(0), color:spreadColor,
+    sub:s => (s.min_cell_idx && s.max_cell_idx) ? `low #${s.min_cell_idx.value} · high #${s.max_cell_idx.value}` : '' },
   { key:'aux_12v', label:'12V aux', unit:'V', fmt:v=>v.toFixed(2), color:auxColor },
-  // Demoted
-  { key:'pack_a', label:'Current', unit:'A', fmt:v=>(v>0?'+':'')+v.toFixed(1) },
-  { key:'pack_v', label:'Pack', unit:'V', fmt:v=>v.toFixed(1) },
   // Charging (only while charging)
   { key:'dc_v', label:'Charge', unit:'V', fmt:v=>v.toFixed(0), charge:true },
   { key:'dc_a', label:'Charge', unit:'A', fmt:v=>v.toFixed(1), charge:true },
   { key:'mains_v', label:'Mains', unit:'V', fmt:v=>v.toFixed(0), charge:true },
   { key:'mains_a', label:'Mains', unit:'A', fmt:v=>v.toFixed(1), charge:true },
-  // Least important — SOH (fairly static), last
-  { key:'soh', label:'SOH', unit:'%', fmt:v=>v.toFixed(0) },
 ];
 
 const STALE_MS = 8000;
@@ -106,14 +100,17 @@ const statusEl = document.getElementById('status');
 const banner = document.getElementById('banner');
 const els = {};
 
+function cfgId(cfg) { return cfg.key || cfg.keys.join('+'); }
+
 function tile(cfg) {
-  if (els[cfg.key]) return els[cfg.key];
+  const id = cfgId(cfg);
+  if (els[id]) return els[id];
   const div = document.createElement('div');
   div.className = 'tile' + (cfg.big ? ' big' : '') + (cfg.span2 ? ' span2' : '');
-  div.innerHTML = `<div class="label">${cfg.label}</div><div class="value">--</div>`;
+  div.innerHTML = `<div class="label">${cfg.label}</div><div class="value">--</div>` + (cfg.sub ? '<div class="sub"></div>' : '');
   grid.appendChild(div);
-  els[cfg.key] = { div, valueEl: div.querySelector('.value') };
-  return els[cfg.key];
+  els[id] = { div, valueEl: div.querySelector('.value'), subEl: div.querySelector('.sub') };
+  return els[id];
 }
 
 function chargeLabel(state) {
@@ -139,15 +136,32 @@ function render(snap) {
   }
 
   for (const cfg of TILES) {
-    const s = sig[cfg.key];
-    const show = s && (!cfg.charge || charging);
-    if (!show) { if (els[cfg.key]) els[cfg.key].div.style.display = 'none'; continue; }
+    const id = cfgId(cfg);
+    let show, valueHtml, colorVal, ts;
+    if (cfg.keys) {
+      const a = sig[cfg.keys[0]], b = sig[cfg.keys[1]];
+      show = a && b && (!cfg.charge || charging);
+      if (show) {
+        valueHtml = `${cfg.fmt(a.value)} / ${cfg.fmt(b.value)}<span class="unit">${cfg.unit}</span>`;
+        colorVal = b.value;
+        ts = Math.min(a.ts, b.ts);
+      }
+    } else {
+      const s = sig[cfg.key];
+      show = s && (!cfg.charge || charging);
+      if (show) {
+        valueHtml = `${cfg.fmt(s.value)}<span class="unit">${cfg.unit}</span>`;
+        colorVal = s.value;
+        ts = s.ts;
+      }
+    }
+    if (!show) { if (els[id]) els[id].div.style.display = 'none'; continue; }
     const t = tile(cfg);
     t.div.style.display = '';
-    const stale = (serverNow - s.ts) > STALE_MS;
-    t.div.classList.toggle('stale', stale);
-    t.valueEl.innerHTML = `${cfg.fmt(s.value)}<span class="unit">${cfg.unit}</span>`;
-    t.valueEl.style.color = cfg.color ? (cfg.color(s.value) || '') : '';
+    t.div.classList.toggle('stale', (serverNow - ts) > STALE_MS);
+    t.valueEl.innerHTML = valueHtml;
+    t.valueEl.style.color = cfg.color ? (cfg.color(colorVal) || '') : '';
+    if (t.subEl) t.subEl.textContent = cfg.sub ? (cfg.sub(sig) || '') : '';
   }
 }
 

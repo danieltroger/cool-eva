@@ -56,6 +56,12 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
       ];
     }
 
+    // 0x204 — residual/available energy: b0-1 BE ≈ Wh (RES.ENERGY). ❓ unverified
+    case 0x204: {
+      if (d.length < 2) return [];
+      return [{ key: 'residual_energy_wh', value: u16be(d[0], d[1]) }];
+    }
+
     // 0x025 — INST.CONS: b0-1 LE ÷10 = Wh (50 Hz). ✅
     case 0x025: {
       if (d.length < 2) return [];
@@ -84,4 +90,4 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x200, 0x201, 0x203, 0x305, 0x306];
+export const STREAM_IDS = [0x025, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306];

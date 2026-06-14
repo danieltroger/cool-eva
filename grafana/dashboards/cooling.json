@@ -1711,6 +1711,25 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ambient_temp"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ambient"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -1744,14 +1763,14 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bike_coolant_temp', 'oil_temp') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bike_coolant_temp', 'oil_temp', 'ambient_temp') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
           "refId": "A",
           "timeColumns": [
             "time"
           ]
         }
       ],
-      "title": "Motor & oil temperature",
+      "title": "Motor / oil / ambient temperature",
       "type": "timeseries"
     },
     {
@@ -1827,6 +1846,146 @@
         "y": 79
       },
       "id": 28,
+      "title": "Energy",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Wh",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "watth"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('residual_energy_wh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Available energy (RES.ENERGY — ❓ unverified)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Wh",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "watth"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('inst_consumption_wh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Instantaneous consumption",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 88
+      },
+      "id": 31,
       "title": "Drive",
       "type": "row"
     },
@@ -1858,9 +2017,9 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 80
+        "y": 89
       },
-      "id": 29,
+      "id": 32,
       "options": {
         "legend": {
           "calcs": [
@@ -1922,9 +2081,9 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 80
+        "y": 89
       },
-      "id": 30,
+      "id": 33,
       "options": {
         "legend": {
           "calcs": [
@@ -1989,5 +2148,5 @@
   "timezone": "browser",
   "title": "Cool Eva — Battery & Cooling",
   "uid": "cool-eva-main",
-  "version": 15
+  "version": 16
 }

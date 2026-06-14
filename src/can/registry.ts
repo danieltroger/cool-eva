@@ -29,8 +29,9 @@ export const SIGNALS: SignalDef[] = [
   { key: 'min_cell_idx', unit: '', group: 'cells', source: 'stream' },
   { key: 'max_cell_idx', unit: '', group: 'cells', source: 'stream' },
 
-  // 0x025 — instantaneous consumption
+  // 0x025 / 0x204 — energy
   { key: 'inst_consumption_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 0.5 },
+  { key: 'residual_energy_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 5 },
 
   // 0x305 / 0x306 — charger (present only while charging)
   { key: 'dc_v', unit: 'V', group: 'charge', source: 'stream' },
@@ -43,6 +44,7 @@ export const SIGNALS: SignalDef[] = [
   { key: 'motor_rpm', unit: 'rpm', group: 'obd', source: 'poll', deadband: 20 },
   { key: 'bike_coolant_temp', unit: '°C', group: 'obd', source: 'poll' },
   { key: 'oil_temp', unit: '°C', group: 'obd', source: 'poll' },
+  { key: 'ambient_temp', unit: '°C', group: 'obd', source: 'poll' },
   { key: 'aux_12v', unit: 'V', group: 'obd', source: 'poll', deadband: 0.02 },
   { key: 'soh_pid', unit: '%', group: 'obd', source: 'poll' },
 ];
