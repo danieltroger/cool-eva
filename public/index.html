@@ -81,10 +81,9 @@ const TILES = [
   { key:'bike_coolant_temp', label:'Motor', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'oil_temp', label:'Oil', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:v=>v.toFixed(0), color:spreadColor },
-  // Key riding metrics
-  { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
+  // Key riding metrics (Power first — SOC is already prominent on the bike's own dash)
   { key:'pack_kw', label:'Power', unit:'kW', big:true, span2:true, fmt:v=>(v>0?'+':'')+v.toFixed(1), color:powerColor },
-  { key:'soh', label:'SOH', unit:'%', fmt:v=>v.toFixed(0) },
+  { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
   { key:'aux_12v', label:'12V aux', unit:'V', fmt:v=>v.toFixed(2), color:auxColor },
   // Demoted
   { key:'pack_a', label:'Current', unit:'A', fmt:v=>(v>0?'+':'')+v.toFixed(1) },
@@ -94,6 +93,8 @@ const TILES = [
   { key:'dc_a', label:'Charge', unit:'A', fmt:v=>v.toFixed(1), charge:true },
   { key:'mains_v', label:'Mains', unit:'V', fmt:v=>v.toFixed(0), charge:true },
   { key:'mains_a', label:'Mains', unit:'A', fmt:v=>v.toFixed(1), charge:true },
+  // Least important — SOH (fairly static), last
+  { key:'soh', label:'SOH', unit:'%', fmt:v=>v.toFixed(0) },
 ];
 
 const STALE_MS = 8000;
