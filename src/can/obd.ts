@@ -23,6 +23,8 @@ const PIDS: PidDef[] = [
   { pid: 0x46, key: 'ambient_temp', decode: (a) => a - 40 },
   { pid: 0x42, key: 'aux_12v', decode: (a, b) => (256 * a + b) / 1000 },
   { pid: 0x5b, key: 'soh_pid', decode: (a) => (a * 100) / 255 },
+  { pid: 0x04, key: 'motor_load_pct', decode: (a) => (a * 100) / 255 },
+  { pid: 0x31, key: 'dist_since_clear_km', decode: (a, b) => 256 * a + b },
 ];
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

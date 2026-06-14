@@ -843,6 +843,25 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "cell_avg_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "avg cell"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "cell_min_mv"
             },
             "properties": [
@@ -891,14 +910,14 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('cell_min_mv', 'cell_max_mv') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('cell_min_mv', 'cell_avg_mv', 'cell_max_mv') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
           "refId": "A",
           "timeColumns": [
             "time"
           ]
         }
       ],
-      "title": "Cell voltages (min / max)",
+      "title": "Cell voltages (min / avg / max)",
       "type": "timeseries"
     },
     {
@@ -1140,6 +1159,25 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "charge_limit_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "limit"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -1173,14 +1211,14 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dc_a', 'mains_a') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dc_a', 'mains_a', 'charge_limit_a') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
           "refId": "A",
           "timeColumns": [
             "time"
           ]
         }
       ],
-      "title": "Charging currents",
+      "title": "Charging currents (+ limit)",
       "type": "timeseries"
     },
     {
@@ -2116,6 +2154,173 @@
       ],
       "title": "Motor RPM",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "%",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "throttle_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "throttle"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "motor_load_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "motor load"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 97
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('throttle_pct', 'motor_load_pct') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Throttle & motor load",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "km",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "lengthkm"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 97
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dist_since_clear_km') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Distance (since DTC clear)",
+      "type": "timeseries"
     }
   ],
   "refresh": "",
@@ -2148,5 +2353,5 @@
   "timezone": "browser",
   "title": "Cool Eva — Battery & Cooling",
   "uid": "cool-eva-main",
-  "version": 16
+  "version": 17
 }

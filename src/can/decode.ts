@@ -48,6 +48,7 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
       const min = u16be(d[4], d[5]);
       const max = u16be(d[6], d[7]);
       return [
+        { key: 'cell_avg_mv', value: u16be(d[0], d[1]) }, // 🟡 ≈ avg cell mV
         { key: 'cell_min_mv', value: min },
         { key: 'cell_max_mv', value: max },
         { key: 'cell_spread_mv', value: max - min },
@@ -84,10 +85,22 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
       return [{ key: 'mains_v', value: d[2] }];
     }
 
+    // 0x447 — charge limit: b6 ÷10 = max charge current A (charging only). 🟡
+    case 0x447: {
+      if (d.length < 7) return [];
+      return [{ key: 'charge_limit_a', value: d[6] / 10 }];
+    }
+
+    // 0x109 — throttle position: b0-1 LE ÷10 = % (0 idle … 100). 🟡
+    case 0x109: {
+      if (d.length < 2) return [];
+      return [{ key: 'throttle_pct', value: u16le(d[0], d[1]) / 10 }];
+    }
+
     default:
       return [];
   }
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306];
+export const STREAM_IDS = [0x025, 0x109, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306, 0x447];

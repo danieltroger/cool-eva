@@ -24,6 +24,7 @@ export const SIGNALS: SignalDef[] = [
 
   // 0x203 — cell balance
   { key: 'cell_min_mv', unit: 'mV', group: 'cells', source: 'stream' },
+  { key: 'cell_avg_mv', unit: 'mV', group: 'cells', source: 'stream' },
   { key: 'cell_max_mv', unit: 'mV', group: 'cells', source: 'stream' },
   { key: 'cell_spread_mv', unit: 'mV', group: 'cells', source: 'stream' },
   { key: 'min_cell_idx', unit: '', group: 'cells', source: 'stream' },
@@ -38,6 +39,7 @@ export const SIGNALS: SignalDef[] = [
   { key: 'dc_a', unit: 'A', group: 'charge', source: 'stream' },
   { key: 'mains_v', unit: 'V', group: 'charge', source: 'stream' },
   { key: 'mains_a', unit: 'A', group: 'charge', source: 'stream' },
+  { key: 'charge_limit_a', unit: 'A', group: 'charge', source: 'stream' }, // 0x447 🟡
 
   // OBD-II polled @1 Hz
   { key: 'speed_kmh', unit: 'km/h', group: 'obd', source: 'poll' },
@@ -47,4 +49,9 @@ export const SIGNALS: SignalDef[] = [
   { key: 'ambient_temp', unit: '°C', group: 'obd', source: 'poll' },
   { key: 'aux_12v', unit: 'V', group: 'obd', source: 'poll', deadband: 0.02 },
   { key: 'soh_pid', unit: '%', group: 'obd', source: 'poll' },
+  { key: 'motor_load_pct', unit: '%', group: 'drive', source: 'poll', deadband: 1 },
+  { key: 'dist_since_clear_km', unit: 'km', group: 'drive', source: 'poll' },
+
+  // 0x109 — throttle position (broadcast, ~100 Hz) 🟡
+  { key: 'throttle_pct', unit: '%', group: 'drive', source: 'stream', deadband: 1 },
 ];
