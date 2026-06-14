@@ -14,7 +14,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${projectDir}
-ExecStart=${nodePath} ${projectDir}/src/index.ts
+ExecStart=${nodePath} --experimental-strip-types ${projectDir}/src/index.ts
 Restart=on-failure
 RestartSec=5
 User=root
