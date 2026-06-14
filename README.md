@@ -16,8 +16,7 @@ a Grafana dashboard for post-ride analysis.
   The app reads broadcast frames *and* actively polls standard OBD-II PIDs
   (**read-only** — no diagnostic writes).
 - **Networking:** the Pi joins my **phone's hotspot**, so it's reachable at
-  **`http://cool-eva.local`** from the phone's browser. It's a bit janky (mDNS only
-  resolves while phone + Pi share the hotspot), but it works for an at-a-glance dash
+  **`http://cool-eva.local`** from the phone's browser. It's a bit janky (have to open hotspot page in phone settings for ~20s at the start of every ride), but it works for an at-a-glance dash
   while riding/charging.
 
 ## What it logs
