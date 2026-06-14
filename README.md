@@ -34,8 +34,7 @@ SQLite database. `🟡` = decoded but the scaling/layout is not yet verified on 
 | **Drive** | `throttle_pct` 🟡, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
 
-> Per-cell voltages, VIN, and BMS writes are **not** reachable from the OBD port —
-> see `obd-garage/CAN_MAP.md` for the full reverse-engineering notes and decode tables.
+> Per-cell voltages, VIN, and BMS writes are **not** reachable from the OBD port (on the standard pins, haven't tried the other pins yet).
 
 ## How it works
 
