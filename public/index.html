@@ -70,11 +70,10 @@ const auxColor = v => v < 11.8 ? '#f87171' : v < 12.4 ? '#facc15' : '#4ade80';
 const socColor = v => v < 15 ? '#f87171' : v < 30 ? '#facc15' : '#4ade80';
 const powerColor = kw => { const a = Math.abs(kw); return a < 3 ? '#e2e8f0' : a < 15 ? '#facc15' : a < 40 ? '#fb923c' : '#f87171'; };
 
+// The array order below IS the on-screen order — reorder these lines to taste.
+// `charge` tiles only show while charging; `big`/`span2` make a tile larger.
 const TILES = [
-  { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
-  { key:'pack_kw', label:'Power', unit:'kW', big:true, span2:true, fmt:v=>(v>0?'+':'')+v.toFixed(1), color:powerColor },
-  { key:'pack_a', label:'Current', unit:'A', fmt:v=>(v>0?'+':'')+v.toFixed(1) },
-  { key:'pack_v', label:'Pack', unit:'V', fmt:v=>v.toFixed(1) },
+  // Temperatures on top
   { key:'batt_temp_hi', label:'Batt max', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'batt_temp_lo', label:'Batt min', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'coolant_in', label:'Coolant in', unit:'°C', fmt:v=>v.toFixed(1), color:tempColor },
@@ -82,8 +81,15 @@ const TILES = [
   { key:'bike_coolant_temp', label:'Motor', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'oil_temp', label:'Oil', unit:'°C', fmt:v=>v.toFixed(0), color:tempColor },
   { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:v=>v.toFixed(0), color:spreadColor },
+  // Key riding metrics
+  { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
+  { key:'pack_kw', label:'Power', unit:'kW', big:true, span2:true, fmt:v=>(v>0?'+':'')+v.toFixed(1), color:powerColor },
   { key:'soh', label:'SOH', unit:'%', fmt:v=>v.toFixed(0) },
   { key:'aux_12v', label:'12V aux', unit:'V', fmt:v=>v.toFixed(2), color:auxColor },
+  // Demoted
+  { key:'pack_a', label:'Current', unit:'A', fmt:v=>(v>0?'+':'')+v.toFixed(1) },
+  { key:'pack_v', label:'Pack', unit:'V', fmt:v=>v.toFixed(1) },
+  // Charging (only while charging)
   { key:'dc_v', label:'Charge', unit:'V', fmt:v=>v.toFixed(0), charge:true },
   { key:'dc_a', label:'Charge', unit:'A', fmt:v=>v.toFixed(1), charge:true },
   { key:'mains_v', label:'Mains', unit:'V', fmt:v=>v.toFixed(0), charge:true },
