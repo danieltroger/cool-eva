@@ -39,6 +39,8 @@ export const SIGNALS: SignalDef[] = [
   { key: 'mains_a', unit: 'A', group: 'charge', source: 'stream' },
 
   // OBD-II polled @1 Hz
+  { key: 'speed_kmh', unit: 'km/h', group: 'obd', source: 'poll' },
+  { key: 'motor_rpm', unit: 'rpm', group: 'obd', source: 'poll', deadband: 20 },
   { key: 'bike_coolant_temp', unit: '°C', group: 'obd', source: 'poll' },
   { key: 'oil_temp', unit: '°C', group: 'obd', source: 'poll' },
   { key: 'aux_12v', unit: 'V', group: 'obd', source: 'poll', deadband: 0.02 },

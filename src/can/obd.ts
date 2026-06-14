@@ -16,6 +16,8 @@ interface PidDef {
 }
 
 const PIDS: PidDef[] = [
+  { pid: 0x0d, key: 'speed_kmh', decode: (a) => a },
+  { pid: 0x0c, key: 'motor_rpm', decode: (a, b) => (256 * a + b) / 4 },
   { pid: 0x05, key: 'bike_coolant_temp', decode: (a) => a - 40 },
   { pid: 0x5c, key: 'oil_temp', decode: (a) => a - 40 },
   { pid: 0x42, key: 'aux_12v', decode: (a, b) => (256 * a + b) / 1000 },

@@ -1817,6 +1817,146 @@
       ],
       "title": "12V aux battery",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 28,
+      "title": "Drive",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "km/h",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "velocitykmh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('speed_kmh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Speed",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "rpm",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "rotrpm"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('motor_rpm') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Motor RPM",
+      "type": "timeseries"
     }
   ],
   "refresh": "",
@@ -1849,5 +1989,5 @@
   "timezone": "browser",
   "title": "Cool Eva — Battery & Cooling",
   "uid": "cool-eva-main",
-  "version": 14
+  "version": 15
 }

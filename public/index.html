@@ -84,6 +84,8 @@ const TILES = [
   // Key riding metrics (Power first — SOC is already prominent on the bike's own dash)
   { key:'pack_kw', label:'Power', unit:'kW', big:true, span2:true, fmt:v=>(v>0?'+':'')+v.toFixed(1), color:powerColor },
   { key:'soc', label:'SOC', unit:'%', big:true, span2:true, fmt:v=>v.toFixed(0), color:socColor },
+  { key:'speed_kmh', label:'Speed', unit:'km/h', fmt:v=>v.toFixed(0) },
+  { key:'motor_rpm', label:'Motor RPM', unit:'rpm', fmt:v=>v.toFixed(0) },
   { key:'aux_12v', label:'12V aux', unit:'V', fmt:v=>v.toFixed(2), color:auxColor },
   // Demoted
   { key:'pack_a', label:'Current', unit:'A', fmt:v=>(v>0?'+':'')+v.toFixed(1) },
