@@ -5,6 +5,7 @@ import { createServer } from 'http';
 import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { handleDbEndpoint } from './db-endpoint.js';
 
 interface SensorOptions {
   rtdNominal: number;
@@ -72,13 +73,7 @@ const dbPath = join(__dirname, 'temperatures.db');
 
 const server = createServer(async (req, res) => {
   if (req.url === '/db') {
-    const file = await readFile(dbPath);
-    res.writeHead(200, {
-      'Content-Type': 'application/octet-stream',
-      'Content-Disposition': 'attachment; filename="temperatures.db"',
-      'Content-Length': file.byteLength,
-    });
-    res.end(file);
+    await handleDbEndpoint(req, res, dbPath);
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/html' });
