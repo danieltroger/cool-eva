@@ -14,6 +14,6 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["*.ts"],
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.ts"],
   "exclude": ["node_modules", "dist", "obd-garage"]
 }

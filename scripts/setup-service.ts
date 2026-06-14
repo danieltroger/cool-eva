@@ -14,7 +14,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${projectDir}
-ExecStart=${nodePath} ${projectDir}/index.ts
+ExecStart=${nodePath} ${projectDir}/src/index.ts
 Restart=on-failure
 RestartSec=5
 User=root
@@ -27,7 +27,7 @@ const serviceName = 'thermometer';
 const servicePath = `/etc/systemd/system/${serviceName}.service`;
 
 if (process.getuid?.() !== 0) {
-  console.error('Must run as root: sudo node setup-service.ts');
+  console.error('Must run as root: sudo node scripts/setup-service.ts');
   process.exit(1);
 }
 

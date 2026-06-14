@@ -68,8 +68,8 @@ console.log(`Polling ${sensors.length} sensor(s) continuously — Ctrl+C to stop
 
 const PORT = 80;
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const indexHtml = await readFile(join(__dirname, 'index.html'), 'utf-8');
-const dbPath = join(__dirname, 'temperatures.db');
+const indexHtml = await readFile(join(__dirname, '..', 'public', 'index.html'), 'utf-8');
+const dbPath = join(__dirname, '..', 'temperatures.db');
 
 const server = createServer(async (req, res) => {
   if (req.url === '/db') {
