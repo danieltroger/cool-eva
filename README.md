@@ -4,7 +4,7 @@ Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside
 the bike logs the temperatures of a custom watercooling loop on the battery pack,
 **plus** the bike's own battery / charge / cell / drive telemetry read straight off
 the CAN bus — all into one SQLite database, surfaced as a live phone dashboard and
-a Grafana dashboard.
+a Grafana dashboard for post-ride analysis.
 
 ## Hardware & setup
 
