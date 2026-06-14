@@ -24,8 +24,8 @@ interface SensorConfig {
 }
 
 const SENSORS: SensorConfig[] = [
-  { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (SPI0)
-  // { name: 'sensor_1', bus: 1, device: 0 },  // /dev/spidev1.0 (SPI1) — uncomment when wired
+  { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (SPI0 CE0, pin 24)
+  { name: 'sensor_1', bus: 0, device: 1 },  // /dev/spidev0.1 (SPI0 CE1, pin 26)
 ];
 
 const SENSOR_OPTIONS: SensorOptions = {
