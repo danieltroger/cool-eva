@@ -57,10 +57,12 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       ];
     }
 
-    // 0x204 — residual/available energy: b0-1 BE ≈ Wh (RES.ENERGY). ❓ unverified
-    case 0x204: {
-      if (data.length < 2) return [];
-      return [{ key: "residual_energy_wh", value: u16be(data[0], data[1]) }];
+    // 0x10A — charge/energy status. b3-4 LE × 2 = RES.ENERGY Wh (residual/available
+    // energy). 🟡 Parked static match: 4778×2=9556 vs menu 9557; confirm the exact
+    // scaling at a 2nd SOC. (Same frame the charge-limit logic reads CHG.PWR.REF, b7.)
+    case 0x10a: {
+      if (data.length < 5) return [];
+      return [{ key: "residual_energy_wh", value: u16le(data[3], data[4]) * 2 }];
     }
 
     // 0x025 — INST.CONS: b0-1 LE ÷10 = Wh (50 Hz). ✅
@@ -118,4 +120,4 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x102, 0x109, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306, 0x447];
+export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x200, 0x201, 0x203, 0x305, 0x306, 0x447];

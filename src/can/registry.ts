@@ -30,7 +30,7 @@ export const SIGNALS: SignalDef[] = [
   { key: "min_cell_idx", unit: "", group: "cells", source: "stream" },
   { key: "max_cell_idx", unit: "", group: "cells", source: "stream" },
 
-  // 0x025 / 0x204 — energy
+  // 0x025 (inst) / 0x10A (residual) — energy
   { key: "inst_consumption_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0.5 },
   { key: "residual_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0 },
 

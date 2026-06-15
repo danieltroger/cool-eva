@@ -1830,7 +1830,7 @@
           "timeColumns": ["time"]
         }
       ],
-      "title": "Available energy (RES.ENERGY — ❓ unverified)",
+      "title": "Available energy (RES.ENERGY, 0x10A — 🟡 confirm scaling)",
       "type": "timeseries"
     },
     {
