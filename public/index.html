@@ -1,231 +1,346 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Cool Eva</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  :root { --bg:#0f172a; --tile:#1e293b; --muted:#64748b; --dim:#334155; --fg:#e2e8f0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg); color: var(--fg);
-    min-height: 100vh; padding: env(safe-area-inset-top) 0.6rem 1rem;
-    -webkit-font-smoothing: antialiased;
-  }
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0.6rem 0.3rem 0.8rem;
-  }
-  header .title { font-size: 1rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
-  .status { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted); }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; transition: background .3s; }
-  .dot.connected { background: #22c55e; }
-
-  .banner {
-    display: none; text-align: center; padding: 0.7rem; margin: 0 0.3rem 0.8rem;
-    border-radius: 0.8rem; background: linear-gradient(90deg,#0c4a6e,#155e75);
-    font-size: 1.1rem; font-weight: 500; letter-spacing: .04em;
-  }
-  .banner.show { display: block; }
-  .banner b { font-weight: 700; }
-
-  .grid {
-    display: grid; gap: 0.6rem;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  }
-  .tile {
-    background: var(--tile); border-radius: 0.9rem; padding: 0.9rem 0.8rem;
-    display: flex; flex-direction: column; gap: 0.25rem; min-height: 104px;
-    transition: opacity .3s;
-  }
-  .tile.span2 { grid-column: span 2; }
-  .tile.stale { opacity: 0.4; }
-  .tile .label {
-    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
-  }
-  .tile .value {
-    font-size: 2.6rem; font-weight: 250; line-height: 1; font-variant-numeric: tabular-nums;
-    margin-top: auto;
-  }
-  .tile.big .value { font-size: 3.6rem; }
-  .tile .unit { font-size: 1rem; color: var(--muted); margin-left: 0.15rem; }
-  .tile .sub { font-size: 0.72rem; color: var(--dim); }
-</style>
-</head>
-<body>
-  <header>
-    <span class="title">Cool&nbsp;Eva</span>
-    <span class="status"><span class="dot" id="dot"></span><span id="status">connecting</span></span>
-  </header>
-
-  <div class="banner" id="banner"></div>
-  <div class="grid" id="grid"></div>
-
-<script>
-// Color helpers: map a value to a CSS color for a tile.
-const temperatureColor = (celsius) =>
-  celsius == null ? null
-  : celsius < 5 ? '#38bdf8'
-  : celsius < 20 ? '#67e8f9'
-  : celsius < 35 ? '#4ade80'
-  : celsius < 45 ? '#facc15'
-  : celsius < 55 ? '#fb923c'
-  : '#f87171';
-const cellSpreadColor = (millivolts) =>
-  millivolts < 15 ? '#4ade80' : millivolts < 30 ? '#facc15' : millivolts < 50 ? '#fb923c' : '#f87171';
-const auxVoltageColor = (volts) =>
-  volts < 11.8 ? '#f87171' : volts < 12.4 ? '#facc15' : '#4ade80';
-const socColor = (percent) =>
-  percent < 15 ? '#f87171' : percent < 30 ? '#facc15' : '#4ade80';
-const powerColor = (kilowatts) => {
-  const magnitude = Math.abs(kilowatts);
-  return magnitude < 3 ? '#e2e8f0' : magnitude < 15 ? '#facc15' : magnitude < 40 ? '#fb923c' : '#f87171';
-};
-
-// The array order below IS the on-screen order — reorder these lines to taste.
-// A tile is either a single `key`, or a paired `keys:[a,b]` shown as "a / b".
-// `charge` tiles only show while charging; `sub(signals)` adds a small 2nd line.
-// Speed / SOC / power / current / pack-V / RPM / SOH are intentionally NOT shown
-// here (they're on the bike's own dash) — but they're still logged to sqlite + Grafana.
-const TILES = [
-  // Temperatures — paired tiles, grouped for glanceability
-  { keys:['batt_temp_lo','batt_temp_hi'], label:'Battery', unit:'°C', span2:true, fmt:(value)=>value.toFixed(0), color:temperatureColor, sub:()=>'min / max' },
-  { keys:['coolant_in','coolant_out'], label:'Coolant', unit:'°C', span2:true, fmt:(value)=>value.toFixed(1), color:temperatureColor, sub:()=>'in / out' },
-  { key:'bike_coolant_temp', label:'Motor', unit:'°C', fmt:(value)=>value.toFixed(0), color:temperatureColor },
-  { key:'oil_temp', label:'Oil', unit:'°C', fmt:(value)=>value.toFixed(0), color:temperatureColor },
-  { key:'ambient_temp', label:'Ambient', unit:'°C', fmt:(value)=>value.toFixed(0), color:temperatureColor },
-  // Cell balance — spread + which cells are weakest/strongest
-  { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:(value)=>value.toFixed(0), color:cellSpreadColor,
-    sub:(signals) => (signals.min_cell_idx && signals.max_cell_idx) ? `low #${signals.min_cell_idx.value} · high #${signals.max_cell_idx.value}` : '' },
-  { key:'aux_12v', label:'12V aux', unit:'V', fmt:(value)=>value.toFixed(2), color:auxVoltageColor },
-  // High beam (0x102 b0 bit6) — on/off
-  { key:'high_beam', label:'High beam', unit:'', fmt:(value)=> value ? 'on' : 'off', color:(value)=> value ? '#fde047' : '#475569' },
-  // Charging (only while charging)
-  { key:'dc_v', label:'Charge', unit:'V', fmt:(value)=>value.toFixed(0), charge:true },
-  { key:'dc_a', label:'Charge', unit:'A', fmt:(value)=>value.toFixed(1), charge:true },
-  { key:'mains_v', label:'Mains', unit:'V', fmt:(value)=>value.toFixed(0), charge:true },
-  { key:'mains_a', label:'Mains', unit:'A', fmt:(value)=>value.toFixed(1), charge:true },
-];
-
-const STALE_MS = 8000;
-const gridEl = document.getElementById('grid');
-const statusDot = document.getElementById('dot');
-const statusText = document.getElementById('status');
-const bannerEl = document.getElementById('banner');
-const tileElements = {};
-
-function tileId(tileConfig) {
-  return tileConfig.key || tileConfig.keys.join('+');
-}
-
-function getTile(tileConfig) {
-  const tileKey = tileId(tileConfig);
-  if (tileElements[tileKey]) return tileElements[tileKey];
-  const container = document.createElement('div');
-  container.className = 'tile' + (tileConfig.big ? ' big' : '') + (tileConfig.span2 ? ' span2' : '');
-  container.innerHTML = `<div class="label">${tileConfig.label}</div><div class="value">--</div>` + (tileConfig.sub ? '<div class="sub"></div>' : '');
-  gridEl.appendChild(container);
-  tileElements[tileKey] = {
-    container,
-    valueElement: container.querySelector('.value'),
-    subElement: container.querySelector('.sub'),
-  };
-  return tileElements[tileKey];
-}
-
-function chargeLabel(chargeState) {
-  if (chargeState === 2) return 'AC charging';
-  if (chargeState === 10) return 'DC charging';
-  if (chargeState === 16) return 'Charge ending…';
-  return null;
-}
-
-function render(snapshot) {
-  const serverTime = snapshot.ts || Date.now();
-  const signals = snapshot.signals || {};
-  const chargeState = signals.charge_state ? signals.charge_state.value : 1;
-  const isCharging = chargeState !== undefined && chargeState !== 1;
-
-  const chargeText = chargeLabel(chargeState);
-  if (chargeText && isCharging) {
-    const chargeKilowatts = signals.dc_v && signals.dc_a ? (signals.dc_v.value * signals.dc_a.value / 1000) : null;
-    bannerEl.innerHTML = `<b>${chargeText}</b>${chargeKilowatts != null ? ' · ' + chargeKilowatts.toFixed(1) + ' kW' : ''}`;
-    bannerEl.classList.add('show');
-  } else {
-    bannerEl.classList.remove('show');
-  }
-
-  for (const tileConfig of TILES) {
-    const tileKey = tileId(tileConfig);
-    let shouldShow, valueHtml, colorValue, timestamp;
-    if (tileConfig.keys) {
-      const low = signals[tileConfig.keys[0]];
-      const high = signals[tileConfig.keys[1]];
-      shouldShow = low && high && (!tileConfig.charge || isCharging);
-      if (shouldShow) {
-        valueHtml = `${tileConfig.fmt(low.value)} / ${tileConfig.fmt(high.value)}<span class="unit">${tileConfig.unit}</span>`;
-        colorValue = high.value;
-        timestamp = Math.min(low.ts, high.ts);
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Cool Eva</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
       }
-    } else {
-      const signal = signals[tileConfig.key];
-      shouldShow = signal && (!tileConfig.charge || isCharging);
-      if (shouldShow) {
-        valueHtml = `${tileConfig.fmt(signal.value)}<span class="unit">${tileConfig.unit}</span>`;
-        colorValue = signal.value;
-        timestamp = signal.ts;
+      :root {
+        --bg: #0f172a;
+        --tile: #1e293b;
+        --muted: #64748b;
+        --dim: #334155;
+        --fg: #e2e8f0;
       }
-    }
-    if (!shouldShow) {
-      if (tileElements[tileKey]) tileElements[tileKey].container.style.display = 'none';
-      continue;
-    }
-    const tile = getTile(tileConfig);
-    tile.container.style.display = '';
-    tile.container.classList.toggle('stale', (serverTime - timestamp) > STALE_MS);
-    tile.valueElement.innerHTML = valueHtml;
-    tile.valueElement.style.color = tileConfig.color ? (tileConfig.color(colorValue) || '') : '';
-    if (tile.subElement) tile.subElement.textContent = tileConfig.sub ? (tileConfig.sub(signals) || '') : '';
-  }
-}
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        min-height: 100vh;
+        padding: env(safe-area-inset-top) 0.6rem 1rem;
+        -webkit-font-smoothing: antialiased;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.6rem 0.3rem 0.8rem;
+      }
+      header .title {
+        font-size: 1rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #ef4444;
+        transition: background 0.3s;
+      }
+      .dot.connected {
+        background: #22c55e;
+      }
 
-let lastMessageAt = 0;
-const store = { ts: 0, signals: {} };  // snapshot replaces signals, patch merges into them
+      .banner {
+        display: none;
+        text-align: center;
+        padding: 0.7rem;
+        margin: 0 0.3rem 0.8rem;
+        border-radius: 0.8rem;
+        background: linear-gradient(90deg, #0c4a6e, #155e75);
+        font-size: 1.1rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+      }
+      .banner.show {
+        display: block;
+      }
+      .banner b {
+        font-weight: 700;
+      }
 
-function connect() {
-  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${wsProtocol}//${location.host}`);
-  socket.onopen = () => { statusDot.classList.add('connected'); statusText.textContent = 'live'; };
-  socket.onmessage = (event) => {
-    lastMessageAt = Date.now();
-    try {
-      const message = JSON.parse(event.data);
-      if (message.type === 'patch') Object.assign(store.signals, message.signals);
-      else store.signals = message.signals || {};   // full snapshot (connect + heartbeat)
-      store.ts = message.ts || Date.now();
-      render(store);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-  socket.onerror = () => socket.close();
-  socket.onclose = () => {
-    statusDot.classList.remove('connected');
-    statusText.textContent = 'reconnecting';
-    setTimeout(connect, 2000);
-  };
-}
+      .grid {
+        display: grid;
+        gap: 0.6rem;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      }
+      .tile {
+        background: var(--tile);
+        border-radius: 0.9rem;
+        padding: 0.9rem 0.8rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        min-height: 104px;
+        transition: opacity 0.3s;
+      }
+      .tile.span2 {
+        grid-column: span 2;
+      }
+      .tile.stale {
+        opacity: 0.4;
+      }
+      .tile .label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--muted);
+      }
+      .tile .value {
+        font-size: 2.6rem;
+        font-weight: 250;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        margin-top: auto;
+      }
+      .tile.big .value {
+        font-size: 3.6rem;
+      }
+      .tile .unit {
+        font-size: 1rem;
+        color: var(--muted);
+        margin-left: 0.15rem;
+      }
+      .tile .sub {
+        font-size: 0.72rem;
+        color: var(--dim);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="title">Cool&nbsp;Eva</span>
+      <span class="status"><span class="dot" id="dot"></span><span id="status">connecting</span></span>
+    </header>
 
-// Watchdog: mark the link stale if the stream goes quiet.
-setInterval(() => {
-  if (lastMessageAt && Date.now() - lastMessageAt > 10000) {
-    statusDot.classList.remove('connected');
-    statusText.textContent = 'reconnecting';
-  }
-}, 3000);
+    <div class="banner" id="banner"></div>
+    <div class="grid" id="grid"></div>
 
-connect();
-</script>
-</body>
+    <script>
+      // Color helpers: map a value to a CSS color for a tile.
+      const temperatureColor = celsius =>
+        celsius == null
+          ? null
+          : celsius < 5
+            ? "#38bdf8"
+            : celsius < 20
+              ? "#67e8f9"
+              : celsius < 35
+                ? "#4ade80"
+                : celsius < 45
+                  ? "#facc15"
+                  : celsius < 55
+                    ? "#fb923c"
+                    : "#f87171";
+      const cellSpreadColor = millivolts =>
+        millivolts < 15 ? "#4ade80" : millivolts < 30 ? "#facc15" : millivolts < 50 ? "#fb923c" : "#f87171";
+      const auxVoltageColor = volts => (volts < 11.8 ? "#f87171" : volts < 12.4 ? "#facc15" : "#4ade80");
+      const socColor = percent => (percent < 15 ? "#f87171" : percent < 30 ? "#facc15" : "#4ade80");
+      const powerColor = kilowatts => {
+        const magnitude = Math.abs(kilowatts);
+        return magnitude < 3 ? "#e2e8f0" : magnitude < 15 ? "#facc15" : magnitude < 40 ? "#fb923c" : "#f87171";
+      };
+
+      // The array order below IS the on-screen order — reorder these lines to taste.
+      // A tile is either a single `key`, or a paired `keys:[a,b]` shown as "a / b".
+      // `charge` tiles only show while charging; `sub(signals)` adds a small 2nd line.
+      // Speed / SOC / power / current / pack-V / RPM / SOH are intentionally NOT shown
+      // here (they're on the bike's own dash) — but they're still logged to sqlite + Grafana.
+      const TILES = [
+        // Temperatures — paired tiles, grouped for glanceability
+        {
+          keys: ["batt_temp_lo", "batt_temp_hi"],
+          label: "Battery",
+          unit: "°C",
+          span2: true,
+          fmt: value => value.toFixed(0),
+          color: temperatureColor,
+          sub: () => "min / max",
+        },
+        {
+          keys: ["coolant_in", "coolant_out"],
+          label: "Coolant",
+          unit: "°C",
+          span2: true,
+          fmt: value => value.toFixed(1),
+          color: temperatureColor,
+          sub: () => "in / out",
+        },
+        {
+          key: "bike_coolant_temp",
+          label: "Motor",
+          unit: "°C",
+          fmt: value => value.toFixed(0),
+          color: temperatureColor,
+        },
+        { key: "oil_temp", label: "Oil", unit: "°C", fmt: value => value.toFixed(0), color: temperatureColor },
+        { key: "ambient_temp", label: "Ambient", unit: "°C", fmt: value => value.toFixed(0), color: temperatureColor },
+        // Cell balance — spread + which cells are weakest/strongest
+        {
+          key: "cell_spread_mv",
+          label: "Cell spread",
+          unit: "mV",
+          fmt: value => value.toFixed(0),
+          color: cellSpreadColor,
+          sub: signals =>
+            signals.min_cell_idx && signals.max_cell_idx
+              ? `low #${signals.min_cell_idx.value} · high #${signals.max_cell_idx.value}`
+              : "",
+        },
+        { key: "aux_12v", label: "12V aux", unit: "V", fmt: value => value.toFixed(2), color: auxVoltageColor },
+        // High beam (0x102 b0 bit6) — on/off
+        {
+          key: "high_beam",
+          label: "High beam",
+          unit: "",
+          fmt: value => (value ? "on" : "off"),
+          color: value => (value ? "#fde047" : "#475569"),
+        },
+        // Charging (only while charging)
+        { key: "dc_v", label: "Charge", unit: "V", fmt: value => value.toFixed(0), charge: true },
+        { key: "dc_a", label: "Charge", unit: "A", fmt: value => value.toFixed(1), charge: true },
+        { key: "mains_v", label: "Mains", unit: "V", fmt: value => value.toFixed(0), charge: true },
+        { key: "mains_a", label: "Mains", unit: "A", fmt: value => value.toFixed(1), charge: true },
+      ];
+
+      const STALE_MS = 8000;
+      const gridEl = document.getElementById("grid");
+      const statusDot = document.getElementById("dot");
+      const statusText = document.getElementById("status");
+      const bannerEl = document.getElementById("banner");
+      const tileElements = {};
+
+      function tileId(tileConfig) {
+        return tileConfig.key || tileConfig.keys.join("+");
+      }
+
+      function getTile(tileConfig) {
+        const tileKey = tileId(tileConfig);
+        if (tileElements[tileKey]) return tileElements[tileKey];
+        const container = document.createElement("div");
+        container.className = "tile" + (tileConfig.big ? " big" : "") + (tileConfig.span2 ? " span2" : "");
+        container.innerHTML =
+          `<div class="label">${tileConfig.label}</div><div class="value">--</div>` +
+          (tileConfig.sub ? '<div class="sub"></div>' : "");
+        gridEl.appendChild(container);
+        tileElements[tileKey] = {
+          container,
+          valueElement: container.querySelector(".value"),
+          subElement: container.querySelector(".sub"),
+        };
+        return tileElements[tileKey];
+      }
+
+      function chargeLabel(chargeState) {
+        if (chargeState === 2) return "AC charging";
+        if (chargeState === 10) return "DC charging";
+        if (chargeState === 16) return "Charge ending…";
+        return null;
+      }
+
+      function render(snapshot) {
+        const serverTime = snapshot.ts || Date.now();
+        const signals = snapshot.signals || {};
+        const chargeState = signals.charge_state ? signals.charge_state.value : 1;
+        const isCharging = chargeState !== undefined && chargeState !== 1;
+
+        const chargeText = chargeLabel(chargeState);
+        if (chargeText && isCharging) {
+          const chargeKilowatts =
+            signals.dc_v && signals.dc_a ? (signals.dc_v.value * signals.dc_a.value) / 1000 : null;
+          bannerEl.innerHTML = `<b>${chargeText}</b>${chargeKilowatts != null ? " · " + chargeKilowatts.toFixed(1) + " kW" : ""}`;
+          bannerEl.classList.add("show");
+        } else {
+          bannerEl.classList.remove("show");
+        }
+
+        for (const tileConfig of TILES) {
+          const tileKey = tileId(tileConfig);
+          let shouldShow, valueHtml, colorValue, timestamp;
+          if (tileConfig.keys) {
+            const low = signals[tileConfig.keys[0]];
+            const high = signals[tileConfig.keys[1]];
+            shouldShow = low && high && (!tileConfig.charge || isCharging);
+            if (shouldShow) {
+              valueHtml = `${tileConfig.fmt(low.value)} / ${tileConfig.fmt(high.value)}<span class="unit">${tileConfig.unit}</span>`;
+              colorValue = high.value;
+              timestamp = Math.min(low.ts, high.ts);
+            }
+          } else {
+            const signal = signals[tileConfig.key];
+            shouldShow = signal && (!tileConfig.charge || isCharging);
+            if (shouldShow) {
+              valueHtml = `${tileConfig.fmt(signal.value)}<span class="unit">${tileConfig.unit}</span>`;
+              colorValue = signal.value;
+              timestamp = signal.ts;
+            }
+          }
+          if (!shouldShow) {
+            if (tileElements[tileKey]) tileElements[tileKey].container.style.display = "none";
+            continue;
+          }
+          const tile = getTile(tileConfig);
+          tile.container.style.display = "";
+          tile.container.classList.toggle("stale", serverTime - timestamp > STALE_MS);
+          tile.valueElement.innerHTML = valueHtml;
+          tile.valueElement.style.color = tileConfig.color ? tileConfig.color(colorValue) || "" : "";
+          if (tile.subElement) tile.subElement.textContent = tileConfig.sub ? tileConfig.sub(signals) || "" : "";
+        }
+      }
+
+      let lastMessageAt = 0;
+      const store = { ts: 0, signals: {} }; // snapshot replaces signals, patch merges into them
+
+      function connect() {
+        const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(`${wsProtocol}//${location.host}`);
+        socket.onopen = () => {
+          statusDot.classList.add("connected");
+          statusText.textContent = "live";
+        };
+        socket.onmessage = event => {
+          lastMessageAt = Date.now();
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === "patch") Object.assign(store.signals, message.signals);
+            else store.signals = message.signals || {}; // full snapshot (connect + heartbeat)
+            store.ts = message.ts || Date.now();
+            render(store);
+          } catch (error) {
+            console.error(error);
+          }
+        };
+        socket.onerror = () => socket.close();
+        socket.onclose = () => {
+          statusDot.classList.remove("connected");
+          statusText.textContent = "reconnecting";
+          setTimeout(connect, 2000);
+        };
+      }
+
+      // Watchdog: mark the link stale if the stream goes quiet.
+      setInterval(() => {
+        if (lastMessageAt && Date.now() - lastMessageAt > 10000) {
+          statusDot.classList.remove("connected");
+          statusText.textContent = "reconnecting";
+        }
+      }, 3000);
+
+      connect();
+    </script>
+  </body>
 </html>

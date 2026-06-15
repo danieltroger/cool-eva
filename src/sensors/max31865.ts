@@ -1,5 +1,5 @@
-import MAX31865 from 'max31865';
-import { record } from '../can/signals.ts';
+import MAX31865 from "max31865";
+import { record } from "../can/signals.ts";
 
 // External MAX31865 PT100 probes on the battery coolant loop, refactored out of
 // index.ts. Feeds the same log-on-change core as the CAN signals, as
@@ -12,8 +12,8 @@ interface ProbeConfig {
 }
 
 const PROBES: ProbeConfig[] = [
-  { key: 'coolant_in', bus: 0, device: 0 }, // /dev/spidev0.0 (SPI0 CE0) — inlet
-  { key: 'coolant_out', bus: 0, device: 1 }, // /dev/spidev0.1 (SPI0 CE1) — outlet
+  { key: "coolant_in", bus: 0, device: 0 }, // /dev/spidev0.0 (SPI0 CE0) — inlet
+  { key: "coolant_out", bus: 0, device: 1 }, // /dev/spidev0.1 (SPI0 CE1) — outlet
 ];
 
 const OPTIONS = {

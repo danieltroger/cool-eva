@@ -1,4 +1,4 @@
-import type { SignalDef } from './signals.ts';
+import type { SignalDef } from "./signals.ts";
 
 // Central registry of every signal we log — units/groups for the phone dashboard
 // and the `signal` table, plus optional per-signal deadbands to tame chatty
@@ -7,58 +7,58 @@ import type { SignalDef } from './signals.ts';
 // deadband omitted ⇒ 0 ⇒ log on any change (i.e. at sensor resolution).
 export const SIGNALS: SignalDef[] = [
   // External MAX31865 coolant probes (battery loop in/out)
-  { key: 'coolant_in', unit: '°C', group: 'coolant', source: 'sensor', deadband: 0.05 },
-  { key: 'coolant_out', unit: '°C', group: 'coolant', source: 'sensor', deadband: 0.05 },
+  { key: "coolant_in", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
+  { key: "coolant_out", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
 
   // 0x200 — BMS
-  { key: 'batt_temp_lo', unit: '°C', group: 'battery', source: 'stream' },
-  { key: 'batt_temp_hi', unit: '°C', group: 'battery', source: 'stream' },
-  { key: 'soc', unit: '%', group: 'battery', source: 'stream' },
-  { key: 'soh', unit: '%', group: 'battery', source: 'stream' },
-  { key: 'pack_v', unit: 'V', group: 'battery', source: 'stream' },
-  { key: 'pack_a', unit: 'A', group: 'battery', source: 'stream' },
-  { key: 'pack_kw', unit: 'kW', group: 'battery', source: 'stream', deadband: 0.05 },
+  { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream" },
+  { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream" },
+  { key: "soc", unit: "%", group: "battery", source: "stream" },
+  { key: "soh", unit: "%", group: "battery", source: "stream" },
+  { key: "pack_v", unit: "V", group: "battery", source: "stream" },
+  { key: "pack_a", unit: "A", group: "battery", source: "stream" },
+  { key: "pack_kw", unit: "kW", group: "battery", source: "stream", deadband: 0.05 },
 
   // 0x201 — charge state (1 idle / 2 AC / 10·16 DC)
-  { key: 'charge_state', unit: '', group: 'charge', source: 'stream' },
+  { key: "charge_state", unit: "", group: "charge", source: "stream" },
 
   // 0x203 — cell balance
-  { key: 'cell_min_mv', unit: 'mV', group: 'cells', source: 'stream' },
-  { key: 'cell_avg_mv', unit: 'mV', group: 'cells', source: 'stream' },
-  { key: 'cell_max_mv', unit: 'mV', group: 'cells', source: 'stream' },
-  { key: 'cell_spread_mv', unit: 'mV', group: 'cells', source: 'stream' },
-  { key: 'min_cell_idx', unit: '', group: 'cells', source: 'stream' },
-  { key: 'max_cell_idx', unit: '', group: 'cells', source: 'stream' },
+  { key: "cell_min_mv", unit: "mV", group: "cells", source: "stream" },
+  { key: "cell_avg_mv", unit: "mV", group: "cells", source: "stream" },
+  { key: "cell_max_mv", unit: "mV", group: "cells", source: "stream" },
+  { key: "cell_spread_mv", unit: "mV", group: "cells", source: "stream" },
+  { key: "min_cell_idx", unit: "", group: "cells", source: "stream" },
+  { key: "max_cell_idx", unit: "", group: "cells", source: "stream" },
 
   // 0x025 / 0x204 — energy
-  { key: 'inst_consumption_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 0.5 },
-  { key: 'residual_energy_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 0 },
+  { key: "inst_consumption_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0.5 },
+  { key: "residual_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0 },
 
   // 0x305 / 0x306 — charger (present only while charging)
-  { key: 'dc_v', unit: 'V', group: 'charge', source: 'stream' },
-  { key: 'dc_a', unit: 'A', group: 'charge', source: 'stream' },
-  { key: 'mains_v', unit: 'V', group: 'charge', source: 'stream' },
-  { key: 'mains_a', unit: 'A', group: 'charge', source: 'stream' },
-  { key: 'charge_limit_a', unit: 'A', group: 'charge', source: 'stream' }, // 0x447 🟡
+  { key: "dc_v", unit: "V", group: "charge", source: "stream" },
+  { key: "dc_a", unit: "A", group: "charge", source: "stream" },
+  { key: "mains_v", unit: "V", group: "charge", source: "stream" },
+  { key: "mains_a", unit: "A", group: "charge", source: "stream" },
+  { key: "charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x447 🟡
 
   // OBD-II polled @1 Hz
-  { key: 'speed_kmh', unit: 'km/h', group: 'obd', source: 'poll' },
-  { key: 'motor_rpm', unit: 'rpm', group: 'obd', source: 'poll', deadband: 20 },
-  { key: 'bike_coolant_temp', unit: '°C', group: 'obd', source: 'poll' },
-  { key: 'oil_temp', unit: '°C', group: 'obd', source: 'poll' },
-  { key: 'ambient_temp', unit: '°C', group: 'obd', source: 'poll' },
-  { key: 'aux_12v', unit: 'V', group: 'obd', source: 'poll', deadband: 0.02 },
-  { key: 'soh_pid', unit: '%', group: 'obd', source: 'poll' },
-  { key: 'motor_load_pct', unit: '%', group: 'drive', source: 'poll', deadband: 1 },
-  { key: 'dist_since_clear_km', unit: 'km', group: 'drive', source: 'poll' },
+  { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
+  { key: "motor_rpm", unit: "rpm", group: "obd", source: "poll", deadband: 20 },
+  { key: "bike_coolant_temp", unit: "°C", group: "obd", source: "poll" },
+  { key: "oil_temp", unit: "°C", group: "obd", source: "poll" },
+  { key: "ambient_temp", unit: "°C", group: "obd", source: "poll" },
+  { key: "aux_12v", unit: "V", group: "obd", source: "poll", deadband: 0.02 },
+  { key: "soh_pid", unit: "%", group: "obd", source: "poll" },
+  { key: "motor_load_pct", unit: "%", group: "drive", source: "poll", deadband: 1 },
+  { key: "dist_since_clear_km", unit: "km", group: "drive", source: "poll" },
 
   // 0x109 — throttle position (broadcast, ~100 Hz) 🟡
-  { key: 'throttle_pct', unit: '%', group: 'drive', source: 'stream', deadband: 0 },
+  { key: "throttle_pct", unit: "%", group: "drive", source: "stream", deadband: 0 },
 
   // 0x102 — handlebar/lights (decoded live on the bike)
-  { key: 'high_beam', unit: '', group: 'controls', source: 'stream' },     // b0 bit6
-  { key: 'brake', unit: '', group: 'controls', source: 'stream' },         // b2 0x20 front | 0x40 rear
-  { key: 'blinker_left', unit: '', group: 'controls', source: 'stream' },  // b2 0x04
-  { key: 'blinker_right', unit: '', group: 'controls', source: 'stream' }, // b2 0x08
-  { key: 'horn', unit: '', group: 'controls', source: 'stream' },          // b2 0x10
+  { key: "high_beam", unit: "", group: "controls", source: "stream" }, // b0 bit6
+  { key: "brake", unit: "", group: "controls", source: "stream" }, // b2 0x20 front | 0x40 rear
+  { key: "blinker_left", unit: "", group: "controls", source: "stream" }, // b2 0x04
+  { key: "blinker_right", unit: "", group: "controls", source: "stream" }, // b2 0x08
+  { key: "horn", unit: "", group: "controls", source: "stream" }, // b2 0x10
 ];

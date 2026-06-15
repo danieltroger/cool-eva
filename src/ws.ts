@@ -1,6 +1,6 @@
-import { WebSocketServer, WebSocket } from 'ws';
-import type { Server } from 'http';
-import { snapshot, onChange } from './can/signals.ts';
+import { WebSocketServer, WebSocket } from "ws";
+import type { Server } from "http";
+import { snapshot, onChange } from "./can/signals.ts";
 
 // Event-driven push to the phone dashboard:
 //   • full snapshot on connect
@@ -25,18 +25,15 @@ export function setupWs(server: Server, heartbeatMs = 5000): WsHandle {
     }
   };
 
-  wss.on('connection', (ws: WebSocket) => {
-    ws.send(JSON.stringify({ type: 'snapshot', ts: Date.now(), signals: snapshot() }));
+  wss.on("connection", (ws: WebSocket) => {
+    ws.send(JSON.stringify({ type: "snapshot", ts: Date.now(), signals: snapshot() }));
   });
 
   // Push only what changed, the moment it changes.
-  onChange((changed) => broadcast({ type: 'patch', ts: Date.now(), signals: changed }));
+  onChange(changed => broadcast({ type: "patch", ts: Date.now(), signals: changed }));
 
   // Liveness heartbeat — NOT the update path.
-  const timer = setInterval(
-    () => broadcast({ type: 'snapshot', ts: Date.now(), signals: snapshot() }),
-    heartbeatMs,
-  );
+  const timer = setInterval(() => broadcast({ type: "snapshot", ts: Date.now(), signals: snapshot() }), heartbeatMs);
 
   return {
     stop: () => {
