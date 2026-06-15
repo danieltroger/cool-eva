@@ -54,6 +54,13 @@
       .dot.connected {
         background: #22c55e;
       }
+  .right { display: flex; align-items: center; gap: 0.8rem; }
+  .toggle {
+    background: var(--tile); color: var(--muted); border: 0; border-radius: 0.5rem;
+    padding: 0.35rem 0.7rem; font: inherit; font-size: 0.72rem; text-transform: uppercase;
+    letter-spacing: 0.08em; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .toggle.on { color: var(--fg); background: #334155; }
 
       .banner {
         display: none;
@@ -124,7 +131,10 @@
   <body>
     <header>
       <span class="title">Cool&nbsp;Eva</span>
+      <div class="right">
+      <button class="toggle" id="viewToggle">all</button>
       <span class="status"><span class="dot" id="dot"></span><span id="status">connecting</span></span>
+    </div>
     </header>
 
     <div class="banner" id="banner"></div>
@@ -223,6 +233,8 @@
       const statusText = document.getElementById("status");
       const bannerEl = document.getElementById("banner");
       const tileElements = {};
+let viewMode = localStorage.getItem('coolEvaView') || 'curated';  // 'curated' | 'all'
+let renderedMode = null;
 
       function tileId(tileConfig) {
         return tileConfig.key || tileConfig.keys.join("+");
@@ -268,29 +280,42 @@
           bannerEl.classList.remove("show");
         }
 
-        for (const tileConfig of TILES) {
-          const tileKey = tileId(tileConfig);
-          let shouldShow, valueHtml, colorValue, timestamp;
-          if (tileConfig.keys) {
-            const low = signals[tileConfig.keys[0]];
-            const high = signals[tileConfig.keys[1]];
-            shouldShow = low && high && (!tileConfig.charge || isCharging);
-            if (shouldShow) {
-              valueHtml = `${tileConfig.fmt(low.value)} / ${tileConfig.fmt(high.value)}<span class="unit">${tileConfig.unit}</span>`;
-              colorValue = high.value;
-              timestamp = Math.min(low.ts, high.ts);
-            }
-          } else {
-            const signal = signals[tileConfig.key];
-            shouldShow = signal && (!tileConfig.charge || isCharging);
-            if (shouldShow) {
-              valueHtml = `${tileConfig.fmt(signal.value)}<span class="unit">${tileConfig.unit}</span>`;
-              colorValue = signal.value;
-              timestamp = signal.ts;
-            }
-          }
-          if (!shouldShow) {
-            if (tileElements[tileKey]) tileElements[tileKey].container.style.display = "none";
+        // Switching modes rebuilds the grid from scratch (the tile sets differ).
+  if (renderedMode !== viewMode) {
+    gridEl.innerHTML = '';
+    for (const key in tileElements) delete tileElements[key];
+    renderedMode = viewMode;
+  }
+
+  if (viewMode === 'all') renderAll(serverTime, signals);
+  else renderCurated(serverTime, signals, isCharging);
+}
+
+// Curated view — the hand-picked tiles in TILES.
+function renderCurated(serverTime, signals, isCharging) {
+  for (const tileConfig of TILES) {
+    const tileKey = tileId(tileConfig);
+    let shouldShow, valueHtml, colorValue, timestamp;
+    if (tileConfig.keys) {
+      const low = signals[tileConfig.keys[0]];
+      const high = signals[tileConfig.keys[1]];
+      shouldShow = low && high && (!tileConfig.charge || isCharging);
+      if (shouldShow) {
+        valueHtml = `${tileConfig.fmt(low.value)} / ${tileConfig.fmt(high.value)}<span class="unit">${tileConfig.unit}</span>`;
+        colorValue = high.value;
+        timestamp = Math.min(low.ts, high.ts);
+      }
+    } else {
+      const signal = signals[tileConfig.key];
+      shouldShow = signal && (!tileConfig.charge || isCharging);
+      if (shouldShow) {
+        valueHtml = `${tileConfig.fmt(signal.value)}<span class="unit">${tileConfig.unit}</span>`;
+        colorValue = signal.value;
+        timestamp = signal.ts;
+      }
+    }
+    if (!shouldShow) {
+      if (tileElements[tileKey]) tileElements[tileKey].container.style.display = "none";
             continue;
           }
           const tile = getTile(tileConfig);
@@ -302,8 +327,28 @@
         }
       }
 
-      let lastMessageAt = 0;
-      const store = { ts: 0, signals: {} }; // snapshot replaces signals, patch merges into them
+      // Debug view — every signal currently being logged, generic tiles, grouped + sorted.
+function formatGeneric(value) {
+  if (Number.isInteger(value)) return String(value);
+  return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
+}
+function renderAll(serverTime, signals) {
+  const keys = Object.keys(signals).sort((a, b) => {
+    const groupA = signals[a].group || '', groupB = signals[b].group || '';
+    return groupA === groupB ? a.localeCompare(b) : groupA.localeCompare(groupB);
+  });
+  for (const key of keys) {
+    const signal = signals[key];
+    const tile = getTile({ key, label: key });
+    tile.container.style.display = '';
+    tile.container.classList.toggle('stale', (serverTime - signal.ts) > STALE_MS);
+    tile.valueElement.innerHTML = `${formatGeneric(signal.value)}<span class="unit">${signal.unit || ''}</span>`;
+    tile.valueElement.style.color = '';
+  }
+}
+
+let lastMessageAt = 0;
+const store = { ts: 0, signals: {} };  // snapshot replaces signals, patch merges into them
 
       function connect() {
         const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -340,7 +385,16 @@
         }
       }, 3000);
 
-      connect();
-    </script>
-  </body>
+      const viewToggle = document.getElementById('viewToggle');
+viewToggle.classList.toggle('on', viewMode === 'all');
+viewToggle.addEventListener('click', () => {
+  viewMode = viewMode === 'all' ? 'curated' : 'all';
+  localStorage.setItem('coolEvaView', viewMode);
+  viewToggle.classList.toggle('on', viewMode === 'all');
+  render(store);
+});
+
+connect();
+</script>
+</body>
 </html>
