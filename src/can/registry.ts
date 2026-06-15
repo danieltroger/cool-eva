@@ -39,7 +39,7 @@ export const SIGNALS: SignalDef[] = [
   { key: "dc_a", unit: "A", group: "charge", source: "stream" },
   { key: "mains_v", unit: "V", group: "charge", source: "stream" },
   { key: "mains_a", unit: "A", group: "charge", source: "stream" },
-  { key: "charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x447 🟡
+  { key: "charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x10a b7 ÷7 ✅
 
   // OBD-II polled @1 Hz
   { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
