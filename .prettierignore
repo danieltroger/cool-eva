@@ -1,0 +1,13 @@
+# Dependencies (node_modules is ignored by Prettier by default; listed for clarity)
+node_modules/
+
+# npm-managed lockfile — leave formatting to npm
+package-lock.json
+
+# Large data / binaries (untracked, but guard local `prettier .` runs)
+*.db
+Energica_Manuals/
+obd-garage/
+
+# Editor
+.idea/
