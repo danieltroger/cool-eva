@@ -16,6 +16,9 @@ Pi-based telemetry for a watercooled Energica Eva Ribelle: MAX31865 coolant prob
   event loop, which also serves the WebSocket and the CAN RX handler. Use
   async/promises; top-level `await` is available (ESM, Node 24).
   **Only exception:** `better-sqlite3`, which is intentionally synchronous.
+- **Braces for control flow.** Always wrap `if` / `else` / `for` / `while` bodies
+  in braces, even one-liners. The only exception is a bare `continue`, `return`, or
+  `break`, which may stay brace-less on the same line.
 - Run `npm run typecheck` before committing.
 
 ## Runtime notes

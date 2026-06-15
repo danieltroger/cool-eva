@@ -62,7 +62,9 @@ if (CAN_ENABLED) {
         handleResponse(msg.id, data);
         return;
       }
-      for (const { key, value } of decodeFrame(msg.id, data)) record(key, value);
+      for (const { key, value } of decodeFrame(msg.id, data)) {
+        record(key, value);
+      }
     });
     channel.start();
     console.log('can: channel started, decoding broadcasts');
