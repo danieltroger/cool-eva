@@ -69,8 +69,8 @@ if (CAN_ENABLED) {
 
     if (OBD_ENABLED) {
       initObd(channel);
-      stopObd = startObdPoller(1000);
-      console.log('obd: polling PIDs 05/5C/42/5B @1Hz');
+      stopObd = startObdPoller(500);
+      console.log('obd: polling @2Hz (speed/rpm/temps/load/distance)');
     } else {
       console.log('obd: disabled (OBD_ENABLED=0) — passive decode only');
     }
