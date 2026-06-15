@@ -7,6 +7,18 @@
   "id": 1,
   "panels": [
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Battery",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
@@ -16,7 +28,126 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 1,
+          "decimals": 0,
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "green",
+                "value": 40
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "SOC",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "purple",
+            "mode": "fixed"
+          },
+          "decimals": 2,
+          "unit": "kwatt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Pack power",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "celsius",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -41,24 +172,25 @@
                 "value": 55
               }
             ]
-          },
-          "unit": "celsius"
+          }
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 0
+        "w": 4,
+        "x": 8,
+        "y": 1
       },
-      "id": 1,
+      "id": 4,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -71,7 +203,1104 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT MAX(celsius) AS value FROM readings WHERE sensor = 'sensor_0' AND unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000",
+          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'batt_temp_hi' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Batt temp max",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 15
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'cell_spread_mv' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Cell spread",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "SOH",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "unit": "volt",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 11.8
+              },
+              {
+                "color": "green",
+                "value": 12.4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'aux_12v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "12V aux",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Pack min/max temp (BMS frame 200) against the external coolant in/out probes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "°C",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "batt_temp_hi"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "batt max"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "batt_temp_lo"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "batt min"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "coolant_in"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "coolant in"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "coolant_out"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "coolant out"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "super-light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('batt_temp_lo', 'batt_temp_hi', 'coolant_in', 'coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Battery temperature vs coolant",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "kW",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 2,
+          "unit": "kwatt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('pack_kw') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Pack power",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "A",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "amp"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('pack_a') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Pack current",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "%",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('soc') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "SOC",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "V",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('pack_v') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Pack voltage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "mV",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_max_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "max cell"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_avg_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "avg cell"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_min_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "min cell"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('cell_min_mv', 'cell_avg_mv', 'cell_max_mv') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Cell voltages (min / avg / max)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "mV",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('cell_spread_mv') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Cell spread",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "id": 15,
+      "title": "Charging",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "V",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "volt"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dc_v"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "DC bus"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mains_v"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "mains"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dc_v', 'mains_v') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Charging voltages",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "A",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "amp"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dc_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "DC"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mains_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "mains"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "charge_limit_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "limit"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dc_a', 'mains_a', 'charge_limit_a') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Charging currents (+ limit)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "id": 18,
+      "title": "Coolant",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 20
+              },
+              {
+                "color": "yellow",
+                "value": 35
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 48
+      },
+      "id": 19,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_in' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100",
           "refId": "A",
           "timeColumns": []
         }
@@ -90,6 +1319,7 @@
             "mode": "thresholds"
           },
           "decimals": 1,
+          "unit": "celsius",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -114,8 +1344,7 @@
                 "value": 55
               }
             ]
-          },
-          "unit": "celsius"
+          }
         },
         "overrides": []
       },
@@ -123,15 +1352,17 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 0
+        "y": 48
       },
-      "id": 2,
+      "id": 20,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -144,7 +1375,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT MAX(celsius) AS value FROM readings WHERE sensor = 'sensor_1' AND unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000",
+          "rawQueryText": "SELECT MAX(r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_out' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100",
           "refId": "A",
           "timeColumns": []
         }
@@ -163,6 +1394,7 @@
             "mode": "thresholds"
           },
           "decimals": 2,
+          "unit": "celsius",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -187,8 +1419,7 @@
                 "value": 10
               }
             ]
-          },
-          "unit": "celsius"
+          }
         },
         "overrides": []
       },
@@ -196,15 +1427,17 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 0
+        "y": 48
       },
-      "id": 3,
+      "id": 21,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -217,12 +1450,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT MAX(delta) AS value FROM (\n  SELECT (unixepoch(timestamp) / 5) * 5 AS t,\n         AVG(CASE WHEN sensor='sensor_1' THEN celsius END)\n           - AVG(CASE WHEN sensor='sensor_0' THEN celsius END) AS delta\n  FROM readings\n  WHERE unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000\n  GROUP BY t\n)\nWHERE delta IS NOT NULL",
+          "rawQueryText": "SELECT MAX(out_v - in_v) AS value FROM (\n  SELECT (r.ts/10000) AS b, MIN(r.ts)/1000.0 AS t,\n    AVG(CASE WHEN s.key='coolant_out' THEN r.value END) AS out_v,\n    AVG(CASE WHEN s.key='coolant_in'  THEN r.value END) AS in_v\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in','coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\n  GROUP BY b\n) WHERE in_v IS NOT NULL AND out_v IS NOT NULL",
           "refId": "A",
           "timeColumns": []
         }
       ],
-      "title": "Max \u0394T (outlet \u2212 inlet)",
+      "title": "Max ΔT (outlet − inlet)",
       "type": "stat"
     },
     {
@@ -245,15 +1478,17 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 0
+        "y": 48
       },
-      "id": 4,
+      "id": 22,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -266,12 +1501,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT COUNT(*) AS value FROM readings WHERE unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000",
+          "rawQueryText": "SELECT COUNT(*) AS value FROM reading r JOIN signal s ON s.id=r.signal_id WHERE s.key IN ('coolant_in','coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100",
           "refId": "A",
           "timeColumns": []
         }
       ],
-      "title": "Readings in range",
+      "title": "Coolant samples",
       "type": "stat"
     },
     {
@@ -279,21 +1514,19 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "30-second buckets. Inlet (sensor_0) was installed first; outlet (sensor_1) data starts 2026-05-10.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisLabel": "\u00b0C",
-            "axisPlacement": "auto",
+            "axisLabel": "°C",
             "drawStyle": "line",
-            "fillOpacity": 8,
-            "lineInterpolation": "linear",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1.5,
             "showPoints": "never",
-            "spanNulls": false
+            "spanNulls": true
           },
           "decimals": 2,
           "unit": "celsius"
@@ -301,61 +1534,59 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byFrameRefID",
-              "options": "A"
-            },
-            "properties": []
-          },
-          {
-            "matcher": {
               "id": "byName",
-              "options": "sensor_0"
+              "options": "coolant_in"
             },
             "properties": [
+              {
+                "id": "displayName",
+                "value": "inlet"
+              },
               {
                 "id": "color",
                 "value": {
                   "fixedColor": "blue",
                   "mode": "fixed"
                 }
-              },
-              {
-                "id": "displayName",
-                "value": "inlet"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "sensor_1"
+              "options": "coolant_out"
             },
             "properties": [
+              {
+                "id": "displayName",
+                "value": "outlet"
+              },
               {
                 "id": "color",
                 "value": {
                   "fixedColor": "orange",
                   "mode": "fixed"
                 }
-              },
-              {
-                "id": "displayName",
-                "value": "outlet"
               }
             ]
           }
         ]
       },
       "gridPos": {
-        "h": 12,
+        "h": 10,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 52
       },
-      "id": 10,
+      "id": 23,
       "options": {
         "legend": {
-          "calcs": ["min", "max", "mean"],
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -371,12 +1602,14 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT unixepoch(timestamp) AS time,\n       sensor,\n       celsius AS value\nFROM readings\nWHERE unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000\n  AND sensor IN ('sensor_0', 'sensor_1')\n  AND celsius BETWEEN -20 AND 100\nORDER BY 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('coolant_in', 'coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nORDER BY time",
           "refId": "A",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "title": "Coolant temperatures \u2014 inlet vs outlet",
+      "title": "Coolant — inlet vs outlet",
       "type": "timeseries"
     },
     {
@@ -384,21 +1617,20 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Heat pulled out of the battery pack. Positive \u0394T means the pack is dumping heat into the coolant.",
+      "description": "Heat pulled out of the pack. Positive ΔT = pack dumping heat into the coolant. 10 s buckets.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
+            "mode": "palette-classic"
           },
           "custom": {
-            "axisLabel": "\u0394T (\u00b0C)",
+            "axisLabel": "ΔT (°C)",
             "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "opacity",
-            "lineInterpolation": "linear",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
             "lineWidth": 1.5,
-            "showPoints": "never"
+            "showPoints": "never",
+            "spanNulls": true
           },
           "decimals": 2,
           "unit": "celsius"
@@ -406,20 +1638,25 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 10,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 62
       },
-      "id": 11,
+      "id": 24,
       "options": {
         "legend": {
-          "calcs": ["min", "max", "mean"],
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "single",
+          "mode": "multi",
           "sort": "none"
         }
       },
@@ -430,30 +1667,691 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT unixepoch(timestamp) AS time,\n       '\u0394T' AS series,\n       AVG(CASE WHEN sensor='sensor_1' AND celsius BETWEEN -20 AND 100 THEN celsius END)\n         - AVG(CASE WHEN sensor='sensor_0' AND celsius BETWEEN -20 AND 100 THEN celsius END) AS value\nFROM readings\nWHERE unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000\nGROUP BY time\nHAVING value IS NOT NULL\nORDER BY 1",
+          "rawQueryText": "SELECT t AS time, 'ΔT' AS metric, out_v - in_v AS value FROM (\n  SELECT (r.ts/10000) AS b, MIN(r.ts)/1000.0 AS t,\n    AVG(CASE WHEN s.key='coolant_out' THEN r.value END) AS out_v,\n    AVG(CASE WHEN s.key='coolant_in'  THEN r.value END) AS in_v\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in','coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\n  GROUP BY b\n) WHERE in_v IS NOT NULL AND out_v IS NOT NULL ORDER BY time",
           "refId": "A",
-          "timeColumns": ["time"]
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
-      "title": "\u0394T across battery (outlet \u2212 inlet)",
+      "title": "ΔT across battery (outlet − inlet)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "id": 25,
+      "title": "OBD-II (polled)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "°C",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bike_coolant_temp"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "motor/coolant"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "oil_temp"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "oil"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ambient_temp"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ambient"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 71
+      },
+      "id": 26,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bike_coolant_temp', 'oil_temp', 'ambient_temp') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Motor / oil / ambient temperature",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "V",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 2,
+          "unit": "volt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 71
+      },
+      "id": 27,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('aux_12v') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "12V aux battery",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 28,
+      "title": "Energy",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Wh",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "watth"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('residual_energy_wh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Available energy (RES.ENERGY — ❓ unverified)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Wh",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "watth"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('inst_consumption_wh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Instantaneous consumption",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 88
+      },
+      "id": 31,
+      "title": "Drive",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "km/h",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "velocitykmh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 89
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('speed_kmh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Speed",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "rpm",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "rotrpm"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 89
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('motor_rpm') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Motor RPM",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "%",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "throttle_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "throttle"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "motor_load_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "motor load"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 97
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('throttle_pct', 'motor_load_pct') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Throttle & motor load",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "km",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "lengthkm"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 97
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dist_since_clear_km') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "title": "Distance (since DTC clear)",
       "type": "timeseries"
     }
   ],
   "refresh": "",
   "schemaVersion": 39,
-  "tags": ["cool-eva", "motorcycle", "cooling"],
+  "tags": [
+    "cool-eva",
+    "motorcycle",
+    "cooling",
+    "battery"
+  ],
   "templating": {
     "list": []
   },
   "time": {
-    "from": "2026-04-12T00:00:00.000Z",
-    "to": "2026-05-25T00:00:00.000Z"
+    "from": "now-7d",
+    "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
   },
   "timezone": "browser",
-  "title": "Cool Eva \u2014 Battery Cooling",
+  "title": "Cool Eva — Battery & Cooling",
   "uid": "cool-eva-main",
-  "version": 13
+  "version": 17
 }
