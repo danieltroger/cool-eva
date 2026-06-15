@@ -94,7 +94,7 @@ const server = createServer(async (req, res) => {
   res.end(indexHtml);
 });
 
-const ws = setupWs(server, 1000);
+const ws = setupWs(server);
 
 server.listen(PORT, () => {
   console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);

@@ -31,6 +31,31 @@ const defs = new Map<string, SignalDef>();
 const liveState = new Map<string, LiveValue>();
 const lastLogged = new Map<string, number>();
 
+// Event-driven push: the WS layer registers a listener and we hand it the signals
+// that changed (already rate-limited by the per-signal deadbands). Changes that
+// happen synchronously (e.g. the several values in one 0x200 frame) are coalesced
+// into one notification via a microtask — no time-based throttle, no added latency.
+type ChangeListener = (changed: Record<string, LiveValue>) => void;
+let changeListener: ChangeListener | null = null;
+let pending: Record<string, LiveValue> | null = null;
+
+export function onChange(listener: ChangeListener): void {
+  changeListener = listener;
+}
+
+function notifyChange(key: string, v: LiveValue): void {
+  if (!changeListener) return;
+  if (!pending) {
+    pending = {};
+    queueMicrotask(() => {
+      const batch = pending;
+      pending = null;
+      if (batch && changeListener) changeListener(batch);
+    });
+  }
+  pending[key] = v;
+}
+
 export function defineSignals(list: SignalDef[]): void {
   for (const d of list) defs.set(d.key, d);
 }
@@ -50,6 +75,7 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
   if (prev === undefined || Math.abs(value - prev) > deadband) {
     lastLogged.set(key, value);
     recordReading(ts, key, value, unit, group, def?.source ?? 'stream');
+    notifyChange(key, { value, unit, group, ts });
   }
 }
 

@@ -168,13 +168,20 @@ function render(snap) {
 }
 
 let lastMessageAt = 0;
+const store = { ts: 0, signals: {} };  // snapshot replaces signals, patch merges into them
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}`);
   ws.onopen = () => { dot.classList.add('connected'); statusEl.textContent = 'live'; };
   ws.onmessage = e => {
     lastMessageAt = Date.now();
-    try { render(JSON.parse(e.data)); } catch (err) { console.error(err); }
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'patch') Object.assign(store.signals, msg.signals);
+      else store.signals = msg.signals || {};   // full snapshot (connect + heartbeat)
+      store.ts = msg.ts || Date.now();
+      render(store);
+    } catch (err) { console.error(err); }
   };
   ws.onerror = () => ws.close();
   ws.onclose = () => {
