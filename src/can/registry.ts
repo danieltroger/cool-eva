@@ -7,8 +7,8 @@ import type { SignalDef } from './signals.ts';
 // deadband omitted ⇒ 0 ⇒ log on any change (i.e. at sensor resolution).
 export const SIGNALS: SignalDef[] = [
   // External MAX31865 coolant probes (battery loop in/out)
-  { key: 'coolant_in', unit: '°C', group: 'coolant', source: 'sensor', deadband: 0.1 },
-  { key: 'coolant_out', unit: '°C', group: 'coolant', source: 'sensor', deadband: 0.1 },
+  { key: 'coolant_in', unit: '°C', group: 'coolant', source: 'sensor', deadband: 0.05 },
+  { key: 'coolant_out', unit: '°C', group: 'coolant', source: 'sensor', deadband: 0.05 },
 
   // 0x200 — BMS
   { key: 'batt_temp_lo', unit: '°C', group: 'battery', source: 'stream' },
@@ -32,7 +32,7 @@ export const SIGNALS: SignalDef[] = [
 
   // 0x025 / 0x204 — energy
   { key: 'inst_consumption_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 0.5 },
-  { key: 'residual_energy_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 5 },
+  { key: 'residual_energy_wh', unit: 'Wh', group: 'energy', source: 'stream', deadband: 0 },
 
   // 0x305 / 0x306 — charger (present only while charging)
   { key: 'dc_v', unit: 'V', group: 'charge', source: 'stream' },
@@ -53,7 +53,7 @@ export const SIGNALS: SignalDef[] = [
   { key: 'dist_since_clear_km', unit: 'km', group: 'drive', source: 'poll' },
 
   // 0x109 — throttle position (broadcast, ~100 Hz) 🟡
-  { key: 'throttle_pct', unit: '%', group: 'drive', source: 'stream', deadband: 1 },
+  { key: 'throttle_pct', unit: '%', group: 'drive', source: 'stream', deadband: 0 },
 
   // 0x410 b4 — high-beam switch (for the lulz / phone automations)
   { key: 'high_beam', unit: '', group: 'controls', source: 'stream' },
