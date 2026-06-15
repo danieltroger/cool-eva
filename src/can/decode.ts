@@ -97,11 +97,19 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return [{ key: 'throttle_pct', value: u16le(data[0], data[1]) / 10 }];
     }
 
-    // 0x102 — body/lights. b0 bit6 (0x40) = high beam on (bit7 0x80 = low beam).
-    // Found empirically on the bike: OFF b0=0x80, ON b0=0x40. ✅
+    // 0x102 — body/lights (decoded live on the bike). b0 bit6 (0x40) = high beam
+    // (bit7 0x80 = low beam). b2 is a lights bitfield: 0x04 L blinker, 0x08 R
+    // blinker, 0x10 horn, 0x20 front brake, 0x40 rear brake. ✅
     case 0x102: {
-      if (data.length < 1) return [];
-      return [{ key: 'high_beam', value: data[0] & 0x40 ? 1 : 0 }];
+      if (data.length < 3) return [];
+      const lights = data[2];
+      return [
+        { key: 'high_beam', value: data[0] & 0x40 ? 1 : 0 },
+        { key: 'brake', value: lights & 0x60 ? 1 : 0 },
+        { key: 'blinker_left', value: lights & 0x04 ? 1 : 0 },
+        { key: 'blinker_right', value: lights & 0x08 ? 1 : 0 },
+        { key: 'horn', value: lights & 0x10 ? 1 : 0 },
+      ];
     }
 
     default:
