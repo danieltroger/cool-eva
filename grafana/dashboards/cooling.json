@@ -58,9 +58,7 @@
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -133,9 +131,7 @@
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -208,9 +204,7 @@
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -259,9 +253,7 @@
         "graphMode": "none",
         "justifyMode": "center",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -363,11 +355,7 @@
       "id": 10,
       "options": {
         "legend": {
-          "calcs": [
-            "min",
-            "max",
-            "mean"
-          ],
+          "calcs": ["min", "max", "mean"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -385,9 +373,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT unixepoch(timestamp) AS time,\n       sensor,\n       celsius AS value\nFROM readings\nWHERE unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000\n  AND sensor IN ('sensor_0', 'sensor_1')\n  AND celsius BETWEEN -20 AND 100\nORDER BY 1",
           "refId": "A",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "title": "Coolant temperatures \u2014 inlet vs outlet",
@@ -428,11 +414,7 @@
       "id": 11,
       "options": {
         "legend": {
-          "calcs": [
-            "min",
-            "max",
-            "mean"
-          ],
+          "calcs": ["min", "max", "mean"],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -450,9 +432,7 @@
           "queryType": "time series",
           "rawQueryText": "SELECT unixepoch(timestamp) AS time,\n       '\u0394T' AS series,\n       AVG(CASE WHEN sensor='sensor_1' AND celsius BETWEEN -20 AND 100 THEN celsius END)\n         - AVG(CASE WHEN sensor='sensor_0' AND celsius BETWEEN -20 AND 100 THEN celsius END) AS value\nFROM readings\nWHERE unixepoch(timestamp) BETWEEN $__from / 1000 AND $__to / 1000\nGROUP BY time\nHAVING value IS NOT NULL\nORDER BY 1",
           "refId": "A",
-          "timeColumns": [
-            "time"
-          ]
+          "timeColumns": ["time"]
         }
       ],
       "title": "\u0394T across battery (outlet \u2212 inlet)",
@@ -461,11 +441,7 @@
   ],
   "refresh": "",
   "schemaVersion": 39,
-  "tags": [
-    "cool-eva",
-    "motorcycle",
-    "cooling"
-  ],
+  "tags": ["cool-eva", "motorcycle", "cooling"],
   "templating": {
     "list": []
   },
@@ -474,16 +450,7 @@
     "to": "2026-05-25T00:00:00.000Z"
   },
   "timepicker": {
-    "refresh_intervals": [
-      "5s",
-      "10s",
-      "30s",
-      "1m",
-      "5m",
-      "15m",
-      "30m",
-      "1h"
-    ]
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
   },
   "timezone": "browser",
   "title": "Cool Eva \u2014 Battery Cooling",

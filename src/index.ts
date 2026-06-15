@@ -1,11 +1,11 @@
-import MAX31865 from 'max31865';
-import Database from 'better-sqlite3';
-import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'http';
-import { readFile } from 'fs/promises';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
-import { handleDbEndpoint } from './db-endpoint.ts';
+import MAX31865 from "max31865";
+import Database from "better-sqlite3";
+import { WebSocketServer, WebSocket } from "ws";
+import { createServer } from "http";
+import { readFile } from "fs/promises";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { handleDbEndpoint } from "./db-endpoint.ts";
 
 interface SensorOptions {
   rtdNominal: number;
@@ -25,20 +25,20 @@ interface SensorConfig {
 }
 
 const SENSORS: SensorConfig[] = [
-  { name: 'sensor_0', bus: 0, device: 0 },  // /dev/spidev0.0 (SPI0 CE0, pin 24)
-  { name: 'sensor_1', bus: 0, device: 1 },  // /dev/spidev0.1 (SPI0 CE1, pin 26)
+  { name: "sensor_0", bus: 0, device: 0 }, // /dev/spidev0.0 (SPI0 CE0, pin 24)
+  { name: "sensor_1", bus: 0, device: 1 }, // /dev/spidev0.1 (SPI0 CE1, pin 26)
 ];
 
 const SENSOR_OPTIONS: SensorOptions = {
-  rtdNominal: 100,   // PT100
-  refResistor: 430,  // Adafruit board
+  rtdNominal: 100, // PT100
+  refResistor: 430, // Adafruit board
   wires: 4,
 };
 
 // --- Database setup ---
 
-const db = new Database('temperatures.db');
-db.pragma('journal_mode = WAL');
+const db = new Database("temperatures.db");
+db.pragma("journal_mode = WAL");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS readings (
@@ -48,9 +48,7 @@ db.exec(`
   )
 `);
 
-const insert = db.prepare(
-  'INSERT INTO readings (sensor, celsius) VALUES (?, ?)'
-);
+const insert = db.prepare("INSERT INTO readings (sensor, celsius) VALUES (?, ?)");
 
 // --- Sensor init ---
 
@@ -68,23 +66,23 @@ console.log(`Polling ${sensors.length} sensor(s) continuously — Ctrl+C to stop
 
 const PORT = 80;
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const indexHtml = await readFile(join(__dirname, '..', 'public', 'index.html'), 'utf-8');
-const dbPath = join(__dirname, '..', 'temperatures.db');
+const indexHtml = await readFile(join(__dirname, "..", "public", "index.html"), "utf-8");
+const dbPath = join(__dirname, "..", "temperatures.db");
 
 const server = createServer(async (req, res) => {
-  if (req.url === '/db') {
+  if (req.url === "/db") {
     await handleDbEndpoint(req, res, dbPath);
     return;
   }
-  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.writeHead(200, { "Content-Type": "text/html" });
   res.end(indexHtml);
 });
 
 const wss = new WebSocketServer({ server });
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on("connection", (ws: WebSocket) => {
   console.log(`WebSocket client connected (${wss.clients.size} total)`);
-  ws.on('close', () => console.log(`WebSocket client disconnected (${wss.clients.size} total)`));
+  ws.on("close", () => console.log(`WebSocket client disconnected (${wss.clients.size} total)`));
 });
 
 function broadcast(data: object) {
@@ -103,15 +101,15 @@ server.listen(PORT, () => {
 // --- Graceful shutdown ---
 
 function shutdown() {
-  console.log('\nShutting down…');
+  console.log("\nShutting down…");
   server.close();
   wss.close();
   db.close();
   process.exit(0);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // --- Poll loop ---
 

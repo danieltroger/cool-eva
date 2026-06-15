@@ -1,165 +1,171 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Thermometer</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0f172a;
-    color: #e2e8f0;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-  .sensors {
-    display: flex;
-    gap: 4rem;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  .sensor {
-    text-align: center;
-  }
-  .sensor .name {
-    font-size: 1.2rem;
-    color: #94a3b8;
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-  .sensor .temp {
-    font-size: 8rem;
-    font-weight: 200;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-    transition: color 0.3s;
-  }
-  .sensor .unit {
-    font-size: 2rem;
-    color: #64748b;
-    vertical-align: super;
-  }
-  .sensor .ago {
-    margin-top: 0.5rem;
-    font-size: 0.9rem;
-    color: #475569;
-  }
-  .status {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8rem;
-    color: #475569;
-  }
-  .status .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #ef4444;
-    transition: background 0.3s;
-  }
-  .status .dot.connected { background: #22c55e; }
-</style>
-</head>
-<body>
-  <div class="status">
-    <span class="dot" id="dot"></span>
-    <span id="status-text">connecting</span>
-  </div>
-  <div class="sensors" id="sensors"></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thermometer</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .sensors {
+        display: flex;
+        gap: 4rem;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .sensor {
+        text-align: center;
+      }
+      .sensor .name {
+        font-size: 1.2rem;
+        color: #94a3b8;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+      .sensor .temp {
+        font-size: 8rem;
+        font-weight: 200;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+        transition: color 0.3s;
+      }
+      .sensor .unit {
+        font-size: 2rem;
+        color: #64748b;
+        vertical-align: super;
+      }
+      .sensor .ago {
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+        color: #475569;
+      }
+      .status {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: #475569;
+      }
+      .status .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ef4444;
+        transition: background 0.3s;
+      }
+      .status .dot.connected {
+        background: #22c55e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="status-text">connecting</span>
+    </div>
+    <div class="sensors" id="sensors"></div>
 
-<script>
-const sensorsEl = document.getElementById('sensors');
-const dotEl = document.getElementById('dot');
-const statusEl = document.getElementById('status-text');
-const sensorEls = {};
-let lastMessageAt = 0;
+    <script>
+      const sensorsEl = document.getElementById("sensors");
+      const dotEl = document.getElementById("dot");
+      const statusEl = document.getElementById("status-text");
+      const sensorEls = {};
+      let lastMessageAt = 0;
 
-function getOrCreateSensor(name) {
-  if (sensorEls[name]) return sensorEls[name];
-  const div = document.createElement('div');
-  div.className = 'sensor';
-  div.innerHTML = `
+      function getOrCreateSensor(name) {
+        if (sensorEls[name]) return sensorEls[name];
+        const div = document.createElement("div");
+        div.className = "sensor";
+        div.innerHTML = `
     <div class="name">${name}</div>
     <div class="temp">--.-<span class="unit">&deg;C</span></div>
     <div class="ago">waiting</div>
   `;
-  sensorsEl.appendChild(div);
-  sensorEls[name] = {
-    tempEl: div.querySelector('.temp'),
-    agoEl: div.querySelector('.ago'),
-    lastUpdate: 0,
-  };
-  return sensorEls[name];
-}
+        sensorsEl.appendChild(div);
+        sensorEls[name] = {
+          tempEl: div.querySelector(".temp"),
+          agoEl: div.querySelector(".ago"),
+          lastUpdate: 0,
+        };
+        return sensorEls[name];
+      }
 
-function tempColor(c) {
-  if (c < 5) return '#38bdf8';
-  if (c < 15) return '#67e8f9';
-  if (c < 25) return '#4ade80';
-  if (c < 35) return '#facc15';
-  return '#f87171';
-}
+      function tempColor(c) {
+        if (c < 5) return "#38bdf8";
+        if (c < 15) return "#67e8f9";
+        if (c < 25) return "#4ade80";
+        if (c < 35) return "#facc15";
+        return "#f87171";
+      }
 
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}`);
+      function connect() {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(`${proto}//${location.host}`);
 
-  ws.onopen = () => {
-    dotEl.classList.add('connected');
-    statusEl.textContent = 'connected';
-  };
+        ws.onopen = () => {
+          dotEl.classList.add("connected");
+          statusEl.textContent = "connected";
+        };
 
-  ws.onclose = () => {
-    dotEl.classList.remove('connected');
-    statusEl.textContent = 'reconnecting';
-    setTimeout(connect, 2000);
-  };
+        ws.onclose = () => {
+          dotEl.classList.remove("connected");
+          statusEl.textContent = "reconnecting";
+          setTimeout(connect, 2000);
+        };
 
-  ws.onerror = () => ws.close();
+        ws.onerror = () => ws.close();
 
-  ws.onmessage = (e) => {
-    lastMessageAt = Date.now();
-    const msg = JSON.parse(e.data);
-    const s = getOrCreateSensor(msg.sensor);
-    s.tempEl.innerHTML = `${msg.celsius.toFixed(1)}<span class="unit">&deg;C</span>`;
-    s.tempEl.style.color = tempColor(msg.celsius);
-    s.lastUpdate = Date.now();
-  };
+        ws.onmessage = e => {
+          lastMessageAt = Date.now();
+          const msg = JSON.parse(e.data);
+          const s = getOrCreateSensor(msg.sensor);
+          s.tempEl.innerHTML = `${msg.celsius.toFixed(1)}<span class="unit">&deg;C</span>`;
+          s.tempEl.style.color = tempColor(msg.celsius);
+          s.lastUpdate = Date.now();
+        };
 
-  // Reconnect if no data for 10 seconds
-  const watchdog = setInterval(() => {
-    if (lastMessageAt && Date.now() - lastMessageAt > 10000) {
-      clearInterval(watchdog);
-      ws.close();
-    }
-  }, 5000);
-  ws.onclose = () => {
-    clearInterval(watchdog);
-    dotEl.classList.remove('connected');
-    statusEl.textContent = 'reconnecting';
-    setTimeout(connect, 2000);
-  };
-}
+        // Reconnect if no data for 10 seconds
+        const watchdog = setInterval(() => {
+          if (lastMessageAt && Date.now() - lastMessageAt > 10000) {
+            clearInterval(watchdog);
+            ws.close();
+          }
+        }, 5000);
+        ws.onclose = () => {
+          clearInterval(watchdog);
+          dotEl.classList.remove("connected");
+          statusEl.textContent = "reconnecting";
+          setTimeout(connect, 2000);
+        };
+      }
 
-// Update "ago" times
-setInterval(() => {
-  for (const s of Object.values(sensorEls)) {
-    if (!s.lastUpdate) continue;
-    const sec = Math.round((Date.now() - s.lastUpdate) / 1000);
-    s.agoEl.textContent = sec < 2 ? 'just now' : `${sec}s ago`;
-  }
-}, 1000);
+      // Update "ago" times
+      setInterval(() => {
+        for (const s of Object.values(sensorEls)) {
+          if (!s.lastUpdate) continue;
+          const sec = Math.round((Date.now() - s.lastUpdate) / 1000);
+          s.agoEl.textContent = sec < 2 ? "just now" : `${sec}s ago`;
+        }
+      }, 1000);
 
-connect();
-</script>
-</body>
+      connect();
+    </script>
+  </body>
 </html>

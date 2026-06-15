@@ -1,4 +1,4 @@
-declare module 'max31865' {
+declare module "max31865" {
   interface MAX31865Options {
     rtdNominal?: number;
     refResistor?: number;
