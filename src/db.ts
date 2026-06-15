@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import Database from 'better-sqlite3';
 
 // Long/EAV schema (see obd-garage/INTEGRATION_PLAN.md §SQLite schema):
 //   signal  — tiny registry, one row per signal key
@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 // The legacy `readings(timestamp, sensor, celsius)` table is kept untouched as a
 // backup and its history is migrated into `reading` once (see migrateLegacy()).
 
-export type SignalSource = "stream" | "poll" | "sensor";
+export type SignalSource = 'stream' | 'poll' | 'sensor';
 
 interface QueuedRow {
   ts: number;
@@ -29,7 +29,7 @@ let queue: QueuedRow[] = [];
 
 export function initDb(path: string, flushMs = 200): void {
   db = new Database(path);
-  db.pragma("journal_mode = WAL");
+  db.pragma('journal_mode = WAL');
 
   // Keep the legacy table definition so old data is never dropped.
   db.exec(`
@@ -58,13 +58,15 @@ export function initDb(path: string, flushMs = 200): void {
     );
   `);
 
-  insertReading = db.prepare("INSERT INTO reading (ts, signal_id, value) VALUES (?, ?, ?)");
-  insSignal = db.prepare("INSERT INTO signal (key, unit, grp, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING");
-  selSignal = db.prepare("SELECT id FROM signal WHERE key = ?");
-  upsertInfo = db.prepare(
-    "INSERT INTO info (key, value, ts) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, ts = excluded.ts"
+  insertReading = db.prepare('INSERT INTO reading (ts, signal_id, value) VALUES (?, ?, ?)');
+  insSignal = db.prepare(
+    'INSERT INTO signal (key, unit, grp, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING',
   );
-  selInfo = db.prepare("SELECT value FROM info WHERE key = ?");
+  selSignal = db.prepare('SELECT id FROM signal WHERE key = ?');
+  upsertInfo = db.prepare(
+    'INSERT INTO info (key, value, ts) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, ts = excluded.ts',
+  );
+  selInfo = db.prepare('SELECT value FROM info WHERE key = ?');
 
   const txn = db.transaction((rows: QueuedRow[]) => {
     for (const r of rows) insertReading.run(r.ts, r.signal_id, r.value);
@@ -93,7 +95,7 @@ export function recordReading(
   value: number,
   unit: string,
   grp: string,
-  source: SignalSource
+  source: SignalSource,
 ): void {
   const id = getSignalId(key, unit, grp, source);
   queue.push({ ts, signal_id: id, value });
@@ -126,19 +128,21 @@ export function closeDb(): void {
 // outlet (per the original dashboard description). Idempotent via an info marker;
 // the legacy `readings` table is left intact as a backup.
 function migrateLegacy(): void {
-  const hasLegacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='readings'").get();
+  const hasLegacy = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='readings'")
+    .get();
   if (!hasLegacy) return;
-  if (getInfo("legacy_readings_migrated")) return;
+  if (getInfo('legacy_readings_migrated')) return;
 
-  const { c } = db.prepare("SELECT COUNT(*) AS c FROM readings").get() as { c: number };
+  const { c } = db.prepare('SELECT COUNT(*) AS c FROM readings').get() as { c: number };
   if (c === 0) {
-    setInfo("legacy_readings_migrated", "1");
+    setInfo('legacy_readings_migrated', '1');
     return;
   }
 
   console.log(`db: migrating ${c} legacy coolant readings into EAV schema…`);
-  const inId = getSignalId("coolant_in", "°C", "coolant", "sensor");
-  const outId = getSignalId("coolant_out", "°C", "coolant", "sensor");
+  const inId = getSignalId('coolant_in', '°C', 'coolant', 'sensor');
+  const outId = getSignalId('coolant_out', '°C', 'coolant', 'sensor');
 
   // Legacy timestamps are UTC ISO strings ("…Z"); strip the Z and let julianday
   // treat them as UTC, then convert to epoch-ms to match Date.now() going forward.
@@ -150,11 +154,11 @@ function migrateLegacy(): void {
     WHERE sensor = ? AND timestamp IS NOT NULL
   `);
   const run = db.transaction(() => {
-    copy.run(inId, "sensor_0");
-    copy.run(outId, "sensor_1");
+    copy.run(inId, 'sensor_0');
+    copy.run(outId, 'sensor_1');
   });
   run();
 
-  setInfo("legacy_readings_migrated", "1");
-  console.log("db: legacy migration complete.");
+  setInfo('legacy_readings_migrated', '1');
+  console.log('db: legacy migration complete.');
 }

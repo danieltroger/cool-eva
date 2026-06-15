@@ -2,7 +2,7 @@
 // ships its own types, but it only installs on Linux (it's an optionalDependency),
 // so this keeps `tsc` resolving on macOS/CI where the native build is skipped.
 // (tsconfig has skipLibCheck, so this coexists with the bundled types on Linux.)
-declare module "socketcan" {
+declare module 'socketcan' {
   export interface CanMessage {
     id: number;
     length?: number;
@@ -17,7 +17,7 @@ declare module "socketcan" {
     mask: number;
   }
   export interface RawChannel {
-    addListener(event: "onMessage", cb: (msg: CanMessage) => void): void;
+    addListener(event: 'onMessage', cb: (msg: CanMessage) => void): void;
     addListener(event: string, cb: (...args: unknown[]) => void): void;
     send(msg: CanMessage): number;
     start(): RawChannel;
@@ -34,7 +34,7 @@ declare module "socketcan" {
   export default _default;
 }
 
-declare module "max31865" {
+declare module 'max31865' {
   interface MAX31865Options {
     rtdNominal?: number;
     refResistor?: number;

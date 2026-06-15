@@ -1,4 +1,4 @@
-import { recordReading, type SignalSource } from "../db.ts";
+import { recordReading, type SignalSource } from '../db.ts';
 
 // The log-on-change core (see obd-garage/INTEGRATION_PLAN.md §Logging model).
 //
@@ -63,8 +63,8 @@ export function defineSignals(list: SignalDef[]): void {
 export function record(key: string, value: number, ts: number = Date.now()): void {
   if (!Number.isFinite(value)) return;
   const def = defs.get(key);
-  const unit = def?.unit ?? "";
-  const group = def?.group ?? "misc";
+  const unit = def?.unit ?? '';
+  const group = def?.group ?? 'misc';
 
   // Always refresh live state for the dashboard.
   liveState.set(key, { value, unit, group, ts });
@@ -74,7 +74,7 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
   const deadband = def?.deadband ?? 0;
   if (prev === undefined || Math.abs(value - prev) > deadband) {
     lastLogged.set(key, value);
-    recordReading(ts, key, value, unit, group, def?.source ?? "stream");
+    recordReading(ts, key, value, unit, group, def?.source ?? 'stream');
     notifyChange(key, { value, unit, group, ts });
   }
 }
