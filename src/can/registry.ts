@@ -55,6 +55,6 @@ export const SIGNALS: SignalDef[] = [
   // 0x109 — throttle position (broadcast, ~100 Hz) 🟡
   { key: 'throttle_pct', unit: '%', group: 'drive', source: 'stream', deadband: 0 },
 
-  // 0x410 b4 — high-beam switch (for the lulz / phone automations)
+  // 0x102 b0 bit6 — high beam on/off (for the lulz / phone automations)
   { key: 'high_beam', unit: '', group: 'controls', source: 'stream' },
 ];

@@ -97,11 +97,11 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
       return [{ key: 'throttle_pct', value: u16le(d[0], d[1]) / 10 }];
     }
 
-    // 0x410 — b4 = high-beam switch (toggles on each press; registers on CAN even
-    // when the lamp is inhibited while charging). ✅ for the lulz / phone automations.
-    case 0x410: {
-      if (d.length < 5) return [];
-      return [{ key: 'high_beam', value: d[4] }];
+    // 0x102 — body/lights. b0 bit6 (0x40) = high beam on (bit7 0x80 = low beam).
+    // Found empirically on the bike: OFF b0=0x80, ON b0=0x40. ✅
+    case 0x102: {
+      if (d.length < 1) return [];
+      return [{ key: 'high_beam', value: d[0] & 0x40 ? 1 : 0 }];
     }
 
     default:
@@ -110,4 +110,4 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x109, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306, 0x410, 0x447];
+export const STREAM_IDS = [0x025, 0x102, 0x109, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306, 0x447];
