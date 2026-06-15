@@ -57,12 +57,17 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       ];
     }
 
-    // 0x10A — charge/energy status. b3-4 LE × 2 = RES.ENERGY Wh (residual/available
-    // energy). 🟡 Parked static match: 4778×2=9556 vs menu 9557; confirm the exact
-    // scaling at a 2nd SOC. (Same frame the charge-limit logic reads CHG.PWR.REF, b7.)
+    // 0x10A — charge/energy status.
+    //  • b3-4 LE × 2 = RES.ENERGY Wh (residual/available energy) 🟡 (parked match
+    //    4778×2=9556 vs menu 9557; confirm scaling at a 2nd SOC).
+    //  • b7 = CHG.PWR.REF % → AC charge-current setpoint; amps = b7 ÷ 7 (RE'd live:
+    //    7%→1 A, 21%→3 A, 49%→7 A; 100% ≈ 14.3 A AC max). ✅
     case 0x10a: {
-      if (data.length < 5) return [];
-      return [{ key: "residual_energy_wh", value: u16le(data[3], data[4]) * 2 }];
+      if (data.length < 8) return [];
+      return [
+        { key: "residual_energy_wh", value: u16le(data[3], data[4]) * 2 },
+        { key: "charge_limit_a", value: Math.round((data[7] / 7) * 10) / 10 },
+      ];
     }
 
     // 0x025 — INST.CONS: b0-1 LE ÷10 = Wh (50 Hz). ✅
@@ -85,12 +90,6 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     case 0x306: {
       if (data.length < 3) return [];
       return [{ key: "mains_v", value: data[2] }];
-    }
-
-    // 0x447 — charge limit: b6 ÷10 = max charge current A (charging only). 🟡
-    case 0x447: {
-      if (data.length < 7) return [];
-      return [{ key: "charge_limit_a", value: data[6] / 10 }];
     }
 
     // 0x109 — throttle position: b0-1 LE ÷10 = % (0 idle … 100). 🟡
@@ -120,4 +119,4 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x200, 0x201, 0x203, 0x305, 0x306, 0x447];
+export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x200, 0x201, 0x203, 0x305, 0x306];

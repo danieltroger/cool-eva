@@ -18,7 +18,7 @@ Everything is logged **on change** (so steady values don't spam the DB) into a s
 | **Coolant** (custom loop) | `coolant_in`, `coolant_out` (°C) | MAX31865 PT100 |
 | **Battery / BMS** | `batt_temp_lo`, `batt_temp_hi` (°C), `soc` (%), `soh` (%), `pack_v` (V), `pack_a` (A), `pack_kw` (kW) | CAN `0x200` |
 | **Cells** | `cell_min_mv`, `cell_avg_mv` 🟡, `cell_max_mv`, `cell_spread_mv`, `min_cell_idx`, `max_cell_idx` | CAN `0x203` |
-| **Charge** | `charge_state` (idle/AC/DC), `dc_v` 🟡, `dc_a` 🟡, `mains_v`, `mains_a`, `charge_limit_a` 🟡 | CAN `0x201`/`0x305`/`0x306`/`0x447` |
+| **Charge** | `charge_state` (idle/AC/DC), `dc_v`, `dc_a`, `mains_v`, `mains_a`, `charge_limit_a` | CAN `0x201`/`0x305`/`0x306`/`0x10a` |
 | **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy) 🟡 | CAN `0x025`/`0x10A` |
 | **Drive** | `throttle_pct` 🟡, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
