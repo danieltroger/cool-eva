@@ -97,10 +97,17 @@ export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
       return [{ key: 'throttle_pct', value: u16le(d[0], d[1]) / 10 }];
     }
 
+    // 0x410 — b4 = high-beam switch (toggles on each press; registers on CAN even
+    // when the lamp is inhibited while charging). ✅ for the lulz / phone automations.
+    case 0x410: {
+      if (d.length < 5) return [];
+      return [{ key: 'high_beam', value: d[4] }];
+    }
+
     default:
       return [];
   }
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x109, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306, 0x447];
+export const STREAM_IDS = [0x025, 0x109, 0x200, 0x201, 0x203, 0x204, 0x305, 0x306, 0x410, 0x447];

@@ -86,6 +86,8 @@ const TILES = [
   { key:'cell_spread_mv', label:'Cell spread', unit:'mV', fmt:v=>v.toFixed(0), color:spreadColor,
     sub:s => (s.min_cell_idx && s.max_cell_idx) ? `low #${s.min_cell_idx.value} · high #${s.max_cell_idx.value}` : '' },
   { key:'aux_12v', label:'12V aux', unit:'V', fmt:v=>v.toFixed(2), color:auxColor },
+  // High-beam switch (raw 0x410 b4) — flips when you toggle the beam; for verifying / fun
+  { key:'high_beam', label:'High beam', unit:'', fmt:v=>v.toFixed(0), color:v=> v ? '#fde047' : '#475569' },
   // Charging (only while charging)
   { key:'dc_v', label:'Charge', unit:'V', fmt:v=>v.toFixed(0), charge:true },
   { key:'dc_a', label:'Charge', unit:'A', fmt:v=>v.toFixed(1), charge:true },
