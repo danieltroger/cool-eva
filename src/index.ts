@@ -44,7 +44,7 @@ let stopObd: (() => void) | undefined;
 
 if (CAN_ENABLED) {
   try {
-    bringUpCan(CAN_IFACE, OBD_ENABLED); // ACTIVE only when we intend to TX OBD reads
+    await bringUpCan(CAN_IFACE, OBD_ENABLED); // ACTIVE only when we intend to TX OBD reads
     channel = openChannel(CAN_IFACE);
 
     try {

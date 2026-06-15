@@ -22,38 +22,35 @@ const OPTIONS = {
   wires: 4 as const,
 };
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-// Initialise the probes and start a poll loop. Coolant is thermally slow, so 1 Hz
-// + a 0.1 °C deadband (in the registry) keeps the log compact while still catching
-// real movement. Reads are logged via record() (log-on-change).
-export async function startCoolantSensors(intervalMs = 1000): Promise<void> {
+// Initialise the probes and read them back-to-back at the sensor's own rate (each
+// getTemperature() awaits an SPI conversion, so the loop yields to the event loop
+// between reads). Logging is on-change with a deadband in the registry, so polling
+// fast doesn't bloat the DB — it just makes changes show up sooner.
+export async function startCoolantSensors(): Promise<void> {
   const probes: { key: string; sensor: MAX31865 }[] = [];
-  for (const cfg of PROBES) {
-    const sensor = new MAX31865(cfg.bus, cfg.device, OPTIONS);
+  for (const probeConfig of PROBES) {
+    const sensor = new MAX31865(probeConfig.bus, probeConfig.device, OPTIONS);
     await sensor.init();
-    probes.push({ key: cfg.key, sensor });
+    probes.push({ key: probeConfig.key, sensor });
   }
-  console.log(`coolant: ${probes.length} MAX31865 probe(s) started @${intervalMs}ms`);
+  console.log(`coolant: ${probes.length} MAX31865 probe(s) started (sensor-rate polling)`);
 
   void (async () => {
     for (;;) {
-      const t0 = Date.now();
       for (const { key, sensor } of probes) {
         try {
-          const c = await sensor.getTemperature();
+          const celsius = await sensor.getTemperature();
           // MAX31865 returns wild values on an open/short/disconnected RTD —
           // skip obvious faults so they don't pollute the log.
-          if (c < -40 || c > 150) {
-            console.warn(`coolant: ${key} out-of-range read ${c.toFixed(1)} °C — skipped`);
+          if (celsius < -40 || celsius > 150) {
+            console.warn(`coolant: ${key} out-of-range read ${celsius.toFixed(1)} °C — skipped`);
             continue;
           }
-          record(key, c);
-        } catch (err) {
-          console.error(`coolant: ${key} read failed:`, err);
+          record(key, celsius);
+        } catch (error) {
+          console.error(`coolant: ${key} read failed:`, error);
         }
       }
-      await sleep(Math.max(0, intervalMs - (Date.now() - t0)));
     }
   })();
 }

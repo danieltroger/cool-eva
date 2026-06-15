@@ -10,98 +10,98 @@ export interface DecodedValue {
   value: number;
 }
 
-const i8 = (b: number): number => (b > 127 ? b - 256 : b);
+const signedByte = (byte: number): number => (byte > 127 ? byte - 256 : byte);
 const u16be = (hi: number, lo: number): number => (hi << 8) | lo;
 const i16be = (hi: number, lo: number): number => {
-  const v = (hi << 8) | lo;
-  return v > 32767 ? v - 65536 : v;
+  const value = (hi << 8) | lo;
+  return value > 32767 ? value - 65536 : value;
 };
 const u16le = (lo: number, hi: number): number => (hi << 8) | lo;
 
-export function decodeFrame(id: number, d: Buffer): DecodedValue[] {
+export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
   switch (id) {
     // 0x200 — BMS: temps, SOC/SOH, pack V/I (20 Hz). ✅
     case 0x200: {
-      if (d.length < 8) return [];
-      const v = u16be(d[4], d[5]) / 10; // pack volts
-      const a = i16be(d[6], d[7]) / 10; // pack amps (signed)
+      if (data.length < 8) return [];
+      const packVolts = u16be(data[4], data[5]) / 10;
+      const packAmps = i16be(data[6], data[7]) / 10; // signed
       return [
-        { key: 'batt_temp_lo', value: i8(d[0]) },
-        { key: 'soc', value: d[1] },
-        { key: 'soh', value: d[2] },
-        { key: 'batt_temp_hi', value: i8(d[3]) },
-        { key: 'pack_v', value: v },
-        { key: 'pack_a', value: a },
-        { key: 'pack_kw', value: Math.round(((v * a) / 1000) * 1000) / 1000 },
+        { key: 'batt_temp_lo', value: signedByte(data[0]) },
+        { key: 'soc', value: data[1] },
+        { key: 'soh', value: data[2] },
+        { key: 'batt_temp_hi', value: signedByte(data[3]) },
+        { key: 'pack_v', value: packVolts },
+        { key: 'pack_a', value: packAmps },
+        { key: 'pack_kw', value: Math.round(((packVolts * packAmps) / 1000) * 1000) / 1000 },
       ];
     }
 
     // 0x201 — charge state: 1 IDLE / 2 AC / 10·16 DC (10 Hz). ✅
     case 0x201: {
-      if (d.length < 1) return [];
-      return [{ key: 'charge_state', value: d[0] }];
+      if (data.length < 1) return [];
+      return [{ key: 'charge_state', value: data[0] }];
     }
 
     // 0x203 — cell balance: indices + min/max cell mV (20 Hz). ✅
     case 0x203: {
-      if (d.length < 8) return [];
-      const min = u16be(d[4], d[5]);
-      const max = u16be(d[6], d[7]);
+      if (data.length < 8) return [];
+      const minCellMv = u16be(data[4], data[5]);
+      const maxCellMv = u16be(data[6], data[7]);
       return [
-        { key: 'cell_avg_mv', value: u16be(d[0], d[1]) }, // 🟡 ≈ avg cell mV
-        { key: 'cell_min_mv', value: min },
-        { key: 'cell_max_mv', value: max },
-        { key: 'cell_spread_mv', value: max - min },
-        { key: 'max_cell_idx', value: d[2] },
-        { key: 'min_cell_idx', value: d[3] },
+        { key: 'cell_avg_mv', value: u16be(data[0], data[1]) }, // 🟡 ≈ avg cell mV
+        { key: 'cell_min_mv', value: minCellMv },
+        { key: 'cell_max_mv', value: maxCellMv },
+        { key: 'cell_spread_mv', value: maxCellMv - minCellMv },
+        { key: 'max_cell_idx', value: data[2] },
+        { key: 'min_cell_idx', value: data[3] },
       ];
     }
 
     // 0x204 — residual/available energy: b0-1 BE ≈ Wh (RES.ENERGY). ❓ unverified
     case 0x204: {
-      if (d.length < 2) return [];
-      return [{ key: 'residual_energy_wh', value: u16be(d[0], d[1]) }];
+      if (data.length < 2) return [];
+      return [{ key: 'residual_energy_wh', value: u16be(data[0], data[1]) }];
     }
 
     // 0x025 — INST.CONS: b0-1 LE ÷10 = Wh (50 Hz). ✅
     case 0x025: {
-      if (d.length < 2) return [];
-      return [{ key: 'inst_consumption_wh', value: u16le(d[0], d[1]) / 10 }];
+      if (data.length < 2) return [];
+      return [{ key: 'inst_consumption_wh', value: u16le(data[0], data[1]) / 10 }];
     }
 
     // 0x305 — charger DC (charging only, 5 Hz). 🟡
     case 0x305: {
-      if (d.length < 7) return [];
+      if (data.length < 7) return [];
       return [
-        { key: 'mains_a', value: d[1] / 10 },
-        { key: 'dc_a', value: u16le(d[3], d[4]) / 10 },
-        { key: 'dc_v', value: u16le(d[5], d[6]) / 10 },
+        { key: 'mains_a', value: data[1] / 10 },
+        { key: 'dc_a', value: u16le(data[3], data[4]) / 10 },
+        { key: 'dc_v', value: u16le(data[5], data[6]) / 10 },
       ];
     }
 
     // 0x306 — charger AC: mains voltage (charging only, 5 Hz). 🟡
     case 0x306: {
-      if (d.length < 3) return [];
-      return [{ key: 'mains_v', value: d[2] }];
+      if (data.length < 3) return [];
+      return [{ key: 'mains_v', value: data[2] }];
     }
 
     // 0x447 — charge limit: b6 ÷10 = max charge current A (charging only). 🟡
     case 0x447: {
-      if (d.length < 7) return [];
-      return [{ key: 'charge_limit_a', value: d[6] / 10 }];
+      if (data.length < 7) return [];
+      return [{ key: 'charge_limit_a', value: data[6] / 10 }];
     }
 
     // 0x109 — throttle position: b0-1 LE ÷10 = % (0 idle … 100). 🟡
     case 0x109: {
-      if (d.length < 2) return [];
-      return [{ key: 'throttle_pct', value: u16le(d[0], d[1]) / 10 }];
+      if (data.length < 2) return [];
+      return [{ key: 'throttle_pct', value: u16le(data[0], data[1]) / 10 }];
     }
 
     // 0x102 — body/lights. b0 bit6 (0x40) = high beam on (bit7 0x80 = low beam).
     // Found empirically on the bike: OFF b0=0x80, ON b0=0x40. ✅
     case 0x102: {
-      if (d.length < 1) return [];
-      return [{ key: 'high_beam', value: d[0] & 0x40 ? 1 : 0 }];
+      if (data.length < 1) return [];
+      return [{ key: 'high_beam', value: data[0] & 0x40 ? 1 : 0 }];
     }
 
     default:
