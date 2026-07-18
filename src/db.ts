@@ -26,6 +26,7 @@ let flushTimer: ReturnType<typeof setInterval> | undefined;
 
 const signalIdCache = new Map<string, number>();
 let queue: QueuedRow[] = [];
+let backupsInProgress = 0;
 
 export function initDb(path: string, flushMs = 200): void {
   db = new Database(path);
@@ -101,6 +102,10 @@ export function recordReading(
 
 export function flushNow(): void {
   if (queue.length === 0) return;
+  // While a backup runs, keep samples queued in memory instead of writing them:
+  // any write to the source DB makes SQLite restart the online backup, and our
+  // flusher is the only writer, so holding it lets the backup converge.
+  if (backupsInProgress > 0) return;
   const rows = queue;
   queue = [];
   flushTxn(rows);
@@ -119,6 +124,20 @@ export function closeDb(): void {
   if (flushTimer) clearInterval(flushTimer);
   flushNow();
   db.close();
+}
+
+// Write a consistent snapshot of the live DB to destPath (SQLite online backup,
+// async and incremental — does not block the event loop). Used by the /db
+// download endpoint; readings recorded meanwhile stay queued until it finishes.
+export async function backupTo(destPath: string): Promise<void> {
+  flushNow();
+  backupsInProgress++;
+  try {
+    await db.backup(destPath);
+  } finally {
+    backupsInProgress--;
+    flushNow();
+  }
 }
 
 // One-time migration of the legacy coolant table into the EAV schema so the
