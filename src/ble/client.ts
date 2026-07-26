@@ -1,4 +1,4 @@
-import { createBluetooth, type Adapter } from "node-ble";
+import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
 import { ensureBluetoothAdapterUp } from "./adapter.ts";
 import { syncSystemClockFromGps } from "./clock.ts";
 import {
@@ -52,6 +52,18 @@ export interface BleClient {
 }
 
 const delay = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+/**
+ * Answer the hub's challenge, then claim the authorised-device slot.
+ *
+ * Write-without-response: measured 5-7 ms versus ~35 ms with response, and the
+ * hub validates against the seed it stored, so the cheap write is the right one.
+ */
+async function sendHandshake(writeCharacteristic: GattCharacteristic, seed: number, address: string): Promise<void> {
+  await writeCharacteristic.writeValue(buildKeyReply(computeSessionKey(seed)), { type: "command" });
+  await delay(ADDRESS_MATCH_DELAY_MS);
+  await writeCharacteristic.writeValue(buildAddressMatch(address), { type: "command" });
+}
 
 async function discoverHubAddress(adapter: Adapter): Promise<string> {
   const deadline = Date.now() + DISCOVERY_TIMEOUT_MS;
@@ -119,17 +131,6 @@ export function startBleClient(options: BleClientOptions): BleClient {
       const addressCandidates = [ourAddress, hubAddress];
       let handshakeAttempts = 0;
 
-      // Measured 5-7 ms with write-without-response vs ~35 ms with response, and
-      // the hub answers the seed it stored, so the cheap write is the right one.
-      async function sendHandshake(seed: number): Promise<void> {
-        const key = computeSessionKey(seed);
-        const address = addressCandidates[handshakeAttempts % addressCandidates.length];
-        handshakeAttempts += 1;
-        await writeCharacteristic.writeValue(buildKeyReply(key), { type: "command" });
-        await delay(ADDRESS_MATCH_DELAY_MS);
-        await writeCharacteristic.writeValue(buildAddressMatch(address), { type: "command" });
-      }
-
       await notifyCharacteristic.startNotifications();
       notifyCharacteristic.on("valuechanged", (chunk: Buffer) => {
         lastFrameAt = Date.now();
@@ -166,7 +167,9 @@ export function startBleClient(options: BleClientOptions): BleClient {
             );
           }
           handshakeInFlight = true;
-          sendHandshake(readSeed(frame))
+          const address = addressCandidates[handshakeAttempts % addressCandidates.length];
+          handshakeAttempts += 1;
+          sendHandshake(writeCharacteristic, readSeed(frame), address)
             .catch(error => {
               console.warn("ble: handshake write failed:", (error as Error).message);
             })

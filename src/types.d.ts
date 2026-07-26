@@ -25,8 +25,13 @@ declare module "socketcan" {
     setRxFilters(filters: RxFilter | RxFilter[]): void;
     disableLoopback(): void;
   }
+  export interface RawChannelOptions {
+    timestamps?: boolean;
+    protocol?: number;
+    non_block_send?: boolean;
+  }
   export function createRawChannel(channel: string, timestamps?: boolean): RawChannel;
-  export function createRawChannelWithOptions(channel: string, options: object): RawChannel;
+  export function createRawChannelWithOptions(channel: string, options: RawChannelOptions): RawChannel;
   const _default: {
     createRawChannel: typeof createRawChannel;
     createRawChannelWithOptions: typeof createRawChannelWithOptions;
