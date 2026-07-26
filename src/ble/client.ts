@@ -110,13 +110,24 @@ export function startBleClient(options: BleClientOptions): BleClient {
       const startedAt = Date.now();
       let lastFrameAt = Date.now();
 
+      // Which address the hub wants in the third frame is genuinely ambiguous:
+      // the BLE deck says "the app sends its OWN MAC", but the decompiled app
+      // reads it from the *connected device* (the hub). The one enrolment we've
+      // observed was mid-way through a probe that alternated both, so we can't
+      // say which claimed the slot. Alternating costs nothing and means a fresh
+      // bike enrols either way — it stops as soon as the hub confirms.
+      const addressCandidates = [ourAddress, hubAddress];
+      let handshakeAttempts = 0;
+
       // Measured 5-7 ms with write-without-response vs ~35 ms with response, and
       // the hub answers the seed it stored, so the cheap write is the right one.
       async function sendHandshake(seed: number): Promise<void> {
         const key = computeSessionKey(seed);
+        const address = addressCandidates[handshakeAttempts % addressCandidates.length];
+        handshakeAttempts += 1;
         await writeCharacteristic.writeValue(buildKeyReply(key), { type: "command" });
         await delay(ADDRESS_MATCH_DELAY_MS);
-        await writeCharacteristic.writeValue(buildAddressMatch(ourAddress), { type: "command" });
+        await writeCharacteristic.writeValue(buildAddressMatch(address), { type: "command" });
       }
 
       await notifyCharacteristic.startNotifications();
