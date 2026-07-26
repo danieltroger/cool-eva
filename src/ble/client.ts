@@ -145,11 +145,8 @@ export function startBleClient(options: BleClientOptions): BleClient {
           if (!isSeedFrame(frame)) {
             const values = decoder.decode(frame);
             if (values.length > 0) {
-              // Measure the Pi's clock error *before* handing the fix to the
-              // clock sync, or a successful step would read back as zero drift.
               const satelliteTime = values.find(value => value.key === "gps_epoch_s");
               if (satelliteTime) {
-                values.push({ key: "gps_time_offset_s", value: satelliteTime.value - Date.now() / 1000 });
                 void syncSystemClockFromGps(satelliteTime.value);
               }
               options.onValues(values);

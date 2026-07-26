@@ -22,23 +22,25 @@ let warnedNotRoot = false;
  * Steps the system clock to GPS UTC when it has drifted more than a minute.
  * Never throws — a failure here must not take the telemetry link down.
  *
- * @returns the Pi's clock error in seconds (GPS minus system), for logging.
+ * The drift itself is not logged as a signal: `gps_epoch_s` is recorded raw
+ * against every row's own timestamp, so the error is recoverable from the data
+ * without storing a derived copy of it.
  */
-export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<number> {
+export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<void> {
   const offsetSeconds = gpsEpochSeconds - Date.now() / 1000;
 
   if (!SYNC_ENABLED || Math.abs(offsetSeconds) <= DRIFT_THRESHOLD_SECONDS) {
-    return offsetSeconds;
+    return;
   }
   if (Date.now() - lastStepAtMs < MIN_SECONDS_BETWEEN_STEPS * 1000) {
-    return offsetSeconds;
+    return;
   }
   if (process.getuid?.() !== 0) {
     if (!warnedNotRoot) {
       warnedNotRoot = true;
       console.warn(`clock: ${offsetSeconds.toFixed(1)} s off GPS but not running as root — cannot set the time`);
     }
-    return offsetSeconds;
+    return;
   }
 
   lastStepAtMs = Date.now();
@@ -51,5 +53,4 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<n
   } catch (error) {
     console.warn("clock: failed to set system time from GPS:", (error as Error).message);
   }
-  return offsetSeconds;
 }
