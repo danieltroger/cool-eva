@@ -58,14 +58,18 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     }
 
     // 0x10A — charge/energy status.
-    //  • b3-4 LE × 2 = RES.ENERGY Wh (residual/available energy) 🟡 (parked match
-    //    4778×2=9556 vs menu 9557; confirm scaling at a 2nd SOC).
+    //  • b3-4 LE, bit 15 masked off, × 2 = RES.ENERGY Wh (residual/available energy).
+    //    Bit 15 is a FLAG, not part of the value: it toggles on ~half the frames, so
+    //    reading the raw word alternated between the true value and value+65536 (the
+    //    square wave in Grafana). Confirmed on 45k logged samples — every value showed
+    //    up as a 0x8000-apart pair — and against the menu at two SOCs (4778×2=9556 vs
+    //    menu 9557; 1095×2=2190 vs menu 2190). ✅
     //  • b7 = CHG.PWR.REF % → AC charge-current setpoint; amps = b7 ÷ 7 (RE'd live:
     //    7%→1 A, 21%→3 A, 49%→7 A; 100% ≈ 14.3 A AC max). ✅
     case 0x10a: {
       if (data.length < 8) return [];
       return [
-        { key: "residual_energy_wh", value: u16le(data[3], data[4]) * 2 },
+        { key: "residual_energy_wh", value: (u16le(data[3], data[4]) & 0x7fff) * 2 },
         { key: "charge_limit_a", value: Math.round((data[7] / 7) * 10) / 10 },
       ];
     }
