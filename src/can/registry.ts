@@ -31,7 +31,10 @@ export const SIGNALS: SignalDef[] = [
   { key: "max_cell_idx", unit: "", group: "cells", source: "stream" },
 
   // 0x025 (inst) / 0x10A (residual) — energy
-  { key: "inst_consumption_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0.5 },
+  // Chattiest signal on the bus by far (~291k rows/day at deadband 0.5, ~49% of all
+  // rows) and not worth that fidelity — 10 Wh still tracks the curve on a ~200-330 Wh
+  // signal while cutting the row count by well over an order of magnitude.
+  { key: "inst_consumption_wh", unit: "Wh", group: "energy", source: "stream", deadband: 10 },
   { key: "residual_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0 },
 
   // 0x305 / 0x306 — charger (present only while charging)
