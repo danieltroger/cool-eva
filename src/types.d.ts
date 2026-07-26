@@ -25,13 +25,65 @@ declare module "socketcan" {
     setRxFilters(filters: RxFilter | RxFilter[]): void;
     disableLoopback(): void;
   }
+  export interface RawChannelOptions {
+    timestamps?: boolean;
+    protocol?: number;
+    non_block_send?: boolean;
+  }
   export function createRawChannel(channel: string, timestamps?: boolean): RawChannel;
-  export function createRawChannelWithOptions(channel: string, options: object): RawChannel;
+  export function createRawChannelWithOptions(channel: string, options: RawChannelOptions): RawChannel;
   const _default: {
     createRawChannel: typeof createRawChannel;
     createRawChannelWithOptions: typeof createRawChannelWithOptions;
   };
   export default _default;
+}
+
+// Minimal shim for `node-ble` (pure JS over D-Bus/BlueZ, so unlike `socketcan` it
+// installs everywhere — it just has no bundled types, and only actually works on
+// Linux with a running bluetoothd).
+declare module "node-ble" {
+  export interface GattCharacteristic {
+    getFlags(): Promise<string[]>;
+    readValue(offset?: number): Promise<Buffer>;
+    writeValue(value: Buffer, optionsOrOffset?: { type?: "request" | "command" | "reliable" } | number): Promise<void>;
+    startNotifications(): Promise<void>;
+    stopNotifications(): Promise<void>;
+    on(event: "valuechanged", listener: (value: Buffer) => void): this;
+    removeAllListeners(event?: string): this;
+  }
+  export interface GattService {
+    characteristics(): Promise<string[]>;
+    getCharacteristic(uuid: string): Promise<GattCharacteristic>;
+  }
+  export interface GattServer {
+    services(): Promise<string[]>;
+    getPrimaryService(uuid: string): Promise<GattService>;
+  }
+  export interface Device {
+    getName(): Promise<string>;
+    getAddress(): Promise<string>;
+    connect(): Promise<void>;
+    disconnect(): Promise<void>;
+    isConnected(): Promise<boolean>;
+    gatt(): Promise<GattServer>;
+    on(event: "connect" | "disconnect", listener: () => void): this;
+  }
+  export interface Adapter {
+    getAddress(): Promise<string>;
+    isDiscovering(): Promise<boolean>;
+    startDiscovery(): Promise<void>;
+    stopDiscovery(): Promise<void>;
+    devices(): Promise<string[]>;
+    getDevice(address: string): Promise<Device>;
+    waitDevice(address: string, timeout?: number): Promise<Device>;
+  }
+  export interface Bluetooth {
+    adapters(): Promise<string[]>;
+    defaultAdapter(): Promise<Adapter>;
+    getAdapter(name: string): Promise<Adapter>;
+  }
+  export function createBluetooth(): { bluetooth: Bluetooth; destroy: () => void };
 }
 
 declare module "max31865" {

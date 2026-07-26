@@ -117,10 +117,18 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       ];
     }
 
+    // 0x480 — E-LOCK / keyless status (10 Hz, present key-on/parked). b2-5 LE
+    // uint32 = ID of the key fob currently present; it matches slot 1 of the 3
+    // fobs paired in the E-LOCK ECU (b0 = 05, b6 = 01 constant). 🟡
+    case 0x480: {
+      if (data.length < 6) return [];
+      return [{ key: "key_fob_id", value: data.readUInt32LE(2) }];
+    }
+
     default:
       return [];
   }
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x200, 0x201, 0x203, 0x305, 0x306];
+export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x200, 0x201, 0x203, 0x305, 0x306, 0x480];

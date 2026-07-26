@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import { snapshot, onChange } from "./can/signals.ts";
+import { snapshot, onChange, type LiveValue } from "./can/signals.ts";
 
 // Event-driven push to the phone dashboard:
 //   • full snapshot on connect
@@ -14,12 +14,23 @@ export interface WsHandle {
   stop: () => void;
 }
 
+/**
+ * The wire shape sent to the dashboard. `public/index.html` is plain JS with no
+ * build step, so it cannot import this — the two can drift silently. Change one,
+ * change the other.
+ */
+export interface DashboardMessage {
+  type: "snapshot" | "patch";
+  ts: number;
+  signals: Record<string, LiveValue>;
+}
+
 export function setupWs(server: Server, heartbeatMs = 5000): WsHandle {
   const wss = new WebSocketServer({ server });
 
-  const broadcast = (obj: object): void => {
+  const broadcast = (message: DashboardMessage): void => {
     if (wss.clients.size === 0) return;
-    const msg = JSON.stringify(obj);
+    const msg = JSON.stringify(message);
     for (const client of wss.clients) {
       if (client.readyState === WebSocket.OPEN) client.send(msg);
     }

@@ -16,8 +16,10 @@ export async function bringUpCan(iface = "can0", active = true): Promise<void> {
   const listenOnly = active ? "listen-only off" : "listen-only on";
   try {
     await execAsync(`ip link set ${iface} down`);
-  } catch {
-    // interface may already be down — ignore
+  } catch (err) {
+    // Usually just "interface already down" on a cold start, but a persistent
+    // failure here is the difference between ACTIVE and a stuck listen-only bus.
+    console.log(`can: ${iface} down failed (likely already down):`, err);
   }
   await execAsync(`ip link set ${iface} type can bitrate 500000 restart-ms 100 ${listenOnly}`);
   await execAsync(`ip link set ${iface} up`);

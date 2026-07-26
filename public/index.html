@@ -132,6 +132,12 @@
       .tile.big .value {
         font-size: 3.6rem;
       }
+      /* Long identifiers (key-fob ID, coordinates) would otherwise overflow the
+         tile and widen the whole grid. */
+      .tile .value.long {
+        font-size: 1.5rem;
+        overflow-wrap: anywhere;
+      }
       .tile .unit {
         font-size: 1rem;
         color: var(--muted);
@@ -352,6 +358,19 @@
         if (Number.isInteger(value)) return String(value);
         return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
       }
+      // A few signals are unreadable under the generic rules: the key-fob ID is a
+      // 4-byte identifier (10 digits of decimal that overflow the tile, and hex is
+      // what you'd compare against the E-LOCK's key list), and coordinates need
+      // their decimals — the generic <100 branch would render 57.709633 as "57.71".
+      function formatSignal(key, value) {
+        if (key === "key_fob_id") {
+          return "0x" + (value >>> 0).toString(16).toUpperCase().padStart(8, "0");
+        }
+        if (key === "gps_lat" || key === "gps_lon") {
+          return value.toFixed(6);
+        }
+        return formatGeneric(value);
+      }
       function renderAll(serverTime, signals) {
         const keys = Object.keys(signals).sort((a, b) => {
           const groupA = signals[a].group || "",
@@ -363,7 +382,11 @@
           const tile = getTile({ key, label: key });
           tile.container.style.display = "";
           tile.container.classList.toggle("stale", serverTime - signal.ts > STALE_MS);
-          tile.valueElement.innerHTML = `${formatGeneric(signal.value)}<span class="unit">${signal.unit || ""}</span>`;
+          const text = formatSignal(key, signal.value);
+          // 2.6rem only fits ~6 characters; anything longer has to step down or it
+          // runs out of the tile and pushes the grid sideways.
+          tile.valueElement.classList.toggle("long", text.length > 6);
+          tile.valueElement.innerHTML = `${text}<span class="unit">${signal.unit || ""}</span>`;
           tile.valueElement.style.color = "";
         }
       }

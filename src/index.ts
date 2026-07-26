@@ -10,7 +10,9 @@ import { startCoolantSensors } from "./sensors/max31865.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
+import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
+import { startBleClient, type BleClient } from "./ble/client.ts";
 import type { RawChannel } from "socketcan";
 
 // Thin orchestrator: wire DB + coolant probes + CAN decode/OBD + HTTP/WS together.
@@ -24,8 +26,15 @@ const CAN_IFACE = "can0";
 // Config (env overrides):
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
+//   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
+//   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (GPS etc.)
+//   BLE_MAC=…     → pin the hub's address (default: discover it by name)
+//   GPS_TIME_SYNC=0 → never step the system clock from satellite time
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
+const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
+const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
+const BLE_MAC = process.env.BLE_MAC ?? "";
 
 // --- DB + signal registry ---
 initDb(join(ROOT, "temperatures.db"));
@@ -51,6 +60,7 @@ if (CAN_ENABLED) {
       channel.setRxFilters([
         ...STREAM_IDS.map(id => ({ id, mask: 0x7ff })),
         { id: 0x7e0, mask: 0x7f0 }, // OBD responses 0x7E0–0x7EF
+        { id: ELOCK_RESP_ID, mask: 0x7ff }, // E-LOCK diagnostic reply (one-shot read at startup)
       ]);
     } catch (err) {
       console.warn("can: setRxFilters failed, accepting all frames:", err);
@@ -60,6 +70,10 @@ if (CAN_ENABLED) {
       const data = msg.data;
       if (isObdResponse(msg.id)) {
         handleResponse(msg.id, data);
+        return;
+      }
+      if (isElockResponse(msg.id)) {
+        handleElockResponse(data);
         return;
       }
       for (const { key, value } of decodeFrame(msg.id, data)) {
@@ -73,6 +87,14 @@ if (CAN_ENABLED) {
       initObd(channel);
       stopObd = startObdPoller(500);
       console.log("obd: polling @2Hz (speed/rpm/temps/load/distance)");
+
+      // One-shot keys-paired read from the E-LOCK ECU. Needs the ACTIVE bus that
+      // OBD_ENABLED brings up; fire-and-forget so it can't delay startup.
+      if (ELOCK_ENABLED) {
+        void readKeysPairedOnce(channel);
+      } else {
+        console.log("elock: disabled (ELOCK_ENABLED=0)");
+      }
     } else {
       console.log("obd: disabled (OBD_ENABLED=0) — passive decode only");
     }
@@ -81,6 +103,23 @@ if (CAN_ENABLED) {
   }
 } else {
   console.log("can: disabled (CAN_ENABLED=0)");
+}
+
+// --- Bluetooth: Connectivity Hub (GPS, torque/power, odometer) ---
+let bleClient: BleClient | undefined;
+
+if (BLE_ENABLED) {
+  bleClient = startBleClient({
+    macAddress: BLE_MAC,
+    onValues: values => {
+      for (const { key, value } of values) {
+        record(key, value);
+      }
+    },
+  });
+  console.log(`ble: connecting to Connectivity Hub ${BLE_MAC || "(discovering by name)"}`);
+} else {
+  console.log("ble: disabled (BLE_ENABLED=0)");
 }
 
 // --- HTTP + WebSocket server ---
@@ -109,10 +148,11 @@ function shutdown(): void {
   shuttingDown = true;
   console.log("\nShutting down…");
   stopObd?.();
+  void bleClient?.stop();
   try {
     channel?.stop();
-  } catch {
-    // ignore
+  } catch (err) {
+    console.log("can: channel stop failed during shutdown:", err);
   }
   ws.stop();
   server.close();

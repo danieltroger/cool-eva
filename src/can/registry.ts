@@ -64,4 +64,53 @@ export const SIGNALS: SignalDef[] = [
   { key: "blinker_left", unit: "", group: "controls", source: "stream" }, // b2 0x04
   { key: "blinker_right", unit: "", group: "controls", source: "stream" }, // b2 0x08
   { key: "horn", unit: "", group: "controls", source: "stream" }, // b2 0x10
+
+  // OBD-II diagnostics/counters, polled with the rest — all slow-moving, so
+  // log-on-change keeps them to a handful of rows per ride.
+  { key: "mil_on", unit: "", group: "diag", source: "poll" }, // PID 01 A bit7
+  { key: "dtc_count", unit: "", group: "diag", source: "poll" }, // PID 01 A & 0x7F
+  { key: "time_since_clear_min", unit: "min", group: "diag", source: "poll" }, // PID 4E — monotonic ⇒ hour meter
+  { key: "dist_with_mil_km", unit: "km", group: "diag", source: "poll" }, // PID 21
+  { key: "time_with_mil_min", unit: "min", group: "diag", source: "poll" }, // PID 4D
+  { key: "warmups_since_clear", unit: "", group: "diag", source: "poll" }, // PID 30
+
+  // Keyless / immobilizer
+  { key: "key_fob_id", unit: "", group: "security", source: "stream" }, // 0x480 b2-5 LE uint32
+  { key: "keys_paired", unit: "", group: "security", source: "poll" }, // E-LOCK 0x791 `21 99`, once at startup
+
+  // --- Bluetooth (Connectivity Hub) ---------------------------------------
+  // Pushed by the hub over BLE, not polled. GPS is NOT on the CAN bus at all
+  // (see obd-garage/CAN_MAP.md §"GPS: NOT on the VDB bus"), and neither are
+  // torque/power or the odometer — PID 01A6 is unsupported by Energica.
+  //
+  // lat/lon deadband ≈ 3 m: parked GPS jitters in the 5th decimal and would
+  // otherwise log continuously, while any real movement blows straight past it.
+  { key: "gps_lat", unit: "°", group: "gps", source: "stream", deadband: 0.00003 },
+  { key: "gps_lon", unit: "°", group: "gps", source: "stream", deadband: 0.00003 },
+  { key: "gps_altitude_m", unit: "m", group: "gps", source: "stream", deadband: 1 },
+  { key: "gps_speed_kmh", unit: "km/h", group: "gps", source: "stream" },
+  { key: "gps_course_deg", unit: "°", group: "gps", source: "stream", deadband: 2 },
+  { key: "gps_satellites", unit: "", group: "gps", source: "stream" },
+  { key: "gps_fix", unit: "", group: "gps", source: "stream" },
+
+  // Satellite UTC — the Pi has no RTC, so this is the only trustworthy clock on
+  // the road. Logged raw and unthrottled (~2 Hz, the rate the hub sends it): if a
+  // ride ever comes back with timestamps from a no-network boot, having the real
+  // time sitting next to every row makes it repairable without any reasoning.
+  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream" },
+
+  { key: "motor_torque_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
+  { key: "motor_power_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
+
+  { key: "odometer_km", unit: "km", group: "drive", source: "stream" },
+  { key: "trip_km", unit: "km", group: "drive", source: "stream" },
+
+  // Vehicle state machine — distinct from 0x201, which is *charge* state only.
+  { key: "vehicle_state", unit: "", group: "drive", source: "stream" },
+  { key: "vehicle_substate", unit: "", group: "drive", source: "stream" },
+
+  { key: "range_km", unit: "km", group: "energy", source: "stream" },
+  { key: "avg_consumption_wh_km", unit: "Wh/km", group: "energy", source: "stream", deadband: 0.5 },
+  { key: "km_per_kwh", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05 },
+  { key: "kwh_per_100km", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05 },
 ];

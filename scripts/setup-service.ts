@@ -7,9 +7,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectDir = resolve(__dirname, "..");
 const nodePath = execSync("which node").toString().trim();
 
+// bluetooth.service must be up before we try to reach the Connectivity Hub over
+// BLE. The app additionally clears the rfkill soft block itself at startup (see
+// src/ble/adapter.ts), so installs predating this still recover.
 const unit = `[Unit]
 Description=PT100 Temperature Logger
-After=network.target
+After=network.target bluetooth.service
+Wants=bluetooth.service
 
 [Service]
 Type=simple
