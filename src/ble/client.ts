@@ -41,6 +41,10 @@ const UNAUTHORISED_HINT_AFTER_MS = 20_000;
 const HUB_NAME_PATTERN = /energica/i;
 const DISCOVERY_TIMEOUT_MS = 40_000;
 
+// How many unanswered handshakes before we also try the hub's own address (see
+// nextEnrolmentAddress — that write is destructive to an existing pairing).
+const ENROL_FALLBACK_AFTER_ATTEMPTS = 6;
+
 export interface BleClientOptions {
   /** Hub address, e.g. "F8:8A:5E:09:D3:B4". Empty ⇒ discover by advertised name. */
   macAddress?: string;
@@ -106,6 +110,15 @@ export function startBleClient(options: BleClientOptions): BleClient {
       const hubAddress = options.macAddress || (await discoverHubAddress(adapter));
       device = await adapter.waitDevice(hubAddress);
       await device.connect();
+      // Scanning for the whole session burns power and can degrade the very link
+      // we just established. Each reconnect builds a fresh createBluetooth(), so
+      // the isDiscovering() check above would otherwise just observe a scan that
+      // was never turned off and leave it running.
+      try {
+        await adapter.stopDiscovery();
+      } catch (error) {
+        console.log("ble: stopDiscovery failed:", (error as Error).message);
+      }
 
       const ourAddress = await adapter.getAddress();
       const gattServer = await device.gatt();
@@ -126,10 +139,28 @@ export function startBleClient(options: BleClientOptions): BleClient {
       // the BLE deck says "the app sends its OWN MAC", but the decompiled app
       // reads it from the *connected device* (the hub). The one enrolment we've
       // observed was mid-way through a probe that alternated both, so we can't
-      // say which claimed the slot. Alternating costs nothing and means a fresh
-      // bike enrols either way — it stops as soon as the hub confirms.
+      // say which claimed the slot.
+      //
+      // So: lead with our own address (what the deck documents) and only start
+      // offering the hub's after several unanswered attempts. That frame writes
+      // the bike's single authorised-device slot, so alternating eagerly could
+      // un-enrol an already-paired Pi over some unrelated hiccup — and the only
+      // way back is physically resetting the slot from the dashboard.
       const addressCandidates = [ourAddress, hubAddress];
       let handshakeAttempts = 0;
+
+      function nextEnrolmentAddress(): string {
+        if (handshakeAttempts < ENROL_FALLBACK_AFTER_ATTEMPTS) {
+          return ourAddress;
+        }
+        if (handshakeAttempts === ENROL_FALLBACK_AFTER_ATTEMPTS) {
+          console.warn(
+            `ble: ${ENROL_FALLBACK_AFTER_ATTEMPTS} handshakes unanswered — also offering the hub's own ` +
+              "address now. If this bike was already paired to this Pi, that pairing may be replaced."
+          );
+        }
+        return addressCandidates[handshakeAttempts % addressCandidates.length];
+      }
 
       await notifyCharacteristic.startNotifications();
       notifyCharacteristic.on("valuechanged", (chunk: Buffer) => {
@@ -167,7 +198,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
             );
           }
           handshakeInFlight = true;
-          const address = addressCandidates[handshakeAttempts % addressCandidates.length];
+          const address = nextEnrolmentAddress();
           handshakeAttempts += 1;
           sendHandshake(writeCharacteristic, readSeed(frame), address)
             .catch(error => {

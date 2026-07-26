@@ -33,6 +33,35 @@ const RESPONSE_TIMEOUT_MS = 300;
 
 let pendingResponse: { resolve: (data: Buffer | null) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
+// Fire-and-forget: call this once at startup. Resolves whatever happens.
+export async function readKeysPairedOnce(channel: RawChannel): Promise<void> {
+  try {
+    // 1) Bare read first — least intrusive, and this ECU usually answers it.
+    let keysPaired = await readKeysPaired(channel);
+
+    // 2) Only if that gave us nothing: open a standard diagnostic session,
+    //    re-read, then close the session again straight away.
+    if (keysPaired === null) {
+      const sessionResponse = await request(channel, [SERVICE_START_SESSION, STANDARD_SESSION]);
+      if (positiveResponsePayload(sessionResponse, SERVICE_START_SESSION) !== null) {
+        keysPaired = await readKeysPaired(channel);
+        await request(channel, [SERVICE_STOP_SESSION]);
+      }
+    }
+
+    if (keysPaired === null) {
+      console.log("elock: no usable response to 21 99 — skipping keys_paired");
+      return;
+    }
+    record("keys_paired", keysPaired);
+    console.log(`elock: keys_paired = ${keysPaired}`);
+  } catch (err) {
+    // Belt and braces — nothing above should throw, and a failure here must
+    // never take the app down.
+    console.error("elock: read failed — continuing without keys_paired", err);
+  }
+}
+
 // Returns true if this frame was an E-LOCK diagnostic response we consumed.
 export function isElockResponse(id: number): boolean {
   return id === ELOCK_RESP_ID;
@@ -96,33 +125,4 @@ async function readKeysPaired(channel: RawChannel): Promise<number | null> {
   // (0x99 = 153), not the count.
   if (!payload || payload.length < 2 || payload[0] !== KEYS_PAIRED_LOCAL_ID) return null;
   return payload[1];
-}
-
-// Fire-and-forget: call this once at startup. Resolves whatever happens.
-export async function readKeysPairedOnce(channel: RawChannel): Promise<void> {
-  try {
-    // 1) Bare read first — least intrusive, and this ECU usually answers it.
-    let keysPaired = await readKeysPaired(channel);
-
-    // 2) Only if that gave us nothing: open a standard diagnostic session,
-    //    re-read, then close the session again straight away.
-    if (keysPaired === null) {
-      const sessionResponse = await request(channel, [SERVICE_START_SESSION, STANDARD_SESSION]);
-      if (positiveResponsePayload(sessionResponse, SERVICE_START_SESSION) !== null) {
-        keysPaired = await readKeysPaired(channel);
-        await request(channel, [SERVICE_STOP_SESSION]);
-      }
-    }
-
-    if (keysPaired === null) {
-      console.log("elock: no usable response to 21 99 — skipping keys_paired");
-      return;
-    }
-    record("keys_paired", keysPaired);
-    console.log(`elock: keys_paired = ${keysPaired}`);
-  } catch (err) {
-    // Belt and braces — nothing above should throw, and a failure here must
-    // never take the app down.
-    console.error("elock: read failed — continuing without keys_paired", err);
-  }
 }

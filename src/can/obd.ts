@@ -18,7 +18,18 @@ interface PidDef {
   pid: number;
   key?: string;
   decode: (a: number, b: number) => number | DecodedValue[];
+  /**
+   * Poll this PID only every Nth round (default: every round). `pollOnce` is
+   * strictly sequential and an unanswered PID costs a full 200 ms timeout, so
+   * putting slow-moving counters on every round would drag speed/rpm well below
+   * the 2 Hz they're scheduled at — for values that change once a ride.
+   */
+  everyNthRound?: number;
 }
+
+// At the default 500 ms poll interval this is once every 10 s — plenty for
+// counters that move once a ride, and it keeps them off 19 of every 20 rounds.
+const DIAGNOSTIC_ROUND_DIVISOR = 20;
 
 const PIDS: PidDef[] = [
   { pid: 0x0d, key: "speed_kmh", decode: a => a },
@@ -35,15 +46,17 @@ const PIDS: PidDef[] = [
   // 0x01 monitor status: A bit7 = MIL lamp, low 7 bits = stored-DTC count.
   {
     pid: 0x01,
+    everyNthRound: DIAGNOSTIC_ROUND_DIVISOR,
     decode: a => [
       { key: "mil_on", value: a & 0x80 ? 1 : 0 },
       { key: "dtc_count", value: a & 0x7f },
     ],
   },
-  { pid: 0x4e, key: "time_since_clear_min", decode: (a, b) => 256 * a + b }, // monotonic ⇒ hour meter
-  { pid: 0x21, key: "dist_with_mil_km", decode: (a, b) => 256 * a + b },
-  { pid: 0x4d, key: "time_with_mil_min", decode: (a, b) => 256 * a + b },
-  { pid: 0x30, key: "warmups_since_clear", decode: a => a },
+  // monotonic ⇒ hour meter
+  { pid: 0x4e, key: "time_since_clear_min", everyNthRound: DIAGNOSTIC_ROUND_DIVISOR, decode: (a, b) => 256 * a + b },
+  { pid: 0x21, key: "dist_with_mil_km", everyNthRound: DIAGNOSTIC_ROUND_DIVISOR, decode: (a, b) => 256 * a + b },
+  { pid: 0x4d, key: "time_with_mil_min", everyNthRound: DIAGNOSTIC_ROUND_DIVISOR, decode: (a, b) => 256 * a + b },
+  { pid: 0x30, key: "warmups_since_clear", everyNthRound: DIAGNOSTIC_ROUND_DIVISOR, decode: a => a },
 ];
 
 // Normalises the two decode shapes into one list of (key, value) pairs.
@@ -99,8 +112,14 @@ function requestPid(pid: number, timeoutMs = 200): Promise<Buffer | null> {
   });
 }
 
+let pollRound = 0;
+
 async function pollOnce(): Promise<void> {
+  pollRound += 1;
   for (const def of PIDS) {
+    if (def.everyNthRound && pollRound % def.everyNthRound !== 0) {
+      continue;
+    }
     const resp = await requestPid(def.pid);
     if (!resp) continue;
     const a = resp[3] ?? 0;

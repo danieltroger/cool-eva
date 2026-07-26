@@ -15,7 +15,12 @@ const MIN_SECONDS_BETWEEN_STEPS = 300;
 
 const SYNC_ENABLED = process.env.GPS_TIME_SYNC !== "0";
 
-let lastStepAtMs = 0;
+// Monotonic, NOT Date.now(): this function steps the very clock it would be
+// measuring against. Stamping the wall clock here and then stepping backwards
+// (the exact case this module exists for) leaves `now - lastStep` hugely
+// negative, so the guard would suppress every later correction until real time
+// caught up. performance.now() is unaffected by `date -s`.
+let lastStepAt = 0;
 let warnedNotRoot = false;
 
 /**
@@ -32,7 +37,7 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
   if (!SYNC_ENABLED || Math.abs(offsetSeconds) <= DRIFT_THRESHOLD_SECONDS) {
     return;
   }
-  if (Date.now() - lastStepAtMs < MIN_SECONDS_BETWEEN_STEPS * 1000) {
+  if (performance.now() - lastStepAt < MIN_SECONDS_BETWEEN_STEPS * 1000) {
     return;
   }
   if (process.getuid?.() !== 0) {
@@ -43,7 +48,7 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
     return;
   }
 
-  lastStepAtMs = Date.now();
+  lastStepAt = performance.now();
   const target = new Date(gpsEpochSeconds * 1000).toISOString();
   try {
     // `date -u -s @<epoch>` rather than `timedatectl set-time`, which refuses

@@ -68,7 +68,9 @@ export function buildKeyReply(key: number): Buffer {
 /** Frame 3 of the handshake: our own adapter address, which the hub stores. */
 export function buildAddressMatch(macAddress: string): Buffer {
   const bytes = macAddress.split(":").map(part => Number.parseInt(part, 16));
-  if (bytes.length !== 6 || bytes.some(byte => !Number.isInteger(byte))) {
+  // Range-check as well as parse: "1FF:00:…" yields 511, which is an integer and
+  // would then be silently truncated to 0xFF by Buffer.from.
+  if (bytes.length !== 6 || bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
     throw new Error(`ble: malformed MAC address ${macAddress}`);
   }
   return Buffer.from([4, 17, 0, 0xfe, ...bytes]);
@@ -193,7 +195,14 @@ export class BleTelemetryDecoder {
       this.#haveLatitude = true;
       return [
         { key: "gps_course_deg", value: frame[2] | ((frame[3] & 1) << 8) },
-        { key: "gps_speed_kmh", value: ((frame[3] >> 1) & 0x7f) | ((frame[4] & 3) << 8) },
+        // ⚠️ Deliberate deviation from CommParser, which shifts by 8 here.
+        // This sub-frame is packed contiguously: course is b2 + b3 bit0 (9 bits),
+        // speed is b3 bits 1-7 then b4 bits 0-1 (9 bits), and latitude's
+        // deci-milliminutes resume at b4 bit2. So the high bits belong at bit 7.
+        // With <<8, value-bit 7 is permanently zero and anything from 128 km/h up
+        // reads 128 too high (130 -> 258). Below 128 the two are identical, which
+        // is how the app gets away with it.
+        { key: "gps_speed_kmh", value: ((frame[3] >> 1) & 0x7f) | ((frame[4] & 3) << 7) },
       ];
     }
 
@@ -228,7 +237,10 @@ export class BleTelemetryDecoder {
       // coordinate sub-frame on a fresh connection (seen live), which would
       // otherwise log a bogus 0; and like the app we suppress the null island
       // it emits before it has a fix.
-      const haveBoth = this.#haveLatitude && this.#haveLongitude;
+      // The have-flags latch, so a live fix is required too: without it a hub
+      // that stops sending the coordinate sub-frames while still sending this
+      // one would replay the last known position forever.
+      const haveBoth = this.#haveLatitude && this.#haveLongitude && this.#fix !== 0;
       if (haveBoth && (latitude !== 0 || longitude !== 0)) {
         values.push({ key: "gps_lat", value: latitude }, { key: "gps_lon", value: longitude });
       }
@@ -277,6 +289,14 @@ export class BleTelemetryDecoder {
     if (!inRange) {
       return null;
     }
-    return Date.UTC(2000 + year, month - 1, day, hours, minutes, seconds, milliseconds) / 1000;
+    // Date.UTC silently rolls impossible dates over (31 Apr becomes 1 May), and
+    // we step the system clock from this, so verify the fields survive a round
+    // trip rather than trusting the range check alone.
+    const epochMilliseconds = Date.UTC(2000 + year, month - 1, day, hours, minutes, seconds, milliseconds);
+    const roundTripped = new Date(epochMilliseconds);
+    if (roundTripped.getUTCMonth() !== month - 1 || roundTripped.getUTCDate() !== day) {
+      return null;
+    }
+    return epochMilliseconds / 1000;
   }
 }
