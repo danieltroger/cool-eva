@@ -86,7 +86,9 @@ Restart the service; it logs `ride-log: encrypting to …` once it finds the key
 node --experimental-strip-types scripts/decrypt-log.ts ride-logs/ --out rides.db
 ```
 
-That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
+That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged.
+
+> ⚠️ The Grafana datasource points at `/repo/temperatures.db` (`grafana/provisioning/datasources/sqlite.yml`), so either decrypt with `--out temperatures.db` **in a directory that doesn't already hold your pre-encryption archive** — the tool would append into it — or repoint the datasource at `rides.db`. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
 
 Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
 
