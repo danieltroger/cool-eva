@@ -26,8 +26,8 @@ Pi-based telemetry for a watercooled Energica Eva Ribelle: MAX31865 coolant prob
 
 ## Deploying to the Pi (learned the hard way)
 
-- Deploy is `rsync -az src/ pi@cool-eva.local:/home/pi/thermometer/src/` then `sudo systemctl restart thermometer`. Logs: `journalctl -u thermometer -f`.
-- **Never rsync `package-lock.json` from macOS.** It records `socketcan` as a skipped optionalDependency because the native build doesn't exist there, so the next `npm install` on the Pi prunes the real one and the service dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. Recovery is `rm package-lock.json && npm install` **on the Pi** (~4 min, rebuilds the native module). Deploy `src/` only unless a dependency actually changed.
+- Deploy is a `git pull` in `/home/pi/thermometer` on the Pi, then `sudo systemctl restart thermometer`. Logs: `journalctl -u thermometer -f`. To try a branch, check it out on the Pi the same way: `git fetch origin && git checkout <branch> && git pull`.
+- **Only run `npm install` on the Pi when a dependency actually changed** — and check `node_modules/socketcan/build/Release/can.node` still exists afterwards. `package-lock.json` is committed but generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi prunes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will keep insisting it's "up to date" — even with `--force`. The fix is `rm package-lock.json && npm install` **on the Pi** (~4 min, rebuilds the native module). A plain `git pull` without `npm install` is safe: it never touches `node_modules`.
 - **Restarting the service re-initialises `can0`**, which kills any other raw-CAN socket with `OSError 100 Network is down`. Expected when you have a scratch script running, not a fault.
 - **The Connectivity Hub accepts one BLE connection at a time** and the service holds it. Stop the service before running a scratch BLE probe, or the two fight over the link.
 - There's no reception in the garage — the Pi is only reachable when the bike is parked within wifi range.
