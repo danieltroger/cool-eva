@@ -121,6 +121,7 @@ export class BleTelemetryDecoder {
   #longitudeMinutes = 0;
   #longitudeDeciMilliminutes = 0;
   #haveLongitude = false;
+  #fix = 0;
 
   decode(frame: Uint8Array): DecodedValue[] {
     switch (frame[0]) {
@@ -207,8 +208,9 @@ export class BleTelemetryDecoder {
       // the value; masking to the declared field width is clearly the intent.)
       const magnitude = ((frame[2] >> 2) & 63) | (frame[3] << 6) | ((frame[4] & 1) << 14);
       const altitude = ((frame[4] >> 1) & 1) !== 0 ? -magnitude : magnitude;
+      this.#fix = frame[2] & 3;
       return [
-        { key: "gps_fix", value: frame[2] & 3 },
+        { key: "gps_fix", value: this.#fix },
         { key: "gps_altitude_m", value: altitude },
       ];
     }
@@ -220,7 +222,8 @@ export class BleTelemetryDecoder {
       const longitude =
         this.#longitudeSign *
         (this.#longitudeDegrees + (this.#longitudeMinutes + this.#longitudeDeciMilliminutes / 10000) / 60);
-      const values: DecodedValue[] = [{ key: "gps_satellites", value: (frame[7] >> 3) & 31 }];
+      const satellites = (frame[7] >> 3) & 31;
+      const values: DecodedValue[] = [{ key: "gps_satellites", value: satellites }];
       // Two guards. The hub can send this time sub-frame *before* either
       // coordinate sub-frame on a fresh connection (seen live), which would
       // otherwise log a bogus 0; and like the app we suppress the null island
@@ -229,9 +232,51 @@ export class BleTelemetryDecoder {
       if (haveBoth && (latitude !== 0 || longitude !== 0)) {
         values.push({ key: "gps_lat", value: latitude }, { key: "gps_lon", value: longitude });
       }
+
+      const epochSeconds = this.#decodeUtc(frame, satellites);
+      if (epochSeconds !== null) {
+        values.push({ key: "gps_epoch_s", value: epochSeconds });
+      }
       return values;
     }
 
     return [];
+  }
+
+  /**
+   * Satellite UTC out of the GPS sub-0xFE frame, as epoch seconds.
+   *
+   * This is the Pi's only trustworthy time source: it has no RTC, so after a
+   * boot with no network every row gets stamped from a bogus clock (a real ride
+   * once landed years in the past). Returns null unless the fix and the field
+   * ranges are all sane — a wrong time is worse than no time, since we act on it.
+   */
+  #decodeUtc(frame: Uint8Array, satellites: number): number | null {
+    if (this.#fix === 0 || satellites < 4) {
+      return null;
+    }
+    const milliseconds = frame[2] | ((frame[3] & 3) << 8);
+    const seconds = (frame[3] >> 2) & 63;
+    const minutes = frame[4] & 63;
+    const hours = ((frame[4] >> 6) & 3) | ((frame[5] & 7) << 2);
+    const day = (frame[5] >> 3) & 31;
+    const month = frame[6] & 15;
+    const year = ((frame[6] >> 4) & 15) | ((frame[7] & 7) << 4);
+
+    const inRange =
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31 &&
+      hours < 24 &&
+      minutes < 60 &&
+      seconds < 60 &&
+      milliseconds < 1000 &&
+      year >= 24 &&
+      year < 100;
+    if (!inRange) {
+      return null;
+    }
+    return Date.UTC(2000 + year, month - 1, day, hours, minutes, seconds, milliseconds) / 1000;
   }
 }

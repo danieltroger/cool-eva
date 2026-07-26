@@ -28,12 +28,13 @@ const CAN_IFACE = "can0";
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
 //   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (GPS etc.)
-//   BLE_MAC=…     → override the hub's address (default: this bike's hub)
+//   BLE_MAC=…     → pin the hub's address (default: discover it by name)
+//   GPS_TIME_SYNC=0 → never step the system clock from satellite time
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
 const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
-const BLE_MAC = process.env.BLE_MAC ?? "F8:8A:5E:09:D3:B4";
+const BLE_MAC = process.env.BLE_MAC ?? "";
 
 // --- DB + signal registry ---
 initDb(join(ROOT, "temperatures.db"));
@@ -116,7 +117,7 @@ if (BLE_ENABLED) {
       }
     },
   });
-  console.log(`ble: connecting to Connectivity Hub ${BLE_MAC}`);
+  console.log(`ble: connecting to Connectivity Hub ${BLE_MAC || "(discovering by name)"}`);
 } else {
   console.log("ble: disabled (BLE_ENABLED=0)");
 }
@@ -150,8 +151,8 @@ function shutdown(): void {
   void bleClient?.stop();
   try {
     channel?.stop();
-  } catch {
-    // ignore
+  } catch (err) {
+    console.log("can: channel stop failed during shutdown:", err);
   }
   ws.stop();
   server.close();

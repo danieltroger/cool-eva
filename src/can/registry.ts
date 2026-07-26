@@ -93,6 +93,14 @@ export const SIGNALS: SignalDef[] = [
   { key: "gps_satellites", unit: "", group: "gps", source: "stream" },
   { key: "gps_fix", unit: "", group: "gps", source: "stream" },
 
+  // Satellite UTC — the Pi has no RTC, so this is the only trustworthy clock on
+  // the road. Deadband 300 s keeps the absolute value to ~a row every 5 min
+  // (it only ever counts up, so any smaller deadband just logs at that rate).
+  // The offset is the one that matters: ~0 normally, and it spikes exactly when
+  // a no-network boot stamps rows into the past.
+  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream", deadband: 300 },
+  { key: "gps_time_offset_s", unit: "s", group: "gps", source: "stream", deadband: 1 },
+
   { key: "motor_torque_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_power_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
 

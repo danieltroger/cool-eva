@@ -70,6 +70,7 @@ declare module "node-ble" {
     startDiscovery(): Promise<void>;
     stopDiscovery(): Promise<void>;
     devices(): Promise<string[]>;
+    getDevice(address: string): Promise<Device>;
     waitDevice(address: string, timeout?: number): Promise<Device>;
   }
   export interface Bluetooth {

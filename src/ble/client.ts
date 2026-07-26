@@ -1,4 +1,6 @@
-import { createBluetooth } from "node-ble";
+import { createBluetooth, type Adapter } from "node-ble";
+import { ensureBluetoothAdapterUp } from "./adapter.ts";
+import { syncSystemClockFromGps } from "./clock.ts";
 import {
   BleTelemetryDecoder,
   FrameReassembler,
@@ -34,9 +36,14 @@ const RECONNECT_DELAY_MS = 5_000;
 const SILENCE_TIMEOUT_MS = 30_000;
 const UNAUTHORISED_HINT_AFTER_MS = 20_000;
 
+// Every Energica hub advertises under this name, so an unconfigured install can
+// find its own bike rather than needing a hard-coded address.
+const HUB_NAME_PATTERN = /energica/i;
+const DISCOVERY_TIMEOUT_MS = 40_000;
+
 export interface BleClientOptions {
-  /** Address of the bike's hub, e.g. "F8:8A:5E:09:D3:B4". */
-  macAddress: string;
+  /** Hub address, e.g. "F8:8A:5E:09:D3:B4". Empty ⇒ discover by advertised name. */
+  macAddress?: string;
   onValues: (values: DecodedValue[]) => void;
 }
 
@@ -46,11 +53,34 @@ export interface BleClient {
 
 const delay = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+async function discoverHubAddress(adapter: Adapter): Promise<string> {
+  const deadline = Date.now() + DISCOVERY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    for (const address of await adapter.devices()) {
+      try {
+        const name = await (await adapter.getDevice(address)).getName();
+        if (HUB_NAME_PATTERN.test(name)) {
+          console.log(`ble: discovered hub "${name}" at ${address}`);
+          return address;
+        }
+      } catch (error) {
+        // Routine during a scan: the device dropped out of range, or advertises
+        // no name at all. Logged anyway so a hub we *should* have matched but
+        // couldn't read is visible rather than silently skipped.
+        console.log(`ble: skipping ${address} while scanning: ${(error as Error).message}`);
+      }
+    }
+    await delay(1_000);
+  }
+  throw new Error("no Energica hub found while scanning — is the bike awake and in range?");
+}
+
 export function startBleClient(options: BleClientOptions): BleClient {
   let stopped = false;
   let disconnectCurrent: (() => Promise<void>) | null = null;
 
   async function runSession(): Promise<void> {
+    await ensureBluetoothAdapterUp();
     const { bluetooth, destroy } = createBluetooth();
     let device: Awaited<ReturnType<Awaited<ReturnType<typeof bluetooth.defaultAdapter>>["waitDevice"]>> | null = null;
     let requestTimer: ReturnType<typeof setInterval> | undefined;
@@ -61,7 +91,8 @@ export function startBleClient(options: BleClientOptions): BleClient {
         await adapter.startDiscovery();
       }
 
-      device = await adapter.waitDevice(options.macAddress);
+      const hubAddress = options.macAddress || (await discoverHubAddress(adapter));
+      device = await adapter.waitDevice(hubAddress);
       await device.connect();
 
       const ourAddress = await adapter.getAddress();
@@ -69,7 +100,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
       const service = await gattServer.getPrimaryService(SERVICE_UUID);
       const notifyCharacteristic = await service.getCharacteristic(NOTIFY_CHARACTERISTIC_UUID);
       const writeCharacteristic = await service.getCharacteristic(WRITE_CHARACTERISTIC_UUID);
-      console.log(`ble: connected to ${options.macAddress}, our address ${ourAddress}`);
+      console.log(`ble: connected to ${hubAddress}, our address ${ourAddress}`);
 
       const reassembler = new FrameReassembler();
       const decoder = new BleTelemetryDecoder();
@@ -103,6 +134,13 @@ export function startBleClient(options: BleClientOptions): BleClient {
           if (!isSeedFrame(frame)) {
             const values = decoder.decode(frame);
             if (values.length > 0) {
+              // Measure the Pi's clock error *before* handing the fix to the
+              // clock sync, or a successful step would read back as zero drift.
+              const satelliteTime = values.find(value => value.key === "gps_epoch_s");
+              if (satelliteTime) {
+                values.push({ key: "gps_time_offset_s", value: satelliteTime.value - Date.now() / 1000 });
+                void syncSystemClockFromGps(satelliteTime.value);
+              }
               options.onValues(values);
             }
             continue;
@@ -155,8 +193,8 @@ export function startBleClient(options: BleClientOptions): BleClient {
         clearInterval(requestTimer);
         try {
           await notifyCharacteristic.stopNotifications();
-        } catch {
-          // already gone
+        } catch (error) {
+          console.log("ble: stopNotifications failed (link already gone):", (error as Error).message);
         }
       };
 
@@ -172,8 +210,8 @@ export function startBleClient(options: BleClientOptions): BleClient {
       disconnectCurrent = null;
       try {
         await device?.disconnect();
-      } catch {
-        // ignore
+      } catch (error) {
+        console.log("ble: disconnect failed (already dropped):", (error as Error).message);
       }
       destroy();
     }

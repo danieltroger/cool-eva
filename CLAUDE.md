@@ -9,6 +9,7 @@ Pi-based telemetry for a watercooled Energica Eva Ribelle: MAX31865 coolant prob
 - **Descriptive names.** Use full, meaningful variable and function names. Avoid cryptic one- or two-letter names (`d`, `s`, `cfg`, `cl`, `kw`, …) — spell it out (`data`, `signal`, `tileConfig`, `chargeText`, `kilowatts`). Tiny throwaway math helpers/indices are the only exception, and only when the meaning is obvious.
 - **No synchronous blocking calls.** Never use `execSync` / `readFileSync` / `writeFileSync` / any `*Sync` or other blocking API in the app — they stall the event loop, which also serves the WebSocket and the CAN RX handler. Use async/promises; top-level `await` is available (ESM, Node 24). **Only exception:** `better-sqlite3`, which is intentionally synchronous.
 - **Braces for control flow.** Always wrap `if` / `else` / `for` / `while` bodies in braces, even one-liners. The only exception is a bare `continue`, `return`, or `break`, which may stay brace-less on the same line.
+- **Never swallow errors.** No empty `catch {}`, and no `catch` whose body is only a comment — that hides failures we may well care about later, on a bike we can't attach a debugger to. If a failure is genuinely expected and recoverable, log it (`console.warn`, or `console.log` when it's routine) with enough context to identify which call failed, then carry on. Catching to keep the process alive is fine; catching to stay quiet is not.
 - Run `npm run typecheck` before committing.
 
 ## Runtime notes
