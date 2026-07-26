@@ -379,6 +379,7 @@
             if (message.type === "patch") Object.assign(store.signals, message.signals);
             else store.signals = message.signals || {}; // full snapshot (connect + heartbeat)
             store.ts = message.ts || Date.now();
+            detectHighBeamGesture(store.signals);
             render(store);
           } catch (error) {
             console.error(error);
@@ -400,14 +401,45 @@
         }
       }, 3000);
 
+      // View mode (curated ⇄ all) can be switched two ways: the header button, or
+      // flashing the high beam 3× quickly — both go through toggleViewMode().
       const viewToggle = document.getElementById("viewToggle");
       viewToggle.classList.toggle("on", viewMode === "all");
-      viewToggle.addEventListener("click", () => {
-        viewMode = viewMode === "all" ? "curated" : "all";
+
+      function setViewMode(mode) {
+        viewMode = mode;
         localStorage.setItem("coolEvaView", viewMode);
         viewToggle.classList.toggle("on", viewMode === "all");
         render(store);
-      });
+      }
+      function toggleViewMode() {
+        setViewMode(viewMode === "all" ? "curated" : "all");
+      }
+      viewToggle.addEventListener("click", toggleViewMode);
+
+      // High-beam flash gesture: 3 rising edges (off→on) of high_beam within
+      // FLASH_WINDOW_MS toggles the view, same as tapping "all". high_beam
+      // (0x102 b0 bit6) already streams in over the WebSocket; each flash-to-pass
+      // press shows up as one rising edge (deadband 0 ⇒ every toggle is pushed).
+      const FLASH_TOGGLE_COUNT = 3;
+      const FLASH_WINDOW_MS = 2000;
+      let prevHighBeam = null;
+      let flashEdges = [];
+      function detectHighBeamGesture(signals) {
+        const signal = signals.high_beam;
+        const value = signal ? signal.value : null;
+        if (value == null) return;
+        if (prevHighBeam === 0 && value === 1) {
+          const now = Date.now();
+          flashEdges.push(now);
+          flashEdges = flashEdges.filter(edgeTime => now - edgeTime <= FLASH_WINDOW_MS);
+          if (flashEdges.length >= FLASH_TOGGLE_COUNT) {
+            flashEdges = [];
+            toggleViewMode();
+          }
+        }
+        prevHighBeam = value;
+      }
 
       connect();
     </script>
