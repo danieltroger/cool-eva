@@ -286,7 +286,7 @@
         // off the pack (0x200 → pack_kw, positive while charging), live for both AC and DC.
         if (isCharging) {
           const onboardChargerLive = ["mains_v", "dc_v", "dc_a", "mains_a"].some(
-            key => signals[key] && serverTime - signals[key].ts < CHARGER_ACTIVE_MS,
+            key => signals[key] && serverTime - signals[key].ts < CHARGER_ACTIVE_MS
           );
           const packKilowatts =
             signals.pack_kw && serverTime - signals.pack_kw.ts < STALE_MS ? signals.pack_kw.value : null;
