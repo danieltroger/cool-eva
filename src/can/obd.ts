@@ -1,18 +1,23 @@
 import type { RawChannel } from "socketcan";
+import type { DecodedValue } from "./decode.ts";
 import { record } from "./signals.ts";
 
 // OBD-II Mode-01 polling over CAN (see obd-garage/CAN_MAP.md §OBD-II queries).
 // Functional request to 0x7DF, single-frame responses arrive on 0x7E8..0x7EF.
-// All four PIDs here return 1–2 data bytes, so no ISO-TP multiframe is needed.
+// Every PID here returns 1–2 data bytes, so no ISO-TP multiframe is needed.
+// A/B follow the OBD-II convention: A = first data byte, B = second.
 
 const OBD_REQ_ID = 0x7df;
 const OBD_RESP_LO = 0x7e0;
 const OBD_RESP_HI = 0x7ef;
 
+// Most PIDs carry exactly one signal, recorded under `key`. A PID that packs
+// several signals into its bytes (0x01 = MIL lamp + stored-DTC count) instead
+// returns the (key, value) pairs itself and leaves `key` off.
 interface PidDef {
   pid: number;
-  key: string;
-  decode: (a: number, b: number) => number;
+  key?: string;
+  decode: (a: number, b: number) => number | DecodedValue[];
 }
 
 const PIDS: PidDef[] = [
@@ -25,7 +30,28 @@ const PIDS: PidDef[] = [
   { pid: 0x5b, key: "soh_pid", decode: a => (a * 100) / 255 },
   { pid: 0x04, key: "motor_load_pct", decode: a => (a * 100) / 255 },
   { pid: 0x31, key: "dist_since_clear_km", decode: (a, b) => 256 * a + b },
+
+  // Diagnostics / counters — slow-moving, so log-on-change makes them nearly free.
+  // 0x01 monitor status: A bit7 = MIL lamp, low 7 bits = stored-DTC count.
+  {
+    pid: 0x01,
+    decode: a => [
+      { key: "mil_on", value: a & 0x80 ? 1 : 0 },
+      { key: "dtc_count", value: a & 0x7f },
+    ],
+  },
+  { pid: 0x4e, key: "time_since_clear_min", decode: (a, b) => 256 * a + b }, // monotonic ⇒ hour meter
+  { pid: 0x21, key: "dist_with_mil_km", decode: (a, b) => 256 * a + b },
+  { pid: 0x4d, key: "time_with_mil_min", decode: (a, b) => 256 * a + b },
+  { pid: 0x30, key: "warmups_since_clear", decode: a => a },
 ];
+
+// Normalises the two decode shapes into one list of (key, value) pairs.
+function decodedValues(def: PidDef, a: number, b: number): DecodedValue[] {
+  const decoded = def.decode(a, b);
+  if (typeof decoded !== "number") return decoded;
+  return def.key ? [{ key: def.key, value: decoded }] : [];
+}
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
 
@@ -79,7 +105,9 @@ async function pollOnce(): Promise<void> {
     if (!resp) continue;
     const a = resp[3] ?? 0;
     const b = resp[4] ?? 0;
-    record(def.key, def.decode(a, b));
+    for (const { key, value } of decodedValues(def, a, b)) {
+      record(key, value);
+    }
   }
 }
 
