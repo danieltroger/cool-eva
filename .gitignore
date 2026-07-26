@@ -142,3 +142,11 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Ride-log encryption. The private key is the ONLY thing that can read the
+# sealed logs — it must never leave the laptop, and never reach the repo or the
+# Pi. The public key is safe to commit and safe on a stolen bike.
+*.private.pem
+ride-log-key.private.pem
+ride-logs/
+*.celog

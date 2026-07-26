@@ -12,6 +12,7 @@ import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
+import { closeEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
 import type { RawChannel } from "socketcan";
 
@@ -30,15 +31,26 @@ const CAN_IFACE = "can0";
 //   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (GPS etc.)
 //   BLE_MAC=…     → pin the hub's address (default: discover it by name)
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
+//   RIDE_LOG_PUBKEY=… → X25519 public key enabling the write-only encrypted log
+//   RIDE_LOG_DIR=…    → where the sealed .celog segments go
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
 const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
 const BLE_MAC = process.env.BLE_MAC ?? "";
+const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
+const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 
 // --- DB + signal registry ---
 initDb(join(ROOT, "temperatures.db"));
 defineSignals(SIGNALS);
+
+// --- Encrypted ride log (write-only; needs only the laptop's public key) ---
+try {
+  await initEncryptedLog({ publicKeyPath: RIDE_LOG_PUBKEY, directory: RIDE_LOG_DIR });
+} catch (err) {
+  console.error("ride-log: init failed — continuing without encrypted logging:", err);
+}
 
 // --- Coolant probes (MAX31865) ---
 try {
@@ -143,12 +155,15 @@ server.listen(PORT, () => {
 
 // --- Graceful shutdown ---
 let shuttingDown = false;
-function shutdown(): void {
+async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log("\nShutting down…");
   stopObd?.();
   void bleClient?.stop();
+  // Awaited, not fire-and-forget: sealing the last segment is async, and
+  // process.exit() below would otherwise kill it and lose the final buffer.
+  await closeEncryptedLog();
   try {
     channel?.stop();
   } catch (err) {
@@ -160,5 +175,5 @@ function shutdown(): void {
   process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

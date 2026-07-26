@@ -64,6 +64,28 @@ docker compose up -d     # Grafana at http://localhost:3000, reads temperatures.
 
 Dashboard provisioned from `grafana/dashboards/cooling.json` (battery temp vs coolant, ΔT across the pack, charge, cells, drive, …).
 
+### Encrypted ride log
+
+A stolen bike is a stolen SD card, and the log holds every route you've ridden — including the one that ends at your front door — plus the ID of the key fob that starts it. So the Pi can be given a **public key only**: it seals every reading it writes and cannot read any of it back.
+
+Set it up once, on the laptop:
+
+```bash
+node --experimental-strip-types scripts/generate-log-key.ts   # writes both keys
+# back the PRIVATE key up (password manager) — it is the only thing that can ever read the logs
+scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/thermometer/
+```
+
+Restart the service; it logs `ride-log: encrypting to …` once it finds the key. Sealed segments land in `ride-logs/*.celog`. To read them back:
+
+```bash
+node --experimental-strip-types scripts/decrypt-log.ts ride-logs/ --out rides.db
+```
+
+That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
+
+Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
+
 ## Notes
 
 - The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes.

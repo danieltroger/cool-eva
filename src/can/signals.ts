@@ -1,4 +1,5 @@
 import { recordReading, type SignalSource } from "../db.ts";
+import { appendReading } from "../storage/encrypted-log.ts";
 
 // The log-on-change core (see obd-garage/INTEGRATION_PLAN.md §Logging model).
 //
@@ -75,6 +76,9 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
   if (prev === undefined || Math.abs(value - prev) > deadband) {
     lastLogged.set(key, value);
     recordReading(ts, key, value, unit, group, def?.source ?? "stream");
+    // Same samples, sealed with the laptop's public key. No-op until a key is
+    // configured. See src/storage/encrypted-log.ts.
+    appendReading(ts, key, value);
     notifyChange(key, { value, unit, group, ts });
   }
 }
