@@ -2,8 +2,7 @@ import { createServer } from "http";
 import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { handleDbEndpoint } from "./db-endpoint.ts";
-import { initDb, closeDb } from "./db.ts";
+import { handleDownloadEndpoint } from "./http/download.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -41,15 +40,25 @@ const BLE_MAC = process.env.BLE_MAC ?? "";
 const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
 const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 
-// --- DB + signal registry ---
-initDb(join(ROOT, "temperatures.db"));
+// --- Signal registry ---
 defineSignals(SIGNALS);
 
-// --- Encrypted ride log (write-only; needs only the laptop's public key) ---
+// --- Storage: the encrypted ride log is the ONLY persistence ---
+// There is no plaintext database any more: a stolen SD card must not give up
+// route history or the key-fob ID. If no public key is present nothing is
+// persisted at all, so say so loudly rather than silently logging into a void.
+let rideLogEnabled = false;
 try {
-  await initEncryptedLog({ publicKeyPath: RIDE_LOG_PUBKEY, directory: RIDE_LOG_DIR });
+  rideLogEnabled = await initEncryptedLog({ publicKeyPath: RIDE_LOG_PUBKEY, directory: RIDE_LOG_DIR });
 } catch (err) {
-  console.error("ride-log: init failed — continuing without encrypted logging:", err);
+  console.error("ride-log: init failed:", err);
+}
+if (!rideLogEnabled) {
+  console.warn("=".repeat(72));
+  console.warn("ride-log: NO PUBLIC KEY — nothing is being persisted. The live dashboard");
+  console.warn(`still works, but every reading is discarded. Put the key at ${RIDE_LOG_PUBKEY}`);
+  console.warn("(generate it on the laptop: node scripts/generate-log-key.ts) and restart.");
+  console.warn("=".repeat(72));
 }
 
 // --- Coolant probes (MAX31865) ---
@@ -136,11 +145,10 @@ if (BLE_ENABLED) {
 
 // --- HTTP + WebSocket server ---
 const indexHtml = await readFile(join(ROOT, "public", "index.html"), "utf-8");
-const dbPath = join(ROOT, "temperatures.db");
 
 const server = createServer(async (req, res) => {
-  if (req.url === "/db") {
-    await handleDbEndpoint(req, res, dbPath);
+  if (req.url === "/dl") {
+    await handleDownloadEndpoint(res, RIDE_LOG_DIR);
     return;
   }
   res.writeHead(200, { "Content-Type": "text/html" });
@@ -171,7 +179,6 @@ async function shutdown(): Promise<void> {
   }
   ws.stop();
   server.close();
-  closeDb();
   process.exit(0);
 }
 

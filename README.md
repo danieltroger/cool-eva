@@ -1,6 +1,6 @@
 # Cool Eva
 
-Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside the bike logs the temperatures of a custom watercooling loop on the battery pack, **plus** the bike's own battery / charge / cell / drive telemetry read straight off the CAN bus — all into one SQLite database, surfaced as a live phone dashboard and a Grafana dashboard for post-ride analysis.
+Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside the bike logs the temperatures of a custom watercooling loop on the battery pack, **plus** the bike's own battery / charge / cell / drive telemetry read straight off the CAN bus — all into an encrypted, write-only ride log, surfaced as a live phone dashboard and (after decryption on the laptop) a Grafana dashboard for post-ride analysis.
 
 ## Hardware & setup
 
@@ -11,7 +11,7 @@ Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside
 
 ## What it logs
 
-Everything is logged **on change** (so steady values don't spam the DB) into a small SQLite database.
+Everything is logged **on change** (so steady values don't spam the log) into the encrypted ride log — see [Encrypted ride log](#encrypted-ride-log).
 
 | Group | Signals | Source |
 | --- | --- | --- |
@@ -29,15 +29,18 @@ Everything is logged **on change** (so steady values don't spam the DB) into a s
 
 ```
 MAX31865 probes ─┐
-                 ├─► signals (log-on-change) ─► SQLite (signal/reading EAV) ─► Grafana
+                 ├─► signals (log-on-change) ─► sealed ride log ─► /dl ─► laptop ─► SQLite ─► Grafana
 Korlan can0 ─────┤                            └─► live state ─► WebSocket ─► phone dashboard
-  · broadcast decode (0x200, 0x203, …)
-  · OBD-II poll @1 Hz (0D, 05, 42, …)
+  · broadcast decode (0x200, 0x203, …)         (the bike holds only a public key:
+  · OBD-II poll @1 Hz (0D, 05, 42, …)            it can seal history, never read it)
+Energica BT hub ─┘
+  · GPS, torque/power, odometer
 ```
 
 - `src/can/` — `socket` (can0 bring-up + raw channel), `decode` (broadcast frame decoders), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
 - `src/sensors/max31865.ts` — the coolant probes.
-- `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`) and batched writes.
+- `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
+- `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments.
 - `src/ws.ts` + `public/index.html` — the live phone riding dashboard.
 - `src/index.ts` — wires it all together.
 
@@ -54,12 +57,13 @@ git pull && npm ci && sudo systemctl restart thermometer
 sudo journalctl -u thermometer -f    # follow logs
 ```
 
-The full SQLite DB can be downloaded from `http://<pi>/db`.
+The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, ~10x smaller than the old SQLite download, and safe to fetch over any network because it's ciphertext. Decrypt it on the laptop (see below) to get a `.db` for Grafana.
 
 ### Grafana
 
 ```bash
 docker compose up -d     # Grafana at http://localhost:3000, reads temperatures.db
+                         # (build that file from a /dl download: see "Encrypted ride log")
 ```
 
 Dashboard provisioned from `grafana/dashboards/cooling.json` (battery temp vs coolant, ΔT across the pack, charge, cells, drive, …).
@@ -90,3 +94,4 @@ Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256
 
 - The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
+- Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.
