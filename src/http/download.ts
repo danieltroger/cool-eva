@@ -1,6 +1,7 @@
 import { createReadStream } from "fs";
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
+import { pipeline } from "stream/promises";
 import type { ServerResponse } from "http";
 
 // GET /dl — hand over the sealed ride log.
@@ -40,8 +41,19 @@ export async function handleDownloadEndpoint(res: ServerResponse, directory: str
   // Sum the sizes up front so the phone shows a real progress bar. Sizes can
   // only grow between here and the read (segments are append-only), and we stop
   // each file at the byte count promised, so the response can't overrun.
-  const sizes = await Promise.all(files.map(async file => (await stat(file)).size));
-  const totalBytes = sizes.reduce((sum, size) => sum + size, 0);
+  //
+  // Zero-byte files are dropped: createReadStream({end: -1}) throws
+  // ERR_OUT_OF_RANGE, and by then the headers are already sent — an appendFile
+  // that failed right after creating the file (ENOSPC) leaves exactly that.
+  const sized = (await Promise.all(files.map(async file => ({ file, size: (await stat(file)).size })))).filter(
+    entry => entry.size > 0
+  );
+  if (sized.length === 0) {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("no ride logs yet\n");
+    return;
+  }
+  const totalBytes = sized.reduce((sum, entry) => sum + entry.size, 0);
   const filename = `cool-eva-${new Date().toISOString().slice(0, 10)}.celog`;
 
   res.writeHead(200, {
@@ -50,26 +62,21 @@ export async function handleDownloadEndpoint(res: ServerResponse, directory: str
     "Content-Disposition": `attachment; filename="${filename}"`,
   });
 
-  for (const [index, file] of files.entries()) {
+  for (const { file, size } of sized) {
     try {
-      await streamInto(res, file, sizes[index]);
+      // `end` is 0-based inclusive — pin to the size already announced so a
+      // segment appended mid-download can't push us past Content-Length.
+      // pipeline() (not pipe) so an aborted download destroys the read stream
+      // and rejects: bare pipe() leaves the source paused with no consumer, the
+      // promise never settles and the fd leaks. On garage wifi, fetching the
+      // whole history with no resume, aborts are the common case.
+      await pipeline(createReadStream(file, { start: 0, end: size - 1 }), res, { end: false });
     } catch (error) {
-      console.error(`dl: streaming ${file} failed:`, (error as Error).message);
+      console.warn(`dl: download of ${file} ended early:`, (error as Error).message);
       res.destroy();
       return;
     }
   }
   res.end();
-  console.log(`dl: served ${files.length} segment file(s), ${totalBytes} bytes`);
-}
-
-function streamInto(res: ServerResponse, path: string, byteCount: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // `end: 0-based inclusive` — pin to the size we already announced so a
-    // segment appended mid-download can't push us past Content-Length.
-    const source = createReadStream(path, { start: 0, end: byteCount - 1 });
-    source.on("error", reject);
-    source.on("end", resolve);
-    source.pipe(res, { end: false });
-  });
+  console.log(`dl: served ${sized.length} segment file(s), ${totalBytes} bytes`);
 }

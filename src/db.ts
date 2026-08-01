@@ -30,7 +30,6 @@ let flushTimer: ReturnType<typeof setInterval> | undefined;
 
 const signalIdCache = new Map<string, number>();
 let queue: QueuedRow[] = [];
-let dbStreamPins = 0;
 
 export function initDb(path: string, flushMs = 200): void {
   db = new Database(path);

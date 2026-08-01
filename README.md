@@ -83,6 +83,8 @@ scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/thermometer/
 Restart the service; it logs `ride-log: encrypting to …` once it finds the key. Sealed segments land in `ride-logs/*.celog`. To read them back:
 
 ```bash
+# a /dl download is a single file; ride-logs/ off the Pi is a directory — both work
+node --experimental-strip-types scripts/decrypt-log.ts cool-eva-2026-08-01.celog
 node --experimental-strip-types scripts/decrypt-log.ts ride-logs/ --out rides.db
 ```
 
@@ -90,7 +92,17 @@ That rebuilds an ordinary SQLite file, so Grafana and the dashboards work agains
 
 > ⚠️ The Grafana datasource points at `/repo/temperatures.db` (`grafana/provisioning/datasources/sqlite.yml`), so either decrypt with `--out temperatures.db` **in a directory that doesn't already hold your pre-encryption archive** — the tool would append into it — or repoint the datasource at `rides.db`. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
 
-Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
+Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. Segments are independently sealed, so damage is contained: the reader resyncs on the next segment and reports what it couldn't read rather than stopping. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
+
+#### What this does and doesn't hide
+
+Holds up: the readings themselves — routes, coordinates, the key-fob ID, everything in the tables above. Whoever takes the SD card, or intercepts a `/dl` download, gets ciphertext.
+
+Does not:
+
+- **Timing metadata leaks.** Filenames are `rides-YYYY-MM-DD.celog`, and sizes scale with how much was logged. That reveals which days the bike moved and roughly for how long, without revealing where. Since the motivating worry is someone learning your habits, that's worth knowing.
+- **No cross-segment integrity.** Each segment is authenticated on its own, so tampering within one is detected — but segments can be deleted or reordered without the reader noticing. It protects confidentiality, not completeness.
+- **`/dl` is unauthenticated** on port 80, like the rest of the server. The payload is sealed, so the exposure is the metadata above rather than the data — but it's a wider audience than "whoever holds the SD card".
 
 ## Notes
 

@@ -78,7 +78,7 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
     // The encrypted ride log is the only persistence — there is no plaintext DB
     // on the bike. No-op until a public key is configured, which the startup
     // banner shouts about. See src/storage/encrypted-log.ts.
-    appendReading(ts, key, value);
+    appendReading(ts, key, value, unit, group, def?.source ?? "stream");
     notifyChange(key, { value, unit, group, ts });
   }
 }

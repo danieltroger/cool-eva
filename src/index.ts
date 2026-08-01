@@ -11,7 +11,7 @@ import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
-import { closeEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
+import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
 import type { RawChannel } from "socketcan";
 
@@ -148,6 +148,9 @@ const indexHtml = await readFile(join(ROOT, "public", "index.html"), "utf-8");
 
 const server = createServer(async (req, res) => {
   if (req.url === "/dl") {
+    // Seal first: you park, pull out the phone and hit /dl, and the tail of the
+    // ride you actually want is still sitting in the buffer unsealed.
+    await flushEncryptedLog();
     await handleDownloadEndpoint(res, RIDE_LOG_DIR);
     return;
   }
