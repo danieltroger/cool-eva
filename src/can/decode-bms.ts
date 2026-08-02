@@ -110,16 +110,18 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
         // Remaining energy, coarse. The memory map states mem 2065 is "1KWh
         // resolution, unsigned" (and mem 2150, in 0x661, "1Wh resolution, unsigned")
         // — whole kWh is the documented unit, and the reason the 24-bit high-res
-        // field exists at all. Left as a raw count rather than labelled kWh because
-        // the 2026-08-02 capture read 964 here at 43 % SOC on a 21.5 kWh pack, which
-        // whole kWh cannot explain; 10 Wh units would (9.64 kWh). The cross-check
-        // that settles it: once 0x661 is live, bms_remaining_energy_wh / 1000 must
-        // track this. If it does, rescale and rename; if it doesn't, one of the two
-        // offsets is wrong.
+        // field exists at all. Left unscaled anyway, because the bus contradicts the
+        // manual: the 2026-08-02 capture read 964 here while 0x10A in the same capture
+        // read 6652 Wh residual, at 43 % SOC. That implies ~6.9 Wh per count — neither
+        // the documented 1 kWh (964 kWh is impossible) nor any round number, so there
+        // is no scale worth committing to. Resolver: once 0x661 is live, mem 2150 is
+        // 1 Wh resolution and confirmed by the manual, so it settles this outright.
         { key: "bms_remaining_energy_raw", value: u16be(data[0], data[1]) },
         { key: "cell_deviation_mv", value: u16be(data[2], data[3]) },
-        // "Amp_H_sum". Read 25.3 Ah at 43 % SOC, where remaining capacity should be
-        // nearer 32 Ah, so this may be a coulomb counter rather than what's left.
+        // "Amp_H_sum". Read 25.3 Ah at 43 % SOC, which implies ~58.8 Ah installed —
+        // a good match for the 58 Ah in modified_eva_ribelle_2021.bms (58 × 0.43 =
+        // 24.9). So the value itself looks right; what it *means* is still unconfirmed
+        // (remaining capacity vs a coulomb counter).
         { key: "remaining_ah", value: u16be(data[4], data[5]) / 10 },
         { key: "cells_connected", value: u16be(data[6], data[7]) },
       ];

@@ -59,8 +59,13 @@ export const SIGNALS: SignalDef[] = [
   { key: "allowed_discharge_a", unit: "A", group: "battery", source: "stream", deadband: 1 },
   { key: "allowed_regen_a", unit: "A", group: "battery", source: "stream", deadband: 1 },
 
-  // 0x203 — cell balance. cell_lowest_v_idx = weak cell (mem 2025), cell_highest_v_idx = strong
-  // cell (mem 2024); these two were swapped before the BMS config was decrypted.
+  // 0x203 — cell balance. cell_lowest_v_idx is mem 2025 and cell_highest_v_idx mem 2024;
+  // the two were swapped before the BMS config was decrypted, hence the rename — rows
+  // under the old min_cell_idx/max_cell_idx keys mean the opposite of their names.
+  //
+  // They name whichever cell sits at each extreme *at that instant*, which is not the
+  // same as naming a weak cell: at the 9 mV pack spread measured 2026-08-02 the ranking
+  // is noise, and the low index wandered between two cells while nothing else moved.
   { key: "cell_min_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "cell_avg_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "cell_max_mv", unit: "mV", group: "cells", source: "stream" },
