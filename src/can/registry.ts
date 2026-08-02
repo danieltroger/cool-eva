@@ -250,6 +250,60 @@ export const SIGNALS: SignalDef[] = [
   { key: "km_per_kwh", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05 },
   { key: "kwh_per_100km", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05 },
 
+  // --- Frames named by the rider-supplied .xdbc, replayed against live traffic ------
+  // 0x020 / 0x022 — inverter and motor temperatures (10 Hz), both at 0.1 °C.
+  // The IGBT and gate readings carried ~0.6 °C peak-to-peak on a stone-cold parked
+  // bike, so a 0.5 °C deadband is about the finest that doesn't just log ADC wobble at
+  // 10 Hz across four signals — and the thermal excursion these exist to catch is tens
+  // of degrees. Motor temperature was rock steady over the same capture and has far
+  // more mass behind it, so it can afford 0.2 °C.
+  { key: "inverter_igbt_min_c", unit: "°C", group: "powertrain", source: "stream", deadband: 0.5 },
+  { key: "inverter_igbt_c", unit: "°C", group: "powertrain", source: "stream", deadband: 0.5 },
+  { key: "inverter_igbt_max_c", unit: "°C", group: "powertrain", source: "stream", deadband: 0.5 },
+  { key: "inverter_gate_c", unit: "°C", group: "powertrain", source: "stream", deadband: 0.5 },
+  { key: "motor_temp_c", unit: "°C", group: "powertrain", source: "stream", deadband: 0.2 },
+
+  // 0x104 — odometer / speed / rpm at 100 Hz. Deliberately NOT merged into the BLE
+  // hub's odometer_km or the OBD poller's speed_kmh / motor_rpm (see decode.ts): the
+  // point is to compare them over a ride, and one key with two writers just flaps.
+  // The odometer only moves every 100 m, so it logs on change; speed and rpm would
+  // otherwise write at 100 Hz, so 0.5 km/h (still twice as fine as the OBD PID's whole
+  // km/h) and 50 rpm out of a ~11 000 rpm range keep them useful but affordable.
+  { key: "odometer_can_km", unit: "km", group: "drive", source: "stream" },
+  { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5 },
+  { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50 },
+  { key: "reverse", unit: "", group: "drive", source: "stream" },
+
+  // 0x109 b2-7 — the inverter's current limits, alongside the throttle above. Same 1 A
+  // deadband as the BMS's allowed_* pair and for the same reason: they move smoothly
+  // with temperature and SOC, so 1 A keeps them off the hot path without hiding a
+  // derate. current_other_a is unidentified and logged so a ride can name it.
+  { key: "current_max_out_a", unit: "A", group: "drive", source: "stream", deadband: 1 },
+  { key: "current_max_regen_a", unit: "A", group: "drive", source: "stream", deadband: 1 },
+  { key: "current_other_a", unit: "A", group: "drive", source: "stream", deadband: 1 },
+
+  // 0x102 b1-2 — the vehicle state bits. Booleans, so log-on-change is exactly one row
+  // per transition and no deadband is wanted.
+  { key: "energized", unit: "", group: "controls", source: "stream" }, // b1 bit1
+  { key: "go_request", unit: "", group: "controls", source: "stream" }, // b1 bit2
+  { key: "go", unit: "", group: "controls", source: "stream" }, // b1 bit3
+  { key: "key_on", unit: "", group: "controls", source: "stream" }, // b1 bit4
+  { key: "stand_up", unit: "", group: "controls", source: "stream" }, // b1 bit5, sidestand retracted
+  { key: "ignition_button", unit: "", group: "controls", source: "stream" }, // b1 bit6, red button, right bar
+  { key: "throttle_on", unit: "", group: "controls", source: "stream" }, // b1 bit7
+  { key: "charging", unit: "", group: "charge", source: "stream" }, // b2 bit0
+  { key: "charge_port_unlocked", unit: "", group: "charge", source: "stream" }, // b2 bit1
+  { key: "moving", unit: "", group: "drive", source: "stream" }, // b2 bit7, .xdbc: speed > 1 km/h
+
+  // 0x102 b4-7 — accelerometers. The unit is deliberately BLANK, not "g": the .xdbc
+  // names the axes in g but gives no scale, so these are raw counts and must not be
+  // plotted as if they were g (see decode.ts). The deadband comes from measurement
+  // rather than a physical threshold we have no way to compute — a parked bike jitters
+  // ~5 counts, so 20 stays quiet at rest with margin. What 100 Hz costs while actually
+  // riding is unknown until there is a ride to count rows in; revisit it then.
+  { key: "accel_lateral_g", unit: "", group: "imu", source: "stream", deadband: 20 },
+  { key: "accel_frontal_g", unit: "", group: "imu", source: "stream", deadband: 20 },
+
   ...perLmuSignals(),
 ];
 
