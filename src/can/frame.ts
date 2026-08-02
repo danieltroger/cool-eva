@@ -16,10 +16,9 @@ export const i16be = (hi: number, lo: number): number => {
   return value > 32767 ? value - 65536 : value;
 };
 export const u16le = (lo: number, hi: number): number => (hi << 8) | lo;
-export const i16le = (lo: number, hi: number): number => {
-  const value = (hi << 8) | lo;
-  return value > 32767 ? value - 65536 : value;
-};
+// Same two's-complement conversion as i16be with the bytes the other way round, so
+// there is only one place to be wrong about the sign bit.
+export const i16le = (lo: number, hi: number): number => i16be(hi, lo);
 export const bit = (word: number, index: number): number => (word >>> index) & 1;
 
 // Reads a field that does not start or end on a byte boundary, in the bit numbering the

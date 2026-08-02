@@ -59,31 +59,40 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return [{ key: "mains_v", value: data[2] }];
     }
 
-    // 0x020 — inverter temperatures, four u16 LE ÷10 °C (10 Hz).
+    // 0x020 — inverter temperatures, four s16 LE ÷10 °C (10 Hz).
     // Captured 2026-08-02 parked: `10 01 10 01 10 01 10 01` → 27.2 °C on all four,
     // against OBD ambient 28 °C on a cold bike. The three IGBT fields moved together
     // (26.9…28.0 °C over 40 s) while the gate field held 27.2 °C throughout, which is
-    // what separates the fourth channel from the first three — but min/inst/max were
-    // never distinguishable from each other at rest, so their order needs load. 🟡
+    // what separates the fourth channel from the first three. A garage lap later the
+    // same day put load on them: the IGBT channel rose 27.5 → 38.1 °C while the gate
+    // rose 27.4 → 30.0 °C, so the two are decidedly different measurements and the
+    // IGBT one is the most responsive thermal signal on the bike. min/inst/max still
+    // never separated from each other, so their order among themselves is a guess. 🟡
     //
-    // The .xdbc calls all four unsigned, and at ~27 °C signed and unsigned read the
-    // same bytes, so the capture cannot tell them apart. A winter log showing ~6500 °C
-    // here is a below-zero reading wrapping: that means they are s16 like 0x022's
-    // motor temperature, and this is the line to change.
+    // The .xdbc calls all four unsigned; they are read signed anyway. Every real
+    // temperature from 0…3276.7 °C decodes identically either way, so signed cannot
+    // regress anything, and a below-zero reading is right instead of wrapping to
+    // ~6553 °C — which the 0.5 °C deadband would happily log all winter, wrecking the
+    // axis of any panel these share with the s16 motor temperature from 0x022.
     case 0x020: {
       if (data.length < 8) return [];
       return [
-        { key: "inverter_igbt_min_c", value: u16le(data[0], data[1]) / 10 },
-        { key: "inverter_igbt_c", value: u16le(data[2], data[3]) / 10 },
-        { key: "inverter_igbt_max_c", value: u16le(data[4], data[5]) / 10 },
-        { key: "inverter_gate_c", value: u16le(data[6], data[7]) / 10 },
+        { key: "inverter_igbt_min_c", value: i16le(data[0], data[1]) / 10 },
+        { key: "inverter_igbt_c", value: i16le(data[2], data[3]) / 10 },
+        { key: "inverter_igbt_max_c", value: i16le(data[4], data[5]) / 10 },
+        { key: "inverter_gate_c", value: i16le(data[6], data[7]) / 10 },
       ];
     }
 
     // 0x022 — motor temperature: b4-5 LE s16 ÷10 °C (10 Hz). Captured 2026-08-02:
     // `00 00 00 00 13 01 00 00` → 27.5 °C, against OBD PID 05 reading 27 °C in the
-    // same minute — two independent paths to one number, at ten times the PID's
-    // resolution. ✅
+    // same minute. ✅
+    //
+    // Those two numbers agreeing at rest made it look like PID 05 was this same sensor
+    // at coarser resolution. The garage lap that afternoon showed it is not: under load
+    // PID 05 rose 27 → 30 °C in step with 0x020's inverter gate channel, while this one
+    // moved 27.9 → 28.5 °C. They are separate sensors that happen to sit at ambient on
+    // a cold bike, which is why this gets its own key.
     //
     // The other six bytes read all-zero across the whole capture. The .xdbc splits
     // them into u16 pairs but assigns no meaning, so they stay undecoded rather than
@@ -106,11 +115,18 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // as separate signals means a ride can settle it; merging them would just make one
     // value flap between writers.
     //
-    // Speed and rpm are UNVERIFIED. Both read 0 for the whole capture (parked), so the
-    // field offsets and scales below are the .xdbc's word alone. The .xdbc's own C
-    // fragment for this frame reads speed as `data[4] | (data[5] << 7)` — a shift of 7,
-    // not 8 — which cannot be reconciled with a clean u13 at bit 32; the bit layout
-    // here is the .xdbc's normalised one. First ride at a known speed settles both.
+    // Speed and rpm read 0 for the whole parked capture, so the offsets below started
+    // as the .xdbc's word alone. A garage lap on 2026-08-02 (545k frames, full bus,
+    // OBD polling in the same file) settled them against ground truth: ✅
+    //
+    //   5F 00 32 00 → speed 95  → 9.5 km/h  (OBD PID 0D: 10)   rpm 400 (PID 0C: 411)
+    //   67 00 36 00 → speed 103 → 10.3 km/h (OBD PID 0D: 10)   rpm 432 (PID 0C: 427)
+    //
+    // Both track their PIDs to within ~1-2 % across the lap, which fixes speed as a u13
+    // at bit 32 and rpm as a u15 at bit 45. The reverse bit is real as well: b7 = 0x80
+    // on 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits
+    // 60-62. So the .xdbc's own C fragment (`data[4] | (data[5] << 7)` — a shift of 7,
+    // not 8) is the thing that doesn't reconcile, not the normalised layout used here.
     case 0x104: {
       if (data.length < 8) return [];
       return [
@@ -125,8 +141,11 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     //  • b0-1 ÷10 = throttle % (0 idle … 100). 🟡
     //  • b4-5 read 1200 parked → 120.0 A, exactly the `allowed_regen_a` the BMS
     //    publishes in 0x202 at the same moment. That agreement is what pins the ÷10
-    //    scale for all three fields. ✅ Signed negative because the .xdbc marks regen
-    //    as flowing the other way; compare its magnitude, not its sign.
+    //    scale for all three fields. ✅ The .xdbc marks regen as flowing the other way
+    //    and so gives it a negative scale; it is logged positive here to match
+    //    `allowed_regen_a`, the signal it was validated against — one physical
+    //    quantity under two keys with opposite signs plots as mirror images and makes
+    //    a difference-of-the-two check read 240 instead of 0.
     //  • b2-3 read 100 → 10.0 A while the BMS was allowing 386.7 A of discharge, so
     //    this is the inverter's currently permitted output rather than the pack
     //    ceiling. Only ever seen at rest, so unverified against ground truth. 🟡
@@ -140,7 +159,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       if (data.length >= 8) {
         values.push(
           { key: "current_max_out_a", value: u16le(data[2], data[3]) / 10 },
-          { key: "current_max_regen_a", value: u16le(data[4], data[5]) / -10 },
+          { key: "current_max_regen_a", value: u16le(data[4], data[5]) / 10 },
           { key: "current_other_a", value: u16le(data[6], data[7]) / 10 }
         );
       }
@@ -161,9 +180,18 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // Everything in b1 plus the three b2 state bits comes from the .xdbc and matched a
     // parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): key_on 1, energized / go /
     // go_request / ignition_button / throttle_on 0, stand_up 0 (it is on the sidestand),
-    // charging 0, moving 0, charge_port_unlocked 1 — the .xdbc notes that last one reads
-    // 1 whenever the bike is NOT charging. Self-consistent at one operating point; a
-    // key-off, a GO and a charging capture would each confirm a slice of it. 🟡
+    // charging 0, moving 0, charge_port_unlocked 1. The garage lap that afternoon then
+    // caught energized, go_request, go, stand_up, ignition_button, throttle_on and
+    // moving all toggling with the rider's actions, so those are confirmed against real
+    // transitions rather than one parked sample. ✅
+    //
+    // ⚠️ charge_port_unlocked is the exception and keeps the 🟡: the only capture of it
+    // is `charging` 0 / this bit 1, and the .xdbc says it reads 1 whenever the bike is
+    // NOT charging — which is also exactly what bit 0 inverted looks like. Nothing seen
+    // so far separates "port lock sensor" from "complement of `charging`", so do not
+    // treat it as an actuator state (e.g. whether the port is safe to open) until it
+    // has been watched across a plug-in. If it drops to 0 the instant `charging` goes
+    // to 1, it is the complement and the key should be renamed.
     //
     // b3 read a constant 0x44 and stays undecoded — the .xdbc only guesses at it.
     case 0x102: {
@@ -190,15 +218,16 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       ];
       // b4-5 / b6-7 LE s16 — lateral and frontal acceleration. THE SCALE IS UNVERIFIED:
       // the .xdbc gives the unit as "g" but no multiplier, and there is nothing on the
-      // bus to calibrate against, so these are the raw counts. Parked they read −108…
-      // −103 lateral and −40…−35 frontal, the right shape for a bike leaning on its
-      // sidestand, but that is a plausibility check and not a calibration — do not plot
-      // them as g until one is measured. Guarded separately so a short frame still
-      // yields the light and brake bits, which are the confirmed ones.
+      // bus to calibrate against, so these are the raw counts and the keys say `_raw`
+      // rather than `_g`. Parked they read −108…−103 lateral and −40…−35 frontal, the
+      // right shape for a bike leaning on its sidestand, but that is a plausibility
+      // check and not a calibration — do not plot them as g until one is measured.
+      // Guarded separately so a short frame still yields the light and brake bits,
+      // which are the confirmed ones.
       if (data.length >= 8) {
         values.push(
-          { key: "accel_lateral_g", value: i16le(data[4], data[5]) },
-          { key: "accel_frontal_g", value: i16le(data[6], data[7]) }
+          { key: "accel_lateral_raw", value: i16le(data[4], data[5]) },
+          { key: "accel_frontal_raw", value: i16le(data[6], data[7]) }
         );
       }
       return values;

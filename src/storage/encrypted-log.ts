@@ -36,6 +36,12 @@ const HKDF_INFO = Buffer.from("cool-eva ride log v1");
 // A seal can only fail for a reason that persists (a full SD card, mostly), and
 // re-queueing forever would trade a disk problem for the OOM killer. Roughly an
 // hour of the chattiest signals; past that we drop oldest-first and say so.
+//
+// "Roughly an hour" assumes every deadband is doing its job. The 100 Hz signals off
+// 0x102 and 0x104 could each fill this in minutes if theirs turned out too fine, and
+// dropping oldest-first drops across all signals — so a runaway there evicts the pack
+// temperatures rather than itself. Only reachable while seals are already failing,
+// which is the case this limit exists for; worth re-deriving if a deadband is loosened.
 const MAX_BUFFERED_READINGS = 200_000;
 
 export interface EncryptedLogOptions {
