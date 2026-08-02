@@ -8,7 +8,6 @@ import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
-import { recordDerivedSignals } from "./can/derived.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
@@ -98,11 +97,9 @@ if (CAN_ENABLED) {
         handleElockResponse(data);
         return;
       }
-      const decoded = decodeFrame(msg.id, data);
-      for (const { key, value } of decoded) {
+      for (const { key, value } of decodeFrame(msg.id, data)) {
         record(key, value);
       }
-      recordDerivedSignals(decoded); // after record(), so it reads this frame's values
     });
     channel.start();
     console.log("can: channel started, decoding broadcasts");

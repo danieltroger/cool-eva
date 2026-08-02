@@ -17,11 +17,11 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | --- | --- | --- |
 | **Coolant** (custom loop) | `coolant_in`, `coolant_out` (°C) | MAX31865 PT100 |
 | **Battery / BMS** | `batt_temp_lo`, `batt_temp_hi` (°C), `soc` (%), `soh` (%), `pack_v` (V), `pack_a` (A), `pack_kw` (kW), `allowed_discharge_a`, `allowed_regen_a` (A), `pack_resistance_mohm` (mΩ) | CAN `0x200`/`0x202`/`0x206` |
-| **Cells** | `cell_min_mv`, `cell_avg_mv`, `cell_max_mv`, `cell_spread_mv`, `cell_deviation_mv` (the BMS's own ΔV), `min_cell_idx` (weak cell), `max_cell_idx` (strong cell), `cells_connected`, `cell_voltage_sum_v` | CAN `0x203`/`0x205`/`0x207` |
+| **Cells** | `cell_min_mv`, `cell_avg_mv`, `cell_max_mv`, `cell_spread_mv`, `cell_deviation_mv` (the BMS's own ΔV), `cell_lowest_v_idx` (weak cell), `cell_highest_v_idx` (strong cell), `cells_connected`, `cell_voltage_sum_v` | CAN `0x203`/`0x205`/`0x207` |
 | **BMS state & faults** | `charge_state` (raw System State bitfield) + decoded `bms_state_*` (discharge / charge / balancing / trickle / idle / charge complete / maintenance), `bms_error_flags`, `bms_warning_flags` (raw words) + booleans for the ones worth acting on: cell over/under voltage, over temperature, leak detected, leak detection failed, contactor faults, low SOC, balancing required | CAN `0x201` |
 | **Isolation** | `iso_test_1`, `iso_test_2`, `iso_test_total` (10-bit ADC, 512 = ideal), `bms_io_state`, `lmu_comm_warnings` | CAN `0x207`/`0x206` |
 | **Charge** | `charge_state`, `dc_v`, `dc_a`, `mains_v`, `mains_a`, `charge_limit_a`, `charger_enabled`, `charger_max_dc_v`, `charger_max_dc_a` | CAN `0x201`/`0x305`/`0x306`/`0x10a`/`0x300` |
-| **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_kwh`, `remaining_ah` | CAN `0x025`/`0x10A`/`0x205` |
+| **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah` | CAN `0x025`/`0x10A`/`0x205` |
 | **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
 
@@ -29,10 +29,11 @@ Decoded, but only present once the pack's BMS is reflashed with the extended con
 
 | Group | Signals | Source |
 | --- | --- | --- |
-| **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — all **81** cells individually, multiplexed by module | CAN `0x662`–`0x664` |
-| **Pack temps** | `pack_temp_avg`, `board_temp_pcb1/2`, `board_temp_bat1/2` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx` | CAN `0x660` |
+| **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — all **81** cells individually, multiplexed by module at 20 Hz | CAN `0x662`–`0x664` |
+| **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells | CAN `0x664` |
+| **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx` | CAN `0x660` |
 | **Energy / hours** | `bms_remaining_energy_wh` (1 Wh resolution), `bms_uptime_min` (BMCU hour meter) | CAN `0x661` |
-| **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv`, plus derived `cell_cutoff_headroom_mv` (weakest cell's margin over the discharge cut-off) | CAN `0x665` |
+| **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv` — the thresholds the BMS is actually configured with, so nothing downstream has to hardcode them | CAN `0x665` |
 
 > VIN and BMS writes are still **not** reachable from the OBD port (on the standard pins, haven't tried the other pins yet). Per-cell voltages **are** — they just have to be enabled in the BMS's own configuration first; see `obd-garage/CAN_MAP.md`.
 
@@ -48,7 +49,7 @@ Energica BT hub ─┘
   · GPS, torque/power, odometer
 ```
 
-- `src/can/` — `socket` (can0 bring-up + raw channel), `decode` (broadcast frame decoders), `derived` (signals that combine two frames, so `decode` can stay pure), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
+- `src/can/` — `socket` (can0 bring-up + raw channel), `decode` (broadcast frame decoders), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
 - `src/sensors/max31865.ts` — the coolant probes.
 - `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
 - `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments.

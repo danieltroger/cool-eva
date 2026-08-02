@@ -228,8 +228,8 @@
           fmt: value => value.toFixed(0),
           color: cellSpreadColor,
           sub: signals =>
-            signals.min_cell_idx && signals.max_cell_idx
-              ? `low #${signals.min_cell_idx.value} · high #${signals.max_cell_idx.value}`
+            signals.cell_lowest_v_idx && signals.cell_highest_v_idx
+              ? `low #${signals.cell_lowest_v_idx.value} · high #${signals.cell_highest_v_idx.value}`
               : "",
         },
         // High beam (0x102 b0 bit6) — on/off

@@ -1,5 +1,12 @@
 import type { SignalDef } from "./signals.ts";
-import { LMU_COUNT, cellsInLmu, cellVoltageKey } from "./decode.ts";
+import {
+  LMU_COUNT,
+  LMUS_WITHOUT_BATTERY_TEMP,
+  cellsInLmu,
+  cellVoltageKey,
+  lmuTemperatureKey,
+  type LmuTemperatureSensor,
+} from "./decode-bms.ts";
 
 // Central registry of every signal we log — units/groups for the phone dashboard
 // and the `signal` table, plus optional per-signal deadbands to tame chatty
@@ -52,18 +59,20 @@ export const SIGNALS: SignalDef[] = [
   { key: "allowed_discharge_a", unit: "A", group: "battery", source: "stream", deadband: 1 },
   { key: "allowed_regen_a", unit: "A", group: "battery", source: "stream", deadband: 1 },
 
-  // 0x203 — cell balance. min_cell_idx = weak cell (mem 2025), max_cell_idx = strong
+  // 0x203 — cell balance. cell_lowest_v_idx = weak cell (mem 2025), cell_highest_v_idx = strong
   // cell (mem 2024); these two were swapped before the BMS config was decrypted.
   { key: "cell_min_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "cell_avg_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "cell_max_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "cell_spread_mv", unit: "mV", group: "cells", source: "stream" },
-  { key: "min_cell_idx", unit: "", group: "cells", source: "stream" },
-  { key: "max_cell_idx", unit: "", group: "cells", source: "stream" },
+  { key: "cell_lowest_v_idx", unit: "", group: "cells", source: "stream" },
+  { key: "cell_highest_v_idx", unit: "", group: "cells", source: "stream" },
 
   // 0x205 — the BMS's own energy/charge counters. cell_deviation_mv is its own
   // max−min, i.e. an independent check on cell_spread_mv computed from 0x203.
-  { key: "bms_remaining_energy_kwh", unit: "kWh", group: "energy", source: "stream" },
+  // The energy field's unit is documented as whole kWh but doesn't match the bus;
+  // logged as a raw count until 0x661 can settle it (see decode-bms.ts).
+  { key: "bms_remaining_energy_raw", unit: "", group: "energy", source: "stream" },
   { key: "cell_deviation_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "remaining_ah", unit: "Ah", group: "energy", source: "stream" },
   { key: "cells_connected", unit: "", group: "cells", source: "stream" },
@@ -73,15 +82,21 @@ export const SIGNALS: SignalDef[] = [
   { key: "lmu_comm_warnings", unit: "", group: "bms", source: "stream" }, // bit n = LMU n
   { key: "bms_io_state", unit: "", group: "bms", source: "stream" }, // bit n = IO n+1
 
-  // 0x207 — isolation test. 10-bit ADC counts around an ideal of 512; a 2-count
-  // deadband keeps the sampling noise out of the DB at 10 Hz while any real leak
-  // (tens of counts) still lands.
-  { key: "iso_test_1", unit: "", group: "bms", source: "stream", deadband: 2 },
-  { key: "iso_test_2", unit: "", group: "bms", source: "stream", deadband: 2 },
-  { key: "iso_test_total", unit: "", group: "bms", source: "stream", deadband: 2 },
+  // 0x207 — isolation test. 10-bit ADC counts around an ideal of 512, at 10 Hz.
+  // These are a slow diagnostic (a leak vs a Y-capacitor), never a transient, so the
+  // deadband is deliberately blunt: a real leak moves tens of counts, while ±3 counts
+  // of ADC wobble at 10 Hz across three signals would be ~2.6M rows/day — four times
+  // the entire rest of the DB, onto a Pi Zero's SD card. Worth re-checking with
+  // `select key, count(*) from … group by key` after the first ride.
+  { key: "iso_test_1", unit: "", group: "bms", source: "stream", deadband: 10 },
+  { key: "iso_test_2", unit: "", group: "bms", source: "stream", deadband: 10 },
+  { key: "iso_test_total", unit: "", group: "bms", source: "stream", deadband: 10 },
   // Sum of the measured cell voltages in 1 V steps — a cross-check on pack_v, which
-  // the BMS measures at the terminals instead.
-  { key: "cell_voltage_sum_v", unit: "V", group: "cells", source: "stream", deadband: 1 },
+  // the BMS measures at the terminals instead. Also 10 Hz, and pack voltage swings
+  // tens of volts under throttle, so the deadband has to sit well above the 1 V
+  // quantisation or it logs continuously while riding. The observed sum-vs-terminal
+  // gap is ~6 V, so 5 V still surfaces a divergence.
+  { key: "cell_voltage_sum_v", unit: "V", group: "cells", source: "stream", deadband: 5 },
 
   // 0x300 — charger enable + the DC limits the BMS grants the charger
   { key: "charger_enabled", unit: "", group: "charge", source: "stream" },
@@ -90,14 +105,10 @@ export const SIGNALS: SignalDef[] = [
   { key: "bms_post_processor_1", unit: "", group: "bms", source: "stream" }, // purpose unknown, logged raw
 
   // --- Frames that only exist after the extended BMS config is flashed -----
-  // 0x660 — module/board temperatures
+  // 0x660 — pack thermal summary (the per-module temps ride in 0x664 instead)
   { key: "lmu_temp_high_idx", unit: "", group: "battery", source: "stream" },
   { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream" },
   { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
-  { key: "board_temp_pcb1", unit: "°C", group: "battery", source: "stream" },
-  { key: "board_temp_pcb2", unit: "°C", group: "battery", source: "stream" },
-  { key: "board_temp_bat1", unit: "°C", group: "battery", source: "stream" },
-  { key: "board_temp_bat2", unit: "°C", group: "battery", source: "stream" },
 
   // 0x661 — 1 Wh remaining energy (5 Wh deadband: 1 Wh out of a ~21 kWh pack is far
   // below anything we can act on, and the frame arrives every second) + the BMCU's
@@ -113,8 +124,20 @@ export const SIGNALS: SignalDef[] = [
   { key: "cell_overvoltage_mv", unit: "mV", group: "cells", source: "stream" },
   { key: "cell_target_mv", unit: "mV", group: "cells", source: "stream" },
 
-  // Derived (see derived.ts): weakest cell's margin over the configured cut-off.
-  { key: "cell_cutoff_headroom_mv", unit: "mV", group: "cells", source: "stream" },
+  // 0x662-0x664 b0 — the raw module selector, logged so that "byte 0 isn't the LMU
+  // number after all" is distinguishable from "the frames never arrived": with no
+  // per-cell signals and no mux row, they never arrived; with a mux row and no cells,
+  // the selector is out of range and the assumption is wrong.
+  //
+  // The deadband deliberately stops it after the first row per boot. It rotates at
+  // 20 Hz, so log-on-change would be ~1.7M rows/day for a number that never carries
+  // new information once you've seen it move. Whether it actually walks 1…11 is
+  // visible live on the dashboard, which reads every sample regardless of deadband.
+  //
+  // The only signal here written by three frames, and safe precisely because they all
+  // read the same memory (2129) — unlike a duplicated measurement, they can't disagree
+  // in a way that would make the value flap.
+  { key: "lmu_cell_mux", unit: "", group: "bms", source: "stream", deadband: 100 },
 
   // 0x025 (inst) / 0x10A (residual) — energy
   // Chattiest signal on the bus by far (~291k rows/day at deadband 0.5, ~49% of all
@@ -200,17 +223,19 @@ export const SIGNALS: SignalDef[] = [
   { key: "km_per_kwh", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05 },
   { key: "kwh_per_100km", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05 },
 
-  ...perCellVoltageSignals(),
+  ...perLmuSignals(),
 ];
 
-// 0x662-0x664 — the 81 individual cell voltages, once the extended BMS config is
-// flashed. Generated rather than hand-listed so they can't drift from the keys the
-// decoder emits, and because 81 near-identical lines would bury everything above.
+// 0x662-0x664 — the 81 individual cell voltages plus each module's own temperatures,
+// once the extended BMS config is flashed. Generated rather than hand-listed so they
+// can't drift from the keys the decoder emits, and because ~110 near-identical lines
+// would bury everything above.
 //
-// 5 mV deadband: the whole point of these is which cell sags, and the resting spread
-// worth chasing is tens of mV. Logging every millivolt of throttle-driven sag on 81
-// signals at ~1 Hz each would roughly multiply the DB's row rate by ten.
-function perCellVoltageSignals(): SignalDef[] {
+// 5 mV deadband on the cells: the whole point of them is which cell sags, and the
+// resting spread worth chasing is tens of mV. Logging every millivolt of
+// throttle-driven sag on 81 signals at ~2 Hz each would multiply the DB's row rate by
+// more than ten. The temperatures are whole °C and move slowly, so they log on change.
+function perLmuSignals(): SignalDef[] {
   const signals: SignalDef[] = [];
   for (let lmuNumber = 1; lmuNumber <= LMU_COUNT; lmuNumber++) {
     for (let cellNumber = 1; cellNumber <= cellsInLmu(lmuNumber); cellNumber++) {
@@ -221,6 +246,12 @@ function perCellVoltageSignals(): SignalDef[] {
         source: "stream",
         deadband: 5,
       });
+    }
+    const sensors: LmuTemperatureSensor[] = LMUS_WITHOUT_BATTERY_TEMP.includes(lmuNumber)
+      ? ["pcb1", "pcb2"]
+      : ["bat1", "pcb1", "pcb2"];
+    for (const sensor of sensors) {
+      signals.push({ key: lmuTemperatureKey(lmuNumber, sensor), unit: "°C", group: "battery", source: "stream" });
     }
   }
   return signals;
