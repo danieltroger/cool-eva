@@ -137,7 +137,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "State of charge, CAN 0x200. Last value at or before the end of the window - these signals hold until they change, so the tile stays populated across a quiet window.",
+      "description": "State of charge, CAN 0x200. Last value at or before the end of the window, with no lower bound - these signals hold until they change, so the tile stays populated across a quiet window, and on a quiet enough one it is showing a reading from well before the range starts.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -686,7 +686,7 @@
     },
     {
       "gridPos": {
-        "h": 8,
+        "h": 11,
         "w": 24,
         "x": 0,
         "y": 46
@@ -698,7 +698,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "**Per-cell voltages come from CAN `0x662`-`0x664`, multiplexed by module** — one module per frame, keyed off the module number carried in the frame itself.\n\n- **Cells 4-8 of LMU 1 and LMU 2 are missing from older data.** `0x663` and `0x664` used to run at the same 50 ms as the BMS's own module poll and aliased against it, never sampling LMU 1 or LMU 2 at all. Those rows are permanently empty for any window recorded before the `6-custom-p32b-lmu-phase.bms` config slowed the two frames to 150 and 250 ms. Empty rows there are that, not a fault.\n- **Cells 4-8 still refresh more slowly than cells 1-3**, because `0x662` stayed at 50 ms. A module's cells are not all the same age — do not read a one-step difference between cell 3 and cell 5 as a real voltage difference.\n- **31 temperature sensors, not 81.** Each LMU reports BAT1 (cells) plus PCB1 and PCB2 (board). BAT2 is disabled on all 11 modules and BAT1 is disabled on LMU 6 and LMU 8, so `LMU06 bat1` and `LMU08 bat1` do not exist. Configured off, not broken.\n- **Two different cell numberings.** Heatmap rows are the module/cell positions the frames name directly. `cell_lowest_v_idx` and `cell_highest_v_idx` are the BMS's own global 0-80 indices, and the mapping between the two is unverified — do not assume index 20 is the cell in row `LMU03 cell5`.\n- **Ignore `min_cell_idx` / `max_cell_idx` if you find them in the database.** They are pre-2026-08-02 rows recorded while `0x203` b2 and b3 were swapped, so they mean the opposite of their names. `cell_lowest_v_idx` and `cell_highest_v_idx` are the corrected keys.\n- **Pad values from before the decoder's plausibility guard are still in the database** and are filtered out here rather than plotted: 8192 mV (`0x2000`) in an unpopulated cell slot, 122 °C (`0x7A`) in a module slot the BMCU has not freshly polled. `lmu7_bat1_c` and `lmu9_bat1_c` carry 93 such rows between 15:04 and 15:58 on 2026-08-02. The heatmaps use the same bands as `src/can/decode-bms.ts`: 1000-5000 mV and -40 to 100 °C.\n- **All of this needs the custom BMS config flashed.** On a stock bike `0x660`-`0x665` never arrive, and the per-cell, per-module and cell-limit panels stay empty. Normal for a stock pack.",
+        "content": "**Per-cell voltages come from CAN `0x662`-`0x664`, multiplexed by module** — one module per frame, keyed off the module number carried in the frame itself.\n\n- **Cells 4-8 of LMU 1 and LMU 2 are missing from older data.** `0x663` and `0x664` used to run at the same 50 ms as the BMS's own module poll and aliased against it, never sampling LMU 1 or LMU 2 at all. Those rows are permanently empty for any window recorded before the `6-custom-p32b-lmu-phase.bms` config slowed the two frames to 150 and 250 ms. Empty rows there are that, not a fault.\n- **Cells 4-8 still refresh more slowly than cells 1-3**, because `0x662` stayed at 50 ms. A module's cells are not all the same age — do not read a one-step difference between cell 3 and cell 5 as a real voltage difference.\n- **31 temperature sensors, not 81.** Each LMU reports BAT1 (cells) plus PCB1 and PCB2 (board). BAT2 is disabled on all 11 modules and BAT1 is disabled on LMU 6 and LMU 8, so `LMU06 bat1` and `LMU08 bat1` do not exist. Configured off, not broken.\n- **Two different cell numberings.** Heatmap rows are the module/cell positions the frames name directly. `cell_lowest_v_idx` and `cell_highest_v_idx` are the BMS's own global 0-80 indices, and the mapping between the two is unverified — do not assume index 20 is the cell in row `LMU03 cell5`.\n- **The `bms_state_*` booleans are newer than `charge_state`.** They were split out of the 0x201 System State byte in a later decoder build, so a window recorded before that build was deployed has the raw `charge_state` byte but none of the seven booleans — in this database the two start 53 minutes apart. The charge annotation and the balancing lanes read the booleans on purpose, so on a pre-split window they draw nothing rather than reaching further back than the panels around them.\n- **Ignore `min_cell_idx` / `max_cell_idx` if you find them in the database.** They are pre-2026-08-02 rows recorded while `0x203` b2 and b3 were swapped, so they mean the opposite of their names. `cell_lowest_v_idx` and `cell_highest_v_idx` are the corrected keys.\n- **Pad values from before the decoder's plausibility guard are still in the database** and are filtered out here rather than plotted: 8192 mV (`0x2000`) in an unpopulated cell slot, 122 °C (`0x7A`) in a module slot the BMCU has not freshly polled. `lmu7_bat1_c` and `lmu9_bat1_c` carry 93 such rows between 15:04 and 15:58 on 2026-08-02. The heatmaps use the same bands as `src/can/decode-bms.ts`: 1000-5000 mV and -40 to 100 °C.\n- **All of this needs the custom BMS config flashed.** On a stock bike `0x660`-`0x665` never arrive, and the per-cell, per-module and cell-limit panels stay empty. Normal for a stock pack.",
         "mode": "markdown"
       },
       "title": "Known gaps in the per-cell and per-module data",
@@ -710,7 +710,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 57
       },
       "id": 12,
       "title": "Cell balance",
@@ -804,7 +804,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 55
+        "y": 58
       },
       "id": 13,
       "options": {
@@ -910,7 +910,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 55
+        "y": 58
       },
       "id": 14,
       "options": {
@@ -1148,7 +1148,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 64
+        "y": 67
       },
       "id": 15,
       "options": {
@@ -1183,7 +1183,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "CAN 0x203 b2 and b3: the cell the BMS currently sees as lowest and as highest. This is not a weak-cell verdict. At the roughly 9 mV spread measured on 2026-08-02 the ranking is noise - the low index wandered between two cells while min, max and average did not move at all. It starts meaning something only once there is a real spread: under load, at low SOC, or at the top of a charge. Read it against the spread panel to the left. These are the BMS's own global indices, and their mapping onto the module/cell rows in the heatmaps above is unverified - do not treat the two numberings as the same thing.",
+      "description": "CAN 0x203 b2 and b3: the cell the BMS currently sees as lowest and as highest. This is not a weak-cell verdict. At the roughly 9 mV spread measured on 2026-08-02 the ranking is noise - the low index wandered between two cells while min, max and average did not move at all. It starts meaning something only once there is a real spread: under load, at low SOC, or at the top of a charge. Read it against the spread panel to the left. These are the BMS's own global indices, and their mapping onto the module/cell rows in the heatmaps above is unverified - do not treat the two numberings as the same thing. The axis is soft-bounded to 0-80 rather than clipped there: these are raw bytes out of 0x203 b2 and b3 with no plausibility guard in the decoder, unlike the mV and °C paths, so a value outside the range draws above the axis where you can see it instead of pinning to 80 and reading as a real index.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1201,8 +1201,8 @@
           },
           "decimals": 0,
           "unit": "none",
-          "min": 0,
-          "max": 80
+          "softMin": 0,
+          "softMax": 80
         },
         "overrides": [
           {
@@ -1249,7 +1249,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 64
+        "y": 67
       },
       "id": 16,
       "options": {
@@ -1374,7 +1374,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 76
       },
       "id": 17,
       "options": {
@@ -1413,7 +1413,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 79
+        "y": 82
       },
       "id": 18,
       "title": "Module temperatures",
@@ -1441,7 +1441,7 @@
         "h": 15,
         "w": 24,
         "x": 0,
-        "y": 80
+        "y": 83
       },
       "id": 19,
       "options": {
@@ -1503,7 +1503,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 95
+        "y": 98
       },
       "id": 20,
       "title": "Pack context",
@@ -1586,7 +1586,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 96
+        "y": 99
       },
       "id": 21,
       "options": {
@@ -1693,7 +1693,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 96
+        "y": 99
       },
       "id": 22,
       "options": {
@@ -1792,7 +1792,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 104
+        "y": 107
       },
       "id": 23,
       "options": {
@@ -1872,7 +1872,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 104
+        "y": 107
       },
       "id": 24,
       "options": {
