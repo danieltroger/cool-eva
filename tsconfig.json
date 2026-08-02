@@ -12,8 +12,22 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "sourceMap": true,
-    "rootDir": "."
+    "rootDir": ".",
+
+    // The dashboard is plain ES modules with no build step, but it is not
+    // unchecked: `checkJs` type-checks public/**/*.js against JSDoc, which lets
+    // those modules import the server's own `DashboardMessage` and `LiveValue`
+    // types. That closes the drift CLAUDE.md warns about — change the wire shape
+    // in src/ws.ts and the dashboard stops compiling — without a bundler.
+    "allowJs": true,
+    "checkJs": true,
+    // The browser resolves "./lib/store.js" literally; TS must not insist on the
+    // extensionless form it prefers.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.ts"],
-  "exclude": ["node_modules", "dist", "obd-garage"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "*.ts", "public/**/*.js"],
+  // The vendored VanJS bundle is minified third-party code shipped with its own
+  // .d.ts; type-checking its internals would fail for reasons we cannot fix and
+  // would not learn anything from.
+  "exclude": ["node_modules", "dist", "obd-garage", "public/vendor/van-1.6.1.js"]
 }

@@ -1,0 +1,9 @@
+{
+  "name": "Cool Eva",
+  "short_name": "Cool Eva",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "start_url": "/"
+}
