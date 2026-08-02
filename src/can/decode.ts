@@ -123,10 +123,19 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     //   67 00 36 00 → speed 103 → 10.3 km/h (OBD PID 0D: 10)   rpm 432 (PID 0C: 427)
     //
     // Both track their PIDs to within ~1-2 % across the lap, which fixes speed as a u13
-    // at bit 32 and rpm as a u15 at bit 45. The reverse bit is real as well: b7 = 0x80
-    // on 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits
+    // at bit 32 and rpm as a u15 at bit 45. rpm's start bit in particular is pinned to
+    // the bit: 44 would decode 800/864 and 46 would decode 200/216 against a PID reading
+    // 411/427, so only 45 reproduces it. The reverse bit is real as well: b7 = 0x80 on
+    // 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits
     // 60-62. So the .xdbc's own C fragment (`data[4] | (data[5] << 7)` — a shift of 7,
     // not 8) is the thing that doesn't reconcile, not the normalised layout used here.
+    //
+    // The lap only reached ~10 km/h / ~430 rpm, so the top of both fields was never
+    // exercised — but that residual announces itself instead of hiding. 200 km/h needs
+    // 11 of speed's 13 bits and 11 000 rpm needs 14 of rpm's 15, so bits 43/44 and 59
+    // can never be set by the quantity itself. If something else lives there the value
+    // is impossible rather than plausible: speed jumps by 204.8 or 409.6 km/h, rpm by
+    // 16 384. Seeing either is the signal that the field is narrower than assumed.
     case 0x104: {
       if (data.length < 8) return [];
       return [
@@ -168,7 +177,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 
     // 0x102 — body/lights, vehicle state and the accelerometers (100 Hz).
     //
-    // b0 bit6 (0x40) = high beam (bit7 0x80 = low beam). b2 is a lights bitfield: 0x04
+    // b0 bit6 (0x40) = high beam (bit7 0x80 = low beam). b2 mixes lamps and state: 0x04
     // L blinker, 0x08 R blinker, 0x10 horn, 0x20 front brake, 0x40 rear brake. Those
     // five were found by working the switches on this bike and diffing the log. ✅
     //
@@ -177,13 +186,21 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // b2 the lamp output — but only ours was measured here, so ours stands and the
     // .xdbc is not allowed to overwrite it. Do not "fix" this from the third-party file.
     //
+    // What settles it is that b2 now accounts for exactly, with no bit claimed twice:
+    // 0/1 charge (.xdbc), 2/3 blinkers (measured here), 4 horn (measured), 5/6 brake
+    // (measured), 7 moving (.xdbc). Two independent reverse-engineering efforts
+    // interlocking across one byte with no gaps and no collisions is good evidence the
+    // .xdbc's b2 assignments really do belong to this frame — and it refutes its own
+    // claim that bits 2/3 are unknown, since there is nowhere else for them to go.
+    //
     // Everything in b1 plus the three b2 state bits comes from the .xdbc and matched a
     // parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): key_on 1, energized / go /
     // go_request / ignition_button / throttle_on 0, stand_up 0 (it is on the sidestand),
     // charging 0, moving 0, charge_port_unlocked 1. The garage lap that afternoon then
     // caught energized, go_request, go, stand_up, ignition_button, throttle_on and
     // moving all toggling with the rider's actions, so those are confirmed against real
-    // transitions rather than one parked sample. ✅
+    // transitions rather than one parked sample. ✅ key_on stayed 1 throughout both, so
+    // it rests on the parked sample alone — a key-off capture is what would confirm it.
     //
     // ⚠️ charge_port_unlocked is the exception and keeps the 🟡: the only capture of it
     // is `charging` 0 / this bit 1, and the .xdbc says it reads 1 whenever the bike is
@@ -198,13 +215,13 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       if (data.length < 3) return [];
       const handlebar = data[0];
       const vehicleState = data[1];
-      const lights = data[2];
+      const lampsAndState = data[2];
       const values: DecodedValue[] = [
         { key: "high_beam", value: handlebar & 0x40 ? 1 : 0 },
-        { key: "brake", value: lights & 0x60 ? 1 : 0 },
-        { key: "blinker_left", value: lights & 0x04 ? 1 : 0 },
-        { key: "blinker_right", value: lights & 0x08 ? 1 : 0 },
-        { key: "horn", value: lights & 0x10 ? 1 : 0 },
+        { key: "brake", value: lampsAndState & 0x60 ? 1 : 0 },
+        { key: "blinker_left", value: lampsAndState & 0x04 ? 1 : 0 },
+        { key: "blinker_right", value: lampsAndState & 0x08 ? 1 : 0 },
+        { key: "horn", value: lampsAndState & 0x10 ? 1 : 0 },
         { key: "energized", value: bit(vehicleState, 1) },
         { key: "go_request", value: bit(vehicleState, 2) },
         { key: "go", value: bit(vehicleState, 3) },
@@ -212,9 +229,9 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "stand_up", value: bit(vehicleState, 5) },
         { key: "ignition_button", value: bit(vehicleState, 6) },
         { key: "throttle_on", value: bit(vehicleState, 7) },
-        { key: "charging", value: bit(lights, 0) },
-        { key: "charge_port_unlocked", value: bit(lights, 1) },
-        { key: "moving", value: bit(lights, 7) },
+        { key: "charging", value: bit(lampsAndState, 0) },
+        { key: "charge_port_unlocked", value: bit(lampsAndState, 1) },
+        { key: "moving", value: bit(lampsAndState, 7) },
       ];
       // b4-5 / b6-7 LE s16 — lateral and frontal acceleration. THE SCALE IS UNVERIFIED:
       // the .xdbc gives the unit as "g" but no multiplier, and there is nothing on the
