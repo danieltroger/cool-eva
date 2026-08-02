@@ -15,10 +15,12 @@ const seenSignalKeys = new Set<string>();
 // Bounded because the meaning of the 20-bit code field is unconfirmed (see
 // decode.ts). If it really is a code, the set stops at however many distinct
 // faults the bike has. If it turns out to be a counter or a timestamp, every
-// report brings new keys, each of which would then be written back to 0 on every
-// report and sit in the 5-second WS snapshot for the rest of the run. 256 is far
-// above any plausible list (MAX_PAGES caps one report at 200 codes) and far below
-// a leak; hitting it says the reading is wrong, so it says so out loud.
+// report brings new keys — up to 200 a minute — and record() puts every one of
+// them into liveState, which ws.ts broadcasts whole every 5 seconds. So past the
+// cap a code is named in the journal but NOT recorded: bounding this set alone
+// would not bound that. 256 is far above any plausible list (MAX_PAGES caps one
+// report at 200 codes) and far below a leak; hitting it says the reading is
+// wrong, so it says so out loud.
 const SEEN_SIGNAL_KEY_LIMIT = 256;
 let warnedSeenKeyLimit = false;
 // null, not "": an empty list has an empty signature too, and starting at ""
@@ -40,6 +42,7 @@ const rawFramesLogged = new Map<string, number>();
 // or a session token then "once per distinct payload" is once a minute forever.
 const SIDE_CHANNEL_PAYLOAD_LIMIT = 24;
 const sideChannelPayloadsLogged = new Set<string>();
+let warnedSideChannelLimit = false;
 
 export function recordDiagnosticReport(report: DiagnosticReport, transport: string): void {
   const presentKeys = new Set(report.codes.map(diagnosticSignalKey));
@@ -50,13 +53,21 @@ export function recordDiagnosticReport(report: DiagnosticReport, transport: stri
   for (const key of presentKeys) {
     if (seenSignalKeys.size < SEEN_SIGNAL_KEY_LIMIT) {
       seenSignalKeys.add(key);
-    } else if (!seenSignalKeys.has(key) && !warnedSeenKeyLimit) {
-      warnedSeenKeyLimit = true;
-      console.warn(
-        `diagnostics: more than ${SEEN_SIGNAL_KEY_LIMIT} distinct code keys this run — the 20-bit ` +
-          "code field is almost certainly not (component, symptom). Codes past this point are still " +
-          "logged but will not be written back to 0 when they clear."
-      );
+    } else if (!seenSignalKeys.has(key)) {
+      // Stop at the cap instead of recording: record() writes into liveState for
+      // any key at all, and liveState ships whole in the 5-second WS snapshot, so
+      // a key recorded here would outlive this loop in memory and on the wire.
+      // The journal line below still names the code, raw field and both readings,
+      // which is where the evidence for settling the layout lives.
+      if (!warnedSeenKeyLimit) {
+        warnedSeenKeyLimit = true;
+        console.warn(
+          `diagnostics: more than ${SEEN_SIGNAL_KEY_LIMIT} distinct code keys this run — the 20-bit ` +
+            "code field is almost certainly not (component, symptom). Codes past this point are still " +
+            "named in the journal below but are no longer recorded as signals."
+        );
+      }
+      continue;
     }
     record(key, 1);
   }
@@ -97,7 +108,20 @@ export function logRawDiagnosticsFrame(frame: Uint8Array, transport: string): vo
  */
 export function logDiagnosticsSideChannel(frame: Uint8Array, transport: string): void {
   const hex = Array.from(frame, byte => byte.toString(16).padStart(2, "0")).join(" ");
-  if (sideChannelPayloadsLogged.size >= SIDE_CHANNEL_PAYLOAD_LIMIT || sideChannelPayloadsLogged.has(hex)) {
+  if (sideChannelPayloadsLogged.size >= SIDE_CHANNEL_PAYLOAD_LIMIT) {
+    // Reaching the cap IS the result: this message is logged at all only because
+    // its payload might vary, so say so rather than going quiet — silence here
+    // would otherwise look identical to the constant payload we expect.
+    if (!warnedSideChannelLimit) {
+      warnedSideChannelLimit = true;
+      console.warn(
+        `diagnostics: type-31 payload has taken ${SIDE_CHANNEL_PAYLOAD_LIMIT} distinct values this ` +
+          "run — it is not the constant it looked like; no longer logging it."
+      );
+    }
+    return;
+  }
+  if (sideChannelPayloadsLogged.has(hex)) {
     return;
   }
   sideChannelPayloadsLogged.add(hex);
