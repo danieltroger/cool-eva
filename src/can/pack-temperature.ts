@@ -89,6 +89,8 @@ let trueTemperatureSource: TrueTemperatureSource = "unknown";
 // 0x660 had any of its five chances. performance.now() is unaffected by `date -s`.
 let firstVcuTemperatureAtMonotonicMs: number | undefined;
 let consecutiveShortThermalFrames = 0;
+// Diagnostics only — never consulted by a routing decision.
+let anyThermalFrameSeen = false;
 let warnedThermalFrameMissing = false;
 let warnedThermalFrameUnexpected = false;
 let warnedThermalFrameShort = false;
@@ -121,6 +123,7 @@ export function configurePackTemperature(customBmsConfig: boolean): void {
   trueTemperatureSource = "unknown";
   firstVcuTemperatureAtMonotonicMs = undefined;
   consecutiveShortThermalFrames = 0;
+  anyThermalFrameSeen = false;
   warnedThermalFrameMissing = false;
   warnedThermalFrameUnexpected = false;
   warnedThermalFrameShort = false;
@@ -141,6 +144,7 @@ function collectTrueTemperatureCandidates(decoded: DecodedValue[]): DecodedValue
 }
 
 function notePackThermalFrame(frameLength: number): void {
+  anyThermalFrameSeen = true;
   if (frameLength < OFFSET_CONFIG_MIN_DLC) {
     noteShortThermalFrame();
     return;
@@ -200,8 +204,8 @@ function resolveVcuFrameOwnership(waitStartedAtMonotonicMs: number): boolean {
     if (warnedThermalFrameMissing) return false;
     warnedThermalFrameMissing = true;
     console.warn(
-      `bms: CUSTOM_BMS_CONFIG is set but no 0x660 arrived within ${THERMAL_FRAME_WAIT_MS} ms of the ` +
-        "first 0x200, so nothing on the bus carries the true pack temperature. " +
+      `bms: CUSTOM_BMS_CONFIG is set but ${describeMissingThermalFrame()}, ` +
+        "so nothing on the bus carries the true pack temperature. " +
         "batt_temp_lo/batt_temp_hi stay UNLOGGED until a 0x660 turns up — under this config 0x200's " +
         "bytes are the VCU's 15 °C-shifted view, not the truth. batt_temp_lo_vcu/batt_temp_hi_vcu " +
         "keep logging throughout. If this pack is in fact stock, unset CUSTOM_BMS_CONFIG and the " +
@@ -214,8 +218,25 @@ function resolveVcuFrameOwnership(waitStartedAtMonotonicMs: number): boolean {
   // the bus can give. 0x200 takes the keys and keeps them.
   trueTemperatureSource = "vcu-frame";
   console.log(
-    `bms: no 0x660 within ${THERMAL_FRAME_WAIT_MS} ms of the first 0x200 — stock config confirmed, ` +
-      "batt_temp_lo/batt_temp_hi now come from 0x200."
+    anyThermalFrameSeen
+      ? // A 0x660 exists, so this is NOT a stock pack — don't claim it is. 0x200 still
+        // takes the keys, and a long 0x660 turning up later still switches them loudly.
+        `bms: ${describeMissingThermalFrame()} — batt_temp_lo/batt_temp_hi now come from 0x200.`
+      : `bms: ${describeMissingThermalFrame()} — stock config confirmed, ` +
+          "batt_temp_lo/batt_temp_hi now come from 0x200."
   );
   return true;
+}
+
+// The window can expire with a short 0x660 already seen but not yet corroborated, so
+// neither message may claim none arrived. Wording only — the routing above is the same
+// either way, and this must never gate it.
+function describeMissingThermalFrame(): string {
+  if (anyThermalFrameSeen) {
+    return (
+      `a 0x660 was seen but not corroborated within ${THERMAL_FRAME_WAIT_MS} ms of the first 0x200 ` +
+      `(${SHORT_THERMAL_FRAMES_TO_TRUST} consecutive short frames are needed)`
+    );
+  }
+  return `no 0x660 arrived within ${THERMAL_FRAME_WAIT_MS} ms of the first 0x200`;
 }
