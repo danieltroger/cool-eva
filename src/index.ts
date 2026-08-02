@@ -11,6 +11,7 @@ import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { resolvePackTemperatures } from "./can/pack-temperature.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
+import { HUB_MIRROR_ID, handleHubMirrorFrame } from "./can/hub-mirror.ts";
 import { setupWs } from "./ws.ts";
 import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
@@ -83,6 +84,7 @@ if (CAN_ENABLED) {
         ...STREAM_IDS.map(id => ({ id, mask: 0x7ff })),
         { id: 0x7e0, mask: 0x7f0 }, // OBD responses 0x7E0–0x7EF
         { id: ELOCK_RESP_ID, mask: 0x7ff }, // E-LOCK diagnostic reply (one-shot read at startup)
+        { id: HUB_MIRROR_ID, mask: 0x7ff }, // Connectivity Hub's Bluetooth messages, mirrored onto CAN
       ]);
     } catch (err) {
       console.warn("can: setRxFilters failed, accepting all frames:", err);
@@ -96,6 +98,10 @@ if (CAN_ENABLED) {
       }
       if (isElockResponse(msg.id)) {
         handleElockResponse(data);
+        return;
+      }
+      if (msg.id === HUB_MIRROR_ID) {
+        handleHubMirrorFrame(data);
         return;
       }
       // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
