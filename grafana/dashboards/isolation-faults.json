@@ -84,22 +84,22 @@
         "enable": true,
         "hide": false,
         "iconColor": "purple",
-        "name": "Charge session (0x201 charge_state)",
+        "name": "Charge session (0x201 state bit 1)",
         "target": {
           "datasource": {
             "type": "frser-sqlite-datasource",
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_state'\n)\nSELECT ts/1000.0 AS time,\n  COALESCE((SELECT MIN(later.ts) FROM samples later WHERE later.ts > samples.ts AND later.value <> 2),\n           ts)/1000.0 AS timeEnd,\n  'Charge start (charge_state = 2)' AS text,\n  'charge_state' AS tags\nFROM samples\nWHERE value = 2 AND (previous_value IS NULL OR previous_value <> 2)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
-          "rawQueryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_state'\n)\nSELECT ts/1000.0 AS time,\n  COALESCE((SELECT MIN(later.ts) FROM samples later WHERE later.ts > samples.ts AND later.value <> 2),\n           ts)/1000.0 AS timeEnd,\n  'Charge start (charge_state = 2)' AS text,\n  'charge_state' AS tags\nFROM samples\nWHERE value = 2 AND (previous_value IS NULL OR previous_value <> 2)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "queryText": "-- bms_state_charge, not charge_state: 0x201 byte 0 is a bitfield, so charging\n-- while balancing reads 0x06 and a `charge_state = 2` test would miss it entirely.\n-- The decoder already publishes the bit (registry.ts), so the mask lives in one place.\nWITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nsessions AS (\n  SELECT ts,\n    -- no later clearing sample means the session is still running: run the band\n    -- to the right edge of the window rather than collapsing it to zero width.\n    COALESCE((SELECT MIN(later.ts) FROM samples later WHERE later.ts > samples.ts AND later.value <> 1),\n             $__to) AS ended\n  FROM samples\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n)\nSELECT ts/1000.0 AS time, ended/1000.0 AS timeEnd,\n  'Charge session (0x201 state bit 1)' AS text,\n  'bms_state_charge' AS tags\nFROM sessions\n-- overlap, not containment, so a session that began before the window still draws\nWHERE ts <= $__to AND ended >= $__from\nORDER BY ts",
+          "rawQueryText": "-- bms_state_charge, not charge_state: 0x201 byte 0 is a bitfield, so charging\n-- while balancing reads 0x06 and a `charge_state = 2` test would miss it entirely.\n-- The decoder already publishes the bit (registry.ts), so the mask lives in one place.\nWITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nsessions AS (\n  SELECT ts,\n    -- no later clearing sample means the session is still running: run the band\n    -- to the right edge of the window rather than collapsing it to zero width.\n    COALESCE((SELECT MIN(later.ts) FROM samples later WHERE later.ts > samples.ts AND later.value <> 1),\n             $__to) AS ended\n  FROM samples\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n)\nSELECT ts/1000.0 AS time, ended/1000.0 AS timeEnd,\n  'Charge session (0x201 state bit 1)' AS text,\n  'bms_state_charge' AS tags\nFROM sessions\n-- overlap, not containment, so a session that began before the window still draws\nWHERE ts <= $__to AND ended >= $__from\nORDER BY ts",
           "refId": "Anno",
           "timeColumns": ["time", "timeEnd"]
         }
       }
     ]
   },
-  "description": "Isolation test, BMS error and warning flags, and diagnostic code counts, decoded from CAN signals and the Connectivity Hub. Every series is logged on change with a per-signal deadband, so flat stretches are held values rather than missing telemetry.",
+  "description": "Isolation test, BMS error and warning flags, and diagnostic code counts, decoded from CAN signals and the Connectivity Hub. Every series is logged on change with a per-signal deadband, so flat stretches are held values rather than missing telemetry. The deadband is 0 for the error and warning bits but 10 counts for iso_test_1/2/total, so a flat isolation trace means “no move larger than 10 counts” rather than “no move”.",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
@@ -122,7 +122,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Latest |512 − IsoTest1|, in 10-bit ADC counts. 512 is the ideal; the deviation is the leak magnitude and a real leak moves tens of counts. IsoTest1 high means the leak sits nearer the positive terminal. Green under 10 counts, red past 60. The reading only means anything above 25 VDC, so it is meaningless with the pack contactors open.",
+      "description": "Latest |512 − IsoTest1|, in 10-bit ADC counts. 512 is the ideal; the deviation is the leak magnitude and a real leak moves tens of counts. IsoTest1 high means the leak sits nearer the positive terminal. The first colour step is 12 rather than 10 because the signal carries deadband 10 (registry.ts): within one service run nothing under an 11-count move is ever stored, so a smaller number on this tile is a stale reading, not a measured deviation. Red past 60. The reading only means anything above 25 VDC, so it is meaningless with the pack contactors open.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -139,7 +139,7 @@
               },
               {
                 "color": "yellow",
-                "value": 10
+                "value": 12
               },
               {
                 "color": "orange",
@@ -179,8 +179,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'iso_test_1' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'iso_test_1' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_1' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_1' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -193,7 +193,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Latest |512 − IsoTest2|, in 10-bit ADC counts. Same scale as IsoTest1; IsoTest2 high means the leak sits nearer the negative terminal. Both deviating by the same amount points at a Y-capacitor in the charger or load rather than a fault.",
+      "description": "Latest |512 − IsoTest2|, in 10-bit ADC counts. Same scale and same deadband-10 caveat as IsoTest1; IsoTest2 high means the leak sits nearer the negative terminal. Both deviating by the same amount points at a Y-capacitor in the charger or load rather than a fault.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -210,7 +210,7 @@
               },
               {
                 "color": "yellow",
-                "value": 10
+                "value": 12
               },
               {
                 "color": "orange",
@@ -250,8 +250,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'iso_test_2' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'iso_test_2' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_2' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_2' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -317,8 +317,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'iso_test_total' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'iso_test_total' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_total' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_total' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -397,8 +397,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_err_leak_detected' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_err_leak_detected' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'bms_err_leak_detected' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'bms_err_leak_detected' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -411,7 +411,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "IsoTest1 and IsoTest2 in raw 10-bit ADC counts, with a flat reference series at the ideal of 512. The axis is soft-clamped to 500-524 so a one-count wobble is visible, and expands on its own if a real leak moves tens of counts. Step interpolation with spanNulls: these carry a deadband of 10, so a flat stretch means the value held steady rather than data going missing, and the two signals are written milliseconds apart so widening them into one table leaves nulls that have to be spanned.",
+      "description": "IsoTest1 and IsoTest2 in raw 10-bit ADC counts, with a flat reference series at the ideal of 512. The axis is soft-clamped to 500-524, which is one deadband either side of the ideal — the smallest move these signals can record (deadband 10, registry.ts) is therefore roughly the full height of the clamped axis, and it expands on its own if a real leak moves further. Step interpolation with spanNulls: a flat stretch means no move larger than 10 counts rather than data going missing — a weaker statement than log-on-change makes elsewhere on this dashboard, and the two signals are written milliseconds apart so widening them into one table leaves nulls that have to be spanned.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -551,7 +551,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "The same two signals as distance from the ideal, which is the number the isolation test is actually about — zero is healthy and the scale starts there, so any movement reads as height rather than as a wiggle on a line sitting at 511. Step interpolation with spanNulls for the same reason as the panel to the left.",
+      "description": "The same two signals as distance from the ideal, which is the number the isolation test is actually about — zero is healthy and the scale starts there, so any movement reads as height rather than as a wiggle on a line sitting at 511. The soft max of 12 is one deadband: anything the signal can actually record within a service run clears it. Step interpolation with spanNulls for the same reason as the panel to the left.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -764,7 +764,7 @@
       },
       "id": 9,
       "panels": [],
-      "title": "BMS errors and warnings (frame 0x201)",
+      "title": "BMS errors and warnings (frames 0x201, 0x206)",
       "type": "row"
     },
     {
@@ -839,8 +839,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000 AS time,\n  MAX(CASE WHEN s.key = 'bms_err_cell_overvoltage'    THEN state END) AS \"error: cell overvoltage\",\n  MAX(CASE WHEN s.key = 'bms_err_cell_undervoltage'   THEN state END) AS \"error: cell undervoltage\",\n  MAX(CASE WHEN s.key = 'bms_err_over_temp'           THEN state END) AS \"error: over temperature\",\n  MAX(CASE WHEN s.key = 'bms_err_leak_detected'       THEN state END) AS \"error: leak detected\",\n  MAX(CASE WHEN s.key = 'bms_err_leak_detect_failed'  THEN state END) AS \"error: leak detect failed\",\n  MAX(CASE WHEN s.key = 'bms_err_contactor'           THEN state END) AS \"error: contactor\",\n  MAX(CASE WHEN s.key = 'bms_warn_low_soc'            THEN state END) AS \"warning: low SOC\",\n  MAX(CASE WHEN s.key = 'bms_warn_balancing_required' THEN state END) AS \"warning: balancing required\"\nFROM (\n  SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END AS state\n  FROM reading r\n  WHERE r.ts BETWEEN $__from AND $__to\n) AS r\nJOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bms_err_cell_overvoltage', 'bms_err_cell_undervoltage', 'bms_err_over_temp',\n                'bms_err_leak_detected', 'bms_err_leak_detect_failed', 'bms_err_contactor',\n                'bms_warn_low_soc', 'bms_warn_balancing_required')\nGROUP BY r.ts/1000\nORDER BY time",
-          "rawQueryText": "SELECT r.ts/1000 AS time,\n  MAX(CASE WHEN s.key = 'bms_err_cell_overvoltage'    THEN state END) AS \"error: cell overvoltage\",\n  MAX(CASE WHEN s.key = 'bms_err_cell_undervoltage'   THEN state END) AS \"error: cell undervoltage\",\n  MAX(CASE WHEN s.key = 'bms_err_over_temp'           THEN state END) AS \"error: over temperature\",\n  MAX(CASE WHEN s.key = 'bms_err_leak_detected'       THEN state END) AS \"error: leak detected\",\n  MAX(CASE WHEN s.key = 'bms_err_leak_detect_failed'  THEN state END) AS \"error: leak detect failed\",\n  MAX(CASE WHEN s.key = 'bms_err_contactor'           THEN state END) AS \"error: contactor\",\n  MAX(CASE WHEN s.key = 'bms_warn_low_soc'            THEN state END) AS \"warning: low SOC\",\n  MAX(CASE WHEN s.key = 'bms_warn_balancing_required' THEN state END) AS \"warning: balancing required\"\nFROM (\n  SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END AS state\n  FROM reading r\n  WHERE r.ts BETWEEN $__from AND $__to\n) AS r\nJOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bms_err_cell_overvoltage', 'bms_err_cell_undervoltage', 'bms_err_over_temp',\n                'bms_err_leak_detected', 'bms_err_leak_detect_failed', 'bms_err_contactor',\n                'bms_warn_low_soc', 'bms_warn_balancing_required')\nGROUP BY r.ts/1000\nORDER BY time",
+          "queryText": "-- MIN(), not MAX(): SQLite compares text with BINARY collation, so 'ACTIVE' < 'clear'\n-- and MIN is severity-first. A flag that both sets and clears inside one second-bucket\n-- must render ACTIVE, not green. Renaming either state string can silently flip that,\n-- so 'ACTIVE' has to keep sorting before the cleared label.\nSELECT r.ts/1000 AS time,\n  MIN(CASE WHEN s.key = 'bms_err_cell_overvoltage'    THEN state END) AS \"error: cell overvoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_cell_undervoltage'   THEN state END) AS \"error: cell undervoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_over_temp'           THEN state END) AS \"error: over temperature\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detected'       THEN state END) AS \"error: leak detected\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detect_failed'  THEN state END) AS \"error: leak detect failed\",\n  MIN(CASE WHEN s.key = 'bms_err_contactor'           THEN state END) AS \"error: contactor\",\n  MIN(CASE WHEN s.key = 'bms_warn_low_soc'            THEN state END) AS \"warning: low SOC\",\n  MIN(CASE WHEN s.key = 'bms_warn_balancing_required' THEN state END) AS \"warning: balancing required\"\nFROM (\n  SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END AS state\n  FROM reading r\n  WHERE r.ts BETWEEN $__from AND $__to\n) AS r\nJOIN signal s ON s.id = r.signal_id\n-- the bare ts predicate inside the derived table is not a scan: SQLite flattens the\n-- subquery and pushes this key filter down, so the plan is\n-- SEARCH r USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?).\nWHERE s.key IN ('bms_err_cell_overvoltage', 'bms_err_cell_undervoltage', 'bms_err_over_temp',\n                'bms_err_leak_detected', 'bms_err_leak_detect_failed', 'bms_err_contactor',\n                'bms_warn_low_soc', 'bms_warn_balancing_required')\nGROUP BY r.ts/1000\nORDER BY time",
+          "rawQueryText": "-- MIN(), not MAX(): SQLite compares text with BINARY collation, so 'ACTIVE' < 'clear'\n-- and MIN is severity-first. A flag that both sets and clears inside one second-bucket\n-- must render ACTIVE, not green. Renaming either state string can silently flip that,\n-- so 'ACTIVE' has to keep sorting before the cleared label.\nSELECT r.ts/1000 AS time,\n  MIN(CASE WHEN s.key = 'bms_err_cell_overvoltage'    THEN state END) AS \"error: cell overvoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_cell_undervoltage'   THEN state END) AS \"error: cell undervoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_over_temp'           THEN state END) AS \"error: over temperature\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detected'       THEN state END) AS \"error: leak detected\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detect_failed'  THEN state END) AS \"error: leak detect failed\",\n  MIN(CASE WHEN s.key = 'bms_err_contactor'           THEN state END) AS \"error: contactor\",\n  MIN(CASE WHEN s.key = 'bms_warn_low_soc'            THEN state END) AS \"warning: low SOC\",\n  MIN(CASE WHEN s.key = 'bms_warn_balancing_required' THEN state END) AS \"warning: balancing required\"\nFROM (\n  SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END AS state\n  FROM reading r\n  WHERE r.ts BETWEEN $__from AND $__to\n) AS r\nJOIN signal s ON s.id = r.signal_id\n-- the bare ts predicate inside the derived table is not a scan: SQLite flattens the\n-- subquery and pushes this key filter down, so the plan is\n-- SEARCH r USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?).\nWHERE s.key IN ('bms_err_cell_overvoltage', 'bms_err_cell_undervoltage', 'bms_err_over_temp',\n                'bms_err_leak_detected', 'bms_err_leak_detect_failed', 'bms_err_contactor',\n                'bms_warn_low_soc', 'bms_warn_balancing_required')\nGROUP BY r.ts/1000\nORDER BY time",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -1085,8 +1085,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dtc_count' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dtc_count' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -1144,8 +1144,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dtc_list_count' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dtc_list_count' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_list_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_list_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -1224,8 +1224,8 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'mil_on' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'mil_on' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'mil_on' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'mil_on' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
           "refId": "A",
           "timeColumns": ["time"]
         }
