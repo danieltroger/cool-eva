@@ -88,10 +88,12 @@ export interface DiagnosticReport {
  *
  * Stateful because the list is paged: each message carries at most two codes, so
  * a list the size of the 38 PID 0x01 reports would arrive spread over ~19 of
- * them. (The only reply seen so far is a single frame carrying no codes at all —
- * see the PR discussion; paging is inferred from the hub's other messages, not
- * yet observed here.) `push` returns null while the list is still coming in and
- * the finished report on the last page.
+ * them. `push` returns null while the list is still coming in and the finished
+ * report on the last page.
+ *
+ * Paging has never actually been observed — every reply so far has been a single
+ * `0xFF` frame carrying no codes (see the note at the top of this file). All of
+ * the below is therefore inferred, not confirmed.
  *
  * Deliberately tolerant about paging. The sub-index convention is inferred from
  * the hub's other multi-part messages (odometer, GPS and vehicle status all end
