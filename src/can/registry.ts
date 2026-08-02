@@ -148,10 +148,18 @@ export const SIGNALS: SignalDef[] = [
   // per-cell signals and no mux row, they never arrived; with a mux row and no cells,
   // the selector is out of range and the assumption is wrong.
   //
+  // The one shape the guard can't see is a 0-BASED selector — modules 0…10 would drop
+  // module 0 and shift the rest onto the wrong keys, with healthy-looking cells. That
+  // is ruled out by measurement, not by the guard: the config-5 capture saw all eleven
+  // LMUs on 0x662, which a 0-based scheme could not produce.
+  //
   // The deadband deliberately stops it after the first row per boot. It rotates at
   // 20 Hz, so log-on-change would be ~1.7M rows/day for a number that never carries
-  // new information once you've seen it move. Whether it actually walks 1…11 is
-  // visible live on the dashboard, which reads every sample regardless of deadband.
+  // new information once you've seen it move. What keeps the rotation observable is
+  // the 5 s full-snapshot heartbeat in ws.ts, which broadcasts liveState — liveState
+  // updates on every sample, but notifyChange sits inside the deadband branch, so the
+  // patch path never fires for this signal. That heartbeat is therefore load-bearing
+  // here: drop it as "redundant" and this becomes invisible.
   //
   // The only signal here written by three frames, and safe precisely because they all
   // read the same memory (2129) — unlike a duplicated measurement, they can't disagree

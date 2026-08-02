@@ -11,8 +11,6 @@
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
 import { type DecodedValue, u16le } from "./frame.ts";
 
-export type { DecodedValue };
-
 export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
   switch (id) {
     // 0x10A — charge/energy status.

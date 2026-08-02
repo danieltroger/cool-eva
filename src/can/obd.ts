@@ -1,5 +1,5 @@
 import type { RawChannel } from "socketcan";
-import type { DecodedValue } from "./decode.ts";
+import type { DecodedValue } from "./frame.ts";
 import { record } from "./signals.ts";
 
 // OBD-II Mode-01 polling over CAN (see obd-garage/CAN_MAP.md §OBD-II queries).

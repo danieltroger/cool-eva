@@ -1,3 +1,4 @@
+import { OFFSET_CONFIG_MIN_DLC } from "./decode-bms.ts";
 import type { DecodedValue } from "./frame.ts";
 
 // Decides which frame is allowed to write batt_temp_lo / batt_temp_hi.
@@ -19,12 +20,15 @@ import type { DecodedValue } from "./frame.ts";
 
 const PACK_THERMAL_FRAME_ID = 0x660;
 
-// 0x660 is DLC 3 before the VCU offset exists and DLC 8 after. Bytes 3-4 (the true
-// pack temp high/low) exist only in the long form.
-const OFFSET_CONFIG_MIN_DLC = 5;
-
 // How long to wait for a long 0x660 before concluding it is not coming. Only consulted
 // when the flag says to expect one — 0x660 is 1 Hz, so a few seconds is plenty.
+//
+// Measured from the first frame we actually see, NOT from startup. The Pi routinely
+// boots while the bike is asleep, so can0 can sit silent for hours; a window started at
+// configure time would already be spent when the bus finally wakes, and the first 0x200
+// (20 Hz) would beat the first 0x660 (1 Hz) and mirror shifted bytes into batt_temp_*
+// with deadband 0 — sealing the very rows this module exists to prevent, and crying
+// wolf with the "no 0x660 arrived" warning on every restart.
 const THERMAL_FRAME_WAIT_MS = 5000;
 
 const VCU_TEMPERATURE_KEYS: ReadonlyArray<readonly [string, string]> = [
@@ -35,7 +39,7 @@ const VCU_TEMPERATURE_KEYS: ReadonlyArray<readonly [string, string]> = [
 let customBmsConfigExpected = false;
 let latestThermalFrameIsLong = false;
 let anyLongThermalFrameSeen = false;
-let startedAtMs = Date.now();
+let firstFrameAtMs: number | undefined;
 let warnedThermalFrameMissing = false;
 let warnedThermalFrameUnexpected = false;
 
@@ -45,6 +49,7 @@ let warnedThermalFrameUnexpected = false;
  * are the true temperature. Stateful: it watches 0x660's length as frames arrive.
  */
 export function resolvePackTemperatures(id: number, data: Buffer, decoded: DecodedValue[]): DecodedValue[] {
+  firstFrameAtMs ??= Date.now();
   if (id === PACK_THERMAL_FRAME_ID) {
     notePackThermalFrame(data.length);
     return decoded;
@@ -62,10 +67,13 @@ export function resolvePackTemperatures(id: number, data: Buffer, decoded: Decod
   return [...decoded, ...trueTemperatures];
 }
 
-/** Call once at startup with the CUSTOM_BMS_CONFIG flag. Default is stock. */
+/**
+ * Call once at startup with the CUSTOM_BMS_CONFIG flag. Default is stock. Sets only
+ * the flag — the grace window starts at the first frame, which may be hours later.
+ */
 export function configurePackTemperature(customBmsConfig: boolean): void {
   customBmsConfigExpected = customBmsConfig;
-  startedAtMs = Date.now();
+  firstFrameAtMs = undefined;
 }
 
 function notePackThermalFrame(frameLength: number): void {
@@ -102,8 +110,9 @@ function shouldMirrorVcuTemperatures(): boolean {
   if (anyLongThermalFrameSeen) return false;
   // The flag expects the offset config but no long 0x660 has ever arrived. Give it a
   // moment (0x200 is 20 Hz, 0x660 only 1 Hz), then treat the flag as mistaken rather
-  // than leave the bike with no temperature logging at all.
-  if (Date.now() - startedAtMs < THERMAL_FRAME_WAIT_MS) return false;
+  // than leave the bike with no temperature logging at all. The clock runs from the
+  // first frame seen, so a long silent bus doesn't consume the window.
+  if (firstFrameAtMs === undefined || Date.now() - firstFrameAtMs < THERMAL_FRAME_WAIT_MS) return false;
   if (!warnedThermalFrameMissing) {
     warnedThermalFrameMissing = true;
     console.warn(

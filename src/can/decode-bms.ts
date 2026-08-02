@@ -179,6 +179,9 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     }
 
     // 0x300 — charger enable + DC limits the BMS grants the charger (10 Hz, LE).
+    // 0x300 is a low, generic-looking ID, so it is worth saying why we attribute it to
+    // the BMS rather than to some other ECU that happens to use it: it is frame 8 in
+    // the BMS's own TX table in every config file we have, stock included.
     case 0x300: {
       if (data.length < 7) return [];
       return [
@@ -208,7 +211,7 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
       // so its length is the only honest way to tell the two configs apart. Bytes 3-4
       // must never be read from the short form: CAN padding would decode as 0 °C,
       // which is plausible enough to be logged and believed rather than spotted.
-      if (data.length >= 5) {
+      if (data.length >= OFFSET_CONFIG_MIN_DLC) {
         values.push(
           { key: "batt_temp_hi", value: signedByte(data[3]) },
           { key: "batt_temp_lo", value: signedByte(data[4]) }
@@ -324,6 +327,13 @@ const SYSTEM_STATE_BITS: ReadonlyArray<readonly [number, string]> = [
 const OVER_TEMPERATURE_ERROR_MASK = (1 << 4) | (1 << 7); // cell | LMU over temperature
 const CONTACTOR_ERROR_MASK = (1 << 21) | (1 << 22) | (1 << 23) | (1 << 24) | (1 << 25); // main +/−, precharge, midpack, precharge timeout
 
+// 0x660 is DLC 3 before the VCU temperature offset exists and DLC 8 after, so its
+// length is what distinguishes the two configs. Exported because pack-temperature.ts
+// must suppress its 0x200 mirror on exactly the frames where the decoder above emits
+// batt_temp_* — if the two ever disagreed, those keys would either stop updating or
+// get two writers flapping 15 °C apart, and neither shows up as an error.
+export const OFFSET_CONFIG_MIN_DLC = 5;
+
 // 11 LMU modules: 1-4 have 8 cells enabled, 5-11 have 7 → 81 series positions,
 // matching the pack's 81s topology.
 export const LMU_COUNT = 11;
@@ -414,16 +424,45 @@ function isPlausibleCellVoltage(millivolts: number): boolean {
   return millivolts >= MIN_PLAUSIBLE_CELL_MV && millivolts <= MAX_PLAUSIBLE_CELL_MV;
 }
 
+// The temperature bytes in the same multiplexed block need their own guard, and the
+// measured pad settles what it has to catch: 0x664 b5 reads 0x7A = 122 °C on a module
+// whose slot isn't freshly populated. (Not 0x20 = 32 °C — a byte-pattern pad mirroring
+// the 0x2000 cell sentinel would have been indistinguishable from a real module
+// temperature. It isn't, so this is catchable.) MaxLMUtemperature is 85 °C in the
+// config, so anything above ~100 °C is definitionally not a reading the BMS tolerates.
+const MIN_PLAUSIBLE_LMU_TEMP_C = -40;
+const MAX_PLAUSIBLE_LMU_TEMP_C = 100;
+
+function isPlausibleLmuTemperature(celsius: number): boolean {
+  return celsius >= MIN_PLAUSIBLE_LMU_TEMP_C && celsius <= MAX_PLAUSIBLE_LMU_TEMP_C;
+}
+
 // 0x664 b5-7 — the temperatures of the module named in byte 0.
+//
+// The band and LMUS_WITHOUT_BATTERY_TEMP are NOT redundant; they catch different
+// failures and both are required:
+//   • the band catches pad values — a module the BMCU hasn't polled yet reads 122 °C;
+//   • the exclusion list catches STALE values. LMU 6 and 8 have BattTemp1Enabled=False
+//     and were measured reporting 0x7A sometimes but a perfectly plausible 28 °C other
+//     times, which is near-certainly another module's reading left behind in the shared
+//     [2129]-[2149] block. No band can catch a stale-but-plausible number; only knowing
+//     from the config that those two modules have no sensor can.
 function decodeLmuTemperatures(data: Buffer): DecodedValue[] {
   const lmuNumber = data[0];
   if (lmuNumber < 1 || lmuNumber > LMU_COUNT) return [];
-  const values: DecodedValue[] = [
-    { key: lmuTemperatureKey(lmuNumber, "pcb1"), value: signedByte(data[6]) },
-    { key: lmuTemperatureKey(lmuNumber, "pcb2"), value: signedByte(data[7]) },
+  const values: DecodedValue[] = [];
+  const boardTemperatures: ReadonlyArray<readonly [LmuTemperatureSensor, number]> = [
+    ["pcb1", signedByte(data[6])],
+    ["pcb2", signedByte(data[7])],
   ];
-  if (!LMUS_WITHOUT_BATTERY_TEMP.includes(lmuNumber)) {
-    values.push({ key: lmuTemperatureKey(lmuNumber, "bat1"), value: signedByte(data[5]) });
+  for (const [sensor, celsius] of boardTemperatures) {
+    if (!isPlausibleLmuTemperature(celsius)) continue;
+    values.push({ key: lmuTemperatureKey(lmuNumber, sensor), value: celsius });
+  }
+  if (LMUS_WITHOUT_BATTERY_TEMP.includes(lmuNumber)) return values;
+  const batteryTemperature = signedByte(data[5]);
+  if (isPlausibleLmuTemperature(batteryTemperature)) {
+    values.push({ key: lmuTemperatureKey(lmuNumber, "bat1"), value: batteryTemperature });
   }
   return values;
 }
