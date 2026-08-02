@@ -1,21 +1,104 @@
 {
   "annotations": {
-    "list": []
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "blue",
+        "name": "Key on",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "WITH samples AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on' AND r.ts BETWEEN $__from AND $__to\n)\nSELECT ts / 1000.0 AS time, 'key on' AS text\nFROM samples\nWHERE value = 1 AND (previous IS NULL OR previous = 0)\nORDER BY time",
+          "refId": "keyOn",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "GO (ready to ride)",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "WITH samples AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go' AND r.ts BETWEEN $__from AND $__to\n)\nSELECT ts / 1000.0 AS time, 'GO' AS text\nFROM samples\nWHERE value = 1 AND (previous IS NULL OR previous = 0)\nORDER BY time",
+          "refId": "go",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "yellow",
+        "name": "Charge start",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging' AND r.ts BETWEEN $__from AND $__to\n),\nbms_state AS (\n  -- bms_state_charge, not a mask over charge_state: 0x201 byte 0 is a bitfield and the\n  -- decoder already publishes this bit from SYSTEM_STATE_BITS. Restating the mask here\n  -- would keep marking bit 1 of a raw byte, silently, if the bit meaning were corrected.\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\n)\nSELECT ts / 1000.0 AS time, 'charging (0x102)' AS text\nFROM charge_flag\nWHERE value = 1 AND (previous IS NULL OR previous = 0)\nUNION ALL\nSELECT ts / 1000.0 AS time, 'BMS charge state (0x201)' AS text\nFROM bms_state\nWHERE value = 1 AND (previous IS NULL OR previous = 0)\nORDER BY time",
+          "refId": "charge",
+          "timeColumns": ["time"]
+        }
+      }
+    ]
   },
   "editable": true,
   "graphTooltip": 1,
-  "id": 1,
+  "links": [],
   "panels": [
+    {
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "### What is measured, and what is assumed\n\n**Measured:** coolant inlet and outlet (2× PT100 on the custom battery loop), pack current and power, per-module temperatures from the BMS, inverter and motor temperatures, ambient from OBD-II.\n\n**Assumed: the coolant flow rate.** It is not measured and it is not on the bus. Every “heat removed” figure below is `ΔT × k`, with `k = flow × ρ·cp` taken from the two boxes at the top of this dashboard. The defaults are 850 L/h — the duty point on the Bosch PAD 12 V pump datasheet (part 0 392 023 004, 850 dm³/h at 0.1 bar) — and 3.5 MJ·m⁻³·K⁻¹ for a 50/50 glycol/water mix. The loop's actual restriction is unknown, so the real flow sits somewhere below that. **The shape of the heat curve is trustworthy; the absolute scale is not.**\n\n**Not claimed at all: heat in.** `pack_kw` is pack *terminal* power; only the I²R fraction of it ends up in the coolant. It is drawn next to ΔT so the correlation can speak for itself — no watts figure for heat in is asserted anywhere on this dashboard.",
+        "mode": "markdown"
+      },
+      "title": "Read this first",
+      "transparent": true,
+      "type": "text"
+    },
     {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 5
       },
-      "id": 1,
-      "title": "Battery",
+      "id": 2,
+      "panels": [],
+      "title": "Coolant loop — the custom watercooling on the battery pack",
       "type": "row"
     },
     {
@@ -23,30 +106,40 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
+      "description": "Query returns a time column and a value column, so the stat panel gets a proper frame. Newest outlet−inlet pair in the window. Positive = the pack is putting heat into the coolant. Unlike the other ΔT panels this one does not skip unusable pairs: if the newest sample cannot be paired — a probe reading outside −20…100 °C, or silent for over an hour — the tile goes blank rather than showing the last good value.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
-          "unit": "percent",
+          "decimals": 2,
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "blue",
                 "value": null
               },
               {
-                "color": "yellow",
-                "value": 20
+                "color": "green",
+                "value": 0.5
               },
               {
-                "color": "green",
-                "value": 40
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "orange",
+                "value": 4
+              },
+              {
+                "color": "red",
+                "value": 8
               }
             ]
-          }
+          },
+          "unit": "celsius"
         },
         "overrides": []
       },
@@ -54,19 +147,21 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 1
+        "y": 6
       },
-      "id": 2,
+      "id": 10,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": ["lastNotNull"],
-          "fields": "",
+          "fields": "/^value$/",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -75,12 +170,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\n-- no IS NOT NULL filter, unlike the other \u0394T panels: this tile is about the latest\n-- pairing specifically, so if the newest sample cannot be paired the tile should go\n-- blank rather than quietly serve the last good \u0394T. Now that the hold is seeded from\n-- before the window, a NULL here means a faulted probe, not \"the other one is late\".\nSELECT ts / 1000.0 AS time, outlet_held - inlet_held AS value\nFROM paired\nWHERE ts >= $__from\nORDER BY ts DESC\nLIMIT 1",
           "refId": "A",
-          "timeColumns": []
+          "timeColumns": ["time"]
         }
       ],
-      "title": "SOC",
+      "title": "ΔT latest",
       "type": "stat"
     },
     {
@@ -88,14 +183,40 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
+      "description": "Query returns a time column and a value column, so the stat panel gets a proper frame. Largest outlet−inlet in the window, among pairings still fresh enough to use. A held reading expires an hour after the sample it came from, so a pairing staler than that is dropped rather than counted. The tile shows the value only; the query returns the instant too, but textMode is \"value\" so it is not drawn.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "purple",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
           "decimals": 2,
-          "unit": "kwatt"
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "orange",
+                "value": 4
+              },
+              {
+                "color": "red",
+                "value": 8
+              }
+            ]
+          },
+          "unit": "celsius"
         },
         "overrides": []
       },
@@ -103,19 +224,21 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 1
+        "y": 6
       },
-      "id": 3,
+      "id": 11,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": ["lastNotNull"],
-          "fields": "",
+          "fields": "/^value$/",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -124,12 +247,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\nSELECT ts / 1000.0 AS time, outlet_held - inlet_held AS value\nFROM paired\nWHERE inlet_held IS NOT NULL AND outlet_held IS NOT NULL AND ts >= $__from\nORDER BY outlet_held - inlet_held DESC\nLIMIT 1",
           "refId": "A",
-          "timeColumns": []
+          "timeColumns": ["time"]
         }
       ],
-      "title": "Pack power",
+      "title": "ΔT peak",
       "type": "stat"
     },
     {
@@ -137,38 +260,32 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
+      "description": "Query returns a time column and a value column, so the stat panel gets a proper frame. Most negative outlet−inlet, among pairings still fresh enough to use. A held reading expires an hour after the sample it came from, so a pairing staler than that is dropped rather than counted. On a settled, parked bike this should sit near zero; whatever it reads is the two probes' mutual offset, and it is the noise floor for every heat number on this dashboard.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
-          "unit": "celsius",
+          "decimals": 2,
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "red",
                 "value": null
               },
               {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "yellow",
-                "value": 35
-              },
-              {
                 "color": "orange",
-                "value": 45
+                "value": -1
               },
               {
-                "color": "red",
-                "value": 55
+                "color": "text",
+                "value": -0.3
               }
             ]
-          }
+          },
+          "unit": "celsius"
         },
         "overrides": []
       },
@@ -176,1045 +293,21 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 1
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "table",
-          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'batt_temp_hi' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "refId": "A",
-          "timeColumns": []
-        }
-      ],
-      "title": "Batt temp max",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "unit": "none",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 15
-              },
-              {
-                "color": "orange",
-                "value": 30
-              },
-              {
-                "color": "red",
-                "value": 50
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 12,
-        "y": 1
-      },
-      "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "table",
-          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'cell_spread_mv' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "refId": "A",
-          "timeColumns": []
-        }
-      ],
-      "title": "Cell spread",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "decimals": 0,
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 1
-      },
-      "id": 6,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "table",
-          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "refId": "A",
-          "timeColumns": []
-        }
-      ],
-      "title": "SOH",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "unit": "volt",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 11.8
-              },
-              {
-                "color": "green",
-                "value": 12.4
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 1
-      },
-      "id": 7,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "table",
-          "rawQueryText": "SELECT r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'aux_12v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
-          "refId": "A",
-          "timeColumns": []
-        }
-      ],
-      "title": "12V aux",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "description": "Pack min/max temp (BMS frame 200) against the external coolant in/out probes.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "°C",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 1,
-          "unit": "celsius"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "batt_temp_hi"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "batt max"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "batt_temp_lo"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "batt min"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "coolant_in"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "coolant in"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "coolant_out"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "coolant out"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('batt_temp_lo', 'batt_temp_hi', 'coolant_in', 'coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Battery temperature vs coolant",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "kW",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 2,
-          "unit": "kwatt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 14
-      },
-      "id": 9,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('pack_kw') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Pack power",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "A",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 1,
-          "unit": "amp"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 14
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('pack_a') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Pack current",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "%",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 22
-      },
-      "id": 11,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('soc') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "SOC",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "V",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 1,
-          "unit": "volt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 22
+        "y": 6
       },
       "id": 12,
       "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('pack_v') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Pack voltage",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "mV",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "none"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cell_max_mv"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "max cell"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cell_avg_mv"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "avg cell"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "text",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cell_min_mv"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "min cell"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 30
-      },
-      "id": 13,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('cell_min_mv', 'cell_avg_mv', 'cell_max_mv') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Cell voltages (min / avg / max)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "mV",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 30
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('cell_spread_mv') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Cell spread",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 38
-      },
-      "id": 15,
-      "title": "Charging",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "V",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "volt"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "dc_v"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "DC bus"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "mains_v"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "mains"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 39
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dc_v', 'mains_v') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Charging voltages",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "A",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 1,
-          "unit": "amp"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "dc_a"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "DC"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "mains_a"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "mains"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "charge_limit_a"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "limit"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 39
-      },
-      "id": 17,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dc_a', 'mains_a', 'charge_limit_a') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Charging currents (+ limit)",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 47
-      },
-      "id": 18,
-      "title": "Coolant",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 1,
-          "unit": "celsius",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "yellow",
-                "value": 35
-              },
-              {
-                "color": "orange",
-                "value": 45
-              },
-              {
-                "color": "red",
-                "value": 55
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 48
-      },
-      "id": 19,
-      "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": ["lastNotNull"],
-          "fields": "",
+          "fields": "/^value$/",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1223,12 +316,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT MAX(r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_in' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\nSELECT ts / 1000.0 AS time, outlet_held - inlet_held AS value\nFROM paired\nWHERE inlet_held IS NOT NULL AND outlet_held IS NOT NULL AND ts >= $__from\nORDER BY outlet_held - inlet_held ASC\nLIMIT 1",
           "refId": "A",
-          "timeColumns": []
+          "timeColumns": ["time"]
         }
       ],
-      "title": "Max inlet",
+      "title": "ΔT trough",
       "type": "stat"
     },
     {
@@ -1236,86 +329,14 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 1,
-          "unit": "celsius",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 20
-              },
-              {
-                "color": "yellow",
-                "value": 35
-              },
-              {
-                "color": "orange",
-                "value": 45
-              },
-              {
-                "color": "red",
-                "value": 55
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 48
-      },
-      "id": 20,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "table",
-          "rawQueryText": "SELECT MAX(r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_out' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100",
-          "refId": "A",
-          "timeColumns": []
-        }
-      ],
-      "title": "Max outlet",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
+      "description": "ASSUMED, NOT MEASURED. Peak ΔT among pairings still fresh enough to use — A held reading expires an hour after the sample it came from, so a pairing staler than that is dropped rather than counted. — times k, k = flow × ρ·cp from the dashboard variables (default 850 L/h, 3.5 MJ·m⁻³·K⁻¹ → 0.83 kW per °C). Flow is not measured, so treat this as an order of magnitude, not a reading.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
           "decimals": 2,
-          "unit": "celsius",
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1325,42 +346,45 @@
               },
               {
                 "color": "green",
-                "value": 1
+                "value": 0.5
               },
               {
                 "color": "yellow",
-                "value": 3
+                "value": 2
               },
               {
                 "color": "orange",
-                "value": 6
+                "value": 5
               },
               {
                 "color": "red",
                 "value": 10
               }
             ]
-          }
+          },
+          "unit": "suffix:kW"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 5,
         "x": 12,
-        "y": 48
+        "y": 6
       },
-      "id": 21,
+      "id": 13,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": ["lastNotNull"],
-          "fields": "",
+          "fields": "/^value$/",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1369,12 +393,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT MAX(out_v - in_v) AS value FROM (\n  SELECT (r.ts/10000) AS b, MIN(r.ts)/1000.0 AS t,\n    AVG(CASE WHEN s.key='coolant_out' THEN r.value END) AS out_v,\n    AVG(CASE WHEN s.key='coolant_in'  THEN r.value END) AS in_v\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in','coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\n  GROUP BY b\n) WHERE in_v IS NOT NULL AND out_v IS NOT NULL",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\nSELECT ts / 1000.0 AS time, (outlet_held - inlet_held) * CAST(${coolant_flow_lph:sqlstring} AS REAL) / 3600.0 * CAST(${coolant_rho_cp:sqlstring} AS REAL) AS value\nFROM paired\nWHERE inlet_held IS NOT NULL AND outlet_held IS NOT NULL AND ts >= $__from\nORDER BY outlet_held - inlet_held DESC\nLIMIT 1",
           "refId": "A",
-          "timeColumns": []
+          "timeColumns": ["time"]
         }
       ],
-      "title": "Max ΔT (outlet − inlet)",
+      "title": "Heat removed, peak (assumed flow)",
       "type": "stat"
     },
     {
@@ -1382,34 +406,66 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
+      "description": "Query returns a time column and a value column, so the stat panel gets a proper frame. Hottest outlet reading in the window.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "purple",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
-          "decimals": 0,
-          "unit": "short"
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 25
+              },
+              {
+                "color": "yellow",
+                "value": 32
+              },
+              {
+                "color": "orange",
+                "value": 38
+              },
+              {
+                "color": "red",
+                "value": 45
+              },
+              {
+                "color": "purple",
+                "value": 60
+              }
+            ]
+          },
+          "unit": "celsius"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 48
+        "w": 4,
+        "x": 17,
+        "y": 6
       },
-      "id": 22,
+      "id": 14,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": ["lastNotNull"],
-          "fields": "",
+          "fields": "/^value$/",
           "values": false
         },
-        "textMode": "auto"
+        "textMode": "value",
+        "wideLayout": true
       },
       "targets": [
         {
@@ -1418,12 +474,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT COUNT(*) AS value FROM reading r JOIN signal s ON s.id=r.signal_id WHERE s.key IN ('coolant_in','coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- unfiltered: ingest already gates at -40..150 (max31865.ts) by skipping the read,\n-- so a degraded probe reading 100..150 reaches the DB and should land on the >=60\n-- purple band rather than be discarded here. A fully open RTD reads wilder than that\n-- and is never recorded at all, so its signature is the trace stopping, not a spike.\nWHERE s.key = 'coolant_out' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.value DESC\nLIMIT 1",
           "refId": "A",
-          "timeColumns": []
+          "timeColumns": ["time"]
         }
       ],
-      "title": "Coolant samples",
+      "title": "Coolant outlet, peak",
       "type": "stat"
     },
     {
@@ -1431,6 +487,88 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
+      "description": "Query returns a time column and a value column, so the stat panel gets a proper frame. OBD-II PID 46. Every temperature on the bike converges on this once it has been parked long enough.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 25
+              },
+              {
+                "color": "yellow",
+                "value": 32
+              },
+              {
+                "color": "orange",
+                "value": 38
+              },
+              {
+                "color": "red",
+                "value": 45
+              },
+              {
+                "color": "purple",
+                "value": 60
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 6
+      },
+      "id": 15,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "/^value$/",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'ambient_temp' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC\nLIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Ambient, latest",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The two PT100 probes on the custom battery loop, plus ambient (OBD-II PID 46, 1 °C resolution) as the reference every temperature decays towards when the bike is parked. Signals are logged on change with a deadband, so a flat line means “unchanged”, not “not measured” — hence step interpolation and spanNulls (a gap is held at the last value, not drawn as a dip). Nothing is filtered here: ingest already rejects reads outside −40…150 °C (max31865.ts), so anything that reaches the database was kept deliberately and a degraded probe draws as the excursion it is. Note that ingest *skips* a bad read rather than clamping it, so a fully open or shorted RTD reads wilder than ±150 °C and is never recorded — its signature is this trace simply stopping, not a spike.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1439,20 +577,22 @@
           "custom": {
             "axisLabel": "°C",
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "lineInterpolation": "stepAfter",
             "lineWidth": 1.5,
-            "showPoints": "never",
+            "pointSize": 4,
+            "showPoints": "auto",
             "spanNulls": true
           },
-          "decimals": 2,
-          "unit": "celsius"
+          "displayName": "${__field.labels.metric}",
+          "unit": "celsius",
+          "decimals": 2
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "coolant_in"
+              "id": "byRegexp",
+              "options": "/coolant_in$/"
             },
             "properties": [
               {
@@ -1470,8 +610,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "coolant_out"
+              "id": "byRegexp",
+              "options": "/coolant_out$/"
             },
             "properties": [
               {
@@ -1486,21 +626,56 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/ambient_temp$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ambient (OBD)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
           }
         ]
       },
       "gridPos": {
-        "h": 10,
+        "h": 9,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 10
       },
-      "id": 23,
+      "id": 16,
       "options": {
         "legend": {
           "calcs": ["min", "max", "mean", "lastNotNull"],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1514,12 +689,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('coolant_in', 'coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nORDER BY time",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- unfiltered: ingest already gates at -40..150 (max31865.ts) by skipping the read.\n-- A degraded probe still inside that band is a fault worth drawing, not one worth\n-- hiding. A fully open RTD never reaches the DB, so it shows up as the trace stopping.\nWHERE s.key IN ('coolant_in', 'coolant_out', 'ambient_temp')\n  AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
           "refId": "A",
           "timeColumns": ["time"]
         }
       ],
-      "title": "Coolant — inlet vs outlet",
+      "title": "Coolant inlet and outlet, against ambient",
       "type": "timeseries"
     },
     {
@@ -1527,7 +702,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Heat pulled out of the pack. Positive ΔT = pack dumping heat into the coolant. 10 s buckets.",
+      "description": "The one directly measured cooling quantity. Both probes are logged on change and never share a timestamp, so each point pairs a fresh reading from one probe with the last known reading of the other (carry-forward). That is not a synchronised pair — a fast transient can show up on one side one sample before the other. Pairing strictly by 10 s bucket instead would leave 60 points where this leaves 789. A held reading expires an hour after the sample it came from, so a pairing staler than that is dropped rather than counted. Unlike the other panels here this one keeps those rows and emits a null, and turns spanNulls off, so a probe fault draws as a gap rather than as a flat line indistinguishable from a quiet period. Near zero, ΔT is dominated by the probes' mutual offset rather than by heat transfer.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1536,29 +711,58 @@
           "custom": {
             "axisLabel": "ΔT (°C)",
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "lineInterpolation": "stepAfter",
             "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "axisSoftMin": -0.5,
+            "axisSoftMax": 0.5
           },
-          "decimals": 2,
-          "unit": "celsius"
+          "displayName": "${__field.labels.metric}",
+          "unit": "celsius",
+          "decimals": 3
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/delta_t$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ΔT (outlet − inlet)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 62
+        "y": 19
       },
-      "id": 24,
+      "id": 17,
       "options": {
         "legend": {
           "calcs": ["min", "max", "mean", "lastNotNull"],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1572,12 +776,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT t AS time, 'ΔT' AS metric, out_v - in_v AS value FROM (\n  SELECT (r.ts/10000) AS b, MIN(r.ts)/1000.0 AS t,\n    AVG(CASE WHEN s.key='coolant_out' THEN r.value END) AS out_v,\n    AVG(CASE WHEN s.key='coolant_in'  THEN r.value END) AS in_v\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in','coolant_out') AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\n  GROUP BY b\n) WHERE in_v IS NOT NULL AND out_v IS NOT NULL ORDER BY time",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\n-- Unusable pairings are kept and emitted as NULL rather than filtered out, and this panel\n-- alone sets spanNulls: false. Filtering plus spanNulls renders a fault identically to a\n-- deadband quiet period -- one flat step across it either way. Keeping the row makes the\n-- distinction structural instead of threshold-based: rows exist only where a probe actually\n-- sampled, so a NULL means \"sampled, could not be paired\" (fault) while ordinary quiet\n-- produces no row at all and still connects. Checked in a Grafana 11.3 container that the\n-- datasource returns config {} on the time field -- no frame interval, so Grafana does not\n-- auto-insert nulls into gaps and spanNulls: false breaks only where a NULL really is.\nSELECT ts / 1000.0 AS time, 'delta_t' AS metric, outlet_held - inlet_held AS value\nFROM paired\nWHERE ts >= $__from\nORDER BY time",
           "refId": "A",
           "timeColumns": ["time"]
         }
       ],
-      "title": "ΔT across battery (outlet − inlet)",
+      "title": "ΔT across the pack (outlet − inlet)",
       "type": "timeseries"
     },
     {
@@ -1586,10 +790,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 70
+        "y": 27
       },
-      "id": 25,
-      "title": "OBD-II (polled)",
+      "id": 3,
+      "panels": [],
+      "title": "Heat balance — ΔT is measured, flow is assumed",
       "type": "row"
     },
     {
@@ -1597,6 +802,594 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
+      "description": "Left axis: ΔT × k, where k = flow × ρ·cp comes from the dashboard variables. Flow is an assumption (Bosch PAD 12 V datasheet duty point, 850 dm³/h at 0.1 bar); the loop's restriction is unknown, so the real flow is lower and so is the real heat. The curve's shape follows ΔT exactly — only its scale is guesswork. A held reading expires an hour after the sample it came from, so a pairing staler than that is dropped rather than counted.\n\nRight axis: `pack_kw` straight off the BMS, on its own axis because it is two orders of magnitude larger. It is terminal power, NOT heat input — only the I²R share of it turns into heat, and that share is not known here. Negative = discharging. Compare the shapes, not the numbers. Signals are logged on change with a deadband, so a flat line means “unchanged”, not “not measured” — hence step interpolation and spanNulls (a gap is held at the last value, not drawn as a dip).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "heat removed (kW, assumed)",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "displayName": "${__field.labels.metric}",
+          "unit": "suffix:kW",
+          "decimals": 3
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/heat_removed$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "heat removed (assumed flow)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/pack_kw$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "pack terminal power (not heat)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "pack terminal power (kW)"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "mean", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\nSELECT ts / 1000.0 AS time, 'heat_removed' AS metric, (outlet_held - inlet_held) * CAST(${coolant_flow_lph:sqlstring} AS REAL) / 3600.0 * CAST(${coolant_rho_cp:sqlstring} AS REAL) AS value\nFROM paired\nWHERE inlet_held IS NOT NULL AND outlet_held IS NOT NULL AND ts >= $__from\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, 'pack_kw' AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Heat removed (assumed flow) vs pack terminal power",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The honest version of “heat in”. Ohmic loss in the pack goes as I², so pack_a² (right axis) is a proportional stand-in for the heat the cells actually generate — proportional to an unknown resistance, so it has no watts scale. If the cooling loop is doing what it is supposed to, ΔT (left axis) should track it with a lag set by the thermal mass of the pack. Nothing here converts one into the other. A held reading expires an hour after the sample it came from, so a pairing staler than that is dropped rather than counted. Signals are logged on change with a deadband, so a flat line means “unchanged”, not “not measured” — hence step interpolation and spanNulls (a gap is held at the last value, not drawn as a dip).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "ΔT (°C)",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "displayName": "${__field.labels.metric}",
+          "unit": "celsius",
+          "decimals": 3
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/delta_t$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ΔT (outlet − inlet)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/pack_current_squared$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "pack current² (loss proxy)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "suffix:A²"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "pack current² (A²)"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "mean", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH probe_samples AS (\n  -- Two columns per probe on purpose. `*_row` marks that the probe reported at all and\n  -- drives the carry-forward partition; `inlet`/`outlet` carry the value only when it is\n  -- in range. An out-of-range reading therefore starts a new partition holding NULL, so the\n  -- hold yields NULL rather than the last good value. That removes the fabricated movement\n  -- the old filter produced (a stuck probe drove \u0394T 0.5 -> 0.6 -> 0.7). Where the row is then\n  -- dropped, that is all it does: spanNulls bridges the missing rows exactly the way it bridges\n  -- a quiet period, so the trace still holds flat. Two panels go further and show the fault\n  -- itself -- the '\u0394T latest' tile blanks, and '\u0394T across the pack' keeps the row as an explicit\n  -- NULL with spanNulls off so it draws as a gap. Ingest already\n  -- gates at -40..150 (max31865.ts), so this narrower band is about the derived maths only;\n  -- the raw coolant traces are plotted unfiltered so a fault is visible there as itself.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'coolant_in' THEN 1 END AS inlet_row,\n         CASE WHEN s.key = 'coolant_out' THEN 1 END AS outlet_row,\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.value END AS inlet,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.value END AS outlet,\n         -- the sample's own timestamp, carried forward with the value so the pairing can\n         -- expire. See the `paired` CTE below.\n         CASE WHEN s.key = 'coolant_in' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS inlet_at,\n         CASE WHEN s.key = 'coolant_out' AND r.value BETWEEN -20 AND 100 THEN r.ts END AS outlet_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('coolant_in', 'coolant_out')\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed the hold with each probe's last sample from before the window. Without this,\n  -- zooming to a stretch where only one probe happened to log a change leaves the other\n  -- NULL and every \u0394T-derived panel reads \"No data\" at once, despite both values being\n  -- known. Seed rows are filtered back out of the final SELECT by `ts >= $__from`.\n  -- One ORDER BY ... LIMIT 1 per probe rather than a ROW_NUMBER() over everything before\n  -- the window: this is a backwards seek on idx_reading_sig_ts that stops after one row,\n  -- so it stays flat as the file grows instead of walking every earlier coolant sample.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    -- capped lookback: without it a 5-minute window can pair a fresh outlet reading with\n    -- an inlet operand from hours earlier (one probe silent across a shutdown), producing a\n    -- large fake \u0394T and a large fake heat figure at a real timestamp. Past an hour the\n    -- honest answer is no reading rather than a stale one.\n    WHERE s.key = 'coolant_in' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN -20 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'coolant_out' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, inlet, outlet, inlet_at, outlet_at,\n         COUNT(inlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS inlet_run,\n         COUNT(outlet_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS outlet_run\n  FROM probe_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(inlet) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_held,\n         MAX(outlet) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_held,\n         MAX(inlet_at) OVER (PARTITION BY inlet_run ORDER BY ts) AS inlet_at_held,\n         MAX(outlet_at) OVER (PARTITION BY outlet_run ORDER BY ts) AS outlet_at_held\n  FROM runs\n),\npaired AS (\n  -- A held value expires an hour after the sample it came from. The -20..100 guard above\n  -- only catches a probe that reports bad numbers; a probe that goes fully open stops\n  -- reporting at all, because max31865.ts skips the read rather than clamping it. Without\n  -- an expiry its last good value would keep pairing with fresh readings from the other\n  -- probe for the rest of the window and draw a confident, entirely fabricated \u0394T -- and a\n  -- fabricated heat figure with it. One hour, applied to every row rather than only to the\n  -- seed, which is why the seed's own lower bound is belt-and-braces (it still narrows the\n  -- index range, so it stays).\n  -- The hour is calibrated against the PER-PROBE inter-sample gap, which is the thing this\n  -- test measures -- not the gap between \u0394T points, which only needs one probe to report.\n  -- Over the 2026-08-02 file: coolant_in 466 gaps, longest 23.6 min; coolant_out 322 gaps,\n  -- longest 23.3 min; neither has a single gap over an hour. Note that file is 4.8 h of a\n  -- mostly-parked bike and contains no overnight sit, so if a healthy long window ever reads\n  -- \"No data\", this constant is the first thing to re-measure.\n  SELECT ts,\n         CASE WHEN ts - inlet_at_held <= 3600000 THEN inlet_held END AS inlet_held,\n         CASE WHEN ts - outlet_at_held <= 3600000 THEN outlet_held END AS outlet_held\n  FROM held\n  ORDER BY ts\n)\nSELECT ts / 1000.0 AS time, 'delta_t' AS metric, outlet_held - inlet_held AS value\nFROM paired\nWHERE inlet_held IS NOT NULL AND outlet_held IS NOT NULL AND ts >= $__from\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, 'pack_current_squared' AS metric, r.value * r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "ΔT vs pack current² (I²R loss proxy)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "id": 4,
+      "panels": [],
+      "title": "Pack modules — 31 temperature sensors across 11 LMUs",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "One row per module sensor: `bat1` is the cell-pack thermistor, `pcb1`/`pcb2` sit on the module board. Colour is temperature, banded rather than continuous because the BMS reports whole degrees. Reading across a column tells you which module runs hottest.\n\nNothing is filtered. Purple (≥60 °C) is not a real temperature — it is a dead or open sensor. In the 2026-08-02 file LMU07 bat1 and LMU09 bat1 both sit at a flat 122 °C for roughly 50 minutes while the pack is at 28 °C; clipping that away would hide a fault, so it is left in and given its own colour.\n\nValues are logged on change, so a bar runs until the sensor next reports something different. That means a sensor that has stopped reporting entirely looks exactly like one sitting at a steady temperature, and no threshold on this panel can separate them: in the 2026-08-02 file a healthy module goes 48 minutes between logged samples at a constant 28 \u00b0C, so any \u201cgone quiet\u201d cutoff short enough to catch a real dropout would fire on settled modules constantly. The signal that does distinguish them is lmu_comm_warnings (0x206), on the Isolation & faults dashboard.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 25
+              },
+              {
+                "color": "yellow",
+                "value": 32
+              },
+              {
+                "color": "orange",
+                "value": 38
+              },
+              {
+                "color": "red",
+                "value": 45
+              },
+              {
+                "color": "purple",
+                "value": 60
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 15,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 30,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.92,
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, printf('LMU%02d %s', CAST(substr(s.key, 4, instr(s.key, '_') - 4) AS INTEGER), replace(substr(s.key, instr(s.key, '_') + 1), '_c', '')) AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key GLOB 'lmu[0-9]*_c' AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Per-module temperature",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Which module sensor ran hottest in the window, sorted by peak. Sorting by peak also puts failed sensors at the top, which is the point — a 122 °C peak next to a 28 °C mean is an open thermistor, not a hot module. `samples` is the number of logged changes, so a low count means the sensor barely moved (or barely reported).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sensor"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "sensor"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "samples"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "samples"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "min_c"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "min"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mean_c"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "mean"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last_c"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "latest"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_c"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "peak"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "blue",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 25
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 32
+                    },
+                    {
+                      "color": "orange",
+                      "value": 38
+                    },
+                    {
+                      "color": "red",
+                      "value": 45
+                    },
+                    {
+                      "color": "purple",
+                      "value": 60
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 63
+      },
+      "id": 31,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "peak"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT printf('LMU%02d %s', CAST(substr(s.key, 4, instr(s.key, '_') - 4) AS INTEGER), replace(substr(s.key, instr(s.key, '_') + 1), '_c', '')) AS sensor,\n       COUNT(*) AS samples,\n       MIN(r.value) AS min_c,\n       AVG(r.value) AS mean_c,\n       MAX(r.value) AS max_c,\n       (SELECT r2.value FROM reading r2\n         WHERE r2.signal_id = s.id AND r2.ts BETWEEN $__from AND $__to\n         ORDER BY r2.ts DESC LIMIT 1) AS last_c\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key GLOB 'lmu[0-9]*_c' AND r.ts BETWEEN $__from AND $__to\nGROUP BY s.id\nORDER BY max_c DESC, sensor",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Hottest module sensor",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Every way the bike reports pack temperature, side by side with the coolant probes, with nothing filtered or smoothed — so decoder and frame problems stay visible instead of being averaged away.\n\nWhat to look for: `batt_temp_hi`/`lo` are supposed to be the TRUE pack temperature and `*_vcu` the VCU's 15 °C-shifted view. Whenever the true pair lands exactly on the `_vcu` pair, the decoder has fallen back to 0x200 and is showing the shifted value — that is a decoding artefact, not the pack cooling by 15 °C. In the 2026-08-02 file that happens between roughly 15:04 and 16:20 UTC. A lone 0 °C in `pack_temp_avg` is a dropped frame, same story. Signals are logged on change with a deadband, so a flat line means “unchanged”, not “not measured” — hence step interpolation and spanNulls (a gap is held at the last value, not drawn as a dip).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1605,25 +1398,27 @@
           "custom": {
             "axisLabel": "°C",
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "lineInterpolation": "stepAfter",
             "lineWidth": 1.5,
-            "showPoints": "never",
+            "pointSize": 4,
+            "showPoints": "auto",
             "spanNulls": true
           },
-          "decimals": 0,
-          "unit": "celsius"
+          "displayName": "${__field.labels.metric}",
+          "unit": "celsius",
+          "decimals": 1
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "bike_coolant_temp"
+              "id": "byRegexp",
+              "options": "/batt_temp_hi$/"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "motor/coolant"
+                "value": "batt max (true)"
               },
               {
                 "id": "color",
@@ -1636,8 +1431,492 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "oil_temp"
+              "id": "byRegexp",
+              "options": "/batt_temp_lo$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "batt min (true)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/batt_temp_hi_vcu$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "batt max (VCU view)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/batt_temp_lo_vcu$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "batt min (VCU view)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/pack_temp_avg$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "pack mean (BMS)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/coolant_in$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "coolant inlet"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/coolant_out$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "coolant outlet"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "super-light-blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('batt_temp_hi', 'batt_temp_lo', 'batt_temp_hi_vcu', 'batt_temp_lo_vcu', 'pack_temp_avg',\n                'coolant_in', 'coolant_out')\n  AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack temperature sources, unfiltered",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 75
+      },
+      "id": 5,
+      "panels": [],
+      "title": "Powertrain and ambient",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The four channels of CAN 0x020 plus the motor sensor from 0x022. The IGBT trio is by far the most responsive thermal signal on the bike — on one slow garage lap it moved 10.6 °C while the motor moved 0.6 °C and the coolant 3 °C — so it gets its own left axis. Gate, motor and ambient share the right axis; putting all six on one axis would flatten the IGBT movement into a straight line.\n\n0x020 reports IGBT min, instantaneous and max, but they have not yet been seen to separate from each other, so expect three lines on top of one another until a real load run says otherwise. Signals are logged on change with a deadband, so a flat line means “unchanged”, not “not measured” — hence step interpolation and spanNulls (a gap is held at the last value, not drawn as a dip).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "IGBT (°C)",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "displayName": "${__field.labels.metric}",
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/inverter_igbt_c$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "IGBT"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/inverter_igbt_min_c$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "IGBT min"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/inverter_igbt_max_c$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "IGBT max"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/inverter_gate_c$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "gate driver"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "gate / motor / ambient (°C)"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/motor_temp_c$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "motor"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "gate / motor / ambient (°C)"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/ambient_temp$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ambient (OBD)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "gate / motor / ambient (°C)"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 40,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('inverter_igbt_min_c', 'inverter_igbt_c', 'inverter_igbt_max_c', 'inverter_gate_c',\n                'motor_temp_c', 'ambient_temp')\n  AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Inverter IGBT (left) · gate, motor and ambient (right)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The factory motor/inverter loop, which is separate from the battery loop the ΔT panels are about. Polled at 1 Hz over OBD-II: PID 05 (`bike_coolant_temp`), PID 5C (`oil_temp`) and PID 46 (ambient), all at 1 °C resolution, so the traces are stepped by the sensor and not just by the logger. Signals are logged on change with a deadband, so a flat line means “unchanged”, not “not measured” — hence step interpolation and spanNulls (a gap is held at the last value, not drawn as a dip).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "°C",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "displayName": "${__field.labels.metric}",
+          "unit": "celsius",
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/bike_coolant_temp$/"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "motor loop coolant"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/oil_temp$/"
             },
             "properties": [
               {
@@ -1655,8 +1934,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "ambient_temp"
+              "id": "byRegexp",
+              "options": "/ambient_temp$/"
             },
             "properties": [
               {
@@ -1666,8 +1945,23 @@
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "blue",
+                  "fixedColor": "text",
                   "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
                 }
               }
             ]
@@ -1676,142 +1970,17 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 71
-      },
-      "id": 26,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bike_coolant_temp', 'oil_temp', 'ambient_temp') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Motor / oil / ambient temperature",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "V",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 2,
-          "unit": "volt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 71
-      },
-      "id": 27,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('aux_12v') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "12V aux battery",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
         "w": 24,
         "x": 0,
-        "y": 79
+        "y": 86
       },
-      "id": 28,
-      "title": "Energy",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "Wh",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "watth"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 80
-      },
-      "id": 29,
+      "id": 41,
       "options": {
         "legend": {
           "calcs": ["min", "max", "mean", "lastNotNull"],
           "displayMode": "table",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1825,366 +1994,71 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('residual_energy_wh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('bike_coolant_temp', 'oil_temp', 'ambient_temp')\n  AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
           "refId": "A",
           "timeColumns": ["time"]
         }
       ],
-      "title": "Available energy (RES.ENERGY, 0x10A)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "Wh",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 1,
-          "unit": "watth"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 80
-      },
-      "id": 30,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('inst_consumption_wh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Instantaneous consumption",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 88
-      },
-      "id": 31,
-      "title": "Drive",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "km/h",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "velocitykmh"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 89
-      },
-      "id": 32,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('speed_kmh') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Speed",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "rpm",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "rotrpm"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 89
-      },
-      "id": 33,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('motor_rpm') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Motor RPM",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "%",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "percent"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "throttle_pct"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "throttle"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "motor_load_pct"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "motor load"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 97
-      },
-      "id": 34,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('throttle_pct', 'motor_load_pct') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Throttle & motor load",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "cool-eva-sqlite"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "km",
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 1.5,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "decimals": 0,
-          "unit": "lengthkm"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 97
-      },
-      "id": 35,
-      "options": {
-        "legend": {
-          "calcs": ["min", "max", "mean", "lastNotNull"],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "cool-eva-sqlite"
-          },
-          "queryType": "time series",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('dist_since_clear_km') AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
-          "refId": "A",
-          "timeColumns": ["time"]
-        }
-      ],
-      "title": "Distance (since DTC clear)",
+      "title": "Bike's own cooling loop (OBD-II)",
       "type": "timeseries"
     }
   ],
   "refresh": "",
   "schemaVersion": 39,
-  "tags": ["cool-eva", "motorcycle", "cooling", "battery"],
+  "tags": ["cool-eva", "cooling", "motorcycle", "thermal"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "850",
+          "value": "850"
+        },
+        "description": "ASSUMPTION, not a measurement. There is no flow sensor in the loop and no flow signal on the bus. 850 dm³/h is the duty point on the Bosch PAD 12 V pump datasheet (0 392 023 004) at 0.1 bar; the loop's real restriction is unknown, so the actual flow is lower. Change this and every heat figure rescales.",
+        "hide": 0,
+        "label": "Assumed coolant flow (L/h)",
+        "name": "coolant_flow_lph",
+        "options": [
+          {
+            "selected": true,
+            "text": "850",
+            "value": "850"
+          }
+        ],
+        "query": "850",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "3.5",
+          "value": "3.5"
+        },
+        "description": "ASSUMPTION. 3.5 MJ·m⁻³·K⁻¹ is roughly a 50/50 ethylene-glycol/water mix near 30 °C (≈ 1060 kg/m³ × 3.3 kJ/kg/K). Straight water would be about 4.2.",
+        "hide": 0,
+        "label": "Coolant ρ·cp (MJ/m³/K)",
+        "name": "coolant_rho_cp",
+        "options": [
+          {
+            "selected": true,
+            "text": "3.5",
+            "value": "3.5"
+          }
+        ],
+        "query": "3.5",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
   },
   "time": {
-    "from": "now-7d",
+    "from": "now-24h",
     "to": "now"
   },
-  "timepicker": {
-    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
-  },
+  "timepicker": {},
   "timezone": "browser",
-  "title": "Cool Eva — Battery & Cooling",
+  "title": "Cool Eva — Cooling",
   "uid": "cool-eva-main",
-  "version": 17
+  "version": 1
 }
