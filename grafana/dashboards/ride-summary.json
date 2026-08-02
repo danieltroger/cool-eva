@@ -12,7 +12,7 @@
         "name": "Key on",
         "target": {
           "queryType": "table",
-          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Key on' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on' AND r.ts BETWEEN $__from AND $__to\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\nORDER BY time",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Key on' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
@@ -28,7 +28,7 @@
         "name": "GO",
         "target": {
           "queryType": "table",
-          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'GO' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go' AND r.ts BETWEEN $__from AND $__to\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\nORDER BY time",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'GO' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
@@ -44,7 +44,7 @@
         "name": "Charge started (0x201)",
         "target": {
           "queryType": "table",
-          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charge started' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\nORDER BY time",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charge started' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
@@ -60,7 +60,7 @@
         "name": "Charging bit (0x102)",
         "target": {
           "queryType": "table",
-          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charging (0x102)' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging' AND r.ts BETWEEN $__from AND $__to\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\nORDER BY time",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charging (0x102)' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
