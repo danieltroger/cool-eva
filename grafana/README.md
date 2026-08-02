@@ -14,7 +14,7 @@ Everything below cost at least one debugging round. None of it is in the plugin'
 
 **`queryType` decides the frame shape, and therefore what field overrides can match.**
 
-- `"queryType": "table"` returns the columns under their SQL aliases. Overrides match those names directly and nothing else is needed. This is what the stat tiles and the state timelines use.
+- `"queryType": "table"` returns the columns under their SQL aliases. Overrides match those names directly and nothing else is needed. Use it whenever the query already names its own columns — every stat tile, and the state timelines that widen the flags into one column per bit.
 - `"queryType": "time series"` splits the rows into one series per `metric` value, and every series arrives in a field literally called `value` with the series name in a `metric` **label**, not in the field name. Legends read `value iso_test_1`, and an override written against the series name matches nothing, because no field is called that.
 
 The fix for the second case is one line in `fieldConfig.defaults`:
