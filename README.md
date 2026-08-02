@@ -49,9 +49,16 @@ The custom config shifts the pack temperatures the VCU reads down by 15 °C, to 
 CUSTOM_BMS_CONFIG=1   # only with the custom BMS config flashed. Default: unset = stock.
 ```
 
-**Leave it unset on a stock bike** — `batt_temp_lo` / `batt_temp_hi` then come straight off `0x200`, from the first frame, exactly as they always have. With it set, those keys come from `0x660` instead and `0x200`'s (shifted) view is logged separately as `batt_temp_lo_vcu` / `batt_temp_hi_vcu`. Either way `batt_temp_lo` / `batt_temp_hi` always mean the **true** pack temperature, so the history stays one continuous series.
+**Leave it unset on a stock bike** — `batt_temp_lo` / `batt_temp_hi` then come straight off `0x200`, as they always have, from about five seconds after the BMS starts talking (see below). With it set, those keys come from `0x660` instead and `0x200`'s (shifted) view is logged separately as `batt_temp_lo_vcu` / `batt_temp_hi_vcu`. Either way `batt_temp_lo` / `batt_temp_hi` always mean the **true** pack temperature, so the history stays one continuous series.
 
-The flag is only a hint about what to expect — the frames on the bus win. Get it wrong in either direction and the app says so and keeps logging correct temperatures: if the custom frames turn up with the flag unset it switches to them and logs a loud error, and if the flag is set but they never appear it warns and falls back to `0x200`. Nothing else in the app is affected by this flag; every other decode is correct on both configs.
+The flag is only a hint about what to expect — the frames on the bus win. Which config is live can only be read off what arrives (a long `0x660` means the offset config, a short one means the extended config without it, and no `0x660` at all means stock), so **the true-temperature keys are not written at all until that is settled**, which takes up to 5 s from the first `0x200`. A gap is deliberate: `batt_temp_lo` / `batt_temp_hi` are never allowed to carry the shifted view, and everything is logged on change, so a few seconds of silence costs nothing while a wrong value would be sealed into the ride log for good. `batt_temp_lo_vcu` / `batt_temp_hi_vcu` are unaffected and log from the first frame.
+
+Get the flag wrong in either direction and the app says so:
+
+- flag unset but the custom frames turn up → loud error, and the keys take `0x660`'s true values;
+- flag set but no `0x660` ever arrives → warning, and `batt_temp_lo` / `batt_temp_hi` stay **unlogged** rather than falling back to `0x200`, whose bytes are the shifted view under that config. Unset the flag if the pack really is stock.
+
+Nothing else in the app is affected by this flag; every other decode is correct on both configs.
 
 ## How it works
 

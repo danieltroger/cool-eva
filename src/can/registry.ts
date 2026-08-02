@@ -21,9 +21,14 @@ export const SIGNALS: SignalDef[] = [
 
   // 0x200 / 0x660 — BMS
   // batt_temp_lo/hi always mean the TRUE pack temperature, whichever frame supplies
-  // them (see pack-temperature.ts), so the history stays one continuous series.
+  // them (see pack-temperature.ts), so the history stays one continuous series. That
+  // guarantee is why they can be ABSENT: until the frames establish which BMS config is
+  // flashed, no row is written under them at all, and if the pack that owns the true
+  // values goes silent they stop rather than fall back. Sparse is the intended shape —
+  // anything reading them has to tolerate gaps instead of interpolating across one.
   // The _vcu pair is what the VCU and dash actually read: identical to the true pair
-  // on the stock config, and 15 °C lower once the DC-derate offset is flashed. The
+  // on the stock config, and 15 °C lower once the DC-derate offset is flashed. It comes
+  // straight off 0x200 with no routing, so it is the pair that never has gaps. The
   // difference between the two is the useful signal — it should be a constant 15 °C,
   // and anything else means the postprocessor isn't doing what we think.
   { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream" },

@@ -56,7 +56,7 @@ configurePackTemperature(CUSTOM_BMS_CONFIG);
 console.log(
   CUSTOM_BMS_CONFIG
     ? "bms: custom config expected — true pack temps from 0x660, 0x200 logged as batt_temp_*_vcu"
-    : "bms: stock config assumed — pack temps straight from 0x200 (set CUSTOM_BMS_CONFIG=1 if flashed)"
+    : "bms: stock config assumed — pack temps from 0x200 once no 0x660 has been seen (set CUSTOM_BMS_CONFIG=1 if flashed)"
 );
 
 // --- Storage: the encrypted ride log is the ONLY persistence ---
@@ -122,7 +122,8 @@ if (CAN_ENABLED) {
       }
       // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
       // pack temperature or the VCU-shifted view — it depends on which BMS config is
-      // on the bus, which no single frame can tell you.
+      // on the bus, which no single frame can tell you. Until it can tell, it emits
+      // nothing under batt_temp_lo/batt_temp_hi rather than guess.
       for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
         record(key, value);
         // Satellite UTC arrives on CAN 0x410 as well as over BLE, and the Pi has no
