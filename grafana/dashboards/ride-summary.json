@@ -1,0 +1,3001 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "blue",
+        "name": "Key on",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Key on' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "GO",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'GO' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "name": "Charge started (0x201)",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charge started' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "orange",
+        "name": "Charging bit (0x102)",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charging (0x102)' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      }
+    ]
+  },
+  "description": "Post-ride summary: distance, speed, power, energy, peak temperatures, elevation and bike state for one ride.",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "description": "",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 39,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "Ride telemetry from CAN `0x104`/`0x105`/`0x108` (speed, odometer, motor), `0x200`-`0x206` (BMS),\n`0x10A` (energy and range), `0x410` (GPS via the Connectivity Hub) and the OBD poller.\n\n**What the 2026-08-02 capture contains.** A short lap and then a garage session. Several decoders\nonly came online after the lap, so the tiles reading them cannot describe it: `odometer_can_km`,\n`speed_can_kmh`, `motor_rpm_can` and `motor_temp_c` all have a handful of samples, none of them\nduring the ride. `trip_km` is the one distance signal with samples through it: +0.2 km across the whole\ncapture, of which 0.1 km falls inside the lap itself — it only resolves to 0.1 km and logged\n3 rows during the lap, so read it as coarse. That is why the Trip meter tile exists next to\nDistance.\n\n**What is empty, and why.** Elevation, Elevation range and Highest point draw nothing because\n`gps_fix` is 0 for the whole capture. The bike was in a garage: `gps_altitude_m` sat at a\nplaceholder 0 m and `gps_lat`/`gps_lon` were never written at all. Those three panels are gated on\nthe fix rather than plotting the placeholder, so an empty chart there means \"no fix\" - which the\n'GPS fix over time' lane at the bottom of the Position row states outright. That is the signal being absent,\nnot a broken query.\n\n**Reading the panels.** Values are logged on change with a per-signal deadband, so a flat stretch\nmeans \"unchanged\", not \"missing\". Every series uses stepAfter with spanNulls on for that reason.",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "transparent": false,
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Ride",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX - MIN of odometer_can_km over the selected range. Chosen over the other three distance signals: it is the CAN 0x104 lifetime odometer at 0.1 km and it agrees with the hub's odometer_km, which only has 1 km resolution. OBD dist_since_clear_km sits ~4 km higher because it counts from the last DTC clear, not from zero. Reads 0.0 km in the 2026-08-02 capture: the 0x104 decoder only came online after the lap, so use the trip meter tile for that ride. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no CAN odometer",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 12
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.ts)/1000.0 AS time, MAX(r.value) - MIN(r.value) AS \"Distance\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'odometer_can_km' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Distance",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last odometer_can_km in range. Unit is a fixed km suffix on purpose: Grafana's built-in lengthkm applies SI prefixes and renders 17042 km as \"17 Mm\".",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no CAN odometer",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 12
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Odometer\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'odometer_can_km' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Odometer",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX - MIN of trip_km, the hub's own trip counter at 0.1 km. Cross-check on the Distance tile, and the only distance signal with samples through the 2026-08-02 lap: +0.2 km across the whole capture, 0.1 km of it inside the lap window, off 3 rows at 0.1 km resolution. Its absolute reading is a running counter that has not been reset, so only the delta means anything.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no trip data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 12
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.ts)/1000.0 AS time, MAX(r.value) - MIN(r.value) AS \"Trip meter\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'trip_km' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Trip meter",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of speed_kmh, the OBD-polled speed at ~2 Hz. The CAN speed (speed_can_kmh, 0x104) is finer but its decoder only started after the 2026-08-02 lap, so OBD is the one with ride coverage. Both are drawn on the Speed panel below.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no speed data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "velocitykmh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 12
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Top speed\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'speed_kmh' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Top speed",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of motor_power_kw (CAN, 0.05 kW deadband). Fixed kW suffix rather than Grafana's kwatt, which would re-scale 0.6 kW to \"600 W\" mid-column.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "noValue": "no power data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kW"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 12
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak motor power\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_power_kw' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak motor power",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of motor_torque_nm (CAN, 0.5 Nm deadband). Regen shows up as negative torque, so this tile is drive torque only.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no torque data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Nm"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 12
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak torque\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_torque_nm' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak torque",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "OBD speed_kmh (polled ~2 Hz) and CAN speed_can_kmh (0x104). Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "velocitykmh",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Speed (OBD)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'speed_kmh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Speed (CAN)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'speed_can_kmh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Speed",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "OBD motor_rpm (20 rpm deadband) and CAN motor_rpm_can (0x104). Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "rotrpm",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Motor RPM (OBD)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_rpm' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Motor RPM (CAN)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_rpm_can' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Motor RPM",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "motor_power_kw on the left axis, motor_torque_nm on the right. Both go negative under regen. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kW"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Motor torque"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix:Nm"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Motor power\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_power_kw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Motor torque\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_torque_nm' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Motor power and torque",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "pack_kw on the left axis, pack_a on the right. Negative pack current is charge into the battery (regen or the mains charger). Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kW"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pack current"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix:A"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Pack power\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Pack current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack power and current",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "throttle_pct straight off CAN with no deadband, so this is the densest signal on the dashboard and the steps are real samples rather than held values.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Throttle\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'throttle_pct' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Throttle",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 13,
+      "panels": [],
+      "title": "Energy",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "First minus last residual_energy_wh in range, i.e. what the pack lost. Goes negative if the range also contains a charge.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no energy data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Wh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 41
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.ts)/1000.0 AS time,\n  (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n   WHERE fs.key = 'residual_energy_wh' AND f.ts BETWEEN $__from AND $__to ORDER BY f.ts ASC LIMIT 1)\n  - (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n     WHERE ls.key = 'residual_energy_wh' AND l.ts BETWEEN $__from AND $__to ORDER BY l.ts DESC LIMIT 1)\n  AS \"Energy used\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'residual_energy_wh' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Energy used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "First minus last soc in range. SOC is a 1 % integer, so a short lap can read 0.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no SOC data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 41
+      },
+      "id": 15,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.ts)/1000.0 AS time,\n  (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n   WHERE fs.key = 'soc' AND f.ts BETWEEN $__from AND $__to ORDER BY f.ts ASC LIMIT 1)\n  - (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n     WHERE ls.key = 'soc' AND l.ts BETWEEN $__from AND $__to ORDER BY l.ts DESC LIMIT 1)\n  AS \"SOC used\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "SOC used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last range_km: the bike's own prediction of distance left, not a computed figure. It reacts hard to recent riding style, so treat it as the dash reading rather than a measurement.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no range data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 41
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Range remaining\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'range_km' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Range remaining",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last km_per_kwh as reported by the bike. It recomputes continuously and swings hard at low speed - it goes negative under regen and reads -5.36 at the end of the 2026-08-02 capture - so it is worth reading at the end of a ride, not mid-lap.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "noValue": "no efficiency data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km/kWh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 41
+      },
+      "id": 17,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Efficiency\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'km_per_kwh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Efficiency",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last kwh_per_100km as reported by the bike: the same figure as the Efficiency tile, the other way up, and just as twitchy at a standstill.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no consumption data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kWh/100km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 41
+      },
+      "id": 18,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Consumption\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'kwh_per_100km' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Consumption",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last remaining_ah from the BMS coulomb counter.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no Ah data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Ah"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 41
+      },
+      "id": 19,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charge remaining\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'remaining_ah' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge remaining",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "residual_energy_wh (0x10A) has no deadband, so every step is a value the bike actually published. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Wh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Energy remaining\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'residual_energy_wh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Energy remaining",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "inst_consumption_wh carries a 10 Wh deadband because it is otherwise the chattiest signal on the bus. Parked it sits at 0. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Wh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 45
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Instantaneous consumption\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'inst_consumption_wh' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Instantaneous consumption",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "range_km, the bike's own estimate. 20 samples across the 2026-08-02 session, so it is mostly flat steps. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Predicted range\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'range_km' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Predicted range",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "id": 23,
+      "panels": [],
+      "title": "Peak temperatures",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of batt_temp_hi, the hottest cell group the BMS reports.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no battery temp",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 20
+              },
+              {
+                "color": "yellow",
+                "value": 35
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 62
+      },
+      "id": 24,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak battery temp\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'batt_temp_hi' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak battery temp",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of inverter_igbt_max_c, the hottest of the inverter's IGBT sensors.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no inverter temp",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 20
+              },
+              {
+                "color": "yellow",
+                "value": 35
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 62
+      },
+      "id": 25,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak inverter IGBT\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'inverter_igbt_max_c' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak inverter IGBT",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of motor_temp_c. Only 3 samples in the 2026-08-02 capture: the decoder came online after the lap.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no motor temp",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 20
+              },
+              {
+                "color": "yellow",
+                "value": 35
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 62
+      },
+      "id": 26,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak motor temp\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_temp_c' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak motor temp",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of coolant_out, the MAX31865 probe on the battery outlet. Bounded to -20..100 C so a probe dropout cannot set the peak.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "noValue": "no coolant data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 20
+              },
+              {
+                "color": "yellow",
+                "value": 35
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 62
+      },
+      "id": 27,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak coolant out\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_out' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak coolant out",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Battery, inverter, motor and coolant-outlet temperature on one axis. The battery and motor signals carry deadbands of about half a degree, the coolant probe 0.05 C, which is why the coolant trace has far more steps. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Battery (hottest)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Inverter IGBT (hottest)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Motor"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Coolant out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 28,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Battery (hottest)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'batt_temp_hi' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Inverter IGBT (hottest)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'inverter_igbt_max_c' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Motor\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_temp_c' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Coolant out\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_out' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nORDER BY r.ts",
+          "refId": "D",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Ride temperatures",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 75
+      },
+      "id": 29,
+      "panels": [],
+      "title": "Position",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last gps_fix, the 2-bit fix field out of CAN 0x410. 0 means no fix and is the only value confirmed on the bench; 1-3 are shown raw. In a garage this reads \"no fix\", gps_altitude_m is a placeholder 0 and gps_lat/gps_lon are never written at all, which is why the elevation panels below are gated on this signal instead of plotting the zero.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "no fix"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "fix (1)"
+                },
+                "2": {
+                  "color": "green",
+                  "index": 2,
+                  "text": "fix (2)"
+                },
+                "3": {
+                  "color": "green",
+                  "index": 3,
+                  "text": "fix (3)"
+                }
+              }
+            }
+          ],
+          "noValue": "no GPS rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 76
+      },
+      "id": 30,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"GPS fix\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'gps_fix' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "GPS fix",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last gps_satellites. The decoder only publishes a position with a fix and at least 4 satellites, so this is the number to look at when the elevation panels are empty.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no GPS rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 76
+      },
+      "id": 31,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Satellites\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'gps_satellites' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Satellites",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX - MIN of gps_altitude_m across rows whose most recent gps_fix is non-zero: the span between the lowest and highest point, not cumulative climb. A loop that climbs and descends the same 400 m twice reads 400 m here, and summing the positive deltas instead would sum GPS jitter into a fake climb against the 1 m deadband. With no fix the query returns nothing and the tile says so rather than reporting a 0 m spread from the placeholder altitude.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no GPS fix",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:m"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 76
+      },
+      "id": 32,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.ts)/1000.0 AS time, MAX(r.value) - MIN(r.value) AS \"Elevation range\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'gps_altitude_m' AND r.ts BETWEEN $__from AND $__to\n  AND COALESCE((\n    SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n    WHERE fs.key = 'gps_fix' AND f.ts <= r.ts + 2000\n    ORDER BY f.ts DESC LIMIT 1\n  ), 0) > 0\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Elevation range",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of gps_altitude_m, same fix gate as Elevation range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no GPS fix",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:m"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 76
+      },
+      "id": 33,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(r.ts)/1000.0 AS time, MAX(r.value) AS \"Highest point\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'gps_altitude_m' AND r.ts BETWEEN $__from AND $__to\n  AND COALESCE((\n    SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n    WHERE fs.key = 'gps_fix' AND f.ts <= r.ts + 2000\n    ORDER BY f.ts DESC LIMIT 1\n  ), 0) > 0\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Highest point",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "gps_altitude_m, plotted only where the most recent gps_fix is non-zero. The gate looks back past the start of the range on purpose, so a fix acquired earlier still counts. Empty means no fix, not a missing decoder: the 2026-08-02 capture was made in a garage where the altitude sat at a placeholder 0 m. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:m",
+          "noValue": "no GPS fix in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Elevation"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 80
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Elevation\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'gps_altitude_m' AND r.ts BETWEEN $__from AND $__to\n  AND COALESCE((\n    SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n    WHERE fs.key = 'gps_fix' AND f.ts <= r.ts + 2000\n    ORDER BY f.ts DESC LIMIT 1\n  ), 0) > 0\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Elevation",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The gate the Elevation panel above runs on. An empty elevation chart with a red \"no fix\" bar here means the receiver never had a fix, which is a different thing from a missing decoder or a broken query.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "no fix": {
+                  "color": "red",
+                  "index": 0
+                },
+                "fix": {
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "no GPS rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 88
+      },
+      "id": 38,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'fix' ELSE 'no fix' END AS \"GPS fix\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'gps_fix' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "GPS fix over time",
+      "type": "state-timeline"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 92
+      },
+      "id": 35,
+      "panels": [],
+      "title": "Bike state",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Boolean CAN signals as lanes. Each stored row is a change, so a lane holds its value until the next row; spanNulls is on for the same reason. In the 2026-08-02 capture these decoders only started after the lap, so the lanes are short.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "no": {
+                  "color": "dark-blue",
+                  "index": 0
+                },
+                "yes": {
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "no state data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 93
+      },
+      "id": 36,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Key on\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'key_on' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"GO\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'go' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Moving\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'moving' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Reverse\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'reverse_gear' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "D",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Brake\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'brake' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "E",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Throttle on\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'throttle_on' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "F",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "State",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "accel_lateral_raw and accel_frontal_raw exactly as they come off the bus. Deliberately unitless: the scale factor is not known, so labelling these in g would be a guess. Useful for shape and for spotting lean or braking events, not for absolute numbers.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 102
+      },
+      "id": 37,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Lateral (counts)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'accel_lateral_raw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Frontal (counts)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'accel_frontal_raw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Accelerometer (raw counts)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "motorcycle", "ride"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cool Eva — Ride summary",
+  "uid": "cool-eva-ride",
+  "version": 1,
+  "weekStart": ""
+}
