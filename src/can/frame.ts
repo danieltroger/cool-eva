@@ -16,4 +16,21 @@ export const i16be = (hi: number, lo: number): number => {
   return value > 32767 ? value - 65536 : value;
 };
 export const u16le = (lo: number, hi: number): number => (hi << 8) | lo;
+// Same two's-complement conversion as i16be with the bytes the other way round, so
+// there is only one place to be wrong about the sign bit.
+export const i16le = (lo: number, hi: number): number => i16be(hi, lo);
 export const bit = (word: number, index: number): number => (word >>> index) & 1;
+
+// Reads a field that does not start or end on a byte boundary, in the bit numbering the
+// vehicle (non-BMS) frames use: bit N is byte N>>3, bit N&7, least-significant bit
+// first. 0x104 packs a 13-bit speed and a 15-bit rpm back to back, so neither can be
+// read as a byte pair. Callers stay under 31 bits, which keeps every shift inside JS's
+// signed 32-bit bitwise domain.
+export function bitFieldLe(data: Buffer, startBit: number, bitCount: number): number {
+  let value = 0;
+  for (let offset = 0; offset < bitCount; offset++) {
+    const absoluteBit = startBit + offset;
+    value |= ((data[absoluteBit >>> 3] >>> (absoluteBit & 7)) & 1) << offset;
+  }
+  return value;
+}
