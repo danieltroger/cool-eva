@@ -1,9 +1,11 @@
 .DS_Store
 
 # --- Local-only material. This is a PUBLIC repo; keep it that way. ----------
-# No trailing slashes in this block: any of these paths may be a symlink to
-# iCloud or an external disk on some machine, and `foo/` does not match a
-# symlink named foo (git records one as a blob, never a tree). See node_modules.
+# The local-material paths below carry no trailing slash: any of them may be a
+# symlink to iCloud or an external disk on some machine, and `foo/` does not
+# match a symlink named foo (git records one as a blob, never a tree). See
+# node_modules. `.idea/` at the end of the block is an ordinary editor
+# directory and keeps its slash.
 #
 # Energica's OEM manuals are copyrighted and must never be committed here.
 # They live in iCloud; `manuals` is a symlink to that folder.
