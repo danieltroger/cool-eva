@@ -14,7 +14,8 @@ import type { DecodedValue } from "./frame.ts";
 // what arrives:
 //   • a long 0x660 (DLC >= OFFSET_CONFIG_MIN_DLC) proves the offset config, and carries
 //     the true temperatures itself;
-//   • a short 0x660 proves the extended config WITHOUT the offset, so 0x200 is true;
+//   • a short 0x660 proves the extended config WITHOUT the offset, so 0x200 is true
+//     (two in a row if a long one had already claimed the keys — see below);
 //   • no 0x660 at all, while the BMS is demonstrably transmitting, means a stock pack.
 //
 // Until one of those holds, batt_temp_lo/batt_temp_hi are not emitted AT ALL. That is
@@ -46,6 +47,17 @@ const PACK_THERMAL_FRAME_ID = 0x660;
 // 0x200 lands, which is precisely when it has to be full.
 const THERMAL_FRAME_WAIT_MS = 5000;
 
+// How many consecutive short 0x660s it takes to hand the true keys back to 0x200 after a
+// long one has already proved the offset config. Promotion the other way needs no
+// corroboration — a long 0x660 carries the true values itself, so acting on one early is
+// never wrong. Demotion is the asymmetric direction: it asserts the pack was reflashed
+// mid-session, and if that assertion is wrong the next 0x200 (20 Hz, deadband 0) writes
+// the shifted view under the true keys, which is the one outcome this module exists to
+// prevent. Two frames is ~2 s, so a genuine reflash still recovers without a restart,
+// while a lone short 0x660 from some other transmitter on the same id cannot move the
+// routing on its own.
+const SHORT_THERMAL_FRAMES_TO_DEMOTE = 2;
+
 // 0x200's two temperature bytes, and the true-temperature key each one feeds when 0x200
 // is the frame that owns the truth. Matched on the keys the decoder emitted rather than
 // on the frame id, so decode-bms.ts stays the only place that knows which bytes of which
@@ -61,7 +73,14 @@ type TrueTemperatureSource = "unknown" | "vcu-frame" | "thermal-frame";
 
 let customBmsConfigExpected = false;
 let trueTemperatureSource: TrueTemperatureSource = "unknown";
-let firstVcuTemperatureAtMs: number | undefined;
+// Monotonic, NOT Date.now(): gps/clock.ts steps the wall clock with `date -u -s` from
+// this same frame loop, and on a Pi with no RTC the first step after a cold boot is
+// routinely hours or years. A backwards step would leave this difference negative
+// forever, so the window would never expire and the true keys would stay unwritten for
+// the whole ride; a forwards step would expire it instantly and latch "stock" before
+// 0x660 had any of its five chances. performance.now() is unaffected by `date -s`.
+let firstVcuTemperatureAtMonotonicMs: number | undefined;
+let consecutiveShortThermalFrames = 0;
 let warnedThermalFrameMissing = false;
 let warnedThermalFrameUnexpected = false;
 let warnedThermalFrameShort = false;
@@ -79,8 +98,8 @@ export function resolvePackTemperatures(id: number, data: Buffer, decoded: Decod
   }
   const trueTemperatures = collectTrueTemperatureCandidates(decoded);
   if (trueTemperatures.length === 0) return decoded;
-  firstVcuTemperatureAtMs ??= Date.now();
-  if (!vcuFrameOwnsTrueTemperature(firstVcuTemperatureAtMs)) return decoded;
+  firstVcuTemperatureAtMonotonicMs ??= performance.now();
+  if (!resolveVcuFrameOwnership(firstVcuTemperatureAtMonotonicMs)) return decoded;
   return [...decoded, ...trueTemperatures];
 }
 
@@ -92,7 +111,8 @@ export function resolvePackTemperatures(id: number, data: Buffer, decoded: Decod
 export function configurePackTemperature(customBmsConfig: boolean): void {
   customBmsConfigExpected = customBmsConfig;
   trueTemperatureSource = "unknown";
-  firstVcuTemperatureAtMs = undefined;
+  firstVcuTemperatureAtMonotonicMs = undefined;
+  consecutiveShortThermalFrames = 0;
   warnedThermalFrameMissing = false;
   warnedThermalFrameUnexpected = false;
   warnedThermalFrameShort = false;
@@ -113,22 +133,14 @@ function collectTrueTemperatureCandidates(decoded: DecodedValue[]): DecodedValue
 }
 
 function notePackThermalFrame(frameLength: number): void {
-  // Most recent 0x660 wins, so a reflash in either direction recovers within a second
-  // rather than needing a restart.
   if (frameLength < OFFSET_CONFIG_MIN_DLC) {
-    // The extended config without the temperature offset: 0x660 exists, but the bytes
-    // carrying the true temperature don't, so 0x200 is the truth as on a stock pack.
-    trueTemperatureSource = "vcu-frame";
-    if (!customBmsConfigExpected || warnedThermalFrameShort) return;
-    warnedThermalFrameShort = true;
-    console.warn(
-      `bms: CUSTOM_BMS_CONFIG is set, but 0x660 arrives in its short form (DLC < ${OFFSET_CONFIG_MIN_DLC}) ` +
-        "— that is the extended config WITHOUT the VCU temperature offset. Taking " +
-        "batt_temp_lo/batt_temp_hi from 0x200, which is correct for that config. Unset " +
-        "CUSTOM_BMS_CONFIG to silence this."
-    );
+    noteShortThermalFrame();
     return;
   }
+  // A long 0x660 is proof of the offset config whatever else has been seen, and it
+  // carries the true values itself, so it takes the keys immediately — a reflash into the
+  // offset config recovers within a second rather than needing a restart.
+  consecutiveShortThermalFrames = 0;
   trueTemperatureSource = "thermal-frame";
   if (customBmsConfigExpected || warnedThermalFrameUnexpected) return;
   // The dangerous direction: the offset IS flashed but we were told it wasn't, so
@@ -146,12 +158,33 @@ function notePackThermalFrame(frameLength: number): void {
   );
 }
 
-// Whether 0x200's temperature bytes are currently KNOWN to be the true pack
-// temperature. Never true on a guess: "not established yet" produces the same answer as
-// "0x660 owns them" — no row written.
-function vcuFrameOwnsTrueTemperature(firstVcuTemperatureAtMs: number): boolean {
+// The extended config WITHOUT the temperature offset: 0x660 exists, but the bytes
+// carrying the true temperature don't, so 0x200 is the truth as on a stock pack. Taking
+// the keys back off an established 0x660 needs SHORT_THERMAL_FRAMES_TO_DEMOTE frames to
+// agree; establishing them from "unknown" does not, since nothing is being written yet.
+function noteShortThermalFrame(): void {
+  consecutiveShortThermalFrames++;
+  if (trueTemperatureSource === "thermal-frame" && consecutiveShortThermalFrames < SHORT_THERMAL_FRAMES_TO_DEMOTE) {
+    return;
+  }
+  trueTemperatureSource = "vcu-frame";
+  if (!customBmsConfigExpected || warnedThermalFrameShort) return;
+  warnedThermalFrameShort = true;
+  console.warn(
+    `bms: CUSTOM_BMS_CONFIG is set, but 0x660 arrives in its short form (DLC < ${OFFSET_CONFIG_MIN_DLC}) ` +
+      "— that is the extended config WITHOUT the VCU temperature offset. Taking " +
+      "batt_temp_lo/batt_temp_hi from 0x200, which is correct for that config. Unset " +
+      "CUSTOM_BMS_CONFIG to silence this."
+  );
+}
+
+// Decides whether 0x200's temperature bytes are currently KNOWN to be the true pack
+// temperature, and commits that decision: the stock case latches the source and logs
+// once. Never true on a guess — "not established yet" produces the same answer as
+// "0x660 owns them", no row written.
+function resolveVcuFrameOwnership(waitStartedAtMonotonicMs: number): boolean {
   if (trueTemperatureSource !== "unknown") return trueTemperatureSource === "vcu-frame";
-  if (Date.now() - firstVcuTemperatureAtMs < THERMAL_FRAME_WAIT_MS) return false;
+  if (performance.now() - waitStartedAtMonotonicMs < THERMAL_FRAME_WAIT_MS) return false;
   if (customBmsConfigExpected) {
     // The flag says the offset config is flashed, and the frame that would carry the
     // true temperature has never arrived. 0x200 is NOT a fallback: under that config its
