@@ -7,6 +7,7 @@ import {
   lmuTemperatureKey,
   type LmuTemperatureSensor,
 } from "./decode-bms.ts";
+import { DTC_TABLE, dtcSignalKey } from "../diagnostics/dtc-table.ts";
 
 // Central registry of every signal we log — units/groups for the phone dashboard
 // and the `signal` table, plus optional per-signal deadbands to tame chatty
@@ -210,6 +211,14 @@ export const SIGNALS: SignalDef[] = [
   { key: "time_with_mil_min", unit: "min", group: "diag", source: "poll" }, // PID 4D
   { key: "warmups_since_clear", unit: "", group: "diag", source: "poll" }, // PID 30
 
+  // The stored codes themselves, out of the Connectivity Hub's diagnostics
+  // message (type 25) — Mode 03 is locked on this bike, so PID 01's dtc_count is
+  // all OBD-II will give up. dtc_list_count is that same number arrived at down a
+  // completely different path, so a disagreement between the two is worth seeing.
+  { key: "dtc_list_count", unit: "", group: "diag", source: "stream" },
+  { key: "dtc_unrecognised_count", unit: "", group: "diag", source: "stream" },
+  ...dtcSignals(),
+
   // Keyless / immobilizer
   { key: "key_fob_id", unit: "", group: "security", source: "stream" }, // 0x480 b2-5 LE uint32
   { key: "keys_paired", unit: "", group: "security", source: "poll" }, // E-LOCK 0x791 `21 99`, once at startup
@@ -334,6 +343,24 @@ export const SIGNALS: SignalDef[] = [
 
   ...perLmuSignals(),
 ];
+
+// One 1/0 signal per trouble code Energica documents, so an active code lands in
+// the ride log with a real unit and group instead of falling through to "misc".
+// Generated from the table for the same reason the cell signals are: 148
+// hand-written near-identical lines would bury everything above, and they could
+// drift from the keys the decoder emits.
+//
+// Nothing is recorded for a code that isn't set — these defs exist so that the
+// ones that DO appear are already described. See src/diagnostics/record.ts, which
+// writes 1 when a code is in the list and 0 once it clears.
+function dtcSignals(): SignalDef[] {
+  return DTC_TABLE.map(entry => ({
+    key: dtcSignalKey(entry.component, entry.symptom),
+    unit: "",
+    group: "diag",
+    source: "stream" as const,
+  }));
+}
 
 // 0x662-0x664 — the 81 individual cell voltages plus each module's own temperatures,
 // once the extended BMS config is flashed. Generated rather than hand-listed so they

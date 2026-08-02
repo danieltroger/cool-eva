@@ -186,9 +186,30 @@
         return magnitude < 3 ? "#e2e8f0" : magnitude < 15 ? "#facc15" : magnitude < 40 ? "#fb923c" : "#f87171";
       };
 
+      // Each trouble code the bike reports is its own 1/0 signal, keyed
+      // dtc_<component>_<symptom> (see src/diagnostics/dtc-table.ts). Names them
+      // compactly, and cross-checks the count against OBD-II PID 01, which
+      // reaches the same number down a completely different path.
+      const MAX_DTCS_LISTED = 8;
+      function activeDtcSummary(signals) {
+        // `\d+`, not `\d{4}`: dtcSignalKey pads the component to a MINIMUM of four
+        // digits, and a code no table row names keeps its raw low 16 bits as the
+        // component — up to 65535, so five digits. Those are exactly the codes
+        // worth seeing, and `\d{4}` would silently drop every one of them.
+        const active = Object.keys(signals)
+          .filter(key => /^dtc_\d+_\d+$/.test(key) && signals[key].value > 0)
+          .map(key => key.slice(4).replace("_", "/"))
+          .sort();
+        const listed = active.slice(0, MAX_DTCS_LISTED).join(" · ");
+        const overflow = active.length > MAX_DTCS_LISTED ? ` +${active.length - MAX_DTCS_LISTED}` : "";
+        const viaObd = signals.dtc_count ? ` · OBD says ${signals.dtc_count.value}` : "";
+        return (active.length ? listed + overflow : "none set") + viaObd;
+      }
+
       // The array order below IS the on-screen order — reorder these lines to taste.
       // A tile is either a single `key`, or a paired `keys:[a,b]` shown as "a / b".
       // `charge` tiles only show while charging; `sub(signals)` adds a small 2nd line.
+      // `staleMs` overrides STALE_MS for a signal that legitimately updates slower.
       // Speed / SOC / power / current / pack-V / RPM / SOH are intentionally NOT shown
       // here (they're on the bike's own dash) — but they're still logged to sqlite + Grafana.
       const TILES = [
@@ -239,6 +260,23 @@
           unit: "",
           fmt: value => (value ? "on" : "off"),
           color: value => (value ? "#fde047" : "#475569"),
+        },
+        // Stored trouble codes, from the Connectivity Hub's diagnostics message.
+        // The sub-line names the codes that are actually set; the full list with
+        // descriptions is in the journal (`journalctl -u thermometer`).
+        // The list is re-requested once a minute (DIAGNOSTICS_EVERY_NTH_ROUND in
+        // src/ble/client.ts), so at the default 8 s this tile would render greyed
+        // out for ~52 s out of every 60. 120 s = two missed rounds, i.e. the point
+        // at which the number really has stopped arriving.
+        {
+          key: "dtc_list_count",
+          label: "Stored codes",
+          unit: "",
+          span2: true,
+          staleMs: 120000,
+          fmt: value => value.toFixed(0),
+          color: value => (value > 0 ? "#facc15" : "#4ade80"),
+          sub: activeDtcSummary,
         },
         // Charging (only while charging)
         { key: "dc_v", label: "Charge", unit: "V", fmt: value => value.toFixed(0), charge: true },
@@ -327,6 +365,7 @@
       function renderCurated(serverTime, signals, isCharging) {
         for (const tileConfig of TILES) {
           const tileKey = tileId(tileConfig);
+          const staleMs = tileConfig.staleMs || STALE_MS;
           let shouldShow, valueHtml, colorValue, timestamp;
           if (tileConfig.keys) {
             const low = signals[tileConfig.keys[0]];
@@ -341,7 +380,7 @@
             const signal = signals[tileConfig.key];
             // charge:true tiles are onboard-charger (AC) readings — only show them while
             // their frame is actually live, so stale values don't linger during DC charging.
-            shouldShow = signal && (!tileConfig.charge || (isCharging && serverTime - signal.ts < STALE_MS));
+            shouldShow = signal && (!tileConfig.charge || (isCharging && serverTime - signal.ts < staleMs));
             if (shouldShow) {
               valueHtml = `${tileConfig.fmt(signal.value)}<span class="unit">${tileConfig.unit}</span>`;
               colorValue = signal.value;
@@ -354,7 +393,7 @@
           }
           const tile = getTile(tileConfig);
           tile.container.style.display = "";
-          tile.container.classList.toggle("stale", serverTime - timestamp > STALE_MS);
+          tile.container.classList.toggle("stale", serverTime - timestamp > staleMs);
           tile.valueElement.innerHTML = valueHtml;
           tile.valueElement.style.color = tileConfig.color ? tileConfig.color(colorValue) || "" : "";
           if (tile.subElement) tile.subElement.textContent = tileConfig.sub ? tileConfig.sub(signals) || "" : "";

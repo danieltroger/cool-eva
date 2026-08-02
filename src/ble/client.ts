@@ -1,6 +1,8 @@
 import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
 import { ensureBluetoothAdapterUp } from "./adapter.ts";
 import { syncSystemClockFromGps } from "../gps/clock.ts";
+import { DiagnosticListAssembler, isDiagnosticsInfoMessage, isDiagnosticsMessage } from "../diagnostics/decode.ts";
+import { logDiagnosticsSideChannel, logRawDiagnosticsFrame, recordDiagnosticReport } from "../diagnostics/record.ts";
 import {
   BleTelemetryDecoder,
   FrameReassembler,
@@ -26,12 +28,20 @@ const WRITE_CHARACTERISTIC_UUID = "8b00ace8-eb0c-49b1-bbea-9aee0a26e1a4";
 // The hub re-seeds continuously until authorised; one reply per seed is plenty.
 const ADDRESS_MATCH_DELAY_MS = 15;
 
-// GPS (type 26) is pushed unsolicited, but vehicle status (2) and odometer (4)
-// are only sent on request — these are the app's own read-only getters. The
-// commands that ACT on the bike (20/22/23/24/27/29) are deliberately absent.
+// GPS (type 26) is pushed unsolicited, but vehicle status (2), odometer (4) and
+// the diagnostics list (25) are only sent on request — these are the app's own
+// read-only getters. The commands that ACT on the bike (20/22/23/24/27/29) are
+// deliberately absent.
 const REQUEST_VEHICLE_INFO = Buffer.from([4, 17, 2, 0xff, 0, 0, 0, 0, 0, 0]);
 const REQUEST_ODOMETER = Buffer.from([4, 17, 4, 0xff, 0, 0, 0, 0, 0, 0]);
+const REQUEST_DIAGNOSTICS = Buffer.from([4, 17, 25, 0xff, 0, 0, 0, 0, 0, 0]);
 const TELEMETRY_REQUEST_INTERVAL_MS = 10_000;
+// Stored trouble codes change once in a blue moon, so asking every round would
+// spend the link on an answer that is the same every time. Every 6th round ⇒ once
+// a minute. The one reply observed so far is a single frame (the list came back
+// empty), but a full list pages two codes per frame, so the 38 PID 0x01 reports
+// would be ~19 frames — which is the cost this cadence exists to avoid.
+const DIAGNOSTICS_EVERY_NTH_ROUND = 6;
 const RECONNECT_DELAY_MS = 5_000;
 const SILENCE_TIMEOUT_MS = 30_000;
 const UNAUTHORISED_HINT_AFTER_MS = 20_000;
@@ -129,6 +139,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
 
       const reassembler = new FrameReassembler();
       const decoder = new BleTelemetryDecoder();
+      const diagnostics = new DiagnosticListAssembler();
       let authorised = false;
       let handshakeInFlight = false;
       let warnedUnauthorised = false;
@@ -174,6 +185,22 @@ export function startBleClient(options: BleClientOptions): BleClient {
             continue;
           }
 
+          if (isDiagnosticsInfoMessage(frame)) {
+            logDiagnosticsSideChannel(frame, "ble");
+            continue;
+          }
+
+          // Diagnostics is paged across frames and yields text, not numbers, so
+          // it can't ride the DecodedValue channel the rest of the telemetry uses.
+          if (isDiagnosticsMessage(frame)) {
+            logRawDiagnosticsFrame(frame, "ble");
+            const report = diagnostics.push(frame);
+            if (report) {
+              recordDiagnosticReport(report, "ble");
+            }
+            continue;
+          }
+
           if (!isSeedFrame(frame)) {
             const values = decoder.decode(frame);
             if (values.length > 0) {
@@ -210,19 +237,33 @@ export function startBleClient(options: BleClientOptions): BleClient {
         }
       });
 
-      // Poll the two getters. Serialised behind one flag because BlueZ rejects
+      // Poll the getters. Serialised behind one flag because BlueZ rejects
       // overlapping GATT writes with org.bluez.Error.InProgress.
       let requestInFlight = false;
+      let requestRound = 0;
       requestTimer = setInterval(() => {
         if (requestInFlight) {
           return;
         }
         requestInFlight = true;
+        requestRound += 1;
+        const askForDiagnostics = requestRound % DIAGNOSTICS_EVERY_NTH_ROUND === 1;
         void (async () => {
           try {
             await writeCharacteristic.writeValue(REQUEST_VEHICLE_INFO, { type: "command" });
             await delay(50);
             await writeCharacteristic.writeValue(REQUEST_ODOMETER, { type: "command" });
+            if (askForDiagnostics) {
+              await delay(50);
+              // Drop whatever half-assembled list is left over from last time. The
+              // assembler ends a list on 0xFE/0xFF, so a lost terminating page would
+              // otherwise let the next reply's pages append to the previous reply's
+              // codes — over-reporting the count and carrying a cleared code forward.
+              // Only the requester knows a new list is starting; the CAN mirror
+              // (src/can/hub-mirror.ts) has no such signal and stays as-is.
+              diagnostics.reset();
+              await writeCharacteristic.writeValue(REQUEST_DIAGNOSTICS, { type: "command" });
+            }
           } catch (error) {
             console.warn("ble: telemetry request failed:", (error as Error).message);
           } finally {
