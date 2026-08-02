@@ -58,7 +58,10 @@ bower_components
 build/Release
 
 # Dependency directories
-node_modules/
+# No trailing slash: `node_modules/` matches a directory but NOT a symlink of
+# that name, and a symlinked node_modules did get committed that way once. Same
+# trap the temperatures.db* note below describes.
+node_modules
 jspm_packages/
 
 # Snowpack dependency directory (https://snowpack.dev/)
