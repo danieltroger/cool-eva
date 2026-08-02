@@ -1,13 +1,17 @@
 # Dependencies (node_modules is ignored by Prettier by default; listed for clarity)
-node_modules/
+# Slash-less to match .gitignore, where the trailing slash genuinely matters. It does
+# NOT matter here: Prettier globs the tree and filters path strings, and its globber
+# does not descend symlinked directories at all, so neither form can leak. Kept
+# identical only so the two files can't drift and the old form get copied back.
+node_modules
 
 # npm-managed lockfile — leave formatting to npm
 package-lock.json
 
 # Large data / binaries (untracked, but guard local `prettier .` runs)
 *.db
-Energica_Manuals/
-obd-garage/
+Energica_Manuals
+obd-garage
 
 # Editor
 .idea/
