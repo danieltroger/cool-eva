@@ -25,7 +25,11 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
 
-Decoded, and live since the extended config was flashed (2026-08-02). On a stock pack these frames simply never arrive and the signals don't exist:
+### Signals that need the custom BMS config
+
+Everything in the table above works on a **stock, unmodified Energica** — including the isolation readings on `0x207` and the allowed-current limits on `0x202`, which the BMS broadcasts as shipped.
+
+The frames below only exist once the pack's LiBAL BMS has been reflashed with the custom config. On a stock bike they simply never arrive, so **these signals being absent is normal, not a fault**:
 
 | Group | Signals | Source |
 | --- | --- | --- |
@@ -36,6 +40,18 @@ Decoded, and live since the extended config was flashed (2026-08-02). On a stock
 | **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv` — the thresholds the BMS is actually configured with, so nothing downstream has to hardcode them | CAN `0x665` |
 
 > VIN and BMS writes are still **not** reachable from the OBD port (on the standard pins, haven't tried the other pins yet). Per-cell voltages **are** — they just have to be enabled in the BMS's own configuration first; see `obd-garage/CAN_MAP.md`.
+
+#### `CUSTOM_BMS_CONFIG` — set this only if you flashed the custom config
+
+The custom config shifts the pack temperatures the VCU reads down by 15 °C, to move its DC-charge derate knee from 36 °C reported to 51 °C actual. That changes what `0x200`'s temperature bytes mean, so the app has to be told:
+
+```bash
+CUSTOM_BMS_CONFIG=1   # only with the custom BMS config flashed. Default: unset = stock.
+```
+
+**Leave it unset on a stock bike** — `batt_temp_lo` / `batt_temp_hi` then come straight off `0x200`, from the first frame, exactly as they always have. With it set, those keys come from `0x660` instead and `0x200`'s (shifted) view is logged separately as `batt_temp_lo_vcu` / `batt_temp_hi_vcu`. Either way `batt_temp_lo` / `batt_temp_hi` always mean the **true** pack temperature, so the history stays one continuous series.
+
+The flag is only a hint about what to expect — the frames on the bus win. Get it wrong in either direction and the app says so and keeps logging correct temperatures: if the custom frames turn up with the flag unset it switches to them and logs a loud error, and if the flag is set but they never appear it warns and falls back to `0x200`. Nothing else in the app is affected by this flag; every other decode is correct on both configs.
 
 ## How it works
 

@@ -250,7 +250,10 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     }
 
     // 0x662-0x664 — one LMU module's cells, multiplexed by the module number in
-    // byte 0 (see decodeLmuCellVoltages). 20 Hz.
+    // byte 0 (see decodeLmuCellVoltages). 0x662 is 20 Hz; 0x663/0x664 were too, until
+    // config 6 slowed them to 150 ms and 250 ms to break a phase lock. So cells 4-8
+    // refresh more slowly than cells 1-3, and a module's eight cells are NOT all the
+    // same age — anything drawing a per-cell view has to allow for that.
     case 0x662: {
       if (data.length < 7) return [];
       return decodeLmuCellVoltages(data, [1, 2, 3]);
@@ -365,10 +368,14 @@ export type LmuTemperatureSensor = "bat1" | "pcb1" | "pcb2";
 // but 0x663 and 0x664 never sampled LMU 1 or 2 across 499 frames each on 2026-08-02,
 // and the rest is heavily skewed. All three frames read the same mem 2129 at the same
 // 20 Hz, so the fixed CAN transmit order is phase-locked to the BMCU's LMU poll.
-// Consequence: cells 4-8 of LMU 1 and 2 are currently unobtainable, and this is a
-// systematic zero — it does NOT fill in with a longer capture. Keying every value off
-// the LMU number in its own frame is what makes this show up as missing data instead
-// of as another module's cells being silently overwritten.
+// Consequence: cells 4-8 of LMU 1 and 2 were unobtainable, and it was a systematic
+// zero rather than sparse sampling — a longer capture would not have filled it in.
+// Keying every value off the LMU number in its own frame is what made this show up as
+// missing data instead of as another module's cells being silently overwritten.
+//
+// Fixed config-side in 6-custom-p32b-lmu-phase.bms by slowing 0x663 to 150 ms and
+// 0x664 to 250 ms so they no longer march in step with the poll. No decoder change was
+// needed, which is the whole point of keying off the in-frame module number.
 function decodeLmuCellVoltages(data: Buffer, cellNumbers: number[]): DecodedValue[] {
   const lmuNumber = data[0];
   // Always log the selector itself, valid or not. Without it, "byte 0 isn't the LMU
