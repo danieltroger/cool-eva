@@ -283,7 +283,5 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 // 0x120/0x121 are deliberately absent: the .xdbc lists them as charge-current
 // setpoints, but neither appeared in 40 s of live capture (parked, unplugged), so
 // there is nothing yet to decode. See obd-garage/CAN_MAP.md.
-const VEHICLE_STREAM_IDS = [
-  0x020, 0x022, 0x025, 0x102, 0x104, 0x109, 0x10a, 0x305, 0x306, GPS_CAN_ID, 0x480,
-];
+const VEHICLE_STREAM_IDS = [0x020, 0x022, 0x025, 0x102, 0x104, 0x109, 0x10a, 0x305, 0x306, GPS_CAN_ID, 0x480];
 export const STREAM_IDS = [...VEHICLE_STREAM_IDS, ...BMS_STREAM_IDS];

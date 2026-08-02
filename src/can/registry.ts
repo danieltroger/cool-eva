@@ -231,10 +231,16 @@ export const SIGNALS: SignalDef[] = [
   { key: "gps_fix", unit: "", group: "gps", source: "stream" },
 
   // Satellite UTC — the Pi has no RTC, so this is the only trustworthy clock on
-  // the road. Logged raw and unthrottled (~2 Hz, the rate the hub sends it): if a
-  // ride ever comes back with timestamps from a no-network boot, having the real
-  // time sitting next to every row makes it repairable without any reasoning.
-  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream" },
+  // the road. Logged raw: if a ride ever comes back with timestamps from a
+  // no-network boot, having the real time sitting next to every row makes it
+  // repairable without any reasoning.
+  //
+  // The deadband is the only thing throttling it. The value carries milliseconds,
+  // so no two samples are ever equal and log-on-change cannot dedupe it — with
+  // both transports sending at ~1.8 Hz that would be ~3.6 rows/s, the highest of
+  // any signal. Half a second is three orders of magnitude below the 60 s drift
+  // the clock step acts on, so it costs the repair use case nothing.
+  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream", deadband: 0.5 },
 
   { key: "motor_torque_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_power_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },

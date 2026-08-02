@@ -12,16 +12,23 @@
 // latitude (sub 0x00), longitude (sub 0x01) and UTC time (sub 0xFE), which is
 // the one that completes it. Hence a class with an instance per stream.
 
-export interface DecodedValue {
-  key: string;
-  value: number;
-}
+// The one declaration of the shape every decoder in the app returns. It lives in
+// can/frame.ts, which imports nothing itself, so reaching for it from here (and
+// therefore from the BLE path, which re-exports it) creates no cycle.
+import type { DecodedValue } from "../can/frame.ts";
+
+export type { DecodedValue };
 
 /** CommParser's GPS_DATA. Frames of any other type are not ours to decode. */
 export const GPS_MESSAGE_TYPE = 26;
 
-/** Both transports use a fixed 8-byte record; anything shorter is truncated. */
-const FRAME_SIZE = 8;
+/**
+ * The hub's record size, identical on both transports: anything shorter than this
+ * is a truncated frame and indexing into it yields NaN. Declared here rather than
+ * in either transport because both need it — ble/protocol.ts re-slices the notify
+ * characteristic to it, since BlueZ does not preserve ATT notification boundaries.
+ */
+export const FRAME_SIZE = 8;
 
 export class GpsMessageDecoder {
   #latitudeSign = 1;

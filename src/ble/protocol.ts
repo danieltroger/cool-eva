@@ -16,14 +16,13 @@
 // ⚠️ The hub only ever accepts ONE authorised device address, stored on the bike.
 // A new device is ignored until the old one is cleared from the dashboard.
 
-import { GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
+import { FRAME_SIZE, GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
 
 // The GPS sub-frames are byte-identical on CAN 0x410, so their bit unpacking lives
-// in ../gps/decode.ts and is shared with src/can/gps.ts rather than duplicated.
+// in ../gps/decode.ts and is shared with src/can/gps.ts rather than duplicated. The
+// record size comes from there for the same reason: it is the hub's framing, not
+// this transport's.
 export type { DecodedValue };
-
-/** Fixed record size of every frame on the notify characteristic. */
-export const FRAME_SIZE = 8;
 
 // Message types (CommParser constants). Only read-only types are handled here —
 // this module deliberately contains no encoder for the commands that ACT on the

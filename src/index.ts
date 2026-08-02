@@ -120,6 +120,14 @@ if (CAN_ENABLED) {
         // RTC — so stepping the clock must not depend on the Bluetooth link being
         // up. The step itself is guarded (drift threshold, one step per 5 min), so
         // both transports calling it at ~2 Hz is harmless.
+        //
+        // This does widen what can move the clock: over BLE the frames came from a
+        // session the hub had authorised, whereas anything on can0 with id 0x410
+        // reaches here unauthenticated, and the clock stamps rows in an append-only
+        // log we can't correct in place. The guards in gps/decode.ts are what stands
+        // in for the authentication — fix != 0, >= 4 satellites, every field range
+        // checked and a Date.UTC round trip — and injecting on the VDB bus is a
+        // level of access with far better targets than our timestamps.
         if (key === "gps_epoch_s") {
           void syncSystemClockFromGps(value);
         }
