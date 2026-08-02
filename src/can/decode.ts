@@ -1,62 +1,18 @@
-// Pure per-frame decoders for the Energica broadcast frames we log.
-// Byte layouts come from obd-garage/CAN_MAP.md. Each decoder returns the list of
-// (signal key, value) pairs carried by that frame; unknown IDs return [].
+// Pure per-frame decoders for the Energica broadcast frames we log. Each decoder
+// takes one frame's bytes and returns the (signal key, value) pairs it carries;
+// unknown IDs return []. No I/O, no clock reads, no cross-frame state — that's what
+// makes them testable by replaying a capture when the bike is out of reach.
 //
-// BE = big-endian pair, LE = little-endian pair. Battery temps are signed (can go
-// below 0 °C); pack current is signed (charge vs discharge).
+// The frames below are reverse-engineered from the wire and cross-checked against the
+// bike's engineering menu (see obd-garage/CAN_MAP.md). The BMS's own frames are a
+// different story — they come from its decrypted config file, so they live in
+// decode-bms.ts and this file just hands unmatched IDs over.
 
-export interface DecodedValue {
-  key: string;
-  value: number;
-}
-
-const signedByte = (byte: number): number => (byte > 127 ? byte - 256 : byte);
-const u16be = (hi: number, lo: number): number => (hi << 8) | lo;
-const i16be = (hi: number, lo: number): number => {
-  const value = (hi << 8) | lo;
-  return value > 32767 ? value - 65536 : value;
-};
-const u16le = (lo: number, hi: number): number => (hi << 8) | lo;
+import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
+import { type DecodedValue, u16le } from "./frame.ts";
 
 export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
   switch (id) {
-    // 0x200 — BMS: temps, SOC/SOH, pack V/I (20 Hz). ✅
-    case 0x200: {
-      if (data.length < 8) return [];
-      const packVolts = u16be(data[4], data[5]) / 10;
-      const packAmps = i16be(data[6], data[7]) / 10; // signed
-      return [
-        { key: "batt_temp_lo", value: signedByte(data[0]) },
-        { key: "soc", value: data[1] },
-        { key: "soh", value: data[2] },
-        { key: "batt_temp_hi", value: signedByte(data[3]) },
-        { key: "pack_v", value: packVolts },
-        { key: "pack_a", value: packAmps },
-        { key: "pack_kw", value: Math.round(((packVolts * packAmps) / 1000) * 1000) / 1000 },
-      ];
-    }
-
-    // 0x201 — charge state: 1 IDLE / 2 AC / 10·16 DC (10 Hz). ✅
-    case 0x201: {
-      if (data.length < 1) return [];
-      return [{ key: "charge_state", value: data[0] }];
-    }
-
-    // 0x203 — cell balance: indices + min/max cell mV (20 Hz). ✅
-    case 0x203: {
-      if (data.length < 8) return [];
-      const minCellMv = u16be(data[4], data[5]);
-      const maxCellMv = u16be(data[6], data[7]);
-      return [
-        { key: "cell_avg_mv", value: u16be(data[0], data[1]) }, // 🟡 ≈ avg cell mV
-        { key: "cell_min_mv", value: minCellMv },
-        { key: "cell_max_mv", value: maxCellMv },
-        { key: "cell_spread_mv", value: maxCellMv - minCellMv },
-        { key: "max_cell_idx", value: data[2] },
-        { key: "min_cell_idx", value: data[3] },
-      ];
-    }
-
     // 0x10A — charge/energy status.
     //  • b3-4 LE, bit 15 masked off, × 2 = RES.ENERGY Wh (residual/available energy).
     //    Bit 15 is a FLAG, not part of the value: it toggles on ~half the frames, so
@@ -126,9 +82,10 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     }
 
     default:
-      return [];
+      // Everything else is either a BMS frame or one we don't decode.
+      return decodeBmsFrame(id, data);
   }
 }
 
 // CAN IDs we decode from the broadcast stream — used to set kernel RX filters.
-export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x200, 0x201, 0x203, 0x305, 0x306, 0x480];
+export const STREAM_IDS = [0x025, 0x102, 0x109, 0x10a, 0x305, 0x306, 0x480, ...BMS_STREAM_IDS];

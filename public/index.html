@@ -228,8 +228,8 @@
           fmt: value => value.toFixed(0),
           color: cellSpreadColor,
           sub: signals =>
-            signals.min_cell_idx && signals.max_cell_idx
-              ? `low #${signals.min_cell_idx.value} · high #${signals.max_cell_idx.value}`
+            signals.cell_lowest_v_idx && signals.cell_highest_v_idx
+              ? `low #${signals.cell_lowest_v_idx.value} · high #${signals.cell_highest_v_idx.value}`
               : "",
         },
         // High beam (0x102 b0 bit6) — on/off
@@ -246,6 +246,10 @@
         { key: "mains_v", label: "Mains", unit: "V", fmt: value => value.toFixed(0), charge: true },
         { key: "mains_a", label: "Mains", unit: "A", fmt: value => value.toFixed(1), charge: true },
       ];
+
+      // 0x201 b0 bits that mean current is going INTO the pack: charge, trickle
+      // charge, maintenance charge. Charge-complete (0x20) deliberately excluded.
+      const CHARGING_STATE_MASK = 0x02 | 0x08 | 0x40;
 
       const STALE_MS = 8000;
       // A charger frame (0x305/0x306) seen within this window ⇒ the onboard AC charger
@@ -283,8 +287,12 @@
       function render(snapshot) {
         const serverTime = snapshot.ts || Date.now();
         const signals = snapshot.signals || {};
-        const chargeState = signals.charge_state ? signals.charge_state.value : 1;
-        const isCharging = chargeState !== 1; // 0x201 b0: 1 = idle, anything else = charging
+        // 0x201 b0 is the BMS System State BITFIELD (read out of the BMS's own config,
+        // superseding the old "1 = idle" guess): bit0 discharge, bit1 charge, bit2
+        // balancing, bit3 trickle, bit4 idle, bit5 charge complete, bit6 maintenance.
+        // The old "anything but 1 is charging" test showed the banner while merely idle.
+        const chargeState = signals.charge_state ? signals.charge_state.value : 0;
+        const isCharging = (chargeState & CHARGING_STATE_MASK) !== 0;
 
         // AC vs DC: the onboard AC charger emits 0x305/0x306 (the mains_*/dc_* signals);
         // during DC fast charging those are silent, so "is one arriving right now?" is the

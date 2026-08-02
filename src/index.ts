@@ -8,6 +8,7 @@ import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
+import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
@@ -32,6 +33,10 @@ const CAN_IFACE = "can0";
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
 //   RIDE_LOG_PUBKEY=… → X25519 public key enabling the write-only encrypted log
 //   RIDE_LOG_DIR=…    → where the sealed .celog segments go
+//   CUSTOM_BMS_CONFIG=1 → this pack has the custom LiBAL BMS config flashed, which
+//     shifts the temperatures on 0x200 down 15 °C and moves the true ones onto 0x660.
+//     Leave unset on a stock Energica. Only affects temperature routing; every other
+//     decode is correct either way, and the frames themselves override a wrong flag.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -39,9 +44,16 @@ const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
 const BLE_MAC = process.env.BLE_MAC ?? "";
 const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
 const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
+const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
 
 // --- Signal registry ---
 defineSignals(SIGNALS);
+configurePackTemperature(CUSTOM_BMS_CONFIG);
+console.log(
+  CUSTOM_BMS_CONFIG
+    ? "bms: custom config expected — true pack temps from 0x660, 0x200 logged as batt_temp_*_vcu"
+    : "bms: stock config assumed — pack temps straight from 0x200 (set CUSTOM_BMS_CONFIG=1 if flashed)"
+);
 
 // --- Storage: the encrypted ride log is the ONLY persistence ---
 // There is no plaintext database any more: a stolen SD card must not give up
@@ -97,7 +109,10 @@ if (CAN_ENABLED) {
         handleElockResponse(data);
         return;
       }
-      for (const { key, value } of decodeFrame(msg.id, data)) {
+      // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
+      // pack temperature or the VCU-shifted view — it depends on which BMS config is
+      // on the bus, which no single frame can tell you.
+      for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
         record(key, value);
       }
     });
