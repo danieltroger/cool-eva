@@ -12,7 +12,18 @@ Everything below cost at least one debugging round. None of it is in the plugin'
 
 **Rows must be globally sorted by time.** `ORDER BY metric, time` fails the whole query with `not sorted in ascending order by time`. Sort by time alone and let the `metric` column split the series.
 
-**Every series comes back in a field literally called `value`,** with the series name in a `metric` label. Two consequences: legends read `value iso_test_1`, and `byName` field overrides silently never match. Set `"displayName": "${__field.labels.metric}"` in `fieldConfig.defaults`, and use `byRegexp` (e.g. `/coolant_in$/`) rather than `byName` for per-series overrides.
+**`queryType` decides the frame shape, and therefore what field overrides can match.**
+
+- `"queryType": "table"` returns the columns under their SQL aliases. Overrides match those names directly and nothing else is needed. This is what the stat tiles and the state timelines use.
+- `"queryType": "time series"` splits the rows into one series per `metric` value, and every series arrives in a field literally called `value` with the series name in a `metric` **label**, not in the field name. Legends read `value iso_test_1`, and an override written against the series name matches nothing, because no field is called that.
+
+The fix for the second case is one line in `fieldConfig.defaults`:
+
+```json
+"displayName": "${__field.labels.metric}"
+```
+
+That makes the computed display name the bare metric, and overrides match it from then on — `byName` against the metric (`isolation-faults.json`) and `byRegexp` against it (`cooling.json`) both work. Without it neither does. So the rule is not "avoid `byName`"; it is **set `displayName` on every `time series` panel**, and pick the matcher you prefer afterwards.
 
 **Interpolate textbox variables through `CAST(${var:sqlstring} AS REAL)`,** not `${var}` bare. A cleared textbox interpolates to nothing and turns the expression into a syntax error; `CAST('' AS REAL)` is `0.0`, which is visibly wrong on screen instead of an error card. It also stops a crafted `?var-…=` link from putting arbitrary SQL into the query, which matters because `docker-compose.yml` runs Grafana anonymous-admin against a read-write mount.
 
