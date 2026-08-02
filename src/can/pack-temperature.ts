@@ -14,8 +14,8 @@ import type { DecodedValue } from "./frame.ts";
 // what arrives:
 //   • a long 0x660 (DLC >= OFFSET_CONFIG_MIN_DLC) proves the offset config, and carries
 //     the true temperatures itself;
-//   • a short 0x660 proves the extended config WITHOUT the offset, so 0x200 is true
-//     (two in a row if a long one had already claimed the keys — see below);
+//   • two consecutive short 0x660s prove the extended config WITHOUT the offset, so
+//     0x200 is true;
 //   • no 0x660 at all, while the BMS is demonstrably transmitting, means a stock pack.
 //
 // Until one of those holds, batt_temp_lo/batt_temp_hi are not emitted AT ALL. That is
@@ -47,16 +47,24 @@ const PACK_THERMAL_FRAME_ID = 0x660;
 // 0x200 lands, which is precisely when it has to be full.
 const THERMAL_FRAME_WAIT_MS = 5000;
 
-// How many consecutive short 0x660s it takes to hand the true keys back to 0x200 after a
-// long one has already proved the offset config. Promotion the other way needs no
-// corroboration — a long 0x660 carries the true values itself, so acting on one early is
-// never wrong. Demotion is the asymmetric direction: it asserts the pack was reflashed
-// mid-session, and if that assertion is wrong the next 0x200 (20 Hz, deadband 0) writes
-// the shifted view under the true keys, which is the one outcome this module exists to
-// prevent. Two frames is ~2 s, so a genuine reflash still recovers without a restart,
-// while a lone short 0x660 from some other transmitter on the same id cannot move the
-// routing on its own.
-const SHORT_THERMAL_FRAMES_TO_DEMOTE = 2;
+// How many consecutive short 0x660s it takes before 0x200 is given the true keys. This
+// is the only transition that can ever write a wrong value — it is what starts feeding
+// bytes to batt_temp_lo/batt_temp_hi (0x200 is 20 Hz with deadband 0), and if the pack is
+// really on the offset config those bytes are the 15 °C-shifted view. So it needs
+// corroboration, in every state and not just when a long frame has already claimed the
+// keys: a lone short 0x660 from some other transmitter on the same id must not be able to
+// move the routing on its own.
+//
+// Promotion the other way needs none — a long 0x660 carries the true values itself, so
+// acting on the first one is never wrong, and a reflash into the offset config still
+// recovers within a second.
+//
+// Two frames is ~2 s at 1 Hz, well inside THERMAL_FRAME_WAIT_MS, so the cost is a second
+// of extra silence in a log-on-change series. The one rough edge: if 0x660 only starts
+// about 4 s after 0x200, the wait window can expire between the two short frames and log
+// its "no 0x660 arrived" line just before they settle it. The routing that results is the
+// same either way — only the wording of a one-shot log is briefly wrong.
+const SHORT_THERMAL_FRAMES_TO_TRUST = 2;
 
 // 0x200's two temperature bytes, and the true-temperature key each one feeds when 0x200
 // is the frame that owns the truth. Matched on the keys the decoder emitted rather than
@@ -159,14 +167,13 @@ function notePackThermalFrame(frameLength: number): void {
 }
 
 // The extended config WITHOUT the temperature offset: 0x660 exists, but the bytes
-// carrying the true temperature don't, so 0x200 is the truth as on a stock pack. Taking
-// the keys back off an established 0x660 needs SHORT_THERMAL_FRAMES_TO_DEMOTE frames to
-// agree; establishing them from "unknown" does not, since nothing is being written yet.
+// carrying the true temperature don't, so 0x200 is the truth as on a stock pack. Handing
+// 0x200 the keys is the transition that starts writing, so it always waits for
+// SHORT_THERMAL_FRAMES_TO_TRUST frames to agree — whether the keys are currently held by
+// a long 0x660 or by nothing at all.
 function noteShortThermalFrame(): void {
   consecutiveShortThermalFrames++;
-  if (trueTemperatureSource === "thermal-frame" && consecutiveShortThermalFrames < SHORT_THERMAL_FRAMES_TO_DEMOTE) {
-    return;
-  }
+  if (consecutiveShortThermalFrames < SHORT_THERMAL_FRAMES_TO_TRUST) return;
   trueTemperatureSource = "vcu-frame";
   if (!customBmsConfigExpected || warnedThermalFrameShort) return;
   warnedThermalFrameShort = true;
