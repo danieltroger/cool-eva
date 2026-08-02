@@ -88,7 +88,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_state'\n)\nSELECT ts / 1000.0 AS time, 'BMS entered Charge' AS text\nFROM ordered\nWHERE (CAST(value AS INTEGER) & 2) != 0 AND (previous_value IS NULL OR (CAST(previous_value AS INTEGER) & 2) = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n)\nSELECT ts / 1000.0 AS time, 'BMS entered Charge' AS text\nFROM ordered\nWHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
@@ -1284,7 +1284,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "CAN 0x201: bit 2 of the System State bitfield is cell balancing, and the warning word carries balancing-required. Balancing runs at the top of a charge, so expect these to line up with the charge annotations and with the spread closing afterwards.",
+      "description": "CAN 0x201: bit 2 of the System State bitfield is cell balancing, and the warning word carries balancing-required. The warning lane is yellow when it fires rather than the green the active lane uses, because green everywhere else on this dashboard means healthy. Balancing runs at the top of a charge, so expect these to line up with the charge annotations and with the spread closing afterwards.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1345,6 +1345,26 @@
               {
                 "id": "displayName",
                 "value": "balancing required (warning)"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "dark-blue",
+                        "index": 0,
+                        "text": "off"
+                      },
+                      "1": {
+                        "color": "yellow",
+                        "index": 1,
+                        "text": "required"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
               }
             ]
           }
