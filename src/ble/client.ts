@@ -1,8 +1,8 @@
 import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
 import { ensureBluetoothAdapterUp } from "./adapter.ts";
 import { syncSystemClockFromGps } from "../gps/clock.ts";
-import { DiagnosticListAssembler, isDiagnosticsMessage } from "../diagnostics/decode.ts";
-import { logRawDiagnosticsFrame, recordDiagnosticReport } from "../diagnostics/record.ts";
+import { DiagnosticListAssembler, isDiagnosticsInfoMessage, isDiagnosticsMessage } from "../diagnostics/decode.ts";
+import { logDiagnosticsSideChannel, logRawDiagnosticsFrame, recordDiagnosticReport } from "../diagnostics/record.ts";
 import {
   BleTelemetryDecoder,
   FrameReassembler,
@@ -180,6 +180,11 @@ export function startBleClient(options: BleClientOptions): BleClient {
               console.log("ble: session confirmed — telemetry streaming");
             }
             authorised = true;
+            continue;
+          }
+
+          if (isDiagnosticsInfoMessage(frame)) {
+            logDiagnosticsSideChannel(frame, "ble");
             continue;
           }
 
