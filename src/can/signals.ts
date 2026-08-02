@@ -83,6 +83,12 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
   }
 }
 
+// Latest value of one signal, for signals derived from more than one frame (see
+// derived.ts). Undefined until that signal has been seen at least once.
+export function latestValue(key: string): number | undefined {
+  return liveState.get(key)?.value;
+}
+
 export function snapshot(): Record<string, LiveValue> {
   const out: Record<string, LiveValue> = {};
   for (const [k, v] of liveState) out[k] = v;
