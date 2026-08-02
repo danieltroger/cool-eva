@@ -47,9 +47,20 @@ The DB stores a row only when a signal changes by more than its per-signal deadb
 
 **Carry-forward joins need seeding from before `$__from`.** Two signals logged independently never share a timestamp, so pairing them means holding the last known value of each. If the hold only sees rows inside the window, zooming to a stretch where just one of the pair happened to log leaves the other NULL and every derived panel blanks at once.
 
+**Seed a timeseries at _both_ ends.** The left seed alone does not draw. Grafana pins the x scale to the dashboard time range, so a sample from before `$__from` is clipped out of the plot area, and `stepAfter` builds segments between consecutive points rather than extending past the last one — one off-screen point has nothing to pair with, so the panel goes from "No data" to an empty plot, which reads as a rendering bug rather than a data gap. Emit the last known value a second time, restamped at `$__to`:
+
+```sql
+UNION ALL
+SELECT * FROM (SELECT $__to/1000.0, s.key, r.value
+               FROM reading r JOIN signal s ON s.id = r.signal_id
+               WHERE s.key = '…' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)
+```
+
+A **state timeline needs only the left seed**: its regions run until the next sample or the end of the time range, so the last state reaches the right edge by itself.
+
 **A flat line means "no change larger than the deadband", not "no change".** Where the deadband is large (10 counts on `iso_test_*`, 100 on `lmu_cell_mux`) say so on the panel — otherwise the axis implies a resolution the data does not carry. Signals whose deadband exceeds their real range only ever produce one row per boot, so a count of them is a count of service restarts.
 
-**A silent sensor and a steady one are not distinguishable from the value stream.** `spanNulls: true` extends the last bar to the right edge either way, and a bounded `spanNulls` cannot separate them here: a healthy module goes 48 minutes between logged samples at a constant 28 °C in the 2026-08-02 file, so any cutoff short enough to catch a dropout fires constantly on settled hardware. Use a dedicated signal — `lmu_comm_warnings` (0x206) — rather than trying to infer it from silence.
+**A silent sensor and a steady one are not distinguishable from the value stream.** A state timeline draws its last region to the end of the range whichever it is — that is the panel type, not `spanNulls`, which only bridges nulls _between_ points. And a bounded `spanNulls` cannot separate them here: a healthy module goes 48 minutes between logged samples at a constant 28 °C in the 2026-08-02 file, so any cutoff short enough to catch a dropout fires constantly on settled hardware. Use a dedicated signal — `lmu_comm_warnings` (0x206) — rather than trying to infer it from silence.
 
 ## Verifying a dashboard before shipping it
 
