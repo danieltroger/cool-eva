@@ -23,15 +23,25 @@ import { formatObdDtc, lookupByComponentSymptom, lookupByObdCode, type DtcTableE
 // So each code is 20 bits and the top nibble of b4/b7 is masked off — the app
 // never used it, and we log it (see `flags`) rather than assume it is padding.
 //
-// ⚠️ What those 20 bits MEAN is not documented anywhere we have. Two readings
-// fit the type-approval table, and this decoder reports both rather than picking
-// one blind (see DiagnosticCode.matchedBy):
+// ⚠️ NO CODE HAS EVER BEEN DECODED. The request/reply mechanism is verified —
+// asking gets a well-formed type-25 reply on both transports, byte-identical
+// across two runs 60 s apart — but every list so far has come back EMPTY (zero
+// codes) while OBD-II PID 0x01 says 38 are stored. Two readings of that fit and
+// neither is settled: the hub may serve only *currently active* faults while PID
+// 0x01 counts *stored* history, or the VCU may simply refuse the list while the
+// bike is parked. `dtc_list_count` sits next to `dtc_count` so a ride, or a real
+// fault, will show which.
+//
+// ⚠️ Because the list is always empty, what those 20 bits MEAN is UNTESTED — no
+// non-zero field has ever arrived. It is documented nowhere we have. Two readings
+// fit the type-approval table, and this decoder resolves both and reports which
+// one matched rather than picking one blind (see DiagnosticCode.matchedBy):
 //   • low 16 bits = the table's "COD." component number, top nibble = SYMPTOM.
 //     This matches the table's own primary key exactly, symptom values run 0-15
 //     which is precisely one nibble, and it is the VCU's native identity.
 //   • low 16 bits = a binary OBD-II DTC, i.e. what a scan tool would print.
-// The first live list settles it; `raw` is carried through either way so nothing
-// is lost if both readings miss.
+// The first non-empty list settles it; `raw` is carried through either way so
+// nothing is lost if both readings miss. Keep the two-reading design until then.
 
 const DIAGNOSTICS_MESSAGE_TYPE = 25;
 // The hub answers `04 11 25 FF` with TWO messages, ~10 ms apart: a type 31 that
@@ -46,7 +56,7 @@ const SUB_INDEX_LAST_PAGE = 0xfe;
 const SUB_INDEX_WHOLE_LIST = 0xff;
 
 // A stuck hub that never sends a last page must not grow the list without bound.
-// 37 codes (what PID 0x01 reports on this bike) is 19 pages, so this is ~5x the
+// 38 codes (what PID 0x01 reports on this bike) is 19 pages, so this is ~5x the
 // largest list we have any reason to expect.
 const MAX_PAGES = 100;
 
@@ -77,8 +87,11 @@ export interface DiagnosticReport {
  * Reassembles a diagnostics list out of the hub's 8-byte messages.
  *
  * Stateful because the list is paged: each message carries at most two codes, so
- * the 37 this bike reports arrive spread over ~19 of them. `push` returns null
- * while the list is still coming in and the finished report on the last page.
+ * a list the size of the 38 PID 0x01 reports would arrive spread over ~19 of
+ * them. (The only reply seen so far is a single frame carrying no codes at all —
+ * see the PR discussion; paging is inferred from the hub's other messages, not
+ * yet observed here.) `push` returns null while the list is still coming in and
+ * the finished report on the last page.
  *
  * Deliberately tolerant about paging. The sub-index convention is inferred from
  * the hub's other multi-part messages (odometer, GPS and vehicle status all end
@@ -100,14 +113,16 @@ export class DiagnosticListAssembler {
     }
 
     this.#pages += 1;
-    for (const raw of [readCodeField(frame, 2), readCodeField(frame, 5)]) {
+    for (const field of [readCodeField(frame, 2), readCodeField(frame, 5)]) {
       // A list with an odd number of codes leaves the second slot of the last
       // page zeroed, and component 0 does not exist in the table — so a zero
-      // field is padding, not a code.
-      if (raw.value === 0) {
+      // field is padding, not a code. This also discards that slot's flags
+      // nibble; if the top nibble ever turns out to carry something on its own,
+      // the raw-frame dump in record.ts is what would show it.
+      if (field.value === 0) {
         continue;
       }
-      const code = describeDiagnosticCode(raw.value, raw.flags);
+      const code = describeDiagnosticCode(field.value, field.flags);
       if (!this.#codes.some(existing => existing.raw === code.raw)) {
         this.#codes.push(code);
       }

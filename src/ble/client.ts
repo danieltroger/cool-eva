@@ -36,9 +36,11 @@ const REQUEST_VEHICLE_INFO = Buffer.from([4, 17, 2, 0xff, 0, 0, 0, 0, 0, 0]);
 const REQUEST_ODOMETER = Buffer.from([4, 17, 4, 0xff, 0, 0, 0, 0, 0, 0]);
 const REQUEST_DIAGNOSTICS = Buffer.from([4, 17, 25, 0xff, 0, 0, 0, 0, 0, 0]);
 const TELEMETRY_REQUEST_INTERVAL_MS = 10_000;
-// Stored trouble codes change once in a blue moon and the reply runs to ~19
-// frames, so asking every round would spend a good slice of the link on an
-// answer that is the same every time. Every 6th round ⇒ once a minute.
+// Stored trouble codes change once in a blue moon, so asking every round would
+// spend the link on an answer that is the same every time. Every 6th round ⇒ once
+// a minute. The one reply observed so far is a single frame (the list came back
+// empty), but a full list pages two codes per frame, so the 38 PID 0x01 reports
+// would be ~19 frames — which is the cost this cadence exists to avoid.
 const DIAGNOSTICS_EVERY_NTH_ROUND = 6;
 const RECONNECT_DELAY_MS = 5_000;
 const SILENCE_TIMEOUT_MS = 30_000;
@@ -253,6 +255,13 @@ export function startBleClient(options: BleClientOptions): BleClient {
             await writeCharacteristic.writeValue(REQUEST_ODOMETER, { type: "command" });
             if (askForDiagnostics) {
               await delay(50);
+              // Drop whatever half-assembled list is left over from last time. The
+              // assembler ends a list on 0xFE/0xFF, so a lost terminating page would
+              // otherwise let the next reply's pages append to the previous reply's
+              // codes — over-reporting the count and carrying a cleared code forward.
+              // Only the requester knows a new list is starting; the CAN mirror
+              // (src/can/hub-mirror.ts) has no such signal and stays as-is.
+              diagnostics.reset();
               await writeCharacteristic.writeValue(REQUEST_DIAGNOSTICS, { type: "command" });
             }
           } catch (error) {

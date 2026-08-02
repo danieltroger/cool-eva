@@ -12,6 +12,15 @@ import type { DiagnosticCode, DiagnosticReport } from "./decode.ts";
 
 /** Codes seen at least once this run, so a code that clears can be zeroed. */
 const seenSignalKeys = new Set<string>();
+// Bounded because the meaning of the 20-bit code field is unconfirmed (see
+// decode.ts). If it really is a code, the set stops at however many distinct
+// faults the bike has. If it turns out to be a counter or a timestamp, every
+// report brings new keys, each of which would then be written back to 0 on every
+// report and sit in the 5-second WS snapshot for the rest of the run. 256 is far
+// above any plausible list (MAX_PAGES caps one report at 200 codes) and far below
+// a leak; hitting it says the reading is wrong, so it says so out loud.
+const SEEN_SIGNAL_KEY_LIMIT = 256;
+let warnedSeenKeyLimit = false;
 // null, not "": an empty list has an empty signature too, and starting at ""
 // would swallow the one line saying the bike reported no codes at all.
 let lastSignature: string | null = null;
@@ -26,16 +35,29 @@ const rawFramesLogged = new Map<string, number>();
 
 // Type 31 has no known meaning and is logged once per distinct payload, so a
 // constant one costs a single line per boot but a change is impossible to miss.
+// Capped like the raw dump above: two identical samples 60 s apart is thin
+// evidence that six unknown bytes are constant, and if one of them is a counter
+// or a session token then "once per distinct payload" is once a minute forever.
+const SIDE_CHANNEL_PAYLOAD_LIMIT = 24;
 const sideChannelPayloadsLogged = new Set<string>();
 
 export function recordDiagnosticReport(report: DiagnosticReport, transport: string): void {
-  const presentKeys = new Set(report.codes.map(code => dtcSignalKey(code.component, code.symptom)));
+  const presentKeys = new Set(report.codes.map(diagnosticSignalKey));
 
   record("dtc_list_count", report.codes.length);
   record("dtc_unrecognised_count", report.codes.filter(code => code.entry === null).length);
 
   for (const key of presentKeys) {
-    seenSignalKeys.add(key);
+    if (seenSignalKeys.size < SEEN_SIGNAL_KEY_LIMIT) {
+      seenSignalKeys.add(key);
+    } else if (!seenSignalKeys.has(key) && !warnedSeenKeyLimit) {
+      warnedSeenKeyLimit = true;
+      console.warn(
+        `diagnostics: more than ${SEEN_SIGNAL_KEY_LIMIT} distinct code keys this run — the 20-bit ` +
+          "code field is almost certainly not (component, symptom). Codes past this point are still " +
+          "logged but will not be written back to 0 when they clear."
+      );
+    }
     record(key, 1);
   }
   // A code that has cleared since the last list has to be written back to 0 —
@@ -75,11 +97,30 @@ export function logRawDiagnosticsFrame(frame: Uint8Array, transport: string): vo
  */
 export function logDiagnosticsSideChannel(frame: Uint8Array, transport: string): void {
   const hex = Array.from(frame, byte => byte.toString(16).padStart(2, "0")).join(" ");
-  if (sideChannelPayloadsLogged.has(hex)) {
+  if (sideChannelPayloadsLogged.size >= SIDE_CHANNEL_PAYLOAD_LIMIT || sideChannelPayloadsLogged.has(hex)) {
     return;
   }
   sideChannelPayloadsLogged.add(hex);
   console.log(`diagnostics: type-31 message via ${transport}: ${hex}`);
+}
+
+/**
+ * The signal key one code is logged under.
+ *
+ * Keyed on the matched table row, not on `code.component`: that field is the raw
+ * low 16 bits, which only equals the table's COD. column under the component
+ * reading of the 20 bits. When the OBD reading is the one that matched, keying on
+ * the raw field would produce something like `dtc_4166_0` while src/can/registry.ts
+ * generated `dtc_0049_0` from that very same table row — the signal would land in
+ * `misc` with no unit, and one fault would end up as two series if the readings
+ * ever swapped. A code neither reading names has no row, so it keeps the
+ * raw-derived key; that is the only case where the key depends on the reading.
+ */
+function diagnosticSignalKey(code: DiagnosticCode): string {
+  if (code.entry) {
+    return dtcSignalKey(code.entry.component, code.entry.symptom);
+  }
+  return dtcSignalKey(code.component, code.symptom);
 }
 
 /**
@@ -93,7 +134,9 @@ export function formatCode(code: DiagnosticCode): string {
     return `${raw} · component ${code.component} symptom ${code.symptom} · ${describeEntry(code.entry)}`;
   }
   if (code.entry && code.matchedBy === "obd") {
-    return `${raw} · read as OBD code · ${describeEntry(code.entry)}`;
+    // Name the table row's own component/symptom too: that pair, not the raw
+    // field, is what the signal key is built from (see diagnosticSignalKey).
+    return `${raw} · read as OBD code · component ${code.entry.component} symptom ${code.entry.symptom} · ${describeEntry(code.entry)}`;
   }
   return `${raw} · unrecognised (component ${code.component} symptom ${code.symptom}, or OBD ${code.obdCodeFromRaw})`;
 }
