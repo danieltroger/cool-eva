@@ -221,7 +221,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Time from the first bms_state_charge = 1 to the end of the last charging interval inside the range. Bounded by the state edges rather than by the range itself, so it does not grow when the range also covers a ride.",
+      "description": "Length of the most recent charge session that overlaps the range: the last 0 to 1 edge of bms_state_charge at or before the end of the range, through to the first 0 after it. Bounded by the state edges rather than by the range itself, so it does not grow when the range also covers a ride. Two charges in one range describe the later one rather than being merged with the gap between them counted, a charge still running reads up to the end of the range instead of 0, and the edge is looked up past the start of the range so zooming into the middle of a session still describes that session.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -272,7 +272,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LEAD(r.ts) OVER (ORDER BY r.ts) AS next_ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\n),\nsession AS (\n  SELECT MIN(ts) AS started, MAX(COALESCE(next_ts, ts)) AS ended\n  FROM charge_flag WHERE value = 1\n)\nSELECT session.ended/1000.0 AS time, session.ended - session.started AS \"Charging time\"\nFROM session WHERE session.started IS NOT NULL",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts <= $__to\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0)\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time, session.ended - session.started AS \"Charging time\"\nFROM session WHERE session.ended >= $__from",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -285,7 +285,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Last minus first soc across the charge session. SOC is a 1 % integer, so a short top-up can legitimately read 0.",
+      "description": "Last minus first soc across the charge session. SOC is a 1 % integer, so a short top-up can legitimately read 0. The session is the most recent one that overlaps the range: the last 0 to 1 edge of bms_state_charge at or before the end of the range, through to the first 0 after it. Two charges in one range therefore describe the later one rather than being merged with the gap between them counted, a charge still running reads up to the end of the range instead of 0, and the edge is looked up past the start of the range so zooming into the middle of a session still describes that session.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -336,7 +336,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LEAD(r.ts) OVER (ORDER BY r.ts) AS next_ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\n),\nsession AS (\n  SELECT MIN(ts) AS started, MAX(COALESCE(next_ts, ts)) AS ended\n  FROM charge_flag WHERE value = 1\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'soc' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'soc' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"SOC gained\"\nFROM session WHERE session.started IS NOT NULL",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts <= $__to\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0)\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'soc' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'soc' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"SOC gained\"\nFROM session WHERE session.ended >= $__from",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -349,7 +349,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Last minus first remaining_ah across the charge session, straight off the BMS coulomb counter.",
+      "description": "Last minus first remaining_ah across the charge session, straight off the BMS coulomb counter. The session is the most recent one that overlaps the range: the last 0 to 1 edge of bms_state_charge at or before the end of the range, through to the first 0 after it. Two charges in one range therefore describe the later one rather than being merged with the gap between them counted, a charge still running reads up to the end of the range instead of 0, and the edge is looked up past the start of the range so zooming into the middle of a session still describes that session.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -400,7 +400,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LEAD(r.ts) OVER (ORDER BY r.ts) AS next_ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\n),\nsession AS (\n  SELECT MIN(ts) AS started, MAX(COALESCE(next_ts, ts)) AS ended\n  FROM charge_flag WHERE value = 1\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'remaining_ah' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'remaining_ah' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"Charge added\"\nFROM session WHERE session.started IS NOT NULL",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts <= $__to\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0)\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'remaining_ah' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'remaining_ah' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"Charge added\"\nFROM session WHERE session.ended >= $__from",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -413,7 +413,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Last minus first residual_energy_wh across the charge session. This is the pack's own available-energy figure, not metered mains energy, so it excludes charger losses.",
+      "description": "Last minus first residual_energy_wh across the charge session. This is the pack's own available-energy figure, not metered mains energy, so it excludes charger losses. The session is the most recent one that overlaps the range: the last 0 to 1 edge of bms_state_charge at or before the end of the range, through to the first 0 after it. Two charges in one range therefore describe the later one rather than being merged with the gap between them counted, a charge still running reads up to the end of the range instead of 0, and the edge is looked up past the start of the range so zooming into the middle of a session still describes that session.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -464,7 +464,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LEAD(r.ts) OVER (ORDER BY r.ts) AS next_ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\n),\nsession AS (\n  SELECT MIN(ts) AS started, MAX(COALESCE(next_ts, ts)) AS ended\n  FROM charge_flag WHERE value = 1\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'residual_energy_wh' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'residual_energy_wh' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"Energy added\"\nFROM session WHERE session.started IS NOT NULL",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge' AND r.ts <= $__to\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0)\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'residual_energy_wh' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'residual_energy_wh' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"Energy added\"\nFROM session WHERE session.ended >= $__from",
           "refId": "A",
           "timeColumns": ["time"]
         }
@@ -1172,6 +1172,13 @@
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
               }
             ]
           },
@@ -1185,21 +1192,6 @@
                 "id": "color",
                 "value": {
                   "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Mains current"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
                   "mode": "fixed"
                 }
               }
@@ -1326,6 +1318,13 @@
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "super-light-blue",
+                  "mode": "fixed"
+                }
               }
             ]
           },
@@ -1339,21 +1338,6 @@
                 "id": "color",
                 "value": {
                   "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "DC current"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "super-light-blue",
                   "mode": "fixed"
                 }
               }
@@ -1593,6 +1577,13 @@
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
               }
             ]
           },
@@ -1606,21 +1597,6 @@
                 "id": "color",
                 "value": {
                   "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SOC"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
                   "mode": "fixed"
                 }
               }
@@ -2043,7 +2019,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Cool Eva - Charging",
+  "title": "Cool Eva — Charging",
   "uid": "cool-eva-charging",
   "version": 1,
   "weekStart": ""
