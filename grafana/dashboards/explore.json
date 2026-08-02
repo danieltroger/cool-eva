@@ -319,7 +319,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Every signal in the database: group, unit, last value, how long it has been quiet, and how many rows it wrote in this window. Click a column header to sort; the funnel icons filter. Type into the `filter` box at the top to narrow by substring of the key. `last value`, `min` and `max` are raw numbers — read the `unit` column next to them, because one table cannot carry °C, mV and km at once.",
+      "description": "Every signal in the database: group, unit, last value, how long it has been quiet, and how many rows it wrote in this window. Click a column header to sort; the funnel icons filter. Type into the `filter` box at the top to narrow by key — it is a SQL LIKE pattern, so `_` matches any one character and `%` any run of them. `last value`, `min` and `max` are raw numbers — read the `unit` column next to them, because one table cannot carry °C, mV and km at once.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -1195,7 +1195,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "The rows behind the plots above, newest first, for every signal selected in the `signal` variable. Capped at 1000 rows — narrow the time range to walk further back. This is the on-change log verbatim: consecutive rows are the moments the value actually moved past its deadband.",
+      "description": "The rows behind the plots above, newest first, for every signal selected in the `signal` variable. Capped at 250 rows **per signal** rather than 250 across the table: a single global cap is taken in time order, so one chatty signal eats the whole budget and a quiet one selected beside it shows only its newest few rows — or none at all, which on this dashboard reads as a dead decoder rather than a full table. `pack_v` alone is 10,183 rows of the capture's 36k. The cost is that selecting a whole subsystem is 250 × its signal count; narrow the time range or the selection rather than the cap. Within each signal this is the on-change log verbatim: consecutive rows are the moments the value actually moved past its deadband.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -1306,7 +1306,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT r.ts AS \"time\", s.key AS \"signal\", r.value AS \"value\", COALESCE(NULLIF(s.unit, ''), '(none)') AS \"unit\"\nFROM reading r\nJOIN signal s ON s.id = r.signal_id\nWHERE s.key IN (${signal:sqlstring}) AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC\nLIMIT 1000",
+          "rawQueryText": "SELECT \"time\", \"signal\", \"value\", \"unit\" FROM (\n  SELECT r.ts AS \"time\", s.key AS \"signal\", r.value AS \"value\",\n         COALESCE(NULLIF(s.unit, ''), '(none)') AS \"unit\",\n         ROW_NUMBER() OVER (PARTITION BY s.key ORDER BY r.ts DESC) AS row_rank\n  FROM reading r\n  JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN (${signal:sqlstring}) AND r.ts BETWEEN $__from AND $__to\n)\nWHERE row_rank <= 250\nORDER BY \"time\" DESC",
           "refId": "A",
           "timeColumns": []
         }
