@@ -1,3 +1,7 @@
+// NOTE: as of the encrypted-ride-log change the Pi no longer writes SQLite at
+// all — this module now exists for scripts/decrypt-log.ts, which rebuilds a
+// plaintext DB on the laptop from decrypted segments so Grafana keeps working.
+
 import Database from "better-sqlite3";
 
 // Long/EAV schema (see obd-garage/INTEGRATION_PLAN.md §SQLite schema):
@@ -26,7 +30,6 @@ let flushTimer: ReturnType<typeof setInterval> | undefined;
 
 const signalIdCache = new Map<string, number>();
 let queue: QueuedRow[] = [];
-let dbStreamPins = 0;
 
 export function initDb(path: string, flushMs = 200): void {
   db = new Database(path);
@@ -120,32 +123,6 @@ export function closeDb(): void {
   if (flushTimer) clearInterval(flushTimer);
   flushNow();
   db.close();
-}
-
-// The /db endpoint streams the raw main database FILE (see db-endpoint.ts). In WAL
-// mode that file only ever changes on a checkpoint, so we "pin" it for the duration
-// of a download to hand out a consistent snapshot without copying the whole ~0.5 GB
-// DB first: fold the WAL in once (so the file is complete + current), then turn off
-// auto-checkpointing so nothing rewrites the file mid-stream. Logging is uninterrupted
-// — new samples just accumulate in the WAL until we unpin and fold them back in.
-// Ref-counted so overlapping downloads are safe: only the first pin checkpoints, only
-// the last unpin restores.
-export function pinDbFileForStreaming(): void {
-  if (dbStreamPins === 0) {
-    flushNow(); // persist queued samples so the snapshot is up to date…
-    db.pragma("wal_checkpoint(TRUNCATE)"); // …fold the WAL into the main file and empty the WAL
-    db.pragma("wal_autocheckpoint = 0"); // freeze the main file: no checkpoint touches it while streaming
-  }
-  dbStreamPins++;
-}
-
-export function unpinDbFile(): void {
-  dbStreamPins--;
-  if (dbStreamPins <= 0) {
-    dbStreamPins = 0;
-    db.pragma("wal_autocheckpoint = 1000"); // restore SQLite's default auto-checkpoint threshold
-    db.pragma("wal_checkpoint(PASSIVE)"); // fold in whatever the WAL accumulated during the download(s)
-  }
 }
 
 // One-time migration of the legacy coolant table into the EAV schema so the

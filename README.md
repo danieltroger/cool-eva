@@ -1,6 +1,6 @@
 # Cool Eva
 
-Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside the bike logs the temperatures of a custom watercooling loop on the battery pack, **plus** the bike's own battery / charge / cell / drive telemetry read straight off the CAN bus — all into one SQLite database, surfaced as a live phone dashboard and a Grafana dashboard for post-ride analysis.
+Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside the bike logs the temperatures of a custom watercooling loop on the battery pack, **plus** the bike's own battery / charge / cell / drive telemetry read straight off the CAN bus — all into an encrypted, write-only ride log, surfaced as a live phone dashboard and (after decryption on the laptop) a Grafana dashboard for post-ride analysis.
 
 ## Hardware & setup
 
@@ -11,7 +11,7 @@ Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside
 
 ## What it logs
 
-Everything is logged **on change** (so steady values don't spam the DB) into a small SQLite database.
+Everything is logged **on change** (so steady values don't spam the log) into the encrypted ride log — see [Encrypted ride log](#encrypted-ride-log).
 
 | Group | Signals | Source |
 | --- | --- | --- |
@@ -29,15 +29,18 @@ Everything is logged **on change** (so steady values don't spam the DB) into a s
 
 ```
 MAX31865 probes ─┐
-                 ├─► signals (log-on-change) ─► SQLite (signal/reading EAV) ─► Grafana
+                 ├─► signals (log-on-change) ─► sealed ride log ─► /dl ─► laptop ─► SQLite ─► Grafana
 Korlan can0 ─────┤                            └─► live state ─► WebSocket ─► phone dashboard
-  · broadcast decode (0x200, 0x203, …)
-  · OBD-II poll @1 Hz (0D, 05, 42, …)
+  · broadcast decode (0x200, 0x203, …)         (the bike holds only a public key:
+  · OBD-II poll @1 Hz (0D, 05, 42, …)            it can seal history, never read it)
+Energica BT hub ─┘
+  · GPS, torque/power, odometer
 ```
 
 - `src/can/` — `socket` (can0 bring-up + raw channel), `decode` (broadcast frame decoders), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
 - `src/sensors/max31865.ts` — the coolant probes.
-- `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`) and batched writes.
+- `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
+- `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments.
 - `src/ws.ts` + `public/index.html` — the live phone riding dashboard.
 - `src/index.ts` — wires it all together.
 
@@ -54,17 +57,59 @@ git pull && npm ci && sudo systemctl restart thermometer
 sudo journalctl -u thermometer -f    # follow logs
 ```
 
-The full SQLite DB can be downloaded from `http://<pi>/db`.
+The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, ~10x smaller than the old SQLite download, and safe to fetch over any network because it's ciphertext. Decrypt it on the laptop (see below) to get a `.db` for Grafana.
 
 ### Grafana
 
 ```bash
 docker compose up -d     # Grafana at http://localhost:3000, reads temperatures.db
+                         # (build that file from a /dl download: see "Encrypted ride log")
 ```
 
 Dashboard provisioned from `grafana/dashboards/cooling.json` (battery temp vs coolant, ΔT across the pack, charge, cells, drive, …).
+
+### Encrypted ride log
+
+A stolen bike is a stolen SD card, and the log holds every route you've ridden — including the one that ends at your front door — plus the ID of the key fob that starts it. So the Pi can be given a **public key only**: it seals every reading it writes and cannot read any of it back.
+
+Set it up once, on the laptop:
+
+```bash
+node --experimental-strip-types scripts/generate-log-key.ts   # writes both keys
+# back the PRIVATE key up (password manager) — it is the only thing that can ever read the logs
+scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/thermometer/
+```
+
+Restart the service; it logs `ride-log: encrypting to …` once it finds the key. Sealed segments land in `ride-logs/*.celog`. To read them back:
+
+```bash
+# a /dl download is a single file; ride-logs/ off the Pi is a directory — both work
+node --experimental-strip-types scripts/decrypt-log.ts cool-eva-2026-08-01.celog
+node --experimental-strip-types scripts/decrypt-log.ts ride-logs/ --out rides.db
+
+# the key is looked up relative to the CWD, so from anywhere else:
+RIDE_LOG_PRIVATE_KEY=~/Documents/cool-eva/ride-log-key.private.pem \
+  node --experimental-strip-types scripts/decrypt-log.ts ~/Downloads/cool-eva-2026-08-01.celog
+```
+
+That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged.
+
+> ⚠️ The Grafana datasource points at `/repo/temperatures.db` (`grafana/provisioning/datasources/sqlite.yml`), so either decrypt with `--out temperatures.db` **in a directory that doesn't already hold your pre-encryption archive** — the tool would append into it — or repoint the datasource at `rides.db`. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
+
+Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. Segments are independently sealed, so damage is contained: the reader resyncs on the next segment and reports what it couldn't read rather than stopping. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
+
+#### What this does and doesn't hide
+
+Holds up: the readings themselves — routes, coordinates, the key-fob ID, everything in the tables above. Whoever takes the SD card, or intercepts a `/dl` download, gets ciphertext.
+
+Does not:
+
+- **Timing metadata leaks.** Filenames are `rides-YYYY-MM-DD.celog`, and sizes scale with how much was logged. That reveals which days the bike moved and roughly for how long, without revealing where. Since the motivating worry is someone learning your habits, that's worth knowing.
+- **No cross-segment integrity.** Each segment is authenticated on its own, so tampering within one is detected — but segments can be deleted or reordered without the reader noticing. It protects confidentiality, not completeness.
+- **`/dl` is unauthenticated** on port 80, like the rest of the server. The payload is sealed, so the exposure is the metadata above rather than the data — but it's a wider audience than "whoever holds the SD card".
 
 ## Notes
 
 - The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
+- Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.

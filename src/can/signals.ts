@@ -1,4 +1,5 @@
-import { recordReading, type SignalSource } from "../db.ts";
+import type { SignalSource } from "../db.ts";
+import { appendReading } from "../storage/encrypted-log.ts";
 
 // The log-on-change core (see obd-garage/INTEGRATION_PLAN.md §Logging model).
 //
@@ -6,8 +7,8 @@ import { recordReading, type SignalSource } from "../db.ts";
 //   liveState   — latest value of every signal, updated on EVERY decoded sample.
 //                 This is what the WebSocket/phone dashboard broadcasts (so the
 //                 display stays fresh even when a value is steady).
-//   lastLogged  — last value actually written to the DB per signal. A new sample
-//                 is written only when it differs from lastLogged by more than the
+//   lastLogged  — last value actually written to the ride log per signal. A new sample
+//                 is sealed only when it differs from lastLogged by more than the
 //                 signal's deadband (0 ⇒ log on any change, i.e. sensor resolution).
 //                 lastLogged starts empty on boot, so the first sample of every
 //                 signal after a (re)boot is always logged.
@@ -74,7 +75,10 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
   const deadband = def?.deadband ?? 0;
   if (prev === undefined || Math.abs(value - prev) > deadband) {
     lastLogged.set(key, value);
-    recordReading(ts, key, value, unit, group, def?.source ?? "stream");
+    // The encrypted ride log is the only persistence — there is no plaintext DB
+    // on the bike. No-op until a public key is configured, which the startup
+    // banner shouts about. See src/storage/encrypted-log.ts.
+    appendReading(ts, key, value, unit, group, def?.source ?? "stream");
     notifyChange(key, { value, unit, group, ts });
   }
 }

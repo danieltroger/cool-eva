@@ -1,7 +1,22 @@
 .DS_Store
-temperatures.db
-temperatures.db-shm
-temperatures.db-wal
+
+# --- Local-only material. This is a PUBLIC repo; keep it that way. ----------
+# Energica's OEM manuals are copyrighted and must never be committed here.
+# They live in iCloud; `manuals` is a symlink to that folder.
+manuals
+Energica_Manuals/
+
+# Reverse-engineering toolkit, notes and captured logs: local only.
+# (Self-contained: scripts + venv + logs all resolve relative to this folder.)
+obd-garage/
+
+# Editor / IDE
+.idea/
+# ---------------------------------------------------------------------------
+
+# Trailing-glob, not exact-match: plain `temperatures.db` did not cover
+# suffixed copies such as temperatures.db.bak-flagfix (479 MB).
+temperatures.db*
 
 # Logs
 logs
@@ -142,3 +157,13 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Ride-log encryption. The private key is the ONLY thing that can read the
+# sealed logs — it must never leave the laptop, and never reach the repo or the
+# Pi. The public key is cryptographically safe to publish, but it is specific to
+# one laptop and this is a public repo, so keep both out.
+*.private.pem
+*.public.pem
+ride-log-key.private.pem
+ride-logs/
+*.celog

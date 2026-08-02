@@ -2,8 +2,7 @@ import { createServer } from "http";
 import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { handleDbEndpoint } from "./db-endpoint.ts";
-import { initDb, closeDb } from "./db.ts";
+import { handleDownloadEndpoint } from "./http/download.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -12,6 +11,7 @@ import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
+import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
 import type { RawChannel } from "socketcan";
 
@@ -30,15 +30,36 @@ const CAN_IFACE = "can0";
 //   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (GPS etc.)
 //   BLE_MAC=…     → pin the hub's address (default: discover it by name)
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
+//   RIDE_LOG_PUBKEY=… → X25519 public key enabling the write-only encrypted log
+//   RIDE_LOG_DIR=…    → where the sealed .celog segments go
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
 const BLE_ENABLED = process.env.BLE_ENABLED !== "0";
 const BLE_MAC = process.env.BLE_MAC ?? "";
+const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
+const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 
-// --- DB + signal registry ---
-initDb(join(ROOT, "temperatures.db"));
+// --- Signal registry ---
 defineSignals(SIGNALS);
+
+// --- Storage: the encrypted ride log is the ONLY persistence ---
+// There is no plaintext database any more: a stolen SD card must not give up
+// route history or the key-fob ID. If no public key is present nothing is
+// persisted at all, so say so loudly rather than silently logging into a void.
+let rideLogEnabled = false;
+try {
+  rideLogEnabled = await initEncryptedLog({ publicKeyPath: RIDE_LOG_PUBKEY, directory: RIDE_LOG_DIR });
+} catch (err) {
+  console.error("ride-log: init failed:", err);
+}
+if (!rideLogEnabled) {
+  console.warn("=".repeat(72));
+  console.warn("ride-log: NO PUBLIC KEY — nothing is being persisted. The live dashboard");
+  console.warn(`still works, but every reading is discarded. Put the key at ${RIDE_LOG_PUBKEY}`);
+  console.warn("(generate it on the laptop: node scripts/generate-log-key.ts) and restart.");
+  console.warn("=".repeat(72));
+}
 
 // --- Coolant probes (MAX31865) ---
 try {
@@ -124,11 +145,13 @@ if (BLE_ENABLED) {
 
 // --- HTTP + WebSocket server ---
 const indexHtml = await readFile(join(ROOT, "public", "index.html"), "utf-8");
-const dbPath = join(ROOT, "temperatures.db");
 
 const server = createServer(async (req, res) => {
-  if (req.url === "/db") {
-    await handleDbEndpoint(req, res, dbPath);
+  if (req.url === "/dl") {
+    // Seal first: you park, pull out the phone and hit /dl, and the tail of the
+    // ride you actually want is still sitting in the buffer unsealed.
+    await flushEncryptedLog();
+    await handleDownloadEndpoint(res, RIDE_LOG_DIR);
     return;
   }
   res.writeHead(200, { "Content-Type": "text/html" });
@@ -143,12 +166,15 @@ server.listen(PORT, () => {
 
 // --- Graceful shutdown ---
 let shuttingDown = false;
-function shutdown(): void {
+async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log("\nShutting down…");
   stopObd?.();
   void bleClient?.stop();
+  // Awaited, not fire-and-forget: sealing the last segment is async, and
+  // process.exit() below would otherwise kill it and lose the final buffer.
+  await closeEncryptedLog();
   try {
     channel?.stop();
   } catch (err) {
@@ -156,9 +182,8 @@ function shutdown(): void {
   }
   ws.stop();
   server.close();
-  closeDb();
   process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
