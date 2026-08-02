@@ -1046,7 +1046,7 @@
             "fillOpacity": 70,
             "lineWidth": 0,
             "spanNulls": false,
-            "barAlignment": 0
+            "barAlignment": 1
           },
           "decimals": 0,
           "unit": "none"
