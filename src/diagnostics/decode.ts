@@ -34,6 +34,13 @@ import { formatObdDtc, lookupByComponentSymptom, lookupByObdCode, type DtcTableE
 // is lost if both readings miss.
 
 const DIAGNOSTICS_MESSAGE_TYPE = 25;
+// The hub answers `04 11 25 FF` with TWO messages, ~10 ms apart: a type 31 that
+// no version of the app knows about, then the type-25 list. Verified live
+// 2026-08-02 on both transports — type 31 appears only in reply to this request
+// (it is absent from the 90 s baseline capture) and always immediately before
+// the list, twice in a row 60 s apart, payload `1F FF 01 03 01 02 04 00` both
+// times. What its six bytes mean is unknown, so it is logged, not decoded.
+const DIAGNOSTICS_INFO_MESSAGE_TYPE = 31;
 const SUB_INDEX_FIRST_PAGE = 0x00;
 const SUB_INDEX_LAST_PAGE = 0xfe;
 const SUB_INDEX_WHOLE_LIST = 0xff;
@@ -140,6 +147,11 @@ export function describeDiagnosticCode(raw: number, flags: number): DiagnosticCo
 /** Is this an 8-byte hub message carrying diagnostics? */
 export function isDiagnosticsMessage(frame: Uint8Array): boolean {
   return frame.length >= 8 && frame[0] === DIAGNOSTICS_MESSAGE_TYPE;
+}
+
+/** Is this the undecoded type-31 message the hub sends with the code list? */
+export function isDiagnosticsInfoMessage(frame: Uint8Array): boolean {
+  return frame.length >= 8 && frame[0] === DIAGNOSTICS_INFO_MESSAGE_TYPE;
 }
 
 function readCodeField(frame: Uint8Array, offset: number): { value: number; flags: number } {

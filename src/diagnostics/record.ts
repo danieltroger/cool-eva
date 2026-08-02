@@ -12,7 +12,9 @@ import type { DiagnosticCode, DiagnosticReport } from "./decode.ts";
 
 /** Codes seen at least once this run, so a code that clears can be zeroed. */
 const seenSignalKeys = new Set<string>();
-let lastSignature = "";
+// null, not "": an empty list has an empty signature too, and starting at ""
+// would swallow the one line saying the bike reported no codes at all.
+let lastSignature: string | null = null;
 
 // How the pages are numbered is inferred, not documented (see decode.ts), so the
 // first list of a run is dumped byte-for-byte. If the assembler never completes
@@ -21,6 +23,10 @@ let lastSignature = "";
 // costs a whole trip to the garage.
 const RAW_FRAME_LOG_LIMIT = 24;
 const rawFramesLogged = new Map<string, number>();
+
+// Type 31 has no known meaning and is logged once per distinct payload, so a
+// constant one costs a single line per boot but a change is impossible to miss.
+const sideChannelPayloadsLogged = new Set<string>();
 
 export function recordDiagnosticReport(report: DiagnosticReport, transport: string): void {
   const presentKeys = new Set(report.codes.map(code => dtcSignalKey(code.component, code.symptom)));
@@ -61,6 +67,19 @@ export function logRawDiagnosticsFrame(frame: Uint8Array, transport: string): vo
   rawFramesLogged.set(transport, alreadyLogged + 1);
   const hex = Array.from(frame, byte => byte.toString(16).padStart(2, "0")).join(" ");
   console.log(`diagnostics: raw frame via ${transport}: ${hex}`);
+}
+
+/**
+ * Logs the type-31 message the hub sends alongside the code list, once per
+ * distinct payload. Nothing decodes it yet — see decode.ts for what is known.
+ */
+export function logDiagnosticsSideChannel(frame: Uint8Array, transport: string): void {
+  const hex = Array.from(frame, byte => byte.toString(16).padStart(2, "0")).join(" ");
+  if (sideChannelPayloadsLogged.has(hex)) {
+    return;
+  }
+  sideChannelPayloadsLogged.add(hex);
+  console.log(`diagnostics: type-31 message via ${transport}: ${hex}`);
 }
 
 /**
