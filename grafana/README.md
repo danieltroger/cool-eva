@@ -23,7 +23,9 @@ The fix for the second case is one line in `fieldConfig.defaults`:
 "displayName": "${__field.labels.metric}"
 ```
 
-That makes the computed display name the bare metric, and overrides match it from then on — `byName` against the metric (`isolation-faults.json`) and `byRegexp` against it (`cooling.json`) both work. Without it neither does. So the rule is not "avoid `byName`"; it is **set `displayName` on every `time series` panel**, and pick the matcher you prefer afterwards.
+That makes the computed display name the bare metric, and overrides match it from then on — `byName` against the metric and `byRegexp` against it both work. Without it neither does, whichever matcher you pick. So the rule is not "avoid `byName`"; it is **set `displayName` on every `time series` panel**, and choose the matcher afterwards on taste.
+
+The corollary is worth checking when you inherit a dashboard: a `time series` panel with overrides and no `defaults.displayName` has overrides that do nothing at all. The symptom is a legend reading `value coolant_in` and palette colours where named ones were configured.
 
 **Interpolate textbox variables through `CAST(${var:sqlstring} AS REAL)`,** not `${var}` bare. A cleared textbox interpolates to nothing and turns the expression into a syntax error; `CAST('' AS REAL)` is `0.0`, which is visibly wrong on screen instead of an error card. It also stops a crafted `?var-…=` link from putting arbitrary SQL into the query, which matters because `docker-compose.yml` runs Grafana anonymous-admin against a read-write mount.
 
