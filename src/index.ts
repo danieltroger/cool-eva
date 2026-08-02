@@ -11,6 +11,7 @@ import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
+import { syncSystemClockFromGps } from "./gps/clock.ts";
 import { setupWs } from "./ws.ts";
 import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
@@ -28,7 +29,8 @@ const CAN_IFACE = "can0";
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
-//   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (GPS etc.)
+//   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (torque/power,
+//                   odometer, vehicle state; GPS also comes in over CAN 0x410)
 //   BLE_MAC=…     → pin the hub's address (default: discover it by name)
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
 //   RIDE_LOG_PUBKEY=… → X25519 public key enabling the write-only encrypted log
@@ -114,6 +116,13 @@ if (CAN_ENABLED) {
       // on the bus, which no single frame can tell you.
       for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
         record(key, value);
+        // Satellite UTC arrives on CAN 0x410 as well as over BLE, and the Pi has no
+        // RTC — so stepping the clock must not depend on the Bluetooth link being
+        // up. The step itself is guarded (drift threshold, one step per 5 min), so
+        // both transports calling it at ~2 Hz is harmless.
+        if (key === "gps_epoch_s") {
+          void syncSystemClockFromGps(value);
+        }
       }
     });
     channel.start();
@@ -141,7 +150,7 @@ if (CAN_ENABLED) {
   console.log("can: disabled (CAN_ENABLED=0)");
 }
 
-// --- Bluetooth: Connectivity Hub (GPS, torque/power, odometer) ---
+// --- Bluetooth: Connectivity Hub (torque/power, odometer, vehicle state, GPS) ---
 let bleClient: BleClient | undefined;
 
 if (BLE_ENABLED) {

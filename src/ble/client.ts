@@ -1,6 +1,6 @@
 import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
 import { ensureBluetoothAdapterUp } from "./adapter.ts";
-import { syncSystemClockFromGps } from "./clock.ts";
+import { syncSystemClockFromGps } from "../gps/clock.ts";
 import {
   BleTelemetryDecoder,
   FrameReassembler,
@@ -14,10 +14,10 @@ import {
 } from "./protocol.ts";
 
 // BLE link to the Energica Connectivity Hub ("Energica BT"), which owns the
-// bike's GPS receiver. GPS is NOT on the OBD/VDB CAN bus — see
-// obd-garage/CAN_MAP.md §"GPS: NOT on the VDB bus" — so this is the only way to
-// get position, and it also yields motor torque/power and the odometer, none of
-// which exist on CAN either.
+// bike's GPS receiver. Position also reaches us over CAN 0x410 (src/can/gps.ts,
+// added 2026-08-02), so this link is no longer the only source of it — but motor
+// torque/power (message type 3) is pushed over Bluetooth only and appears on no
+// CAN frame we know of, which is why the link stays.
 
 const SERVICE_UUID = "14839ac5-7d7f-415d-9a43-167340cf233a";
 const NOTIFY_CHARACTERISTIC_UUID = "0734594b-a8e8-4b1b-a6b2-cd5243059a58";

@@ -61,11 +61,14 @@ MAX31865 probes ─┐
 Korlan can0 ─────┤                            └─► live state ─► WebSocket ─► phone dashboard
   · broadcast decode (0x200, 0x203, …)         (the bike holds only a public key:
   · OBD-II poll @1 Hz (0D, 05, 42, …)            it can seal history, never read it)
+  · GPS on 0x410
 Energica BT hub ─┘
-  · GPS, torque/power, odometer
+  · torque/power, odometer, vehicle state
 ```
 
 - `src/can/` — `socket` (can0 bring-up + raw channel), `decode`/`decode-bms` (broadcast frame decoders, pure), `pack-temperature` (picks which frame owns the true pack temperature, since that depends on which BMS config is flashed), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
+- `src/gps/` — `decode` (the hub's GPS message, pure; shared by CAN `0x410` and the BLE link, which send byte-identical frames), `clock` (steps the Pi's clock from satellite UTC — it has no RTC).
+- `src/ble/` — the Bluetooth link to the Connectivity Hub: `protocol` (framing + handshake, pure), `client` (D-Bus session), `adapter` (bring-up).
 - `src/sensors/max31865.ts` — the coolant probes.
 - `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
 - `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments.

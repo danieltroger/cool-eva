@@ -214,10 +214,11 @@ export const SIGNALS: SignalDef[] = [
   { key: "key_fob_id", unit: "", group: "security", source: "stream" }, // 0x480 b2-5 LE uint32
   { key: "keys_paired", unit: "", group: "security", source: "poll" }, // E-LOCK 0x791 `21 99`, once at startup
 
-  // --- Bluetooth (Connectivity Hub) ---------------------------------------
-  // Pushed by the hub over BLE, not polled. GPS is NOT on the CAN bus at all
-  // (see obd-garage/CAN_MAP.md §"GPS: NOT on the VDB bus"), and neither are
-  // torque/power or the odometer — PID 01A6 is unsupported by Energica.
+  // --- Connectivity Hub (CAN 0x410 and/or Bluetooth) -----------------------
+  // Pushed by the hub, never polled. GPS arrives on both transports — the hub
+  // mirrors its BLE framing onto CAN 0x410 at ~1.8 Hz (src/can/gps.ts) — while
+  // torque/power and the odometer are Bluetooth-only, with no CAN frame and no
+  // OBD PID (01A6 is unsupported by Energica) carrying them.
   //
   // lat/lon deadband ≈ 3 m: parked GPS jitters in the 5th decimal and would
   // otherwise log continuously, while any real movement blows straight past it.
