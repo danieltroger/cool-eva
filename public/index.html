@@ -186,6 +186,22 @@
         return magnitude < 3 ? "#e2e8f0" : magnitude < 15 ? "#facc15" : magnitude < 40 ? "#fb923c" : "#f87171";
       };
 
+      // Each trouble code the bike reports is its own 1/0 signal, keyed
+      // dtc_<component>_<symptom> (see src/diagnostics/dtc-table.ts). Names them
+      // compactly, and cross-checks the count against OBD-II PID 01, which
+      // reaches the same number down a completely different path.
+      const MAX_DTCS_LISTED = 8;
+      function activeDtcSummary(signals) {
+        const active = Object.keys(signals)
+          .filter(key => /^dtc_\d{4}_\d+$/.test(key) && signals[key].value > 0)
+          .map(key => key.slice(4).replace("_", "/"))
+          .sort();
+        const listed = active.slice(0, MAX_DTCS_LISTED).join(" · ");
+        const overflow = active.length > MAX_DTCS_LISTED ? ` +${active.length - MAX_DTCS_LISTED}` : "";
+        const viaObd = signals.dtc_count ? ` · OBD says ${signals.dtc_count.value}` : "";
+        return (active.length ? listed + overflow : "none set") + viaObd;
+      }
+
       // The array order below IS the on-screen order — reorder these lines to taste.
       // A tile is either a single `key`, or a paired `keys:[a,b]` shown as "a / b".
       // `charge` tiles only show while charging; `sub(signals)` adds a small 2nd line.
@@ -239,6 +255,18 @@
           unit: "",
           fmt: value => (value ? "on" : "off"),
           color: value => (value ? "#fde047" : "#475569"),
+        },
+        // Stored trouble codes, from the Connectivity Hub's diagnostics message.
+        // The sub-line names the codes that are actually set; the full list with
+        // descriptions is in the journal (`journalctl -u thermometer`).
+        {
+          key: "dtc_list_count",
+          label: "Stored codes",
+          unit: "",
+          span2: true,
+          fmt: value => value.toFixed(0),
+          color: value => (value > 0 ? "#facc15" : "#4ade80"),
+          sub: activeDtcSummary,
         },
         // Charging (only while charging)
         { key: "dc_v", label: "Charge", unit: "V", fmt: value => value.toFixed(0), charge: true },

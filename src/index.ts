@@ -12,6 +12,8 @@ import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-te
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { syncSystemClockFromGps } from "./gps/clock.ts";
+import { GPS_CAN_ID } from "./can/gps.ts";
+import { handleHubMirrorFrame } from "./can/hub-mirror.ts";
 import { setupWs } from "./ws.ts";
 import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
@@ -110,6 +112,13 @@ if (CAN_ENABLED) {
       if (isElockResponse(msg.id)) {
         handleElockResponse(data);
         return;
+      }
+      // 0x410 is the hub's whole message stream on one id, so it has two readers and
+      // must NOT return here: the diagnostics list is picked off below, and the frame
+      // then carries on to decodeFrame, which is where the GPS multiplex (~1.8 Hz) is
+      // decoded. Returning early would silently take CAN GPS out.
+      if (msg.id === GPS_CAN_ID) {
+        handleHubMirrorFrame(data);
       }
       // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
       // pack temperature or the VCU-shifted view — it depends on which BMS config is
