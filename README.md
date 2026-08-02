@@ -25,11 +25,11 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
 
-Decoded, but only present once the pack's BMS is reflashed with the extended config — until then these frames never arrive and the signals simply don't exist:
+Decoded, and live since the extended config was flashed (2026-08-02). On a stock pack these frames simply never arrive and the signals don't exist:
 
 | Group | Signals | Source |
 | --- | --- | --- |
-| **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — all **81** cells individually, multiplexed by module at 20 Hz | CAN `0x662`–`0x664` |
+| **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — the individual cells, multiplexed by module at 20 Hz. Known gap: cells 4-8 of LMU 1 and 2 never get sampled, because the CAN transmit order is phase-locked to the BMS's module poll (see `obd-garage/CAN_MAP.md`) | CAN `0x662`–`0x664` |
 | **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells | CAN `0x664` |
 | **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx`; in the offset config also the true `batt_temp_lo`/`batt_temp_hi` and `pp_output3_raw` (a diagnostic, retired once confirmed) | CAN `0x660` |
 | **Energy / hours** | `bms_remaining_energy_wh` (1 Wh resolution), `bms_uptime_min` (BMCU hour meter) | CAN `0x661` |

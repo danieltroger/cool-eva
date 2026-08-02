@@ -27,6 +27,9 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     // So these bytes are always "what the VCU and the dash see", which is honest under
     // both configs; the true temperature comes from 0x660 when that config is loaded.
     // pack-temperature.ts resolves which source feeds batt_temp_lo/batt_temp_hi.
+    //
+    // Measured on the bus 2026-08-02 with the offset config live: 0x200 reported 13/14
+    // °C while 0x660 b3/b4 reported 28/29 °C — exactly 15 °C on both ends.
     case 0x200: {
       if (data.length < 8) return [];
       const packVolts = u16be(data[4], data[5]) / 10;
@@ -211,12 +214,13 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
           { key: "batt_temp_lo", value: signedByte(data[4]) }
         );
       }
-      // b5-6 is the whole 16-bit postprocessor Output3 slot (mem 2074), broadcast to
-      // settle one unconfirmed inference: when a postprocessor writes a 1-byte result
-      // into a 16-bit slot, we assume the meaningful byte is the LOW one (slot base +
-      // 1), which is what 0x200 reads and what mem 2012..2015's big-endian byte
-      // addressing implies. If the low byte here equals b3 − 15, the assumption holds
-      // and this signal can be retired.
+      // b5-6 is the whole 16-bit postprocessor Output3 slot (mem 2074). It was added
+      // to settle one inference documentation couldn't confirm: when a postprocessor
+      // writes a 1-byte result into a 16-bit slot, which byte holds it? CONFIRMED
+      // 2026-08-02 — the word read 0x000E with b3 = 29 °C, so the value 14 (= 29 − 15)
+      // sits in the LOW byte, as assumed. That is the byte 0x200 reads, so the
+      // temperature offset lands where it should. Kept for now, but it has served its
+      // purpose and can be dropped from both the config and this decoder.
       if (data.length >= 7) {
         values.push({ key: "pp_output3_raw", value: u16be(data[5], data[6]) });
       }
@@ -232,6 +236,11 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     // already carries it. Two frames feeding one signal turns any disagreement into a
     // value that flaps every frame instead of an obvious decode error, so the
     // duplicate was removed from the config rather than given a second key.
+    //
+    // Unconfirmed: the energy field read 0 Wh at 38 % SOC on 2026-08-02, five minutes
+    // after a BMS reboot. Most likely not yet computed that soon after boot rather
+    // than a decode fault — do not treat a 0 here as authoritative until it has been
+    // re-checked after a longer run.
     case 0x661: {
       if (data.length < 6) return [];
       return [
@@ -351,6 +360,15 @@ export type LmuTemperatureSensor = "bat1" | "pcb1" | "pcb2";
 // The range check below still earns its keep: if byte 0 ever came back static or out
 // of range we would keep re-logging one module rather than smear its values across
 // the others' keys.
+//
+// KNOWN GAP (config-side, not a decode fault): 0x662 samples all 11 modules evenly,
+// but 0x663 and 0x664 never sampled LMU 1 or 2 across 499 frames each on 2026-08-02,
+// and the rest is heavily skewed. All three frames read the same mem 2129 at the same
+// 20 Hz, so the fixed CAN transmit order is phase-locked to the BMCU's LMU poll.
+// Consequence: cells 4-8 of LMU 1 and 2 are currently unobtainable, and this is a
+// systematic zero — it does NOT fill in with a longer capture. Keying every value off
+// the LMU number in its own frame is what makes this show up as missing data instead
+// of as another module's cells being silently overwritten.
 function decodeLmuCellVoltages(data: Buffer, cellNumbers: number[]): DecodedValue[] {
   const lmuNumber = data[0];
   // Always log the selector itself, valid or not. Without it, "byte 0 isn't the LMU
@@ -366,11 +384,27 @@ function decodeLmuCellVoltages(data: Buffer, cellNumbers: number[]): DecodedValu
     // LMUs 5-11 have no cell #8, so 0x664's second slot is meaningless for them.
     if (cellNumber > cellsPresent) continue;
     const millivolts = u16be(data[1 + slot * 2], data[2 + slot * 2]);
-    // 0 mV is the BMS's "no reading" placeholder, never a real series cell.
-    if (millivolts === 0) continue;
+    if (!isPlausibleCellVoltage(millivolts)) continue;
     values.push({ key: cellVoltageKey(lmuNumber, cellNumber), value: millivolts });
   }
   return values;
+}
+
+// The BMS pads a slot it has no reading for with a sentinel, and that sentinel is NOT
+// zero: 0x664's cell-8 field read 8192 mV (0x2000) in all 459 samples from LMUs 5-11
+// on the 2026-08-02 capture, those modules having only 7 cells. A magic-number list
+// would only cover the sentinels we happen to have seen, so anything outside a
+// plausible series-cell band is dropped instead. The band is deliberately far wider
+// than this pack's own configured limits (0x665: 2000 mV end-of-life, 4300 mV
+// over-voltage), so no real cell — even a badly damaged one — can fall outside it.
+//
+// A genuinely shorted cell reading ~0 mV would be dropped too; 0x203's cell_min_mv
+// still catches that, and it is measured by the BMS rather than inferred here.
+const MIN_PLAUSIBLE_CELL_MV = 1000;
+const MAX_PLAUSIBLE_CELL_MV = 5000;
+
+function isPlausibleCellVoltage(millivolts: number): boolean {
+  return millivolts >= MIN_PLAUSIBLE_CELL_MV && millivolts <= MAX_PLAUSIBLE_CELL_MV;
 }
 
 // 0x664 b5-7 — the temperatures of the module named in byte 0.
