@@ -190,12 +190,12 @@
       // dtc_<component>_<symptom> (see src/diagnostics/dtc-table.ts). Names them
       // compactly, and cross-checks the count against OBD-II PID 01, which
       // reaches the same number down a completely different path.
-      // `\d+`, not `\d{4}`: dtcSignalKey pads the component to a MINIMUM of four
-      // digits, and a code no table row names keeps its raw low 16 bits as the
-      // component — up to 65535, so five digits. Those are exactly the codes worth
-      // seeing, and `\d{4}` would silently drop every one of them.
       const MAX_DTCS_LISTED = 8;
       function activeDtcSummary(signals) {
+        // `\d+`, not `\d{4}`: dtcSignalKey pads the component to a MINIMUM of four
+        // digits, and a code no table row names keeps its raw low 16 bits as the
+        // component — up to 65535, so five digits. Those are exactly the codes
+        // worth seeing, and `\d{4}` would silently drop every one of them.
         const active = Object.keys(signals)
           .filter(key => /^dtc_\d+_\d+$/.test(key) && signals[key].value > 0)
           .map(key => key.slice(4).replace("_", "/"))
