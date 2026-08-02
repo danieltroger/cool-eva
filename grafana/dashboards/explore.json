@@ -641,7 +641,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Signals whose last reading is more than 5 minutes older than the newest reading in the window. Signals with no rows at all in the window are not counted here — those are the 'No data in range' tile next door, so the two stats partition the signal list rather than overlapping. Some of these are legitimately static — see the table below before concluding anything.",
+      "description": "Signals whose last reading is more than 5 minutes older than the newest reading in the window. Signals with no rows at all in the window are not counted here — those are the 'No data in range' tile next door, so the two counts are disjoint rather than double-counting the same signals. Neither covers a signal that has merely been quiet for a minute or two. Some of these are legitimately static — see the table below before concluding anything.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -847,7 +847,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "How long each signal has been quiet, measured against the newest reading anywhere in the window rather than wall clock, so a historical window still ranks correctly. This is a prompt to look, not proof of a fault: a signal that is legitimately constant (keys_paired, soh, a stored DTC count) is indistinguishable here from a decoder that stopped emitting. Judge a row against its own habit — the `rows` column tells you whether it normally chatters — and against its neighbours in the same group. A whole group going quiet at once is the shape worth chasing.",
+      "description": "How long each signal has been quiet, measured against the newest reading anywhere in the window rather than wall clock, so a historical window still ranks correctly. This is a prompt to look, not proof of a fault: a signal that is legitimately constant (keys_paired, soh, a stored DTC count) is indistinguishable here from a decoder that stopped emitting. Judge a row against its own habit — the `rows` column tells you whether it normally chatters — and against its neighbours in the same group. A whole group going quiet at once is the shape worth chasing. The `filter` box at the top narrows this table too.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -1020,7 +1020,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, COUNT(*) AS n_rows, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT\n  s.key AS \"signal\",\n  s.grp AS \"group\",\n  s.source AS \"source\",\n  (newest.ts - per_signal.last_ts) / 1000.0 AS \"silent for\",\n  COALESCE(per_signal.n_rows, 0) AS \"rows\",\n  per_signal.last_ts AS \"last seen\"\nFROM signal s\nLEFT JOIN per_signal ON per_signal.signal_id = s.id\nCROSS JOIN newest\nORDER BY CASE WHEN per_signal.last_ts IS NULL THEN 1 ELSE 0 END DESC, newest.ts - per_signal.last_ts DESC, s.key",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, COUNT(*) AS n_rows, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT\n  s.key AS \"signal\",\n  s.grp AS \"group\",\n  s.source AS \"source\",\n  (newest.ts - per_signal.last_ts) / 1000.0 AS \"silent for\",\n  COALESCE(per_signal.n_rows, 0) AS \"rows\",\n  per_signal.last_ts AS \"last seen\"\nFROM signal s\nLEFT JOIN per_signal ON per_signal.signal_id = s.id\nCROSS JOIN newest\nWHERE s.key LIKE '%' || ${filter:sqlstring} || '%'\nORDER BY CASE WHEN per_signal.last_ts IS NULL THEN 1 ELSE 0 END DESC, newest.ts - per_signal.last_ts DESC, s.key",
           "refId": "A",
           "timeColumns": []
         }
@@ -1033,7 +1033,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Row count per one-minute bucket per `signal.grp` — the logger's pulse. A subsystem that flatlines while others keep writing is the signature of a dead decoder. Nulls are NOT spanned here: unlike a telemetry value, a missing bucket really does mean nothing was written that minute, so the gap is the information.",
+      "description": "Row count per one-minute bucket per `signal.grp` — the logger's pulse. A subsystem that stops writing while others keep going is the signature of a dead decoder. Drawn as bars rather than lines on purpose: a minute in which *nothing at all* was written produces no row, so there is no null for `spanNulls: false` to break a line on, and a line would be interpolated straight across a whole-logger outage — bike parked, service down, `can0` gone — as if rows had been written throughout. Bars cannot interpolate, so a blank column means exactly what it looks like. Read magnitudes off the legend's sum and max columns rather than off the bar heights, which get thin over a long range.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1042,13 +1042,11 @@
           "displayName": "${__field.labels.metric}",
           "custom": {
             "axisLabel": "rows / min",
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "lineInterpolation": "linear",
-            "lineWidth": 1.5,
-            "pointSize": 4,
-            "showPoints": "auto",
-            "spanNulls": false
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "spanNulls": false,
+            "barAlignment": 0
           },
           "decimals": 0,
           "unit": "none"
@@ -1536,7 +1534,7 @@
             "type": "frser-sqlite-datasource",
             "uid": "cool-eva-sqlite"
           },
-          "description": "Every signal in this subsystem plotted raw. The axis is deliberately unitless and each series carries its own unit in the legend, because one group mixes V, A, °C and %. That also means small signals get flattened by large ones — click a legend entry to isolate a single series, or use the 'Plot any signal' row above, which does put the real unit on the axis. Steps hold and nulls are spanned: a gap in on-change logging means the value did not move. This is the one query on the dashboard with no bucketing and no LIMIT, and the plugin's long-to-wide conversion pads every series out to every timestamp in the group, so the point count is roughly (signals in group) × (rows in group). Measured on the 4.8-hour 2026-08-02 capture: 648k points for `battery`, 315k for `cells`, 80k for `drive` — and that scales with however much history the range covers. Narrow the time range before expanding the big groups. The row is collapsed by default for exactly this reason, so nothing runs until you open it.",
+          "description": "Every signal in this subsystem plotted raw. The axis is deliberately unitless and each series carries its own unit in the legend, because one group mixes V, A, °C and %. That also means small signals get flattened by large ones — click a legend entry to isolate a single series, or use the 'Plot any signal' row above, which does put the real unit on the axis. Steps hold and nulls are spanned: a gap in on-change logging means the value did not move. This is the one query on the dashboard that pulls a whole subsystem raw — unbucketed and unlimited, where 'Plot any signal' above is unbucketed but one signal per panel — and the plugin's long-to-wide conversion pads every series out to every timestamp in the group, so the point count is roughly (signals in group) × (rows in group). Measured on the 4.8-hour 2026-08-02 capture: 648k points for `battery`, 315k for `cells`, 80k for `drive` — and that scales with however much history the range covers. Narrow the time range before expanding the big groups. The row is collapsed by default for exactly this reason, so nothing runs until you open it.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1658,7 +1656,7 @@
           "text": "",
           "value": ""
         },
-        "description": "Substring match on the signal key in the signal browser. Empty matches everything.",
+        "description": "Matches the signal key with SQL LIKE in both full-signal tables, so it is a pattern rather than a plain substring: `_` matches any one character and `%` any run of them, which is why `cell_1` also matches `cell21`. Empty matches everything.",
         "hide": 0,
         "label": "filter",
         "name": "filter",
