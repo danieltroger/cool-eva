@@ -104,7 +104,16 @@ docker compose up -d     # Grafana at http://localhost:3000, reads temperatures.
                          # (build that file from a /dl download: see "Encrypted ride log")
 ```
 
-Dashboard provisioned from `grafana/dashboards/cooling.json` (battery temp vs coolant, ΔT across the pack, charge, cells, drive, …).
+Six dashboards are provisioned from `grafana/dashboards/`, one file each:
+
+- **Cooling** (`cooling.json`) — ΔT across the pack, heat removed against an assumed coolant flow, inlet/outlet/ambient, per-module temperatures, powertrain temps.
+- **Battery & cell balancing** (`battery-cells.json`) — per-cell voltage and per-module temperature heatmaps, spread over time, the cell limits the BMS is actually configured with.
+- **Ride summary** (`ride-summary.json`) — speed, power, torque, energy, peak temperatures, position, bike state.
+- **Charging** (`charging.json`) — charge sessions, charger mains and DC side, the BMS system-state lanes.
+- **Isolation & faults** (`isolation-faults.json`) — the BMS isolation test in raw ADC counts, the error and warning flags, the stored diagnostic code counts, the BMS IO lines.
+- **Explore & data health** (`explore.json`) — every logged signal, a browser over the whole registry, and how long each signal has been quiet.
+
+`grafana/README.md` collects the datasource and panel traps that querying log-on-change data in this plugin keeps producing — read it before writing a new dashboard.
 
 ### Encrypted ride log
 
