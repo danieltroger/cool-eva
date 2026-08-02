@@ -247,6 +247,7 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "cell_target_mv", value: u16be(data[6], data[7]) },
       ];
     }
+
     default:
       return [];
   }

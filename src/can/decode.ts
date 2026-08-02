@@ -82,6 +82,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       if (data.length < 6) return [];
       return [{ key: "key_fob_id", value: data.readUInt32LE(2) }];
     }
+
     default:
       // Everything else is either a BMS frame or one we don't decode.
       return decodeBmsFrame(id, data);
