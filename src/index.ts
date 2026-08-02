@@ -8,6 +8,7 @@ import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
+import { resolvePackTemperatures } from "./can/pack-temperature.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { setupWs } from "./ws.ts";
@@ -97,7 +98,10 @@ if (CAN_ENABLED) {
         handleElockResponse(data);
         return;
       }
-      for (const { key, value } of decodeFrame(msg.id, data)) {
+      // resolvePackTemperatures decides whether 0x200's temperature bytes are the true
+      // pack temperature or the VCU-shifted view — it depends on which BMS config is
+      // on the bus, which no single frame can tell you.
+      for (const { key, value } of resolvePackTemperatures(msg.id, data, decodeFrame(msg.id, data))) {
         record(key, value);
       }
     });

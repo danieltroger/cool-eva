@@ -16,7 +16,7 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | Group | Signals | Source |
 | --- | --- | --- |
 | **Coolant** (custom loop) | `coolant_in`, `coolant_out` (°C) | MAX31865 PT100 |
-| **Battery / BMS** | `batt_temp_lo`, `batt_temp_hi` (°C), `soc` (%), `soh` (%), `pack_v` (V), `pack_a` (A), `pack_kw` (kW), `allowed_discharge_a`, `allowed_regen_a` (A), `pack_resistance_mohm` (mΩ) | CAN `0x200`/`0x202`/`0x206` |
+| **Battery / BMS** | `batt_temp_lo`, `batt_temp_hi` (°C, always the **true** pack temperature), `batt_temp_lo_vcu`, `batt_temp_hi_vcu` (what the VCU and dash read — 15 °C lower once the DC-derate offset config is flashed), `soc` (%), `soh` (%), `pack_v` (V), `pack_a` (A), `pack_kw` (kW), `allowed_discharge_a`, `allowed_regen_a` (A), `pack_resistance_mohm` (mΩ) | CAN `0x200`/`0x202`/`0x206`/`0x660` |
 | **Cells** | `cell_min_mv`, `cell_avg_mv`, `cell_max_mv`, `cell_spread_mv`, `cell_deviation_mv` (the BMS's own ΔV), `cell_lowest_v_idx`, `cell_highest_v_idx` (which cell is at each extreme _right now_ — at a few mV of spread that ranking is noise, not a health verdict), `cells_connected`, `cell_voltage_sum_v` | CAN `0x203`/`0x205`/`0x207` |
 | **BMS state & faults** | `charge_state` (raw System State bitfield) + decoded `bms_state_*` (discharge / charge / balancing / trickle / idle / charge complete / maintenance), `bms_error_flags`, `bms_warning_flags` (raw words) + booleans for the ones worth acting on: cell over/under voltage, over temperature, leak detected, leak detection failed, contactor faults, low SOC, balancing required | CAN `0x201` |
 | **Isolation** | `iso_test_1`, `iso_test_2`, `iso_test_total` (10-bit ADC, 512 = ideal), `bms_io_state`, `lmu_comm_warnings` | CAN `0x207`/`0x206` |
@@ -31,7 +31,7 @@ Decoded, but only present once the pack's BMS is reflashed with the extended con
 | --- | --- | --- |
 | **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — all **81** cells individually, multiplexed by module at 20 Hz | CAN `0x662`–`0x664` |
 | **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells | CAN `0x664` |
-| **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx` | CAN `0x660` |
+| **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx`; in the offset config also the true `batt_temp_lo`/`batt_temp_hi` and `pp_output3_raw` (a diagnostic, retired once confirmed) | CAN `0x660` |
 | **Energy / hours** | `bms_remaining_energy_wh` (1 Wh resolution), `bms_uptime_min` (BMCU hour meter) | CAN `0x661` |
 | **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv` — the thresholds the BMS is actually configured with, so nothing downstream has to hardcode them | CAN `0x665` |
 
@@ -49,7 +49,7 @@ Energica BT hub ─┘
   · GPS, torque/power, odometer
 ```
 
-- `src/can/` — `socket` (can0 bring-up + raw channel), `decode` (broadcast frame decoders), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
+- `src/can/` — `socket` (can0 bring-up + raw channel), `decode`/`decode-bms` (broadcast frame decoders, pure), `pack-temperature` (picks which frame owns the true pack temperature, since that depends on which BMS config is flashed), `obd` (OBD-II poll loop), `signals`/`registry` (log-on-change core).
 - `src/sensors/max31865.ts` — the coolant probes.
 - `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
 - `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments.

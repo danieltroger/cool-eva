@@ -15,15 +15,27 @@ import { type DecodedValue, bit, i16be, signedByte, u16be, u16le } from "./frame
 export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
   switch (id) {
     // 0x200 — BMS: temps, SOC/SOH, pack V/I (20 Hz). ✅
+    //
+    // b0/b3 are logged as batt_temp_*_vcu, NOT as batt_temp_*, because what they mean
+    // depends on which BMS config is flashed. The VCU derates DC charging from 36 °C
+    // reported pack temperature, which is far too early for a watercooled pack, so the
+    // offset config shifts these two bytes down by 15 °C to move that knee to 51 °C
+    // actual. The shift is two postprocessor lines that only touch what is transmitted
+    // — every BMS protection threshold, the regen shaping curve and allowed_regen_a
+    // are still computed from the raw internal values.
+    //
+    // So these bytes are always "what the VCU and the dash see", which is honest under
+    // both configs; the true temperature comes from 0x660 when that config is loaded.
+    // pack-temperature.ts resolves which source feeds batt_temp_lo/batt_temp_hi.
     case 0x200: {
       if (data.length < 8) return [];
       const packVolts = u16be(data[4], data[5]) / 10;
       const packAmps = i16be(data[6], data[7]) / 10; // signed
       return [
-        { key: "batt_temp_lo", value: signedByte(data[0]) },
+        { key: "batt_temp_lo_vcu", value: signedByte(data[0]) },
         { key: "soc", value: data[1] },
         { key: "soh", value: data[2] },
-        { key: "batt_temp_hi", value: signedByte(data[3]) },
+        { key: "batt_temp_hi_vcu", value: signedByte(data[3]) },
         { key: "pack_v", value: packVolts },
         { key: "pack_a", value: packAmps },
         { key: "pack_kw", value: Math.round(((packVolts * packAmps) / 1000) * 1000) / 1000 },
@@ -127,11 +139,16 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
       ];
     }
 
-    // 0x206 — pack resistance + module comms (1 Hz). b7 repeats Pack Temp Low, which
-    // 0x200 already logs at 20 Hz, so it is skipped. lmu_comm_warnings is a bitmask
+    // 0x206 — pack resistance + module comms (1 Hz). lmu_comm_warnings is a bitmask
     // with bit n = LMU n; bms_io_state is a bitfield with bit n = IO n+1.
     // pack_resistance_mohm reads 0 with the pack at rest — the BMS needs current
     // flowing to measure it, so 0 parked is expected rather than a decode failure.
+    //
+    // b7 is deliberately NOT decoded. It carries whatever 0x200 b0 carries — the true
+    // pack temp low under the pre-offset config, the VCU-shifted one under the offset
+    // config — so its meaning is config-dependent, and it is a 1 Hz duplicate of a
+    // 20 Hz signal either way. Skipping it means this frame needs no config detection
+    // at all, which is strictly safer than deciding what it means and being wrong.
     case 0x206: {
       if (data.length < 7) return [];
       return [
@@ -171,16 +188,39 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
       ];
     }
 
-    // 0x660 — pack thermal summary (1 Hz, 3 bytes). The per-module temperatures are
-    // NOT here: mem 2146-2149 sit inside the multiplexed [2129]-[2149] LMU block, so
-    // they only mean anything next to an LMU number and ride in 0x664 instead.
+    // 0x660 — pack thermal summary (1 Hz). The per-module temperatures are NOT here:
+    // mem 2146-2149 sit inside the multiplexed [2129]-[2149] LMU block, so they only
+    // mean anything next to an LMU number and ride in 0x664 instead.
+    //
+    // pack_temp_avg (mem 2123) is NOT offset by the VCU shift — only the two bytes on
+    // 0x200 and 0x206 b7 are — so it stays directly comparable with batt_temp_*.
     case 0x660: {
       if (data.length < 3) return [];
-      return [
+      const values: DecodedValue[] = [
         { key: "lmu_temp_high_idx", value: data[0] },
         { key: "lmu_temp_low_idx", value: data[1] },
         { key: "pack_temp_avg", value: signedByte(data[2]) },
       ];
+      // The frame is DLC 3 before the VCU temperature offset exists and DLC 8 after,
+      // so its length is the only honest way to tell the two configs apart. Bytes 3-4
+      // must never be read from the short form: CAN padding would decode as 0 °C,
+      // which is plausible enough to be logged and believed rather than spotted.
+      if (data.length >= 5) {
+        values.push(
+          { key: "batt_temp_hi", value: signedByte(data[3]) },
+          { key: "batt_temp_lo", value: signedByte(data[4]) }
+        );
+      }
+      // b5-6 is the whole 16-bit postprocessor Output3 slot (mem 2074), broadcast to
+      // settle one unconfirmed inference: when a postprocessor writes a 1-byte result
+      // into a 16-bit slot, we assume the meaningful byte is the LOW one (slot base +
+      // 1), which is what 0x200 reads and what mem 2012..2015's big-endian byte
+      // addressing implies. If the low byte here equals b3 − 15, the assumption holds
+      // and this signal can be retired.
+      if (data.length >= 7) {
+        values.push({ key: "pp_output3_raw", value: u16be(data[5], data[6]) });
+      }
+      return values;
     }
 
     // 0x661 — high-resolution remaining energy + BMCU hour meter (1 Hz, DLC 6).

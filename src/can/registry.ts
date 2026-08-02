@@ -18,9 +18,17 @@ export const SIGNALS: SignalDef[] = [
   { key: "coolant_in", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
   { key: "coolant_out", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
 
-  // 0x200 — BMS
+  // 0x200 / 0x660 — BMS
+  // batt_temp_lo/hi always mean the TRUE pack temperature, whichever frame supplies
+  // them (see pack-temperature.ts), so the history stays one continuous series.
+  // The _vcu pair is what the VCU and dash actually read: identical to the true pair
+  // on the stock config, and 15 °C lower once the DC-derate offset is flashed. The
+  // difference between the two is the useful signal — it should be a constant 15 °C,
+  // and anything else means the postprocessor isn't doing what we think.
   { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream" },
   { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream" },
+  { key: "batt_temp_lo_vcu", unit: "°C", group: "battery", source: "stream" },
+  { key: "batt_temp_hi_vcu", unit: "°C", group: "battery", source: "stream" },
   { key: "soc", unit: "%", group: "battery", source: "stream" },
   { key: "soh", unit: "%", group: "battery", source: "stream" },
   { key: "pack_v", unit: "V", group: "battery", source: "stream" },
@@ -110,10 +118,16 @@ export const SIGNALS: SignalDef[] = [
   { key: "bms_post_processor_1", unit: "", group: "bms", source: "stream" }, // purpose unknown, logged raw
 
   // --- Frames that only exist after the extended BMS config is flashed -----
-  // 0x660 — pack thermal summary (the per-module temps ride in 0x664 instead)
+  // 0x660 — pack thermal summary (the per-module temps ride in 0x664 instead).
+  // pack_temp_avg is not touched by the VCU offset, so it stays comparable with
+  // batt_temp_*. The frame also carries the true batt_temp_lo/hi in its long form.
   { key: "lmu_temp_high_idx", unit: "", group: "battery", source: "stream" },
   { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream" },
   { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
+  // Diagnostic, retire once confirmed: the full 16-bit postprocessor Output3 slot,
+  // to check that a 1-byte postprocessor result really lands in the LOW byte. Holds a
+  // small temperature, so a deadband would only mask the thing it exists to reveal.
+  { key: "pp_output3_raw", unit: "", group: "bms", source: "stream" },
 
   // 0x661 — 1 Wh remaining energy (5 Wh deadband: 1 Wh out of a ~21 kWh pack is far
   // below anything we can act on, and the frame arrives every second) + the BMCU's
