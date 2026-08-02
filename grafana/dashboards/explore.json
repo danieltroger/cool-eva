@@ -641,7 +641,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Signals whose last reading is more than 5 minutes older than the newest reading in the window. Some of these are legitimately static — see the table below before concluding anything.",
+      "description": "Signals whose last reading is more than 5 minutes older than the newest reading in the window. Signals with no rows at all in the window are not counted here — those are the 'No data in range' tile next door, so the two stats partition the signal list rather than overlapping. Some of these are legitimately static — see the table below before concluding anything.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -698,7 +698,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT COUNT(*) AS \"silent\"\nFROM signal s\nLEFT JOIN per_signal ON per_signal.signal_id = s.id\nCROSS JOIN newest\nWHERE per_signal.last_ts IS NULL OR newest.ts - per_signal.last_ts > 300000",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT COUNT(*) AS \"silent\"\nFROM per_signal CROSS JOIN newest\nWHERE newest.ts - per_signal.last_ts > 300000",
           "refId": "A",
           "timeColumns": []
         }
@@ -1011,12 +1011,7 @@
           "show": false
         },
         "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "silent for"
-          }
-        ]
+        "sortBy": []
       },
       "targets": [
         {
@@ -1541,7 +1536,7 @@
             "type": "frser-sqlite-datasource",
             "uid": "cool-eva-sqlite"
           },
-          "description": "Every signal in this subsystem plotted raw. The axis is deliberately unitless and each series carries its own unit in the legend, because one group mixes V, A, °C and %. That also means small signals get flattened by large ones — click a legend entry to isolate a single series, or use the 'Plot any signal' row above, which does put the real unit on the axis. Steps hold and nulls are spanned: a gap in on-change logging means the value did not move.",
+          "description": "Every signal in this subsystem plotted raw. The axis is deliberately unitless and each series carries its own unit in the legend, because one group mixes V, A, °C and %. That also means small signals get flattened by large ones — click a legend entry to isolate a single series, or use the 'Plot any signal' row above, which does put the real unit on the axis. Steps hold and nulls are spanned: a gap in on-change logging means the value did not move. This is the one query on the dashboard with no bucketing and no LIMIT, and the plugin's long-to-wide conversion pads every series out to every timestamp in the group, so the point count is roughly (signals in group) × (rows in group). Measured on the 4.8-hour 2026-08-02 capture: 648k points for `battery`, 315k for `cells`, 80k for `drive` — and that scales with however much history the range covers. Narrow the time range before expanding the big groups. The row is collapsed by default for exactly this reason, so nothing runs until you open it.",
           "fieldConfig": {
             "defaults": {
               "color": {
