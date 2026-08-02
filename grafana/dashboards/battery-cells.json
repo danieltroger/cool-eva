@@ -203,7 +203,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Terminal pack voltage, CAN 0x200. Reads about 6 V below the sum of the cells (cell_voltage_sum_v) - a real measurement difference, not a decode error.",
+      "description": "Terminal pack voltage, CAN 0x200. Reads about 6 V below the sum of the cells (cell_voltage_sum_v) - a real measurement difference, not a decode error. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -262,7 +262,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "CAN 0x200, signed. Positive is current leaving the pack.",
+      "description": "CAN 0x200, signed. Positive is current leaving the pack. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -321,7 +321,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "cell_max_mv minus cell_min_mv, CAN 0x203. Under about 20 mV the pack is flat and the extreme-cell indices mean nothing.",
+      "description": "cell_max_mv minus cell_min_mv, CAN 0x203. Under about 20 mV the pack is flat and the extreme-cell indices mean nothing. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -391,7 +391,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "CAN 0x205. Should read 81 - the pack is 2p81s. Lower means the BMS has lost a module.",
+      "description": "CAN 0x205. Should read 81 - the pack is 2p81s, and the BMS counts series positions rather than physical cells, so 81 is the whole pack and not half of it. Lower means the BMS has lost a module. Last value at or before the end of the window, with no lower bound: on a window with no BMS traffic at all this tile will still show a green 81 carried in from outside the range, so read it together with the heatmaps rather than on its own.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -453,7 +453,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "State of health, CAN 0x200.",
+      "description": "State of health, CAN 0x200. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -609,7 +609,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "The same cells with the pack-wide movement taken out: each cell minus the mean of all 81 at that step. This is the view that answers which cell sits low and whether that changes with SOC or load. Blue is below the pack average, red above. The scale is fixed at plus or minus 25 mV so a colour means the same thing across time ranges; past that it clamps to the end colour. The average is computed from these 81 samples rather than from cell_avg_mv, so both sides of the subtraction come from the same frames.",
+      "description": "The same cells with the pack-wide movement taken out: each cell minus the mean of the cells at that step. This is the view that answers which cell sits low and whether that changes with SOC or load. Blue is below the pack average, red above. The scale is fixed at plus or minus 25 mV so a colour means the same thing across time ranges; past that it clamps to the end colour. The average comes from these same samples rather than from cell_avg_mv, so both sides of the subtraction come from the same frames. It is a mean over whatever cells actually have a value at that step, not a fixed division by 81 — on data recorded before the 6-custom-p32b-lmu-phase.bms config only 71 of the 81 positions ever reported, and dividing by 81 there would put the baseline about 400 mV out. The cost of that choice is that the divisor can change inside a window when a cell reports for the first time, which shows up as every row shifting colour in the same column; check the absolute panel above before reading that as a pack-wide event.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -681,7 +681,7 @@
           "timeColumns": ["time"]
         }
       ],
-      "title": "Per-cell voltage minus the average of the 81 cells (mV)",
+      "title": "Per-cell voltage minus the pack average at that step (mV)",
       "type": "heatmap"
     },
     {
@@ -1404,7 +1404,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "This is per module, not per cell: the pack has no per-cell temperature sensors. Each of the 11 LMU modules reports up to three — BAT1 on the cells, PCB1 and PCB2 on its board — which is 31 rows, not 81. Cells are sampled onto a common 240-step time grid and each step carries the last value logged at or before it, so a flat band means the value has not changed, not that data is missing. Rows are the module and cell numbers the frames name themselves. Readings outside -40 to 100 °C are dropped, the same band the decoder now applies: the BMS pads a module slot it has not freshly polled with 0x7A = 122 °C, and rows logged before that guard existed are still in the database. Held forward across the grid, one of them would take over the colour scale for the whole panel.",
+      "description": "This is per module, not per cell: the pack has no per-cell temperature sensors. Each of the 11 LMU modules reports up to three — BAT1 on the cells, PCB1 and PCB2 on its board — which is 31 rows, not 81. Sensors are sampled onto a common 240-step time grid and each step carries the last value logged at or before it, so a flat band means the value has not changed, not that data is missing. Rows are the module number and sensor name the frames carry — there are no cell numbers in this panel at all. Readings outside -40 to 100 °C are dropped, the same band the decoder now applies: the BMS pads a module slot it has not freshly polled with 0x7A = 122 °C, and rows logged before that guard existed are still in the database. Held forward across the grid, one of them would take over the colour scale for the whole panel.",
       "fieldConfig": {
         "defaults": {
           "custom": {
