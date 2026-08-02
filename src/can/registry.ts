@@ -272,7 +272,7 @@ export const SIGNALS: SignalDef[] = [
   { key: "odometer_can_km", unit: "km", group: "drive", source: "stream" },
   { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50 },
-  { key: "reverse", unit: "", group: "drive", source: "stream" },
+  { key: "reverse_gear", unit: "", group: "drive", source: "stream" },
 
   // 0x109 b2-7 — the inverter's current limits, alongside the throttle above. Same 1 A
   // deadband as the BMS's allowed_* pair and for the same reason: they move smoothly

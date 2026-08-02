@@ -117,7 +117,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "odometer_can_km", value: data.readUInt32LE(0) / 10 },
         { key: "speed_can_kmh", value: bitFieldLe(data, 32, 13) / 10 },
         { key: "motor_rpm_can", value: bitFieldLe(data, 45, 15) },
-        { key: "reverse", value: bitFieldLe(data, 63, 1) },
+        { key: "reverse_gear", value: bitFieldLe(data, 63, 1) },
       ];
     }
 
