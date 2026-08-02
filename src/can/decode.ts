@@ -1,7 +1,9 @@
 // Pure per-frame decoders for the Energica broadcast frames we log. Each decoder
 // takes one frame's bytes and returns the (signal key, value) pairs it carries;
 // unknown IDs return []. No I/O, no clock reads, no cross-frame state — that's what
-// makes them testable by replaying a capture when the bike is out of reach.
+// makes them testable by replaying a capture when the bike is out of reach. The one
+// frame that can't be stateless is 0x410, where a GPS fix spans three sub-frames; it
+// keeps that state in gps.ts and this file only routes to it.
 //
 // The frames below are reverse-engineered from the wire and cross-checked against the
 // bike's engineering menu (see obd-garage/CAN_MAP.md). The BMS's own frames are a
@@ -17,6 +19,7 @@
 
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
 import { type DecodedValue, bit, bitFieldLe, i16le, u16le } from "./frame.ts";
+import { decodeGpsCanFrame, GPS_CAN_ID } from "./gps.ts";
 
 export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
   switch (id) {
@@ -250,6 +253,17 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return values;
     }
 
+    // 0x410 — the Connectivity Hub's own message stream, mirrored onto CAN with the
+    // same framing it uses over BLE (b0 = message type, b1 = sub-index). Carries the
+    // GPS multiplex at ~1.8 Hz unsolicited, which is the whole reason position no
+    // longer depends on the Bluetooth link. Decoded in gps.ts because a fix spans
+    // three sub-frames. ✅ framing and rate confirmed on the bus; the payload is
+    // all-zero in the garage, so the coordinates themselves are still BLE-verified
+    // only. (The old note that b4 here is a high-beam switch was reading one byte of
+    // this multiplex; 0x102 is the real lights frame and already supersedes it.)
+    case GPS_CAN_ID:
+      return decodeGpsCanFrame(data);
+
     // 0x480 — E-LOCK / keyless status (10 Hz, present key-on/parked). b2-5 LE
     // uint32 = ID of the key fob currently present; it matches slot 1 of the 3
     // fobs paired in the E-LOCK ECU (b0 = 05, b6 = 01 constant). 🟡
@@ -269,5 +283,5 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 // 0x120/0x121 are deliberately absent: the .xdbc lists them as charge-current
 // setpoints, but neither appeared in 40 s of live capture (parked, unplugged), so
 // there is nothing yet to decode. See obd-garage/CAN_MAP.md.
-const VEHICLE_STREAM_IDS = [0x020, 0x022, 0x025, 0x102, 0x104, 0x109, 0x10a, 0x305, 0x306, 0x480];
+const VEHICLE_STREAM_IDS = [0x020, 0x022, 0x025, 0x102, 0x104, 0x109, 0x10a, 0x305, 0x306, GPS_CAN_ID, 0x480];
 export const STREAM_IDS = [...VEHICLE_STREAM_IDS, ...BMS_STREAM_IDS];

@@ -1,6 +1,8 @@
-// Primitives shared by the CAN frame decoders: the shape they return, and the byte
+// Primitives shared by the frame decoders: the shape they return, and the byte
 // readers they read fields with. Split out so decode.ts and decode-bms.ts can both
-// use them without either importing the other.
+// use them without either importing the other. `DecodedValue` is the app's single
+// declaration of that shape — gps/decode.ts imports it from here too, and the BLE
+// path through ble/protocol.ts re-exports it, so there is only one to keep in step.
 //
 // BE = big-endian pair, LE = little-endian pair.
 

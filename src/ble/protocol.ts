@@ -16,13 +16,13 @@
 // ⚠️ The hub only ever accepts ONE authorised device address, stored on the bike.
 // A new device is ignored until the old one is cleared from the dashboard.
 
-export interface DecodedValue {
-  key: string;
-  value: number;
-}
+import { FRAME_SIZE, GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
 
-/** Fixed record size of every frame on the notify characteristic. */
-export const FRAME_SIZE = 8;
+// The GPS sub-frames are byte-identical on CAN 0x410, so their bit unpacking lives
+// in ../gps/decode.ts and is shared with src/can/gps.ts rather than duplicated. The
+// record size comes from there for the same reason: it is the hub's framing, not
+// this transport's.
+export type { DecodedValue };
 
 // Message types (CommParser constants). Only read-only types are handled here —
 // this module deliberately contains no encoder for the commands that ACT on the
@@ -33,7 +33,6 @@ const TYPE_MATCH_ATTEMPT = 1;
 const TYPE_VEHICLE_STATUS = 2;
 const TYPE_OUTPUT = 3;
 const TYPE_ODOMETER = 4;
-const TYPE_GPS_DATA = 26;
 
 /**
  * SecurityAccess.java. Java uses a signed 32-bit arithmetic shift and relies on
@@ -108,22 +107,11 @@ function unsigned32(byte3: number, byte2: number, byte1: number, byte0: number):
 }
 
 /**
- * Decodes the hub's pushed telemetry. Stateful because a GPS fix is split over
- * three sub-frames: latitude (sub 0), longitude (sub 1) and finally UTC time
- * (sub 0xFE), which is the one that completes the fix.
+ * Decodes the hub's pushed telemetry. Stateful because of the GPS multiplex, which
+ * spreads one fix over three sub-frames — hence one decoder instance per session.
  */
 export class BleTelemetryDecoder {
-  #latitudeSign = 1;
-  #latitudeDegrees = 0;
-  #latitudeMinutes = 0;
-  #latitudeDeciMilliminutes = 0;
-  #haveLatitude = false;
-  #longitudeSign = 1;
-  #longitudeDegrees = 0;
-  #longitudeMinutes = 0;
-  #longitudeDeciMilliminutes = 0;
-  #haveLongitude = false;
-  #fix = 0;
+  #gps = new GpsMessageDecoder();
 
   decode(frame: Uint8Array): DecodedValue[] {
     switch (frame[0]) {
@@ -133,8 +121,8 @@ export class BleTelemetryDecoder {
         return this.#decodeOutput(frame);
       case TYPE_ODOMETER:
         return this.#decodeOdometer(frame);
-      case TYPE_GPS_DATA:
-        return this.#decodeGps(frame);
+      case GPS_MESSAGE_TYPE:
+        return this.#gps.decode(frame);
       default:
         return [];
     }
@@ -184,119 +172,5 @@ export class BleTelemetryDecoder {
       return [{ key: "odometer_km", value: raw }];
     }
     return [];
-  }
-
-  #decodeGps(frame: Uint8Array): DecodedValue[] {
-    if (frame[1] === 0x00) {
-      this.#latitudeDeciMilliminutes = ((frame[4] >> 2) & 63) | (frame[5] << 6);
-      this.#latitudeMinutes = frame[6] & 63;
-      this.#latitudeDegrees = ((frame[6] >> 6) & 3) | ((frame[7] & 63) << 2);
-      this.#latitudeSign = ((frame[7] >> 6) & 1) !== 0 ? -1 : 1;
-      this.#haveLatitude = true;
-      return [
-        { key: "gps_course_deg", value: frame[2] | ((frame[3] & 1) << 8) },
-        // ⚠️ Deliberate deviation from CommParser, which shifts by 8 here.
-        // This sub-frame is packed contiguously: course is b2 + b3 bit0 (9 bits),
-        // speed is b3 bits 1-7 then b4 bits 0-1 (9 bits), and latitude's
-        // deci-milliminutes resume at b4 bit2. So the high bits belong at bit 7.
-        // With <<8, value-bit 7 is permanently zero and anything from 128 km/h up
-        // reads 128 too high (130 -> 258). Below 128 the two are identical, which
-        // is how the app gets away with it.
-        { key: "gps_speed_kmh", value: ((frame[3] >> 1) & 0x7f) | ((frame[4] & 3) << 7) },
-      ];
-    }
-
-    if (frame[1] === 0x01) {
-      this.#longitudeDeciMilliminutes = ((frame[4] >> 2) & 63) | (frame[5] << 6);
-      this.#longitudeMinutes = frame[6] & 63;
-      this.#longitudeDegrees = ((frame[6] >> 6) & 3) | ((frame[7] & 63) << 2);
-      this.#longitudeSign = ((frame[7] >> 6) & 1) !== 0 ? -1 : 1;
-      this.#haveLongitude = true;
-      // 15-bit magnitude: 6 bits from b2, 8 from b3, 1 from b4, then a sign bit.
-      // (CommParser shifts a *signed* byte here, which sign-extends and corrupts
-      // the value; masking to the declared field width is clearly the intent.)
-      const magnitude = ((frame[2] >> 2) & 63) | (frame[3] << 6) | ((frame[4] & 1) << 14);
-      const altitude = ((frame[4] >> 1) & 1) !== 0 ? -magnitude : magnitude;
-      this.#fix = frame[2] & 3;
-      return [
-        { key: "gps_fix", value: this.#fix },
-        { key: "gps_altitude_m", value: altitude },
-      ];
-    }
-
-    if (frame[1] === 0xfe) {
-      const latitude =
-        this.#latitudeSign *
-        (this.#latitudeDegrees + (this.#latitudeMinutes + this.#latitudeDeciMilliminutes / 10000) / 60);
-      const longitude =
-        this.#longitudeSign *
-        (this.#longitudeDegrees + (this.#longitudeMinutes + this.#longitudeDeciMilliminutes / 10000) / 60);
-      const satellites = (frame[7] >> 3) & 31;
-      const values: DecodedValue[] = [{ key: "gps_satellites", value: satellites }];
-      // Two guards. The hub can send this time sub-frame *before* either
-      // coordinate sub-frame on a fresh connection (seen live), which would
-      // otherwise log a bogus 0; and like the app we suppress the null island
-      // it emits before it has a fix.
-      // The have-flags latch, so a live fix is required too: without it a hub
-      // that stops sending the coordinate sub-frames while still sending this
-      // one would replay the last known position forever.
-      const haveBoth = this.#haveLatitude && this.#haveLongitude && this.#fix !== 0;
-      if (haveBoth && (latitude !== 0 || longitude !== 0)) {
-        values.push({ key: "gps_lat", value: latitude }, { key: "gps_lon", value: longitude });
-      }
-
-      const epochSeconds = this.#decodeUtc(frame, satellites);
-      if (epochSeconds !== null) {
-        values.push({ key: "gps_epoch_s", value: epochSeconds });
-      }
-      return values;
-    }
-
-    return [];
-  }
-
-  /**
-   * Satellite UTC out of the GPS sub-0xFE frame, as epoch seconds.
-   *
-   * This is the Pi's only trustworthy time source: it has no RTC, so after a
-   * boot with no network every row gets stamped from a bogus clock (a real ride
-   * once landed years in the past). Returns null unless the fix and the field
-   * ranges are all sane — a wrong time is worse than no time, since we act on it.
-   */
-  #decodeUtc(frame: Uint8Array, satellites: number): number | null {
-    if (this.#fix === 0 || satellites < 4) {
-      return null;
-    }
-    const milliseconds = frame[2] | ((frame[3] & 3) << 8);
-    const seconds = (frame[3] >> 2) & 63;
-    const minutes = frame[4] & 63;
-    const hours = ((frame[4] >> 6) & 3) | ((frame[5] & 7) << 2);
-    const day = (frame[5] >> 3) & 31;
-    const month = frame[6] & 15;
-    const year = ((frame[6] >> 4) & 15) | ((frame[7] & 7) << 4);
-
-    const inRange =
-      month >= 1 &&
-      month <= 12 &&
-      day >= 1 &&
-      day <= 31 &&
-      hours < 24 &&
-      minutes < 60 &&
-      seconds < 60 &&
-      milliseconds < 1000 &&
-      year >= 24 &&
-      year < 100;
-    if (!inRange) {
-      return null;
-    }
-    // Date.UTC silently rolls impossible dates over (31 Apr becomes 1 May), and
-    // we step the system clock from this, so verify the fields survive a round
-    // trip rather than trusting the range check alone.
-    const epochMilliseconds = Date.UTC(2000 + year, month - 1, day, hours, minutes, seconds, milliseconds);
-    const roundTripped = new Date(epochMilliseconds);
-    if (roundTripped.getUTCMonth() !== month - 1 || roundTripped.getUTCDate() !== day) {
-      return null;
-    }
-    return epochMilliseconds / 1000;
   }
 }

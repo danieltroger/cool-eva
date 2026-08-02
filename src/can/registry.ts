@@ -214,10 +214,11 @@ export const SIGNALS: SignalDef[] = [
   { key: "key_fob_id", unit: "", group: "security", source: "stream" }, // 0x480 b2-5 LE uint32
   { key: "keys_paired", unit: "", group: "security", source: "poll" }, // E-LOCK 0x791 `21 99`, once at startup
 
-  // --- Bluetooth (Connectivity Hub) ---------------------------------------
-  // Pushed by the hub over BLE, not polled. GPS is NOT on the CAN bus at all
-  // (see obd-garage/CAN_MAP.md §"GPS: NOT on the VDB bus"), and neither are
-  // torque/power or the odometer — PID 01A6 is unsupported by Energica.
+  // --- Connectivity Hub (CAN 0x410 and/or Bluetooth) -----------------------
+  // Pushed by the hub, never polled. GPS arrives on both transports — the hub
+  // mirrors its BLE framing onto CAN 0x410 at ~1.8 Hz (src/can/gps.ts) — while
+  // torque/power and the odometer are Bluetooth-only, with no CAN frame and no
+  // OBD PID (01A6 is unsupported by Energica) carrying them.
   //
   // lat/lon deadband ≈ 3 m: parked GPS jitters in the 5th decimal and would
   // otherwise log continuously, while any real movement blows straight past it.
@@ -230,10 +231,16 @@ export const SIGNALS: SignalDef[] = [
   { key: "gps_fix", unit: "", group: "gps", source: "stream" },
 
   // Satellite UTC — the Pi has no RTC, so this is the only trustworthy clock on
-  // the road. Logged raw and unthrottled (~2 Hz, the rate the hub sends it): if a
-  // ride ever comes back with timestamps from a no-network boot, having the real
-  // time sitting next to every row makes it repairable without any reasoning.
-  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream" },
+  // the road. Logged raw: if a ride ever comes back with timestamps from a
+  // no-network boot, having the real time sitting next to every row makes it
+  // repairable without any reasoning.
+  //
+  // The deadband is the only thing throttling it. The value carries milliseconds,
+  // so no two samples are ever equal and log-on-change cannot dedupe it — with
+  // both transports sending at ~1.8 Hz that would be ~3.6 rows/s, the highest of
+  // any signal. Half a second is three orders of magnitude below the 60 s drift
+  // the clock step acts on, so it costs the repair use case nothing.
+  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream", deadband: 0.5 },
 
   { key: "motor_torque_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_power_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
