@@ -138,6 +138,9 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
         // 24.9). So the value itself looks right; what it *means* is still unconfirmed
         // (remaining capacity vs a coulomb counter).
         { key: "remaining_ah", value: u16be(data[4], data[5]) / 10 },
+        // Series positions, not physical cells: the 2p81s pack reads 81 here, not 162
+        // (2026-08-02 capture, every row). Anything lower means the BMS has dropped a
+        // module, which is what the battery dashboard's threshold is set against.
         { key: "cells_connected", value: u16be(data[6], data[7]) },
       ];
     }

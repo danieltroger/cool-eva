@@ -1,0 +1,1921 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "light-blue",
+        "name": "Key on",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on'\n)\nSELECT ts / 1000.0 AS time, 'Key on' AS text\nFROM ordered\nWHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "GO",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go'\n)\nSELECT ts / 1000.0 AS time, 'GO' AS text\nFROM ordered\nWHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "yellow",
+        "name": "Charging (0x102)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nSELECT ts / 1000.0 AS time, 'Charging' AS text\nFROM ordered\nWHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "orange",
+        "name": "BMS charge state (0x201)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n)\nSELECT ts / 1000.0 AS time, 'BMS entered Charge' AS text\nFROM ordered\nWHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "name": "BMS balancing (0x201)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH ordered AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_balancing'\n)\nSELECT ts / 1000.0 AS time, 'BMS started balancing' AS text\nFROM ordered\nWHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      }
+    ]
+  },
+  "description": "Per-cell voltages, per-module temperatures and cell balance for the 2p81s pack, from BMS frames 0x200-0x207 and 0x660-0x665. Everything is logged on change with deadbands, so a flat line or a flat heatmap band means unchanged, not missing.",
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Pack state",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "State of charge, CAN 0x200. Last value at or before the end of the window, with no lower bound - these signals hold until they change, so the tile stays populated across a quiet window, and on a quiet enough one it is showing a reading from well before the range starts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "green",
+                "value": 40
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Value\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "SOC",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Terminal pack voltage, CAN 0x200. Reads about 6 V below the sum of the cells (cell_voltage_sum_v) - a real measurement difference, not a decode error. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Value\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_v' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack voltage",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x200, signed. Positive is current leaving the pack. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Value\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_a' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack current",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "cell_max_mv minus cell_min_mv, CAN 0x203. Under about 20 mV the pack is flat and the extreme-cell indices mean nothing. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 200
+              }
+            ]
+          },
+          "unit": "suffix:mV"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Value\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'cell_spread_mv' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Cell spread",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x205. Should read 81 - the pack is 2p81s, and the BMS counts series positions rather than physical cells, so 81 is the whole pack and not half of it. Lower means the BMS has lost a module. Last value at or before the end of the window, with no lower bound: on a window with no BMS traffic at all this tile will still show a green 81 carried in from outside the range, so read it together with the heatmaps rather than on its own.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 81
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Value\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'cells_connected' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Cells connected",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "State of health, CAN 0x200. Last value at or before the end of the window, with no lower bound, so on a quiet window this can be a reading from well before the range starts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Value\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soh' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "SOH",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 8,
+      "title": "Per-cell voltages",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "81 cells from CAN 0x662-0x664, multiplexed by module. Cells are sampled onto a common 240-step time grid and each step carries the last value logged at or before it, so a flat band means the value has not changed, not that data is missing. Rows are the module and cell numbers the frames name themselves. The colour scale spans whatever the window contains, so at rest a 20 mV spread fills the whole palette. Over a charge or a ride the pack-wide swing dominates instead, and the panel below is the one that shows which cell sits low.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 9,
+      "options": {
+        "calculate": false,
+        "cellGap": 0,
+        "cellValues": {
+          "decimals": 1,
+          "unit": "suffix:mV"
+        },
+        "color": {
+          "mode": "scheme",
+          "scheme": "Turbo",
+          "steps": 64,
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "reverse": false
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": -1000000000.0
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH RECURSIVE\n  window_bounds AS (\n    SELECT $__from AS window_start, $__to AS window_end,\n           MAX(($__to - $__from) / 240, 5000) AS step_ms\n  ),\n  time_grid (bucket_ts) AS (\n    SELECT window_start FROM window_bounds\n    UNION ALL\n    SELECT bucket_ts + (SELECT step_ms FROM window_bounds) FROM time_grid\n    WHERE bucket_ts + (SELECT step_ms FROM window_bounds) <= (SELECT window_end FROM window_bounds)\n  ),\n  series AS (\n    SELECT s.id AS signal_id,\n           printf('LMU%02d cell%d',\n                  CAST(SUBSTR(s.key, 4, INSTR(s.key, '_cell') - 4) AS INTEGER),\n                  CAST(REPLACE(SUBSTR(s.key, INSTR(s.key, '_cell') + 5), '_mv', '') AS INTEGER)) AS row_label\n    FROM signal s\n    WHERE s.key GLOB 'lmu*_cell*_mv'\n  ),\n  held AS (\n    SELECT g.bucket_ts, series.row_label,\n           (SELECT r.value FROM reading r\n             WHERE r.signal_id = series.signal_id AND r.ts <= g.bucket_ts\n               AND r.value BETWEEN 1000 AND 5000\n             ORDER BY r.ts DESC LIMIT 1) AS held_value\n    FROM time_grid g CROSS JOIN series\n  ),\n  sampled AS (SELECT * FROM held WHERE held_value IS NOT NULL)\nSELECT bucket_ts / 1000.0 AS time, row_label, held_value AS \"Value\"\nFROM sampled\nORDER BY time, row_label",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Per-cell voltage (mV)",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The same cells with the pack-wide movement taken out: each cell minus the mean of the cells at that step. This is the view that answers which cell sits low and whether that changes with SOC or load. Blue is below the pack average, red above. The scale is fixed at plus or minus 25 mV so a colour means the same thing across time ranges; past that it clamps to the end colour. The average comes from these same samples rather than from cell_avg_mv, so both sides of the subtraction come from the same frames. It is a mean over whatever cells actually have a value at that step, not a fixed division by 81 — on data recorded before the 6-custom-p32b-lmu-phase.bms config only 71 of the 81 positions ever reported, and dividing by 81 there would put the baseline about 400 mV out. The cost of that choice is that the divisor can change inside a window when a cell reports for the first time, which shows up as every row shifting colour in the same column; check the absolute panel above before reading that as a pack-wide event.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 10,
+      "options": {
+        "calculate": false,
+        "cellGap": 0,
+        "cellValues": {
+          "decimals": 1,
+          "unit": "suffix:mV"
+        },
+        "color": {
+          "mode": "scheme",
+          "scheme": "RdYlBu",
+          "steps": 64,
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "reverse": true,
+          "min": -25,
+          "max": 25
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": -1000000000.0
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH RECURSIVE\n  window_bounds AS (\n    SELECT $__from AS window_start, $__to AS window_end,\n           MAX(($__to - $__from) / 240, 5000) AS step_ms\n  ),\n  time_grid (bucket_ts) AS (\n    SELECT window_start FROM window_bounds\n    UNION ALL\n    SELECT bucket_ts + (SELECT step_ms FROM window_bounds) FROM time_grid\n    WHERE bucket_ts + (SELECT step_ms FROM window_bounds) <= (SELECT window_end FROM window_bounds)\n  ),\n  series AS (\n    SELECT s.id AS signal_id,\n           printf('LMU%02d cell%d',\n                  CAST(SUBSTR(s.key, 4, INSTR(s.key, '_cell') - 4) AS INTEGER),\n                  CAST(REPLACE(SUBSTR(s.key, INSTR(s.key, '_cell') + 5), '_mv', '') AS INTEGER)) AS row_label\n    FROM signal s\n    WHERE s.key GLOB 'lmu*_cell*_mv'\n  ),\n  held AS (\n    SELECT g.bucket_ts, series.row_label,\n           (SELECT r.value FROM reading r\n             WHERE r.signal_id = series.signal_id AND r.ts <= g.bucket_ts\n               AND r.value BETWEEN 1000 AND 5000\n             ORDER BY r.ts DESC LIMIT 1) AS held_value\n    FROM time_grid g CROSS JOIN series\n  ),\n  sampled AS (SELECT * FROM held WHERE held_value IS NOT NULL)\nSELECT bucket_ts / 1000.0 AS time, row_label,\n       held_value - AVG(held_value) OVER (PARTITION BY bucket_ts) AS \"Value\"\nFROM sampled\nORDER BY time, row_label",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Per-cell voltage minus the pack average at that step (mV)",
+      "type": "heatmap"
+    },
+    {
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "id": 11,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "**Per-cell voltages come from CAN `0x662`-`0x664`, multiplexed by module** — one module per frame, keyed off the module number carried in the frame itself.\n\n- **Cells 4-8 of LMU 1 and LMU 2 are missing from older data.** `0x663` and `0x664` used to run at the same 50 ms as the BMS's own module poll and aliased against it, never sampling LMU 1 or LMU 2 at all. Those rows are permanently empty for any window recorded before the `6-custom-p32b-lmu-phase.bms` config slowed the two frames to 150 and 250 ms. Empty rows there are that, not a fault.\n- **Cells 4-8 still refresh more slowly than cells 1-3**, because `0x662` stayed at 50 ms. A module's cells are not all the same age — do not read a one-step difference between cell 3 and cell 5 as a real voltage difference.\n- **31 temperature sensors, not 81.** Each LMU reports BAT1 (cells) plus PCB1 and PCB2 (board). BAT2 is disabled on all 11 modules and BAT1 is disabled on LMU 6 and LMU 8, so `LMU06 bat1` and `LMU08 bat1` do not exist. Configured off, not broken.\n- **Two different cell numberings.** Heatmap rows are the module/cell positions the frames name directly. `cell_lowest_v_idx` and `cell_highest_v_idx` are the BMS's own global 0-80 indices, and the mapping between the two is unverified — do not assume index 20 is the cell in row `LMU03 cell5`.\n- **The `bms_state_*` booleans are newer than `charge_state`.** They were split out of the 0x201 System State byte in a later decoder build, so a window recorded before that build was deployed has the raw `charge_state` byte but none of the seven booleans — in this database the two start 53 minutes apart. The charge annotation and the balancing lanes read the booleans on purpose, so on a pre-split window they draw nothing rather than reaching further back than the panels around them.\n- **Ignore `min_cell_idx` / `max_cell_idx` if you find them in the database.** They are pre-2026-08-02 rows recorded while `0x203` b2 and b3 were swapped, so they mean the opposite of their names. `cell_lowest_v_idx` and `cell_highest_v_idx` are the corrected keys.\n- **Pad values from before the decoder's plausibility guard are still in the database** and are filtered out here rather than plotted: 8192 mV (`0x2000`) in an unpopulated cell slot, 122 °C (`0x7A`) in a module slot the BMCU has not freshly polled. `lmu7_bat1_c` and `lmu9_bat1_c` carry 93 such rows between 15:04 and 15:58 on 2026-08-02. The heatmaps use the same bands as `src/can/decode-bms.ts`: 1000-5000 mV and -40 to 100 °C.\n- **All of this needs the custom BMS config flashed.** On a stock bike `0x660`-`0x665` never arrive, and the per-cell, per-module and cell-limit panels stay empty. Normal for a stock pack.",
+        "mode": "markdown"
+      },
+      "title": "Known gaps in the per-cell and per-module data",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "id": 12,
+      "title": "Cell balance",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x203. Stepped and null-spanning because these are logged on change: a flat line is a held value, not a gap. Seeded with the last value before the window, so a signal that has not changed recently still draws.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "suffix:mV"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_min_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "cell min"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_avg_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "cell average"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_max_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "cell max"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 58
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('cell_min_mv', 'cell_avg_mv', 'cell_max_mv')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Cell min / average / max (mV)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "cell_spread_mv is max minus min computed from CAN 0x203 at 20 Hz. cell_deviation_mv is the BMS's own delta V from CAN 0x205 at 1 Hz. Two independent frames measuring the same thing, so they should track. Short disagreements are the rate difference between the frames; a sustained one means a decode problem.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "suffix:mV"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_spread_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "spread (0x203, computed)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_deviation_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "delta V (0x205, BMS)"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 58
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('cell_spread_mv', 'cell_deviation_mv')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Spread cross-check: computed vs the BMS's own delta V (mV)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The same min / average / max on a full-scale axis, against the four thresholds the BMS is actually configured with - read from CAN 0x665, not hardcoded here. Those four are constants stamped into the frame when the config was built, so a flat line is correct; if they ever disagree with the measured cells, the config is stale. The discharge cut-off is not instant either: the minimum cell has to sit under it for 60 s before the BMS opens the contactors, and allowed discharge current derates first.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "suffix:mV"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_min_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "cell min"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_avg_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "cell average"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_max_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "cell max"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_cutoff_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "discharge cut-off"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_end_of_life_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "end of life"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_target_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "charge target"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_overvoltage_mv"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "over-voltage"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 67
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('cell_min_mv', 'cell_avg_mv', 'cell_max_mv', 'cell_cutoff_mv', 'cell_end_of_life_mv', 'cell_overvoltage_mv', 'cell_target_mv')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Cell voltage against the configured BMS limits (mV)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x203 b2 and b3: the cell the BMS currently sees as lowest and as highest. This is not a weak-cell verdict. At the roughly 9 mV spread measured on 2026-08-02 the ranking is noise - the low index wandered between two cells while min, max and average did not move at all. It starts meaning something only once there is a real spread: under load, at low SOC, or at the top of a charge. Read it against the spread panel to the left. These are the BMS's own global indices, and their mapping onto the module/cell rows in the heatmaps above is unverified - do not treat the two numberings as the same thing. The axis is soft-bounded to 0-80 rather than clipped there: these are raw bytes out of 0x203 b2 and b3 with no plausibility guard in the decoder, unlike the mV and °C paths, so a value outside the range draws above the axis where you can see it instead of pinning to 80 and reading as a real index.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "none",
+          "softMin": 0,
+          "softMax": 80
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_lowest_v_idx"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "lowest-voltage cell index"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cell_highest_v_idx"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "highest-voltage cell index"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 67
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('cell_lowest_v_idx', 'cell_highest_v_idx')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Which cell index sits at each extreme (0-80)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x201: bit 2 of the System State bitfield is cell balancing, and the warning word carries balancing-required. The warning lane is yellow when it fires rather than the green the active lane uses, because green everywhere else on this dashboard means healthy. Balancing runs at the top of a charge, so expect these to line up with the charge annotations and with the spread closing afterwards.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "dark-blue",
+                  "index": 0,
+                  "text": "off"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "on"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-blue",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bms_state_balancing"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "balancing active (0x201 bit 2)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bms_warn_balancing_required"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "balancing required (warning)"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "dark-blue",
+                        "index": 0,
+                        "text": "off"
+                      },
+                      "1": {
+                        "color": "yellow",
+                        "index": 1,
+                        "text": "required"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 17,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('bms_state_balancing', 'bms_warn_balancing_required')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Balancing state",
+      "type": "state-timeline"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "id": 18,
+      "title": "Module temperatures",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "This is per module, not per cell: the pack has no per-cell temperature sensors. Each of the 11 LMU modules reports up to three — BAT1 on the cells, PCB1 and PCB2 on its board — which is 31 rows, not 81. Sensors are sampled onto a common 240-step time grid and each step carries the last value logged at or before it, so a flat band means the value has not changed, not that data is missing. Rows are the module number and sensor name the frames carry — there are no cell numbers in this panel at all. Readings outside -40 to 100 °C are dropped, the same band the decoder now applies: the BMS pads a module slot it has not freshly polled with 0x7A = 122 °C, and rows logged before that guard existed are still in the database. Held forward across the grid, one of them would take over the colour scale for the whole panel.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 15,
+        "w": 24,
+        "x": 0,
+        "y": 83
+      },
+      "id": 19,
+      "options": {
+        "calculate": false,
+        "cellGap": 0,
+        "cellValues": {
+          "decimals": 1,
+          "unit": "celsius"
+        },
+        "color": {
+          "mode": "scheme",
+          "scheme": "Turbo",
+          "steps": 64,
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "reverse": false
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": -1000000000.0
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH RECURSIVE\n  window_bounds AS (\n    SELECT $__from AS window_start, $__to AS window_end,\n           MAX(($__to - $__from) / 240, 5000) AS step_ms\n  ),\n  time_grid (bucket_ts) AS (\n    SELECT window_start FROM window_bounds\n    UNION ALL\n    SELECT bucket_ts + (SELECT step_ms FROM window_bounds) FROM time_grid\n    WHERE bucket_ts + (SELECT step_ms FROM window_bounds) <= (SELECT window_end FROM window_bounds)\n  ),\n  series AS (\n    SELECT s.id AS signal_id,\n           printf('LMU%02d %s',\n                  CAST(SUBSTR(s.key, 4, INSTR(s.key, '_') - 4) AS INTEGER),\n                  REPLACE(SUBSTR(s.key, INSTR(s.key, '_') + 1), '_c', '')) AS row_label\n    FROM signal s\n    WHERE s.key GLOB 'lmu*_c' AND s.key NOT GLOB '*_cell*'\n  ),\n  held AS (\n    SELECT g.bucket_ts, series.row_label,\n           (SELECT r.value FROM reading r\n             WHERE r.signal_id = series.signal_id AND r.ts <= g.bucket_ts\n               AND r.value BETWEEN -40 AND 100\n             ORDER BY r.ts DESC LIMIT 1) AS held_value\n    FROM time_grid g CROSS JOIN series\n  ),\n  sampled AS (SELECT * FROM held WHERE held_value IS NOT NULL)\nSELECT bucket_ts / 1000.0 AS time, row_label, held_value AS \"Value\"\nFROM sampled\nORDER BY time, row_label",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Per-module temperature (°C) — 31 sensors, not 81 cells",
+      "type": "heatmap"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 98
+      },
+      "id": 20,
+      "title": "Pack context",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "SOC from CAN 0x200 on the left axis, remaining Ah from CAN 0x205 on the right. The Ah figure behaves like a coulomb counter and reads lower than the nameplate capacity implies, so use it as a trend rather than an absolute.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "soc"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "SOC"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "remaining_ah"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "remaining Ah"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "suffix:Ah"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 99
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('soc', 'remaining_ah')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "SOC and remaining charge",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x200. Voltage on the left axis, current on the right. Current is signed, positive is discharge. Read the per-cell panels against this - a cell that only sags under load shows up here.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "unit": "suffix:V"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pack_v"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "pack voltage"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pack_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "pack current"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "suffix:A"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 99
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('pack_v', 'pack_a')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack voltage and current",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x202. What the BMS is willing to pass right now. It derates before any voltage limit is reached, so it is the earliest warning that the pack is out of headroom - earlier than the cut-off line on the limits panel above, and unlike that constant it can never go stale.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "unit": "suffix:A"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "allowed_discharge_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "allowed discharge"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "allowed_regen_a"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "allowed regen"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 107
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('allowed_discharge_a', 'allowed_regen_a')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Allowed discharge and regen current",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "CAN 0x206. The BMS needs current flowing to measure this, so it reads 0 at rest. A parked session showing a flat zero here is expected, not a dead signal.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "decimals": 2,
+          "unit": "suffix:mΩ"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pack_resistance_mohm"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "pack resistance"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 107
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH selected AS (\n  SELECT s.id AS signal_id, s.key AS metric FROM signal s WHERE s.key IN ('pack_resistance_mohm')\n),\ncarried_in AS (\n  SELECT $__from AS ts, selected.metric,\n         (SELECT r.value FROM reading r\n           WHERE r.signal_id = selected.signal_id AND r.ts <= $__from\n           ORDER BY r.ts DESC LIMIT 1) AS held_value\n  FROM selected\n)\nSELECT ts / 1000.0 AS time, metric, held_value AS \"Value\" FROM carried_in WHERE held_value IS NOT NULL\nUNION ALL\nSELECT r.ts / 1000.0, selected.metric, r.value\nFROM reading r JOIN selected ON selected.signal_id = r.signal_id\nWHERE r.ts > $__from AND r.ts <= $__to\nORDER BY 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack internal resistance",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "battery"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cool Eva — Battery & cell balancing",
+  "uid": "cool-eva-battery-cells",
+  "weekStart": ""
+}
