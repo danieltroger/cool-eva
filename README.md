@@ -86,6 +86,10 @@ Restart the service; it logs `ride-log: encrypting to …` once it finds the key
 # a /dl download is a single file; ride-logs/ off the Pi is a directory — both work
 node --experimental-strip-types scripts/decrypt-log.ts cool-eva-2026-08-01.celog
 node --experimental-strip-types scripts/decrypt-log.ts ride-logs/ --out rides.db
+
+# the key is looked up relative to the CWD, so from anywhere else:
+RIDE_LOG_PRIVATE_KEY=~/Documents/cool-eva/ride-log-key.private.pem \
+  node --experimental-strip-types scripts/decrypt-log.ts ~/Downloads/cool-eva-2026-08-01.celog
 ```
 
 That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged.
