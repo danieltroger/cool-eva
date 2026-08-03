@@ -33,6 +33,25 @@ The corollary is worth checking when you inherit a dashboard: a `time series` pa
 
 **State timelines ignore value mappings on numeric fields.** They label each region with its threshold bucket instead (`-∞+`, or `< 1` if you add a step). Return named text states from SQL — `CASE WHEN value <> 0 THEN 'ACTIVE' ELSE 'clear' END` — and the colours and legend come out right.
 
+**A state timeline whose series are not known in advance needs `queryType: "table"` plus `partitionByValues`.** The pivoted one-column-per-series form only works when you can write the columns out at authoring time — fine for `bms_io_state`'s eight IO lines, impossible for diagnostic codes, where which of the 148 appear is a runtime fact. Measured against Grafana 11.3 with this plugin, on a `(time, metric, state)` query:
+
+| shape                           | result                                                         |
+| ------------------------------- | -------------------------------------------------------------- |
+| `time series` + text `value`    | **`No data in response`** — the plugin builds no frame at all  |
+| `time series` + numeric `value` | renders, but every row is labelled `-∞+` (see above)           |
+| `table` + `partitionByValues`   | ✅ one row per distinct `metric`, text states, correct colours |
+
+So: return `time`, `metric` and a text `value`, set `queryType: "table"`, and add
+
+```json
+"transformations": [
+  { "id": "partitionByValues",
+    "options": { "fields": ["metric"], "keepFields": false, "naming": { "asLabels": true } } }
+]
+```
+
+`asLabels: true` puts the series name in a `metric` label, which then needs the **same `displayName` line as a time-series panel** — `"displayName": "${__field.labels.metric}"` — or every row on the timeline is called `value`. (`asLabels: false` with `"${__series.name}"` works identically; pick one and keep the file consistent.) Used by `trouble-codes.json`.
+
 **Aggregating those text states, `MIN()` is severity-first, `MAX()` is not.** SQLite compares text with BINARY collation and `'ACTIVE'` (0x41) sorts before `'clear'` (0x63), so `MAX()` over a bucket containing both returns `'clear'` and a flag that set and cleared inside one bucket renders green. Renaming either label can flip this silently.
 
 **Grafana keys a separate y-scale off each distinct `axisLabel`.** Setting the label on one of three right-axis series produces three stacked right axes. All series sharing an axis must share the label string exactly.

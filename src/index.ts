@@ -5,6 +5,7 @@ import { handleDownloadEndpoint } from "./http/download.ts";
 import { loadStaticFiles } from "./http/static.ts";
 import { handleWaypointEndpoint } from "./http/waypoint.ts";
 import { handleStatusEndpoint } from "./http/status.ts";
+import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -210,6 +211,10 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/status") {
     await handleStatusEndpoint(res, RIDE_LOG_DIR, rideLogEnabled);
+    return;
+  }
+  if (url.pathname === "/dtc-table") {
+    handleDtcTableEndpoint(req, res);
     return;
   }
   if (staticFiles.serve(url.pathname, res)) {

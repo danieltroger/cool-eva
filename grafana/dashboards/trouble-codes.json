@@ -1,0 +1,564 @@
+{
+  "uid": "cool-eva-trouble-codes",
+  "title": "Cool Eva \u2014 Trouble codes",
+  "description": "Every diagnostic code the bike has reported, named from Energica's own type-approval table, with the history that makes an intermittent fault visible.",
+  "tags": ["cool-eva", "motorcycle", "faults", "diagnostics", "dtc"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Right now",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Codes active",
+      "description": "How many codes the Connectivity Hub currently reports as ACTIVE. This is the bike saying what is wrong right now, and it changes minute to minute \u2014 P0A07 was seen flipping 0\u21941 on a stationary bike on 2026-08-02. Zero here does not mean the fault is gone; check the timeline below.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'dtc_list_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'dtc_list_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Codes stored (OBD)",
+      "description": "OBD-II PID 0x01's stored-fault count \u2014 the bike's fault HISTORY, not what is wrong now. Normally far larger than the active count (38 vs 0-1 here) because it accumulates and is only cleared by a scan tool. The two are different measurements down completely different paths and are not meant to agree.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'dtc_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'dtc_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Warning lamp",
+      "description": "PID 0x01 bit 7 \u2014 the dashboard's malfunction lamp. Off does NOT mean no faults: most codes in Energica's table carry MIL=0 and never light it, P0A07 among them. Treat this as 'the bike decided to shout', not as a fault count.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "off",
+                  "index": 0
+                },
+                "1": {
+                  "text": "ON",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'mil_on' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'mil_on' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Unrecognised codes",
+      "description": "Codes the bike reported that are NOT in the 148-entry type-approval table. Non-zero means either a code the document omits (components 51, 52 and 60 are absent from it) or that the 20-bit field is being read wrongly. Either way it is worth looking at the raw frames in the journal.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'dtc_unrecognised_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the\n-- window, and a held value beats \"No data\", which reads as a dead logger.\nWHERE s.key = 'dtc_unrecognised_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Which codes, and when",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "state-timeline",
+      "title": "Each code, active vs clear",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The reason this dashboard exists. Every diagnostic code the bike has reported, as a band over time. An intermittent fault \u2014 one that latches for a single poll and clears \u2014 is invisible on a counter and unmissable here. Rows are written log-on-change, so a band continues until the next change: a long 'active' stripe means it stayed set, not that it was re-reported. Codes are labelled with their OBD number and Energica's own description.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__field.labels.metric}",
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 80
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "active": {
+                  "color": "red",
+                  "index": 0
+                },
+                "clear": {
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "alignValue": "left",
+        "rowHeight": 0.9,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": ["metric"],
+            "keepFields": false,
+            "naming": {
+              "asLabels": true
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "WITH code(key, obd, name, descr, mil) AS (\n  VALUES ('dtc_0001_0', 'P0562', 'SYSTEM VOLTAGE LOW', 'VCU main supply undervoltage', 0),\n         ('dtc_0001_1', 'P0563', 'SYSTEM VOLTAGE HIGH', 'VCU main supply overvoltage', 0),\n         ('dtc_0002_0', 'U0028', 'VEHICLE COMMUNICATION BUS A', 'VDB bus off', 0),\n         ('dtc_0002_1', 'U0031', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uC', 0),\n         ('dtc_0002_2', 'U0034', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uS', 0),\n         ('dtc_0003_0', 'P1000', 'B_PACK_V_LOW', 'Battery pack undervoltage', 0),\n         ('dtc_0003_1', 'P1001', 'B_PACK_V_HIGH', 'Battery pack overvoltage', 0),\n         ('dtc_0004_0', 'P1002', 'BTEMP_LOW', 'Battery pack under temp', 0),\n         ('dtc_0004_1', 'P1003', 'BTEMP_HIGH', 'Battery pack over temp', 0),\n         ('dtc_0004_2', 'P0514', 'BATTERY TEMPERATURE SENSOR CIRCUIT RANGE/PERFORMANCE', 'Error reading temperature', 1),\n         ('dtc_0004_3', 'P0516', 'BATTERY TEMPERATURE SENSOR CIRCUIT LOW', 'BMS temperature sensor short circuit fault', 1),\n         ('dtc_0004_4', 'P0517', 'BATTERY TEMPERATURE SENSOR CIRCUIT HIGH', 'BMS temperature sensor open circuit fault', 1),\n         ('dtc_0004_5', 'U0115', 'MISMATCH OF BATTERY CONFIGURATION BETWEEN VCU-BMS', 'Mismatch of battery configuration between VCU and BMS', 1),\n         ('dtc_0005_0', 'U0111', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''A''', 'BMS internal communication problem', 1),\n         ('dtc_0006_0', 'U0112', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''B''', 'BMS BCMU-LMU communication problem', 1),\n         ('dtc_0007_0', 'P1004', 'BMS_CELL_UV', 'BMS cell undervoltage alarm', 0),\n         ('dtc_0007_1', 'P1005', 'BMS VOLTAGE MISREADING', 'Error reading voltage', 1),\n         ('dtc_0007_2', 'P1006', 'BMS VOLTAGE MISREADING', 'Error reading voltage + BMS cell undervoltage alarm', 1),\n         ('dtc_0007_3', 'P1064', 'BMS PACK_VOLTAGE COHERENCY ERROR', 'BMS pack voltage coherency error', 0),\n         ('dtc_0008_0', 'P1007', 'BMS_CELL_OV', 'BMS cell overvoltage alarm', 0),\n         ('dtc_0008_1', 'P1008', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage', 1),\n         ('dtc_0008_2', 'P1009', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage + BMS cell overvoltage alarm', 1),\n         ('dtc_0008_3', 'U0113', 'BMS DEAD LOCK', 'BMS dead lock', 0),\n         ('dtc_0008_4', 'U0114', 'BMS COHERENCY ERROR', 'BMS coherency error', 0),\n         ('dtc_0009_0', 'U0301', 'SOFTWARE INCOMPATIBILITY WITH ECM/PCM', 'Drive configuration error', 0),\n         ('dtc_0010_0', 'P1010', 'HV+ CONTACTOR SC FAULT', 'HV+ contactor short circuit', 0),\n         ('dtc_0010_1', 'P1011', 'HV+ CONTACTOR OC FAULT', 'HV+ contactor open circuit', 0),\n         ('dtc_0010_2', 'P1012', 'HV+ CONTACTOR WELDED', 'HV+ contactor welded', 0),\n         ('dtc_0010_3', 'P1013', 'HV+ CONTACTOR ERROR', 'HV+ contactor error', 0),\n         ('dtc_0011_0', 'P1014', 'FCHG CONTACTOR SC FAULT', 'Fast-charge contactor short circuit', 0),\n         ('dtc_0011_1', 'P1015', 'FCHG CONTACTOR OC FAULT', 'Fast-charge contactor open circuit', 0),\n         ('dtc_0011_2', 'P1016', 'FCHG CONTACTOR WELDED', 'Fast-charge contactor welded circuit', 0),\n         ('dtc_0011_3', 'P1017', 'FCHG CONTACTOR ERROR', 'Fast-charge contactor error', 0),\n         ('dtc_0012_0', 'P1018', 'HV- CONTACTOR SC FAULT', 'HV- contactor short circuit', 0),\n         ('dtc_0012_1', 'P1019', 'HV- CONTACTOR OC FAULT', 'HV- contactor open circuit', 0),\n         ('dtc_0012_2', 'P1020', 'HV- CONTACTOR WELDED FAULT', 'HV- contactor welded fault', 0),\n         ('dtc_0012_3', 'P1021', 'HV- CONTACTOR ERROR', 'HV- contactor error', 0),\n         ('dtc_0013_0', 'P1022', 'CHG CONTACTOR SC', 'Charge contactor short circuit', 0),\n         ('dtc_0013_1', 'P1023', 'CHG CONTACTOR OC', 'Charge contactor open circuit', 0),\n         ('dtc_0013_2', 'P1024', 'CHG CONTACTOR ERROR', 'Possible contactor fault', 0),\n         ('dtc_0014_0', 'P1025', 'PRECHARGE SEQUENCE', 'Precharge sequence failed', 0),\n         ('dtc_0014_1', 'P1026', 'PRECHARGE CONTACTOR SC', 'Precharge sequence failed \u2014 precharge contactor short circuit', 0),\n         ('dtc_0014_2', 'P1027', 'PRECHARGE CONTACTOR OC', 'Precharge sequence failed \u2014 precharge contactor open circuit', 0),\n         ('dtc_0015_0', 'P0A08', 'DC/DC CONVERTER STATUS CIRCUIT', 'PSU over maximum temperature', 0),\n         ('dtc_0016_0', 'P0A10', 'DC/DC CONVERTER STATUS CIRCUIT HIGH INPUT', 'PSU output too high', 0),\n         ('dtc_0016_1', 'P0A09', 'DC/DC CONVERTER STATUS CIRCUIT LOW INPUT', 'PSU output too low', 0),\n         ('dtc_0017_0', 'P1028', 'PSU OVERCURRENT', '12 V circuit abnormal load', 0),\n         ('dtc_0018_0', 'U0037', 'VEHICLE COMMUNICATION BUS B', 'DTB bus off', 0),\n         ('dtc_0018_1', 'U0040', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uC', 0),\n         ('dtc_0018_2', 'U0043', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uS', 0),\n         ('dtc_0019_0', 'P0117', 'ENGINE COOLANT TEMPERATURE CIRCUIT LOW', 'Motor coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0019_1', 'P0118', 'ENGINE COOLANT TEMPERATURE CIRCUIT HIGH', 'Motor coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0019_2', 'P0298', 'ENGINE OIL OVER TEMPERATURE', 'Motor oil over temperature', 1),\n         ('dtc_0020_0', 'P1049', 'DRIVE OVERTEMP', 'Drive temperature too high', 1),\n         ('dtc_0020_1', 'U0110', 'LOST COMMUNICATION WITH DRIVE MOTOR CONTROL MODULE', 'Drive generic error', 1),\n         ('dtc_0020_2', 'P0A02', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT LOW', 'Drive coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0020_3', 'P0A03', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT HIGH', 'Drive coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0020_4', 'P0335', 'CRANKSHAFT POSITION SENSOR ''A'' CIRCUIT', 'Motor position error', 1),\n         ('dtc_0021_0', 'P1029', 'ODOMETER ACCESS ERROR', 'Odometer EEPROM read/write failed', 0),\n         ('dtc_0021_1', 'P0632', 'ODOMETER NOT PROGRAMMED - ECM/PCM', 'Odometer not programmed', 0),\n         ('dtc_0022_0', 'P1030', 'VCU CELL UNDERVOLTAGE', 'Cell undervoltage VCU alarm', 0),\n         ('dtc_0023_0', 'C1000', 'LEAK DETECT', 'Leak detected between HV circuit and chassis', 0),\n         ('dtc_0024_0', 'C1001', 'HV+ LEAK DETECT', 'Leak detected between chassis and HV+ rail', 0),\n         ('dtc_0025_0', 'C1002', 'HV- LEAK DETECT', 'Leak detected between chassis and HV- rail', 0),\n         ('dtc_0026_0', 'P2503', 'CHARGING SYSTEM VOLTAGE LOW', 'Charger DC undervoltage shutdown', 0),\n         ('dtc_0026_1', 'P2504', 'CHARGING SYSTEM VOLTAGE HIGH', 'Charger DC overvoltage shutdown', 0),\n         ('dtc_0026_2', 'P1031', 'CHARGER DC CONNECTION', 'Charger DC connection failure', 0),\n         ('dtc_0027_0', 'P1032', 'CHARGER CONTROL', 'Charger control timeout shutdown \u2014 no control frame received within 1000 ms', 0),\n         ('dtc_0028_0', 'P1033', 'CHARGER DC CURRENT LIMIT', 'Charger reached DC current limit', 0),\n         ('dtc_0029_0', 'P1034', 'CHARGER SCI COMM', 'Charger DSP SPI communication error', 0),\n         ('dtc_0030_0', 'P1035', 'CHARGER AC OV', 'Charger AC overvoltage shutdown', 0),\n         ('dtc_0030_1', 'P1036', 'CHARGER AC UV', 'Charger AC undervoltage shutdown', 0),\n         ('dtc_0031_0', 'P1037', 'CHARGER HIGHTEMP', 'Charger high temperature shutdown (primary or secondary)', 0),\n         ('dtc_0031_1', 'P1038', 'CHARGER LOWTEMP', 'Low temperature shutdown', 0),\n         ('dtc_0032_0', 'P1039', 'CHARGER TRANSFORMER FAILURE', 'Transformer failure \u2014 unable to provide power', 0),\n         ('dtc_0033_0', 'P1040', 'CHARGER FAN OC', 'Charger fan open circuit fault', 0),\n         ('dtc_0033_1', 'P1041', 'CHARGER FAN SC', 'Charger fan short circuit fault', 0),\n         ('dtc_0033_2', 'P1042', 'CHARGER FAN LOCK', 'Charger fan locked', 0),\n         ('dtc_0034_0', 'B1000', 'POSITION LIGHTS OC', 'Position lights open circuit fault', 0),\n         ('dtc_0034_1', 'B1001', 'POSITION LIGHTS SC', 'Position lights short circuit fault', 0),\n         ('dtc_0035_0', 'B1002', 'STOP LIGHTS OC', 'Stop lights open circuit fault', 0),\n         ('dtc_0035_1', 'B1003', 'STOP LIGHTS SC', 'Stop lights short circuit fault', 0),\n         ('dtc_0036_0', 'B1004', 'LEFT INDICATOR OC', 'Left indicator open circuit fault', 0),\n         ('dtc_0036_1', 'B1005', 'LEFT INDICATOR SC', 'Left indicator short circuit fault', 0),\n         ('dtc_0037_0', 'B1006', 'RIGHT INDICATOR OC', 'Right indicator open circuit fault', 0),\n         ('dtc_0037_1', 'B1007', 'RIGHT INDICATOR SC', 'Right indicator short circuit fault', 0),\n         ('dtc_0038_0', 'B1008', 'INDICATOR CONTROL', 'Indicator lights control block fault', 0),\n         ('dtc_0039_0', 'B1009', 'LOW BEAM OC', 'Low beam open circuit fault', 0),\n         ('dtc_0039_1', 'B1010', 'LOW BEAM SC', 'Low beam short circuit fault', 0),\n         ('dtc_0039_2', 'B1011', 'LOW BEAM UF', 'Low beam undefined fault', 0),\n         ('dtc_0039_3', 'U0182', 'LOST COMMUNICATION WITH LIGHTING CONTROL MODULE FRONT', 'Low beam module communication error \u2014 module not responding', 0),\n         ('dtc_0040_0', 'B1012', 'HIGH BEAM OC', 'High beam open circuit fault', 0),\n         ('dtc_0040_1', 'B1013', 'HIGH BEAM SC', 'High beam short circuit fault', 0),\n         ('dtc_0040_2', 'B1014', 'HIGH BEAM UF', 'High beam undefined fault', 0),\n         ('dtc_0040_3', 'U0182', 'HIGH BEAM MODULE COMM ERR', 'High beam module communication error \u2014 module not responding', 0),\n         ('dtc_0041_0', 'P0120', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT', 'Throttle fault (physical error)', 1),\n         ('dtc_0042_0', 'P0121', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT RANGE/PERFORMANCE', 'Throttle fault (logic error)', 1),\n         ('dtc_0043_0', 'B1015', 'HORN OC', 'Horn open circuit fault', 0),\n         ('dtc_0043_1', 'B1016', 'HORN SC', 'Horn short circuit fault', 0),\n         ('dtc_0044_0', 'P0A07', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH', 'Water pump open circuit fault', 0),\n         ('dtc_0044_1', 'P0A06', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT LOW', 'Water pump short circuit fault', 0),\n         ('dtc_0044_2', 'P0A05', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN', 'Water pump locked', 0),\n         ('dtc_0045_0', 'P1043', 'MAIN HV FUSE', 'Main fuse blown', 0),\n         ('dtc_0046_0', 'P1044', 'VCU CELL OVERVOLTAGE', 'Cell overvoltage VCU alarm', 1),\n         ('dtc_0047_0', 'B1017', 'PASSING WARNING', 'Passing light pressed for more than 60 s', 0),\n         ('dtc_0048_0', 'P1045', 'ERROR INLET', 'Error inlet', 0),\n         ('dtc_0049_0', 'P1046', 'BATTERY PACK UNBALANCED', 'Battery pack unbalanced alarm', 0),\n         ('dtc_0050_0', 'P1047', 'BATTERY UNDER CHG TEMP', 'Battery under charge temperature alarm', 0),\n         ('dtc_0053_0', 'U1000', 'SPI COMMUNICATION ERROR', 'Low level safety error', 0),\n         ('dtc_0053_1', 'P1053', 'CONTROL-SAFETY VERSION MISMATCH', 'Low level safety error', 0),\n         ('dtc_0053_10', 'P1058', 'MICRO CONTROL RESET BY MICRO SAFETY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_11', 'P2641', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''B''', 'Low level safety error', 1),\n         ('dtc_0053_12', 'P1059', 'KILIS CONTROL EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_13', 'P1060', 'KILIS SAFETY EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_14', 'P1061', 'CHECK INFO LIST', 'Low level safety error', 0),\n         ('dtc_0053_15', 'P1062', 'GENERIC ERRORR', 'Low level safety error', 0),\n         ('dtc_0053_2', 'P0610', 'CONTROL MODULE VEHICLE OPTION ERROR', 'Low level safety error (uC parameter error)', 0),\n         ('dtc_0053_3', 'P1054', 'SAFETY MODULE VEHICLE OPTION ERROR', 'Low level safety error (uS parameter error)', 0),\n         ('dtc_0053_4', 'P0601', 'INTERNAL CONTROL MODULE MEMORY CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_5', 'P1055', 'INTERNAL SAFETY MODULE CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_6', 'P1063', 'INTERNAL CONTROL MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_7', 'P1056', 'INTERNAL SAFETY MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_8', 'P0603', 'INTERNAL CONTROL MODULE KEEP ALIVE MEMORY (KAM) ERROR', 'Low level safety error (watchdog error)', 0),\n         ('dtc_0053_9', 'P1057', 'MICRO SAFETY RESET BY MICRO CONTROL ERROR', 'Low level safety error', 0),\n         ('dtc_0054_0', 'C1003', 'UNSPECIFIED CM ERROR', 'Unspecified charge manager error', 0),\n         ('dtc_0054_1', 'C1004', 'CP LINE PROBLEM OR EVSE NOT COMPATIBLE', 'CP line problem or EVSE not compatible', 0),\n         ('dtc_0054_10', 'C1013', 'AC LINE ERROR', 'AC line error', 0),\n         ('dtc_0054_11', 'C1014', 'UNCLASSIFIED CM ERROR', 'Unclassified charge manager error', 0),\n         ('dtc_0054_12', 'C1015', 'FAST CHARGE NOT PRESENT', 'Fast charge not present', 0),\n         ('dtc_0054_2', 'C1005', 'LOCKING DEVICE PROBLEM', 'Locking device problem', 0),\n         ('dtc_0054_3', 'C1006', 'CM-VEHICLE COMMUNICATION ERROR', 'Charge manager to vehicle communication error', 0),\n         ('dtc_0054_4', 'C1007', 'CM INTERNAL ERROR', 'Charge manager internal error', 0),\n         ('dtc_0054_5', 'C1008', 'EVSE EMERGENCY SHUTDOWN', 'EVSE emergency shutdown', 0),\n         ('dtc_0054_6', 'C1009', 'QCA ERROR', 'QCA (powerline modem) error', 0),\n         ('dtc_0054_7', 'C1010', 'PROTOCOL ERROR', 'Protocol error', 0),\n         ('dtc_0054_8', 'C1011', 'CM APPLICATION LAYER ERROR', 'Charge manager application layer error', 0),\n         ('dtc_0054_9', 'C1012', 'SLAC PROCES ERROR', 'SLAC process error', 0),\n         ('dtc_0055_0', 'P2637', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''A''', 'Torque feedback error', 0),\n         ('dtc_0056_0', 'C1016', 'ASSET', 'Asset module \u2014 no run', 0),\n         ('dtc_0056_1', 'C1017', 'ASSET', 'Asset module \u2014 run', 0),\n         ('dtc_0057_0', 'B1018', 'FLASH FULL', 'Low flash storage', 0),\n         ('dtc_0058_0', 'P0605', 'INTERNAL CONTROL MODULE READ ONLY MEMORY (ROM) ERROR', 'Flash read/write error', 0),\n         ('dtc_0059_0', 'U0412', 'INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A', 'BMS status error', 0),\n         ('dtc_0061_0', 'P0500', 'VEHICLE SPEED SENSOR ''A''', 'Front wheel speed sensor failure', 0),\n         ('dtc_0061_1', 'P2158', 'VEHICLE SPEED SENSOR ''B''', 'Rear wheel speed sensor failure', 0),\n         ('dtc_0061_2', 'P2158+P0500', 'VEHICLE SPEED SENSOR ''A'' + VEHICLE SPEED SENSOR ''B''', 'Front and rear wheel speed sensors failure', 0),\n         ('dtc_0061_3', 'P2162', 'VEHICLE SPEED SENSOR ''A'' / ''B'' CORRELATION', 'Wheel speed sensor coherency failure', 0),\n         ('dtc_0062_0', 'U0121', 'LOST COMMUNICATION WITH ANTI-LOCK BRAKE SYSTEM (ABS) CONTROL MODULE', 'ABS timeout communication error', 0)\n)\n, dtc AS (\n  SELECT s.key AS key, r.ts AS ts, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key LIKE 'dtc\\_%\\_%' ESCAPE '\\'\n    AND s.key NOT IN ('dtc_count', 'dtc_list_count', 'dtc_unrecognised_count')\n    AND r.ts <= $__to\n), seed AS (\n  SELECT key, MAX(ts) AS ts FROM dtc WHERE ts < $__from GROUP BY key\n), points AS (\n  SELECT key, ts, value FROM dtc WHERE ts >= $__from\n  UNION ALL\n  SELECT d.key, $__from, d.value FROM dtc d JOIN seed ON seed.key = d.key AND seed.ts = d.ts\n)\nSELECT p.ts/1000.0 AS time,\n       COALESCE(c.obd, 'raw ' || SUBSTR(p.key, 5)) || ' \u2014 ' || COALESCE(c.descr, 'not in code table') AS metric,\n       CASE WHEN p.value > 0 THEN 'active' ELSE 'clear' END AS value\nFROM points p\nLEFT JOIN code c ON c.key = p.key\nORDER BY p.ts",
+          "queryText": "WITH code(key, obd, name, descr, mil) AS (\n  VALUES ('dtc_0001_0', 'P0562', 'SYSTEM VOLTAGE LOW', 'VCU main supply undervoltage', 0),\n         ('dtc_0001_1', 'P0563', 'SYSTEM VOLTAGE HIGH', 'VCU main supply overvoltage', 0),\n         ('dtc_0002_0', 'U0028', 'VEHICLE COMMUNICATION BUS A', 'VDB bus off', 0),\n         ('dtc_0002_1', 'U0031', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uC', 0),\n         ('dtc_0002_2', 'U0034', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uS', 0),\n         ('dtc_0003_0', 'P1000', 'B_PACK_V_LOW', 'Battery pack undervoltage', 0),\n         ('dtc_0003_1', 'P1001', 'B_PACK_V_HIGH', 'Battery pack overvoltage', 0),\n         ('dtc_0004_0', 'P1002', 'BTEMP_LOW', 'Battery pack under temp', 0),\n         ('dtc_0004_1', 'P1003', 'BTEMP_HIGH', 'Battery pack over temp', 0),\n         ('dtc_0004_2', 'P0514', 'BATTERY TEMPERATURE SENSOR CIRCUIT RANGE/PERFORMANCE', 'Error reading temperature', 1),\n         ('dtc_0004_3', 'P0516', 'BATTERY TEMPERATURE SENSOR CIRCUIT LOW', 'BMS temperature sensor short circuit fault', 1),\n         ('dtc_0004_4', 'P0517', 'BATTERY TEMPERATURE SENSOR CIRCUIT HIGH', 'BMS temperature sensor open circuit fault', 1),\n         ('dtc_0004_5', 'U0115', 'MISMATCH OF BATTERY CONFIGURATION BETWEEN VCU-BMS', 'Mismatch of battery configuration between VCU and BMS', 1),\n         ('dtc_0005_0', 'U0111', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''A''', 'BMS internal communication problem', 1),\n         ('dtc_0006_0', 'U0112', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''B''', 'BMS BCMU-LMU communication problem', 1),\n         ('dtc_0007_0', 'P1004', 'BMS_CELL_UV', 'BMS cell undervoltage alarm', 0),\n         ('dtc_0007_1', 'P1005', 'BMS VOLTAGE MISREADING', 'Error reading voltage', 1),\n         ('dtc_0007_2', 'P1006', 'BMS VOLTAGE MISREADING', 'Error reading voltage + BMS cell undervoltage alarm', 1),\n         ('dtc_0007_3', 'P1064', 'BMS PACK_VOLTAGE COHERENCY ERROR', 'BMS pack voltage coherency error', 0),\n         ('dtc_0008_0', 'P1007', 'BMS_CELL_OV', 'BMS cell overvoltage alarm', 0),\n         ('dtc_0008_1', 'P1008', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage', 1),\n         ('dtc_0008_2', 'P1009', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage + BMS cell overvoltage alarm', 1),\n         ('dtc_0008_3', 'U0113', 'BMS DEAD LOCK', 'BMS dead lock', 0),\n         ('dtc_0008_4', 'U0114', 'BMS COHERENCY ERROR', 'BMS coherency error', 0),\n         ('dtc_0009_0', 'U0301', 'SOFTWARE INCOMPATIBILITY WITH ECM/PCM', 'Drive configuration error', 0),\n         ('dtc_0010_0', 'P1010', 'HV+ CONTACTOR SC FAULT', 'HV+ contactor short circuit', 0),\n         ('dtc_0010_1', 'P1011', 'HV+ CONTACTOR OC FAULT', 'HV+ contactor open circuit', 0),\n         ('dtc_0010_2', 'P1012', 'HV+ CONTACTOR WELDED', 'HV+ contactor welded', 0),\n         ('dtc_0010_3', 'P1013', 'HV+ CONTACTOR ERROR', 'HV+ contactor error', 0),\n         ('dtc_0011_0', 'P1014', 'FCHG CONTACTOR SC FAULT', 'Fast-charge contactor short circuit', 0),\n         ('dtc_0011_1', 'P1015', 'FCHG CONTACTOR OC FAULT', 'Fast-charge contactor open circuit', 0),\n         ('dtc_0011_2', 'P1016', 'FCHG CONTACTOR WELDED', 'Fast-charge contactor welded circuit', 0),\n         ('dtc_0011_3', 'P1017', 'FCHG CONTACTOR ERROR', 'Fast-charge contactor error', 0),\n         ('dtc_0012_0', 'P1018', 'HV- CONTACTOR SC FAULT', 'HV- contactor short circuit', 0),\n         ('dtc_0012_1', 'P1019', 'HV- CONTACTOR OC FAULT', 'HV- contactor open circuit', 0),\n         ('dtc_0012_2', 'P1020', 'HV- CONTACTOR WELDED FAULT', 'HV- contactor welded fault', 0),\n         ('dtc_0012_3', 'P1021', 'HV- CONTACTOR ERROR', 'HV- contactor error', 0),\n         ('dtc_0013_0', 'P1022', 'CHG CONTACTOR SC', 'Charge contactor short circuit', 0),\n         ('dtc_0013_1', 'P1023', 'CHG CONTACTOR OC', 'Charge contactor open circuit', 0),\n         ('dtc_0013_2', 'P1024', 'CHG CONTACTOR ERROR', 'Possible contactor fault', 0),\n         ('dtc_0014_0', 'P1025', 'PRECHARGE SEQUENCE', 'Precharge sequence failed', 0),\n         ('dtc_0014_1', 'P1026', 'PRECHARGE CONTACTOR SC', 'Precharge sequence failed \u2014 precharge contactor short circuit', 0),\n         ('dtc_0014_2', 'P1027', 'PRECHARGE CONTACTOR OC', 'Precharge sequence failed \u2014 precharge contactor open circuit', 0),\n         ('dtc_0015_0', 'P0A08', 'DC/DC CONVERTER STATUS CIRCUIT', 'PSU over maximum temperature', 0),\n         ('dtc_0016_0', 'P0A10', 'DC/DC CONVERTER STATUS CIRCUIT HIGH INPUT', 'PSU output too high', 0),\n         ('dtc_0016_1', 'P0A09', 'DC/DC CONVERTER STATUS CIRCUIT LOW INPUT', 'PSU output too low', 0),\n         ('dtc_0017_0', 'P1028', 'PSU OVERCURRENT', '12 V circuit abnormal load', 0),\n         ('dtc_0018_0', 'U0037', 'VEHICLE COMMUNICATION BUS B', 'DTB bus off', 0),\n         ('dtc_0018_1', 'U0040', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uC', 0),\n         ('dtc_0018_2', 'U0043', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uS', 0),\n         ('dtc_0019_0', 'P0117', 'ENGINE COOLANT TEMPERATURE CIRCUIT LOW', 'Motor coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0019_1', 'P0118', 'ENGINE COOLANT TEMPERATURE CIRCUIT HIGH', 'Motor coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0019_2', 'P0298', 'ENGINE OIL OVER TEMPERATURE', 'Motor oil over temperature', 1),\n         ('dtc_0020_0', 'P1049', 'DRIVE OVERTEMP', 'Drive temperature too high', 1),\n         ('dtc_0020_1', 'U0110', 'LOST COMMUNICATION WITH DRIVE MOTOR CONTROL MODULE', 'Drive generic error', 1),\n         ('dtc_0020_2', 'P0A02', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT LOW', 'Drive coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0020_3', 'P0A03', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT HIGH', 'Drive coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0020_4', 'P0335', 'CRANKSHAFT POSITION SENSOR ''A'' CIRCUIT', 'Motor position error', 1),\n         ('dtc_0021_0', 'P1029', 'ODOMETER ACCESS ERROR', 'Odometer EEPROM read/write failed', 0),\n         ('dtc_0021_1', 'P0632', 'ODOMETER NOT PROGRAMMED - ECM/PCM', 'Odometer not programmed', 0),\n         ('dtc_0022_0', 'P1030', 'VCU CELL UNDERVOLTAGE', 'Cell undervoltage VCU alarm', 0),\n         ('dtc_0023_0', 'C1000', 'LEAK DETECT', 'Leak detected between HV circuit and chassis', 0),\n         ('dtc_0024_0', 'C1001', 'HV+ LEAK DETECT', 'Leak detected between chassis and HV+ rail', 0),\n         ('dtc_0025_0', 'C1002', 'HV- LEAK DETECT', 'Leak detected between chassis and HV- rail', 0),\n         ('dtc_0026_0', 'P2503', 'CHARGING SYSTEM VOLTAGE LOW', 'Charger DC undervoltage shutdown', 0),\n         ('dtc_0026_1', 'P2504', 'CHARGING SYSTEM VOLTAGE HIGH', 'Charger DC overvoltage shutdown', 0),\n         ('dtc_0026_2', 'P1031', 'CHARGER DC CONNECTION', 'Charger DC connection failure', 0),\n         ('dtc_0027_0', 'P1032', 'CHARGER CONTROL', 'Charger control timeout shutdown \u2014 no control frame received within 1000 ms', 0),\n         ('dtc_0028_0', 'P1033', 'CHARGER DC CURRENT LIMIT', 'Charger reached DC current limit', 0),\n         ('dtc_0029_0', 'P1034', 'CHARGER SCI COMM', 'Charger DSP SPI communication error', 0),\n         ('dtc_0030_0', 'P1035', 'CHARGER AC OV', 'Charger AC overvoltage shutdown', 0),\n         ('dtc_0030_1', 'P1036', 'CHARGER AC UV', 'Charger AC undervoltage shutdown', 0),\n         ('dtc_0031_0', 'P1037', 'CHARGER HIGHTEMP', 'Charger high temperature shutdown (primary or secondary)', 0),\n         ('dtc_0031_1', 'P1038', 'CHARGER LOWTEMP', 'Low temperature shutdown', 0),\n         ('dtc_0032_0', 'P1039', 'CHARGER TRANSFORMER FAILURE', 'Transformer failure \u2014 unable to provide power', 0),\n         ('dtc_0033_0', 'P1040', 'CHARGER FAN OC', 'Charger fan open circuit fault', 0),\n         ('dtc_0033_1', 'P1041', 'CHARGER FAN SC', 'Charger fan short circuit fault', 0),\n         ('dtc_0033_2', 'P1042', 'CHARGER FAN LOCK', 'Charger fan locked', 0),\n         ('dtc_0034_0', 'B1000', 'POSITION LIGHTS OC', 'Position lights open circuit fault', 0),\n         ('dtc_0034_1', 'B1001', 'POSITION LIGHTS SC', 'Position lights short circuit fault', 0),\n         ('dtc_0035_0', 'B1002', 'STOP LIGHTS OC', 'Stop lights open circuit fault', 0),\n         ('dtc_0035_1', 'B1003', 'STOP LIGHTS SC', 'Stop lights short circuit fault', 0),\n         ('dtc_0036_0', 'B1004', 'LEFT INDICATOR OC', 'Left indicator open circuit fault', 0),\n         ('dtc_0036_1', 'B1005', 'LEFT INDICATOR SC', 'Left indicator short circuit fault', 0),\n         ('dtc_0037_0', 'B1006', 'RIGHT INDICATOR OC', 'Right indicator open circuit fault', 0),\n         ('dtc_0037_1', 'B1007', 'RIGHT INDICATOR SC', 'Right indicator short circuit fault', 0),\n         ('dtc_0038_0', 'B1008', 'INDICATOR CONTROL', 'Indicator lights control block fault', 0),\n         ('dtc_0039_0', 'B1009', 'LOW BEAM OC', 'Low beam open circuit fault', 0),\n         ('dtc_0039_1', 'B1010', 'LOW BEAM SC', 'Low beam short circuit fault', 0),\n         ('dtc_0039_2', 'B1011', 'LOW BEAM UF', 'Low beam undefined fault', 0),\n         ('dtc_0039_3', 'U0182', 'LOST COMMUNICATION WITH LIGHTING CONTROL MODULE FRONT', 'Low beam module communication error \u2014 module not responding', 0),\n         ('dtc_0040_0', 'B1012', 'HIGH BEAM OC', 'High beam open circuit fault', 0),\n         ('dtc_0040_1', 'B1013', 'HIGH BEAM SC', 'High beam short circuit fault', 0),\n         ('dtc_0040_2', 'B1014', 'HIGH BEAM UF', 'High beam undefined fault', 0),\n         ('dtc_0040_3', 'U0182', 'HIGH BEAM MODULE COMM ERR', 'High beam module communication error \u2014 module not responding', 0),\n         ('dtc_0041_0', 'P0120', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT', 'Throttle fault (physical error)', 1),\n         ('dtc_0042_0', 'P0121', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT RANGE/PERFORMANCE', 'Throttle fault (logic error)', 1),\n         ('dtc_0043_0', 'B1015', 'HORN OC', 'Horn open circuit fault', 0),\n         ('dtc_0043_1', 'B1016', 'HORN SC', 'Horn short circuit fault', 0),\n         ('dtc_0044_0', 'P0A07', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH', 'Water pump open circuit fault', 0),\n         ('dtc_0044_1', 'P0A06', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT LOW', 'Water pump short circuit fault', 0),\n         ('dtc_0044_2', 'P0A05', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN', 'Water pump locked', 0),\n         ('dtc_0045_0', 'P1043', 'MAIN HV FUSE', 'Main fuse blown', 0),\n         ('dtc_0046_0', 'P1044', 'VCU CELL OVERVOLTAGE', 'Cell overvoltage VCU alarm', 1),\n         ('dtc_0047_0', 'B1017', 'PASSING WARNING', 'Passing light pressed for more than 60 s', 0),\n         ('dtc_0048_0', 'P1045', 'ERROR INLET', 'Error inlet', 0),\n         ('dtc_0049_0', 'P1046', 'BATTERY PACK UNBALANCED', 'Battery pack unbalanced alarm', 0),\n         ('dtc_0050_0', 'P1047', 'BATTERY UNDER CHG TEMP', 'Battery under charge temperature alarm', 0),\n         ('dtc_0053_0', 'U1000', 'SPI COMMUNICATION ERROR', 'Low level safety error', 0),\n         ('dtc_0053_1', 'P1053', 'CONTROL-SAFETY VERSION MISMATCH', 'Low level safety error', 0),\n         ('dtc_0053_10', 'P1058', 'MICRO CONTROL RESET BY MICRO SAFETY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_11', 'P2641', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''B''', 'Low level safety error', 1),\n         ('dtc_0053_12', 'P1059', 'KILIS CONTROL EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_13', 'P1060', 'KILIS SAFETY EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_14', 'P1061', 'CHECK INFO LIST', 'Low level safety error', 0),\n         ('dtc_0053_15', 'P1062', 'GENERIC ERRORR', 'Low level safety error', 0),\n         ('dtc_0053_2', 'P0610', 'CONTROL MODULE VEHICLE OPTION ERROR', 'Low level safety error (uC parameter error)', 0),\n         ('dtc_0053_3', 'P1054', 'SAFETY MODULE VEHICLE OPTION ERROR', 'Low level safety error (uS parameter error)', 0),\n         ('dtc_0053_4', 'P0601', 'INTERNAL CONTROL MODULE MEMORY CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_5', 'P1055', 'INTERNAL SAFETY MODULE CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_6', 'P1063', 'INTERNAL CONTROL MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_7', 'P1056', 'INTERNAL SAFETY MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_8', 'P0603', 'INTERNAL CONTROL MODULE KEEP ALIVE MEMORY (KAM) ERROR', 'Low level safety error (watchdog error)', 0),\n         ('dtc_0053_9', 'P1057', 'MICRO SAFETY RESET BY MICRO CONTROL ERROR', 'Low level safety error', 0),\n         ('dtc_0054_0', 'C1003', 'UNSPECIFIED CM ERROR', 'Unspecified charge manager error', 0),\n         ('dtc_0054_1', 'C1004', 'CP LINE PROBLEM OR EVSE NOT COMPATIBLE', 'CP line problem or EVSE not compatible', 0),\n         ('dtc_0054_10', 'C1013', 'AC LINE ERROR', 'AC line error', 0),\n         ('dtc_0054_11', 'C1014', 'UNCLASSIFIED CM ERROR', 'Unclassified charge manager error', 0),\n         ('dtc_0054_12', 'C1015', 'FAST CHARGE NOT PRESENT', 'Fast charge not present', 0),\n         ('dtc_0054_2', 'C1005', 'LOCKING DEVICE PROBLEM', 'Locking device problem', 0),\n         ('dtc_0054_3', 'C1006', 'CM-VEHICLE COMMUNICATION ERROR', 'Charge manager to vehicle communication error', 0),\n         ('dtc_0054_4', 'C1007', 'CM INTERNAL ERROR', 'Charge manager internal error', 0),\n         ('dtc_0054_5', 'C1008', 'EVSE EMERGENCY SHUTDOWN', 'EVSE emergency shutdown', 0),\n         ('dtc_0054_6', 'C1009', 'QCA ERROR', 'QCA (powerline modem) error', 0),\n         ('dtc_0054_7', 'C1010', 'PROTOCOL ERROR', 'Protocol error', 0),\n         ('dtc_0054_8', 'C1011', 'CM APPLICATION LAYER ERROR', 'Charge manager application layer error', 0),\n         ('dtc_0054_9', 'C1012', 'SLAC PROCES ERROR', 'SLAC process error', 0),\n         ('dtc_0055_0', 'P2637', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''A''', 'Torque feedback error', 0),\n         ('dtc_0056_0', 'C1016', 'ASSET', 'Asset module \u2014 no run', 0),\n         ('dtc_0056_1', 'C1017', 'ASSET', 'Asset module \u2014 run', 0),\n         ('dtc_0057_0', 'B1018', 'FLASH FULL', 'Low flash storage', 0),\n         ('dtc_0058_0', 'P0605', 'INTERNAL CONTROL MODULE READ ONLY MEMORY (ROM) ERROR', 'Flash read/write error', 0),\n         ('dtc_0059_0', 'U0412', 'INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A', 'BMS status error', 0),\n         ('dtc_0061_0', 'P0500', 'VEHICLE SPEED SENSOR ''A''', 'Front wheel speed sensor failure', 0),\n         ('dtc_0061_1', 'P2158', 'VEHICLE SPEED SENSOR ''B''', 'Rear wheel speed sensor failure', 0),\n         ('dtc_0061_2', 'P2158+P0500', 'VEHICLE SPEED SENSOR ''A'' + VEHICLE SPEED SENSOR ''B''', 'Front and rear wheel speed sensors failure', 0),\n         ('dtc_0061_3', 'P2162', 'VEHICLE SPEED SENSOR ''A'' / ''B'' CORRELATION', 'Wheel speed sensor coherency failure', 0),\n         ('dtc_0062_0', 'U0121', 'LOST COMMUNICATION WITH ANTI-LOCK BRAKE SYSTEM (ABS) CONTROL MODULE', 'ABS timeout communication error', 0)\n)\n, dtc AS (\n  SELECT s.key AS key, r.ts AS ts, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key LIKE 'dtc\\_%\\_%' ESCAPE '\\'\n    AND s.key NOT IN ('dtc_count', 'dtc_list_count', 'dtc_unrecognised_count')\n    AND r.ts <= $__to\n), seed AS (\n  SELECT key, MAX(ts) AS ts FROM dtc WHERE ts < $__from GROUP BY key\n), points AS (\n  SELECT key, ts, value FROM dtc WHERE ts >= $__from\n  UNION ALL\n  SELECT d.key, $__from, d.value FROM dtc d JOIN seed ON seed.key = d.key AND seed.ts = d.ts\n)\nSELECT p.ts/1000.0 AS time,\n       COALESCE(c.obd, 'raw ' || SUBSTR(p.key, 5)) || ' \u2014 ' || COALESCE(c.descr, 'not in code table') AS metric,\n       CASE WHEN p.value > 0 THEN 'active' ELSE 'clear' END AS value\nFROM points p\nLEFT JOIN code c ON c.key = p.key\nORDER BY p.ts",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Detail",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Every code ever recorded, with Energica's description",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "One row per code that has been set at least once, newest first. 'Times set' counts rising edges, not samples \u2014 the same rule the phone dashboard uses \u2014 so a code that latched once and stayed set reads as 1. Ignores the START of the dashboard time range, not the end: it reports every code recorded up to the right edge of the window, so panning back to an old ride shows the fault history as it stood then, matching the timeline above rather than contradicting it.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Code"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Lights lamp"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Times set"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "WITH code(key, obd, name, descr, mil) AS (\n  VALUES ('dtc_0001_0', 'P0562', 'SYSTEM VOLTAGE LOW', 'VCU main supply undervoltage', 0),\n         ('dtc_0001_1', 'P0563', 'SYSTEM VOLTAGE HIGH', 'VCU main supply overvoltage', 0),\n         ('dtc_0002_0', 'U0028', 'VEHICLE COMMUNICATION BUS A', 'VDB bus off', 0),\n         ('dtc_0002_1', 'U0031', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uC', 0),\n         ('dtc_0002_2', 'U0034', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uS', 0),\n         ('dtc_0003_0', 'P1000', 'B_PACK_V_LOW', 'Battery pack undervoltage', 0),\n         ('dtc_0003_1', 'P1001', 'B_PACK_V_HIGH', 'Battery pack overvoltage', 0),\n         ('dtc_0004_0', 'P1002', 'BTEMP_LOW', 'Battery pack under temp', 0),\n         ('dtc_0004_1', 'P1003', 'BTEMP_HIGH', 'Battery pack over temp', 0),\n         ('dtc_0004_2', 'P0514', 'BATTERY TEMPERATURE SENSOR CIRCUIT RANGE/PERFORMANCE', 'Error reading temperature', 1),\n         ('dtc_0004_3', 'P0516', 'BATTERY TEMPERATURE SENSOR CIRCUIT LOW', 'BMS temperature sensor short circuit fault', 1),\n         ('dtc_0004_4', 'P0517', 'BATTERY TEMPERATURE SENSOR CIRCUIT HIGH', 'BMS temperature sensor open circuit fault', 1),\n         ('dtc_0004_5', 'U0115', 'MISMATCH OF BATTERY CONFIGURATION BETWEEN VCU-BMS', 'Mismatch of battery configuration between VCU and BMS', 1),\n         ('dtc_0005_0', 'U0111', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''A''', 'BMS internal communication problem', 1),\n         ('dtc_0006_0', 'U0112', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''B''', 'BMS BCMU-LMU communication problem', 1),\n         ('dtc_0007_0', 'P1004', 'BMS_CELL_UV', 'BMS cell undervoltage alarm', 0),\n         ('dtc_0007_1', 'P1005', 'BMS VOLTAGE MISREADING', 'Error reading voltage', 1),\n         ('dtc_0007_2', 'P1006', 'BMS VOLTAGE MISREADING', 'Error reading voltage + BMS cell undervoltage alarm', 1),\n         ('dtc_0007_3', 'P1064', 'BMS PACK_VOLTAGE COHERENCY ERROR', 'BMS pack voltage coherency error', 0),\n         ('dtc_0008_0', 'P1007', 'BMS_CELL_OV', 'BMS cell overvoltage alarm', 0),\n         ('dtc_0008_1', 'P1008', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage', 1),\n         ('dtc_0008_2', 'P1009', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage + BMS cell overvoltage alarm', 1),\n         ('dtc_0008_3', 'U0113', 'BMS DEAD LOCK', 'BMS dead lock', 0),\n         ('dtc_0008_4', 'U0114', 'BMS COHERENCY ERROR', 'BMS coherency error', 0),\n         ('dtc_0009_0', 'U0301', 'SOFTWARE INCOMPATIBILITY WITH ECM/PCM', 'Drive configuration error', 0),\n         ('dtc_0010_0', 'P1010', 'HV+ CONTACTOR SC FAULT', 'HV+ contactor short circuit', 0),\n         ('dtc_0010_1', 'P1011', 'HV+ CONTACTOR OC FAULT', 'HV+ contactor open circuit', 0),\n         ('dtc_0010_2', 'P1012', 'HV+ CONTACTOR WELDED', 'HV+ contactor welded', 0),\n         ('dtc_0010_3', 'P1013', 'HV+ CONTACTOR ERROR', 'HV+ contactor error', 0),\n         ('dtc_0011_0', 'P1014', 'FCHG CONTACTOR SC FAULT', 'Fast-charge contactor short circuit', 0),\n         ('dtc_0011_1', 'P1015', 'FCHG CONTACTOR OC FAULT', 'Fast-charge contactor open circuit', 0),\n         ('dtc_0011_2', 'P1016', 'FCHG CONTACTOR WELDED', 'Fast-charge contactor welded circuit', 0),\n         ('dtc_0011_3', 'P1017', 'FCHG CONTACTOR ERROR', 'Fast-charge contactor error', 0),\n         ('dtc_0012_0', 'P1018', 'HV- CONTACTOR SC FAULT', 'HV- contactor short circuit', 0),\n         ('dtc_0012_1', 'P1019', 'HV- CONTACTOR OC FAULT', 'HV- contactor open circuit', 0),\n         ('dtc_0012_2', 'P1020', 'HV- CONTACTOR WELDED FAULT', 'HV- contactor welded fault', 0),\n         ('dtc_0012_3', 'P1021', 'HV- CONTACTOR ERROR', 'HV- contactor error', 0),\n         ('dtc_0013_0', 'P1022', 'CHG CONTACTOR SC', 'Charge contactor short circuit', 0),\n         ('dtc_0013_1', 'P1023', 'CHG CONTACTOR OC', 'Charge contactor open circuit', 0),\n         ('dtc_0013_2', 'P1024', 'CHG CONTACTOR ERROR', 'Possible contactor fault', 0),\n         ('dtc_0014_0', 'P1025', 'PRECHARGE SEQUENCE', 'Precharge sequence failed', 0),\n         ('dtc_0014_1', 'P1026', 'PRECHARGE CONTACTOR SC', 'Precharge sequence failed \u2014 precharge contactor short circuit', 0),\n         ('dtc_0014_2', 'P1027', 'PRECHARGE CONTACTOR OC', 'Precharge sequence failed \u2014 precharge contactor open circuit', 0),\n         ('dtc_0015_0', 'P0A08', 'DC/DC CONVERTER STATUS CIRCUIT', 'PSU over maximum temperature', 0),\n         ('dtc_0016_0', 'P0A10', 'DC/DC CONVERTER STATUS CIRCUIT HIGH INPUT', 'PSU output too high', 0),\n         ('dtc_0016_1', 'P0A09', 'DC/DC CONVERTER STATUS CIRCUIT LOW INPUT', 'PSU output too low', 0),\n         ('dtc_0017_0', 'P1028', 'PSU OVERCURRENT', '12 V circuit abnormal load', 0),\n         ('dtc_0018_0', 'U0037', 'VEHICLE COMMUNICATION BUS B', 'DTB bus off', 0),\n         ('dtc_0018_1', 'U0040', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uC', 0),\n         ('dtc_0018_2', 'U0043', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uS', 0),\n         ('dtc_0019_0', 'P0117', 'ENGINE COOLANT TEMPERATURE CIRCUIT LOW', 'Motor coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0019_1', 'P0118', 'ENGINE COOLANT TEMPERATURE CIRCUIT HIGH', 'Motor coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0019_2', 'P0298', 'ENGINE OIL OVER TEMPERATURE', 'Motor oil over temperature', 1),\n         ('dtc_0020_0', 'P1049', 'DRIVE OVERTEMP', 'Drive temperature too high', 1),\n         ('dtc_0020_1', 'U0110', 'LOST COMMUNICATION WITH DRIVE MOTOR CONTROL MODULE', 'Drive generic error', 1),\n         ('dtc_0020_2', 'P0A02', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT LOW', 'Drive coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0020_3', 'P0A03', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT HIGH', 'Drive coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0020_4', 'P0335', 'CRANKSHAFT POSITION SENSOR ''A'' CIRCUIT', 'Motor position error', 1),\n         ('dtc_0021_0', 'P1029', 'ODOMETER ACCESS ERROR', 'Odometer EEPROM read/write failed', 0),\n         ('dtc_0021_1', 'P0632', 'ODOMETER NOT PROGRAMMED - ECM/PCM', 'Odometer not programmed', 0),\n         ('dtc_0022_0', 'P1030', 'VCU CELL UNDERVOLTAGE', 'Cell undervoltage VCU alarm', 0),\n         ('dtc_0023_0', 'C1000', 'LEAK DETECT', 'Leak detected between HV circuit and chassis', 0),\n         ('dtc_0024_0', 'C1001', 'HV+ LEAK DETECT', 'Leak detected between chassis and HV+ rail', 0),\n         ('dtc_0025_0', 'C1002', 'HV- LEAK DETECT', 'Leak detected between chassis and HV- rail', 0),\n         ('dtc_0026_0', 'P2503', 'CHARGING SYSTEM VOLTAGE LOW', 'Charger DC undervoltage shutdown', 0),\n         ('dtc_0026_1', 'P2504', 'CHARGING SYSTEM VOLTAGE HIGH', 'Charger DC overvoltage shutdown', 0),\n         ('dtc_0026_2', 'P1031', 'CHARGER DC CONNECTION', 'Charger DC connection failure', 0),\n         ('dtc_0027_0', 'P1032', 'CHARGER CONTROL', 'Charger control timeout shutdown \u2014 no control frame received within 1000 ms', 0),\n         ('dtc_0028_0', 'P1033', 'CHARGER DC CURRENT LIMIT', 'Charger reached DC current limit', 0),\n         ('dtc_0029_0', 'P1034', 'CHARGER SCI COMM', 'Charger DSP SPI communication error', 0),\n         ('dtc_0030_0', 'P1035', 'CHARGER AC OV', 'Charger AC overvoltage shutdown', 0),\n         ('dtc_0030_1', 'P1036', 'CHARGER AC UV', 'Charger AC undervoltage shutdown', 0),\n         ('dtc_0031_0', 'P1037', 'CHARGER HIGHTEMP', 'Charger high temperature shutdown (primary or secondary)', 0),\n         ('dtc_0031_1', 'P1038', 'CHARGER LOWTEMP', 'Low temperature shutdown', 0),\n         ('dtc_0032_0', 'P1039', 'CHARGER TRANSFORMER FAILURE', 'Transformer failure \u2014 unable to provide power', 0),\n         ('dtc_0033_0', 'P1040', 'CHARGER FAN OC', 'Charger fan open circuit fault', 0),\n         ('dtc_0033_1', 'P1041', 'CHARGER FAN SC', 'Charger fan short circuit fault', 0),\n         ('dtc_0033_2', 'P1042', 'CHARGER FAN LOCK', 'Charger fan locked', 0),\n         ('dtc_0034_0', 'B1000', 'POSITION LIGHTS OC', 'Position lights open circuit fault', 0),\n         ('dtc_0034_1', 'B1001', 'POSITION LIGHTS SC', 'Position lights short circuit fault', 0),\n         ('dtc_0035_0', 'B1002', 'STOP LIGHTS OC', 'Stop lights open circuit fault', 0),\n         ('dtc_0035_1', 'B1003', 'STOP LIGHTS SC', 'Stop lights short circuit fault', 0),\n         ('dtc_0036_0', 'B1004', 'LEFT INDICATOR OC', 'Left indicator open circuit fault', 0),\n         ('dtc_0036_1', 'B1005', 'LEFT INDICATOR SC', 'Left indicator short circuit fault', 0),\n         ('dtc_0037_0', 'B1006', 'RIGHT INDICATOR OC', 'Right indicator open circuit fault', 0),\n         ('dtc_0037_1', 'B1007', 'RIGHT INDICATOR SC', 'Right indicator short circuit fault', 0),\n         ('dtc_0038_0', 'B1008', 'INDICATOR CONTROL', 'Indicator lights control block fault', 0),\n         ('dtc_0039_0', 'B1009', 'LOW BEAM OC', 'Low beam open circuit fault', 0),\n         ('dtc_0039_1', 'B1010', 'LOW BEAM SC', 'Low beam short circuit fault', 0),\n         ('dtc_0039_2', 'B1011', 'LOW BEAM UF', 'Low beam undefined fault', 0),\n         ('dtc_0039_3', 'U0182', 'LOST COMMUNICATION WITH LIGHTING CONTROL MODULE FRONT', 'Low beam module communication error \u2014 module not responding', 0),\n         ('dtc_0040_0', 'B1012', 'HIGH BEAM OC', 'High beam open circuit fault', 0),\n         ('dtc_0040_1', 'B1013', 'HIGH BEAM SC', 'High beam short circuit fault', 0),\n         ('dtc_0040_2', 'B1014', 'HIGH BEAM UF', 'High beam undefined fault', 0),\n         ('dtc_0040_3', 'U0182', 'HIGH BEAM MODULE COMM ERR', 'High beam module communication error \u2014 module not responding', 0),\n         ('dtc_0041_0', 'P0120', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT', 'Throttle fault (physical error)', 1),\n         ('dtc_0042_0', 'P0121', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT RANGE/PERFORMANCE', 'Throttle fault (logic error)', 1),\n         ('dtc_0043_0', 'B1015', 'HORN OC', 'Horn open circuit fault', 0),\n         ('dtc_0043_1', 'B1016', 'HORN SC', 'Horn short circuit fault', 0),\n         ('dtc_0044_0', 'P0A07', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH', 'Water pump open circuit fault', 0),\n         ('dtc_0044_1', 'P0A06', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT LOW', 'Water pump short circuit fault', 0),\n         ('dtc_0044_2', 'P0A05', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN', 'Water pump locked', 0),\n         ('dtc_0045_0', 'P1043', 'MAIN HV FUSE', 'Main fuse blown', 0),\n         ('dtc_0046_0', 'P1044', 'VCU CELL OVERVOLTAGE', 'Cell overvoltage VCU alarm', 1),\n         ('dtc_0047_0', 'B1017', 'PASSING WARNING', 'Passing light pressed for more than 60 s', 0),\n         ('dtc_0048_0', 'P1045', 'ERROR INLET', 'Error inlet', 0),\n         ('dtc_0049_0', 'P1046', 'BATTERY PACK UNBALANCED', 'Battery pack unbalanced alarm', 0),\n         ('dtc_0050_0', 'P1047', 'BATTERY UNDER CHG TEMP', 'Battery under charge temperature alarm', 0),\n         ('dtc_0053_0', 'U1000', 'SPI COMMUNICATION ERROR', 'Low level safety error', 0),\n         ('dtc_0053_1', 'P1053', 'CONTROL-SAFETY VERSION MISMATCH', 'Low level safety error', 0),\n         ('dtc_0053_10', 'P1058', 'MICRO CONTROL RESET BY MICRO SAFETY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_11', 'P2641', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''B''', 'Low level safety error', 1),\n         ('dtc_0053_12', 'P1059', 'KILIS CONTROL EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_13', 'P1060', 'KILIS SAFETY EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_14', 'P1061', 'CHECK INFO LIST', 'Low level safety error', 0),\n         ('dtc_0053_15', 'P1062', 'GENERIC ERRORR', 'Low level safety error', 0),\n         ('dtc_0053_2', 'P0610', 'CONTROL MODULE VEHICLE OPTION ERROR', 'Low level safety error (uC parameter error)', 0),\n         ('dtc_0053_3', 'P1054', 'SAFETY MODULE VEHICLE OPTION ERROR', 'Low level safety error (uS parameter error)', 0),\n         ('dtc_0053_4', 'P0601', 'INTERNAL CONTROL MODULE MEMORY CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_5', 'P1055', 'INTERNAL SAFETY MODULE CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_6', 'P1063', 'INTERNAL CONTROL MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_7', 'P1056', 'INTERNAL SAFETY MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_8', 'P0603', 'INTERNAL CONTROL MODULE KEEP ALIVE MEMORY (KAM) ERROR', 'Low level safety error (watchdog error)', 0),\n         ('dtc_0053_9', 'P1057', 'MICRO SAFETY RESET BY MICRO CONTROL ERROR', 'Low level safety error', 0),\n         ('dtc_0054_0', 'C1003', 'UNSPECIFIED CM ERROR', 'Unspecified charge manager error', 0),\n         ('dtc_0054_1', 'C1004', 'CP LINE PROBLEM OR EVSE NOT COMPATIBLE', 'CP line problem or EVSE not compatible', 0),\n         ('dtc_0054_10', 'C1013', 'AC LINE ERROR', 'AC line error', 0),\n         ('dtc_0054_11', 'C1014', 'UNCLASSIFIED CM ERROR', 'Unclassified charge manager error', 0),\n         ('dtc_0054_12', 'C1015', 'FAST CHARGE NOT PRESENT', 'Fast charge not present', 0),\n         ('dtc_0054_2', 'C1005', 'LOCKING DEVICE PROBLEM', 'Locking device problem', 0),\n         ('dtc_0054_3', 'C1006', 'CM-VEHICLE COMMUNICATION ERROR', 'Charge manager to vehicle communication error', 0),\n         ('dtc_0054_4', 'C1007', 'CM INTERNAL ERROR', 'Charge manager internal error', 0),\n         ('dtc_0054_5', 'C1008', 'EVSE EMERGENCY SHUTDOWN', 'EVSE emergency shutdown', 0),\n         ('dtc_0054_6', 'C1009', 'QCA ERROR', 'QCA (powerline modem) error', 0),\n         ('dtc_0054_7', 'C1010', 'PROTOCOL ERROR', 'Protocol error', 0),\n         ('dtc_0054_8', 'C1011', 'CM APPLICATION LAYER ERROR', 'Charge manager application layer error', 0),\n         ('dtc_0054_9', 'C1012', 'SLAC PROCES ERROR', 'SLAC process error', 0),\n         ('dtc_0055_0', 'P2637', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''A''', 'Torque feedback error', 0),\n         ('dtc_0056_0', 'C1016', 'ASSET', 'Asset module \u2014 no run', 0),\n         ('dtc_0056_1', 'C1017', 'ASSET', 'Asset module \u2014 run', 0),\n         ('dtc_0057_0', 'B1018', 'FLASH FULL', 'Low flash storage', 0),\n         ('dtc_0058_0', 'P0605', 'INTERNAL CONTROL MODULE READ ONLY MEMORY (ROM) ERROR', 'Flash read/write error', 0),\n         ('dtc_0059_0', 'U0412', 'INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A', 'BMS status error', 0),\n         ('dtc_0061_0', 'P0500', 'VEHICLE SPEED SENSOR ''A''', 'Front wheel speed sensor failure', 0),\n         ('dtc_0061_1', 'P2158', 'VEHICLE SPEED SENSOR ''B''', 'Rear wheel speed sensor failure', 0),\n         ('dtc_0061_2', 'P2158+P0500', 'VEHICLE SPEED SENSOR ''A'' + VEHICLE SPEED SENSOR ''B''', 'Front and rear wheel speed sensors failure', 0),\n         ('dtc_0061_3', 'P2162', 'VEHICLE SPEED SENSOR ''A'' / ''B'' CORRELATION', 'Wheel speed sensor coherency failure', 0),\n         ('dtc_0062_0', 'U0121', 'LOST COMMUNICATION WITH ANTI-LOCK BRAKE SYSTEM (ABS) CONTROL MODULE', 'ABS timeout communication error', 0)\n)\n, edge AS (\n  SELECT s.key AS key, r.ts AS ts, r.value AS value,\n         LAG(r.value) OVER (PARTITION BY s.key ORDER BY r.ts) AS prev\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key LIKE 'dtc\\_%\\_%' ESCAPE '\\'\n    AND s.key NOT IN ('dtc_count', 'dtc_list_count', 'dtc_unrecognised_count')\n    AND r.ts <= $__to\n)\nSELECT COALESCE(c.obd, 'raw ' || SUBSTR(e.key, 5)) AS \"Code\",\n       COALESCE(c.descr, 'not in Energica''s code table') AS \"What it means\",\n       COALESCE(c.name, '') AS \"OBD name\",\n       -- '?' on a LEFT JOIN miss, not 'no': every other column COALESCEs the miss\n       -- explicitly, and a confident \"the lamp does not light for this\" two columns\n       -- from \"not in Energica's code table\" is a claim we cannot make. The phone\n       -- view omits the clause entirely in that case; this keeps them agreeing.\n       CASE WHEN c.key IS NULL THEN '?' WHEN c.mil = 1 THEN 'yes' ELSE 'no' END AS \"Lights lamp\",\n       -- Rising edges only. Counting rows would report a code that latched once as\n       -- having fired hundreds of times, because the server re-broadcasts whole state.\n       SUM(CASE WHEN e.value > 0 AND (e.prev IS NULL OR e.prev <= 0) THEN 1 ELSE 0 END) AS \"Times set\",\n       DATETIME(MIN(CASE WHEN e.value > 0 THEN e.ts END)/1000, 'unixepoch', 'localtime') AS \"First seen\",\n       DATETIME(MAX(CASE WHEN e.value > 0 THEN e.ts END)/1000, 'unixepoch', 'localtime') AS \"Last seen\"\nFROM edge e\nLEFT JOIN code c ON c.key = e.key\nGROUP BY e.key\nHAVING \"Times set\" > 0\nORDER BY MAX(CASE WHEN e.value > 0 THEN e.ts END) DESC",
+          "queryText": "WITH code(key, obd, name, descr, mil) AS (\n  VALUES ('dtc_0001_0', 'P0562', 'SYSTEM VOLTAGE LOW', 'VCU main supply undervoltage', 0),\n         ('dtc_0001_1', 'P0563', 'SYSTEM VOLTAGE HIGH', 'VCU main supply overvoltage', 0),\n         ('dtc_0002_0', 'U0028', 'VEHICLE COMMUNICATION BUS A', 'VDB bus off', 0),\n         ('dtc_0002_1', 'U0031', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uC', 0),\n         ('dtc_0002_2', 'U0034', 'VEHICLE COMMUNICATION BUS A (LOW)', 'VDB bus off uS', 0),\n         ('dtc_0003_0', 'P1000', 'B_PACK_V_LOW', 'Battery pack undervoltage', 0),\n         ('dtc_0003_1', 'P1001', 'B_PACK_V_HIGH', 'Battery pack overvoltage', 0),\n         ('dtc_0004_0', 'P1002', 'BTEMP_LOW', 'Battery pack under temp', 0),\n         ('dtc_0004_1', 'P1003', 'BTEMP_HIGH', 'Battery pack over temp', 0),\n         ('dtc_0004_2', 'P0514', 'BATTERY TEMPERATURE SENSOR CIRCUIT RANGE/PERFORMANCE', 'Error reading temperature', 1),\n         ('dtc_0004_3', 'P0516', 'BATTERY TEMPERATURE SENSOR CIRCUIT LOW', 'BMS temperature sensor short circuit fault', 1),\n         ('dtc_0004_4', 'P0517', 'BATTERY TEMPERATURE SENSOR CIRCUIT HIGH', 'BMS temperature sensor open circuit fault', 1),\n         ('dtc_0004_5', 'U0115', 'MISMATCH OF BATTERY CONFIGURATION BETWEEN VCU-BMS', 'Mismatch of battery configuration between VCU and BMS', 1),\n         ('dtc_0005_0', 'U0111', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''A''', 'BMS internal communication problem', 1),\n         ('dtc_0006_0', 'U0112', 'LOST COMMUNICATION WITH BATTERY ENERGY CONTROL MODULE ''B''', 'BMS BCMU-LMU communication problem', 1),\n         ('dtc_0007_0', 'P1004', 'BMS_CELL_UV', 'BMS cell undervoltage alarm', 0),\n         ('dtc_0007_1', 'P1005', 'BMS VOLTAGE MISREADING', 'Error reading voltage', 1),\n         ('dtc_0007_2', 'P1006', 'BMS VOLTAGE MISREADING', 'Error reading voltage + BMS cell undervoltage alarm', 1),\n         ('dtc_0007_3', 'P1064', 'BMS PACK_VOLTAGE COHERENCY ERROR', 'BMS pack voltage coherency error', 0),\n         ('dtc_0008_0', 'P1007', 'BMS_CELL_OV', 'BMS cell overvoltage alarm', 0),\n         ('dtc_0008_1', 'P1008', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage', 1),\n         ('dtc_0008_2', 'P1009', 'BMS VOLTAGE MISREADING', 'BMS misreading voltage + BMS cell overvoltage alarm', 1),\n         ('dtc_0008_3', 'U0113', 'BMS DEAD LOCK', 'BMS dead lock', 0),\n         ('dtc_0008_4', 'U0114', 'BMS COHERENCY ERROR', 'BMS coherency error', 0),\n         ('dtc_0009_0', 'U0301', 'SOFTWARE INCOMPATIBILITY WITH ECM/PCM', 'Drive configuration error', 0),\n         ('dtc_0010_0', 'P1010', 'HV+ CONTACTOR SC FAULT', 'HV+ contactor short circuit', 0),\n         ('dtc_0010_1', 'P1011', 'HV+ CONTACTOR OC FAULT', 'HV+ contactor open circuit', 0),\n         ('dtc_0010_2', 'P1012', 'HV+ CONTACTOR WELDED', 'HV+ contactor welded', 0),\n         ('dtc_0010_3', 'P1013', 'HV+ CONTACTOR ERROR', 'HV+ contactor error', 0),\n         ('dtc_0011_0', 'P1014', 'FCHG CONTACTOR SC FAULT', 'Fast-charge contactor short circuit', 0),\n         ('dtc_0011_1', 'P1015', 'FCHG CONTACTOR OC FAULT', 'Fast-charge contactor open circuit', 0),\n         ('dtc_0011_2', 'P1016', 'FCHG CONTACTOR WELDED', 'Fast-charge contactor welded circuit', 0),\n         ('dtc_0011_3', 'P1017', 'FCHG CONTACTOR ERROR', 'Fast-charge contactor error', 0),\n         ('dtc_0012_0', 'P1018', 'HV- CONTACTOR SC FAULT', 'HV- contactor short circuit', 0),\n         ('dtc_0012_1', 'P1019', 'HV- CONTACTOR OC FAULT', 'HV- contactor open circuit', 0),\n         ('dtc_0012_2', 'P1020', 'HV- CONTACTOR WELDED FAULT', 'HV- contactor welded fault', 0),\n         ('dtc_0012_3', 'P1021', 'HV- CONTACTOR ERROR', 'HV- contactor error', 0),\n         ('dtc_0013_0', 'P1022', 'CHG CONTACTOR SC', 'Charge contactor short circuit', 0),\n         ('dtc_0013_1', 'P1023', 'CHG CONTACTOR OC', 'Charge contactor open circuit', 0),\n         ('dtc_0013_2', 'P1024', 'CHG CONTACTOR ERROR', 'Possible contactor fault', 0),\n         ('dtc_0014_0', 'P1025', 'PRECHARGE SEQUENCE', 'Precharge sequence failed', 0),\n         ('dtc_0014_1', 'P1026', 'PRECHARGE CONTACTOR SC', 'Precharge sequence failed \u2014 precharge contactor short circuit', 0),\n         ('dtc_0014_2', 'P1027', 'PRECHARGE CONTACTOR OC', 'Precharge sequence failed \u2014 precharge contactor open circuit', 0),\n         ('dtc_0015_0', 'P0A08', 'DC/DC CONVERTER STATUS CIRCUIT', 'PSU over maximum temperature', 0),\n         ('dtc_0016_0', 'P0A10', 'DC/DC CONVERTER STATUS CIRCUIT HIGH INPUT', 'PSU output too high', 0),\n         ('dtc_0016_1', 'P0A09', 'DC/DC CONVERTER STATUS CIRCUIT LOW INPUT', 'PSU output too low', 0),\n         ('dtc_0017_0', 'P1028', 'PSU OVERCURRENT', '12 V circuit abnormal load', 0),\n         ('dtc_0018_0', 'U0037', 'VEHICLE COMMUNICATION BUS B', 'DTB bus off', 0),\n         ('dtc_0018_1', 'U0040', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uC', 0),\n         ('dtc_0018_2', 'U0043', 'VEHICLE COMMUNICATION BUS B (LOW)', 'DTB bus off uS', 0),\n         ('dtc_0019_0', 'P0117', 'ENGINE COOLANT TEMPERATURE CIRCUIT LOW', 'Motor coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0019_1', 'P0118', 'ENGINE COOLANT TEMPERATURE CIRCUIT HIGH', 'Motor coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0019_2', 'P0298', 'ENGINE OIL OVER TEMPERATURE', 'Motor oil over temperature', 1),\n         ('dtc_0020_0', 'P1049', 'DRIVE OVERTEMP', 'Drive temperature too high', 1),\n         ('dtc_0020_1', 'U0110', 'LOST COMMUNICATION WITH DRIVE MOTOR CONTROL MODULE', 'Drive generic error', 1),\n         ('dtc_0020_2', 'P0A02', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT LOW', 'Drive coolant temperature circuit low (short circuit)', 1),\n         ('dtc_0020_3', 'P0A03', 'MOTOR ELECTRONICS COOLANT TEMPERATURE SENSOR CIRCUIT HIGH', 'Drive coolant temperature circuit high (open circuit)', 1),\n         ('dtc_0020_4', 'P0335', 'CRANKSHAFT POSITION SENSOR ''A'' CIRCUIT', 'Motor position error', 1),\n         ('dtc_0021_0', 'P1029', 'ODOMETER ACCESS ERROR', 'Odometer EEPROM read/write failed', 0),\n         ('dtc_0021_1', 'P0632', 'ODOMETER NOT PROGRAMMED - ECM/PCM', 'Odometer not programmed', 0),\n         ('dtc_0022_0', 'P1030', 'VCU CELL UNDERVOLTAGE', 'Cell undervoltage VCU alarm', 0),\n         ('dtc_0023_0', 'C1000', 'LEAK DETECT', 'Leak detected between HV circuit and chassis', 0),\n         ('dtc_0024_0', 'C1001', 'HV+ LEAK DETECT', 'Leak detected between chassis and HV+ rail', 0),\n         ('dtc_0025_0', 'C1002', 'HV- LEAK DETECT', 'Leak detected between chassis and HV- rail', 0),\n         ('dtc_0026_0', 'P2503', 'CHARGING SYSTEM VOLTAGE LOW', 'Charger DC undervoltage shutdown', 0),\n         ('dtc_0026_1', 'P2504', 'CHARGING SYSTEM VOLTAGE HIGH', 'Charger DC overvoltage shutdown', 0),\n         ('dtc_0026_2', 'P1031', 'CHARGER DC CONNECTION', 'Charger DC connection failure', 0),\n         ('dtc_0027_0', 'P1032', 'CHARGER CONTROL', 'Charger control timeout shutdown \u2014 no control frame received within 1000 ms', 0),\n         ('dtc_0028_0', 'P1033', 'CHARGER DC CURRENT LIMIT', 'Charger reached DC current limit', 0),\n         ('dtc_0029_0', 'P1034', 'CHARGER SCI COMM', 'Charger DSP SPI communication error', 0),\n         ('dtc_0030_0', 'P1035', 'CHARGER AC OV', 'Charger AC overvoltage shutdown', 0),\n         ('dtc_0030_1', 'P1036', 'CHARGER AC UV', 'Charger AC undervoltage shutdown', 0),\n         ('dtc_0031_0', 'P1037', 'CHARGER HIGHTEMP', 'Charger high temperature shutdown (primary or secondary)', 0),\n         ('dtc_0031_1', 'P1038', 'CHARGER LOWTEMP', 'Low temperature shutdown', 0),\n         ('dtc_0032_0', 'P1039', 'CHARGER TRANSFORMER FAILURE', 'Transformer failure \u2014 unable to provide power', 0),\n         ('dtc_0033_0', 'P1040', 'CHARGER FAN OC', 'Charger fan open circuit fault', 0),\n         ('dtc_0033_1', 'P1041', 'CHARGER FAN SC', 'Charger fan short circuit fault', 0),\n         ('dtc_0033_2', 'P1042', 'CHARGER FAN LOCK', 'Charger fan locked', 0),\n         ('dtc_0034_0', 'B1000', 'POSITION LIGHTS OC', 'Position lights open circuit fault', 0),\n         ('dtc_0034_1', 'B1001', 'POSITION LIGHTS SC', 'Position lights short circuit fault', 0),\n         ('dtc_0035_0', 'B1002', 'STOP LIGHTS OC', 'Stop lights open circuit fault', 0),\n         ('dtc_0035_1', 'B1003', 'STOP LIGHTS SC', 'Stop lights short circuit fault', 0),\n         ('dtc_0036_0', 'B1004', 'LEFT INDICATOR OC', 'Left indicator open circuit fault', 0),\n         ('dtc_0036_1', 'B1005', 'LEFT INDICATOR SC', 'Left indicator short circuit fault', 0),\n         ('dtc_0037_0', 'B1006', 'RIGHT INDICATOR OC', 'Right indicator open circuit fault', 0),\n         ('dtc_0037_1', 'B1007', 'RIGHT INDICATOR SC', 'Right indicator short circuit fault', 0),\n         ('dtc_0038_0', 'B1008', 'INDICATOR CONTROL', 'Indicator lights control block fault', 0),\n         ('dtc_0039_0', 'B1009', 'LOW BEAM OC', 'Low beam open circuit fault', 0),\n         ('dtc_0039_1', 'B1010', 'LOW BEAM SC', 'Low beam short circuit fault', 0),\n         ('dtc_0039_2', 'B1011', 'LOW BEAM UF', 'Low beam undefined fault', 0),\n         ('dtc_0039_3', 'U0182', 'LOST COMMUNICATION WITH LIGHTING CONTROL MODULE FRONT', 'Low beam module communication error \u2014 module not responding', 0),\n         ('dtc_0040_0', 'B1012', 'HIGH BEAM OC', 'High beam open circuit fault', 0),\n         ('dtc_0040_1', 'B1013', 'HIGH BEAM SC', 'High beam short circuit fault', 0),\n         ('dtc_0040_2', 'B1014', 'HIGH BEAM UF', 'High beam undefined fault', 0),\n         ('dtc_0040_3', 'U0182', 'HIGH BEAM MODULE COMM ERR', 'High beam module communication error \u2014 module not responding', 0),\n         ('dtc_0041_0', 'P0120', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT', 'Throttle fault (physical error)', 1),\n         ('dtc_0042_0', 'P0121', 'THROTTLE/PEDAL POSITION SENSOR/SWITCH ''A'' CIRCUIT RANGE/PERFORMANCE', 'Throttle fault (logic error)', 1),\n         ('dtc_0043_0', 'B1015', 'HORN OC', 'Horn open circuit fault', 0),\n         ('dtc_0043_1', 'B1016', 'HORN SC', 'Horn short circuit fault', 0),\n         ('dtc_0044_0', 'P0A07', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH', 'Water pump open circuit fault', 0),\n         ('dtc_0044_1', 'P0A06', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT LOW', 'Water pump short circuit fault', 0),\n         ('dtc_0044_2', 'P0A05', 'MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN', 'Water pump locked', 0),\n         ('dtc_0045_0', 'P1043', 'MAIN HV FUSE', 'Main fuse blown', 0),\n         ('dtc_0046_0', 'P1044', 'VCU CELL OVERVOLTAGE', 'Cell overvoltage VCU alarm', 1),\n         ('dtc_0047_0', 'B1017', 'PASSING WARNING', 'Passing light pressed for more than 60 s', 0),\n         ('dtc_0048_0', 'P1045', 'ERROR INLET', 'Error inlet', 0),\n         ('dtc_0049_0', 'P1046', 'BATTERY PACK UNBALANCED', 'Battery pack unbalanced alarm', 0),\n         ('dtc_0050_0', 'P1047', 'BATTERY UNDER CHG TEMP', 'Battery under charge temperature alarm', 0),\n         ('dtc_0053_0', 'U1000', 'SPI COMMUNICATION ERROR', 'Low level safety error', 0),\n         ('dtc_0053_1', 'P1053', 'CONTROL-SAFETY VERSION MISMATCH', 'Low level safety error', 0),\n         ('dtc_0053_10', 'P1058', 'MICRO CONTROL RESET BY MICRO SAFETY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_11', 'P2641', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''B''', 'Low level safety error', 1),\n         ('dtc_0053_12', 'P1059', 'KILIS CONTROL EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_13', 'P1060', 'KILIS SAFETY EPROM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_14', 'P1061', 'CHECK INFO LIST', 'Low level safety error', 0),\n         ('dtc_0053_15', 'P1062', 'GENERIC ERRORR', 'Low level safety error', 0),\n         ('dtc_0053_2', 'P0610', 'CONTROL MODULE VEHICLE OPTION ERROR', 'Low level safety error (uC parameter error)', 0),\n         ('dtc_0053_3', 'P1054', 'SAFETY MODULE VEHICLE OPTION ERROR', 'Low level safety error (uS parameter error)', 0),\n         ('dtc_0053_4', 'P0601', 'INTERNAL CONTROL MODULE MEMORY CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_5', 'P1055', 'INTERNAL SAFETY MODULE CHECK SUM ERROR', 'Low level safety error', 0),\n         ('dtc_0053_6', 'P1063', 'INTERNAL CONTROL MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_7', 'P1056', 'INTERNAL SAFETY MODULE READ ONLY MEMORY ERROR', 'Low level safety error', 0),\n         ('dtc_0053_8', 'P0603', 'INTERNAL CONTROL MODULE KEEP ALIVE MEMORY (KAM) ERROR', 'Low level safety error (watchdog error)', 0),\n         ('dtc_0053_9', 'P1057', 'MICRO SAFETY RESET BY MICRO CONTROL ERROR', 'Low level safety error', 0),\n         ('dtc_0054_0', 'C1003', 'UNSPECIFIED CM ERROR', 'Unspecified charge manager error', 0),\n         ('dtc_0054_1', 'C1004', 'CP LINE PROBLEM OR EVSE NOT COMPATIBLE', 'CP line problem or EVSE not compatible', 0),\n         ('dtc_0054_10', 'C1013', 'AC LINE ERROR', 'AC line error', 0),\n         ('dtc_0054_11', 'C1014', 'UNCLASSIFIED CM ERROR', 'Unclassified charge manager error', 0),\n         ('dtc_0054_12', 'C1015', 'FAST CHARGE NOT PRESENT', 'Fast charge not present', 0),\n         ('dtc_0054_2', 'C1005', 'LOCKING DEVICE PROBLEM', 'Locking device problem', 0),\n         ('dtc_0054_3', 'C1006', 'CM-VEHICLE COMMUNICATION ERROR', 'Charge manager to vehicle communication error', 0),\n         ('dtc_0054_4', 'C1007', 'CM INTERNAL ERROR', 'Charge manager internal error', 0),\n         ('dtc_0054_5', 'C1008', 'EVSE EMERGENCY SHUTDOWN', 'EVSE emergency shutdown', 0),\n         ('dtc_0054_6', 'C1009', 'QCA ERROR', 'QCA (powerline modem) error', 0),\n         ('dtc_0054_7', 'C1010', 'PROTOCOL ERROR', 'Protocol error', 0),\n         ('dtc_0054_8', 'C1011', 'CM APPLICATION LAYER ERROR', 'Charge manager application layer error', 0),\n         ('dtc_0054_9', 'C1012', 'SLAC PROCES ERROR', 'SLAC process error', 0),\n         ('dtc_0055_0', 'P2637', 'TORQUE MANAGEMENT FEEDBACK SIGNAL ''A''', 'Torque feedback error', 0),\n         ('dtc_0056_0', 'C1016', 'ASSET', 'Asset module \u2014 no run', 0),\n         ('dtc_0056_1', 'C1017', 'ASSET', 'Asset module \u2014 run', 0),\n         ('dtc_0057_0', 'B1018', 'FLASH FULL', 'Low flash storage', 0),\n         ('dtc_0058_0', 'P0605', 'INTERNAL CONTROL MODULE READ ONLY MEMORY (ROM) ERROR', 'Flash read/write error', 0),\n         ('dtc_0059_0', 'U0412', 'INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A', 'BMS status error', 0),\n         ('dtc_0061_0', 'P0500', 'VEHICLE SPEED SENSOR ''A''', 'Front wheel speed sensor failure', 0),\n         ('dtc_0061_1', 'P2158', 'VEHICLE SPEED SENSOR ''B''', 'Rear wheel speed sensor failure', 0),\n         ('dtc_0061_2', 'P2158+P0500', 'VEHICLE SPEED SENSOR ''A'' + VEHICLE SPEED SENSOR ''B''', 'Front and rear wheel speed sensors failure', 0),\n         ('dtc_0061_3', 'P2162', 'VEHICLE SPEED SENSOR ''A'' / ''B'' CORRELATION', 'Wheel speed sensor coherency failure', 0),\n         ('dtc_0062_0', 'U0121', 'LOST COMMUNICATION WITH ANTI-LOCK BRAKE SYSTEM (ABS) CONTROL MODULE', 'ABS timeout communication error', 0)\n)\n, edge AS (\n  SELECT s.key AS key, r.ts AS ts, r.value AS value,\n         LAG(r.value) OVER (PARTITION BY s.key ORDER BY r.ts) AS prev\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key LIKE 'dtc\\_%\\_%' ESCAPE '\\'\n    AND s.key NOT IN ('dtc_count', 'dtc_list_count', 'dtc_unrecognised_count')\n    AND r.ts <= $__to\n)\nSELECT COALESCE(c.obd, 'raw ' || SUBSTR(e.key, 5)) AS \"Code\",\n       COALESCE(c.descr, 'not in Energica''s code table') AS \"What it means\",\n       COALESCE(c.name, '') AS \"OBD name\",\n       -- '?' on a LEFT JOIN miss, not 'no': every other column COALESCEs the miss\n       -- explicitly, and a confident \"the lamp does not light for this\" two columns\n       -- from \"not in Energica's code table\" is a claim we cannot make. The phone\n       -- view omits the clause entirely in that case; this keeps them agreeing.\n       CASE WHEN c.key IS NULL THEN '?' WHEN c.mil = 1 THEN 'yes' ELSE 'no' END AS \"Lights lamp\",\n       -- Rising edges only. Counting rows would report a code that latched once as\n       -- having fired hundreds of times, because the server re-broadcasts whole state.\n       SUM(CASE WHEN e.value > 0 AND (e.prev IS NULL OR e.prev <= 0) THEN 1 ELSE 0 END) AS \"Times set\",\n       DATETIME(MIN(CASE WHEN e.value > 0 THEN e.ts END)/1000, 'unixepoch', 'localtime') AS \"First seen\",\n       DATETIME(MAX(CASE WHEN e.value > 0 THEN e.ts END)/1000, 'unixepoch', 'localtime') AS \"Last seen\"\nFROM edge e\nLEFT JOIN code c ON c.key = e.key\nGROUP BY e.key\nHAVING \"Times set\" > 0\nORDER BY MAX(CASE WHEN e.value > 0 THEN e.ts END) DESC",
+          "timeColumns": ["time"]
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "The two counts, side by side",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "dtc_count is OBD-II's STORED history; dtc_list_count is the hub's ACTIVE list. They are different measurements and their disagreement is expected, not a bug \u2014 confirmed 2026-08-03 when the active list was observed flickering while the stored count sat at 38. A jump in the stored count is a new fault being remembered; a spike in the active count is something happening right now.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "${__field.labels.metric}",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisSoftMin": 0
+          },
+          "decimals": 0,
+          "unit": "none",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": ["lastNotNull"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "time series",
+          "rawQueryText": "WITH counts AS (\n  SELECT s.key AS key, r.ts AS ts, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('dtc_count', 'dtc_list_count', 'dtc_unrecognised_count')\n    AND r.ts <= $__to\n), edges AS (\n  SELECT key, MAX(CASE WHEN ts < $__from THEN ts END) AS before_ts, MAX(ts) AS latest_ts\n  FROM counts GROUP BY key\n)\nSELECT ts/1000.0 AS time, key AS metric, value FROM counts WHERE ts >= $__from\nUNION ALL\nSELECT $__from/1000.0, c.key, c.value\n  FROM counts c JOIN edges e ON e.key = c.key AND e.before_ts = c.ts\nUNION ALL\nSELECT $__to/1000.0, c.key, c.value\n  FROM counts c JOIN edges e ON e.key = c.key AND e.latest_ts = c.ts\nORDER BY time",
+          "queryText": "WITH counts AS (\n  SELECT s.key AS key, r.ts AS ts, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('dtc_count', 'dtc_list_count', 'dtc_unrecognised_count')\n    AND r.ts <= $__to\n), edges AS (\n  SELECT key, MAX(CASE WHEN ts < $__from THEN ts END) AS before_ts, MAX(ts) AS latest_ts\n  FROM counts GROUP BY key\n)\nSELECT ts/1000.0 AS time, key AS metric, value FROM counts WHERE ts >= $__from\nUNION ALL\nSELECT $__from/1000.0, c.key, c.value\n  FROM counts c JOIN edges e ON e.key = c.key AND e.before_ts = c.ts\nUNION ALL\nSELECT $__to/1000.0, c.key, c.value\n  FROM counts c JOIN edges e ON e.key = c.key AND e.latest_ts = c.ts\nORDER BY time",
+          "timeColumns": ["time"]
+        }
+      ]
+    }
+  ]
+}

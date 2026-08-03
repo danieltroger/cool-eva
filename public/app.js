@@ -9,6 +9,7 @@ import { RideView } from "./views/ride.js";
 import { HypermileView } from "./views/hypermile.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
+import { FaultsView } from "./views/faults.js";
 import { Sheet, hasTroubleCodes, refreshStatus, sheetOpen } from "./views/sheet.js";
 import { monotonicNow } from "./lib/clock.js";
 
@@ -17,13 +18,14 @@ const { button, div, span } = van.tags;
 // Shell: header, the current view, the tab bar, and the rules for when the bike
 // gets to choose the view instead of you.
 
-/** @typedef {"ride" | "hypermile" | "charge" | "all"} ViewName */
+/** @typedef {"ride" | "hypermile" | "charge" | "all" | "faults"} ViewName */
 
 const TABS = /** @type {const} */ ([
   { name: "ride", label: "Ride" },
   { name: "hypermile", label: "Hypermile" },
   { name: "charge", label: "Charge" },
   { name: "all", label: "All" },
+  { name: "faults", label: "Faults" },
 ]);
 
 const view = van.state(/** @type {ViewName} */ ("ride"));
@@ -50,6 +52,8 @@ function App() {
           return ChargeView();
         case "all":
           return AllView();
+        case "faults":
+          return FaultsView();
         default:
           return RideView();
       }
@@ -70,9 +74,9 @@ function Header() {
           void refreshStatus();
         },
       },
-      // A stored trouble code turns the menu button itself into the warning, so
-      // nothing has to be given up on the riding screens to surface it.
-      () => (hasTroubleCodes() ? "⚠" : "☰")
+      // The Faults tab carries the warning now, and it leads somewhere that names
+      // the code. Two ⚠ for one fault is how a warning stops being read.
+      "☰"
     ),
     span({ class: "brand" }, "Cool Eva"),
     div(
@@ -94,7 +98,9 @@ function TabBar() {
             view.val = tab.name;
           },
         },
-        tab.label
+        // The Faults tab carries the warning itself, so a code that appears mid-ride
+        // is visible without giving up any space on the screen you are looking at.
+        tab.name === "faults" ? () => (hasTroubleCodes() ? `⚠ ${tab.label}` : tab.label) : tab.label
       )
     )
   );
