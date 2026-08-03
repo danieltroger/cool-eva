@@ -189,7 +189,7 @@ function TroubleCodes() {
     if (active.length === 0) {
       return `none set${crossCheck}`;
     }
-    return `${active.join(" · ")}${crossCheck} — full descriptions in journalctl -u thermometer`;
+    return `${active.join(" · ")}${crossCheck} — named, with history, on the Faults tab`;
   });
 }
 
