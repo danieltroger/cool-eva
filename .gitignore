@@ -1,14 +1,20 @@
 .DS_Store
 
 # --- Local-only material. This is a PUBLIC repo; keep it that way. ----------
+# The local-material paths below carry no trailing slash: any of them may be a
+# symlink to iCloud or an external disk on some machine, and `foo/` does not
+# match a symlink named foo (git records one as a blob, never a tree). See
+# node_modules. `.idea/` at the end of the block is an ordinary editor
+# directory and keeps its slash.
+#
 # Energica's OEM manuals are copyrighted and must never be committed here.
 # They live in iCloud; `manuals` is a symlink to that folder.
 manuals
-Energica_Manuals/
+Energica_Manuals
 
 # Reverse-engineering toolkit, notes and captured logs: local only.
 # (Self-contained: scripts + venv + logs all resolve relative to this folder.)
-obd-garage/
+obd-garage
 
 # Editor / IDE
 .idea/
@@ -58,7 +64,10 @@ bower_components
 build/Release
 
 # Dependency directories
-node_modules/
+# No trailing slash: `node_modules/` matches a directory but NOT a symlink of
+# that name, and a symlinked node_modules did get committed that way once. Same
+# trap the temperatures.db* note above describes.
+node_modules
 jspm_packages/
 
 # Snowpack dependency directory (https://snowpack.dev/)
@@ -165,5 +174,7 @@ vite.config.ts.timestamp-*
 *.private.pem
 *.public.pem
 ride-log-key.private.pem
-ride-logs/
+# No trailing slash, same reason as node_modules: sealed logs are big enough to
+# want to park on an external disk and symlink back.
+ride-logs
 *.celog

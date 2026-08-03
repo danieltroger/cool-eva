@@ -1,0 +1,1437 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "blue",
+        "name": "Power on (key_on)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on'\n)\nSELECT ts/1000.0 AS time, 'Key on' AS text, 'key_on' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "rawQueryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on'\n)\nSELECT ts/1000.0 AS time, 'Key on' AS text, 'key_on' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "GO (ready to ride)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go'\n)\nSELECT ts/1000.0 AS time, 'GO' AS text, 'go' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "rawQueryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go'\n)\nSELECT ts/1000.0 AS time, 'GO' AS text, 'go' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "yellow",
+        "name": "Charging (0x102)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nSELECT ts/1000.0 AS time, 'Charging (0x102)' AS text, 'charging' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "rawQueryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nSELECT ts/1000.0 AS time, 'Charging (0x102)' AS text, 'charging' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "name": "Charge session (0x201 state bit 1)",
+        "target": {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "-- bms_state_charge, not charge_state: 0x201 byte 0 is a bitfield, so charging\n-- while balancing reads 0x06 and a `charge_state = 2` test would miss it entirely.\n-- The decoder already publishes the bit (registry.ts), so the mask lives in one place.\nWITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nsessions AS (\n  SELECT ts,\n    -- no later clearing sample means the session is still running: run the band\n    -- to the right edge of the window rather than collapsing it to zero width.\n    -- An unterminated session is indistinguishable from a running one here, so a\n    -- session whose clearing sample was never recorded (service killed mid-charge,\n    -- bike unplugged while the BMS was asleep) paints to the right edge of every\n    -- window from then on. That is the right default; it is also where to look first\n    -- if a charge band looks implausibly long.\n    COALESCE((SELECT MIN(later.ts) FROM samples later WHERE later.ts > samples.ts AND later.value <> 1),\n             $__to) AS ended\n  FROM samples\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n)\nSELECT ts/1000.0 AS time, ended/1000.0 AS timeEnd,\n  'Charge session (0x201 state bit 1)' AS text,\n  'bms_state_charge' AS tags\nFROM sessions\n-- overlap, not containment, so a session that began before the window still draws\nWHERE ts <= $__to AND ended >= $__from\nORDER BY ts",
+          "rawQueryText": "-- bms_state_charge, not charge_state: 0x201 byte 0 is a bitfield, so charging\n-- while balancing reads 0x06 and a `charge_state = 2` test would miss it entirely.\n-- The decoder already publishes the bit (registry.ts), so the mask lives in one place.\nWITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nsessions AS (\n  SELECT ts,\n    -- no later clearing sample means the session is still running: run the band\n    -- to the right edge of the window rather than collapsing it to zero width.\n    -- An unterminated session is indistinguishable from a running one here, so a\n    -- session whose clearing sample was never recorded (service killed mid-charge,\n    -- bike unplugged while the BMS was asleep) paints to the right edge of every\n    -- window from then on. That is the right default; it is also where to look first\n    -- if a charge band looks implausibly long.\n    COALESCE((SELECT MIN(later.ts) FROM samples later WHERE later.ts > samples.ts AND later.value <> 1),\n             $__to) AS ended\n  FROM samples\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n)\nSELECT ts/1000.0 AS time, ended/1000.0 AS timeEnd,\n  'Charge session (0x201 state bit 1)' AS text,\n  'bms_state_charge' AS tags\nFROM sessions\n-- overlap, not containment, so a session that began before the window still draws\nWHERE ts <= $__to AND ended >= $__from\nORDER BY ts",
+          "refId": "Anno",
+          "timeColumns": ["time", "timeEnd"]
+        }
+      }
+    ]
+  },
+  "description": "Isolation test, BMS error and warning flags, and diagnostic code counts, decoded from CAN signals and the Connectivity Hub. Every series is logged on change with a per-signal deadband, so flat stretches are held values rather than missing telemetry. The deadband is 0 for the error and warning bits but 10 counts for iso_test_1/2/total, so a flat isolation trace means “no move larger than 10 counts” rather than “no move”.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Isolation test (BMS frame 0x207)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Latest |512 − IsoTest1|, in 10-bit ADC counts. 512 is the ideal; the deviation is the leak magnitude and a real leak moves tens of counts. IsoTest1 high means the leak sits nearer the positive terminal. The first colour step is 12 rather than 10 because the signal carries deadband 10 (registry.ts): within one service run nothing under an 11-count move is ever stored, so a smaller number on this tile is a stale reading, not a measured deviation. Red past 60. The reading only means anything above 25 VDC, so it is meaningless with the pack contactors open.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 12
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_1' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_1' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "IsoTest1 — counts off 512",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Latest |512 − IsoTest2|, in 10-bit ADC counts. Same scale and same deadband-10 caveat as IsoTest1; IsoTest2 high means the leak sits nearer the negative terminal. Both deviating by the same amount points at a Y-capacitor in the charger or load rather than a fault.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 12
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_2' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, ABS(512 - r.value) AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_2' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "IsoTest2 — counts off 512",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Latest raw IsoTestTotal. This one is NOT an offset from 512 — the BMS flags a leak when IsoTestTotal exceeds the measured pack voltage, so it is read against pack_v (see the panel below), not against 512. Recorded values so far are 0-2 against a ~288 V pack.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 250
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_total' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'iso_test_total' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "IsoTestTotal (latest)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "bms_err_leak_detected — bit 16 of the BMS error word from frame 0x201. This is the BMS's own verdict, as opposed to the raw ADC counts to the left.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "No"
+                },
+                "1": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "YES"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'bms_err_leak_detected' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'bms_err_leak_detected' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Leak detected (error bit 16)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "IsoTest1 and IsoTest2 in raw 10-bit ADC counts, with a flat reference series at the ideal of 512. The axis is soft-clamped to 500-524, which is one deadband either side of the ideal — the smallest move these signals can record (deadband 10, registry.ts) is therefore roughly the full height of the clamped axis, and it expands on its own if a real leak moves further. Step interpolation with spanNulls: a flat stretch means no move larger than 10 counts rather than data going missing — a weaker statement than log-on-change makes elsewhere on this dashboard, and the two signals are written milliseconds apart so widening them into one table leaves nulls that have to be spanned.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "ADC counts",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 500,
+            "axisSoftMax": 524
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "iso_test_1"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "iso_test_2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ideal (512)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends. iso_test_* carries deadband 10 and lastLogged resets on restart,\n-- so in practice these only log once per service boot: a window containing no restart\n-- returns nothing at all, and the panel reads \"No data\" for a signal whose held value is\n-- perfectly well defined.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('iso_test_1', 'iso_test_2') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends. iso_test_* carries deadband 10 and lastLogged resets on restart,\n-- so in practice these only log once per service boot: a window containing no restart\n-- returns nothing at all, and the panel reads \"No data\" for a signal whose held value is\n-- perfectly well defined.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('iso_test_1', 'iso_test_2') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends, because this series is derived from iso_test_1's row timestamps\n-- rather than from a signal of its own. Unseeded it disappears whenever the data does,\n-- taking the reference line with it, so the panel goes fully blank instead of at least\n-- showing the ideal it is meant to be read against.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'ideal (512)' AS metric, 512 AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'iso_test_1' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'ideal (512)', 512\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'ideal (512)', 512\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends, because this series is derived from iso_test_1's row timestamps\n-- rather than from a signal of its own. Unseeded it disappears whenever the data does,\n-- taking the reference line with it, so the panel goes fully blank instead of at least\n-- showing the ideal it is meant to be read against.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'ideal (512)' AS metric, 512 AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'iso_test_1' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'ideal (512)', 512\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'ideal (512)', 512\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Isolation ADC counts vs ideal (512)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The same two signals as distance from the ideal, which is the number the isolation test is actually about — zero is healthy and the scale starts there, so any movement reads as height rather than as a wiggle on a line sitting at 511. The soft max of 12 is one deadband: anything the signal can actually record within a service run clears it. Step interpolation with spanNulls for the same reason as the panel to the left.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "counts off ideal",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "axisSoftMax": 12
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "iso_test_1"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "iso_test_2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends. iso_test_* carries deadband 10 and lastLogged resets on restart,\n-- so in practice these only log once per service boot: a window containing no restart\n-- returns nothing at all, and the panel reads \"No data\" for a signal whose held value is\n-- perfectly well defined.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, s.key AS metric, ABS(512 - r.value) AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('iso_test_1', 'iso_test_2') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends. iso_test_* carries deadband 10 and lastLogged resets on restart,\n-- so in practice these only log once per service boot: a window containing no restart\n-- returns nothing at all, and the panel reads \"No data\" for a signal whose held value is\n-- perfectly well defined.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, s.key AS metric, ABS(512 - r.value) AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('iso_test_1', 'iso_test_2') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_1' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, ABS(512 - r.value)\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_2' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Deviation from ideal — |512 − count|",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The BMS flags an isolation leak when IsoTestTotal rises above the measured pack voltage, so the two are plotted on one axis and compared directly — the gap between the lines is the margin. Counts and volts share an axis here because the comparison itself is unit-free. IsoTestTotal steps (deadband 10, so it holds between samples); pack voltage is drawn with linear interpolation because it is a densely sampled analogue value that really does move between samples \u2014 but it keeps the panel's default of showing points, because it is also seeded to the window edges and a linear segment from a seed sample would otherwise be an unmarked ramp through values that were never measured. Where the points are far apart, the line between them is drawn, not read. spanNulls on both, since widening two signals with different timestamps into one table inserts nulls that are not gaps in the data.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "counts (IsoTestTotal) / volts (pack)",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 0
+          },
+          "decimals": 1,
+          "displayName": "${__field.labels.metric}",
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "IsoTestTotal"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pack voltage (leak threshold)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "linear"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends. iso_test_* carries deadband 10 and lastLogged resets on restart,\n-- so in practice these only log once per service boot: a window containing no restart\n-- returns nothing at all, and the panel reads \"No data\" for a signal whose held value is\n-- perfectly well defined.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'IsoTestTotal' AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'iso_test_total' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'IsoTestTotal', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_total' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'IsoTestTotal', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_total' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends. iso_test_* carries deadband 10 and lastLogged resets on restart,\n-- so in practice these only log once per service boot: a window containing no restart\n-- returns nothing at all, and the panel reads \"No data\" for a signal whose held value is\n-- perfectly well defined.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'IsoTestTotal' AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'iso_test_total' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'IsoTestTotal', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_total' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'IsoTestTotal', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'iso_test_total' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends. pack_v carries no deadband and updates every ~1.7 s, but only\n-- while CAN is streaming: a parked bike with the BMS asleep produces no rows at all, and\n-- that is precisely the state in which iso_test_total needs its own seed. Unseeded, panel\n-- 8 would show a held IsoTestTotal against a missing threshold, which is the half of the\n-- comparison that carries the meaning. Longest pack_v gap in the 2026-08-02 file: 26 min.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'pack voltage (leak threshold)' AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'pack_v' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'pack voltage (leak threshold)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_v' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'pack voltage (leak threshold)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_v' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends. pack_v carries no deadband and updates every ~1.7 s, but only\n-- while CAN is streaming: a parked bike with the BMS asleep produces no rows at all, and\n-- that is precisely the state in which iso_test_total needs its own seed. Unseeded, panel\n-- 8 would show a held IsoTestTotal against a missing threshold, which is the half of the\n-- comparison that carries the meaning. Longest pack_v gap in the 2026-08-02 file: 26 min.\n-- Two seed rows per series, not one. Grafana pins the x scale to the dashboard time\n-- range, so a lone sample from before $__from is clipped out of the plot area; and\n-- stepAfter draws segments between consecutive points rather than extending past the\n-- last one, so a single off-screen point draws no line at all. The second row restamps\n-- the last known value at $__to, which gives the step two points to span and is exactly\n-- what carry-forward means. ORDER BY time over the whole union keeps the plugin's\n-- global-ascending-time rule.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'pack voltage (leak threshold)' AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'pack_v' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'pack voltage (leak threshold)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_v' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'pack voltage (leak threshold)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_v' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "IsoTestTotal vs pack voltage (the leak threshold)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "id": 9,
+      "panels": [],
+      "title": "BMS errors and warnings (frames 0x201, 0x206)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The eight decoded booleans out of the BMS error and warning words. A state timeline rather than a line chart: these are two-valued, and what matters is which stretch of time a bit was set, not the shape of a line between 0 and 1. Each bar holds its state until the next sample, which is how log-on-change data is meant to be read — a long unbroken bar is a flag that stayed put, not a signal that stopped reporting. The query turns each flag into the words 'clear' and 'ACTIVE' and groups on whole seconds, so the eight flags out of one 0x201 decode land on the same row instead of eight rows that are mostly empty. 'error: over temperature' merges error bits 4 and 7 (cell and LMU) and 'error: contactor' merges bits 21-25, matching the decoder.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "clear": {
+                  "color": "green",
+                  "index": 0
+                },
+                "ACTIVE": {
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 10,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "-- MIN(), not MAX(): SQLite compares text with BINARY collation, so 'ACTIVE' < 'clear'\n-- and MIN is severity-first. A flag that both sets and clears inside one second-bucket\n-- must render ACTIVE, not green. Renaming either state string can silently flip that,\n-- so 'ACTIVE' has to keep sorting before the cleared label.\nSELECT r.ts/1000 AS time,\n  MIN(CASE WHEN s.key = 'bms_err_cell_overvoltage'    THEN state END) AS \"error: cell overvoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_cell_undervoltage'   THEN state END) AS \"error: cell undervoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_over_temp'           THEN state END) AS \"error: over temperature\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detected'       THEN state END) AS \"error: leak detected\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detect_failed'  THEN state END) AS \"error: leak detect failed\",\n  MIN(CASE WHEN s.key = 'bms_err_contactor'           THEN state END) AS \"error: contactor\",\n  MIN(CASE WHEN s.key = 'bms_warn_low_soc'            THEN state END) AS \"warning: low SOC\",\n  MIN(CASE WHEN s.key = 'bms_warn_balancing_required' THEN state END) AS \"warning: balancing required\"\nFROM (\n  SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END AS state\n  FROM reading r\n  WHERE r.ts BETWEEN $__from AND $__to\n  -- Seeded from before $__from only. A state-timeline region runs until the next sample or\n  -- the end of the time range, so the last state already extends to the right edge on its\n  -- own   -- unlike a timeseries, this needs no $__to row. Without the left seed a quiet\n  -- window returns nothing and the panel blanks, which is the failure the stat tiles were\n  -- fixed for.\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_cell_overvoltage' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_cell_undervoltage' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_over_temp' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_leak_detected' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_leak_detect_failed' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_contactor' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_warn_low_soc' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_warn_balancing_required' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n) AS r\nJOIN signal s ON s.id = r.signal_id\n-- the bare ts predicate inside the derived table is not a scan: SQLite flattens the\n-- subquery and pushes this key filter down, so the plan is\n-- SEARCH r USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?).\nWHERE s.key IN ('bms_err_cell_overvoltage', 'bms_err_cell_undervoltage', 'bms_err_over_temp',\n                'bms_err_leak_detected', 'bms_err_leak_detect_failed', 'bms_err_contactor',\n                'bms_warn_low_soc', 'bms_warn_balancing_required')\nGROUP BY r.ts/1000\nORDER BY time",
+          "rawQueryText": "-- MIN(), not MAX(): SQLite compares text with BINARY collation, so 'ACTIVE' < 'clear'\n-- and MIN is severity-first. A flag that both sets and clears inside one second-bucket\n-- must render ACTIVE, not green. Renaming either state string can silently flip that,\n-- so 'ACTIVE' has to keep sorting before the cleared label.\nSELECT r.ts/1000 AS time,\n  MIN(CASE WHEN s.key = 'bms_err_cell_overvoltage'    THEN state END) AS \"error: cell overvoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_cell_undervoltage'   THEN state END) AS \"error: cell undervoltage\",\n  MIN(CASE WHEN s.key = 'bms_err_over_temp'           THEN state END) AS \"error: over temperature\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detected'       THEN state END) AS \"error: leak detected\",\n  MIN(CASE WHEN s.key = 'bms_err_leak_detect_failed'  THEN state END) AS \"error: leak detect failed\",\n  MIN(CASE WHEN s.key = 'bms_err_contactor'           THEN state END) AS \"error: contactor\",\n  MIN(CASE WHEN s.key = 'bms_warn_low_soc'            THEN state END) AS \"warning: low SOC\",\n  MIN(CASE WHEN s.key = 'bms_warn_balancing_required' THEN state END) AS \"warning: balancing required\"\nFROM (\n  SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END AS state\n  FROM reading r\n  WHERE r.ts BETWEEN $__from AND $__to\n  -- Seeded from before $__from only. A state-timeline region runs until the next sample or\n  -- the end of the time range, so the last state already extends to the right edge on its\n  -- own   -- unlike a timeseries, this needs no $__to row. Without the left seed a quiet\n  -- window returns nothing and the panel blanks, which is the failure the stat tiles were\n  -- fixed for.\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_cell_overvoltage' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_cell_undervoltage' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_over_temp' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_leak_detected' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_leak_detect_failed' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_err_contactor' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_warn_low_soc' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts, r.signal_id, CASE WHEN r.value <> 0 THEN 'ACTIVE' ELSE 'clear' END\n                 FROM reading r JOIN signal seed ON seed.id = r.signal_id\n                 WHERE seed.key = 'bms_warn_balancing_required' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n) AS r\nJOIN signal s ON s.id = r.signal_id\n-- the bare ts predicate inside the derived table is not a scan: SQLite flattens the\n-- subquery and pushes this key filter down, so the plan is\n-- SEARCH r USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?).\nWHERE s.key IN ('bms_err_cell_overvoltage', 'bms_err_cell_undervoltage', 'bms_err_over_temp',\n                'bms_err_leak_detected', 'bms_err_leak_detect_failed', 'bms_err_contactor',\n                'bms_warn_low_soc', 'bms_warn_balancing_required')\nGROUP BY r.ts/1000\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "BMS error and warning bits",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The undecoded 32-bit error word and 24-bit warning word, plotted as integers. Worth keeping next to the booleans above because they carry bits the decoder does not name: in the current file the warning word reads 262144 (bit 18) for one stretch, and bit 18 has no decoded boolean, so this panel is the only place that shows it. Step interpolation with spanNulls — log-on-change, so a flat line is a held value.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "raw word value",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 0
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bms_error_flags"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bms_warning_flags"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends, same as the isolation panels above: log-on-change means a quiet\n-- window returns nothing and the panel reads \"No data\" for a value that is perfectly well\n-- known. A lone row from before $__from is not enough -- Grafana pins the x scale to the\n-- time range so it is clipped, and stepAfter builds segments between consecutive points\n-- rather than extending past the last one. The second row restamps the last known value\n-- at $__to so the step has a segment to draw. ORDER BY time keeps the global sort.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('bms_error_flags', 'bms_warning_flags') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_error_flags' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_warning_flags' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_error_flags' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_warning_flags' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends, same as the isolation panels above: log-on-change means a quiet\n-- window returns nothing and the panel reads \"No data\" for a value that is perfectly well\n-- known. A lone row from before $__from is not enough -- Grafana pins the x scale to the\n-- time range so it is clipped, and stepAfter builds segments between consecutive points\n-- rather than extending past the last one. The second row restamps the last known value\n-- at $__to so the step has a segment to draw. ORDER BY time keeps the global sort.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, s.key AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('bms_error_flags', 'bms_warning_flags') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_error_flags' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_warning_flags' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_error_flags' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, s.key, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_warning_flags' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Raw error and warning words",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "lmu_comm_warnings from frame 0x206, plotted raw. It is a bitmask where bit n corresponds to LMU n, so any non-zero value names which battery module stopped answering; zero is all eleven modules reporting. Step interpolation with spanNulls: log-on-change, so the flat line means the mask held rather than the signal stopping.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "bitmask value",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "axisSoftMax": 4
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lmu_comm_warnings"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends, same as the isolation panels above: log-on-change means a quiet\n-- window returns nothing and the panel reads \"No data\" for a value that is perfectly well\n-- known. A lone row from before $__from is not enough -- Grafana pins the x scale to the\n-- time range so it is clipped, and stepAfter builds segments between consecutive points\n-- rather than extending past the last one. The second row restamps the last known value\n-- at $__to so the step has a segment to draw. ORDER BY time keeps the global sort.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'lmu_comm_warnings' AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'lmu_comm_warnings' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'lmu_comm_warnings', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'lmu_comm_warnings' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'lmu_comm_warnings', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'lmu_comm_warnings' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends, same as the isolation panels above: log-on-change means a quiet\n-- window returns nothing and the panel reads \"No data\" for a value that is perfectly well\n-- known. A lone row from before $__from is not enough -- Grafana pins the x scale to the\n-- time range so it is clipped, and stepAfter builds segments between consecutive points\n-- rather than extending past the last one. The second row restamps the last known value\n-- at $__to so the step has a segment to draw. ORDER BY time keeps the global sort.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time, 'lmu_comm_warnings' AS metric, r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'lmu_comm_warnings' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'lmu_comm_warnings', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'lmu_comm_warnings' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'lmu_comm_warnings', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'lmu_comm_warnings' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "LMU comm warnings",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "id": 13,
+      "panels": [],
+      "title": "Diagnostic codes",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The code count in mode 01 PID 01, byte A bits 0-6, polled over OBD-II. It disagrees with dtc_list_count next to it (38 against 0). Which of the two is the number of faults on this bike is unresolved — this tile is one of two readings, not the fault count.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 42
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "dtc_count — OBD PID 01",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The number of codes in the list the Connectivity Hub returns (message type 25). It disagrees with dtc_count next to it (0 against 38). The likeliest reading is that the hub serves currently active faults while PID 01 counts stored history, but an empty list is also what the VCU returns when it will not serve them while parked, so this is not settled. Neither tile is the fault count.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 42
+      },
+      "id": 15,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_list_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'dtc_list_count' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "dtc_list_count — Connectivity Hub",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Bit 7 of mode 01 PID 01 byte A — whether the malfunction indicator lamp is commanded on. Polled over OBD-II alongside dtc_count.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "Off"
+                },
+                "1": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "ON"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 42
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'mil_on' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS value\nFROM reading r JOIN signal s ON s.id = r.signal_id\n-- no lower bound: log-on-change means the last change can predate the window,\n-- and a held value is the honest answer where \"No data\" reads as a dead logger.\nWHERE s.key = 'mil_on' AND r.ts <= $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "MIL lamp (mil_on)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "dtc_count and dtc_list_count over time, deliberately drawn as two separate series rather than reconciled into one number. They come from different transports — OBD-II mode 01 PID 01 against the Connectivity Hub's own code list — and currently disagree, 38 against 0. It is not established whether one counts stored history and the other currently active faults, or whether the VCU simply will not serve the list while the bike is parked, so neither series is labelled as the fault count. Step interpolation with spanNulls: both are logged on change and at unrelated timestamps, so each line holds until its own next sample and the nulls that widening introduces are not missing data.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "number of codes",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "axisSoftMax": 40
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dtc_count (OBD PID 01)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dtc_list_count (Connectivity Hub)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "-- Seeded at both ends, same as the isolation panels above: log-on-change means a quiet\n-- window returns nothing and the panel reads \"No data\" for a value that is perfectly well\n-- known. A lone row from before $__from is not enough -- Grafana pins the x scale to the\n-- time range so it is clipped, and stepAfter builds segments between consecutive points\n-- rather than extending past the last one. The second row restamps the last known value\n-- at $__to so the step has a segment to draw. ORDER BY time keeps the global sort.\n-- dtc_count and dtc_list_count never change in practice (38 and 0), so before seeding\n-- this panel read \"No data\" in almost every window while the two stat tiles directly\n-- above it read 38 and 0 -- same signals, opposite verdicts, eight pixels apart.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time,\n  CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END AS metric,\n  r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('dtc_count', 'dtc_list_count') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_count' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_list_count' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_count' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_list_count' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded at both ends, same as the isolation panels above: log-on-change means a quiet\n-- window returns nothing and the panel reads \"No data\" for a value that is perfectly well\n-- known. A lone row from before $__from is not enough -- Grafana pins the x scale to the\n-- time range so it is clipped, and stepAfter builds segments between consecutive points\n-- rather than extending past the last one. The second row restamps the last known value\n-- at $__to so the step has a segment to draw. ORDER BY time keeps the global sort.\n-- dtc_count and dtc_list_count never change in practice (38 and 0), so before seeding\n-- this panel read \"No data\" in almost every window while the two stat tiles directly\n-- above it read 38 and 0 -- same signals, opposite verdicts, eight pixels apart.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time,\n  CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END AS metric,\n  r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('dtc_count', 'dtc_list_count') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_count' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_list_count' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_count' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, CASE s.key\n    WHEN 'dtc_count'      THEN 'dtc_count (OBD PID 01)'\n    WHEN 'dtc_list_count' THEN 'dtc_list_count (Connectivity Hub)'\n  END, r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dtc_list_count' AND r.ts <= $__to ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Diagnostic code counts — two independent readings",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 18,
+      "panels": [],
+      "title": "BMS IO lines",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The bms_io_state byte from frame 0x206 split into its eight bits, where bit n is IO n+1. A state timeline because each bit is a two-valued line whose interesting property is how long it stayed high. Worth watching next to the isolation panels: in the current file the byte goes 0x13 to 0x87 and back over the same stretch that the BMS reports charging, which is the same stretch where IsoTest2 moves off 511. What each IO line is wired to is not established. All eight bits come out of one byte, so each sample fills every row and each bar holds its state until bms_io_state is logged again — flat is a held value, not a dropout.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "low": {
+                  "color": "dark-blue",
+                  "index": 0
+                },
+                "high": {
+                  "color": "yellow",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "id": 19,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "queryText": "-- Seeded from before $__from only. A state-timeline region runs until the next sample or\n-- the end of the time range, so the last state already extends to the right edge on its\n-- own -- unlike a timeseries, this needs no $__to row. Without the left seed a quiet\n-- window returns nothing and the panel blanks, which is the failure the stat tiles were\n-- fixed for.\nSELECT time, \"IO1\", \"IO2\", \"IO3\", \"IO4\", \"IO5\", \"IO6\", \"IO7\", \"IO8\" FROM (\n  SELECT r.ts/1000.0 AS time,\n  CASE WHEN (CAST(r.value AS INTEGER) >> 0) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO1\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 1) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO2\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 2) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO3\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 3) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO4\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 4) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO5\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 5) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO6\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 6) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO7\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 7) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO8\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_io_state' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 0) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 1) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 2) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 3) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 4) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 5) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 6) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 7) & 1 = 1 THEN 'high' ELSE 'low' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_io_state' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "rawQueryText": "-- Seeded from before $__from only. A state-timeline region runs until the next sample or\n-- the end of the time range, so the last state already extends to the right edge on its\n-- own -- unlike a timeseries, this needs no $__to row. Without the left seed a quiet\n-- window returns nothing and the panel blanks, which is the failure the stat tiles were\n-- fixed for.\nSELECT time, \"IO1\", \"IO2\", \"IO3\", \"IO4\", \"IO5\", \"IO6\", \"IO7\", \"IO8\" FROM (\n  SELECT r.ts/1000.0 AS time,\n  CASE WHEN (CAST(r.value AS INTEGER) >> 0) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO1\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 1) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO2\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 2) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO3\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 3) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO4\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 4) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO5\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 5) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO6\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 6) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO7\",\n  CASE WHEN (CAST(r.value AS INTEGER) >> 7) & 1 = 1 THEN 'high' ELSE 'low' END AS \"IO8\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_io_state' AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 0) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 1) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 2) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 3) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 4) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 5) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 6) & 1 = 1 THEN 'high' ELSE 'low' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 7) & 1 = 1 THEN 'high' ELSE 'low' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_io_state' AND r.ts < $__from ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "bms_io_state — IO lines 1-8",
+      "type": "state-timeline"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "motorcycle", "isolation", "faults", "bms"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cool Eva — Isolation & faults",
+  "uid": "cool-eva-isolation",
+  "version": 1
+}

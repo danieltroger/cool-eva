@@ -1,0 +1,2026 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "blue",
+        "name": "Key on",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Key on' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'key_on'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "GO",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'GO' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'go'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "name": "Charge started (0x201)",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charge started' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "orange",
+        "name": "Charging bit (0x102)",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charging (0x102)' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      }
+    ]
+  },
+  "description": "Charging session view: BMS charge states, charger mains and DC side, cell spread and pack temperature during a charge.",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "description": "",
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "Charge telemetry from CAN `0x201` (BMS system state), `0x10A` (charge current limit) and the\ncharger frames (`mains_v`, `mains_a`, `dc_v`, `dc_a`, `charger_enabled`, `charger_max_dc_*`).\n\n**What is captured so far.** The 2026-08-02 session contains one AC charge: about 48 minutes from\n16:55 to 17:43, 224 V and 3.2 A on the mains side, roughly 2.3 A at 295 V on the DC side, SOC 38 to\n39 %, +0.9 Ah. Everything on this dashboard that reads off those signals has real data behind it.\n\n**What is still empty, and why.** These have never been seen non-zero, so their panels and lanes\nstay blank until a longer or fuller charge is captured. That is the signal being absent, not a\nbroken query:\n\n- `bms_state_trickle`, `bms_state_balancing`, `bms_state_charge_complete`, `bms_state_maintenance`\n  and `bms_state_idle` - the pack only ever reported Discharge or Charge. Balancing runs at the top\n  of charge, so `cell_spread_mv` during balancing needs a charge that actually reaches full.\n- `charging` (`0x102` bit) - that decoder only started sampling after the charge had ended, so the\n  bit is recorded as 0 throughout. `bms_state_charge` off `0x201` is the reliable charge flag and is\n  what the annotations use.\n- `charge_port_unlocked` - three samples, all parked.\n- `go` - the GO signal has only ever been 0 in the capture, so the GO annotation draws nothing\n  here either. `ride-summary.json` has a GO lane in its State panel to check that against; this dashboard does not,\n  so read the empty annotation as the signal being flat rather than the query failing.\n\n**When the charge-session tiles overstate.** `bms_state_charge` closes a session with a 0, and\nthe four tiles fall back to the end of the range when there is no closing 0 yet. That is right\nfor a charge still running and wrong for one the bike slept through before logging the 0: the\nsession then reads open-ended until the next power-on writes that 0, and the three delta tiles\ncan go negative once the bike has been ridden since. Clamping to the last row on the bus instead\nwould be worse - the 2026-08-02 charge has stretches of 26 minutes with no `pack_v` row and 17\nminutes with no row of any signal, because a resting pack at 3 A changes nothing worth logging,\nso that clamp would under-report every real charge by up to that much. Read a suspiciously long\ncharging time against the BMS system state lanes below.\n\n**Reading the panels.** Values are logged on change with a per-signal deadband, so a flat stretch\nmeans \"unchanged\", not \"missing\". Every series uses stepAfter with spanNulls on for that reason.\n",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "transparent": false,
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 2,
+      "panels": [],
+      "title": "Charge session",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last charge_state, the raw System State byte out of 0x201 b0. Bit 0 Discharge, bit 1 Charge, bit 2 Balancing, bit 3 Trickle, bit 4 Idle, bit 5 Charge complete, bit 6 Maintenance. The mapping covers the single-bit values; a combination shows as its raw number, and the lanes further down are the reliable way to read overlapping states.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "text",
+                  "index": 0,
+                  "text": "none"
+                },
+                "1": {
+                  "color": "blue",
+                  "index": 1,
+                  "text": "Discharge"
+                },
+                "2": {
+                  "color": "green",
+                  "index": 2,
+                  "text": "Charge"
+                },
+                "4": {
+                  "color": "yellow",
+                  "index": 3,
+                  "text": "Balancing"
+                },
+                "8": {
+                  "color": "orange",
+                  "index": 4,
+                  "text": "Trickle"
+                },
+                "16": {
+                  "color": "text",
+                  "index": 5,
+                  "text": "Idle"
+                },
+                "32": {
+                  "color": "green",
+                  "index": 6,
+                  "text": "Charge complete"
+                },
+                "64": {
+                  "color": "purple",
+                  "index": 7,
+                  "text": "Maintenance"
+                }
+              }
+            }
+          ],
+          "noValue": "no BMS state",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 19
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"BMS state\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_state' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "BMS state",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Length of the most recent charge session, bounded by the bms_state_charge edges rather than by the range itself, so it does not grow when the range also covers a ride. The session is the most recent one that started at or before the end of the range: the last 0 to 1 edge of bms_state_charge, through to the first 0 after it. Both edges are found outside the range if that is where they are, so this reports the whole session whether the range is zoomed into the middle of a charge or panned off its end, and two charges in one range describe the later one instead of being merged with the gap between them counted. A session with no closing 0 yet reads up to the end of the range - see the About panel for when that overstates.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no charge in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "dtdurationms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 19
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts <= $__to\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time, session.ended - session.started AS \"Charging time\"\nFROM session WHERE session.ended >= $__from",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charging time",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last minus first soc across the charge session. SOC is a 1 % integer, so a short top-up can legitimately read 0. The session is the most recent one that started at or before the end of the range: the last 0 to 1 edge of bms_state_charge, through to the first 0 after it. Both edges are found outside the range if that is where they are, so this reports the whole session whether the range is zoomed into the middle of a charge or panned off its end, and two charges in one range describe the later one instead of being merged with the gap between them counted. A session with no closing 0 yet reads up to the end of the range - see the About panel for when that overstates.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no charge in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 19
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts <= $__to\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'soc' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'soc' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"SOC gained\"\nFROM session WHERE session.ended >= $__from",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "SOC gained",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last minus first remaining_ah across the charge session, straight off the BMS coulomb counter. The session is the most recent one that started at or before the end of the range: the last 0 to 1 edge of bms_state_charge, through to the first 0 after it. Both edges are found outside the range if that is where they are, so this reports the whole session whether the range is zoomed into the middle of a charge or panned off its end, and two charges in one range describe the later one instead of being merged with the gap between them counted. A session with no closing 0 yet reads up to the end of the range - see the About panel for when that overstates.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no charge in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Ah"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 19
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts <= $__to\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'remaining_ah' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'remaining_ah' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"Charge added\"\nFROM session WHERE session.ended >= $__from",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge added",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last minus first residual_energy_wh across the charge session. This is the pack's own available-energy figure, not metered mains energy, so it excludes charger losses. The session is the most recent one that started at or before the end of the range: the last 0 to 1 edge of bms_state_charge, through to the first 0 after it. Both edges are found outside the range if that is where they are, so this reports the whole session whether the range is zoomed into the middle of a charge or panned off its end, and two charges in one range describe the later one instead of being merged with the gap between them counted. A session with no closing 0 yet reads up to the end of the range - see the About panel for when that overstates.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no charge in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Wh"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 19
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH charge_flag AS (\n  SELECT r.ts AS ts, r.value AS value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_state_charge'\n),\nlast_start AS (\n  SELECT MAX(ts) AS started FROM charge_flag\n  WHERE value = 1 AND (previous_value IS NULL OR previous_value = 0) AND ts <= $__to\n),\nsession AS (\n  SELECT last_start.started AS started,\n         COALESCE((SELECT MIN(later.ts) FROM charge_flag later\n                   WHERE later.value = 0 AND later.ts > last_start.started), $__to) AS ended\n  FROM last_start WHERE last_start.started IS NOT NULL\n)\nSELECT session.ended/1000.0 AS time,\n  (SELECT l.value FROM reading l JOIN signal ls ON ls.id = l.signal_id\n   WHERE ls.key = 'residual_energy_wh' AND l.ts <= session.ended + 2000\n   ORDER BY l.ts DESC LIMIT 1)\n  - (SELECT f.value FROM reading f JOIN signal fs ON fs.id = f.signal_id\n     WHERE fs.key = 'residual_energy_wh' AND f.ts <= session.started + 2000\n     ORDER BY f.ts DESC LIMIT 1)\n  AS \"Energy added\"\nFROM session WHERE session.ended >= $__from",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Energy added",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last charger_enabled. Tracks bms_state_charge closely but comes from the charger frame, so it is a useful second opinion on whether the charger itself was commanded on.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "dark-blue",
+                  "index": 0,
+                  "text": "no"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "yes"
+                }
+              }
+            }
+          ],
+          "noValue": "no charger data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 19
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charger enabled\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charger_enabled' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charger enabled",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The seven bms_state_* booleans decoded from the 0x201 System State byte, one lane each. A state timeline suits these far better than lines: each stored row is an edge and the value holds until the next one. In the current capture only Discharge and Charge ever go on; the other five lanes sit at \"no\" and will stay that way until a charge reaches balancing or completion.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "no": {
+                  "color": "dark-blue",
+                  "index": 0
+                },
+                "yes": {
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "no BMS state rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 9,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Discharge\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_discharge' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Charge\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_charge' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Trickle\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_trickle' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Balancing\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_balancing' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "D",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Charge complete\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_charge_complete' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "E",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Idle\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_idle' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "F",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Maintenance\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'bms_state_maintenance' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "G",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "BMS system state",
+      "type": "state-timeline"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Charger",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last mains_v. Fixed V suffix rather than Grafana's volt, which applies SI prefixes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no charger data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 34
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Mains voltage\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'mains_v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Mains voltage",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of mains_a over the range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no charger data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 34
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak mains current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'mains_a' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak mains current",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last dc_v, the charger's output voltage into the pack. Sits a few volts above pack_v while current is flowing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no charger data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 34
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"DC voltage\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dc_v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "DC voltage",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of dc_a over the range. Only 7 rows exist in the 2026-08-02 capture, so this is a coarse figure; mains current is the better-sampled one.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no charger data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 34
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak DC current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dc_a' AND r.ts BETWEEN $__from AND $__to\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak DC current",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last charge_limit_a from 0x10A b7. This is the limit the bike is asking for, not what is flowing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no limit data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 34
+      },
+      "id": 15,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charge current limit\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_limit_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge current limit",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last charger_max_dc_a, the charger's own ceiling. Reads 0 when the charger is off.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no charger data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 34
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charger max DC current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charger_max_dc_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charger max DC current",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "mains_v on the left axis, mains_a on the right. Mains current is only published while the charger is drawing, so the trace stops rather than falling to zero when charging ends. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Mains current"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix:A"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Mains voltage"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Mains voltage\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'mains_v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Mains current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'mains_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Mains side",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "dc_v on the left axis, dc_a on the right. dc_a is sparse (7 rows in the current capture) because it only changes in 0.1 A steps at a low charge rate. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "DC current"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix:A"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "super-light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "DC voltage"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"DC voltage\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dc_v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"DC current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dc_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "DC side",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "charge_limit_a (what the bike asks for), charger_max_dc_a (what the charger can do) and dc_a (what actually flowed). All three are step-held between samples. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charge limit\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_limit_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charger max DC\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charger_max_dc_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"DC current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dc_a' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Current limits vs delivered",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "pack_v on the left axis, soc on the right. pack_v is the densest signal in the database; soc moves in 1 % steps, so its trace is a staircase. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SOC"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pack voltage"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Pack voltage\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_v' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"SOC\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack voltage and SOC",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 21,
+      "panels": [],
+      "title": "Battery during charge",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "cell_spread_mv is max minus min computed from 0x203; cell_deviation_mv is the BMS's own max-min out of 0x205, so the two are independent takes on the same thing and should track. This is the panel to watch during a charge: balancing only runs near the top of charge, so a spread that keeps growing as the pack fills is the interesting failure. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:mV"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Cell spread (0x203)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'cell_spread_mv' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Cell deviation (0x205)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'cell_deviation_mv' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Cell spread",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "batt_temp_hi against the coolant outlet probe. AC charging at 3 A barely warms the pack; the reason to keep the panel is that a fast charge should show up here first. coolant_out is bounded to -20..100 C so a probe dropout cannot distort the axis. Values are logged on change with a per-signal deadband, so a gap means \"unchanged\", not \"missing\". stepAfter + spanNulls therefore draws exactly what was recorded; linear interpolation would invent samples that were never on the bus.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Battery (hottest)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Coolant out"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Battery (hottest)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'batt_temp_hi' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Coolant out\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'coolant_out' AND r.ts BETWEEN $__from AND $__to AND r.value BETWEEN -20 AND 100\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge temperatures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "charger_enabled from the charger frame, charging from 0x102 and charge_port_unlocked. The 0x102 charging bit has no coverage during the captured charge - its decoder started afterwards - which is exactly why the annotations key off 0x201 instead.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "no": {
+                  "color": "dark-blue",
+                  "index": 0
+                },
+                "yes": {
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "no charge flag rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "id": 24,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Charger enabled\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charger_enabled' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Charging (0x102)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charging' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Charge port unlocked\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_port_unlocked' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge flags",
+      "type": "state-timeline"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "motorcycle", "charging"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cool Eva — Charging",
+  "uid": "cool-eva-charging",
+  "version": 1,
+  "weekStart": ""
+}

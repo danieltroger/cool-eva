@@ -1,0 +1,1687 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Every logged signal, not just the ones someone built a panel for. Overview and signal browser first, then data health, then an ad-hoc plotter, then one collapsed row per subsystem.",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Rows in the `signal` table. Every signal the logger knows how to write, whether or not it fired.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS \"signals\" FROM signal",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Signals defined",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Distinct signals with at least one reading inside the dashboard time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(DISTINCT signal_id) AS \"reporting\"\nFROM reading\nWHERE ts BETWEEN $__from AND $__to",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Reporting in range",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Rows in `reading` inside the time range. Logging is on-change, so this counts value changes, not samples.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS \"readings\"\nFROM reading\nWHERE ts BETWEEN $__from AND $__to",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Readings in range",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Distinct values of `signal.grp`. Each one gets its own repeated row at the bottom of this dashboard.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "purple",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(DISTINCT grp) AS \"subsystems\" FROM signal WHERE grp IS NOT NULL AND grp <> ''",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Subsystems",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Timestamp of the most recent row in the window. Everything on the data-health row measures silence against this instant, not against wall clock.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "dateTimeAsIso",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MAX(ts) AS \"newest\"\nFROM reading\nWHERE ts BETWEEN $__from AND $__to",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Newest reading in range",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Every signal in the database: group, unit, last value, how long it has been quiet, and how many rows it wrote in this window. Click a column header to sort; the funnel icons filter. Type into the `filter` box at the top to narrow by key — it is a SQL LIKE pattern, so `_` matches any one character and `%` any run of them. `last value`, `min` and `max` are raw numbers — read the `unit` column next to them, because one table cannot carry °C, mV and km at once.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "signal"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 230
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "group"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unit"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "source"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last value"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.width",
+                "value": 130
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "min"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rows"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "silent for"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 60
+                    },
+                    {
+                      "color": "orange",
+                      "value": 300
+                    },
+                    {
+                      "color": "red",
+                      "value": 900
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 170
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last seen"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 17,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "group"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, COUNT(*) AS n_rows, MAX(ts) AS last_ts, MIN(value) AS min_value, MAX(value) AS max_value\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT\n  s.key AS \"signal\",\n  s.grp AS \"group\",\n  COALESCE(NULLIF(s.unit, ''), '(none)') AS \"unit\",\n  s.source AS \"source\",\n  (SELECT r.value FROM reading r\n     WHERE r.signal_id = s.id AND r.ts BETWEEN $__from AND $__to\n     ORDER BY r.ts DESC LIMIT 1) AS \"last value\",\n  (newest.ts - per_signal.last_ts) / 1000.0 AS \"silent for\",\n  COALESCE(per_signal.n_rows, 0) AS \"rows\",\n  per_signal.min_value AS \"min\",\n  per_signal.max_value AS \"max\",\n  per_signal.last_ts AS \"last seen\"\nFROM signal s\nLEFT JOIN per_signal ON per_signal.signal_id = s.id\nCROSS JOIN newest\nWHERE s.key LIKE '%' || ${filter:sqlstring} || '%'\nORDER BY s.grp, s.key",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Signal browser",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "id": 8,
+      "panels": [],
+      "title": "Data health",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Signals whose last reading is within 60 s of the newest reading in the window. On a live database this is the set that is definitely still flowing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 23
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT COUNT(*) AS \"fresh\"\nFROM per_signal CROSS JOIN newest\nWHERE newest.ts - per_signal.last_ts <= 60000",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Updated in last minute",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Signals whose last reading is more than 5 minutes older than the newest reading in the window. Signals with no rows at all in the window are not counted here — those are the 'No data in range' tile next door, so the two counts are disjoint rather than double-counting the same signals. Neither covers a signal that has merely been quiet for a minute or two. Some of these are legitimately static — see the table below before concluding anything.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 23
+      },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT COUNT(*) AS \"silent\"\nFROM per_signal CROSS JOIN newest\nWHERE newest.ts - per_signal.last_ts > 300000",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Silent over 5 min",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Signals defined in the `signal` table with zero rows inside the time range. Widen the range before reading anything into this.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 20
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 23
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS \"no data\"\nFROM signal s\nWHERE NOT EXISTS (SELECT 1 FROM reading r WHERE r.signal_id = s.id AND r.ts BETWEEN $__from AND $__to)",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "No data in range",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Largest gap between a signal's last reading and the newest reading in the window.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "unit": "dtdurations",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 23
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT MAX(newest.ts - per_signal.last_ts) / 1000.0 AS \"longest silence\"\nFROM per_signal CROSS JOIN newest",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Longest silence",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "How long each signal has been quiet, measured against the newest reading anywhere in the window rather than wall clock, so a historical window still ranks correctly. This is a prompt to look, not proof of a fault: a signal that is legitimately constant (keys_paired, soh, a stored DTC count) is indistinguishable here from a decoder that stopped emitting. Judge a row against its own habit — the `rows` column tells you whether it normally chatters — and against its neighbours in the same group. A whole group going quiet at once is the shape worth chasing. The `filter` box at the top narrows this table too.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "signal"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "group"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "source"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rows"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "silent for"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 60
+                    },
+                    {
+                      "color": "orange",
+                      "value": 300
+                    },
+                    {
+                      "color": "red",
+                      "value": 900
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "gradient",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last seen"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 17,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, COUNT(*) AS n_rows, MAX(ts) AS last_ts\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT\n  s.key AS \"signal\",\n  s.grp AS \"group\",\n  s.source AS \"source\",\n  (newest.ts - per_signal.last_ts) / 1000.0 AS \"silent for\",\n  COALESCE(per_signal.n_rows, 0) AS \"rows\",\n  per_signal.last_ts AS \"last seen\"\nFROM signal s\nLEFT JOIN per_signal ON per_signal.signal_id = s.id\nCROSS JOIN newest\nWHERE s.key LIKE '%' || ${filter:sqlstring} || '%'\nORDER BY CASE WHEN per_signal.last_ts IS NULL THEN 1 ELSE 0 END DESC, newest.ts - per_signal.last_ts DESC, s.key",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Time since last reading — worst first",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Row count per one-minute bucket per `signal.grp` — the logger's pulse. A subsystem that stops writing while others keep going is the signature of a dead decoder. Drawn as bars rather than lines on purpose: a minute in which *nothing at all* was written produces no row, so there is no null for `spanNulls: false` to break a line on, and a line would be interpolated straight across a whole-logger outage — bike parked, service down, `can0` gone — as if rows had been written throughout. Bars cannot interpolate, so a blank column means exactly what it looks like. Read magnitudes off the legend's sum and max columns rather than off the bar heights, which get thin over a long range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "displayName": "${__field.labels.metric}",
+          "custom": {
+            "axisLabel": "rows / min",
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "spanNulls": false,
+            "barAlignment": 1
+          },
+          "decimals": 0,
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 17,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": ["sum", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT (r.ts / 60000) * 60 AS time, s.grp AS metric, COUNT(*) AS value\nFROM reading r\nJOIN signal s ON s.id = r.signal_id\nWHERE r.ts BETWEEN $__from AND $__to\nGROUP BY 1, 2\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Rows written per minute, by subsystem",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Plot any signal",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "One panel per signal picked in the `signal` variable at the top (which itself is filtered by the `group` variable). The y-axis unit is pulled from `signal.unit` by the 'Config from query results' transformation reading query B, so 17042 km stays 17042 km instead of being auto-scaled to 17 Mm. Steps hold their value between readings and nulls are spanned, because a gap in on-change logging means 'unchanged', not 'missing'.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "displayName": "${__field.labels.metric}",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 4,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "mean", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, s.key AS metric, r.value AS value\nFROM reading r\nJOIN signal s ON s.id = r.signal_id\nWHERE s.key IN (${signal:sqlstring}) AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT COALESCE(NULLIF(s.unit, ''), 'none') AS unit\nFROM signal s\nWHERE s.key IN (${signal:sqlstring})\nLIMIT 1",
+          "refId": "B",
+          "timeColumns": []
+        }
+      ],
+      "title": "$signal",
+      "type": "timeseries",
+      "transformations": [
+        {
+          "id": "configFromData",
+          "options": {
+            "applyTo": {
+              "id": "byType",
+              "options": "number"
+            },
+            "configRefId": "B",
+            "mappings": [
+              {
+                "fieldName": "unit",
+                "handlerKey": "unit"
+              }
+            ]
+          }
+        }
+      ],
+      "repeat": "signal",
+      "repeatDirection": "h",
+      "maxPerRow": 2
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The rows behind the plots above, newest first, for every signal selected in the `signal` variable. Capped at 250 rows **per signal** rather than 250 across the table: a single global cap is taken in time order, so one chatty signal eats the whole budget and a quiet one selected beside it shows only its newest few rows — or none at all, which on this dashboard reads as a dead decoder rather than a full table. `pack_v` alone is 10,183 rows of the capture's 36k. The cost is that selecting a whole subsystem is 250 × its signal count, and that because the rows are then interleaved by time while the cap is per signal, each signal's block ends at its own 250th-newest row: a signal disappearing partway down the table is the cap running out, not a gap in the log. Narrow the time range or the selection rather than the cap. Within each signal this is the on-change log verbatim: consecutive rows are the moments the value actually moved past its deadband.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              },
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "signal"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 240
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unit"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "value"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "custom.width",
+                "value": 160
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "id": 17,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "time"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT \"time\", \"signal\", \"value\", \"unit\" FROM (\n  SELECT r.ts AS \"time\", s.key AS \"signal\", r.value AS \"value\",\n         COALESCE(NULLIF(s.unit, ''), '(none)') AS \"unit\",\n         ROW_NUMBER() OVER (PARTITION BY s.key ORDER BY r.ts DESC) AS row_rank\n  FROM reading r\n  JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN (${signal:sqlstring}) AND r.ts BETWEEN $__from AND $__to\n)\nWHERE row_rank <= 250\nORDER BY \"time\" DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Raw values",
+      "type": "table"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      },
+      "id": 20,
+      "panels": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "description": "Inventory for this subsystem: every signal in `signal.grp = $grp` with its unit, its last value in the window, the min/max it reached, how long it has been quiet and how many rows it wrote. Units are per row because a single group mixes °C, V, A and %.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "none"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "signal"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 200
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "unit"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 80
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "last value"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 110
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "min"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 100
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "max"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 100
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "rows"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 80
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "silent for"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dtdurations"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 1
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "yellow",
+                          "value": 60
+                        },
+                        {
+                          "color": "orange",
+                          "value": 300
+                        },
+                        {
+                          "color": "red",
+                          "value": 900
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-text"
+                    }
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 160
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 10,
+            "x": 0,
+            "y": 0
+          },
+          "id": 18,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": ["sum"],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "cool-eva-sqlite"
+              },
+              "queryType": "table",
+              "rawQueryText": "WITH per_signal AS (\n  SELECT signal_id, COUNT(*) AS n_rows, MAX(ts) AS last_ts, MIN(value) AS min_value, MAX(value) AS max_value\n  FROM reading\n  WHERE ts BETWEEN $__from AND $__to\n  GROUP BY signal_id\n),\nnewest AS (SELECT MAX(last_ts) AS ts FROM per_signal)\nSELECT\n  s.key AS \"signal\",\n  COALESCE(NULLIF(s.unit, ''), '(none)') AS \"unit\",\n  (SELECT r.value FROM reading r\n     WHERE r.signal_id = s.id AND r.ts BETWEEN $__from AND $__to\n     ORDER BY r.ts DESC LIMIT 1) AS \"last value\",\n  per_signal.min_value AS \"min\",\n  per_signal.max_value AS \"max\",\n  (newest.ts - per_signal.last_ts) / 1000.0 AS \"silent for\",\n  COALESCE(per_signal.n_rows, 0) AS \"rows\"\nFROM signal s\nLEFT JOIN per_signal ON per_signal.signal_id = s.id\nCROSS JOIN newest\nWHERE s.grp IN (${grp:sqlstring})\nORDER BY s.key",
+              "refId": "A",
+              "timeColumns": []
+            }
+          ],
+          "title": "Signals in $grp",
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "description": "Every signal in this subsystem plotted raw. The axis is deliberately unitless and each series carries its own unit in the legend, because one group mixes V, A, °C and %. That also means small signals get flattened by large ones — click a legend entry to isolate a single series, or use the 'Plot any signal' row above, which does put the real unit on the axis. Steps hold and nulls are spanned: a gap in on-change logging means the value did not move. This is the one query on the dashboard that pulls a whole subsystem raw — unbucketed and unlimited, where 'Plot any signal' above is unbucketed but one signal per panel — and the plugin's long-to-wide conversion pads every series out to every timestamp in the group, so the point count is roughly (signals in group) × (rows in group). Measured on the 4.8-hour 2026-08-02 capture: 648k points for `battery`, 315k for `cells`, 80k for `drive` — and that scales with however much history the range covers. Narrow the time range before expanding the big groups. The row is collapsed by default for exactly this reason, so nothing runs until you open it.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "displayName": "${__field.labels.metric}",
+              "custom": {
+                "axisLabel": "mixed units — see legend",
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 1.5,
+                "pointSize": 4,
+                "showPoints": "auto",
+                "spanNulls": true
+              },
+              "unit": "none"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 14,
+            "x": 10,
+            "y": 0
+          },
+          "id": 19,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "cool-eva-sqlite"
+              },
+              "queryType": "time series",
+              "rawQueryText": "SELECT\n  r.ts / 1000.0 AS time,\n  s.key || CASE WHEN COALESCE(s.unit, '') = '' THEN '' ELSE ' (' || s.unit || ')' END AS metric,\n  r.value AS value\nFROM reading r\nJOIN signal s ON s.id = r.signal_id\nWHERE s.grp IN (${grp:sqlstring}) AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+              "refId": "A",
+              "timeColumns": ["time"]
+            }
+          ],
+          "title": "$grp — raw values",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Subsystem: $grp",
+      "type": "row",
+      "repeat": "grp"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "motorcycle", "explore", "data-health"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "definition": "SELECT DISTINCT grp FROM signal WHERE grp IS NOT NULL AND grp <> '' ORDER BY grp",
+        "description": "Subsystem, straight from signal.grp. Drives the repeated rows at the bottom and filters the signal picker.",
+        "hide": 0,
+        "includeAll": true,
+        "label": "group",
+        "multi": true,
+        "name": "grp",
+        "options": [],
+        "query": "SELECT DISTINCT grp FROM signal WHERE grp IS NOT NULL AND grp <> '' ORDER BY grp",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": ["pack_kw"],
+          "value": ["pack_kw"]
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "definition": "SELECT key FROM signal WHERE grp IN (${grp:sqlstring}) ORDER BY key",
+        "description": "Signal keys, narrowed to whatever the group variable is set to. Drives the ad-hoc plot and the raw value table.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "signal",
+        "multi": true,
+        "name": "signal",
+        "options": [],
+        "query": "SELECT key FROM signal WHERE grp IN (${grp:sqlstring}) ORDER BY key",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "description": "Matches the signal key with SQL LIKE in both full-signal tables, so it is a pattern rather than a plain substring: `_` matches any one character and `%` any run of them, which is why `cell_1` also matches `cell21`. Empty matches everything.",
+        "hide": 0,
+        "label": "filter",
+        "name": "filter",
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+  },
+  "timezone": "browser",
+  "title": "Cool Eva — Explore & data health",
+  "uid": "cool-eva-explore",
+  "version": 1
+}
