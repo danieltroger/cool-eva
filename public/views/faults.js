@@ -88,11 +88,11 @@ export function FaultsView() {
       if (faults.length === 0) {
         return div();
       }
-      // A plain div, NOT class="view": .view carries `padding: 0 0.5rem`, so nesting
-      // one insets these cards relative to the hero and Counters tile either side of
-      // them. views/all.js nests a bare div for the same reason. .tile.span2 still
-      // spans both columns, since it inherits the OUTER grid.
-      return div(SectionLabel("Codes"), ...faults.map(FaultCard));
+      // .tile-group, not .view and not a bare div: .view would double the 0.5 rem
+      // horizontal padding and inset this group relative to the hero and Counters
+      // either side of it, while a bare div drops the cards out of any grid and
+      // loses the gap between them entirely.
+      return div({ class: "tile-group" }, SectionLabel("Codes"), ...faults.map(FaultCard));
     },
     SectionLabel("Counters"),
     Counters(),
@@ -352,14 +352,25 @@ function rawLabel(key) {
 }
 
 /**
- * Fetches the code table once. Failure is not fatal — the view falls back to raw
+ * Fetches the code table. Failure is not fatal — the view falls back to raw
  * component/symptom numbers and says so, because a fault you cannot name is still
  * a fault you need to know about.
+ *
+ * Re-entry is gated on a flag rather than on the error state, which matters twice.
+ * FaultsView() runs on every switch INTO the tab, so gating on `table.val` alone
+ * lets tab-flipping fire several requests while the first is still in the air. And
+ * gating on `tableError` would make one failure permanent: a fetch that lost to the
+ * phone not having joined the garage wifi yet would leave the screen showing "44/0"
+ * for the rest of the session, with no reload or reconnect able to recover it.
+ * Coming back to the tab retries.
  */
+let fetchInFlight = false;
+
 async function loadTable() {
-  if (table.val || tableError.val) {
+  if (table.val || fetchInFlight) {
     return;
   }
+  fetchInFlight = true;
   try {
     const response = await fetch("/dtc-table");
     if (!response.ok) {
@@ -367,8 +378,13 @@ async function loadTable() {
     }
     const payload = /** @type {DtcTablePayload} */ (await response.json());
     table.val = payload.codes;
+    tableError.val = null;
   } catch (error) {
-    tableError.val = /** @type {Error} */ (error).message;
+    // Not a cast: `throw 'x'` and some engines' json() rejections are not Errors,
+    // and asserting they are puts "Code names unavailable (undefined)" on screen.
+    tableError.val = error instanceof Error ? error.message : String(error);
     console.warn("faults: could not load /dtc-table —", error);
+  } finally {
+    fetchInFlight = false;
   }
 }

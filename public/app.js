@@ -74,9 +74,9 @@ function Header() {
           void refreshStatus();
         },
       },
-      // A stored trouble code turns the menu button itself into the warning, so
-      // nothing has to be given up on the riding screens to surface it.
-      () => (hasTroubleCodes() ? "⚠" : "☰")
+      // The Faults tab carries the warning now, and it leads somewhere that names
+      // the code. Two ⚠ for one fault is how a warning stops being read.
+      "☰"
     ),
     span({ class: "brand" }, "Cool Eva"),
     div(

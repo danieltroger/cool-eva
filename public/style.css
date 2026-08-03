@@ -105,6 +105,16 @@ body {
   align-content: start;
 }
 
+/* A run of full-width tiles inside a .view. Re-using .view here would work for
+   layout but double its horizontal padding, insetting the group relative to the
+   tiles above and below it; a bare div loses the gap instead, because the cards
+   stop being grid items. This carries the gap and nothing else. */
+.tile-group {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.5rem;
+}
+
 .section {
   grid-column: 1 / -1;
   font-size: 0.68rem;
@@ -290,6 +300,12 @@ body {
   letter-spacing: 0.06em;
   /* Deliberately tall: this is aimed at with a gloved thumb, in motion. */
   padding: 1.05rem 0.2rem;
+  /* The Faults tab widens to "⚠ Faults" when a code sets. With five tabs sharing
+     the width that can wrap on a narrow phone, and --tabs-height is a fixed
+     constant that body's padding-bottom derives from — so a wrapped label makes
+     the real bar taller than the space reserved for it and buries the last tile
+     under your thumb, the exact thing --tabs-height exists to prevent. */
+  white-space: nowrap;
   cursor: pointer;
 }
 
