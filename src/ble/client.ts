@@ -1,5 +1,6 @@
 import { createBluetooth, type Adapter, type GattCharacteristic } from "node-ble";
 import { ensureBluetoothAdapterUp } from "./adapter.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 import { syncSystemClockFromGps } from "../gps/clock.ts";
 import { DiagnosticListAssembler, isDiagnosticsInfoMessage, isDiagnosticsMessage } from "../diagnostics/decode.ts";
 import { logDiagnosticsSideChannel, logRawDiagnosticsFrame, recordDiagnosticReport } from "../diagnostics/record.ts";
@@ -80,8 +81,8 @@ async function sendHandshake(writeCharacteristic: GattCharacteristic, seed: numb
 }
 
 async function discoverHubAddress(adapter: Adapter): Promise<string> {
-  const deadline = Date.now() + DISCOVERY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
+  const startedAt = monotonicNow();
+  while (since(startedAt) < DISCOVERY_TIMEOUT_MS) {
     for (const address of await adapter.devices()) {
       try {
         const name = await (await adapter.getDevice(address)).getName();
@@ -143,8 +144,8 @@ export function startBleClient(options: BleClientOptions): BleClient {
       let authorised = false;
       let handshakeInFlight = false;
       let warnedUnauthorised = false;
-      const startedAt = Date.now();
-      let lastFrameAt = Date.now();
+      const startedAt = monotonicNow();
+      let lastFrameAt = monotonicNow();
 
       // Which address the hub wants in the third frame is genuinely ambiguous:
       // the BLE deck says "the app sends its OWN MAC", but the decompiled app
@@ -175,7 +176,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
 
       await notifyCharacteristic.startNotifications();
       notifyCharacteristic.on("valuechanged", (chunk: Buffer) => {
-        lastFrameAt = Date.now();
+        lastFrameAt = monotonicNow();
         for (const frame of reassembler.push(chunk)) {
           if (isSessionConfirmed(frame)) {
             if (!authorised) {
@@ -216,7 +217,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
           if (authorised || handshakeInFlight) {
             continue;
           }
-          if (!warnedUnauthorised && Date.now() - startedAt > UNAUTHORISED_HINT_AFTER_MS) {
+          if (!warnedUnauthorised && since(startedAt) > UNAUTHORISED_HINT_AFTER_MS) {
             warnedUnauthorised = true;
             console.warn(
               "ble: hub keeps re-seeding and never confirms the session. It only accepts ONE " +
@@ -282,7 +283,7 @@ export function startBleClient(options: BleClientOptions): BleClient {
       };
 
       // Hold the session open until the link goes quiet or we're shutting down.
-      while (!stopped && Date.now() - lastFrameAt < SILENCE_TIMEOUT_MS) {
+      while (!stopped && since(lastFrameAt) < SILENCE_TIMEOUT_MS) {
         await delay(1_000);
       }
       if (!stopped) {

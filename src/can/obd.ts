@@ -1,6 +1,7 @@
 import type { RawChannel } from "socketcan";
 import type { DecodedValue } from "./frame.ts";
 import { record } from "./signals.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 
 // OBD-II Mode-01 polling over CAN (see obd-garage/CAN_MAP.md §OBD-II queries).
 // Functional request to 0x7DF, single-frame responses arrive on 0x7E8..0x7EF.
@@ -136,13 +137,16 @@ export function startObdPoller(intervalMs = 1000): () => void {
   let stopped = false;
   const loop = async (): Promise<void> => {
     while (!stopped) {
-      const t0 = Date.now();
+      // Monotonic: a backwards wall-clock step makes the elapsed time negative,
+      // so `intervalMs - elapsed` becomes the size of the step and polling stalls
+      // for that long — a minute-sized step means a minute with no OBD data.
+      const roundStartedAt = monotonicNow();
       try {
         await pollOnce();
       } catch (err) {
         console.error("obd: poll error", err);
       }
-      await sleep(Math.max(0, intervalMs - (Date.now() - t0)));
+      await sleep(Math.max(0, intervalMs - since(roundStartedAt)));
     }
   };
   void loop();

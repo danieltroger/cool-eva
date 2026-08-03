@@ -1,5 +1,6 @@
 import { OFFSET_CONFIG_MIN_DLC } from "./decode-bms.ts";
 import type { DecodedValue } from "./frame.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 
 // Decides which frame is allowed to write batt_temp_lo / batt_temp_hi.
 //
@@ -86,7 +87,7 @@ let trueTemperatureSource: TrueTemperatureSource = "unknown";
 // routinely hours or years. A backwards step would leave this difference negative
 // forever, so the window would never expire and the true keys would stay unwritten for
 // the whole ride; a forwards step would expire it instantly and latch "stock" before
-// 0x660 had any of its five chances. performance.now() is unaffected by `date -s`.
+// 0x660 had any of its five chances. See ../monotonic.ts.
 let firstVcuTemperatureAtMonotonicMs: number | undefined;
 let consecutiveShortThermalFrames = 0;
 // Diagnostics only — never consulted by a routing decision.
@@ -108,7 +109,7 @@ export function resolvePackTemperatures(id: number, data: Buffer, decoded: Decod
   }
   const trueTemperatures = collectTrueTemperatureCandidates(decoded);
   if (trueTemperatures.length === 0) return decoded;
-  firstVcuTemperatureAtMonotonicMs ??= performance.now();
+  firstVcuTemperatureAtMonotonicMs ??= monotonicNow();
   if (!resolveVcuFrameOwnership(firstVcuTemperatureAtMonotonicMs)) return decoded;
   return [...decoded, ...trueTemperatures];
 }
@@ -195,7 +196,7 @@ function noteShortThermalFrame(): void {
 // "0x660 owns them", no row written.
 function resolveVcuFrameOwnership(waitStartedAtMonotonicMs: number): boolean {
   if (trueTemperatureSource !== "unknown") return trueTemperatureSource === "vcu-frame";
-  if (performance.now() - waitStartedAtMonotonicMs < THERMAL_FRAME_WAIT_MS) return false;
+  if (since(waitStartedAtMonotonicMs) < THERMAL_FRAME_WAIT_MS) return false;
   if (customBmsConfigExpected) {
     // The flag says the offset config is flashed, and the frame that would carry the
     // true temperature has never arrived. 0x200 is NOT a fallback: under that config its
