@@ -44,7 +44,15 @@ export function handleWaypointEndpoint(res: ServerResponse): void {
   // refused for the whole ride; against the monotonic clock it reads as what it is.
   const latitudeAge = ageMs("gps_lat");
   const longitudeAge = ageMs("gps_lon");
-  const fixAgeMs = Math.max(latitudeAge ?? Infinity, longitudeAge ?? Infinity);
+  if (latitudeAge === null || longitudeAge === null) {
+    // Cannot happen while record() writes liveState and the monotonic mark together,
+    // which is exactly why it must not be papered over with a sentinel: an Infinity
+    // here would have Siri announce "GPS fix is Infinity seconds old".
+    respond(res, "No GPS fix yet — waypoint not saved.");
+    console.warn("waypoint: refused, GPS signals present but never marked as seen");
+    return;
+  }
+  const fixAgeMs = Math.max(latitudeAge, longitudeAge);
   if (fixAgeMs > FIX_MAX_AGE_MS) {
     respond(res, `GPS fix is ${Math.round(fixAgeMs / 1000)} seconds old — waypoint not saved.`);
     console.warn(`waypoint: refused, fix is ${Math.round(fixAgeMs / 1000)} s old`);
