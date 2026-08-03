@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { isPlausible } from "./bounds.js";
 import { ringFor } from "./ring.js";
+import { monotonicNow, since } from "./clock.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -150,7 +151,7 @@ export function connect() {
     // only `onopen` ever cleared it, so one throttled interval in a backgrounded
     // tab left the header lying about a link that was streaming fine.
     connection.val = "live";
-    lastMessageAt = Date.now();
+    lastMessageAt = monotonicNow();
     try {
       const message = /** @type {DashboardMessage} */ (JSON.parse(event.data));
       apply(message);
@@ -204,7 +205,10 @@ function apply(message) {
       continue;
     }
     signalState(key).val = reading;
-    ringFor(key).push(reading.ts, reading.value);
+    // The ring is keyed on the phone's monotonic clock, not reading.ts: the Pi has
+    // no RTC and its stamps can be hours out from this device, which would put every
+    // sample outside every chart window. See lib/clock.js.
+    ringFor(key).push(monotonicNow(), reading.value);
   }
   if (added) {
     knownKeys.val = [...seenKeys].sort();
@@ -215,7 +219,9 @@ function apply(message) {
 // silence — recovery is driven by messages arriving, above — so a throttled timer
 // in a background tab cannot leave a false label on screen.
 setInterval(() => {
-  if (lastMessageAt > 0 && Date.now() - lastMessageAt > SILENCE_LIMIT_MS) {
+  // Monotonic: a wall-clock jump here would either fake a dropout on a healthy link
+  // or hide a real one, and this watchdog exists precisely to be trusted about that.
+  if (lastMessageAt > 0 && since(lastMessageAt) > SILENCE_LIMIT_MS) {
     connection.val = "offline";
   }
 }, 3000);

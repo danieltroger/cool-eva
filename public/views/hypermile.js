@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
 import { ringFor } from "../lib/ring.js";
+import { monotonicNow } from "../lib/clock.js";
 import {
   CELL_COUNT,
   headroomMv,
@@ -168,14 +169,14 @@ function ConsumptionTile() {
       { class: "value" },
       () => {
         chartTick.val;
-        const rolling = rollingConsumption(Date.now());
+        const rolling = rollingConsumption(monotonicNow());
         return rolling == null ? "–" : rolling.whPerKm.toFixed(0);
       },
       span({ class: "unit" }, "Wh/km")
     ),
     div({ class: "sub" }, () => {
       chartTick.val;
-      const now = Date.now();
+      const now = monotonicNow();
       const rolling = rollingConsumption(now);
       const range = rollingRangeKm(now);
       if (rolling == null) {
@@ -222,7 +223,7 @@ function LossTile() {
       if (milliohms == null || milliohms <= 0) {
         return sparkline({ values: [], color: colors.MUTED });
       }
-      const amps = ringFor("pack_a").since(10 * 60_000, Date.now());
+      const amps = ringFor("pack_a").since(10 * 60_000, monotonicNow());
       const watts = amps.values.map(value => (value * value * milliohms) / 1000);
       const packKilowatts = peek("pack_kw");
       const outputWatts = packKilowatts == null ? 0 : Math.abs(packKilowatts) * 1000;

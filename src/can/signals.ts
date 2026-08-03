@@ -1,5 +1,6 @@
 import type { SignalSource } from "../db.ts";
 import { appendReading } from "../storage/encrypted-log.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 
 // The log-on-change core (see obd-garage/INTEGRATION_PLAN.md §Logging model).
 //
@@ -31,6 +32,18 @@ export interface LiveValue {
 const defs = new Map<string, SignalDef>();
 const liveState = new Map<string, LiveValue>();
 const lastLogged = new Map<string, number>();
+
+// When each signal was last seen, on the monotonic clock.
+//
+// Deliberately NOT a field on LiveValue: `ts` is a wall-clock stamp because that is
+// what gets sealed into the ride log and what the dashboard displays, and it has to
+// stay that. But "how old is this reading" is a duration, and this process steps its
+// own wall clock (gps/clock.ts, see ../monotonic.ts) — so every server-side
+// freshness check has to measure against something a `date -s` cannot move. Keeping
+// it in a parallel map also keeps it off the WebSocket, where a second timestamp per
+// signal would be ~230 numbers per snapshot that no client can use: performance.now()
+// origins are per-process and mean nothing in the browser.
+const lastSeenMonotonic = new Map<string, number>();
 
 // Event-driven push: the WS layer registers a listener and we hand it the signals
 // that changed (already rate-limited by the per-signal deadbands). Changes that
@@ -69,6 +82,7 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
 
   // Always refresh live state for the dashboard.
   liveState.set(key, { value, unit, group, ts });
+  lastSeenMonotonic.set(key, monotonicNow());
 
   // Change-detection (against last *logged* value) for the DB.
   const prev = lastLogged.get(key);
@@ -81,6 +95,20 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
     appendReading(ts, key, value, unit, group, def?.source ?? "stream");
     notifyChange(key, { value, unit, group, ts });
   }
+}
+
+/**
+ * Milliseconds since this signal last arrived, or null if it never has.
+ *
+ * Use this for every "is it fresh / is it stale" question on the server. Comparing
+ * `Date.now()` against `LiveValue.ts` looks equivalent and is not: the first GPS fix
+ * after a no-network boot steps the clock by however wrong the Pi was, and every
+ * reading taken before that step instantly looks hours old — or, on a backwards
+ * step, arrives from the future.
+ */
+export function ageMs(key: string): number | null {
+  const mark = lastSeenMonotonic.get(key);
+  return mark === undefined ? null : since(mark);
 }
 
 export function snapshot(): Record<string, LiveValue> {

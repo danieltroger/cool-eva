@@ -11,6 +11,14 @@
 // Fixed-size typed arrays rather than a growing array of objects — this runs for a
 // whole ride in a backgrounded Safari tab, and the allocation churn of the obvious
 // implementation is exactly what gets a tab killed under memory pressure.
+//
+// Timestamps here are the PHONE's monotonic clock (lib/clock.js), never the Pi's
+// `LiveValue.ts`. Two reasons, and both have teeth: these are only ever used to ask
+// "how long ago", which must survive the phone's wall clock moving; and the Pi has
+// no RTC, so mixing its stamps with a client `Date.now()` — which is what this did
+// first — silently empties every trace on a cold-booted bike. Nothing in a chart
+// needs to correlate with the ride log, so the simplest correct base is the local
+// monotonic one.
 
 /** Samples kept per signal. At the 2 Hz write rate below this is ~30 minutes. */
 const CAPACITY = 3600;
@@ -29,7 +37,7 @@ export class Ring {
   #length = 0;
 
   /**
-   * @param {number} ts
+   * @param {number} ts monotonic, from lib/clock.js — NOT a server `LiveValue.ts`
    * @param {number} value
    */
   push(ts, value) {
@@ -57,7 +65,7 @@ export class Ring {
    * Oldest-to-newest samples from the last `windowMs`, as flat [t, v] pairs ready
    * for a polyline. Returns a fresh array; callers must not hold onto it.
    * @param {number} windowMs
-   * @param {number} now
+   * @param {number} now monotonic, from lib/clock.js
    * @returns {{ times: number[], values: number[], min: number, max: number }}
    */
   since(windowMs, now) {

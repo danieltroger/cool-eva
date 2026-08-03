@@ -1,7 +1,7 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { ServerResponse } from "http";
-import { snapshot } from "../can/signals.ts";
+import { ageMs, snapshot } from "../can/signals.ts";
 import { waypointsSaved } from "./waypoint.ts";
 
 // GET /status — the things the dashboard needs that aren't telemetry.
@@ -58,12 +58,15 @@ async function measureLog(directory: string): Promise<{ segments: number; bytes:
 }
 
 function summariseGroups(): Record<string, [number, number]> {
-  const now = Date.now();
   const groups: Record<string, [number, number]> = {};
-  for (const value of Object.values(snapshot())) {
+  for (const [key, value] of Object.entries(snapshot())) {
     const counts = groups[value.group] ?? [0, 0];
     counts[1] += 1;
-    if (now - value.ts < FRESH_MS) {
+    // ageMs(), not Date.now() - value.ts: a clock step would otherwise flip every
+    // group to 0-live at once, which reads as "the CAN bus died" — the exact
+    // question this endpoint exists to answer, answered wrongly.
+    const age = ageMs(key);
+    if (age !== null && age < FRESH_MS) {
       counts[0] += 1;
     }
     groups[value.group] = counts;

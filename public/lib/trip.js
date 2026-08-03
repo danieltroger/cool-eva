@@ -1,6 +1,7 @@
 // @ts-check
 
 import { peek } from "./store.js";
+import { monotonicNow, since } from "./clock.js";
 
 // Trip accounting for the current session.
 //
@@ -12,7 +13,7 @@ import { peek } from "./store.js";
 /** Above this the bike counts as moving, ignoring GPS jitter at a standstill. */
 const MOVING_THRESHOLD_KMH = 3;
 
-const startedAt = Date.now();
+const startedAt = monotonicNow();
 let odometerAtStart = /** @type {number | null} */ (null);
 let movingSeconds = 0;
 let topSpeedKmh = 0;
@@ -60,7 +61,7 @@ export function movingTimeSeconds() {
 }
 
 export function elapsedSeconds() {
-  return (Date.now() - startedAt) / 1000;
+  return since(startedAt) / 1000;
 }
 
 export function topSpeed() {

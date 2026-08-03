@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
+import { monotonicNow } from "../lib/clock.js";
 import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
 import { PairTile, SectionLabel, SignalTile, Tile } from "../lib/tiles.js";
 import { meter, sparkline, splitBar } from "../lib/svg.js";
@@ -170,7 +171,7 @@ function CoolantDeltaTile() {
     ),
     () => {
       chartTick.val;
-      const now = Date.now();
+      const now = monotonicNow();
       const inlet = ringFor("coolant_in").since(10 * 60_000, now);
       const outlet = ringFor("coolant_out").since(10 * 60_000, now);
       // Both traces would need a shared scale to be comparable, and the difference
