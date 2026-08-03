@@ -1,8 +1,8 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, signalState, valueOf } from "../lib/store.js";
-import { ringFor } from "../lib/ring.js";
+import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
+import { differenceByTime, ringFor } from "../lib/ring.js";
 import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
 import { PairTile, SectionLabel, SignalTile, Tile } from "../lib/tiles.js";
 import { meter, sparkline, splitBar } from "../lib/svg.js";
@@ -174,9 +174,17 @@ function CoolantDeltaTile() {
       const inlet = ringFor("coolant_in").since(10 * 60_000, now);
       const outlet = ringFor("coolant_out").since(10 * 60_000, now);
       // Both traces would need a shared scale to be comparable, and the difference
-      // is the point — so chart the difference itself, sampled at the outlet's rate.
-      const deltas = outlet.values.map((value, index) => value - (inlet.values[index] ?? value));
-      return sparkline({ values: deltas, color: deltaColor(), minSpan: 0.5, baseline: 0 });
+      // is the point — so chart the difference itself, at the outlet's sample times
+      // with the inlet held from whatever it last read. Pairing the two by array
+      // index instead would silently plot the rate mismatch between the probes.
+      const deltas = differenceByTime(outlet, inlet);
+      // peek(), not the deltaColor() above: that reads through valueOf() and would
+      // subscribe this redraw to both probes instead of leaving it on the tick.
+      const inletNow = peek("coolant_in");
+      const outletNow = peek("coolant_out");
+      const delta = inletNow == null || outletNow == null ? null : outletNow - inletNow;
+      const traceColor = delta != null && delta > 0.3 ? colors.GOOD : colors.MUTED;
+      return sparkline({ values: deltas, color: traceColor, minSpan: 0.5, baseline: 0 });
     },
     div({ class: "sub" }, () => {
       const watts = resistiveLossWatts();

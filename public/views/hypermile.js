@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, signalState, valueOf } from "../lib/store.js";
+import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
 import { ringFor } from "../lib/ring.js";
 import {
   CELL_COUNT,
@@ -210,8 +210,13 @@ function LossTile() {
       span({ class: "unit" }, "%")
     ),
     () => {
+      // Everything read inside this binding becomes a dependency of it, so the
+      // resistance is sampled with peek() and the colour is computed from peeked
+      // values — reading pack_a or pack_kw through valueOf() here would subscribe
+      // the redraw to a signal with no deadband and pace it at frame rate, which is
+      // exactly what the tick is meant to prevent.
       chartTick.val;
-      const milliohms = valueOf("pack_resistance_mohm");
+      const milliohms = peek("pack_resistance_mohm");
       // Charting zero watts because the resistance is unknown draws a flat line that
       // looks like a measurement of "no losses". Draw the empty placeholder instead.
       if (milliohms == null || milliohms <= 0) {
@@ -219,7 +224,11 @@ function LossTile() {
       }
       const amps = ringFor("pack_a").since(10 * 60_000, Date.now());
       const watts = amps.values.map(value => (value * value * milliohms) / 1000);
-      return sparkline({ values: watts, color: colors.lossFraction(resistiveLossPercent()), minSpan: 100 });
+      const packKilowatts = peek("pack_kw");
+      const outputWatts = packKilowatts == null ? 0 : Math.abs(packKilowatts) * 1000;
+      const newestWatts = watts.length > 0 ? watts[watts.length - 1] : null;
+      const percent = outputWatts < 300 || newestWatts == null ? null : (newestWatts / outputWatts) * 100;
+      return sparkline({ values: watts, color: colors.lossFraction(percent), minSpan: 100 });
     },
     div({ class: "sub" }, () => {
       const milliohms = valueOf("pack_resistance_mohm");
@@ -281,18 +290,20 @@ function CellStrip() {
     // Scale to the spread rather than to zero, or 81 near-identical cells all draw
     // as full-height bars and the weak one is invisible.
     const padding = Math.max((high - low) * 0.25, 5);
-    const weakest = low;
     return div(
       div({ class: "label" }, `Cells (${bars.length} of ${CELL_COUNT})`),
       barStrip({
-        bars: bars.map(value => ({
-          value,
-          color: value === weakest ? colors.BAD : value - low < (high - low) * 0.25 ? colors.WARN : colors.GOOD,
-        })),
+        // The *scale* is relative — that is what makes a short bar visible — but the
+        // *colour* is absolute, in millivolts below the strongest cell. Colouring by
+        // position within the pack's own spread means a well-balanced pack (a few mV
+        // end to end) paints itself orange and red, and a pack whose cells all read
+        // identically after the 5 mV deadband paints entirely red. colors.spread()
+        // already encodes what a gap worth worrying about actually is.
+        bars: bars.map(value => ({ value, color: colors.spread(high - value) })),
         low: low - padding,
         high: high + padding,
       }),
-      div({ class: "sub" }, `${Math.round(low)} – ${Math.round(high)} mV`)
+      div({ class: "sub" }, `${Math.round(low)} – ${Math.round(high)} mV · spread ${Math.round(high - low)} mV`)
     );
   });
 }

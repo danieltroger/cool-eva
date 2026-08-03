@@ -43,6 +43,27 @@ const faults = new Map();
 export const knownKeys = van.state(/** @type {string[]} */ ([]));
 
 /**
+ * Group per key. A plain Map rather than a state, deliberately: a signal's group
+ * never changes after it is first seen, and reading it from a state inside a
+ * binding would subscribe that binding to the signal. The ALL view groups ~230
+ * keys in one binding, so doing that there would re-run the whole grid on every
+ * patch — the exact cost the per-signal store above exists to avoid.
+ * @type {Map<string, string>}
+ */
+const groups = new Map();
+
+/** Keys the bike has actually sent, as opposed to states a view happens to have created. */
+const seenKeys = new Set();
+
+/**
+ * The group a signal belongs to, without subscribing to it.
+ * @param {string} key
+ */
+export function groupOf(key) {
+  return groups.get(key) ?? "misc";
+}
+
+/**
  * The state holding a signal's latest plausible reading, created on first use.
  * Reading `.val` inside a binding subscribes that binding to this signal alone.
  * @param {string} key
@@ -72,11 +93,32 @@ export function faultState(key) {
 
 /**
  * Latest numeric value of a signal, or null. Convenience for derived values.
+ *
+ * Reading this inside a binding subscribes that binding to the signal, which is
+ * usually what you want — a readout should update when its number does. When it
+ * is not what you want, use peek().
  * @param {string} key
  * @returns {number | null}
  */
 export function valueOf(key) {
   const reading = signalState(key).val;
+  return reading ? reading.value : null;
+}
+
+/**
+ * The same value, without subscribing to it.
+ *
+ * VanJS collects dependencies during a binding by intercepting the `val` getter
+ * (`curDeps?._getters?.add(this)`, van-1.6.1.js:36); `rawVal` is a plain property
+ * and is not intercepted. So this is the read to use for anything a binding needs
+ * to *sample* rather than *react to* — a chart that is paced by chartTick, or the
+ * timers in app.js. Using valueOf() in those places silently re-subscribes the
+ * binding to a 20 Hz signal and cancels whatever throttle it was meant to have.
+ * @param {string} key
+ * @returns {number | null}
+ */
+export function peek(key) {
+  const reading = signalState(key).rawVal;
   return reading ? reading.value : null;
 }
 
@@ -139,7 +181,22 @@ function apply(message) {
   serverTime.val = message.ts;
   let added = false;
   for (const [key, reading] of Object.entries(message.signals)) {
-    if (!states.has(key)) {
+    // Tracked here, and NOT via `states`, because `states` is not a record of what
+    // the bike has sent: signalState() is also called while a view is being built
+    // (every valueOf() does it), so a key can be in `states` before a single
+    // message mentions it. Keying off that would file those signals under "misc"
+    // forever and list never-seen keys in the ALL view.
+    //
+    // Recorded before the plausibility gate below, not after. A signal that only
+    // ever produces rejected readings — coolant_in stuck at -242 °C for 59 450
+    // rows is the real case — must still count as seen exactly once, or `added`
+    // latches true and knownKeys is rebuilt on every message, re-running
+    // everything bound to it; and the fault-only branch in views/all.js never gets
+    // a key to render.
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      groups.set(key, reading.group);
+      signalState(key);
       added = true;
     }
     if (!isPlausible(key, reading.value, reading.unit, reading.group)) {
@@ -150,7 +207,7 @@ function apply(message) {
     ringFor(key).push(reading.ts, reading.value);
   }
   if (added) {
-    knownKeys.val = [...states.keys()].sort();
+    knownKeys.val = [...seenKeys].sort();
   }
 }
 

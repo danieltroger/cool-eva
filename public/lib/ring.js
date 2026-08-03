@@ -112,6 +112,50 @@ export class Ring {
   }
 }
 
+/**
+ * Differences two windows sample-by-sample, pairing by *timestamp* rather than by
+ * array index.
+ *
+ * Index pairing looks right and is not: two signals only line up by index if they
+ * were sampled together, and nothing here guarantees that. coolant_in and
+ * coolant_out are read from separate awaited calls and each is gated by its own
+ * 0.05 °C deadband before it is pushed, so the two rings hold different numbers of
+ * samples taken at different moments — on this bike coolant_in has roughly ten
+ * times the rows of coolant_out. Subtracting by index would drift further into the
+ * past the further along the window you look, and produce a plausible-looking
+ * trace of the rate mismatch rather than of the quantity being measured.
+ *
+ * For each sample of `primary`, this takes the newest `reference` sample at or
+ * before it — a zero-order hold, which is the correct reading of "what was the
+ * inlet doing when the outlet was measured".
+ *
+ * @param {{ times: number[], values: number[] }} primary
+ * @param {{ times: number[], values: number[] }} reference
+ * @returns {number[]}
+ */
+export function differenceByTime(primary, reference) {
+  /** @type {number[]} */
+  const out = [];
+  if (reference.times.length === 0) {
+    return out;
+  }
+  // Both windows come out of Ring.since() oldest-first, so one forward walk does it.
+  let index = 0;
+  for (let position = 0; position < primary.times.length; position++) {
+    const at = primary.times[position];
+    while (index + 1 < reference.times.length && reference.times[index + 1] <= at) {
+      index += 1;
+    }
+    // Skip primary samples older than anything in the reference window: there is
+    // nothing to hold from, and extrapolating backwards would invent the value.
+    if (reference.times[index] > at) {
+      continue;
+    }
+    out.push(primary.values[position] - reference.values[index]);
+  }
+  return out;
+}
+
 /** @type {Map<string, Ring>} */
 const rings = new Map();
 

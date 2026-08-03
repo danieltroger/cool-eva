@@ -1,6 +1,6 @@
 // @ts-check
 
-import { valueOf } from "./store.js";
+import { peek } from "./store.js";
 
 // Trip accounting for the current session.
 //
@@ -27,12 +27,12 @@ export function updateTrip(nowMs) {
   lastUpdateMs = nowMs;
 
   // CAN odometer first, hub second — see the note in derive.js rollingConsumption.
-  const odometer = valueOf("odometer_can_km") ?? valueOf("odometer_km");
+  const odometer = peek("odometer_can_km") ?? peek("odometer_km");
   if (odometer != null && odometerAtStart == null) {
     odometerAtStart = odometer;
   }
 
-  const speed = valueOf("gps_speed_kmh") ?? valueOf("speed_can_kmh") ?? valueOf("speed_kmh");
+  const speed = peek("gps_speed_kmh") ?? peek("speed_can_kmh") ?? peek("speed_kmh");
   if (speed == null) {
     return;
   }
@@ -48,7 +48,7 @@ export function updateTrip(nowMs) {
 
 /** Kilometres since the page was opened, or null before the odometer arrives. */
 export function distanceKm() {
-  const odometer = valueOf("odometer_can_km") ?? valueOf("odometer_km");
+  const odometer = peek("odometer_can_km") ?? peek("odometer_km");
   if (odometer == null || odometerAtStart == null) {
     return null;
   }

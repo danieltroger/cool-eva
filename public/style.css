@@ -16,9 +16,18 @@
   --bg: #0f172a;
   --tile: #1e293b;
   --tile-edge: #263449;
-  --muted: #64748b;
-  --dim: #334155;
-  --fg: #e2e8f0;
+  /* Text colours, with their contrast ratio against --tile / --bg.
+   *
+   * This screen is read in daylight, through a visor, at speed. WCAG AA's 4.5:1 is
+   * a floor for an indoor monitor, not a target here — everything below clears 6:1
+   * and the values clear 11:1. The first version of this file used #334155 for
+   * .sub and #64748b for .label, which measure 1.4:1 and 3.1:1 against the tile
+   * they sit on: the sub-lines were effectively invisible and the labels failed AA.
+   * If you darken any of these, measure it first. */
+  --fg: #e2e8f0; /* 11.9:1 / 14.5:1 — values */
+  --label: #aab8cc; /* 7.3:1 / 8.9:1 — labels, units, tabs */
+  --sub: #9aa9bf; /* 6.1:1 / 7.5:1 — second lines, section headings */
+  --dim: #334155; /* borders only — never text */
   --bad: #f87171;
   --good: #4ade80;
 
@@ -51,13 +60,13 @@ body {
   font-size: 0.8rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--label);
 }
 
 .menu {
   background: none;
   border: 0;
-  color: var(--muted);
+  color: var(--label);
   font-size: 1.3rem;
   line-height: 1;
   padding: 0.2rem 0.4rem;
@@ -69,7 +78,7 @@ body {
   align-items: center;
   gap: 0.4rem;
   font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--label);
 }
 
 .dot {
@@ -101,7 +110,7 @@ body {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: var(--dim);
+  color: var(--sub);
   padding: 0.45rem 0.2rem 0;
 }
 
@@ -124,14 +133,17 @@ body {
    number is old is more useful than an empty space where it used to be. */
 .tile.stale,
 .raw.stale {
-  opacity: 0.4;
+  /* Dimmed enough to read as "this is old", not so much that it stops being
+     readable: at the old 0.4 the text fell to around 2:1 and a stale value —
+     which is still the last thing the bike actually said — became a smudge. */
+  opacity: 0.72;
 }
 
 .label {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.09em;
-  color: var(--muted);
+  color: var(--label);
 }
 
 .value {
@@ -144,13 +156,13 @@ body {
 
 .unit {
   font-size: 0.95rem;
-  color: var(--muted);
+  color: var(--label);
   margin-left: 0.2rem;
 }
 
 .sub {
   font-size: 0.72rem;
-  color: var(--dim);
+  color: var(--sub);
   line-height: 1.35;
 }
 
@@ -186,7 +198,7 @@ body {
 
 .hero-unit {
   font-size: 1.1rem;
-  color: var(--muted);
+  color: var(--label);
   margin-left: 0.35rem;
   letter-spacing: 0;
 }
@@ -246,7 +258,7 @@ body {
 }
 
 .fact-label {
-  color: var(--muted);
+  color: var(--label);
 }
 
 .fact-value {
@@ -272,7 +284,7 @@ body {
   flex: 1;
   background: none;
   border: 0;
-  color: var(--muted);
+  color: var(--label);
   font: inherit;
   font-size: 0.76rem;
   letter-spacing: 0.06em;
@@ -326,7 +338,7 @@ body {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: var(--dim);
+  color: var(--sub);
   padding: 0.9rem 0.2rem 0.5rem;
 }
 
@@ -346,7 +358,7 @@ body {
   font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--muted);
+  color: var(--label);
 }
 
 .stat-value {
@@ -375,7 +387,7 @@ body {
 
 .action-note {
   font-size: 0.72rem;
-  color: var(--muted);
+  color: var(--label);
   padding: 0.35rem 0.3rem 0;
 }
 
@@ -383,7 +395,7 @@ body {
   width: 100%;
   background: none;
   border: 0;
-  color: var(--muted);
+  color: var(--label);
   font: inherit;
   padding: 1.1rem;
   margin-top: 0.6rem;
@@ -422,7 +434,7 @@ body {
 
 .raw-key {
   font-size: 0.62rem;
-  color: var(--muted);
+  color: var(--label);
   /* Generated keys like cell_v_lmu11_c7 must wrap rather than widen the grid. */
   overflow-wrap: anywhere;
 }

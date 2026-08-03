@@ -1,6 +1,6 @@
 // @ts-check
 
-import { valueOf } from "./store.js";
+import { peek } from "./store.js";
 
 // The under-voltage dwell timer.
 //
@@ -36,8 +36,8 @@ export function updateDwell(nowMs) {
   const elapsedS = lastUpdateMs === 0 ? 0 : (nowMs - lastUpdateMs) / 1000;
   lastUpdateMs = nowMs;
 
-  const minimum = valueOf("cell_min_mv");
-  const cutoff = valueOf("cell_cutoff_mv");
+  const minimum = peek("cell_min_mv");
+  const cutoff = peek("cell_cutoff_mv");
   if (minimum == null || cutoff == null) {
     return;
   }

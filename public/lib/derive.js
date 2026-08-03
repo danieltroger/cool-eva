@@ -1,6 +1,6 @@
 // @ts-check
 
-import { valueOf } from "./store.js";
+import { peek, valueOf } from "./store.js";
 import { ringFor } from "./ring.js";
 
 // Everything the dashboard shows that the bike does not itself measure.
@@ -149,8 +149,28 @@ export function restingMinCellMv() {
  * @returns {number | null}
  */
 export function headroomMv() {
-  const minimum = valueOf("cell_min_mv");
-  const cutoff = valueOf("cell_cutoff_mv");
+  return headroomMvWith(valueOf);
+}
+
+/**
+ * The same, sampled rather than subscribed — for the view rules in app.js, which
+ * are paced by the shared tick and must not add cell_min_mv to its dependencies.
+ * @returns {number | null}
+ */
+export function headroomMvSampled() {
+  return headroomMvWith(peek);
+}
+
+/**
+ * Parameterised on how it reads, so the subscribing and sampling variants above
+ * cannot drift apart — the alternative is two copies of the same subtraction, and
+ * the one that gets fixed is never the one that is wrong.
+ * @param {(key: string) => number | null} read
+ * @returns {number | null}
+ */
+function headroomMvWith(read) {
+  const minimum = read("cell_min_mv");
+  const cutoff = read("cell_cutoff_mv");
   if (minimum == null || cutoff == null) {
     return null;
   }
@@ -242,7 +262,22 @@ export function limitFraction(key, ceiling) {
 
 /** True when the BMS reports any state that means "charging" — see the bitfield note. */
 export function isCharging() {
-  return (
-    valueOf("bms_state_charge") === 1 || valueOf("bms_state_trickle") === 1 || valueOf("bms_state_maintenance") === 1
-  );
+  return isChargingWith(valueOf);
+}
+
+/** The same, sampled rather than subscribed. See headroomMvSampled(). */
+export function isChargingSampled() {
+  return isChargingWith(peek);
+}
+
+/**
+ * `charge_state` is a bitfield, not an enum: 1 = discharge, 2 = charge, 4
+ * balancing, 8 trickle, 16 idle, 32 charge-complete, 64 maintenance. Testing it
+ * against a single value flags Idle as charging, which is what the old dashboard's
+ * `!== 1` did — so this reads the decoded bits instead. Charge-complete is
+ * deliberately excluded: current is no longer going in.
+ * @param {(key: string) => number | null} read
+ */
+function isChargingWith(read) {
+  return read("bms_state_charge") === 1 || read("bms_state_trickle") === 1 || read("bms_state_maintenance") === 1;
 }

@@ -53,6 +53,16 @@ const BY_KEY = {
 const BOOLEAN_GROUPS = new Set(["controls", "diag"]);
 
 /**
+ * …except these, which share the `diag` group with the 148 generated `dtc_*`
+ * flags but are counts, not flags. `dtc_count` is 0…127 (PID 01) and
+ * `warmups_since_clear` 0…255 (PID 30), so the group-wide 1/0 rule would reject
+ * every value above 1 as a sensor fault — gating out exactly the stored-code
+ * count that the sheet's OBD cross-check exists to show, precisely when there is
+ * something to cross-check.
+ */
+const COUNTER_KEYS = new Set(["dtc_count", "warmups_since_clear", "dtc_list_count", "dtc_unrecognised_count"]);
+
+/**
  * Fallbacks by unit, for the ~140 signals not worth naming individually.
  * @type {Record<string, [number, number]>}
  */
@@ -101,6 +111,9 @@ export function boundsFor(key, unit, group) {
   }
   if (key.startsWith(CELL_VOLTAGE_PREFIX)) {
     return [1500, 4500];
+  }
+  if (COUNTER_KEYS.has(key)) {
+    return [0, 1000];
   }
   // Flags are checked before units because their unit is "" — which would
   // otherwise fall through to unbounded and let high_beam=193 render as "on".

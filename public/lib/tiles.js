@@ -102,10 +102,13 @@ export function SignalTile({
         () => {
           // Bound to the tick, not to the signal: redrawing a polyline on every
           // frame of a 20 Hz signal is pure battery drain for motion no eye can use.
+          // The colour is sampled off the ring rather than read from the state for
+          // the same reason — currentValue() reads `.val`, which would re-subscribe
+          // this binding to the signal and cancel the throttle entirely.
           chartTick.val;
           const now = Date.now();
           const { values } = ringFor(key).since(chartWindowMs, now);
-          return sparkline({ values, color: color ? color(currentValue()) : CALM, minSpan });
+          return sparkline({ values, color: color ? color(ringFor(key).latest()) : CALM, minSpan });
         },
       ]
     : [];

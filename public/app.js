@@ -1,8 +1,8 @@
 // @ts-check
 
 import van from "./vendor/van-1.6.1.js";
-import { chartTick, connect, connection, signalState, valueOf } from "./lib/store.js";
-import { isCharging, headroomMv } from "./lib/derive.js";
+import { chartTick, connect, connection, peek, signalState } from "./lib/store.js";
+import { headroomMvSampled, isChargingSampled } from "./lib/derive.js";
 import { updateDwell } from "./lib/dwell.js";
 import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
@@ -111,7 +111,7 @@ let wasCharging = false;
 let wasCritical = false;
 
 function autoFocus() {
-  const charging = isCharging();
+  const charging = isChargingSampled();
   if (charging && !wasCharging) {
     view.val = "charge";
   }
@@ -122,8 +122,8 @@ function autoFocus() {
   }
   wasCharging = charging;
 
-  const soc = valueOf("soc");
-  const headroom = headroomMv();
+  const soc = peek("soc");
+  const headroom = headroomMvSampled();
   const critical = (soc != null && soc <= HYPERMILE_SOC) || (headroom != null && headroom <= HYPERMILE_HEADROOM_MV);
   if (critical && !wasCritical && !charging) {
     view.val = "hypermile";
@@ -145,7 +145,9 @@ let previousHighBeam = /** @type {number | null} */ (null);
 let flashEdges = /** @type {number[]} */ ([]);
 
 function detectHighBeamGesture() {
-  const current = valueOf("high_beam");
+  // peek(): the enclosing derive already subscribes to high_beam explicitly, and
+  // reading it again through valueOf() would say the same thing less clearly.
+  const current = peek("high_beam");
   if (current == null) {
     return;
   }
@@ -165,6 +167,14 @@ function detectHighBeamGesture() {
 // under-voltage dwell, trip accounting, and the view rules. Individual modules
 // keeping their own intervals would drift apart and each pay their own wakeup cost
 // on a phone that is trying to sleep.
+//
+// For that to be true, everything reached from here has to *sample* signals rather
+// than subscribe to them — hence peek() throughout updateDwell, updateTrip and
+// autoFocus. Reading through valueOf() instead would quietly add every signal they
+// touch to this binding's dependencies, and the tick would stop being what paces
+// it. Nothing would break (the two counters use wall-clock deltas and autoFocus is
+// edge-triggered, so both are correct at any rate) but the comment above would be
+// false, which is worse.
 van.derive(() => {
   chartTick.val;
   const now = Date.now();

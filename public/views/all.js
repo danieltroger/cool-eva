@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { faultState, knownKeys, isStale, signalState } from "../lib/store.js";
+import { faultState, groupOf, knownKeys, isStale, signalState } from "../lib/store.js";
 import { STALE_MS } from "../lib/tiles.js";
 import { MUTED } from "../lib/colors.js";
 
@@ -43,8 +43,11 @@ export function AllView() {
       /** @type {Map<string, string[]>} */
       const byGroup = new Map();
       for (const key of keys) {
-        const reading = signalState(key).val;
-        const group = reading ? reading.group : "misc";
+        // groupOf(), not signalState(key).val: reading the state here would
+        // subscribe this one binding to all ~230 signals, so any patch — pack_a
+        // arrives at frame rate with no deadband — would tear down and rebuild
+        // the entire grid, losing any text selection with it.
+        const group = groupOf(key);
         const list = byGroup.get(group) ?? [];
         list.push(key);
         byGroup.set(group, list);

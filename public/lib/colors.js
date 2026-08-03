@@ -13,7 +13,9 @@ export const WATCH = "#facc15";
 export const WARN = "#fb923c";
 export const BAD = "#f87171";
 export const COLD = "#38bdf8";
-export const MUTED = "#64748b";
+/* 6.1:1 against the tiles — matches --sub in style.css. Anything dimmer is
+   unreadable in daylight; see the palette note there before changing it. */
+export const MUTED = "#9aa9bf";
 
 /**
  * @param {number | null} celsius
