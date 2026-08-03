@@ -1,4 +1,5 @@
-import type { ServerResponse } from "http";
+import { createHash } from "crypto";
+import type { IncomingMessage, ServerResponse } from "http";
 import { DTC_TABLE, dtcSignalKey } from "../diagnostics/dtc-table.ts";
 
 // GET /dtc-table — Energica's code table, so the dashboard can say
@@ -28,14 +29,27 @@ export interface DtcTableRow {
   illuminatesMil: boolean;
 }
 
-export function handleDtcTableEndpoint(res: ServerResponse): void {
+export function handleDtcTableEndpoint(req: IncomingMessage, res: ServerResponse): void {
+  // Deliberately NOT `immutable`. This URL is not content-addressed, so that would
+  // be a promise the server cannot keep: browsers honour it hard — Safari and Chrome
+  // skip revalidation even on an explicit reload — and the first time a transcribed
+  // description is corrected, every phone that has opened the Faults tab would keep
+  // serving the old text for a day with no in-app way to clear it. `git pull` +
+  // restart would look like it did nothing, which is a bad thing to be debugging in
+  // a garage with no reception.
+  //
+  // `no-cache` means "revalidate", not "don't store": a reload costs a 304 and no
+  // payload, which is what the garage-over-a-hotspot case actually needed.
+  if (req.headers["if-none-match"] === ETAG) {
+    res.writeHead(304, { ETag: ETAG, "Cache-Control": "no-cache" });
+    res.end();
+    return;
+  }
   res.writeHead(200, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": String(SERIALISED.length),
-    // The table is a compile-time constant transcribed from a PDF; it can only
-    // change when this binary does. Cache it hard so a garage reload over a phone
-    // hotspot doesn't re-fetch 148 entries.
-    "Cache-Control": "public, max-age=86400, immutable",
+    ETag: ETAG,
+    "Cache-Control": "no-cache",
   });
   res.end(SERIALISED);
 }
@@ -58,3 +72,7 @@ function buildPayload(): DtcTablePayload {
 // Serialised once at import: the table never changes at runtime, and this runs on
 // the same event loop as the CAN RX handler.
 const SERIALISED = Buffer.from(JSON.stringify(buildPayload()), "utf-8");
+
+// Derived from the bytes, so a corrected description ships a new tag automatically
+// and no deploy step has to remember to bump anything.
+const ETAG = `"${createHash("sha256").update(SERIALISED).digest("base64url").slice(0, 16)}"`;

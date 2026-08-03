@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, knownKeys, valueOf } from "../lib/store.js";
+import { chartTick, isStale, knownKeys, valueOf } from "../lib/store.js";
 import { monotonicNow } from "../lib/clock.js";
 import { ringFor } from "../lib/ring.js";
 import { Fact, SectionLabel } from "../lib/tiles.js";
@@ -29,21 +29,49 @@ const { div, span } = van.tags;
  * Codes quiet for longer than this drop off the screen. Chosen against the
  * observed cadence: P0A07's longest gap between firings was ~3.5 min, so a code
  * silent for 30 min is genuinely gone rather than mid-cycle.
+ *
+ * MUST stay below HISTORY_MS or it does nothing: Ring.since() already discards
+ * anything older than the window it is given, so if the two are equal the ring is
+ * silently enforcing the policy this constant claims to own — and lowering this one
+ * to tighten the drop-off would have no effect at all.
  */
 const RECENT_MS = 30 * 60_000;
 
-/** How far back "last seen" can look. The ring holds ~30 min at the 2 Hz write rate. */
-const HISTORY_MS = 30 * 60_000;
+/**
+ * How far back "last seen" and the firing count may look. Deliberately longer than
+ * RECENT_MS, per above.
+ *
+ * Not ring-limited: the "~30 minutes" figure on Ring's CAPACITY is the 2 Hz case
+ * (pack current and friends). A dtc_* key lands once per diagnostics round — every
+ * 6th BLE request at 10 s, so ~60 s — which puts 3600 samples at roughly 60 hours.
+ * This constant is what bounds the reach, not the buffer.
+ */
+const HISTORY_MS = 6 * 60 * 60_000;
+
+/**
+ * A fault list not refreshed within this long is treated as unknown, not as clear.
+ *
+ * liveState never drops a key and the server re-broadcasts the whole snapshot every
+ * 5 s, so `dtc_list_count` stays readable forever once it has arrived — meaning a
+ * dead BLE link to the hub is indistinguishable from a healthy bike with no faults
+ * on value alone, and the screen would show a confident green "clear" next to a
+ * header still reading "live". record() refreshes the timestamp on EVERY call, not
+ * only on change (src/can/signals.ts), so staleness is the signal that separates
+ * them. ~3 min is three missed rounds.
+ */
+const DIAGNOSTICS_SILENCE_MS = 3 * 60_000;
 
 /** Loaded once from /dtc-table, so a code can be named rather than numbered. */
 const table = van.state(/** @type {Record<string, DtcTableRow> | null} */ (null));
 /** Set once the fetch has failed — the view then degrades to raw numbers and says so. */
 const tableError = van.state(/** @type {string | null} */ (null));
 
-/**
- * @typedef {{ component: number, symptom: number, obdCode: string, name: string,
- *   description: string, illuminatesMil: boolean }} DtcTableRow
- */
+// Pulled from the server rather than re-declared. A hand-copied shape is the same
+// drift this endpoint exists to prevent, one level up: renaming `obdCode` server-side
+// would type-check clean here and show `undefined` on the card. Same rule as
+// DashboardMessage in CLAUDE.md — typecheck covers public/ via checkJs.
+/** @typedef {import("../../src/http/dtc-table.ts").DtcTableRow} DtcTableRow */
+/** @typedef {import("../../src/http/dtc-table.ts").DtcTablePayload} DtcTablePayload */
 
 /**
  * @typedef {{ key: string, active: boolean, lastSeenMs: number | null,
@@ -60,7 +88,11 @@ export function FaultsView() {
       if (faults.length === 0) {
         return div();
       }
-      return div({ class: "view" }, SectionLabel("Codes"), ...faults.map(FaultCard));
+      // A plain div, NOT class="view": .view carries `padding: 0 0.5rem`, so nesting
+      // one insets these cards relative to the hero and Counters tile either side of
+      // them. views/all.js nests a bare div for the same reason. .tile.span2 still
+      // spans both columns, since it inherits the OUTER grid.
+      return div(SectionLabel("Codes"), ...faults.map(FaultCard));
     },
     SectionLabel("Counters"),
     Counters(),
@@ -88,8 +120,9 @@ function headlineState() {
     return { kind: "recent", count: faults.length };
   }
   // No list at all is not the same as an empty list: one means the bike said
-  // "nothing is wrong", the other means we have not heard from it.
-  if (valueOf("dtc_list_count") == null) {
+  // "nothing is wrong", the other means we have not heard from it. A list that has
+  // stopped arriving is the second case too — see DIAGNOSTICS_SILENCE_MS.
+  if (valueOf("dtc_list_count") == null || isStale("dtc_list_count", DIAGNOSTICS_SILENCE_MS)) {
     return { kind: "unknown", count: 0 };
   }
   return { kind: "clear", count: 0 };
@@ -129,7 +162,9 @@ function headlineCaption() {
     case "recent":
       return "not active now — but seen this session";
     case "unknown":
-      return "no fault list received yet";
+      return valueOf("dtc_list_count") == null
+        ? "no fault list received yet"
+        : "fault list has stopped arriving — this is not “no faults”";
     default:
       return "nothing in the bike's active list";
   }
@@ -330,7 +365,7 @@ async function loadTable() {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
-    const payload = await response.json();
+    const payload = /** @type {DtcTablePayload} */ (await response.json());
     table.val = payload.codes;
   } catch (error) {
     tableError.val = /** @type {Error} */ (error).message;

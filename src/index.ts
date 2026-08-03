@@ -214,7 +214,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/dtc-table") {
-    handleDtcTableEndpoint(res);
+    handleDtcTableEndpoint(req, res);
     return;
   }
   if (staticFiles.serve(url.pathname, res)) {
