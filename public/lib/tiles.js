@@ -159,7 +159,17 @@ export function PairTile({ label, keys, format, unit = "", color, caption = "", 
   const second = signalState(keys[1]);
   return div(
     {
-      class: `tile ${className}`,
+      // Staleness matters more on a pair than on a single value, because
+      // batt_temp_lo/batt_temp_hi are deliberately sparse: they are not written at
+      // all until the frames establish which BMS config is flashed, and they stop
+      // rather than fall back to 0x200's shifted view if the source that owns the
+      // true temperature goes quiet (see src/can/pack-temperature.ts). Without
+      // this the tile would keep presenting the last good pair as current, which
+      // is the one thing that file goes out of its way not to do.
+      class: () => {
+        const stale = (first.val || second.val) && isStale(keys[0], STALE_MS) && isStale(keys[1], STALE_MS);
+        return `tile ${className}${stale ? " stale" : ""}`;
+      },
       style: () => (hasEverArrived(keys[0]) || hasEverArrived(keys[1]) ? "" : "display:none"),
     },
     div({ class: "label" }, label),
