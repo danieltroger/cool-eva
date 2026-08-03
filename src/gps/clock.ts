@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { monotonicNow, since } from "../monotonic.ts";
 
 const runCommand = promisify(execFile);
 
@@ -19,8 +20,15 @@ const SYNC_ENABLED = process.env.GPS_TIME_SYNC !== "0";
 // measuring against. Stamping the wall clock here and then stepping backwards
 // (the exact case this module exists for) leaves `now - lastStep` hugely
 // negative, so the guard would suppress every later correction until real time
-// caught up. performance.now() is unaffected by `date -s`.
-let lastStepAt = 0;
+// caught up. See ../monotonic.ts.
+//
+// `undefined`, not 0, for "never stepped": monotonic time starts near zero, so a
+// 0 sentinel reads as "stepped at boot" and this guard then suppresses the FIRST
+// correction for a full MIN_SECONDS_BETWEEN_STEPS — precisely the window after a
+// cold boot where a Pi with no RTC has a nonsense date and needs the step most.
+// (Harmless under Date.now(), where 0 is 1970 and the difference is enormous —
+// which is why it survived the switch to a monotonic source unnoticed.)
+let lastStepAt: number | undefined;
 let warnedNotRoot = false;
 
 /**
@@ -37,7 +45,7 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
   if (!SYNC_ENABLED || Math.abs(offsetSeconds) <= DRIFT_THRESHOLD_SECONDS) {
     return;
   }
-  if (performance.now() - lastStepAt < MIN_SECONDS_BETWEEN_STEPS * 1000) {
+  if (lastStepAt !== undefined && since(lastStepAt) < MIN_SECONDS_BETWEEN_STEPS * 1000) {
     return;
   }
   if (process.getuid?.() !== 0) {
@@ -48,7 +56,7 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
     return;
   }
 
-  lastStepAt = performance.now();
+  lastStepAt = monotonicNow();
   const target = new Date(gpsEpochSeconds * 1000).toISOString();
   try {
     // `date -u -s @<epoch>` rather than `timedatectl set-time`, which refuses
