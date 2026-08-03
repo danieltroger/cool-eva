@@ -10,6 +10,7 @@ import { configurePackTemperature, resolvePackTemperatures } from "../src/can/pa
 import { loadStaticFiles } from "../src/http/static.ts";
 import { handleStatusEndpoint } from "../src/http/status.ts";
 import { setupWs } from "../src/ws.ts";
+import { monotonicNow } from "../src/monotonic.ts";
 
 // Replays a candump capture into the dashboard, on a laptop, with no bike.
 //
@@ -99,7 +100,7 @@ async function replay({ file, speed, skipSeconds }: Options): Promise<void> {
     }
     if (firstCaptureSeconds === null) {
       firstCaptureSeconds = frame.seconds;
-      startedAt = Date.now();
+      startedAt = monotonicNow();
     }
     const offsetSeconds = frame.seconds - firstCaptureSeconds;
     if (offsetSeconds < skipSeconds) {
@@ -109,8 +110,10 @@ async function replay({ file, speed, skipSeconds }: Options): Promise<void> {
     // Pace against the capture's own clock so the dashboard sees the rates it will
     // see on the bike — a 20 Hz frame arriving as fast as the disk can read it
     // would not exercise the deadbands or the chart sampling at all.
+    // Monotonic: this is a deadline, and the replay can be running while something
+    // else on the laptop steps the clock (or a DST change lands mid-capture).
     const dueAt = startedAt + ((offsetSeconds - skipSeconds) * 1000) / speed;
-    const waitMs = dueAt - Date.now();
+    const waitMs = dueAt - monotonicNow();
     if (waitMs > 1) {
       await new Promise(resolve => setTimeout(resolve, waitMs));
     }

@@ -10,6 +10,7 @@ import { HypermileView } from "./views/hypermile.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { Sheet, hasTroubleCodes, refreshStatus, sheetOpen } from "./views/sheet.js";
+import { monotonicNow } from "./lib/clock.js";
 
 const { button, div, span } = van.tags;
 
@@ -152,7 +153,9 @@ function detectHighBeamGesture() {
     return;
   }
   if (previousHighBeam === 0 && current === 1) {
-    const now = Date.now();
+    // Monotonic: three flashes inside a 2 s window is a duration, and a wall-clock
+    // jump between two of them would either swallow the gesture or fire it early.
+    const now = monotonicNow();
     flashEdges = [...flashEdges, now].filter(edge => now - edge <= FLASH_WINDOW_MS);
     if (flashEdges.length >= FLASH_COUNT) {
       flashEdges = [];
@@ -177,7 +180,10 @@ function detectHighBeamGesture() {
 // false, which is worse.
 van.derive(() => {
   chartTick.val;
-  const now = Date.now();
+  // Both counters integrate elapsed time, so they take the monotonic clock — the
+  // dwell timer in particular decides how much of the BMS's 60 s cut-off window is
+  // used, and a wall-clock jump would credit or refund it in one step.
+  const now = monotonicNow();
   updateDwell(now);
   updateTrip(now);
   autoFocus();

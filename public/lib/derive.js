@@ -205,7 +205,7 @@ export function remainingWh() {
  * distance actually covered. Preferred over the bike's own figure because the
  * horizon is known and stated on screen — a single averaged number with no stated
  * window invites false precision.
- * @param {number} now
+ * @param {number} now monotonic, from lib/clock.js — the rings are keyed on it
  * @returns {{ whPerKm: number, km: number } | null}
  */
 export function rollingConsumption(now) {
@@ -232,7 +232,7 @@ export function rollingConsumption(now) {
 /**
  * Range left at the rate you have actually been riding, rather than at whatever
  * the bike's estimator assumes.
- * @param {number} now
+ * @param {number} now monotonic, from lib/clock.js
  * @returns {number | null}
  */
 export function rollingRangeKm(now) {

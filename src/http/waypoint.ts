@@ -1,5 +1,5 @@
 import type { ServerResponse } from "http";
-import { record, snapshot } from "../can/signals.ts";
+import { ageMs, record, snapshot } from "../can/signals.ts";
 
 // GET /waypoint — stamp "I am here, now" into the ride log.
 //
@@ -37,7 +37,22 @@ export function handleWaypointEndpoint(res: ServerResponse): void {
     return;
   }
 
-  const fixAgeMs = now - Math.min(latitude.ts, longitude.ts);
+  // Monotonic age, not `now - latitude.ts`. The Pi has no RTC, so the first GPS fix
+  // of a no-network boot steps the wall clock by however wrong it was — and this
+  // endpoint is reached exactly then, on a bike that has just been switched on with
+  // a fresh fix. Against wall time that fix reads as hours old and the waypoint is
+  // refused for the whole ride; against the monotonic clock it reads as what it is.
+  const latitudeAge = ageMs("gps_lat");
+  const longitudeAge = ageMs("gps_lon");
+  if (latitudeAge === null || longitudeAge === null) {
+    // Cannot happen while record() writes liveState and the monotonic mark together,
+    // which is exactly why it must not be papered over with a sentinel: an Infinity
+    // here would have Siri announce "GPS fix is Infinity seconds old".
+    respond(res, "No GPS fix yet — waypoint not saved.");
+    console.warn("waypoint: refused, GPS signals present but never marked as seen");
+    return;
+  }
+  const fixAgeMs = Math.max(latitudeAge, longitudeAge);
   if (fixAgeMs > FIX_MAX_AGE_MS) {
     respond(res, `GPS fix is ${Math.round(fixAgeMs / 1000)} seconds old — waypoint not saved.`);
     console.warn(`waypoint: refused, fix is ${Math.round(fixAgeMs / 1000)} s old`);

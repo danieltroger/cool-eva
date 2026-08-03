@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { isPlausible } from "./bounds.js";
 import { ringFor } from "./ring.js";
+import { monotonicNow, since } from "./clock.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -123,6 +124,16 @@ export function peek(key) {
 }
 
 /**
+ * The server's clock from the last message, without subscribing to it. apply()
+ * writes serverTime on every message, so reading `.val` inside a binding paces that
+ * binding at the WebSocket's full rate.
+ * @returns {number}
+ */
+export function peekServerTime() {
+  return serverTime.rawVal;
+}
+
+/**
  * True when a signal has not been refreshed within `maxAgeMs`.
  * @param {string} key
  * @param {number} maxAgeMs
@@ -150,7 +161,7 @@ export function connect() {
     // only `onopen` ever cleared it, so one throttled interval in a backgrounded
     // tab left the header lying about a link that was streaming fine.
     connection.val = "live";
-    lastMessageAt = Date.now();
+    lastMessageAt = monotonicNow();
     try {
       const message = /** @type {DashboardMessage} */ (JSON.parse(event.data));
       apply(message);
@@ -204,7 +215,29 @@ function apply(message) {
       continue;
     }
     signalState(key).val = reading;
-    ringFor(key).push(reading.ts, reading.value);
+    // Monotonic base, but placed at the moment the reading was actually taken
+    // rather than at the moment it arrived.
+    //
+    // `message.ts - reading.ts` is the reading's age *on the server*, so it is
+    // server-vs-server arithmetic and involves no cross-clock comparison; applying
+    // it to the local monotonic clock lands the sample where it belongs on the axis.
+    //
+    // This also restores a dedupe that stamping on arrival silently lost. ws.ts
+    // heartbeats a FULL snapshot every 5 s and liveState never drops a key, so
+    // every heartbeat re-delivers all ~230 signals whether or not they changed.
+    // Stamped on arrival, each of those is a fresh sample, and a signal that has
+    // stopped arriving — hub down, poller stalled, probe unplugged on a plausible
+    // last value — draws a flat line forever on a tile isStale() is greying out.
+    // Here a repeated reading gets the same sample time every heartbeat (its age
+    // grows exactly as fast as the clock advances), so MIN_INTERVAL_MS drops it and
+    // the trace ends where the data ended.
+    //
+    // Clamped at 0 only for a backwards server clock step, which would otherwise
+    // place a sample in the future and pin it to the newest end of the window. A
+    // large positive age is left alone: that IS an old reading, and it falling out
+    // of the chart window is the correct outcome.
+    const serverAgeMs = Math.max(0, message.ts - reading.ts);
+    ringFor(key).push(monotonicNow() - serverAgeMs, reading.value);
   }
   if (added) {
     knownKeys.val = [...seenKeys].sort();
@@ -215,7 +248,9 @@ function apply(message) {
 // silence — recovery is driven by messages arriving, above — so a throttled timer
 // in a background tab cannot leave a false label on screen.
 setInterval(() => {
-  if (lastMessageAt > 0 && Date.now() - lastMessageAt > SILENCE_LIMIT_MS) {
+  // Monotonic: a wall-clock jump here would either fake a dropout on a healthy link
+  // or hide a real one, and this watchdog exists precisely to be trusted about that.
+  if (lastMessageAt > 0 && since(lastMessageAt) > SILENCE_LIMIT_MS) {
     connection.val = "offline";
   }
 }, 3000);

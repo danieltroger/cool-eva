@@ -1,8 +1,9 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, faultState, isStale, signalState } from "./store.js";
+import { chartTick, faultState, isStale, peekServerTime, signalState } from "./store.js";
 import { ringFor } from "./ring.js";
+import { monotonicNow } from "./clock.js";
 import { sparkline } from "./svg.js";
 import { CALM, MUTED } from "./colors.js";
 
@@ -106,8 +107,7 @@ export function SignalTile({
           // the same reason — currentValue() reads `.val`, which would re-subscribe
           // this binding to the signal and cancel the throttle entirely.
           chartTick.val;
-          const now = Date.now();
-          const { values } = ringFor(key).since(chartWindowMs, now);
+          const { values } = ringFor(key).since(chartWindowMs, monotonicNow());
           return sparkline({ values, color: color ? color(ringFor(key).latest()) : CALM, minSpan });
         },
       ]
@@ -131,8 +131,19 @@ export function SignalTile({
       unit ? span({ class: "unit" }, unit) : null
     ),
     () => {
+      // Paced at 2 Hz so the fault notice can time itself out; see FAULT_MEMORY_MS.
+      chartTick.val;
       const active = fault.val;
-      if (active && Date.now() - active.ts < FAULT_MEMORY_MS) {
+      // Server time, not Date.now(): active.ts is stamped by the Pi, and comparing
+      // it against this device's clock measures the gap between two machines rather
+      // than the age of the fault. Both sides here are server wall time, which is
+      // the only pairing that means anything.
+      //
+      // Peeked, not read through `.val`: apply() sets serverTime on every message
+      // including 20 Hz patches, so subscribing would rebuild this div at frame rate
+      // — the same leak the chart binding above avoids. The tick above is what makes
+      // the notice expire on its own instead of hanging around until the next fault.
+      if (active && peekServerTime() - active.ts < FAULT_MEMORY_MS) {
         return div({ class: "sub fault" }, `sensor fault (${active.value.toFixed(0)})`);
       }
       return sub ? div({ class: "sub" }, sub()) : div({ class: "sub" }, "");
