@@ -5,6 +5,10 @@
 # identical only so the two files can't drift and the old form get copied back.
 node_modules
 
+# Vendored third-party library, committed verbatim so it stays diffable against
+# upstream. Reformatting it would make the next version bump unreviewable.
+public/vendor/
+
 # npm-managed lockfile — leave formatting to npm
 package-lock.json
 

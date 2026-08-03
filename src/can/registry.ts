@@ -346,6 +346,16 @@ export const SIGNALS: SignalDef[] = [
   { key: "accel_lateral_raw", unit: "", group: "imu", source: "stream", deadband: 100 },
   { key: "accel_frontal_raw", unit: "", group: "imu", source: "stream", deadband: 100 },
 
+  // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
+  // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only
+  // when asked for, which is why they carry no deadband. The position is copied
+  // into its own pair of signals rather than inferred from the nearest gps_lat/lon
+  // row, whose ~3 m deadband means the last logged fix can be minutes stale at a
+  // standstill — exactly when you stop to save a waypoint.
+  { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor" },
+  { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor" },
+  { key: "waypoint_lon", unit: "°", group: "waypoint", source: "sensor" },
+
   ...perLmuSignals(),
 ];
 

@@ -1,0 +1,457 @@
+/* Cool Eva dashboard.
+ *
+ * Read at speed, through a visor, in daylight, one-handed. That constraint decides
+ * nearly everything below: very large numbers, very few of them per screen, colour
+ * carrying state so the digits don't have to be parsed, and touch targets sized for
+ * a gloved thumb rather than a cursor.
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0f172a;
+  --tile: #1e293b;
+  --tile-edge: #263449;
+  /* Text colours, with their contrast ratio against --tile / --bg.
+   *
+   * This screen is read in daylight, through a visor, at speed. WCAG AA's 4.5:1 is
+   * a floor for an indoor monitor, not a target here — everything below clears 6:1
+   * and the values clear 11:1. The first version of this file used #334155 for
+   * .sub and #64748b for .label, which measure 1.4:1 and 3.1:1 against the tile
+   * they sit on: the sub-lines were effectively invisible and the labels failed AA.
+   * If you darken any of these, measure it first. */
+  --fg: #e2e8f0; /* 11.9:1 / 14.5:1 — values */
+  --label: #aab8cc; /* 7.3:1 / 8.9:1 — labels, units, tabs */
+  --sub: #9aa9bf; /* 6.1:1 / 7.5:1 — second lines, section headings */
+  --dim: #334155; /* borders only — never text */
+  --bad: #f87171;
+  --good: #4ade80;
+
+  /* The tab bar is fixed; every scrolling surface has to clear it plus the home
+     indicator, or the last tile sits permanently under your thumb. */
+  --tabs-height: 4.2rem;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  padding-bottom: calc(var(--tabs-height) + env(safe-area-inset-bottom));
+}
+
+/* ---------- header ---------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: calc(env(safe-area-inset-top) + 0.5rem) 0.9rem 0.6rem;
+}
+
+.brand {
+  flex: 1;
+  font-size: 0.8rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--label);
+}
+
+.menu {
+  background: none;
+  border: 0;
+  color: var(--label);
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--label);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bad);
+  transition: background 0.3s;
+}
+.dot.live {
+  background: var(--good);
+}
+.dot.connecting {
+  background: #facc15;
+}
+
+/* ---------- layout ---------- */
+
+.view {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, 1fr);
+  padding: 0 0.5rem;
+  align-content: start;
+}
+
+.section {
+  grid-column: 1 / -1;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--sub);
+  padding: 0.45rem 0.2rem 0;
+}
+
+.tile {
+  background: var(--tile);
+  border-radius: 0.9rem;
+  padding: 0.7rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-height: 88px;
+  transition: opacity 0.3s;
+}
+
+.tile.span2 {
+  grid-column: 1 / -1;
+}
+
+/* A value that has stopped arriving is dimmed rather than hidden: knowing the
+   number is old is more useful than an empty space where it used to be. */
+.tile.stale,
+.raw.stale {
+  /* Dimmed enough to read as "this is old", not so much that it stops being
+     readable: at the old 0.4 the text fell to around 2:1 and a stale value —
+     which is still the last thing the bike actually said — became a smudge. */
+  opacity: 0.72;
+}
+
+.label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--label);
+}
+
+.value {
+  font-size: 2.15rem;
+  font-weight: 250;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin-top: auto;
+}
+
+.unit {
+  font-size: 0.95rem;
+  color: var(--label);
+  margin-left: 0.2rem;
+}
+
+.sub {
+  font-size: 0.72rem;
+  color: var(--sub);
+  line-height: 1.35;
+}
+
+/* The one thing on the page that must never be mistaken for a normal reading. */
+.sub.fault {
+  color: var(--bad);
+}
+
+.missing {
+  font-size: 0.78rem;
+  padding: 0.4rem 0.1rem;
+}
+
+/* ---------- hero ---------- */
+
+.hero {
+  grid-column: 1 / -1;
+  background: var(--tile);
+  border-radius: 1.1rem;
+  padding: 0.8rem 0.85rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hero-value {
+  font-size: 4rem;
+  font-weight: 200;
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.hero-unit {
+  font-size: 1.1rem;
+  color: var(--label);
+  margin-left: 0.35rem;
+  letter-spacing: 0;
+}
+
+.charge-hero {
+  flex-direction: row;
+  align-items: center;
+  gap: 1.2rem;
+}
+
+.charge-hero .ring {
+  width: 7.5rem;
+  flex: none;
+}
+
+.charge-hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+/* ---------- svg primitives ---------- */
+
+.spark {
+  width: 100%;
+  height: 26px;
+  display: block;
+  margin-top: 0.1rem;
+}
+
+.meter {
+  width: 100%;
+  height: 12px;
+  display: block;
+  margin: 0.15rem 0;
+}
+
+.strip {
+  width: 100%;
+  height: 60px;
+  display: block;
+  margin: 0.3rem 0;
+}
+
+.ring {
+  display: block;
+}
+
+/* ---------- facts ---------- */
+
+.fact {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  padding: 0.15rem 0;
+  border-top: 1px solid var(--tile-edge);
+}
+
+.fact-label {
+  color: var(--label);
+}
+
+.fact-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- tabs ---------- */
+
+.tabs {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--tile-edge);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 5;
+}
+
+.tab {
+  flex: 1;
+  background: none;
+  border: 0;
+  color: var(--label);
+  font: inherit;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  /* Deliberately tall: this is aimed at with a gloved thumb, in motion. */
+  padding: 1.05rem 0.2rem;
+  cursor: pointer;
+}
+
+.tab.on {
+  color: var(--fg);
+  box-shadow: inset 0 2px 0 var(--good);
+}
+
+/* ---------- sheet ---------- */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.6);
+  display: flex;
+  align-items: flex-end;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  z-index: 10;
+}
+
+.sheet.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sheet-body {
+  width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border-top-left-radius: 1.2rem;
+  border-top-right-radius: 1.2rem;
+  border-top: 1px solid var(--tile-edge);
+  padding: 1rem 0.9rem calc(1.4rem + env(safe-area-inset-bottom));
+  transform: translateY(2rem);
+  transition: transform 0.2s;
+}
+
+.sheet.open .sheet-body {
+  transform: translateY(0);
+}
+
+.sheet-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--sub);
+  padding: 0.9rem 0.2rem 0.5rem;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.stat {
+  background: var(--tile);
+  border-radius: 0.7rem;
+  padding: 0.6rem 0.5rem;
+}
+
+.stat-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--label);
+}
+
+.stat-value {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.15rem;
+}
+
+.action {
+  width: 100%;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+  border-radius: 0.8rem;
+  color: var(--fg);
+  font: inherit;
+  font-size: 1rem;
+  padding: 1rem;
+  margin-top: 0.5rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.action:disabled {
+  opacity: 0.5;
+}
+
+.action-note {
+  font-size: 0.72rem;
+  color: var(--label);
+  padding: 0.35rem 0.3rem 0;
+}
+
+.sheet-close {
+  width: 100%;
+  background: none;
+  border: 0;
+  color: var(--label);
+  font: inherit;
+  padding: 1.1rem;
+  margin-top: 0.6rem;
+  cursor: pointer;
+}
+
+/* ---------- raw signal view ---------- */
+
+.filter {
+  grid-column: 1 / -1;
+}
+
+.filter input {
+  width: 100%;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+  border-radius: 0.7rem;
+  color: var(--fg);
+  font: inherit;
+  font-size: 1rem;
+  padding: 0.7rem 0.8rem;
+}
+
+.raw-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+}
+
+.raw {
+  background: var(--tile);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  min-width: 0;
+}
+
+.raw-key {
+  font-size: 0.62rem;
+  color: var(--label);
+  /* Generated keys like cell_v_lmu11_c7 must wrap rather than widen the grid. */
+  overflow-wrap: anywhere;
+}
+
+.raw-value {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.raw-fault {
+  font-size: 0.6rem;
+  color: var(--bad);
+}
+
+/* The `all` view sets its own two-column grid inside each group, so the outer
+   view grid must not also try to lay its children out in two columns. */
+.view > div:not(.tile):not(.hero):not(.section):not(.filter) {
+  grid-column: 1 / -1;
+}

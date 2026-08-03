@@ -1,8 +1,10 @@
 import { createServer } from "http";
-import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { handleDownloadEndpoint } from "./http/download.ts";
+import { loadStaticFiles } from "./http/static.ts";
+import { handleWaypointEndpoint } from "./http/waypoint.ts";
+import { handleStatusEndpoint } from "./http/status.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -186,18 +188,35 @@ if (BLE_ENABLED) {
 }
 
 // --- HTTP + WebSocket server ---
-const indexHtml = await readFile(join(ROOT, "public", "index.html"), "utf-8");
+const staticFiles = await loadStaticFiles(join(ROOT, "public"));
+console.log(
+  `http: serving ${staticFiles.count} static files (${(staticFiles.bytes / 1024).toFixed(1)} kB) from memory`
+);
 
 const server = createServer(async (req, res) => {
-  if (req.url === "/dl") {
+  // Query strings are for the endpoints below; the static map is keyed by path.
+  const url = new URL(req.url ?? "/", "http://localhost");
+
+  if (url.pathname === "/dl") {
     // Seal first: you park, pull out the phone and hit /dl, and the tail of the
     // ride you actually want is still sitting in the buffer unsealed.
     await flushEncryptedLog();
     await handleDownloadEndpoint(res, RIDE_LOG_DIR);
     return;
   }
-  res.writeHead(200, { "Content-Type": "text/html" });
-  res.end(indexHtml);
+  if (url.pathname === "/waypoint") {
+    handleWaypointEndpoint(res);
+    return;
+  }
+  if (url.pathname === "/status") {
+    await handleStatusEndpoint(res, RIDE_LOG_DIR, rideLogEnabled);
+    return;
+  }
+  if (staticFiles.serve(url.pathname, res)) {
+    return;
+  }
+  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("not found\n");
 });
 
 const ws = setupWs(server);

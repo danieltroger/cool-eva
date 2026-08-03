@@ -79,8 +79,47 @@ Energica BT hub ─┘
 - `src/sensors/max31865.ts` — the coolant probes.
 - `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
 - `src/db.ts` — SQLite schema (long/EAV: `signal` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments.
-- `src/ws.ts` + `public/index.html` — the live phone riding dashboard.
+- `src/http/` — `static` (serves `public/` from memory), `download` (`/dl`), `waypoint` (`/waypoint`), `status` (`/status`).
+- `src/ws.ts` + `public/` — the live phone riding dashboard (see below).
 - `src/index.ts` — wires it all together.
+
+## The dashboard
+
+Four screens, switched from the tab bar — or by **flashing the high beam three times**, which is the only control that works with both hands on the bars.
+
+| Screen | For |
+| --- | --- |
+| **Ride** | GPS speed, power, pack and coolant temperatures, **coolant ΔT** with the I²R watts going in beside it, charge |
+| **Hypermile** | Weakest cell's headroom above cut-off (instantaneous **and** sag-compensated), the BMS's 60 s cut-off timer, allowed current, rolling Wh/km, resistive loss, all 81 cells as a strip |
+| **Charge** | A / V / kW, what the BMS is granting the charger, balancing state, cell spread trend, pack temperature, isolation |
+| **All** | Every signal the bike is producing, grouped and filterable |
+
+**Ride** and **Charge** are what you leave it on; the other two the bike picks for you. It switches to Charge when the BMS reports a charging state, and to Hypermile below 5 % SOC **or** when the weakest cell drops within 150 mV of cut-off — SOC near empty comes from an OCV table that was never re-characterised for these cells, so it can't be the only trigger. The switch is edge-triggered: once it has moved you, you can move back and it stays put.
+
+Design notes for the hypermiling numbers are in `HYPERMILING.md`; the derivations all live in `public/lib/derive.js` and nothing derived is ever logged.
+
+### No build step
+
+`public/` is plain ES modules that the browser runs exactly as committed — deploy stays `git pull` + restart, with nothing to rebuild and no dist to go stale, and you can edit a file over ssh in the garage. The one dependency is [VanJS](https://vanjs.org) (5 kB, vendored in `public/vendor/`), which is signals over real DOM with no virtual DOM anywhere.
+
+It is still type-checked: `tsconfig.json` sets `checkJs`, and the modules carry JSDoc types that **import the server's own `DashboardMessage` from `src/ws.ts`**. Change the wire shape and `npm run typecheck` fails — which is what stops the two drifting apart.
+
+Bad readings are filtered rather than drawn. Across 7.6 M logged rows the bike has produced `coolant_in` at −242 °C (59 450 rows), `coolant_out` at 988 °C (40 351), `0xFFFF` cell voltages and `high_beam` reading 193 — so `public/lib/bounds.js` gates every signal against a physical range, and a rejected value shows as **sensor fault** instead of being clamped into something plausible.
+
+### Developing it without the bike
+
+```bash
+node --experimental-strip-types scripts/replay-capture.ts <capture.log> --speed 4 --skip 60
+# → dashboard on http://localhost:8080, fed by the real decoders
+```
+
+Replays a `candump -tA` capture through the actual decode path, so what's on screen has taken the same route it does on the Pi. Captures and what's in each are listed in `cool-eva-archive/CAPTURES.md`; `capture-20260802-185513-563dd217.log` is the only one containing a real charging session.
+
+### Saving a waypoint from Siri
+
+`GET /waypoint` stamps the current fix into the ride log and replies with one line of text, which Siri reads back. To set it up: **Shortcuts → new shortcut → Get Contents of URL → `http://cool-eva.local/waypoint`**, then add **Speak Text** with the result. Name it something like "Mark this spot" and it works from the handlebars.
+
+A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`), so it travels the normal path into the encrypted log and needs no change to the log format. It refuses to save on a fix older than 30 seconds, and says so rather than silently recording the wrong place.
 
 ## Running it
 
