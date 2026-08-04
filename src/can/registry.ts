@@ -130,10 +130,15 @@ export const SIGNALS: SignalDef[] = [
   { key: "lmu_temp_high_idx", unit: "", group: "battery", source: "stream" },
   { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream" },
   { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
-  // Diagnostic, retire once confirmed: the full 16-bit postprocessor Output3 slot,
-  // to check that a 1-byte postprocessor result really lands in the LOW byte. Holds a
-  // small temperature, so a deadband would only mask the thing it exists to reveal.
-  { key: "pp_output3_raw", unit: "", group: "bms", source: "stream" },
+  // Clamp instrumentation, one byte each. No deadband: these are small integers whose
+  // whole purpose is to show the clamp's arithmetic, so smoothing would hide it.
+  // clamp_diff >= 128 means the pack is below the threshold and the clamp is passing
+  // the true temperature through untouched; clamp_amount is what is being subtracted.
+  { key: "clamp_diff", unit: "", group: "bms", source: "stream" },
+  { key: "clamp_amount", unit: "°C", group: "bms", source: "stream" },
+  // Echo of the byte 0x200 b3 carries. It should always equal batt_temp_hi_vcu; if it
+  // does not, the config is repointed wrong rather than the decoder being wrong.
+  { key: "batt_temp_hi_vcu_echo", unit: "°C", group: "bms", source: "stream" },
 
   // 0x661 — 1 Wh remaining energy (5 Wh deadband: 1 Wh out of a ~21 kWh pack is far
   // below anything we can act on, and the frame arrives every second) + the BMCU's

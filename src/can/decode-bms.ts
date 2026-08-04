@@ -220,15 +220,41 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
           { key: "batt_temp_lo", value: signedByte(data[4]) }
         );
       }
-      // b5-6 is the whole 16-bit postprocessor Output3 slot (mem 2074). It was added
-      // to settle one inference documentation couldn't confirm: when a postprocessor
-      // writes a 1-byte result into a 16-bit slot, which byte holds it? CONFIRMED
-      // 2026-08-02 — the word read 0x000E with b3 = 29 °C, so the value 14 (= 29 − 15)
-      // sits in the LOW byte, as assumed. That is the byte 0x200 reads, so the
-      // temperature offset lands where it should. Kept for now, but it has served its
-      // purpose and can be dropped from both the config and this decoder.
-      if (data.length >= 7) {
-        values.push({ key: "pp_output3_raw", value: u16be(data[5], data[6]) });
+      // b5-7 instrument the temperature clamp, one byte each. They used to be a single
+      // 16-bit read of postprocessor slot Output3 spanning b5-6, which answered a
+      // one-off question (a 1-byte result lands in the LOW byte of a 16-bit slot —
+      // confirmed 2026-08-02, word 0x000E with b3 = 29 °C). The unconditional-offset
+      // config that used that layout is retired; it broke charging. Both configs still
+      // in play (11-full-conditional-offset and 14-signbit-clamp) declare b5, b6 and b7
+      // as three separate 1-byte signals, so the 16-bit decode would now silently pair
+      // two unrelated bytes: it reported 0x0202 on 2026-08-04 and was read as "the
+      // offset is not applied", when in fact diff = 2 and amount = 2 at a true 37 °C is
+      // the clamp working.
+      //
+      //   clamp_diff   = true_temp − 35, as an unsigned byte, so >= 128 means colder
+      //                  than the threshold (that sign bit is what drives the clamp)
+      //   clamp_amount = how much is being subtracted: equal to diff when hot, 0 when cold
+      //   batt_temp_hi_vcu_echo = the result the VCU is actually shown, pinned at 35
+      //                  while hot and equal to the true temperature while cold
+      //
+      // ⚠️ That arithmetic is 14-signbit-clamp's, the config flashed now.
+      // 11-full-conditional-offset points the same two bytes at a 0/1 "hotter than 35"
+      // guard and a flat 9 °C offset instead — and on 2026-08-04 its postprocessor line
+      // never ran at all, so both bytes read 0x00 through a whole DC charge while b7
+      // carried the true temperature. So these two keys mean "whatever the live config
+      // feeds those slots", not the subtraction above, and a pair of zeroes is a
+      // statement about the config rather than about this decode. Only b7 is the same
+      // quantity in every config that has ever sent a long 0x660.
+      //
+      // The echo is not merely the same value as 0x200 b3, it is the same memory
+      // (mem 2075, in both configs), so a disagreement between the two means a
+      // repointing error in the config rather than a decode error here.
+      if (data.length >= 8) {
+        values.push(
+          { key: "clamp_diff", value: data[5] },
+          { key: "clamp_amount", value: data[6] },
+          { key: "batt_temp_hi_vcu_echo", value: signedByte(data[7]) }
+        );
       }
       return values;
     }
