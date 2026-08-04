@@ -5,7 +5,8 @@ import {
   MODE_STORED_DTCS,
   decodeObdDtcResponse,
 } from "../src/diagnostics/obd-dtc.ts";
-import { recordFreezeFrameDtc, recordTroubleCodeRead } from "../src/diagnostics/stored-codes.ts";
+import { FREEZE_FRAME_DTC_KEY, recordFreezeFrameDtc, recordTroubleCodeRead } from "../src/diagnostics/stored-codes.ts";
+import { record } from "../src/can/signals.ts";
 
 // One real OBD-II trouble-code exchange, kept where two scripts can share it:
 // scripts/decode-dtc-response.ts checks the decoders against it, and
@@ -80,6 +81,12 @@ export function loadCapturedTroubleCodes(): boolean {
   );
   recordTroubleCodeRead({ outcome: "silent", mode: MODE_PENDING_DTCS }, "pending");
   recordTroubleCodeRead({ outcome: "silent", mode: MODE_PERMANENT_DTCS }, "permanent");
+  // Both halves, because on the bike both happen: the PID poller records the signal
+  // and then hands the same value to the snapshot (src/can/obd.ts). Doing only the
+  // second here would leave freeze_frame_dtc missing from the ALL view in a replay
+  // and present on the bike, which is the sort of difference that gets debugged
+  // twice before anyone notices it is the fixture.
+  record(FREEZE_FRAME_DTC_KEY, CAPTURED_FREEZE_FRAME_DTC);
   recordFreezeFrameDtc(CAPTURED_FREEZE_FRAME_DTC);
   return true;
 }

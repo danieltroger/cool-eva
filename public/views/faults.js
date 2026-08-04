@@ -335,6 +335,10 @@ function describeList(list) {
       return list.truncated ? `${list.codes.length} of ${list.declaredCount} — cut short` : `${list.codes.length}`;
     case "no-response":
       return "no response";
+    // "we never asked", not "the bike did not answer" — a dead can0 socket must not
+    // be reported as the VCU declining.
+    case "not-asked":
+      return "could not ask";
     case "incomplete":
       return "reply cut short";
     case "refused":
@@ -383,13 +387,29 @@ function StoredList(snapshot) {
           },
           () => (storedExpanded.val ? "show fewer" : `show all ${ranked.length}`)
         ),
-    div(
-      { class: "sub", style: `color:${colors.MUTED}` },
-      freezeFrame
-        ? `${freezeFrame} is the freeze-frame code — the one the bike captured when it lit the lamp.`
-        : "No freeze frame stored, so nothing here is singled out as the reason for the lamp."
-    )
+    div({ class: "sub", style: `color:${colors.MUTED}` }, describeFreezeFrame(snapshot, freezeFrame))
   );
+}
+
+/**
+ * Three states, not two — the same distinction describeList() makes just above.
+ *
+ * `freezeFrame === null` means PID 02 has never been answered, which is the normal
+ * state for the first ten seconds after boot (the PID is on the 20-round diagnostic
+ * cadence while the first mode-03 read fires on round 1) and the permanent state if
+ * it times out. Saying "no freeze frame stored" there would report the bike's answer
+ * before it has given one. `raw: 0` is that answer.
+ * @param {TroubleCodeSnapshot} snapshot
+ * @param {string | null} freezeFrame
+ */
+function describeFreezeFrame(snapshot, freezeFrame) {
+  if (snapshot.freezeFrame === null) {
+    return "Freeze-frame code not read yet — nothing here is singled out.";
+  }
+  if (freezeFrame) {
+    return `${freezeFrame} is the freeze-frame code — the one the bike captured when it lit the lamp.`;
+  }
+  return "No freeze frame stored, so nothing here is singled out as the reason for the lamp.";
 }
 
 /**

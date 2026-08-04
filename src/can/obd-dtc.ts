@@ -74,6 +74,10 @@ const OBD_FUNCTIONAL_REQUEST_ID = 0x7df;
 const OBD_RESPONSE_LO = 0x7e0;
 const OBD_RESPONSE_HI = 0x7ef;
 
+/** The physical request half of that range — the only IDs this module may transmit on. */
+const PHYSICAL_REQUEST_LO = 0x7e0;
+const PHYSICAL_REQUEST_HI = 0x7e7;
+
 /**
  * Where the flow-control frame goes: the physical request address paired with the
  * ID the reply came in on (0x7EF ⇒ 0x7E7), per ISO 15765-2 — a functionally
@@ -127,10 +131,20 @@ const RETRY_GAP_MS = 120;
 export type DtcReadOutcome =
   /** A reply arrived and decoded. `response` may still be a refusal. */
   | { outcome: "answered"; mode: number; response: ObdDtcResponse; payload: Uint8Array }
-  /** Nothing at all came back. NOT the same as "there are no codes". */
+  /** The question reached the bus and nothing came back. NOT "there are no codes". */
   | { outcome: "silent"; mode: number }
   /** A First Frame arrived and the rest never did. Distinct from silence. */
-  | { outcome: "truncated"; mode: number; reason: string };
+  | { outcome: "truncated"; mode: number; reason: string }
+  /**
+   * The question never reached the bus — our socket, not the bike.
+   *
+   * Kept apart from `silent` because they are claims about different things, and
+   * only one of them is about the VCU. `can0` goes down whenever the service
+   * restarts (CLAUDE.md), so a send that throws is a thing that happens; filing it
+   * as "no response" would put our own dead socket on the dashboard as the bike
+   * refusing to answer.
+   */
+  | { outcome: "not-sent"; mode: number; reason: string };
 
 interface InFlightRequest {
   mode: number;
@@ -162,10 +176,11 @@ export async function requestTroubleCodeList(channel: RawChannel, mode: number):
     throw new Error(`obd-dtc: mode 0x${mode.toString(16)} is not a read-only trouble-code service`);
   }
   if (inFlight) {
-    console.warn(
-      `obd-dtc: mode 0x${mode.toString(16)} skipped — a mode 0x${inFlight.mode.toString(16)} read is still running`
-    );
-    return { outcome: "silent", mode };
+    const reason = `a mode 0x${inFlight.mode.toString(16)} read was still running`;
+    console.warn(`obd-dtc: mode 0x${mode.toString(16)} skipped — ${reason}`);
+    // `not-sent`, not `silent`: nothing was put on the bus, so the bike has not
+    // declined to answer anything.
+    return { outcome: "not-sent", mode, reason };
   }
 
   let result: DtcReadOutcome = { outcome: "silent", mode };
@@ -261,7 +276,8 @@ function attemptRead(channel: RawChannel, mode: number): Promise<DtcReadOutcome>
       channel.send({ id: OBD_FUNCTIONAL_REQUEST_ID, ext: false, rtr: false, data: frame });
     } catch (err) {
       console.error(`obd-dtc: send of mode 0x${mode.toString(16)} failed`, err);
-      settle(request, { outcome: "silent", mode });
+      // Ours, not the bike's — see the `not-sent` note on DtcReadOutcome.
+      settle(request, { outcome: "not-sent", mode, reason: err instanceof Error ? err.message : String(err) });
     }
   });
 }
@@ -322,9 +338,21 @@ function addressesService(mode: number, data: Buffer): boolean {
 }
 
 function sendFlowControl(channel: RawChannel, responseId: number): void {
+  const flowControlId = responseId + FLOW_CONTROL_ID_OFFSET;
+  // The rest of this module is read-only by construction rather than by argument,
+  // and this is the one place that derives a transmit ID from a received one. A
+  // First Frame arriving on 0x7E0..0x7E7 — the request half of the range that
+  // isTroubleCodeResponseId accepts — would put the flow control on 0x7D8..0x7DF,
+  // and 0x7DF is the functional broadcast every ECU on the bus reads as a request.
+  // Unlikely rather than impossible, which is exactly what a guard is for.
+  if (flowControlId < PHYSICAL_REQUEST_LO || flowControlId > PHYSICAL_REQUEST_HI) {
+    console.warn(
+      `obd-dtc: refusing flow control to 0x${flowControlId.toString(16)} — outside the physical request range`
+    );
+    return;
+  }
   const frame = Buffer.alloc(8);
   Buffer.from(FLOW_CONTROL_FRAME).copy(frame);
-  const flowControlId = responseId + FLOW_CONTROL_ID_OFFSET;
   try {
     channel.send({ id: flowControlId, ext: false, rtr: false, data: frame });
   } catch (err) {
@@ -340,6 +368,9 @@ export function describeReadOutcome(result: DtcReadOutcome): string {
   const mode = `mode 0x${result.mode.toString(16).padStart(2, "0")}`;
   if (result.outcome === "silent") {
     return `${mode}: NO RESPONSE — which is not the same claim as “no codes”`;
+  }
+  if (result.outcome === "not-sent") {
+    return `${mode}: never asked — ${result.reason}`;
   }
   if (result.outcome === "truncated") {
     return `${mode}: transfer started and stalled — ${result.reason}`;

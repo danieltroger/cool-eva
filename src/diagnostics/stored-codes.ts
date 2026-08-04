@@ -32,6 +32,13 @@ export type TroubleCodeListState =
   | { state: "codes"; codes: TroubleCodeRow[]; declaredCount: number; truncated: boolean }
   /** Asked; nothing came back at all. NOT "no codes". */
   | { state: "no-response" }
+  /**
+   * Never made it onto the bus — our socket, not the bike. Deliberately not folded
+   * into `no-response`: that one is a claim about the VCU, and this one is a claim
+   * about us. `can0` drops whenever the service restarts, and attributing that to
+   * the bike would be exactly the kind of invented answer this file exists to avoid.
+   */
+  | { state: "not-asked"; reason: string }
   /** A transfer started every time and never finished. Distinct from silence. */
   | { state: "incomplete"; reason: string }
   /** The bike refused, by name. */
@@ -111,7 +118,7 @@ const lastSignature: Record<DtcListKind, string | null> = { stored: null, pendin
  */
 export function recordTroubleCodeRead(result: DtcReadOutcome, list: DtcListKind): void {
   const previous = lastSignature[list];
-  const next = describeReadOutcome(result);
+  const line = describeReadOutcome(result);
 
   state[list] = toListState(result);
   const current = state[list];
@@ -119,14 +126,26 @@ export function recordTroubleCodeRead(result: DtcReadOutcome, list: DtcListKind)
     record(COUNT_SIGNAL_KEYS[list], current.codes.length);
   }
 
-  readAtWallClock = Date.now();
-  readAtMonotonic = monotonicNow();
+  // Only when a question actually reached the bus. "Last read: 3 s ago" next to a
+  // list we failed to send would be the screen inventing a freshness it does not
+  // have — the whole point of keeping `not-asked` separate.
+  if (current.state !== "not-asked") {
+    readAtWallClock = Date.now();
+    readAtMonotonic = monotonicNow();
+  }
 
+  // Signed on the CODES, not on the summary line. `describeReadOutcome` says "39
+  // stored code(s)" and nothing more, so a service that cleared one code and set
+  // another would leave the count at 39, match the previous signature, and never
+  // print the list — silencing the journal for exactly the change worth finding
+  // later. The counts are the only signals here, so this journal is the only
+  // durable record of WHICH codes were stored.
+  const next = current.state === "codes" ? `${line} :: ${current.codes.map(code => code.obdCode).join(",")}` : line;
   if (next === previous) {
     return;
   }
   lastSignature[list] = next;
-  console.log(`obd-dtc: ${next}`);
+  console.log(`obd-dtc: ${line}`);
   if (current.state === "codes") {
     for (const code of current.codes) {
       const named = code.description ?? "not in Energica's table";
@@ -143,6 +162,10 @@ export function recordTroubleCodeRead(result: DtcReadOutcome, list: DtcListKind)
  */
 export function recordFreezeFrameDtc(raw: number): void {
   const changed = freezeFrame?.raw !== raw;
+  // A row with `raw: 0` and an EMPTY obdCode, rather than null and rather than
+  // "P0000". Null is reserved for "PID 02 has not answered yet", which the dashboard
+  // has to be able to tell apart from the bike saying there is no freeze frame; and
+  // P0000 is not a code — formatting 0 as one would put a phantom on the screen.
   freezeFrame = raw === 0 ? { raw, obdCode: "", ...unlisted() } : describeTroubleCode(raw);
   if (!changed) {
     return;
@@ -171,6 +194,9 @@ export function troubleCodeSnapshot(): TroubleCodeSnapshot {
 function toListState(result: DtcReadOutcome): TroubleCodeListState {
   if (result.outcome === "silent") {
     return { state: "no-response" };
+  }
+  if (result.outcome === "not-sent") {
+    return { state: "not-asked", reason: result.reason };
   }
   if (result.outcome === "truncated") {
     return { state: "incomplete", reason: result.reason };
