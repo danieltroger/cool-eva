@@ -170,7 +170,12 @@ function ConsumptionTile() {
       () => {
         chartTick.val;
         const rolling = rollingConsumption(monotonicNow());
-        return rolling == null ? "–" : rolling.whPerKm.toFixed(0);
+        if (rolling.state === "measured") {
+          return rolling.whPerKm.toFixed(0);
+        }
+        // A descent puts energy back in; a dash is what "no reading" looks like, and
+        // this is a reading.
+        return rolling.state === "regenerating" ? "regen" : "–";
       },
       span({ class: "unit" }, "Wh/km")
     ),
@@ -178,10 +183,13 @@ function ConsumptionTile() {
       chartTick.val;
       const now = monotonicNow();
       const rolling = rollingConsumption(now);
-      const range = rollingRangeKm(now);
-      if (rolling == null) {
+      if (rolling.state === "waiting") {
         return "needs ~200 m of riding";
       }
+      if (rolling.state === "regenerating") {
+        return `putting charge back over the last ${rolling.km.toFixed(1)} km`;
+      }
+      const range = rollingRangeKm(now);
       const rangeText = range == null ? "" : ` · ${Math.round(range)} km left at this rate`;
       return `over the last ${rolling.km.toFixed(1)} km${rangeText}`;
     }),
