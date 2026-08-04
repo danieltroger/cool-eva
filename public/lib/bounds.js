@@ -75,8 +75,14 @@ const BY_UNIT = {
   "kW": [-300, 300],
 };
 
-/** Per-cell voltages are generated keys (`cell_v_lmu3_c5`), so match by prefix. */
-const CELL_VOLTAGE_PREFIX = "cell_v_";
+/**
+ * Per-cell voltages are generated keys, so they are matched by shape rather than
+ * listed. The pattern must stay in step with `cellVoltageKey()` in
+ * src/can/decode-bms.ts — an earlier version guessed `cell_v_*` and matched
+ * nothing, which silently dropped all 81 cells through to the much looser `mV`
+ * unit range below, where a 0 mV dropout would have read as a real value.
+ */
+const CELL_VOLTAGE_PATTERN = /^lmu\d+_cell\d+_mv$/;
 
 /**
  * True if `value` is a believable reading of `key`.
@@ -109,7 +115,7 @@ export function boundsFor(key, unit, group) {
   if (explicit) {
     return explicit;
   }
-  if (key.startsWith(CELL_VOLTAGE_PREFIX)) {
+  if (CELL_VOLTAGE_PATTERN.test(key)) {
     return [1500, 4500];
   }
   if (COUNTER_KEYS.has(key)) {

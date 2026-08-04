@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
+import { chartTick, knownKeys, peek, signalState, valueOf } from "../lib/store.js";
 import { ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import {
@@ -270,20 +270,24 @@ function SpreadTile() {
 function CellStrip() {
   return div({ class: "tile span2" }, () => {
     chartTick.val;
+    const cells = cellVoltageKeys(knownKeys.val);
+    if (cells.length === 0) {
+      return Missing(`Per-cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
+    }
     const bars = [];
     let low = Infinity;
     let high = -Infinity;
-    for (let lmu = 1; lmu <= 11; lmu++) {
-      const cells = lmu <= 4 ? 8 : 7;
-      for (let cell = 1; cell <= cells; cell++) {
-        const value = valueOf(`cell_v_lmu${lmu}_c${cell}`);
-        if (value == null) {
-          continue;
-        }
-        bars.push(value);
-        low = Math.min(low, value);
-        high = Math.max(high, value);
+    for (const key of cells) {
+      // peek(), not valueOf(): this binding is paced by the tick above, and
+      // subscribing it to 81 signals at ~2 Hz each would rebuild the strip
+      // continuously.
+      const value = peek(key);
+      if (value == null) {
+        continue;
       }
+      bars.push(value);
+      low = Math.min(low, value);
+      high = Math.max(high, value);
     }
     if (bars.length === 0) {
       return Missing(`Per-cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
@@ -307,6 +311,34 @@ function CellStrip() {
       div({ class: "sub" }, `${Math.round(low)} – ${Math.round(high)} mV · spread ${Math.round(high - low)} mV`)
     );
   });
+}
+
+/**
+ * The per-cell voltage keys currently arriving, in pack order.
+ *
+ * Discovered from what the bike is actually sending rather than constructed from
+ * a loop over module and cell numbers. The first version built its own keys and
+ * got the format wrong — `cell_v_lmu3_c5` against the decoder's
+ * `lmu3_cell5_mv` — so the strip reported "0 of 81" for an entire ride while the
+ * ALL view, which renders whatever arrives, showed all 81 of them. Deriving the
+ * list the same way removes the chance to disagree with the decoder at all;
+ * `src/can/decode-bms.ts` owns the naming and nothing here restates it.
+ *
+ * Sorted by module then cell so the strip reads in pack order — string sort would
+ * put lmu10 between lmu1 and lmu2 and scramble which bar is which cell.
+ * @param {string[]} keys
+ * @returns {string[]}
+ */
+function cellVoltageKeys(keys) {
+  const found = [];
+  for (const key of keys) {
+    const match = /^lmu(\d+)_cell(\d+)_mv$/.exec(key);
+    if (match) {
+      found.push({ key, lmu: Number(match[1]), cell: Number(match[2]) });
+    }
+  }
+  found.sort((a, b) => (a.lmu === b.lmu ? a.cell - b.cell : a.lmu - b.lmu));
+  return found.map(entry => entry.key);
 }
 
 /**
