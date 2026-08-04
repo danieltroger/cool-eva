@@ -466,6 +466,46 @@ body {
   color: var(--bad);
 }
 
+/* ---------- stored trouble codes (faults view) ---------- */
+
+/* Thirty-nine of these have to fit on a phone, so one line each: the code on the
+   left at a fixed width so the codes form a readable column, the description
+   filling the rest and clipping rather than wrapping every row to two lines. */
+.code-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+.code-line-id {
+  flex: 0 0 3.6rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.code-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-toggle {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  color: var(--label);
+  font: inherit;
+  font-size: 0.74rem;
+  /* Padded well past the text: this is a thumb target in a garage, and the label
+     itself is only about 60 px wide. */
+  padding: 0.5rem 0.1rem;
+  cursor: pointer;
+}
+
 /* The `all` view sets its own two-column grid inside each group, so the outer
    view grid must not also try to lay its children out in two columns. */
 .view > div:not(.tile):not(.hero):not(.section):not(.filter) {
