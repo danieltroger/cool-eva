@@ -201,32 +201,85 @@ export function remainingWh() {
 }
 
 /**
- * Wh/km measured over the last few minutes, from energy actually spent against
- * distance actually covered. Preferred over the bike's own figure because the
- * horizon is known and stated on screen — a single averaged number with no stated
- * window invites false precision.
+ * Wh/km over the last few minutes: pack power integrated over time, against
+ * distance actually covered.
+ *
+ * The energy term is integrated from `pack_kw` rather than differenced from a
+ * remaining-energy counter, which is what the first version did and why the
+ * readout kept going blank mid-ride. Measured across the seven rides of
+ * 2026-08-04: `residual_energy_wh` moves in ~158 Wh steps — roughly one step per
+ * kilometre — so a five-minute window often held fewer than the two samples a
+ * difference needs, and the tile showed nothing between 23% and 100% of the time
+ * depending on the ride. `bms_remaining_energy_wh`, which has the 1 Wh resolution
+ * this wants, reads a constant 0 on this pack.
+ *
+ * `pack_kw` has no such problem: it is pushed to the ring at up to 2 Hz, so the
+ * window is never short of samples while the bike is moving. Cross-checked against
+ * an independent source on the same rides — Δ`remaining_ah` × pack voltage — the
+ * integral agrees to within ~5% on every one of them.
+ *
+ * Differencing `residual_energy_wh` lands 25-35% below both, but that is not
+ * evidence of a bad decode: it is validated against the bike's own menu (see
+ * decode.ts 0x10a) and is an estimate of energy *available to the cut-off*, which
+ * is legitimately less than the charge the pack still holds. It is simply the wrong
+ * quantity for "what did the last five minutes cost", which is energy drawn.
+ *
+ * Still preferred over the bike's own average because the horizon is known and
+ * stated on screen; a single averaged number with no stated window invites false
+ * precision.
  * @param {number} now monotonic, from lib/clock.js — the rings are keyed on it
  * @returns {{ whPerKm: number, km: number } | null}
  */
 export function rollingConsumption(now) {
-  const energyKey =
-    positiveOrNull("bms_remaining_energy_wh") != null ? "bms_remaining_energy_wh" : "residual_energy_wh";
-  const energy = ringFor(energyKey).since(ROLLING_WINDOW_MS, now);
+  const power = ringFor("pack_kw").since(ROLLING_WINDOW_MS, now);
   // 0x104's odometer in preference to the hub's: it is on the CAN bus, so it is
   // there whenever the bike is awake, while the Bluetooth one needs the hub link to
   // be up. Both are logged separately on purpose, so this picks rather than merges.
   const distanceKey = positiveOrNull("odometer_can_km") != null ? "odometer_can_km" : "odometer_km";
   const distance = ringFor(distanceKey).since(ROLLING_WINDOW_MS, now);
-  if (energy.values.length < 2 || distance.values.length < 2) {
+  if (power.values.length < 2 || distance.values.length < 2) {
     return null;
   }
-  const spentWh = energy.values[0] - energy.values[energy.values.length - 1];
+
+  const spentWh = integrateWh(power.times, power.values);
   const travelledKm = distance.values[distance.values.length - 1] - distance.values[0];
-  // Under ~200 m the odometer's own resolution dominates and the ratio is garbage.
+  // Under ~200 m the odometer's 100 m resolution dominates and the ratio is garbage.
+  // A window that is net-regen has nothing useful to say as a consumption figure.
   if (travelledKm < 0.2 || spentWh <= 0) {
     return null;
   }
   return { whPerKm: spentWh / travelledKm, km: travelledKm };
+}
+
+/**
+ * Watt-hours drawn from the pack across a window of pack_kw samples.
+ *
+ * Zero-order hold: each sample is taken to apply until the next one. pack_kw is
+ * pushed to the ring on change with a 0.05 kW deadband, so a value that stops
+ * updating genuinely has not moved, and the step is the reading rather than an
+ * interpolation between two guesses.
+ *
+ * Discharge is negative on this bike (see the sign note at the top of this file),
+ * so the sum is negated to make consumption positive. Regen is included with its
+ * own sign and correctly reduces the total.
+ *
+ * This assumes ring time advances at the same rate as the ride, which is true on
+ * the bike and is NOT true under scripts/replay-capture.ts at anything other than
+ * `--speed 1`: the odometer supplies distance in ride-space while the ring is
+ * stamped in real time, so a 10x replay reports a tenth of the real Wh/km. That is
+ * an artefact of the tool, not of this function — worth knowing before filing it
+ * as a bug for the second time.
+ * @param {number[]} times monotonic, oldest first
+ * @param {number[]} kilowatts
+ * @returns {number}
+ */
+function integrateWh(times, kilowatts) {
+  let wattHours = 0;
+  for (let index = 0; index < times.length - 1; index++) {
+    const hours = (times[index + 1] - times[index]) / 3_600_000;
+    wattHours += -kilowatts[index] * hours * 1000;
+  }
+  return wattHours;
 }
 
 /**
