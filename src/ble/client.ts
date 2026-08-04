@@ -37,11 +37,14 @@ const REQUEST_VEHICLE_INFO = Buffer.from([4, 17, 2, 0xff, 0, 0, 0, 0, 0, 0]);
 const REQUEST_ODOMETER = Buffer.from([4, 17, 4, 0xff, 0, 0, 0, 0, 0, 0]);
 const REQUEST_DIAGNOSTICS = Buffer.from([4, 17, 25, 0xff, 0, 0, 0, 0, 0, 0]);
 const TELEMETRY_REQUEST_INTERVAL_MS = 10_000;
-// Stored trouble codes change once in a blue moon, so asking every round would
-// spend the link on an answer that is the same every time. Every 6th round ⇒ once
-// a minute. The one reply observed so far is a single frame (the list came back
-// empty), but a full list pages two codes per frame, so the 38 PID 0x01 reports
-// would be ~19 frames — which is the cost this cadence exists to avoid.
+// The hub serves the ACTIVE fault list (see ../diagnostics/decode.ts), which
+// mostly reads the same minute after minute, so asking every round would spend
+// the link re-fetching an unchanged answer. Every 6th round ⇒ once a minute —
+// which does undersample a code that flaps, so a gap in the series is not
+// evidence a fault cleared. Every reply so far has been a single frame carrying
+// one code or none, but a list pages two codes per frame, so one the size of the
+// 39 PID 0x01 reports would be ~20 frames — the cost this cadence exists to
+// avoid.
 const DIAGNOSTICS_EVERY_NTH_ROUND = 6;
 const RECONNECT_DELAY_MS = 5_000;
 const SILENCE_TIMEOUT_MS = 30_000;
