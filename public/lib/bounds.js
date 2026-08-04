@@ -1,5 +1,7 @@
 // @ts-check
 
+import { CELL_VOLTAGE_PATTERN } from "./cells.js";
+
 // Plausibility gate: what range a signal can physically be in.
 //
 // This exists because the real data is not clean. Across 7.6 M logged readings
@@ -76,15 +78,6 @@ const BY_UNIT = {
 };
 
 /**
- * Per-cell voltages are generated keys, so they are matched by shape rather than
- * listed. The pattern must stay in step with `cellVoltageKey()` in
- * src/can/decode-bms.ts — an earlier version guessed `cell_v_*` and matched
- * nothing, which silently dropped all 81 cells through to the much looser `mV`
- * unit range below, where a 0 mV dropout would have read as a real value.
- */
-const CELL_VOLTAGE_PATTERN = /^lmu\d+_cell\d+_mv$/;
-
-/**
  * True if `value` is a believable reading of `key`.
  * @param {string} key
  * @param {number} value
@@ -116,7 +109,18 @@ export function boundsFor(key, unit, group) {
     return explicit;
   }
   if (CELL_VOLTAGE_PATTERN.test(key)) {
-    return [1500, 4500];
+    // The same band the decoder uses (MIN/MAX_PLAUSIBLE_CELL_MV in
+    // src/can/decode-bms.ts), and deliberately not tighter.
+    //
+    // A tighter client gate is actively harmful here. The decoder's band is wide on
+    // purpose — "far wider than this pack's own configured limits, so no real cell,
+    // even a badly damaged one, can fall outside it" — and anything this rejects
+    // does not reach signalState, so CellStrip goes on drawing the last good bar.
+    // A cell collapsing to 1400 mV would then be invisible on the one screen whose
+    // premise is that a single cell out of 81 ends the ride. The server has already
+    // dropped the 0xFFFF sentinel and the 8192 mV pad; this is defence in depth, so
+    // it should agree rather than second-guess.
+    return [1000, 5000];
   }
   if (COUNTER_KEYS.has(key)) {
     return [0, 1000];

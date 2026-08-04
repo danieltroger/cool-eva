@@ -1,11 +1,11 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, knownKeys, peek, valueOf } from "../lib/store.js";
+import { chartTick, faultState, knownKeys, peek, valueOf } from "../lib/store.js";
+import { CELL_COUNT, cellVoltageKeys } from "../lib/cells.js";
 import { ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import {
-  CELL_COUNT,
   headroomMv,
   limitFraction,
   remainingWh,
@@ -271,9 +271,6 @@ function CellStrip() {
   return div({ class: "tile span2" }, () => {
     chartTick.val;
     const cells = cellVoltageKeys(knownKeys.val);
-    if (cells.length === 0) {
-      return Missing(`Per-cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
-    }
     const bars = [];
     let low = Infinity;
     let high = -Infinity;
@@ -292,6 +289,10 @@ function CellStrip() {
     if (bars.length === 0) {
       return Missing(`Per-cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
     }
+    // A cell whose reading was rejected keeps its last good bar, so the strip would
+    // otherwise look complete while one of its 81 values is frozen. Say so — the
+    // whole premise of this screen is that one cell out of 81 ends the ride.
+    const faulted = cells.filter(key => faultState(key).rawVal !== null).length;
     // Scale to the spread rather than to zero, or 81 near-identical cells all draw
     // as full-height bars and the weak one is invisible.
     const padding = Math.max((high - low) * 0.25, 5);
@@ -308,37 +309,13 @@ function CellStrip() {
         low: low - padding,
         high: high + padding,
       }),
-      div({ class: "sub" }, `${Math.round(low)} – ${Math.round(high)} mV · spread ${Math.round(high - low)} mV`)
+      div(
+        { class: faulted > 0 ? "sub fault" : "sub" },
+        `${Math.round(low)} – ${Math.round(high)} mV · spread ${Math.round(high - low)} mV` +
+          (faulted > 0 ? ` · ${faulted} cell${faulted === 1 ? "" : "s"} reading out of range` : "")
+      )
     );
   });
-}
-
-/**
- * The per-cell voltage keys currently arriving, in pack order.
- *
- * Discovered from what the bike is actually sending rather than constructed from
- * a loop over module and cell numbers. The first version built its own keys and
- * got the format wrong — `cell_v_lmu3_c5` against the decoder's
- * `lmu3_cell5_mv` — so the strip reported "0 of 81" for an entire ride while the
- * ALL view, which renders whatever arrives, showed all 81 of them. Deriving the
- * list the same way removes the chance to disagree with the decoder at all;
- * `src/can/decode-bms.ts` owns the naming and nothing here restates it.
- *
- * Sorted by module then cell so the strip reads in pack order — string sort would
- * put lmu10 between lmu1 and lmu2 and scramble which bar is which cell.
- * @param {string[]} keys
- * @returns {string[]}
- */
-function cellVoltageKeys(keys) {
-  const found = [];
-  for (const key of keys) {
-    const match = /^lmu(\d+)_cell(\d+)_mv$/.exec(key);
-    if (match) {
-      found.push({ key, lmu: Number(match[1]), cell: Number(match[2]) });
-    }
-  }
-  found.sort((a, b) => (a.lmu === b.lmu ? a.cell - b.cell : a.lmu - b.lmu));
-  return found.map(entry => entry.key);
 }
 
 /**
