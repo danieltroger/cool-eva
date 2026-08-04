@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, knownKeys, peek, signalState, valueOf } from "../lib/store.js";
+import { chartTick, knownKeys, peek, valueOf } from "../lib/store.js";
 import { ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import {
