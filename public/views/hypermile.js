@@ -1,11 +1,11 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
+import { chartTick, faultState, knownKeys, peek, valueOf } from "../lib/store.js";
+import { CELL_COUNT, cellVoltageKeys } from "../lib/cells.js";
 import { ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import {
-  CELL_COUNT,
   headroomMv,
   limitFraction,
   remainingWh,
@@ -270,24 +270,29 @@ function SpreadTile() {
 function CellStrip() {
   return div({ class: "tile span2" }, () => {
     chartTick.val;
+    const cells = cellVoltageKeys(knownKeys.val);
     const bars = [];
     let low = Infinity;
     let high = -Infinity;
-    for (let lmu = 1; lmu <= 11; lmu++) {
-      const cells = lmu <= 4 ? 8 : 7;
-      for (let cell = 1; cell <= cells; cell++) {
-        const value = valueOf(`cell_v_lmu${lmu}_c${cell}`);
-        if (value == null) {
-          continue;
-        }
-        bars.push(value);
-        low = Math.min(low, value);
-        high = Math.max(high, value);
+    for (const key of cells) {
+      // peek(), not valueOf(): this binding is paced by the tick above, and
+      // subscribing it to 81 signals at ~2 Hz each would rebuild the strip
+      // continuously.
+      const value = peek(key);
+      if (value == null) {
+        continue;
       }
+      bars.push(value);
+      low = Math.min(low, value);
+      high = Math.max(high, value);
     }
     if (bars.length === 0) {
       return Missing(`Per-cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
     }
+    // A cell whose reading was rejected keeps its last good bar, so the strip would
+    // otherwise look complete while one of its 81 values is frozen. Say so — the
+    // whole premise of this screen is that one cell out of 81 ends the ride.
+    const faulted = cells.filter(key => faultState(key).rawVal !== null).length;
     // Scale to the spread rather than to zero, or 81 near-identical cells all draw
     // as full-height bars and the weak one is invisible.
     const padding = Math.max((high - low) * 0.25, 5);
@@ -304,7 +309,11 @@ function CellStrip() {
         low: low - padding,
         high: high + padding,
       }),
-      div({ class: "sub" }, `${Math.round(low)} – ${Math.round(high)} mV · spread ${Math.round(high - low)} mV`)
+      div(
+        { class: faulted > 0 ? "sub fault" : "sub" },
+        `${Math.round(low)} – ${Math.round(high)} mV · spread ${Math.round(high - low)} mV` +
+          (faulted > 0 ? ` · ${faulted} cell${faulted === 1 ? "" : "s"} reading out of range` : "")
+      )
     );
   });
 }

@@ -2,6 +2,9 @@
 
 import { peek, valueOf } from "./store.js";
 import { ringFor } from "./ring.js";
+// Series count lives with everything else about the pack's cells, so the sag
+// divisor and the strip's "n of 81" cannot disagree.
+import { CELL_COUNT } from "./cells.js";
 
 // Everything the dashboard shows that the bike does not itself measure.
 //
@@ -15,9 +18,6 @@ import { ringFor } from "./ring.js";
 // Ribelle's 126 kW peak) and positive on regen and charge. Getting this backwards
 // silently inverts sag compensation, so it is asserted by name below rather than
 // left implicit in a minus sign.
-
-/** Series positions in the pack: 11 LMUs, four with 8 cells and seven with 7. */
-export const CELL_COUNT = 81;
 
 /** Rolling windows. Long enough to be stable, short enough to reflect this hill. */
 export const ROLLING_WINDOW_MS = 5 * 60_000;
