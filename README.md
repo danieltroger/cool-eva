@@ -216,7 +216,7 @@ Codes are named from Energica's own type-approval table (`src/diagnostics/dtc-ta
 
 **Modes 07 and 0A return nothing at all** — silence, not a refusal, across six attempts. That means "not implemented" and "implemented but withheld" cannot be told apart from here, so the dashboard says **"no response"** rather than "none pending". Those are different claims and only one of them is true.
 
-The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs. `obd-garage/CAN_MAP.md` has the frames, the measurements, and the story of why this looked impossible until 2026-08-04.
+The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs.
 
 ## Notes
 
