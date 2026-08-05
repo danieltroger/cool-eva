@@ -44,7 +44,7 @@ The frames below only exist once the pack's LiBAL BMS has been reflashed with th
 
 #### `CUSTOM_BMS_CONFIG` — set this only if you flashed the custom config
 
-The custom config shifts the pack temperatures the VCU reads down by 15 °C, to move its DC-charge derate knee from 36 °C reported to 51 °C actual. That changes what `0x200`'s temperature bytes mean, so the app has to be told:
+The custom config lowers the pack temperatures the VCU reads, so that its DC-charge derate knee — which starts at a reported 36 °C, far too early for a watercooled pack — is pushed later. How much lower depends on which config is flashed: the current one (`14-signbit-clamp`) **pins** the reported value at 35 °C whenever the pack is hotter than that, and passes the true temperature through untouched when it is colder, so the difference is 0 below the threshold and (true − 35) above it. An earlier config used a flat −15 °C instead, but it broke charging and is retired. Either way this changes what `0x200`'s temperature bytes mean, so the app has to be told:
 
 ```bash
 CUSTOM_BMS_CONFIG=1   # only with the custom BMS config flashed. Default: unset = stock.
