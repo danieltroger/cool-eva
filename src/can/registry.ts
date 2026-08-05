@@ -217,11 +217,29 @@ export const SIGNALS: SignalDef[] = [
   { key: "warmups_since_clear", unit: "", group: "diag", source: "poll" }, // PID 30
 
   // The stored codes themselves, out of the Connectivity Hub's diagnostics
-  // message (type 25) — Mode 03 is locked on this bike, so PID 01's dtc_count is
-  // all OBD-II will give up. dtc_list_count is that same number arrived at down a
-  // completely different path, so a disagreement between the two is worth seeing.
+  // message (type 25). dtc_list_count is the bike's ACTIVE fault list — the same
+  // count as dtc_count arrived at down a completely different path, so a
+  // disagreement between the two is worth seeing.
+  //
+  // ⚠️ CORRECTED 2026-08-04: this comment used to claim "Mode 03 is locked on this
+  // bike, so PID 01's dtc_count is all OBD-II will give up". That was wrong. Mode 03
+  // works and hands over all 39 codes by name over ISO-TP; the NRC 0x33 it was
+  // convicted on belonged to our own flow-control frame, not to the request. See
+  // src/can/obd-dtc.ts.
   { key: "dtc_list_count", unit: "", group: "diag", source: "stream" },
   { key: "dtc_unrecognised_count", unit: "", group: "diag", source: "stream" },
+  // The OBD-II lists, counted. Only the counts are signals — the codes themselves
+  // go out over /stored-dtcs, because 39 more keys in every 5-second WebSocket
+  // snapshot is a poor trade for a list that changes when the bike is serviced.
+  // dtc_pending_count and dtc_permanent_count are recorded ONLY if modes 07/0A ever
+  // answer; on this bike they never have, and their absence is the honest record of
+  // that. Do not default them to 0.
+  { key: "dtc_stored_count", unit: "", group: "diag", source: "poll" },
+  { key: "dtc_pending_count", unit: "", group: "diag", source: "poll" },
+  { key: "dtc_permanent_count", unit: "", group: "diag", source: "poll" },
+  // PID 02, the raw 16-bit freeze-frame code (0x0514 ⇒ P0514). Unitless because it
+  // is an identifier, not a measurement — never plot it.
+  { key: "freeze_frame_dtc", unit: "", group: "diag", source: "poll" },
   ...dtcSignals(),
 
   // Keyless / immobilizer

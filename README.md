@@ -24,6 +24,7 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah` | CAN `0x025`/`0x10A`/`0x205` |
 | **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
+| **Trouble codes** | `mil_on`, `dtc_count` (stored, per PID `01`), `dtc_stored_count` (the mode-03 list's own length — the same number down a second path), `dtc_list_count` (the bike's _active_ list, a different thing), `freeze_frame_dtc` (the code that lit the lamp), plus one 1/0 signal per code Energica documents. See [Trouble codes](#trouble-codes) | OBD-II `01`/`02` + **mode 03** · CAN `0x410` |
 
 ### Signals that need the custom BMS config
 
@@ -194,8 +195,31 @@ Does not:
 - **No cross-segment integrity.** Each segment is authenticated on its own, so tampering within one is detected — but segments can be deleted or reordered without the reader noticing. It protects confidentiality, not completeness.
 - **`/dl` is unauthenticated** on port 80, like the rest of the server. The payload is sealed, so the exposure is the metadata above rather than the data — but it's a wider audience than "whoever holds the SD card".
 
+## Trouble codes
+
+The bike keeps two completely different fault lists, and the Faults tab shows them apart because merging them would be wrong:
+
+|  | What it is | How many, right now | Where from |
+| --- | --- | --- | --- |
+| **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity Hub message type 25, over Bluetooth and mirrored onto CAN `0x410` |
+| **Stored** | Everything that has _ever_ been wrong and not been cleared. It only climbs | **39** | OBD-II **mode 03**, over ISO-TP |
+| **Pending / permanent** | Would be OBD-II modes 07 and 0A | — | **no response.** See below |
+
+Mode 03's reply is 80 bytes, so it needs ISO-TP: a First Frame, a flow-control frame back from us, then eleven Consecutive Frames. `src/can/iso-tp.ts` reassembles it and `src/diagnostics/obd-dtc.ts` decodes it — both pure, bytes in and codes out, so a captured transfer replays on a laptop:
+
+```bash
+node --experimental-strip-types scripts/decode-dtc-response.ts
+# → replays a real 2026-08-04 transfer and checks it still decodes to the same 39 codes
+```
+
+Codes are named from Energica's own type-approval table (`src/diagnostics/dtc-table.ts`, 148 codes). All 39 of this bike's are in it. **Mode 01 PID 02** — the freeze-frame code, i.e. the one the bike captured when it lit the lamp — reads `P0514`, _"Error reading temperature"_, which is why the warning light is on.
+
+**Modes 07 and 0A return nothing at all** — silence, not a refusal, across six attempts. That means "not implemented" and "implemented but withheld" cannot be told apart from here, so the dashboard says **"no response"** rather than "none pending". Those are different claims and only one of them is true.
+
+The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs.
+
 ## Notes
 
-- The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes.
+- The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes. Nothing here can clear a trouble code: OBD-II **mode 04 is not implemented and must not be** — it would erase the history above, on a bike that has been accumulating it since before anyone was reading.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.

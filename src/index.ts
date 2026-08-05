@@ -6,6 +6,7 @@ import { loadStaticFiles } from "./http/static.ts";
 import { handleWaypointEndpoint } from "./http/waypoint.ts";
 import { handleStatusEndpoint } from "./http/status.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
+import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -215,6 +216,13 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/dtc-table") {
     handleDtcTableEndpoint(req, res);
+    return;
+  }
+  // The codes the bike currently has stored, as last read by the OBD poller. Serves
+  // a snapshot and never touches the bus, so refreshing the page cannot start a
+  // multiframe transfer.
+  if (url.pathname === "/stored-dtcs") {
+    handleStoredDtcsEndpoint(res);
     return;
   }
   if (staticFiles.serve(url.pathname, res)) {

@@ -49,6 +49,12 @@ const BY_KEY = {
   "motor_rpm": [-12_000, 12_000],
   "aux_12v": [0, 20],
   "range_km": [0, 500],
+  // Mode 01 PID 02's freeze-frame code — an IDENTIFIER, not a measurement, so the
+  // whole 16-bit space is legitimate (P0514 is 0x0514 = 1300, and a U-code reaches
+  // 0xFFFF). It needs its own entry rather than COUNTER_KEYS below, whose 0…1000
+  // would reject most of the range. 0 is meaningful too: it is the bike's own way
+  // of saying no freeze frame is stored.
+  "freeze_frame_dtc": [0, 65_535],
 };
 
 /** Signals that are 1/0 flags, where anything else is a bad read. */
@@ -62,7 +68,18 @@ const BOOLEAN_GROUPS = new Set(["controls", "diag"]);
  * count that the sheet's OBD cross-check exists to show, precisely when there is
  * something to cross-check.
  */
-const COUNTER_KEYS = new Set(["dtc_count", "warmups_since_clear", "dtc_list_count", "dtc_unrecognised_count"]);
+const COUNTER_KEYS = new Set([
+  "dtc_count",
+  "warmups_since_clear",
+  "dtc_list_count",
+  "dtc_unrecognised_count",
+  // The OBD-II list lengths. dtc_stored_count reads 39 on this bike today, so
+  // without these three the gate rejects the very number the Faults tab exists to
+  // show — and rejects it precisely when there is something to show.
+  "dtc_stored_count",
+  "dtc_pending_count",
+  "dtc_permanent_count",
+]);
 
 /**
  * Fallbacks by unit, for the ~140 signals not worth naming individually.
