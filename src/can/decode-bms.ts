@@ -19,17 +19,28 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     // b0/b3 are logged as batt_temp_*_vcu, NOT as batt_temp_*, because what they mean
     // depends on which BMS config is flashed. The VCU derates DC charging from 36 °C
     // reported pack temperature, which is far too early for a watercooled pack, so the
-    // offset config shifts these two bytes down by 15 °C to move that knee to 51 °C
-    // actual. The shift is two postprocessor lines that only touch what is transmitted
-    // — every BMS protection threshold, the regen shaping curve and allowed_regen_a
-    // are still computed from the raw internal values.
+    // custom configs lower these two bytes to push that knee later. Only what is
+    // transmitted changes — every BMS protection threshold, the regen shaping curve and
+    // allowed_regen_a are still computed from the raw internal values.
+    //
+    // The size of that shift is NOT fixed, and assuming it is has already produced one
+    // false alarm. Three configs have been flashed:
+    //   5-custom-p32b-vcu-offset  a flat −15 °C. RETIRED — it broke charging.
+    //   11-full-conditional-offset  a no-op: its postprocessor line never ran (verified
+    //                             over 1900 samples, 0x660 b3/b4 identical to 0x200).
+    //   14-signbit-clamp  (current) pins the reported value at 35 °C while the pack is
+    //                     hotter and passes the true value through while it is colder.
+    // So under the live config the difference batt_temp_hi − batt_temp_hi_vcu is 0 below
+    // 35 °C and (true − 35) above it — 1 °C at a true 36 °C. A constant 15 is the one
+    // thing it is NOT. Do not treat any particular difference as a health check.
     //
     // So these bytes are always "what the VCU and the dash see", which is honest under
-    // both configs; the true temperature comes from 0x660 when that config is loaded.
+    // every config; the true temperature comes from 0x660 when one of these is loaded.
     // pack-temperature.ts resolves which source feeds batt_temp_lo/batt_temp_hi.
     //
-    // Measured on the bus 2026-08-02 with the offset config live: 0x200 reported 13/14
-    // °C while 0x660 b3/b4 reported 28/29 °C — exactly 15 °C on both ends.
+    // Measured 2026-08-02 under the retired flat-offset config: 0x200 reported 13/14 °C
+    // while 0x660 b3/b4 reported 28/29 °C. Measured 2026-08-04 under the clamp: 0x200
+    // reported 35/35 while 0x660 b3/b4 reported 36/36.
     case 0x200: {
       if (data.length < 8) return [];
       const packVolts = u16be(data[4], data[5]) / 10;
@@ -249,9 +260,16 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
       // The echo is not merely the same value as 0x200 b3, it is the same memory
       // (mem 2075, in both configs), so a disagreement between the two means a
       // repointing error in the config rather than a decode error here.
-      if (data.length >= 8) {
+      //
+      // clamp_diff is decoded SIGNED. The postprocessor computes it with a signed
+      // subtract, so as a raw byte it steps 1 → 255 the instant the pack crosses the
+      // threshold — a 254-count jump for a 2 °C move, which every autoscaling consumer
+      // would read as a sentinel or a dead sensor. Signed, the same bit pattern reads
+      // −1, the series stays continuous, and the sign bit that drives the whole clamp is
+      // still exactly `value < 0`. It is then directly comparable with batt_temp_hi − 35.
+      if (data.length >= CLAMP_INSTRUMENTATION_MIN_DLC) {
         values.push(
-          { key: "clamp_diff", value: data[5] },
+          { key: "clamp_diff", value: signedByte(data[5]) },
           { key: "clamp_amount", value: data[6] },
           { key: "batt_temp_hi_vcu_echo", value: signedByte(data[7]) }
         );
@@ -362,6 +380,13 @@ const CONTACTOR_ERROR_MASK = (1 << 21) | (1 << 22) | (1 << 23) | (1 << 24) | (1 
 // batt_temp_* — if the two ever disagreed, those keys would either stop updating or
 // get two writers flapping 15 °C apart, and neither shows up as an error.
 export const OFFSET_CONFIG_MIN_DLC = 5;
+
+// The clamp instrumentation in b5-7 needs the frame to be full length, a stricter gate
+// than OFFSET_CONFIG_MIN_DLC above: a DLC 5-7 frame proves the true temperatures are
+// present without proving the clamp bytes are. Named rather than inline so the two
+// thresholds are visibly different decisions instead of looking like one of them is a
+// typo — every long 0x660 sent so far has been DLC 8, so the gap is untested in practice.
+export const CLAMP_INSTRUMENTATION_MIN_DLC = 8;
 
 // 11 LMU modules: 1-4 have 8 cells enabled, 5-11 have 7 → 81 series positions,
 // matching the pack's 81s topology.

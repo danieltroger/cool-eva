@@ -95,6 +95,11 @@ let anyThermalFrameSeen = false;
 let warnedThermalFrameMissing = false;
 let warnedThermalFrameUnexpected = false;
 let warnedThermalFrameShort = false;
+// Last batt_temp_hi_vcu off 0x200, and how many consecutive 0x660s have disagreed with
+// it. See noteEchoAgreement — diagnostics only, never consulted by a routing decision.
+let lastVcuTemperatureHigh: number | undefined;
+let consecutiveEchoMismatches = 0;
+let warnedEchoMismatch = false;
 
 /**
  * Takes what a frame decoded to and returns what should actually be recorded, adding
@@ -105,7 +110,11 @@ let warnedThermalFrameShort = false;
 export function resolvePackTemperatures(id: number, data: Buffer, decoded: DecodedValue[]): DecodedValue[] {
   if (id === PACK_THERMAL_FRAME_ID) {
     notePackThermalFrame(data.length);
+    noteEchoAgreement(decoded);
     return decoded;
+  }
+  for (const { key, value } of decoded) {
+    if (key === "batt_temp_hi_vcu") lastVcuTemperatureHigh = value;
   }
   const trueTemperatures = collectTrueTemperatureCandidates(decoded);
   if (trueTemperatures.length === 0) return decoded;
@@ -128,6 +137,9 @@ export function configurePackTemperature(customBmsConfig: boolean): void {
   warnedThermalFrameMissing = false;
   warnedThermalFrameUnexpected = false;
   warnedThermalFrameShort = false;
+  lastVcuTemperatureHigh = undefined;
+  consecutiveEchoMismatches = 0;
+  warnedEchoMismatch = false;
 }
 
 // 0x200's VCU-view values, relabelled with the true-temperature keys they would feed.
@@ -142,6 +154,39 @@ function collectTrueTemperatureCandidates(decoded: DecodedValue[]): DecodedValue
     }
   }
   return candidates;
+}
+
+// 0x660 b7 and 0x200 b3 are the same BMS memory (mem 2075) under every config that has
+// ever sent a long 0x660, so they cannot legitimately disagree for long. If they do, the
+// .bms config's signal is repointed at the wrong slot — which is silent everywhere else,
+// because both values stay individually plausible. CLAUDE.md: a failure that "can't
+// happen" is exactly the one that has to be loud.
+//
+// Persistence is required rather than a bare inequality. 0x200 is 20 Hz and 0x660 is
+// 1 Hz, so the two are sampled up to a second apart and differ by 1 whenever the pack
+// genuinely crosses a degree. A repointing error instead disagrees on every frame and
+// usually by a lot, so a few consecutive mismatches separate the two cleanly.
+const ECHO_MISMATCHES_BEFORE_WARNING = 3;
+
+function noteEchoAgreement(decoded: DecodedValue[]): void {
+  const echo = decoded.find(({ key }) => key === "batt_temp_hi_vcu_echo")?.value;
+  // Absent under short 0x660s and under any config that doesn't send the clamp bytes;
+  // that is not a mismatch, and neither is a 0x660 that beat the first 0x200.
+  if (echo === undefined || lastVcuTemperatureHigh === undefined) return;
+  if (echo === lastVcuTemperatureHigh) {
+    consecutiveEchoMismatches = 0;
+    return;
+  }
+  consecutiveEchoMismatches += 1;
+  if (consecutiveEchoMismatches < ECHO_MISMATCHES_BEFORE_WARNING || warnedEchoMismatch) return;
+  warnedEchoMismatch = true;
+  console.warn(
+    `bms: *** 0x660 b7 (${echo} °C) and 0x200 b3 (${lastVcuTemperatureHigh} °C) disagree on ` +
+      `${consecutiveEchoMismatches} consecutive frames, but they read the same BMS memory. ` +
+      "The flashed .bms config almost certainly points one of them at the wrong postprocessor " +
+      "slot. batt_temp_hi_vcu is what the VCU acts on, so treat it as the real one and re-check " +
+      "the config's CANTX signal addresses."
+  );
 }
 
 function notePackThermalFrame(frameLength: number): void {
@@ -208,7 +253,7 @@ function resolveVcuFrameOwnership(waitStartedAtMonotonicMs: number): boolean {
       `bms: CUSTOM_BMS_CONFIG is set but ${describeMissingThermalFrame()}, ` +
         "so nothing on the bus carries the true pack temperature. " +
         "batt_temp_lo/batt_temp_hi stay UNLOGGED until a 0x660 turns up — under this config 0x200's " +
-        "bytes are the VCU's 15 °C-shifted view, not the truth. batt_temp_lo_vcu/batt_temp_hi_vcu " +
+        "bytes are the VCU's lowered view, not the truth. batt_temp_lo_vcu/batt_temp_hi_vcu " +
         "keep logging throughout. If this pack is in fact stock, unset CUSTOM_BMS_CONFIG and the " +
         "true keys resume from 0x200."
     );

@@ -34,22 +34,30 @@ import { formatObdDtc, lookupByComponentSymptom, lookupByObdCode, type DtcTableE
 // moving, so emptiness is not a parked-state refusal either. Two non-empty
 // replies out of eight in the 2026-08-02 boot captures say the same thing.
 //
-// ✅ THE 20 BITS ARE (component, symptom) — `matchedBy: "component"`. Every
-// non-zero field seen so far is raw 0x0002C: component 44, symptom 0, which
-// dtc-table.ts gives as P0A07 "Water pump open circuit fault". That is the one
-// fault on this bike known to be real independently of anything on the bus — the
-// coolant pump is wired to the heated-grip output, leaving the VCU's own pump
-// driver open. Reading the same bytes as a binary OBD-II DTC gives "P002C", which
-// is nowhere in the table. One non-zero field decides it.
+// ✅ THE LOW 16 BITS ARE THE COMPONENT NUMBER — `matchedBy: "component"`. Every
+// non-zero field seen so far is raw 0x0002C: component 44, which dtc-table.ts
+// gives as P0A07 "Water pump open circuit fault". That is the one fault on this
+// bike known to be real independently of anything on the bus — the coolant pump is
+// wired to the heated-grip output, leaving the VCU's own pump driver open. Reading
+// the same bytes as a binary OBD-II DTC gives "P002C", which is nowhere in the
+// table. One non-zero field decides that much.
+//
+// 🟡 THE TOP NIBBLE BEING *SYMPTOM* IS STILL UNTESTED. It has been 0 in every
+// reply ever received, so "symptom" and "padding" and "flags" all predict exactly
+// what we have seen — P0A07 is symptom 0, so the match above would have worked
+// under any of them. Nothing here distinguishes them until a code with a non-zero
+// top nibble arrives. `flags` keeps carrying that nibble separately for that
+// reason. Do not upgrade this marker on the strength of more symptom-0 codes.
 //
 // Both readings are still computed and `raw` is still carried through, because
 // one component/symptom pair is not a survey of the encoding. The OBD branch is
 // now an unexercised fallback rather than an open question (see
 // DiagnosticCode.matchedBy):
 //   • low 16 bits = the table's "COD." component number, top nibble = SYMPTOM.
-//     ✅ Confirmed, and it always fitted best: it matches the table's own primary
-//     key exactly, symptom values run 0-15 which is precisely one nibble, and it
-//     is the VCU's native identity.
+//     ✅ for the component half, 🟡 for the nibble. It always fitted best: it
+//     matches the table's own primary key exactly, symptom values run 0-15 which
+//     is precisely one nibble, and it is the VCU's native identity — but see
+//     above, only symptom 0 has ever been observed.
 //   • low 16 bits = a binary OBD-II DTC, i.e. what a scan tool would print.
 //
 // 🟡 The code FLAPS. In that capture it was present at 19:40, 19:48, 19:53,
