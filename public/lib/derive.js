@@ -339,6 +339,35 @@ function integrateWh(times, kilowatts, from, to) {
 }
 
 /**
+ * The bike's own consumption figure over the same window, in Wh/km — a cross-check
+ * on the integral from a completely different path.
+ *
+ * Source is `kwh_per_100km` off the Bluetooth hub. Of the three consumption fields
+ * the hub sends it is the only usable one: `avg_consumption_wh_km` reads a constant
+ * 0 (bytes 4-5 of sub-frame 0x01 are never populated on this bike), and
+ * `km_per_kwh` is quantised to whole km/kWh, so inverting it gives Wh/km that jump
+ * 125 → 250 → 500 — the two disagree with each other by a median 1.69x.
+ *
+ * Median rather than mean, and windowed rather than instantaneous, because the raw
+ * signal is violently noisy: it swung between 1 and 495 Wh/km inside a single
+ * 20-minute ride on 2026-08-04. A median over the window sits within ~15 Wh/km of
+ * the integral on every ride that day, which is the agreement worth showing.
+ *
+ * Not used as the primary reading: it arrives at ~5/min against pack_kw's 2 Hz, and
+ * it stops entirely whenever the Bluetooth link is down, which CAN never is.
+ * @param {number} now monotonic, from lib/clock.js
+ * @returns {number | null}
+ */
+export function bikeConsumptionWhPerKm(now) {
+  const { values } = ringFor("kwh_per_100km").since(ROLLING_WINDOW_MS, now);
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((first, second) => first - second);
+  return sorted[Math.floor(sorted.length / 2)] * 10;
+}
+
+/**
  * Range left at the rate you have actually been riding, rather than at whatever
  * the bike's estimator assumes.
  * @param {number} now monotonic, from lib/clock.js

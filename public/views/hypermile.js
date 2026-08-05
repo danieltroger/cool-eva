@@ -6,6 +6,7 @@ import { CELL_COUNT, cellVoltageKeys } from "../lib/cells.js";
 import { ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import {
+  bikeConsumptionWhPerKm,
   headroomMv,
   limitFraction,
   remainingWh,
@@ -197,7 +198,12 @@ function ConsumptionTile() {
       const energy = remainingWh();
       return energy == null ? "–" : `${(energy / 1000).toFixed(2)} kWh`;
     }),
-    Fact("Bike's own estimate", () => {
+    Fact("Bike's own figure", () => {
+      chartTick.val;
+      const bike = bikeConsumptionWhPerKm(monotonicNow());
+      return bike == null ? "–" : `${Math.round(bike)} Wh/km`;
+    }),
+    Fact("Bike's own range", () => {
       const range = valueOf("range_km");
       return range == null ? "–" : `${Math.round(range)} km`;
     })
