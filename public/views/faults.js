@@ -231,11 +231,13 @@ function FaultCard(fault) {
  * The two counts, kept apart on purpose.
  *
  * They measure different things and always disagree: `dtc_count` is OBD-II PID
- * 0x01's STORED history (38 on this bike), while `dtc_list_count` is the
- * Connectivity Hub's ACTIVE list (0 or 1). That was a suspicion until 2026-08-03,
- * when the active list was seen flipping 0↔1 on a stationary bike across two
- * boots — stored history cannot flicker. Merging them into one number would be
- * wrong; showing either alone would hide the other.
+ * 0x01's STORED history (39 on this bike as of 2026-08-04, and only ever
+ * climbing), while `dtc_list_count` is the Connectivity Hub's ACTIVE list (0 or
+ * 1). That was a suspicion until 2026-08-03, when the active list was seen
+ * flipping 0↔1 on a stationary bike across two boots — stored history cannot
+ * flicker. Confirmed again on 2026-08-04 under load: 11 of 47 polls carried a
+ * code while PID 0x01 sat at 39, riding and DC charging alike. Merging them into
+ * one number would be wrong; showing either alone would hide the other.
  */
 function Counters() {
   return div(

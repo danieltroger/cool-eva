@@ -26,11 +26,13 @@ export const SIGNALS: SignalDef[] = [
   // flashed, no row is written under them at all, and if the pack that owns the true
   // values goes silent they stop rather than fall back. Sparse is the intended shape —
   // anything reading them has to tolerate gaps instead of interpolating across one.
-  // The _vcu pair is what the VCU and dash actually read: identical to the true pair
-  // on the stock config, and 15 °C lower once the DC-derate offset is flashed. It comes
-  // straight off 0x200 with no routing, so it is the pair that never has gaps. The
-  // difference between the two is the useful signal — it should be a constant 15 °C,
-  // and anything else means the postprocessor isn't doing what we think.
+  // The _vcu pair is what the VCU and dash actually read: identical to the true pair on
+  // the stock config, and lower once a DC-derate config is flashed. It comes straight off
+  // 0x200 with no routing, so it is the pair that never has gaps. The difference between
+  // the two is the useful signal, but it is NOT a fixed number and must not be used as a
+  // health check — under 14-signbit-clamp (flashed now) it is 0 below 35 °C and
+  // (true − 35) above, e.g. 1 °C at a true 36 °C. Only the retired flat-offset config
+  // gave a constant 15. See the 0x200 comment in decode-bms.ts for the config history.
   { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream" },
   { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream" },
   { key: "batt_temp_lo_vcu", unit: "°C", group: "battery", source: "stream" },
@@ -130,10 +132,27 @@ export const SIGNALS: SignalDef[] = [
   { key: "lmu_temp_high_idx", unit: "", group: "battery", source: "stream" },
   { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream" },
   { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
-  // Diagnostic, retire once confirmed: the full 16-bit postprocessor Output3 slot,
-  // to check that a 1-byte postprocessor result really lands in the LOW byte. Holds a
-  // small temperature, so a deadband would only mask the thing it exists to reveal.
-  { key: "pp_output3_raw", unit: "", group: "bms", source: "stream" },
+  // Clamp instrumentation, one byte each. No deadband: these are small integers whose
+  // whole purpose is to show the clamp's arithmetic, so smoothing would hide it.
+  // clamp_diff is decoded signed, so negative means the pack is below the threshold and
+  // the clamp is passing the true temperature through untouched; clamp_amount is what is
+  // being subtracted.
+  //
+  // Both carry NO unit on purpose, even though under the current config they happen to be
+  // degrees. They are raw config-dependent slots — under 11-full-conditional-offset
+  // clamp_amount is a flag × 9, not a temperature at all. Tagging them "°C" would also
+  // opt them into bounds.js's BY_UNIT["°C"] = [-40, 200] fallback, so a legitimate value
+  // outside that window would be rejected as a dead sensor and drawn as a fault. Same
+  // treatment as bms_post_processor_1 and the iso_test_* signals.
+  { key: "clamp_diff", unit: "", group: "bms", source: "stream" },
+  { key: "clamp_amount", unit: "", group: "bms", source: "stream" },
+  // Echo of the byte 0x200 b3 carries — genuinely a temperature, so "°C" is right here.
+  // It must always equal batt_temp_hi_vcu; pack-temperature.ts warns once per run if it
+  // ever doesn't, because that means the .bms config is repointed wrong. Unlike the
+  // pp_output3_raw diagnostic it replaces, this is permanent instrumentation: it guards
+  // an invariant that can break on any future config edit, so there is no point at which
+  // it has "served its purpose" and can be retired.
+  { key: "batt_temp_hi_vcu_echo", unit: "°C", group: "bms", source: "stream" },
 
   // 0x661 — 1 Wh remaining energy (5 Wh deadband: 1 Wh out of a ~21 kWh pack is far
   // below anything we can act on, and the frame arrives every second) + the BMCU's

@@ -23,25 +23,51 @@ import { formatObdDtc, lookupByComponentSymptom, lookupByObdCode, type DtcTableE
 // So each code is 20 bits and the top nibble of b4/b7 is masked off — the app
 // never used it, and we log it (see `flags`) rather than assume it is padding.
 //
-// ⚠️ NO CODE HAS EVER BEEN DECODED. The request/reply mechanism is verified —
-// asking gets a well-formed type-25 reply on both transports, byte-identical
-// across two runs 60 s apart — but every list so far has come back EMPTY (zero
-// codes) while OBD-II PID 0x01 says 38 are stored. Two readings of that fit and
-// neither is settled: the hub may serve only *currently active* faults while PID
-// 0x01 counts *stored* history, or the VCU may simply refuse the list while the
-// bike is parked. `dtc_list_count` sits next to `dtc_count` so a ride, or a real
-// fault, will show which.
+// ✅ THIS IS THE CURRENTLY-ACTIVE FAULT LIST, NOT STORED HISTORY. Every early
+// reply came back EMPTY (zero codes) while OBD-II PID 0x01 reported 38 stored,
+// and two readings fit: the hub serves only *currently active* faults
+// while PID 0x01 counts *stored* history, or the VCU refuses the list while the
+// bike is parked. It is the first. Across capture-20260804-193952 — 19:39 to
+// 20:26, riding, then a 19 kW DC charge, then riding — 11 of 47 once-a-minute
+// replies carried ONE code while PID 0x01 read 39 stored throughout. Stored
+// history cannot flicker, and the empty replies came with the bike awake and
+// moving, so emptiness is not a parked-state refusal either. Two non-empty
+// replies out of eight in the 2026-08-02 boot captures say the same thing.
 //
-// ⚠️ Because the list is always empty, what those 20 bits MEAN is UNTESTED — no
-// non-zero field has ever arrived. It is documented nowhere we have. Two readings
-// fit the type-approval table, and this decoder resolves both and reports which
-// one matched rather than picking one blind (see DiagnosticCode.matchedBy):
+// ✅ THE LOW 16 BITS ARE THE COMPONENT NUMBER — `matchedBy: "component"`. Every
+// non-zero field seen so far is raw 0x0002C: component 44, which dtc-table.ts
+// gives as P0A07 "Water pump open circuit fault". That is the one fault on this
+// bike known to be real independently of anything on the bus — the coolant pump is
+// wired to the heated-grip output, leaving the VCU's own pump driver open. Reading
+// the same bytes as a binary OBD-II DTC gives "P002C", which is nowhere in the
+// table. One non-zero field decides that much.
+//
+// 🟡 THE TOP NIBBLE BEING *SYMPTOM* IS STILL UNTESTED. It has been 0 in every
+// reply ever received, so "symptom" and "padding" and "flags" all predict exactly
+// what we have seen — P0A07 is symptom 0, so the match above would have worked
+// under any of them. Nothing here distinguishes them until a code with a non-zero
+// top nibble arrives. `flags` keeps carrying that nibble separately for that
+// reason. Do not upgrade this marker on the strength of more symptom-0 codes.
+//
+// Both readings are still computed and `raw` is still carried through, because
+// one component/symptom pair is not a survey of the encoding. The OBD branch is
+// now an unexercised fallback rather than an open question (see
+// DiagnosticCode.matchedBy):
 //   • low 16 bits = the table's "COD." component number, top nibble = SYMPTOM.
-//     This matches the table's own primary key exactly, symptom values run 0-15
-//     which is precisely one nibble, and it is the VCU's native identity.
+//     ✅ for the component half, 🟡 for the nibble. It always fitted best: it
+//     matches the table's own primary key exactly, symptom values run 0-15 which
+//     is precisely one nibble, and it is the VCU's native identity — but see
+//     above, only symptom 0 has ever been observed.
 //   • low 16 bits = a binary OBD-II DTC, i.e. what a scan tool would print.
-// The first non-empty list settles it; `raw` is carried through either way so
-// nothing is lost if both readings miss. Keep the two-reading design until then.
+//
+// 🟡 The code FLAPS. In that capture it was present at 19:40, 19:48, 19:53,
+// 19:56, 20:01, 20:04, 20:07, 20:11, 20:12, 20:17 and 20:25, and absent at every
+// other poll — while riding and while charging alike, so it does not track either
+// state. A permanently open circuit ought to report every time, which says
+// something gates the test; the VCU only exercising the pump driver when it
+// commands the pump on would fit, but that is a guess and only the flapping is
+// observed. At one poll a minute the series is undersampled, so the gaps are a
+// sampling artefact as much as anything — do not read a period out of them.
 
 const DIAGNOSTICS_MESSAGE_TYPE = 25;
 // The hub answers `04 11 25 FF` with TWO messages, ~10 ms apart: a type 31 that
@@ -56,7 +82,8 @@ const SUB_INDEX_LAST_PAGE = 0xfe;
 const SUB_INDEX_WHOLE_LIST = 0xff;
 
 // A stuck hub that never sends a last page must not grow the list without bound.
-// 38 codes (what PID 0x01 reports on this bike) is 19 pages, so this is ~5x the
+// 39 codes (what PID 0x01 reports on this bike, and an over-estimate now that the
+// list is known to carry only active faults) is 20 pages, so this is ~5x the
 // largest list we have any reason to expect.
 const MAX_PAGES = 100;
 
@@ -87,13 +114,14 @@ export interface DiagnosticReport {
  * Reassembles a diagnostics list out of the hub's 8-byte messages.
  *
  * Stateful because the list is paged: each message carries at most two codes, so
- * a list the size of the 38 PID 0x01 reports would arrive spread over ~19 of
+ * a list the size of the 39 PID 0x01 reports would arrive spread over ~20 of
  * them. `push` returns null while the list is still coming in and the finished
  * report on the last page.
  *
- * Paging has never actually been observed — every reply so far has been a single
- * `0xFF` frame carrying no codes (see the note at the top of this file). All of
- * the below is therefore inferred, not confirmed.
+ * ⚠️ Paging has never actually been observed — every reply so far has been a
+ * single `0xFF` frame carrying one code or none, which is exactly what an active
+ * list on a bike with one active fault looks like (see the note at the top of
+ * this file). All of the below is therefore still inferred, not confirmed.
  *
  * Deliberately tolerant about paging. The sub-index convention is inferred from
  * the hub's other multi-part messages (odometer, GPS and vehicle status all end
