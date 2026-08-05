@@ -49,6 +49,11 @@ const BY_KEY = {
   "motor_rpm": [-12_000, 12_000],
   "aux_12v": [0, 20],
   "range_km": [0, 500],
+  // The hub's own consumption figures, both of which emit nonsense at a standstill:
+  // kwh_per_100km has been seen at 650 (6500 Wh/km) and km_per_kwh at 0. Generous
+  // enough to keep a genuinely awful climb, tight enough to drop the sentinels.
+  "kwh_per_100km": [0, 100],
+  "km_per_kwh": [0.5, 200],
   // Mode 01 PID 02's freeze-frame code — an IDENTIFIER, not a measurement, so the
   // whole 16-bit space is legitimate (P0514 is 0x0514 = 1300, and a U-code reaches
   // 0xFFFF). It needs its own entry rather than COUNTER_KEYS below, whose 0…1000
