@@ -12,11 +12,12 @@ import type { DiagnosticCode, DiagnosticReport } from "./decode.ts";
 
 /** Codes seen at least once this run, so a code that clears can be zeroed. */
 const seenSignalKeys = new Set<string>();
-// Bounded because the meaning of the 20-bit code field is unconfirmed (see
-// decode.ts). If it really is a code, the set stops at however many distinct
-// faults the bike has. If it turns out to be a counter or a timestamp, every
-// report brings new keys — up to 200 a minute — and record() puts every one of
-// them into liveState, which ws.ts broadcasts whole every 5 seconds. So past the
+// Bounded because one confirmed code is not a survey of the 20-bit field (see
+// decode.ts). If it really is a code everywhere, the set stops at however many
+// distinct faults the bike has. If some other component's slot turns out to hold
+// a counter or a timestamp instead, every report brings new keys — up to 200 a
+// minute — and record() puts every one of them into liveState, which ws.ts
+// broadcasts whole every 5 seconds. So past the
 // cap a code is named in the journal but NOT recorded: bounding this set alone
 // would not bound that. 256 is far above any plausible list (MAX_PAGES caps one
 // report at 200 codes) and far below a leak; hitting it says the reading is
@@ -148,9 +149,9 @@ function diagnosticSignalKey(code: DiagnosticCode): string {
 }
 
 /**
- * One code as a log line. Always leads with the raw field: until a live list
- * confirms how those 20 bits are laid out, the raw value is the only part of
- * this we know to be true, and it is what makes the reading settleable later.
+ * One code as a log line. Always leads with the raw field: the layout is settled
+ * on a single code (see decode.ts), and the raw value is the one part of this
+ * that stays true whichever reading ends up naming a future code.
  */
 export function formatCode(code: DiagnosticCode): string {
   const raw = `raw 0x${code.raw.toString(16).padStart(5, "0")}${code.flags ? ` flags 0x${code.flags.toString(16)}` : ""}`;

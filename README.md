@@ -16,7 +16,7 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | Group | Signals | Source |
 | --- | --- | --- |
 | **Coolant** (custom loop) | `coolant_in`, `coolant_out` (°C) | MAX31865 PT100 |
-| **Battery / BMS** | `batt_temp_lo`, `batt_temp_hi` (°C, always the **true** pack temperature), `batt_temp_lo_vcu`, `batt_temp_hi_vcu` (what the VCU and dash read — 15 °C lower once the DC-derate offset config is flashed), `soc` (%), `soh` (%), `pack_v` (V), `pack_a` (A), `pack_kw` (kW), `allowed_discharge_a`, `allowed_regen_a` (A), `pack_resistance_mohm` (mΩ) | CAN `0x200`/`0x202`/`0x206`/`0x660` |
+| **Battery / BMS** | `batt_temp_lo`, `batt_temp_hi` (°C, always the **true** pack temperature), `batt_temp_lo_vcu`, `batt_temp_hi_vcu` (what the VCU and dash read — lowered once a DC-derate config is flashed, by an amount that depends on the config; under the current clamp they pin at 35 °C while the pack is hotter), `soc` (%), `soh` (%), `pack_v` (V), `pack_a` (A), `pack_kw` (kW), `allowed_discharge_a`, `allowed_regen_a` (A), `pack_resistance_mohm` (mΩ) | CAN `0x200`/`0x202`/`0x206`/`0x660` |
 | **Cells** | `cell_min_mv`, `cell_avg_mv`, `cell_max_mv`, `cell_spread_mv`, `cell_deviation_mv` (the BMS's own ΔV), `cell_lowest_v_idx`, `cell_highest_v_idx` (which cell is at each extreme _right now_ — at a few mV of spread that ranking is noise, not a health verdict), `cells_connected`, `cell_voltage_sum_v` | CAN `0x203`/`0x205`/`0x207` |
 | **BMS state & faults** | `charge_state` (raw System State bitfield) + decoded `bms_state_*` (discharge / charge / balancing / trickle / idle / charge complete / maintenance), `bms_error_flags`, `bms_warning_flags` (raw words) + booleans for the ones worth acting on: cell over/under voltage, over temperature, leak detected, leak detection failed, contactor faults, low SOC, balancing required | CAN `0x201` |
 | **Isolation** | `iso_test_1`, `iso_test_2`, `iso_test_total` (10-bit ADC, 512 = ideal), `bms_io_state`, `lmu_comm_warnings` | CAN `0x207`/`0x206` |
@@ -24,6 +24,7 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah` | CAN `0x025`/`0x10A`/`0x205` |
 | **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
+| **Trouble codes** | `mil_on`, `dtc_count` (stored, per PID `01`), `dtc_stored_count` (the mode-03 list's own length — the same number down a second path), `dtc_list_count` (the bike's _active_ list, a different thing), `freeze_frame_dtc` (the code that lit the lamp), plus one 1/0 signal per code Energica documents. See [Trouble codes](#trouble-codes) | OBD-II `01`/`02` + **mode 03** · CAN `0x410` |
 
 ### Signals that need the custom BMS config
 
@@ -35,7 +36,7 @@ The frames below only exist once the pack's LiBAL BMS has been reflashed with th
 | --- | --- | --- |
 | **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — the individual cells, multiplexed by module at 20 Hz. Known gap: cells 4-8 of LMU 1 and 2 never get sampled, because the CAN transmit order is phase-locked to the BMS's module poll (see `obd-garage/CAN_MAP.md`) | CAN `0x662`–`0x664` |
 | **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells | CAN `0x664` |
-| **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx`; in the offset config also the true `batt_temp_lo`/`batt_temp_hi` and `pp_output3_raw` (a diagnostic, retired once confirmed) | CAN `0x660` |
+| **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx`; in the clamp config also the true `batt_temp_lo`/`batt_temp_hi` plus the clamp's own arithmetic (`clamp_diff`, `clamp_amount`, `batt_temp_hi_vcu_echo`) | CAN `0x660` |
 | **Energy / hours** | `bms_remaining_energy_wh` (1 Wh resolution), `bms_uptime_min` (BMCU hour meter) | CAN `0x661` |
 | **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv` — the thresholds the BMS is actually configured with, so nothing downstream has to hardcode them | CAN `0x665` |
 
@@ -194,8 +195,31 @@ Does not:
 - **No cross-segment integrity.** Each segment is authenticated on its own, so tampering within one is detected — but segments can be deleted or reordered without the reader noticing. It protects confidentiality, not completeness.
 - **`/dl` is unauthenticated** on port 80, like the rest of the server. The payload is sealed, so the exposure is the metadata above rather than the data — but it's a wider audience than "whoever holds the SD card".
 
+## Trouble codes
+
+The bike keeps two completely different fault lists, and the Faults tab shows them apart because merging them would be wrong:
+
+|  | What it is | How many, right now | Where from |
+| --- | --- | --- | --- |
+| **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity Hub message type 25, over Bluetooth and mirrored onto CAN `0x410` |
+| **Stored** | Everything that has _ever_ been wrong and not been cleared. It only climbs | **39** | OBD-II **mode 03**, over ISO-TP |
+| **Pending / permanent** | Would be OBD-II modes 07 and 0A | — | **no response.** See below |
+
+Mode 03's reply is 80 bytes, so it needs ISO-TP: a First Frame, a flow-control frame back from us, then eleven Consecutive Frames. `src/can/iso-tp.ts` reassembles it and `src/diagnostics/obd-dtc.ts` decodes it — both pure, bytes in and codes out, so a captured transfer replays on a laptop:
+
+```bash
+node --experimental-strip-types scripts/decode-dtc-response.ts
+# → replays a real 2026-08-04 transfer and checks it still decodes to the same 39 codes
+```
+
+Codes are named from Energica's own type-approval table (`src/diagnostics/dtc-table.ts`, 148 codes). All 39 of this bike's are in it. **Mode 01 PID 02** — the freeze-frame code, i.e. the one the bike captured when it lit the lamp — reads `P0514`, _"Error reading temperature"_, which is why the warning light is on.
+
+**Modes 07 and 0A return nothing at all** — silence, not a refusal, across six attempts. That means "not implemented" and "implemented but withheld" cannot be told apart from here, so the dashboard says **"no response"** rather than "none pending". Those are different claims and only one of them is true.
+
+The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs.
+
 ## Notes
 
-- The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes.
+- The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes. Nothing here can clear a trouble code: OBD-II **mode 04 is not implemented and must not be** — it would erase the history above, on a bike that has been accumulating it since before anyone was reading.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.

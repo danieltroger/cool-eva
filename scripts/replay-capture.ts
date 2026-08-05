@@ -9,8 +9,11 @@ import { decodeFrame } from "../src/can/decode.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "../src/can/pack-temperature.ts";
 import { loadStaticFiles } from "../src/http/static.ts";
 import { handleStatusEndpoint } from "../src/http/status.ts";
+import { handleDtcTableEndpoint } from "../src/http/dtc-table.ts";
+import { handleStoredDtcsEndpoint } from "../src/http/stored-dtcs.ts";
 import { setupWs } from "../src/ws.ts";
 import { monotonicNow } from "../src/monotonic.ts";
+import { loadCapturedTroubleCodes } from "./captured-dtc-transfer.ts";
 
 // Replays a candump capture into the dashboard, on a laptop, with no bike.
 //
@@ -64,12 +67,31 @@ const server = createServer(async (req, res) => {
     res.end("Replay: no GPS to save.\n");
     return;
   }
+  // Both real handlers. The Faults tab is unreadable without them — it would fall
+  // back to raw component/symptom numbers and an empty stored list, which is the
+  // one screen a replay cannot otherwise check.
+  if (url.pathname === "/dtc-table") {
+    handleDtcTableEndpoint(req, res);
+    return;
+  }
+  if (url.pathname === "/stored-dtcs") {
+    handleStoredDtcsEndpoint(res);
+    return;
+  }
   if (staticFiles.serve(url.pathname, res)) {
     return;
   }
   res.writeHead(404);
   res.end("not found\n");
 });
+
+// Trouble codes are polled, not broadcast, so no candump contains them — a replay
+// would show an empty Faults tab however good the capture. This loads one real
+// 2026-08-04 mode-03 transfer through the real decoders instead, so the screen shows
+// the 39 codes the bike actually has.
+if (!loadCapturedTroubleCodes()) {
+  console.warn("replay: the captured mode-03 transfer no longer reassembles — Faults will be empty");
+}
 
 setupWs(server);
 server.listen(options.port, () => {
