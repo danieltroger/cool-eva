@@ -31,7 +31,7 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     //   14-signbit-clamp  pinned the reported value at 35 °C for ANY true temperature
     //                     above 35, and passed the true value through below it.
     //                     SUPERSEDED — see 15 below.
-    //   15-bounded-clamp  (current, flashed 2026-08-09) bounds that clamp at the top:
+    //   15-bounded-clamp  (built 2026-08-09, NOT YET FLASHED) bounds that clamp at the top:
     //                     below 35 °C it passes the truth through, from 35 to 54 °C it
     //                     reports 35, and at 55 °C and above it reports the TRUTH again.
     // So under the live config the difference batt_temp_hi − batt_temp_hi_vcu is 0 below

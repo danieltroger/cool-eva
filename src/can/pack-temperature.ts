@@ -15,9 +15,12 @@ import { monotonicNow, since } from "../monotonic.ts";
 // custom LiBAL config is flashed those bytes carry the VCU's lowered view instead — to
 // push its DC-charge derate knee, which starts at a reported 36 °C, past the point where
 // a watercooled pack actually needs derating — and the truth moves to the long 0x660.
-// How much lower depends on the config and is not a fixed number: 15-bounded-clamp, the
-// one flashed now, reports 35 °C for any true temperature from 35 to 54 and the truth
-// either side of that band. This routing is the ONLY config-dependent decode in the repo;
+// How much lower depends on the config and is not a fixed number: 15-bounded-clamp, which
+// this decoder targets, reports 35 °C for any true temperature from 35 to 54 and the truth
+// either side of that band. (It is built but NOT yet flashed as of 2026-08-09 — the bike
+// still runs 14-signbit-clamp, which never reports above 35. Both send the same frames at
+// the same length, so the bus cannot tell them apart; see decode-bms.ts on why no runtime
+// discriminator is offered.) This routing is the ONLY config-dependent decode in the repo;
 // every other frame and correction is right on both.
 //
 // No single frame announces which config is flashed, so it has to be established from

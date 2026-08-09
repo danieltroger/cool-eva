@@ -30,7 +30,7 @@ export const SIGNALS: SignalDef[] = [
   // the stock config, and lower once a DC-derate config is flashed. It comes straight off
   // 0x200 with no routing, so it is the pair that never has gaps. The difference between
   // the two is the useful signal, but it is NOT a fixed number, not even monotonic in
-  // temperature, and must not be used as a health check — under 15-bounded-clamp (flashed
+  // temperature, and must not be used as a health check — under 15-bounded-clamp (built, not yet flashed
   // now) it is 0 below 35 °C, (true − 35) from 35 to 54 °C, and 0 again from 55 °C up, where
   // the truth is reported so the VCU's limp protection can still fire. Only the retired
   // flat-offset config gave a constant 15. See the 0x200 comment in decode-bms.ts.
