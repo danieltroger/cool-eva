@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, valueOf } from "../lib/store.js";
-import { Fact, PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
+import { Fact, SectionLabel, SignalTile } from "../lib/tiles.js";
 import { ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import { power, whole } from "../lib/format.js";
@@ -62,7 +62,6 @@ export function ChargeView() {
     LimitsTile(),
     SectionLabel("Pack"),
     BalanceTile(),
-    CellRangeTile(),
     SignalTile({
       key: "pack_temp_avg",
       label: "Pack temp",
@@ -166,33 +165,18 @@ function BalanceTile() {
     chart: true,
     minSpan: 10,
     sub: () => {
+      // The spread is max − min, so the two voltages it is made of belong on the
+      // same tile rather than in one of their own: while charging, how full the
+      // cells actually are matters as much as how far apart they are.
+      const minimum = valueOf("cell_min_mv");
+      const maximum = valueOf("cell_max_mv");
+      const range = minimum == null || maximum == null ? "" : `${Math.round(minimum)}–${Math.round(maximum)} mV · `;
       const balancing = valueOf("bms_state_balancing") === 1;
       const low = valueOf("cell_lowest_v_idx");
       const high = valueOf("cell_highest_v_idx");
-      const cells = low == null || high == null ? "" : ` · weakest #${Math.round(low)}, strongest #${Math.round(high)}`;
-      return `${balancing ? "balancing now" : "not balancing"}${cells}`;
+      const cells = low == null || high == null ? "" : ` · low #${Math.round(low)}, high #${Math.round(high)}`;
+      return `${range}${balancing ? "balancing now" : "not balancing"}${cells}`;
     },
-  });
-}
-
-/**
- * The actual millivolts behind the spread.
- *
- * The tile above gives the gap and which cells are at each end, which is the number
- * that matters for balancing — but not where the pack as a whole is sitting. While
- * charging that is the thing you want: how far the top cell still has to go before
- * the BMS starts holding the charge back, and whether the bottom one is coming up
- * with it. Both come from 0x203, which the BMS sends whether or not the extended
- * per-cell frames are configured, so this works on a stock pack too.
- */
-function CellRangeTile() {
-  return PairTile({
-    label: "Cell low / high",
-    keys: ["cell_min_mv", "cell_max_mv"],
-    format: value => value.toFixed(0),
-    unit: "mV",
-    className: "span2",
-    caption: "min / max across the pack",
   });
 }
 
