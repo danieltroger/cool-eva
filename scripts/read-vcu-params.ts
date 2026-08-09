@@ -413,7 +413,7 @@ function parseArguments(argv: string[]): Options {
         break;
       }
       case "--index":
-        options.requested.push(requireNumber(argv, ++position, argument));
+        options.requested.push(requireIndex(argv, ++position, argument));
         break;
       case "--pace":
         options.paceMs = requireNumber(argv, ++position, argument);
@@ -475,6 +475,23 @@ function requireNumber(argv: string[], position: number, flag: string): number {
     fail(`${flag} needs a number`);
   }
   return value;
+}
+
+/**
+ * `--index` names a bank-1 identifier, so it must be a whole number param-codec.ts
+ * will accept. Checked HERE, at parse time, rather than being let through to blow up
+ * inside identifierForIndex() once can0 is open and the partial file handle is held:
+ * `--index 3.5` and `--index 9999` used to survive resolveTargets() (unnamedParameter
+ * built a stand-in for them) and only throw mid-sweep, as an unhandled rejection with
+ * no snapshot written. Every other bad argument in this file fails cleanly through
+ * fail() before the bus is touched; this one now does too.
+ */
+function requireIndex(argv: string[], position: number, flag: string): number {
+  const index = requireNumber(argv, position, flag);
+  if (!Number.isInteger(index) || index < 1 || index > 0x0fff) {
+    fail(`${flag} takes a whole parameter index between 1 and ${0x0fff}, not ${index}`);
+  }
+  return index;
 }
 
 function fail(message: string): never {
