@@ -291,6 +291,14 @@ type ExchangeResult =
  * told so rather than being given a plausible wrong answer.
  */
 function exchange(context: ClientContext, micro: VcuMicro, request: VcuRequest): Promise<ExchangeResult> {
+  if (context.stopped) {
+    // Nothing reaches the bus after stop(), whichever entry point asked. readParameter()
+    // already checks this, but openSession() and ping() route straight through here, so
+    // without this a Ctrl-C mid-sweep still puts 10 81 / 3E on the bus for the micro we
+    // had not got to yet — contradicting stop()'s "stops accepting work". This is where
+    // the guarantee belongs for all three callers.
+    return Promise.resolve({ kind: "not-sent", reason: "client stopped" });
+  }
   if (context.pending) {
     const reason = "a request was already in flight";
     console.warn(`vcu: ${reason} — refusing to interleave a second one`);

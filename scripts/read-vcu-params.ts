@@ -166,6 +166,12 @@ process.on("SIGTERM", () => onSignal("SIGTERM"));
 process.on("SIGHUP", () => onSignal("SIGHUP"));
 
 for (const micro of options.micros) {
+  // Same interrupted check the read loop below has: a Ctrl-C between the two pings must
+  // not go on to open a session on the other micro. The client now refuses to transmit
+  // after stop() too, but breaking here also stops the misleading "NOT responding" line.
+  if (interrupted) {
+    break;
+  }
   const reachable = await client.ping(micro);
   console.log(reachable ? `${micro}: session open, responding` : `${micro}: NOT responding to 10 81 + 3E`);
 }
