@@ -165,11 +165,17 @@ function BalanceTile() {
     chart: true,
     minSpan: 10,
     sub: () => {
+      // The spread is max − min, so the two voltages it is made of belong on the
+      // same tile rather than in one of their own: while charging, how full the
+      // cells actually are matters as much as how far apart they are.
+      const minimum = valueOf("cell_min_mv");
+      const maximum = valueOf("cell_max_mv");
+      const range = minimum == null || maximum == null ? "" : `${Math.round(minimum)}–${Math.round(maximum)} mV · `;
       const balancing = valueOf("bms_state_balancing") === 1;
       const low = valueOf("cell_lowest_v_idx");
       const high = valueOf("cell_highest_v_idx");
-      const cells = low == null || high == null ? "" : ` · weakest #${Math.round(low)}, strongest #${Math.round(high)}`;
-      return `${balancing ? "balancing now" : "not balancing"}${cells}`;
+      const cells = low == null || high == null ? "" : ` · low #${Math.round(low)}, high #${Math.round(high)}`;
+      return `${range}${balancing ? "balancing now" : "not balancing"}${cells}`;
     },
   });
 }
