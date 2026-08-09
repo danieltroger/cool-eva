@@ -7,6 +7,7 @@ import { handleWaypointEndpoint } from "./http/waypoint.ts";
 import { handleStatusEndpoint } from "./http/status.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
+import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -45,6 +46,9 @@ const CAN_IFACE = "can0";
 //     the temperatures on 0x200 (by a config-dependent amount, not a constant) and moves
 //     the true ones onto 0x660. Leave unset on a stock Energica. Only affects temperature
 //     routing; every other decode is correct either way, and the frames override a wrong flag.
+//   VCU_PARAM_DIR=… → where scripts/read-vcu-params.ts leaves its snapshots, which
+//     /vcu-params serves. Nothing here ever writes there or reads the parameters
+//     itself: this process never puts a diagnostic request on the bus for them.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -53,6 +57,7 @@ const BLE_MAC = process.env.BLE_MAC ?? "";
 const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.public.pem");
 const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
+const VCU_PARAM_DIR = process.env.VCU_PARAM_DIR ?? join(ROOT, "vcu-params");
 
 // --- Signal registry ---
 defineSignals(SIGNALS);
@@ -223,6 +228,14 @@ const server = createServer(async (req, res) => {
   // multiframe transfer.
   if (url.pathname === "/stored-dtcs") {
     handleStoredDtcsEndpoint(res);
+    return;
+  }
+  // The VCU's calibration parameters, as scripts/read-vcu-params.ts last read them.
+  // Also never touches the bus — this process never asks the micros anything, by
+  // design (see the script's header for why the sweep is on-demand rather than
+  // something the service does at startup).
+  if (url.pathname === "/vcu-params") {
+    await handleVcuParamsEndpoint(res, VCU_PARAM_DIR);
     return;
   }
   if (staticFiles.serve(url.pathname, res)) {

@@ -218,8 +218,25 @@ Codes are named from Energica's own type-approval table (`src/diagnostics/dtc-ta
 
 The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs.
 
+## VCU parameters, by name
+
+The VCU's calibration EEPROM — throttle maps, cell limits, current thresholds, the charge-current ceilings — is readable off the bus **by name, with no authentication**. The two micros serve it as KWP bank 1, and the mapping is simply `CommonIdentifier = 0x1000 | index`, where the index is the row number in Energica's own `params.ecf` parameter file. Parameter _n_ is `22 [0x10|hi] [lo]`.
+
+`src/vcu/param-table.ts` carries a copy of that file — 277 names, widths and micro assignments — so nothing depends on a path in one person's iCloud folder. **Its values are another bike's**: the file came from a different variant, and 21 of the 233 parameters the A9 serves read differently here (`MAX_DC_CHG_CURRENT` is 75 A on this bike against the file's 60). It is a name table, and the column showing its values is labelled as another bike's everywhere it appears.
+
+```bash
+# on the Pi, bike awake — run it detached, the link drops
+node --experimental-strip-types scripts/read-vcu-params.ts                     # all 277
+node --experimental-strip-types scripts/read-vcu-params.ts MAX_DC_CHG_CURRENT  # just this one
+node --experimental-strip-types scripts/check-vcu-params.ts                    # on a laptop, no bike
+```
+
+**It is on demand, not something the service does.** These are configuration: they do not move while riding, so logging them as time series would spend SD-card writes re-recording constants, and 277 more keys in the WebSocket snapshot would cost every dashboard update. What is worth knowing is that one _changed_ — so every run diffs against the previous snapshot and says so loudly. `GET /vcu-params` and `/params.html` serve that snapshot from disk and **never touch the bus**, so the result is a tap away on the phone while the read itself stays deliberate and rare.
+
+A sweep survives the link dropping: each row is appended to `vcu-params/sweep.partial.jsonl` as it arrives, and re-running the same command resumes from there rather than starting again. Snapshots are gitignored — they are one motorcycle's — while the name table needed to take your own is committed.
+
 ## Notes
 
-- The CAN bus is **read-only**: passive broadcast decode + standard OBD-II _read_ requests only. No KWP/UDS writes. Nothing here can clear a trouble code: OBD-II **mode 04 is not implemented and must not be** — it would erase the history above, on a bike that has been accumulating it since before anyone was reading.
+- The CAN bus is **read-only**: passive broadcast decode, standard OBD-II _read_ requests, and the KWP `0x22` parameter reads above. No writes of any kind. Nothing here can clear a trouble code: OBD-II **mode 04 is not implemented and must not be** — it would erase the history above, on a bike that has been accumulating it since before anyone was reading. `0x2E`, `0x3B`, `0x27`, `0x31`, `0x11` and `0x2F` are likewise absent, and `src/vcu/param-codec.ts` is built so they cannot be expressed rather than merely left unwritten.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.

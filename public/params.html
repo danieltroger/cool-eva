@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Cool Eva — VCU parameters</title>
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧊</text></svg>"
+    />
+    <!-- Scoped here rather than added to style.css: that file is the riding
+         dashboard's, written for numbers read through a visor at speed, and a dense
+         reference table wants the opposite of everything in it. -->
+    <style>
+      body {
+        padding: 0.9rem;
+      }
+      h1 {
+        font-size: 1.1rem;
+        margin-bottom: 0.3rem;
+      }
+      #status,
+      #summary {
+        color: var(--sub);
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+      }
+      #search {
+        width: 100%;
+        padding: 0.6rem 0.7rem;
+        margin-bottom: 0.7rem;
+        font-size: 1rem;
+        color: var(--fg);
+        background: var(--tile);
+        border: 1px solid var(--tile-edge);
+        border-radius: 0.5rem;
+      }
+      /* The table is wider than a phone and must stay so — wrapping a hex column
+         makes it unreadable. It scrolls inside this wrapper instead. */
+      .scroll {
+        overflow-x: auto;
+      }
+      table {
+        border-collapse: collapse;
+        font-size: 0.8rem;
+        white-space: nowrap;
+      }
+      th,
+      td {
+        padding: 0.3rem 0.55rem;
+        text-align: left;
+        border-bottom: 1px solid var(--dim);
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        color: var(--label);
+        font-weight: 600;
+      }
+      td.name {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      td.raw {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--sub);
+      }
+      td.value {
+        text-align: right;
+      }
+      td.other {
+        text-align: right;
+        color: var(--sub);
+      }
+      /* 21 of 233 parameters genuinely differ from the variant file, so a difference
+         is normal and marked rather than alarming. */
+      td.differs {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      td.unnamed,
+      tr.unread td {
+        color: var(--label);
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>VCU parameters</h1>
+    <!-- Both warnings sit above the table on purpose. The first is what stops
+         someone reading the last column as this bike's; the second is what stops
+         them reading a stale snapshot as live. -->
+    <p id="status">loading…</p>
+    <p id="summary"></p>
+    <p id="provenance" style="color: var(--sub); font-size: 0.8rem; margin-bottom: 0.7rem">
+      Names, widths and routing come from <code>params.ecf</code>, a parameter file from a
+      <strong>different</strong> Energica. The <em>values</em> in the last column are that other bike's and are shown
+      only for comparison — this bike's readings are the “This bike” column. Read on demand with
+      <code>scripts/read-vcu-params.ts</code>; nothing here polls the bus.
+    </p>
+    <input id="search" type="search" placeholder="filter by name, section, index or micro…" disabled />
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Section</th>
+            <th>µC</th>
+            <th>This bike</th>
+            <th>Raw</th>
+            <th>params.ecf (other bike)</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <script type="module" src="/lib/params-page.js"></script>
+  </body>
+</html>

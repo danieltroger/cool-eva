@@ -178,3 +178,10 @@ ride-log-key.private.pem
 # want to park on an external disk and symlink back.
 ride-logs
 *.celog
+
+# VCU parameter snapshots written by scripts/read-vcu-params.ts. Generated output,
+# and specific to one motorcycle — the name table it is read against IS committed
+# (src/vcu/param-table.ts), so another owner gets everything they need to take their
+# own. Committing one deliberately, as a reference set of real Eva Ribelle values,
+# would be a fine thing to do; it just should not happen by accident on every run.
+vcu-params
