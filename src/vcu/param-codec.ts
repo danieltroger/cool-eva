@@ -287,9 +287,9 @@ export interface VcuParameterValue {
    * The value per the table's S/U column — the number to show a human.
    *
    * Null when there is no honest typed reading: the identifier is not in the name
-   * table (a reserved slot such as 260/262/263/265), or its record length
-   * contradicts the TYPE column. In both cases `rawHex` and `unsigned` still carry
-   * everything the bike actually said, so nothing is lost by refusing to guess.
+   * table (an index outside the 1…277 this variant's file describes), or its record
+   * length contradicts the TYPE column. In both cases `rawHex` and `unsigned` still
+   * carry everything the bike actually said, so nothing is lost by refusing to guess.
    */
   value: number | null;
   /** The record length disagrees with the table. Never seen on 233 records; loud if it ever is. */
@@ -297,11 +297,13 @@ export interface VcuParameterValue {
 }
 
 /**
- * Interprets a record. `parameter` is null for an identifier the name table does
- * not describe, which is an ordinary outcome rather than an error — indices 260,
- * 262, 263 and 265 are real, readable, reserved slots that answer 0, and a bike
- * with more parameters than this variant's file would simply show up here as more
- * of them.
+ * Interprets a record. `parameter` is null for an identifier the name table does not
+ * describe — which means an index outside the contiguous 1…277 this variant's file
+ * covers, as it has no gaps (scripts/check-vcu-params.ts asserts exactly that). That
+ * is an ordinary outcome, not an error: a bike with more parameters than this file
+ * knows shows up here as more of them, with its raw bytes intact. (260/262/263/265
+ * are NOT such cases — they are named EVSE placeholders, EE_EVSE_DUMMY_1 …
+ * EVSE_DUMMY_WORD4, that happen to read 0 on this bike.)
  */
 export function interpretRecord(record: Uint8Array, parameter: VcuParameter | null): VcuParameterValue {
   const unsigned = record.reduce((accumulated, byte) => accumulated * 256 + byte, 0);

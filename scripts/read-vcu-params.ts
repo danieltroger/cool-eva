@@ -30,8 +30,9 @@ import {
 //   # just the ones you came for
 //   node --experimental-strip-types scripts/read-vcu-params.ts MAX_DC_CHG_CURRENT FCHG_CURRENT_GAIN
 //
-//   # an identifier the name table does not describe — reads back as raw bytes
-//   node --experimental-strip-types scripts/read-vcu-params.ts --index 260
+//   # an identifier the name table does not describe — reads back as raw bytes.
+//   # The table covers 1…277 with no gaps, so an undescribed index means 278 and up.
+//   node --experimental-strip-types scripts/read-vcu-params.ts --index 278
 //
 // ⚠️ RUN IT DETACHED. The link to the bike drops — that is the normal case, not the
 // exception, and on 2026-08-08 it cost a whole result set mid-read
@@ -312,7 +313,7 @@ async function openCanChannel(): Promise<typeof import("socketcan")> {
 }
 
 /**
- * A routing stand-in for an index the name table does not describe, so `--index 260`
+ * A routing stand-in for an index the name table does not describe, so `--index 278`
  * still reads. Only `index` and `micro` are used — toParameterRow() looks the real
  * table up again, so an unnamed identifier comes out with a null name and type and
  * its raw bytes intact, rather than wearing the placeholders below.

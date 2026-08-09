@@ -29,10 +29,11 @@ export interface VcuParameterRow {
   identifier: number;
   micro: VcuMicro;
   /**
-   * From the name table, or null for an identifier it does not describe. Null is
-   * NOT an error: 260, 262, 263 and 265 are real, readable, reserved slots that
-   * answer 0, and a variant with more parameters than this file knows would show up
-   * here the same way — with its raw value intact.
+   * From the name table, or null for an identifier it does not describe. Null is NOT
+   * an error: the table covers 1…277 with no gaps, so null means an index outside that
+   * range, and a variant with more parameters than this file knows would show up here
+   * the same way — with its raw value intact. (260/262/263/265 are named EVSE
+   * placeholders that read 0 on this bike, not unnamed slots.)
    */
   name: string | null;
   section: string | null;

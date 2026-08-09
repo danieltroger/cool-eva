@@ -117,7 +117,7 @@ const BY_INDEX = new Map(PARAMETER_TABLE.map(parameter => [parameter.index, para
 
 const BY_NAME = groupByName(PARAMETER_TABLE);
 
-/** The parameter at a given index, or null if the table does not describe it (e.g. a reserved slot). */
+/** The parameter at a given index, or null if the table does not describe it (an index outside 1…277). */
 export function parameterAtIndex(index: number): VcuParameter | null {
   return BY_INDEX.get(index) ?? null;
 }
