@@ -41,10 +41,10 @@ const CAN_IFACE = "can0";
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
 //   RIDE_LOG_PUBKEY=… → X25519 public key enabling the write-only encrypted log
 //   RIDE_LOG_DIR=…    → where the sealed .celog segments go
-//   CUSTOM_BMS_CONFIG=1 → this pack has the custom LiBAL BMS config flashed, which
-//     shifts the temperatures on 0x200 down 15 °C and moves the true ones onto 0x660.
-//     Leave unset on a stock Energica. Only affects temperature routing; every other
-//     decode is correct either way, and the frames themselves override a wrong flag.
+//   CUSTOM_BMS_CONFIG=1 → this pack has the custom LiBAL BMS config flashed, which lowers
+//     the temperatures on 0x200 (by a config-dependent amount, not a constant) and moves
+//     the true ones onto 0x660. Leave unset on a stock Energica. Only affects temperature
+//     routing; every other decode is correct either way, and the frames override a wrong flag.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
