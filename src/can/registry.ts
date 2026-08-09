@@ -29,10 +29,11 @@ export const SIGNALS: SignalDef[] = [
   // The _vcu pair is what the VCU and dash actually read: identical to the true pair on
   // the stock config, and lower once a DC-derate config is flashed. It comes straight off
   // 0x200 with no routing, so it is the pair that never has gaps. The difference between
-  // the two is the useful signal, but it is NOT a fixed number and must not be used as a
-  // health check — under 14-signbit-clamp (flashed now) it is 0 below 35 °C and
-  // (true − 35) above, e.g. 1 °C at a true 36 °C. Only the retired flat-offset config
-  // gave a constant 15. See the 0x200 comment in decode-bms.ts for the config history.
+  // the two is the useful signal, but it is NOT a fixed number, not even monotonic in
+  // temperature, and must not be used as a health check — under 15-bounded-clamp (built, not yet flashed
+  // now) it is 0 below 35 °C, (true − 35) from 35 to 54 °C, and 0 again from 55 °C up, where
+  // the truth is reported so the VCU's limp protection can still fire. Only the retired
+  // flat-offset config gave a constant 15. See the 0x200 comment in decode-bms.ts.
   { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream" },
   { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream" },
   { key: "batt_temp_lo_vcu", unit: "°C", group: "battery", source: "stream" },
@@ -134,17 +135,31 @@ export const SIGNALS: SignalDef[] = [
   { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
   // Clamp instrumentation, one byte each. No deadband: these are small integers whose
   // whole purpose is to show the clamp's arithmetic, so smoothing would hide it.
-  // clamp_diff is decoded signed, so negative means the pack is below the threshold and
-  // the clamp is passing the true temperature through untouched; clamp_amount is what is
-  // being subtracted.
+  // clamp_gate is the mask that decides which regime is in force — 255 while the clamp is
+  // subtracting, 0 while the true temperature is going to the VCU (below 35 °C, or from
+  // 55 °C up where the VCU's limp protection has to be able to see the truth). clamp_amount
+  // is what it would subtract; what it actually subtracts is clamp_amount & clamp_gate.
   //
-  // Both carry NO unit on purpose, even though under the current config they happen to be
-  // degrees. They are raw config-dependent slots — under 11-full-conditional-offset
-  // clamp_amount is a flag × 9, not a temperature at all. Tagging them "°C" would also
-  // opt them into bounds.js's BY_UNIT["°C"] = [-40, 200] fallback, so a legitimate value
-  // outside that window would be rejected as a dead sensor and drawn as a fault. Same
-  // treatment as bms_post_processor_1 and the iso_test_* signals.
-  { key: "clamp_diff", unit: "", group: "bms", source: "stream" },
+  // Both carry NO unit on purpose, and for two different reasons. clamp_gate is not a
+  // quantity at all, it is a byte of all ones or all zeroes. clamp_amount happens to be
+  // degrees under the current config but is a raw config-dependent slot — under
+  // 11-full-conditional-offset it was a flag × 9. Tagging either "°C" would also opt it into
+  // bounds.js's BY_UNIT["°C"] = [-40, 200] fallback, which would reject 255 as a dead sensor
+  // and draw the healthy state as a fault. Same treatment as bms_post_processor_1 and the
+  // iso_test_* signals.
+  //
+  // clamp_gate REPLACES clamp_diff, which 206 rows have already shipped under (Aug 2026,
+  // 14-signbit-clamp) meaning "true pack temp high − 35 °C, signed". It is retired rather
+  // than repurposed: −1 under the old meaning is a pack at 34 °C, and −1 is also what a
+  // signed read of a closed gate would say, so reusing the key would put two unrelated
+  // meanings in one series with nothing in the data to mark where one ends. Retiring it
+  // costs nothing, because clamp_diff was exactly batt_temp_hi − 35 and always was —
+  // verified over all 198 same-timestamp pairs in the log, true 28…55 °C, no exceptions — so
+  // every old row can still be reconstructed from batt_temp_hi, which is in the same frame.
+  // The units and group of those rows live in the sealed log segments themselves
+  // (scripts/decrypt-log.ts prefers them over this registry), so dropping the entry here
+  // does not orphan them.
+  { key: "clamp_gate", unit: "", group: "bms", source: "stream" },
   { key: "clamp_amount", unit: "", group: "bms", source: "stream" },
   // Echo of the byte 0x200 b3 carries — genuinely a temperature, so "°C" is right here.
   // It must always equal batt_temp_hi_vcu; pack-temperature.ts warns once per run if it

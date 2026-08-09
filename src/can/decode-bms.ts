@@ -24,15 +24,26 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     // allowed_regen_a are still computed from the raw internal values.
     //
     // The size of that shift is NOT fixed, and assuming it is has already produced one
-    // false alarm. Three configs have been flashed:
+    // false alarm. Four configs have been flashed:
     //   5-custom-p32b-vcu-offset  a flat −15 °C. RETIRED — it broke charging.
     //   11-full-conditional-offset  a no-op: its postprocessor line never ran (verified
     //                             over 1900 samples, 0x660 b3/b4 identical to 0x200).
-    //   14-signbit-clamp  (current) pins the reported value at 35 °C while the pack is
-    //                     hotter and passes the true value through while it is colder.
+    //   14-signbit-clamp  pinned the reported value at 35 °C for ANY true temperature
+    //                     above 35, and passed the true value through below it.
+    //                     SUPERSEDED — see 15 below.
+    //   15-bounded-clamp  (built 2026-08-09, NOT YET FLASHED) bounds that clamp at the top:
+    //                     below 35 °C it passes the truth through, from 35 to 54 °C it
+    //                     reports 35, and at 55 °C and above it reports the TRUTH again.
     // So under the live config the difference batt_temp_hi − batt_temp_hi_vcu is 0 below
-    // 35 °C and (true − 35) above it — 1 °C at a true 36 °C. A constant 15 is the one
-    // thing it is NOT. Do not treat any particular difference as a health check.
+    // 35 °C, (true − 35) from 35 to 54 °C, and 0 again from 55 °C up. A constant 15 is
+    // the one thing it is NOT, and it is not even monotonic in temperature. Do not treat
+    // any particular difference as a health check.
+    //
+    // The upper bound exists because the VCU enters limp mode at 55 °C (LIMP_B_TEMP = 55 in
+    // the A9 parameter block — obd-garage/DC_CHARGE_LIMITS.md §7 puts it plainly: pinned at
+    // 35, the unbounded clamp does not delay that protection, it disables it). Not
+    // hypothetical: this bike's own log has the pack at a true 55 °C on 2026-08-08 13:45 UTC
+    // with clamp_amount = 20 and batt_temp_hi_vcu last logged at 35.
     //
     // So these bytes are always "what the VCU and the dash see", which is honest under
     // every config; the true temperature comes from 0x660 when one of these is loaded.
@@ -235,41 +246,78 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
       // 16-bit read of postprocessor slot Output3 spanning b5-6, which answered a
       // one-off question (a 1-byte result lands in the LOW byte of a 16-bit slot —
       // confirmed 2026-08-02, word 0x000E with b3 = 29 °C). The unconditional-offset
-      // config that used that layout is retired; it broke charging. Both configs still
-      // in play (11-full-conditional-offset and 14-signbit-clamp) declare b5, b6 and b7
-      // as three separate 1-byte signals, so the 16-bit decode would now silently pair
-      // two unrelated bytes: it reported 0x0202 on 2026-08-04 and was read as "the
-      // offset is not applied", when in fact diff = 2 and amount = 2 at a true 37 °C is
-      // the clamp working.
+      // config that used that layout is retired; it broke charging. Every config from 11
+      // on declares b5, b6 and b7 as three separate 1-byte signals, so the 16-bit decode
+      // would now silently pair two unrelated bytes: it reported 0x0202 on 2026-08-04 and
+      // was read as "the offset is not applied", when in fact diff = 2 and amount = 2 at a
+      // true 37 °C was the clamp working.
       //
-      //   clamp_diff   = true_temp − 35, as an unsigned byte, so >= 128 means colder
-      //                  than the threshold (that sign bit is what drives the clamp)
-      //   clamp_amount = how much is being subtracted: equal to diff when hot, 0 when cold
-      //   batt_temp_hi_vcu_echo = the result the VCU is actually shown, pinned at 35
-      //                  while hot and equal to the true temperature while cold
+      // Read out of 15-bounded-clamp.bms (CANTX_Frame_10, DLC 8):
       //
-      // ⚠️ That arithmetic is 14-signbit-clamp's, the config flashed now.
-      // 11-full-conditional-offset points the same two bytes at a 0/1 "hotter than 35"
-      // guard and a flat 9 °C offset instead — and on 2026-08-04 its postprocessor line
-      // never ran at all, so both bytes read 0x00 through a whole DC charge while b7
-      // carried the true temperature. So these two keys mean "whatever the live config
-      // feeds those slots", not the subtraction above, and a pair of zeroes is a
-      // statement about the config rather than about this decode. Only b7 is the same
-      // quantity in every config that has ever sent a long 0x660.
+      //   clamp_gate   (b5, mem 2103) = the gate that decides which regime is in force.
+      //                  255 = closed, the clamp may subtract; 0 = open, the true
+      //                  temperature is going out untouched. Called `mask2` in the config,
+      //                  because it is an all-ones/all-zeroes byte ANDed over the amount.
+      //   clamp_amount (b6, mem 2087) = how much the clamp WOULD subtract, before the gate
+      //   batt_temp_hi_vcu_echo (b7, mem 2075) = the result the VCU is actually shown
+      //
+      // and the identity that ties all three to b3, checkable from this frame alone:
+      //
+      //   batt_temp_hi_vcu_echo === batt_temp_hi − (clamp_amount & clamp_gate)
+      //
+      // ⚠️ b6 is the PRE-gate amount, not "how much is being subtracted" — that changed
+      // with config 15 even though the byte's address did not. At 55 °C and up the gate
+      // opens, so clamp_amount reads (true − 35) ≥ 20 while nothing at all is subtracted.
+      // The two only coincide while the gate is closed, which is every ordinary
+      // temperature. Under 11-full-conditional-offset it is a flat 9 °C offset, and on
+      // 2026-08-04 that config's postprocessor line never ran at all, so b5 and b6 both
+      // read 0x00 through a whole DC charge while b7 carried the true temperature. So
+      // these two keys mean "whatever the live config feeds those slots"; only b7 is the
+      // same quantity in every config that has ever sent a long 0x660.
       //
       // The echo is not merely the same value as 0x200 b3, it is the same memory
-      // (mem 2075, in both configs), so a disagreement between the two means a
-      // repointing error in the config rather than a decode error here.
+      // (mem 2075, in configs 11 through 15 — verified against the decrypted XML), so a
+      // disagreement between the two means a repointing error in the config rather than a
+      // decode error here. pack-temperature.ts watches for it.
       //
-      // clamp_diff is decoded SIGNED. The postprocessor computes it with a signed
-      // subtract, so as a raw byte it steps 1 → 255 the instant the pack crosses the
-      // threshold — a 254-count jump for a 2 °C move, which every autoscaling consumer
-      // would read as a sentinel or a dead sensor. Signed, the same bit pattern reads
-      // −1, the series stays continuous, and the sign bit that drives the whole clamp is
-      // still exactly `value < 0`. It is then directly comparable with batt_temp_hi − 35.
+      // ── WHY b5 IS DECODED AS THE GATE AND NOT AS 14-signbit-clamp's clamp_diff ──
+      //
+      // There is no reliable way to tell 14 from 15 apart at runtime, and this decoder does
+      // not try. Both send 0x660 at DLC 8 with the same eight fields; only b5's source
+      // memory moved (2079 → 2103). Under 14 b5 was `true − 35` wrapped, which takes 255 at
+      // a true 34 °C and 0 at 35 °C — so a single frame at either of those temperatures is
+      // literally indistinguishable from a healthy config 15, and the two configs' visible
+      // behaviour only diverges above 54 °C.
+      //
+      // A per-frame discriminator does exist on paper (config 14 predicts b5 = (b3 − 35)
+      // mod 256, config 15 predicts 255 below 55 °C and 0 above; those differ at every
+      // temperature except exactly 34 °C) and it is deliberately NOT used. It is circular:
+      // it assumes the postprocessor chain is healthy in order to decide what the byte
+      // means, and telling us the chain is NOT healthy is the entire reason this byte is on
+      // the bus. It would mislabel precisely the frames it exists to catch. A statistical
+      // "b5 has only ever been 0 or 255" test is worse — it converges slowly and a pack
+      // parked at 34 °C fakes it indefinitely.
+      //
+      // So the honest answer is that the operator declares the config by flashing it, and
+      // this decoder is written for the config that is flashed. That is acceptable here,
+      // and would NOT be under batt_temp_lo/batt_temp_hi, for two reasons:
+      //   • b3/b4 are identical under both configs, so the true-temperature keys — the ones
+      //     with years of history that pack-temperature.ts exists to protect — cannot be
+      //     corrupted by getting this wrong. Only diagnostic instrumentation can.
+      //   • being wrong is recoverable rather than silent. Config 14's b5 was exactly
+      //     (batt_temp_hi − 35) mod 256, verified across all 198 same-timestamp pairs in the
+      //     ride log (true 28…55 °C, zero exceptions), so if this decode is applied to a
+      //     bike still on 14 the rows can be reconstructed from batt_temp_hi in the same
+      //     frame — nothing is destroyed. And it will not be quiet about it:
+      //     pack-temperature.ts warns once on any b5 that is not a mask.
+      //
+      // clamp_gate is decoded UNSIGNED, unlike the clamp_diff it replaces. 255 is a mask of
+      // all ones, not minus one; signing it would render the normal, healthy, everything-is-
+      // working state as "−1" on every chart and invite exactly the arithmetic (gate − 1,
+      // gate + 35) that the byte no longer supports.
       if (data.length >= CLAMP_INSTRUMENTATION_MIN_DLC) {
         values.push(
-          { key: "clamp_diff", value: signedByte(data[5]) },
+          { key: "clamp_gate", value: data[5] },
           { key: "clamp_amount", value: data[6] },
           { key: "batt_temp_hi_vcu_echo", value: signedByte(data[7]) }
         );
@@ -387,6 +435,31 @@ export const OFFSET_CONFIG_MIN_DLC = 5;
 // thresholds are visibly different decisions instead of looking like one of them is a
 // typo — every long 0x660 sent so far has been DLC 8, so the gap is untested in practice.
 export const CLAMP_INSTRUMENTATION_MIN_DLC = 8;
+
+// The only two values 0x660 b5 can hold under 15-bounded-clamp: the postprocessor builds
+// it as (((true_hi − 55) & 0xFF) / 128) × 255, truncated to one byte, so it is a byte of
+// all ones or a byte of all zeroes and nothing else.
+//
+// That the divide truncates toward zero on unsigned bytes — the assumption the whole mask
+// trick rests on — is not taken on trust. It is proven by the config-14 rows already in the
+// ride log, which use the identical construct one threshold lower: across 186 same-timestamp
+// pairs, clamp_amount was 0 on every frame where clamp_diff was negative (raw byte ≥ 128, so
+// the divide had to yield 1) and equal to clamp_diff on every frame where it was not (so the
+// divide had to yield 0), with zero exceptions. Neither a signed nor a rounding divide can
+// produce that pattern; see the warnings in pack-temperature.ts for what each would look
+// like here.
+export const CLAMP_GATE_CLOSED = 255;
+export const CLAMP_GATE_OPEN = 0;
+
+// The two temperatures that bound the clamp, both in true °C.
+//
+// CLAMP_FLOOR_C is what the VCU is shown throughout the clamped band, chosen to sit just
+// under the 36 °C DC-charge derate knee. LIMP_MODE_TEMP_C is the VCU's LIMP_B_TEMP, and the
+// reason the clamp is bounded at all: at and above it the config reports the truth so that
+// the VCU's own thermal protection can still fire. Exported for the plausibility checks in
+// pack-temperature.ts, which need to know which regime a given true temperature implies.
+export const CLAMP_FLOOR_C = 35;
+export const LIMP_MODE_TEMP_C = 55;
 
 // 11 LMU modules: 1-4 have 8 cells enabled, 5-11 have 7 → 81 series positions,
 // matching the pack's 81s topology.

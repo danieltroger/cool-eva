@@ -1,4 +1,10 @@
-import { OFFSET_CONFIG_MIN_DLC } from "./decode-bms.ts";
+import {
+  CLAMP_FLOOR_C,
+  CLAMP_GATE_CLOSED,
+  CLAMP_GATE_OPEN,
+  LIMP_MODE_TEMP_C,
+  OFFSET_CONFIG_MIN_DLC,
+} from "./decode-bms.ts";
 import type { DecodedValue } from "./frame.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 
@@ -6,10 +12,16 @@ import { monotonicNow, since } from "../monotonic.ts";
 //
 // Those two keys have years of history behind them and must keep meaning the TRUE
 // pack temperature. On a stock Energica that is 0x200 bytes 0/3, full stop. Once the
-// custom LiBAL config is flashed those bytes are shifted 15 °C low — to move the VCU's
-// DC-charge derate knee from 36 °C reported to 51 °C actual — and the truth moves to
-// the long 0x660 instead. This routing is the ONLY config-dependent decode in the
-// repo; every other frame and correction is right on both.
+// custom LiBAL config is flashed those bytes carry the VCU's lowered view instead — to
+// push its DC-charge derate knee, which starts at a reported 36 °C, past the point where
+// a watercooled pack actually needs derating — and the truth moves to the long 0x660.
+// How much lower depends on the config and is not a fixed number: 15-bounded-clamp, which
+// this decoder targets, reports 35 °C for any true temperature from 35 to 54 and the truth
+// either side of that band. (It is built but NOT yet flashed as of 2026-08-09 — the bike
+// still runs 14-signbit-clamp, which never reports above 35. Both send the same frames at
+// the same length, so the bus cannot tell them apart; see decode-bms.ts on why no runtime
+// discriminator is offered.) This routing is the ONLY config-dependent decode in the repo;
+// every other frame and correction is right on both.
 //
 // No single frame announces which config is flashed, so it has to be established from
 // what arrives:
@@ -21,9 +33,10 @@ import { monotonicNow, since } from "../monotonic.ts";
 //
 // Until one of those holds, batt_temp_lo/batt_temp_hi are not emitted AT ALL. That is
 // the rule the module exists to enforce, and it is deliberately asymmetric: a gap in a
-// log-on-change series costs nothing and reads as "not known yet", whereas a shifted
-// value under the true-temperature key reads as a 15 °C plunge indistinguishable from a
-// failing sensor — and the ride log is sealed, so it can never be corrected afterwards.
+// log-on-change series costs nothing and reads as "not known yet", whereas a lowered
+// value under the true-temperature key reads as a plunge indistinguishable from a failing
+// sensor — up to 19 °C under the bounded clamp, and it was 15 °C flat under the retired
+// offset config — and the ride log is sealed, so it can never be corrected afterwards.
 // There is no such thing as a safe fallback here; going quiet IS the fallback.
 //
 // CUSTOM_BMS_CONFIG says which config to expect, but the frames say what actually
@@ -100,6 +113,11 @@ let warnedThermalFrameShort = false;
 let lastVcuTemperatureHigh: number | undefined;
 let consecutiveEchoMismatches = 0;
 let warnedEchoMismatch = false;
+// The clamp gate's own self-test. See noteClampGate — also diagnostics only.
+let consecutiveNonMaskGates = 0;
+let consecutiveOpenGatesInClampBand = 0;
+let warnedClampGateNotAMask = false;
+let warnedClampGateStuckOpen = false;
 
 /**
  * Takes what a frame decoded to and returns what should actually be recorded, adding
@@ -111,6 +129,7 @@ export function resolvePackTemperatures(id: number, data: Buffer, decoded: Decod
   if (id === PACK_THERMAL_FRAME_ID) {
     notePackThermalFrame(data.length);
     noteEchoAgreement(decoded);
+    noteClampGate(decoded);
     return decoded;
   }
   for (const { key, value } of decoded) {
@@ -140,6 +159,10 @@ export function configurePackTemperature(customBmsConfig: boolean): void {
   lastVcuTemperatureHigh = undefined;
   consecutiveEchoMismatches = 0;
   warnedEchoMismatch = false;
+  consecutiveNonMaskGates = 0;
+  consecutiveOpenGatesInClampBand = 0;
+  warnedClampGateNotAMask = false;
+  warnedClampGateStuckOpen = false;
 }
 
 // 0x200's VCU-view values, relabelled with the true-temperature keys they would feed.
@@ -189,6 +212,107 @@ function noteEchoAgreement(decoded: DecodedValue[]): void {
   );
 }
 
+// 0x660 b5 under 15-bounded-clamp is a mask the postprocessor builds by dividing a byte by
+// 128 and multiplying by 255, so the only values it can hold are 255 (gate closed, the clamp
+// is subtracting) and 0 (gate open, the true temperature is going to the VCU). Anything else
+// means the arithmetic is not doing what the config was written against, and — unlike the
+// clamp itself — that is invisible from every other signal on the bus, because a wrong mask
+// still produces a temperature that looks perfectly reasonable.
+//
+// This is worth checking because b5 is the one byte whose meaning is not settled by the
+// frame itself: it carried 14-signbit-clamp's clamp_diff until 2026-08-09 (see the b5-7
+// comment in decode-bms.ts for why no runtime discriminator is attempted). The three
+// diagnoses a bad value gives, in the order they are worth suspecting:
+//
+//   • not 0 or 255 → the bike is almost certainly still on 14-signbit-clamp, where this byte
+//     is (true_hi − 35) wrapped. Cheap to confirm: it will equal batt_temp_hi − 35 exactly.
+//   • 254 specifically → the Divide operator rounds instead of truncating. Then the mask
+//     drops bit 0 of the amount and the reported temperature is up to 1 °C off — a ±1 °C
+//     error is the whole symptom, which is why it needs saying out loud rather than being
+//     left to be noticed.
+//   • 0 while the pack sits in the clamped band → the Divide operator is signed, so the gate
+//     never closes and the clamp never applies. Fails safe (the VCU sees the truth, and its
+//     55 °C limp protection works), but the DC-charge derate relief the config exists for is
+//     simply not happening.
+//
+// Only the third needs the temperature for context, and it uses a band that config 14 cannot
+// produce: between the clamp floor and limp threshold, exclusive, 14's b5 is 1…19 and never
+// 0. So this warning means "the gate failed to close", never "you are on the old config" —
+// that is the first warning's job, and the two stay separable.
+const CLAMP_GATE_FAULTS_BEFORE_WARNING = 3;
+
+// The gate a rounding Divide would emit throughout the clamped band: 2 × 255 truncated to a
+// byte. Worth naming because it is a signature rather than just another wrong number — it
+// pins the fault on the operator's rounding, where any other non-mask value points at the
+// previous config's byte instead.
+const ROUNDING_DIVIDE_GATE = 254;
+
+function noteClampGate(decoded: DecodedValue[]): void {
+  const gate = decoded.find(({ key }) => key === "clamp_gate")?.value;
+  // Absent under short 0x660s and under any config that doesn't send the clamp bytes.
+  if (gate === undefined) return;
+  noteClampGateIsAMask(gate);
+  const trueTemperatureHigh = decoded.find(({ key }) => key === "batt_temp_hi")?.value;
+  if (trueTemperatureHigh !== undefined) {
+    noteClampGateRegime(gate, trueTemperatureHigh);
+  }
+}
+
+// Persistence for the same reason the echo check has it: a single odd frame is a misread on
+// the wire, a repeated one is the config. At 1 Hz three frames is three seconds.
+function noteClampGateIsAMask(gate: number): void {
+  if (gate === CLAMP_GATE_CLOSED || gate === CLAMP_GATE_OPEN) {
+    consecutiveNonMaskGates = 0;
+    return;
+  }
+  consecutiveNonMaskGates += 1;
+  if (consecutiveNonMaskGates < CLAMP_GATE_FAULTS_BEFORE_WARNING || warnedClampGateNotAMask) return;
+  warnedClampGateNotAMask = true;
+  console.warn(
+    `bms: *** 0x660 b5 read ${gate} on ${consecutiveNonMaskGates} consecutive frames, but under ` +
+      `15-bounded-clamp it can only be ${CLAMP_GATE_CLOSED} (clamp active) or ${CLAMP_GATE_OPEN} ` +
+      `(true temperature being reported). *** ${diagnoseNonMaskGate(gate)} ` +
+      "batt_temp_lo/batt_temp_hi are untouched by this either way — b3/b4 carry the true " +
+      "temperatures under both configs."
+  );
+}
+
+function diagnoseNonMaskGate(gate: number): string {
+  if (gate === ROUNDING_DIVIDE_GATE) {
+    return (
+      "That is what a ROUNDING Divide operator produces where the config assumes a truncating " +
+      "one. The mask then drops bit 0 of the amount, so the temperature the VCU is shown is up " +
+      "to 1 °C off — check batt_temp_hi_vcu against 35 while the pack is in the clamped band."
+    );
+  }
+  return (
+    "Most likely this pack is still on 14-signbit-clamp, where b5 is (true pack temp high − 35): " +
+    "compare clamp_gate with batt_temp_hi − 35 to confirm. If that is it, this run's clamp_gate " +
+    "rows are that difference rather than a gate, and they are reconstructible from batt_temp_hi."
+  );
+}
+
+function noteClampGateRegime(gate: number, trueTemperatureHigh: number): void {
+  const inClampedBand = trueTemperatureHigh > CLAMP_FLOOR_C && trueTemperatureHigh < LIMP_MODE_TEMP_C;
+  if (!inClampedBand || gate !== CLAMP_GATE_OPEN) {
+    consecutiveOpenGatesInClampBand = 0;
+    return;
+  }
+  consecutiveOpenGatesInClampBand += 1;
+  if (consecutiveOpenGatesInClampBand < CLAMP_GATE_FAULTS_BEFORE_WARNING || warnedClampGateStuckOpen) return;
+  warnedClampGateStuckOpen = true;
+  console.warn(
+    `bms: 0x660 b5 has been ${CLAMP_GATE_OPEN} for ${consecutiveOpenGatesInClampBand} consecutive ` +
+      `frames with the pack at a true ${trueTemperatureHigh} °C — above the ${CLAMP_FLOOR_C} °C ` +
+      `clamp floor and below the ${LIMP_MODE_TEMP_C} °C limp threshold, so the gate should be ` +
+      `${CLAMP_GATE_CLOSED}. It is not closing, so nothing is being subtracted and the VCU is ` +
+      "seeing the true temperature. " +
+      "This fails SAFE — limp mode and every BMS protection still work — but the DC-charge derate " +
+      "relief the config exists for is not happening. Likeliest cause: the postprocessor's Divide " +
+      "treats its operand as signed, so (true − 55) never yields a quotient of 1 below 55 °C."
+  );
+}
+
 function notePackThermalFrame(frameLength: number): void {
   anyThermalFrameSeen = true;
   if (frameLength < OFFSET_CONFIG_MIN_DLC) {
@@ -202,17 +326,18 @@ function notePackThermalFrame(frameLength: number): void {
   trueTemperatureSource = "thermal-frame";
   if (customBmsConfigExpected || warnedThermalFrameUnexpected) return;
   // The dangerous direction: the offset IS flashed but we were told it wasn't, so
-  // 0x200's bytes are 15 °C low. Normally nothing has been logged from them, because the
-  // keys stay unwritten until a frame settles the question — but say so loudly anyway,
-  // since the flag is wrong and only the operator can fix it.
+  // 0x200's bytes are the VCU's lowered view. Normally nothing has been logged from them,
+  // because the keys stay unwritten until a frame settles the question — but say so loudly
+  // anyway, since the flag is wrong and only the operator can fix it.
   warnedThermalFrameUnexpected = true;
   console.error(
     "bms: *** CUSTOM_BMS_CONFIG is not set, but extended 0x660 frames " +
       `(DLC >= ${OFFSET_CONFIG_MIN_DLC}) are arriving. *** The custom BMS config IS flashed, so ` +
-      "0x200's temperature bytes are shifted 15 °C LOW. Taking batt_temp_lo/batt_temp_hi from " +
-      `0x660. If 0x200 had already been flowing for ${THERMAL_FRAME_WAIT_MS} ms when this frame ` +
-      "arrived, the keys were briefly fed from 0x200 and those rows are 15 °C cold. " +
-      "Set CUSTOM_BMS_CONFIG=1 and restart."
+      "0x200's temperature bytes are the VCU's LOWERED view, not the truth. Taking " +
+      `batt_temp_lo/batt_temp_hi from 0x660. If 0x200 had already been flowing for ` +
+      `${THERMAL_FRAME_WAIT_MS} ms when this frame arrived, the keys were briefly fed from 0x200 ` +
+      "and those rows are cold by whatever the live config subtracts — up to 19 °C under the " +
+      "bounded clamp, at a true 54 °C. Set CUSTOM_BMS_CONFIG=1 and restart."
   );
 }
 
