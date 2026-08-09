@@ -1,4 +1,4 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { mkdir, open, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
@@ -78,7 +78,7 @@ import {
 // is what GET /vcu-params serves, so the result is still on the phone in the
 // garage without an ssh session — the service exposes it, it just never asks for it.
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_OUTPUT_DIRECTORY = "vcu-params";
 const PARTIAL_FILE = "sweep.partial.jsonl";
@@ -364,7 +364,11 @@ async function loadBaseline(options: Options): Promise<{ path: string; snapshot:
  */
 async function warnIfListenOnly(iface: string): Promise<void> {
   try {
-    const { stdout } = await execAsync(`ip -details link show ${iface}`);
+    // execFile, not exec: no `/bin/sh -c`, so the interface name is an argv entry
+    // rather than a fragment of a shell command. `--iface 'can0; rm -rf …'` reaches
+    // `ip` as one (nonexistent) interface name and fails as a plain exit code, not
+    // as a shell running whatever followed the semicolon.
+    const { stdout } = await execFileAsync("ip", ["-details", "link", "show", iface]);
     if (/listen-only\s+on|\blisten-only\b(?!\s+off)/.test(stdout)) {
       console.warn(
         `⚠️  ${iface} is in LISTEN-ONLY mode: nothing can be transmitted and every read will time out.\n` +
