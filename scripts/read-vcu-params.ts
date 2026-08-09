@@ -285,7 +285,7 @@ async function report(snapshot: VcuParameterSnapshot): Promise<void> {
 function resolveTargets(options: Options): VcuParameter[] {
   const wanted =
     options.requested.length > 0
-      ? options.requested.map(index => parameterAtIndex(index) ?? unnamedParameter(index))
+      ? options.requested.map(index => parameterAtIndex(index) ?? unnamedParameter(index, options.micros))
       : PARAMETER_TABLE;
   // Grouped, because A8 and A9 hold separate sessions: interleaving them would let
   // each one idle out while the other was being read, and pay for a re-open on
@@ -317,19 +317,28 @@ async function openCanChannel(): Promise<typeof import("socketcan")> {
  * table up again, so an unnamed identifier comes out with a null name and type and
  * its raw bytes intact, rather than wearing the placeholders below.
  *
- * A9 is a GUESS, and it says so out loud: 233 of the 277 live there, but requesting
- * from the wrong micro produces silence rather than a wrong value, so `--micro A8`
- * is the thing to try before concluding an identifier does not exist.
+ * The micro follows the caller. Given an explicit `--micro` the stand-in is stamped
+ * with it: an unnamed index has no table owner to contradict, and probing the other
+ * micro is the entire point of `--index N --micro A8`. Only with both micros in play
+ * (the default) is there nothing to go on — then it reads from the A9, where 233 of
+ * the 277 live, and says so, `--micro A8` being the thing to try if that is silent.
+ * That advice now works: it used to stamp A9 unconditionally, so `--micro A8` filtered
+ * the stand-in straight back out and the run read nothing.
  */
-function unnamedParameter(index: number): VcuParameter {
-  console.warn(`index ${index} is not in the name table — assuming it lives on the A9; use --micro A8 if it is silent`);
+function unnamedParameter(index: number, micros: VcuMicro[]): VcuParameter {
+  const micro = micros.length === 1 ? micros[0] : "A9";
+  if (micros.length > 1) {
+    console.warn(
+      `index ${index} is not in the name table — assuming it lives on the A9; use --micro A8 if it is silent`
+    );
+  }
   return {
     index,
     identifier: 0x1000 | index,
     name: `UNKNOWN_${index}`,
     type: "WORD",
     signed: false,
-    micro: "A9",
+    micro,
     section: "(not in params.ecf)",
     otherBikeValue: 0,
   };
