@@ -227,12 +227,25 @@ async function report(snapshot: VcuParameterSnapshot): Promise<void> {
   );
   const serialised = `${JSON.stringify(snapshot, null, 2)}\n`;
   await writeFile(archivePath, serialised, "utf-8");
-  await writeFile(latestPath, serialised, "utf-8");
 
+  // `latest.json` is the diff baseline AND what GET /vcu-params serves, so it is only
+  // replaced by a snapshot that actually read something. A run where the bike was
+  // asleep (every read `no-session`), or that was stopped before the first reply, is a
+  // fact about the run — the timestamped archive above records it — and must not clobber
+  // a file full of real values with one full of failures. Otherwise the next run diffs
+  // against that and reports 277 status changes, burying any genuine value-changed. The
+  // rest of this script is careful about exactly this "read nothing" vs "read and it
+  // changed" distinction; latest.json was the one place it was not.
   const read = snapshot.rows.filter(row => row.status === "read").length;
+  if (read > 0) {
+    await writeFile(latestPath, serialised, "utf-8");
+  }
+
   console.log(
     `\n${read}/${snapshot.rows.length} read${snapshot.complete ? "" : "  ⚠️ INCOMPLETE — re-run to resume"}` +
-      `\nwrote ${archivePath} and ${latestPath}`
+      (read > 0
+        ? `\nwrote ${archivePath} and ${latestPath}`
+        : `\nwrote ${archivePath}; left ${latestPath} as it was — nothing was read, so the baseline stands`)
   );
   if (snapshot.complete) {
     // Only once the sweep finished: deleting the resume file after a partial run is
