@@ -4,8 +4,8 @@
 // makes them testable by replaying a capture when the bike is out of reach. Two frames
 // can't be stateless and neither keeps its state here: 0x410, where a GPS fix spans
 // three sub-frames (gps.ts), and 0x102's attitude pair, whose out-of-range warning fires
-// once per process rather than at the frame rate (attitude.ts). This file only routes to
-// both, and each exports a reset so replaying a second capture starts clean.
+// once per axis per process rather than at the frame rate (attitude.ts). This file only
+// routes to both, and each exports a reset so replaying a second capture starts clean.
 //
 // The frames below are reverse-engineered from the wire and cross-checked against the
 // bike's engineering menu (see obd-garage/CAN_MAP.md). The BMS's own frames are a
@@ -181,7 +181,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return values;
     }
 
-    // 0x102 — body/lights, vehicle state and the accelerometers (100 Hz).
+    // 0x102 — body/lights, vehicle state and the attitude angles (100 Hz).
     //
     // b0 bit6 (0x40) = high beam (bit7 0x80 = low beam). b2 mixes lamps and state: 0x04
     // L blinker, 0x08 R blinker, 0x10 horn, 0x20 front brake, 0x40 rear brake. Those
@@ -244,7 +244,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       // `AttitudeSensor_Phi` reads the same bytes on the side stand, and the values sit
       // on an arctangent lattice that a scaled count cannot produce. attitude.ts has the
       // full argument, the sign conventions, what is still only inferred, and the
-      // one-shot warning for a count outside the ±180.0° an atan2 can reach. It applies
+      // warning for a count outside the ±180.0° an atan2 can reach. It applies
       // its own length guard, so a short frame still yields the light and brake bits,
       // which are the confirmed ones.
       values.push(...decodeAttitudeFrame(data));
