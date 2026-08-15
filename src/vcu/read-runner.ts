@@ -138,6 +138,12 @@ interface RunnerContext extends VcuReadRunnerOptions {
   failure: string | null;
   stderr: string;
   cancelled: boolean;
+  /**
+   * The archives that already existed when this run started, so the one it writes
+   * can be told from its predecessors without consulting a clock. Null before the
+   * first start.
+   */
+  archivesAtStart: Promise<Set<string>> | null;
 }
 
 export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunner {
@@ -149,6 +155,7 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
     failure: null,
     stderr: "",
     cancelled: false,
+    archivesAtStart: null,
   };
   return {
     start: () => start(context),
@@ -172,6 +179,11 @@ function start(context: RunnerContext): { started: boolean; reason: string | nul
   if (context.child) {
     return { started: false, reason: "a parameter read is already running" };
   }
+  // Kicked off BEFORE the spawn and deliberately not awaited: start() stays
+  // synchronous so the HTTP handler answers immediately, and the listing only has
+  // to win a race against a child that has not been forked yet.
+  context.archivesAtStart = listArchives(context.outputDirectory);
+
   const child = spawn(
     process.execPath,
     // The invocation CLAUDE.md documents, kept identical so there is one way to run
@@ -302,7 +314,7 @@ async function readState(context: RunnerContext): Promise<VcuReadState> {
     // /vcu-params either way.
     return { phase: "idle" };
   }
-  const snapshot = await loadRunArchive(context.outputDirectory, context.startedAt);
+  const snapshot = await loadRunArchive(context.outputDirectory, context.archivesAtStart);
   const tally = tallyOf(snapshot?.rows ?? (await readPartialRows(context.outputDirectory)));
   if (context.failure) {
     return {
@@ -392,30 +404,61 @@ async function readPartialRows(directory: string): Promise<VcuParameterRow[]> {
  * asleep. That is exactly the distinction service mode has to keep, so the archive
  * is what is read here and `latest.json` is never consulted.
  *
- * Names are `<ISO timestamp with : replaced by ->.json`, which still sorts
- * chronologically as text, so the newest is the last one by plain string order.
- * Returns null when the script died before writing one.
+ * ⚠️ Which archive is OURS is decided by "it was not there when we started", not
+ * by comparing its `readAt` against our `startedAt`. Both of those are `Date.now()`
+ * on a Pi with no RTC that steps its own clock from GPS mid-run (src/gps/clock.ts),
+ * so that comparison is exactly the cross-clock arithmetic ../monotonic.ts exists
+ * to forbid: a backward step between our start and the script's finish would make a
+ * PREVIOUS run's archive look like ours, and put its 277 reads on screen under a
+ * sweep that managed none. Sorting the filenames has the same flaw, since they are
+ * timestamps too. A set difference has no clock in it at all.
+ *
+ * The listing is taken at start and deliberately not awaited there, so a child that
+ * wrote its archive within microseconds of spawning could be mistaken for a
+ * pre-existing one. A sweep is ~277 reads over a 300 ms reply window; a readdir is
+ * not, so this is theoretical rather than a race to design around.
+ *
+ * Returns null when nothing new appeared — the script died before writing one, or
+ * never got far enough to run.
  */
-async function loadRunArchive(directory: string, startedAt: number): Promise<VcuParameterSnapshot | null> {
-  let entries: string[];
+async function loadRunArchive(
+  directory: string,
+  archivesAtStart: Promise<Set<string>> | null
+): Promise<VcuParameterSnapshot | null> {
+  if (!archivesAtStart) {
+    return null;
+  }
+  const before = await archivesAtStart;
+  const written = [...(await listArchives(directory))].filter(entry => !before.has(entry)).sort();
+  // Sorted so a run that somehow produced two takes the later one. Only a
+  // tie-break; it is not what decides whether an archive is ours.
+  const ours = written.at(-1);
+  if (!ours) {
+    return null;
+  }
   try {
-    entries = await readdir(directory);
+    return JSON.parse(await readFile(join(directory, ours), "utf-8")) as VcuParameterSnapshot;
+  } catch (err) {
+    console.warn(`vcu-read: could not read the archive ${ours}:`, err);
+    return null;
+  }
+}
+
+/**
+ * The snapshot archives in a directory. `latest.json` is excluded: it is a COPY of
+ * whichever archive last read something, so counting it would make a run that read
+ * nothing appear to have written two files.
+ *
+ * A directory that cannot be listed yields an empty set rather than throwing —
+ * which then reads as "no new archive", i.e. an honest "we do not know how that run
+ * ended" instead of a crash inside a progress poll.
+ */
+async function listArchives(directory: string): Promise<Set<string>> {
+  try {
+    const entries = await readdir(directory);
+    return new Set(entries.filter(entry => entry.endsWith(".json") && entry !== LATEST_FILE));
   } catch (err) {
     console.warn(`vcu-read: could not list ${directory}:`, err);
-    return null;
-  }
-  const archives = entries.filter(entry => entry.endsWith(".json") && entry !== LATEST_FILE).sort();
-  const newest = archives.at(-1);
-  if (!newest) {
-    return null;
-  }
-  try {
-    const snapshot = JSON.parse(await readFile(join(directory, newest), "utf-8")) as VcuParameterSnapshot;
-    // An archive older than this run is a previous run's, and reporting it as ours
-    // would put someone else's 277 reads under a sweep that managed none.
-    return snapshot.readAt >= startedAt ? snapshot : null;
-  } catch (err) {
-    console.warn(`vcu-read: could not read the archive ${newest}:`, err);
-    return null;
+    return new Set();
   }
 }
