@@ -89,11 +89,19 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | **Cells** | `cell_min_mv`, `cell_avg_mv`, `cell_max_mv`, `cell_spread_mv`, `cell_deviation_mv` (the BMS's own ΔV), `cell_lowest_v_idx`, `cell_highest_v_idx` (which cell is at each extreme _right now_ — at a few mV of spread that ranking is noise, not a health verdict), `cells_connected`, `cell_voltage_sum_v` | CAN `0x203`/`0x205`/`0x207` |
 | **BMS state & faults** | `charge_state` (raw System State bitfield) + decoded `bms_state_*` (discharge / charge / balancing / trickle / idle / charge complete / maintenance), `bms_error_flags`, `bms_warning_flags` (raw words) + booleans for the ones worth acting on: cell over/under voltage, over temperature, leak detected, leak detection failed, contactor faults, low SOC, balancing required | CAN `0x201` |
 | **Isolation** | `iso_test_1`, `iso_test_2`, `iso_test_total` (10-bit ADC, 512 = ideal), `bms_io_state`, `lmu_comm_warnings` | CAN `0x207`/`0x206` |
-| **Charge** | `charge_state`, `dc_v`, `dc_a`, `mains_v`, `mains_a`, `charge_limit_a`, `charger_enabled`, `charger_max_dc_v`, `charger_max_dc_a` | CAN `0x201`/`0x305`/`0x306`/`0x10a`/`0x300` |
-| **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah` | CAN `0x025`/`0x10A`/`0x205` |
-| **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
+| **Charge** | `charge_state`, `dc_v`, `dc_a`, `mains_v`, `mains_a`, `charge_limit_a`, `charger_enabled`, `charger_max_dc_v`, `charger_max_dc_a`, `bms_post_processor_1` (purpose unknown, logged raw so a ride can name it) | CAN `0x201`/`0x305`/`0x306`/`0x10a`/`0x300` |
+| **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah`, plus the hub's own trip figures: `range_km`, `avg_consumption_wh_km`, `km_per_kwh`, `kwh_per_100km` (the last two emit nonsense at a standstill and are gated on the dashboard) | CAN `0x025`/`0x10A`/`0x205` + hub |
+| **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km`, `motor_torque_nm`, `motor_power_kw` (Bluetooth only — on no CAN frame and no OBD PID we know of), `odometer_km`, `trip_km`, `vehicle_state`, `vehicle_substate` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` + hub |
+| **Drive, second opinion** | `speed_can_kmh`, `motor_rpm_can`, `odometer_can_km`, `reverse_gear` — deliberately **not** merged into the keys above, because comparing the two over a ride is the point and one key with two writers just flaps. Plus the inverter's own limits `current_max_out_a`, `current_max_regen_a`, `current_other_a` (unidentified; logged so a ride can name it) | CAN `0x104`/`0x109` |
+| **GPS** | `gps_lat`, `gps_lon`, `gps_altitude_m`, `gps_speed_kmh`, `gps_course_deg`, `gps_satellites`, `gps_fix`, `gps_epoch_s` (satellite UTC, logged raw — the Pi has no RTC, so a no-network boot's timestamps stay repairable). Arrives over **both** transports; position is not Bluetooth-only | CAN `0x410` + hub over BLE |
+| **Powertrain temps** | `inverter_igbt_min_c`, `inverter_igbt_c`, `inverter_igbt_max_c`, `inverter_gate_c`, `motor_temp_c` (°C) — separate sensors from the OBD poller's `bike_coolant_temp`, and they move differently under load | CAN `0x020`/`0x022` |
+| **Controls & vehicle state** | `high_beam` (which is also how you change dashboard screens), `brake`, `blinker_left`, `blinker_right`, `horn`, `energized`, `go_request`, `go`, `key_on`, `stand_up` (sidestand retracted), `ignition_button`, `throttle_on`, `moving`, `charging`, `charge_port_unlocked` | CAN `0x102` |
+| **IMU** | `accel_lateral_raw`, `accel_frontal_raw` — raw counts, **not** g: the `.xdbc` names the axes in g but gives no scale, so they must not be plotted as if they were | CAN `0x102` b4-7 |
+| **Security** | `key_fob_id` (which fob started the bike — part of why the log is sealed), `keys_paired` (read once at startup from the E-LOCK ECU) | CAN `0x480` + E-LOCK `0x791` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
-| **Trouble codes** | `mil_on`, `dtc_count` (stored, per PID `01`), `dtc_stored_count` (the mode-03 list's own length — the same number down a second path), `dtc_list_count` (the bike's _active_ list, a different thing), `freeze_frame_dtc` (the code that lit the lamp), plus one 1/0 signal per code Energica documents. See [Trouble codes](#trouble-codes) | OBD-II `01`/`02` + **mode 03** · CAN `0x410` |
+| **Trouble codes** | `mil_on`, `dtc_count` (stored, per PID `01`), `dtc_stored_count` (the mode-03 list's own length — the same number down a second path), `dtc_list_count` (the bike's _active_ list, a different thing), `dtc_unrecognised_count`, `freeze_frame_dtc` (the code that lit the lamp), plus one 1/0 signal per code Energica documents. `dtc_pending_count` and `dtc_permanent_count` are written **only if** modes 07/0A ever answer — on this bike they never have, and their absence is the honest record of that. See [Trouble codes](#trouble-codes) | OBD-II `01`/`02` + **mode 03** · CAN `0x410` |
+| **Service counters** | `time_since_clear_min` (monotonic ⇒ an hour meter), `warmups_since_clear`, `dist_with_mil_km`, `time_with_mil_min` | OBD-II `4E`/`30`/`21`/`4D` |
+| **Waypoints** | `waypoint_seq`, `waypoint_lat`, `waypoint_lon` — written only when you ask, from the dashboard button or Siri. See [Saving a waypoint from Siri](#saving-a-waypoint-from-siri) | `GET /waypoint` |
 
 ### Signals that need the custom BMS config
 
@@ -104,7 +112,8 @@ The frames below only exist once the pack's LiBAL BMS has been reflashed with th
 | Group | Signals | Source |
 | --- | --- | --- |
 | **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — the individual cells, multiplexed by module at 20 Hz. Known gap: cells 4-8 of LMU 1 and 2 never get sampled, because the CAN transmit order is phase-locked to the BMS's module poll (see `src/can/decode-bms.ts`) | CAN `0x662`–`0x664` |
-| **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells | CAN `0x664` |
+| **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells. Modules 6 and 8 have no battery sensor enabled, so they never report one: configuration, not a fault | CAN `0x664` |
+| **Module selector** | `lmu_cell_mux` — the raw module number the per-cell frames are currently carrying, logged so that "byte 0 isn't the LMU number after all" stays distinguishable from "the frames never arrived". Deadbanded to one row per boot | CAN `0x662`–`0x664` b0 |
 | **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx`; in the clamp config also the true `batt_temp_lo`/`batt_temp_hi` plus the clamp's own arithmetic (`clamp_gate`, `clamp_amount`, `batt_temp_hi_vcu_echo`) | CAN `0x660` |
 | **Energy / hours** | `bms_remaining_energy_wh` (1 Wh resolution), `bms_uptime_min` (BMCU hour meter) | CAN `0x661` |
 | **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv` — the thresholds the BMS is actually configured with, so nothing downstream has to hardcode them | CAN `0x665` |
@@ -155,7 +164,7 @@ Energica BT hub ─┘
 
 ## The dashboard
 
-Four screens, switched from the tab bar — or by **flashing the high beam three times**, which is the only control that works with both hands on the bars.
+Five screens, switched from the tab bar — or by **flashing the high beam three times**, which is the only control that works with both hands on the bars.
 
 | Screen | For |
 | --- | --- |
@@ -163,8 +172,9 @@ Four screens, switched from the tab bar — or by **flashing the high beam three
 | **Hypermile** | Weakest cell's headroom above cut-off (instantaneous **and** sag-compensated), the BMS's 60 s cut-off timer, allowed current, rolling Wh/km, resistive loss, all 81 cells as a strip |
 | **Charge** | A / V / kW, what the BMS is granting the charger, balancing state, cell spread trend, pack temperature, isolation |
 | **All** | Every signal the bike is producing, grouped and filterable |
+| **Faults** | Stored and active trouble codes, named from Energica's own table, with the history behind each. Carries the ⚠ itself, so a code appearing mid-ride is visible without costing space on the screen you're looking at |
 
-**Ride** and **Charge** are what you leave it on; the other two the bike picks for you. It switches to Charge when the BMS reports a charging state, and to Hypermile below 5 % SOC **or** when the weakest cell drops within 150 mV of cut-off — SOC near empty comes from an OCV table that was never re-characterised for these cells, so it can't be the only trigger. The switch is edge-triggered: once it has moved you, you can move back and it stays put.
+**Ride** and **Charge** are what you leave it on; Hypermile and Charge the bike picks for you. It switches to Charge when the BMS reports a charging state, and to Hypermile below 5 % SOC **or** when the weakest cell drops within 150 mV of cut-off — SOC near empty comes from an OCV table that was never re-characterised for these cells, so it can't be the only trigger. The switch is edge-triggered: once it has moved you, you can move back and it stays put.
 
 Design notes for the hypermiling numbers are in `HYPERMILING.md`; the derivations all live in `public/lib/derive.js` and nothing derived is ever logged.
 
