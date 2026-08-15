@@ -221,10 +221,23 @@ function FaultCard(fault) {
     div(
       { class: "sub", style: `color:${colors.MUTED}` },
       `component ${componentOf(fault.key)} · symptom ${symptomOf(fault.key)}` +
-        (row ? ` · warning lamp: ${row.illuminatesMil ? "yes" : "no"}` : "") +
+        (row ? ` · warning lamp: ${milText(row.illuminatesMil)}` : "") +
         (fault.firings > 1 ? ` · ${fault.firings}× this session` : "")
     )
   );
+}
+
+/**
+ * Three-way, not a boolean: the six codes that reach us from EMsuite alone have
+ * no MIL column in any source, and "no" would be an answer we do not have. Same
+ * distinction `rank()` sorts on below.
+ * @param {boolean | null} illuminatesMil
+ */
+function milText(illuminatesMil) {
+  if (illuminatesMil === null) {
+    return "unknown";
+  }
+  return illuminatesMil ? "yes" : "no";
 }
 
 /**

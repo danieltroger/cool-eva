@@ -18,11 +18,12 @@
 // other source: EMsuite adds six codes the PDF omits (51/0, 52/0, 54/13, 60/0,
 // 63/0, 63/1) and omits one the PDF carries ((4,5) U0115).
 //
-// ⚠️ MIL IS UNKNOWN FOR THOSE SIX EMSUITE-ONLY CODES. Only the PDF has a MIL
-// column and it does not list them; EMsuite's JSON has no MIL field at all, for
-// any code. They are written `false` because the interface needs a boolean and
-// because every neighbouring code in their components is `false` — that is a
-// placeholder, not a reading, and nothing may cite it as one.
+// ⚠️ MIL IS UNKNOWN FOR THOSE SIX EMSUITE-ONLY CODES, and they carry `null` to
+// say so. Only the PDF has a MIL column and it does not list them; EMsuite's
+// JSON has no MIL field at all, for any code. `false` would have been a claim —
+// the dashboard renders it as "warning lamp: no" and sorts the code with the
+// harmless ones — so the unknown is in the data rather than in this comment,
+// the same way stored-codes.ts nulls a code that is not in the table at all.
 //
 // The table is keyed by TWO columns, not one:
 //   • COD.    — the VCU's component number, 1…63 and every one of them used
@@ -45,8 +46,14 @@ export interface DtcTableEntry {
   name: string;
   /** "DESCRIPTION" column — what Energica means by it on this vehicle. */
   description: string;
-  /** "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on. */
-  illuminatesMil: boolean;
+  /**
+   * "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on, and
+   * null ⇒ no source states it. Null rather than false for the same reason
+   * stored-codes.ts uses null for a code that isn't in the table at all:
+   * rendering an absent MIL column as "warning lamp: no" would be an answer we
+   * do not have. Only the six EMsuite-only codes are null.
+   */
+  illuminatesMil: boolean | null;
 }
 
 export const DTC_TABLE: DtcTableEntry[] = [
@@ -289,8 +296,10 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // were self-contradictory (an *open circuit* description under a CIRCUIT HIGH
   // name, and vice versa); SAE J2012 assigns P0A05 to "Control Circuit/Open" and
   // P0A07 to "Control Circuit High"; and symptom 1 was already consistent, with
-  // P0A06 "…LOW" against a short circuit. A locked pump stalls and drags current
-  // up, which is the "high" case, so symptom 2 is P0A07.
+  // P0A06 "…LOW" against a short circuit. Symptom 2 then gets P0A07 because the
+  // other two are spoken for, not because anything about a locked rotor predicts
+  // "high" — J2012's high/low is a circuit *voltage* classification, and a stalled
+  // motor's extra current does not obviously map onto it either way.
   //
   // ⚠️ SYMPTOM 0 IS THIS BIKE'S OWN FAULT — the coolant pump is wired to the
   // heated-grip output, leaving the VCU's pump driver open. It has been called
@@ -313,9 +322,9 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // unused — it used to, on the strength of the PDF's gap alone. The names are
   // EMsuite's own titles: the PDF's "DTC NAME" column is where the terser house
   // names elsewhere in this table come from, and it has nothing to say here.
-  // MIL is unknown for all six additions — see the ⚠️ note at the top.
-  entry(51, 0, "P1050", "BATTERY STATISTICS INFO1", "Battery statistics info 1", false),
-  entry(52, 0, "P1051", "BATTERY STATISTICS INFO2", "Battery statistics info 2", false),
+  // MIL is unknown for all six additions, hence `null` — see the ⚠️ note at the top.
+  entry(51, 0, "P1050", "BATTERY STATISTICS INFO1", "Battery statistics info 1", null),
+  entry(52, 0, "P1051", "BATTERY STATISTICS INFO2", "Battery statistics info 2", null),
 
   // Component 53 is the safety micro's own self-check. Every symptom shares the
   // one description "LOW LEVEL SAFETY ERROR"; the detail is in the DTC name.
@@ -358,7 +367,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(54, 11, "C1014", "UNCLASSIFIED CM ERROR", "Unclassified charge manager error", false),
   entry(54, 12, "C1015", "FAST CHARGE NOT PRESENT", "Fast charge not present", false),
   // Added 2026-08-15 from EMsuite (see the note at component 51). MIL unknown.
-  entry(54, 13, "C1018", "CURRENT SET POINT EXCEEDED BY EVSE", "Current set point exceeded by EVSE", false),
+  entry(54, 13, "C1018", "CURRENT SET POINT EXCEEDED BY EVSE", "Current set point exceeded by EVSE", null),
 
   entry(55, 0, "P2637", "TORQUE MANAGEMENT FEEDBACK SIGNAL 'A'", "Torque feedback error", false),
 
@@ -370,7 +379,7 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(59, 0, "U0412", "INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A", "BMS status error", false),
 
   // Added 2026-08-15 from EMsuite (see the note at component 51). MIL unknown.
-  entry(60, 0, "P1052", "BATTERY STATISTICS INFO3", "Battery statistics info 3", false),
+  entry(60, 0, "P1052", "BATTERY STATISTICS INFO3", "Battery statistics info 3", null),
 
   entry(61, 0, "P0500", "VEHICLE SPEED SENSOR 'A'", "Front wheel speed sensor failure", false),
   entry(61, 1, "P2158", "VEHICLE SPEED SENSOR 'B'", "Rear wheel speed sensor failure", false),
@@ -405,8 +414,8 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // Added 2026-08-15 from EMsuite (see the note at component 51). MIL unknown.
   // Component 63 is the rear position lights, and it is the reason the component
   // range above now reads 1…63: the PDF's table stops at 62.
-  entry(63, 0, "B1019", "REAR POSITION LIGHTS OPEN CIRCUIT FAULT", "Rear position lights open circuit fault", false),
-  entry(63, 1, "B1020", "REAR POSITION LIGHTS SHORT CIRCUIT FAULT", "Rear position lights short circuit fault", false),
+  entry(63, 0, "B1019", "REAR POSITION LIGHTS OPEN CIRCUIT FAULT", "Rear position lights open circuit fault", null),
+  entry(63, 1, "B1020", "REAR POSITION LIGHTS SHORT CIRCUIT FAULT", "Rear position lights short circuit fault", null),
 ];
 
 /** The table entry for a (component, symptom) pair, or null if it isn't listed. */
@@ -454,7 +463,7 @@ function entry(
   obdCode: string,
   name: string,
   description: string,
-  illuminatesMil: boolean
+  illuminatesMil: boolean | null
 ): DtcTableEntry {
   return { component, symptom, obdCode, name, description, illuminatesMil };
 }

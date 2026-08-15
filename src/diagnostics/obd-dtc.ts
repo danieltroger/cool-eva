@@ -170,5 +170,17 @@ export function formatObdTroubleCode(troubleCode: ObdTroubleCode): string {
   if (!troubleCode.entry) {
     return `${troubleCode.code} — not in Energica's table (raw 0x${troubleCode.raw.toString(16).padStart(4, "0")})`;
   }
-  return `${troubleCode.code} — ${troubleCode.entry.description}${troubleCode.entry.illuminatesMil ? " [MIL]" : ""}`;
+  return `${troubleCode.code} — ${troubleCode.entry.description}${milSuffix(troubleCode.entry.illuminatesMil)}`;
+}
+
+/**
+ * "[MIL]", "[MIL?]" or nothing. The middle case is a code whose MIL column no
+ * source states (dtc-table.ts nulls those); printing nothing there would read as
+ * a positive "does not light the lamp".
+ */
+function milSuffix(illuminatesMil: boolean | null): string {
+  if (illuminatesMil === null) {
+    return " [MIL?]";
+  }
+  return illuminatesMil ? " [MIL]" : "";
 }

@@ -26,7 +26,8 @@ export interface DtcTableRow {
   obdCode: string;
   name: string;
   description: string;
-  illuminatesMil: boolean;
+  /** null ⇒ no source states it; see DtcTableEntry.illuminatesMil. */
+  illuminatesMil: boolean | null;
 }
 
 export function handleDtcTableEndpoint(req: IncomingMessage, res: ServerResponse): void {
