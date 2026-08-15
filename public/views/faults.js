@@ -12,7 +12,7 @@ const { button, div, span } = van.tags;
 // The faults screen.
 //
 // Built around one property of this bike's only observed code: it FLICKERS.
-// P0A07 (water pump open circuit) was active on 2 of 8 consecutive polls across
+// P0A05 (water pump open circuit) was active on 2 of 8 consecutive polls across
 // two boots on 2026-08-02, at constant temperature and standstill — see the
 // *Trouble codes* section of obd-garage/CAN_MAP.md. A screen showing only what is
 // active *right now* would have been blank six times out of eight while a real
@@ -27,7 +27,7 @@ const { button, div, span } = van.tags;
 
 /**
  * Codes quiet for longer than this drop off the screen. Chosen against the
- * observed cadence: P0A07's longest gap between firings was ~3.5 min, so a code
+ * observed cadence: P0A05's longest gap between firings was ~3.5 min, so a code
  * silent for 30 min is genuinely gone rather than mid-cycle.
  *
  * MUST stay below HISTORY_MS or it does nothing: Ring.since() already discards
@@ -221,10 +221,23 @@ function FaultCard(fault) {
     div(
       { class: "sub", style: `color:${colors.MUTED}` },
       `component ${componentOf(fault.key)} · symptom ${symptomOf(fault.key)}` +
-        (row ? ` · warning lamp: ${row.illuminatesMil ? "yes" : "no"}` : "") +
+        (row ? ` · warning lamp: ${milText(row.illuminatesMil)}` : "") +
         (fault.firings > 1 ? ` · ${fault.firings}× this session` : "")
     )
   );
+}
+
+/**
+ * Three-way, not a boolean: the six codes that reach us from the service-tool
+ * data alone have no MIL column in any source, and "no" would be an answer we
+ * do not have. Same distinction `rank()` sorts on below.
+ * @param {boolean | null} illuminatesMil
+ */
+function milText(illuminatesMil) {
+  if (illuminatesMil === null) {
+    return "unknown";
+  }
+  return illuminatesMil ? "yes" : "no";
 }
 
 /**
@@ -536,7 +549,7 @@ function historyOf(key, now) {
 /**
  * The pure half of the above, split out so it can be replayed against a recorded
  * timeline without a DOM — which is how the numbers on this screen were checked
- * against the real 2026-08-02 P0A07 sequence out of the ride log.
+ * against the real 2026-08-02 P0A05 sequence out of the ride log.
  *
  * Counts RISING EDGES, not samples. The signal is written on change, but the ring
  * is also fed by the whole-state snapshot the server broadcasts every 5 s, so

@@ -331,7 +331,7 @@ node --experimental-strip-types scripts/decode-dtc-response.ts
 # → replays a real 2026-08-04 transfer and checks it still decodes to the same 39 codes
 ```
 
-Codes are named from Energica's own type-approval table (`src/diagnostics/dtc-table.ts`, 148 codes). All 39 of this bike's are in it. **Mode 01 PID 02** — the freeze-frame code, i.e. the one the bike captured when it lit the lamp — reads `P0514`, _"Error reading temperature"_, which is why the warning light is on.
+Codes are named from Energica's own type-approval table, reconciled against the manufacturer's service-tool copy of it (`src/diagnostics/dtc-table.ts`, 154 codes). All 39 of this bike's are in it. **Mode 01 PID 02** — the freeze-frame code, i.e. the one the bike captured when it lit the lamp — reads `P0514`, _"Error reading temperature"_, which is why the warning light is on.
 
 **Modes 07 and 0A return nothing at all** — silence, not a refusal, across six attempts. That means "not implemented" and "implemented but withheld" cannot be told apart from here, so the dashboard says **"no response"** rather than "none pending". Those are different claims and only one of them is true.
 

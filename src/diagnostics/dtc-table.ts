@@ -3,30 +3,59 @@
 // (EN.H.010134.001.OBD E2110, 24/03/2022, §7.6.2.7.4 "List of all OBD output
 // codes and formats used"). Data only — no I/O, no state.
 //
+// SECOND SOURCE, 2026-08-15 — the manufacturer's service-tool data. The tool
+// ships the same table as JSON embedded in its own executable, one
+// {id, code, symptom, title} record per fault and 153 of them; the extract and
+// the notes on it are kept outside this repo, with the rest of the source
+// material. That is an independent path to the same data — a shipped binary
+// rather than a PDF read by eye — so where the two agree the transcription below
+// is corroborated, not merely careful. They share 147 (component, symptom) pairs
+// and 144 of those carry an IDENTICAL OBD code. All three disagreements are
+// argued at the entries themselves: (44,0) and (44,2), where the service-tool
+// data corrected a swap, and (61,2), where it replaced a dual code with a single
+// one.
+//
+// Coverage differs in both directions and neither gap proves anything about the
+// other source: the service-tool data adds six codes the PDF omits (51/0, 52/0,
+// 54/13, 60/0, 63/0, 63/1) and omits one the PDF carries ((4,5) U0115).
+//
+// ⚠️ MIL IS UNKNOWN FOR THOSE SIX SERVICE-TOOL-ONLY CODES, and they carry `null`
+// to say so. Only the PDF has a MIL column and it does not list them; the
+// service tool's JSON has no MIL field at all, for any code. `false` would have
+// been a claim — the dashboard renders it as "warning lamp: no" and sorts the
+// code with the harmless ones — so the unknown is in the data rather than in
+// this comment, the same way stored-codes.ts nulls a code that is not in the
+// table at all.
+//
 // The table is keyed by TWO columns, not one:
-//   • COD.    — the VCU's component number (1…62; 51, 52 and 60 are unused)
+//   • COD.    — the VCU's component number, 1…63 and every one of them used
 //   • SYMPTOM — which fault of that component, 0…15
 // The OBD column is the translation for a generic scan tool. It is not unique:
-// U0182 appears under both component 39 and 40, and component 61 symptom 2
-// reports two codes at once. So (component, symptom) is the primary key here.
+// U0182 appears under both component 39 and 40. So (component, symptom) is the
+// primary key here.
 //
-// Only the codes the document actually lists are present — 148 of them. A code
-// the bike reports that is missing here is reported as unrecognised rather than
-// guessed at.
+// 154 codes — the union of the two sources. A code the bike reports that is in
+// neither is reported as unrecognised rather than guessed at.
 
 export interface DtcTableEntry {
   /** "COD." column — the VCU's component number. */
   component: number;
   /** "SYMPTOM" column — which fault of that component, 0…15. */
   symptom: number;
-  /** "OBD" column. "P2158+P0500" for the one entry that reports two at once. */
+  /** "OBD" column. Always a single code — see the (61,2) note for the one that wasn't. */
   obdCode: string;
   /** "DTC NAME" column — the generic OBD name of the code. */
   name: string;
   /** "DESCRIPTION" column — what Energica means by it on this vehicle. */
   description: string;
-  /** "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on. */
-  illuminatesMil: boolean;
+  /**
+   * "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on, and
+   * null ⇒ no source states it. Null rather than false for the same reason
+   * stored-codes.ts uses null for a code that isn't in the table at all:
+   * rendering an absent MIL column as "warning lamp: no" would be an answer we
+   * do not have. Only the six service-tool-only codes are null.
+   */
+  illuminatesMil: boolean | null;
 }
 
 export const DTC_TABLE: DtcTableEntry[] = [
@@ -45,6 +74,11 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(4, 2, "P0514", "BATTERY TEMPERATURE SENSOR CIRCUIT RANGE/PERFORMANCE", "Error reading temperature", true),
   entry(4, 3, "P0516", "BATTERY TEMPERATURE SENSOR CIRCUIT LOW", "BMS temperature sensor short circuit fault", true),
   entry(4, 4, "P0517", "BATTERY TEMPERATURE SENSOR CIRCUIT HIGH", "BMS temperature sensor open circuit fault", true),
+  // KEPT 2026-08-15 despite being the one entry the service-tool data has no
+  // record of. Its absence there is a gap in that source, not evidence against
+  // the code: the two sources disagree about coverage in both directions (the
+  // service-tool data carries six the PDF omits), so neither one's silence
+  // disproves the other's listing.
   entry(
     4,
     5,
@@ -258,9 +292,26 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(43, 0, "B1015", "HORN OC", "Horn open circuit fault", false),
   entry(43, 1, "B1016", "HORN SC", "Horn short circuit fault", false),
 
-  entry(44, 0, "P0A07", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH", "Water pump open circuit fault", false),
+  // ⚠️ CORRECTED 2026-08-15: symptoms 0 and 2 had their OBD codes — and their
+  // names with them — the wrong way round. This file read P0A07 "…CIRCUIT HIGH"
+  // for symptom 0 and P0A05 "…CIRCUIT/OPEN" for symptom 2; the service tool's
+  // embedded table has them swapped, and three things say it is right. The old
+  // rows were self-contradictory (an *open circuit* description under a CIRCUIT
+  // HIGH name, and vice versa); SAE J2012 assigns P0A05 to "Control
+  // Circuit/Open" and P0A07 to "Control Circuit High"; and symptom 1 was already
+  // consistent, with P0A06 "…LOW" against a short circuit. Symptom 2 then gets
+  // P0A07 because the other two are spoken for, not because anything about a
+  // locked rotor predicts "high" — J2012's high/low is a circuit *voltage*
+  // classification, and a stalled motor's extra current does not obviously map
+  // onto it either way.
+  //
+  // ⚠️ SYMPTOM 0 IS THIS BIKE'S OWN FAULT — the coolant pump is wired to the
+  // heated-grip output, leaving the VCU's pump driver open. It has been called
+  // "P0A07" in older notes here, in obd-garage/, and to other owners. The code to
+  // quote from now on is P0A05; P0A07 on this bike would mean a seized pump.
+  entry(44, 0, "P0A05", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN", "Water pump open circuit fault", false),
   entry(44, 1, "P0A06", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT LOW", "Water pump short circuit fault", false),
-  entry(44, 2, "P0A05", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN", "Water pump locked", false),
+  entry(44, 2, "P0A07", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH", "Water pump locked", false),
 
   entry(45, 0, "P1043", "MAIN HV FUSE", "Main fuse blown", false),
   entry(46, 0, "P1044", "VCU CELL OVERVOLTAGE", "Cell overvoltage VCU alarm", true),
@@ -268,6 +319,17 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(48, 0, "P1045", "ERROR INLET", "Error inlet", false),
   entry(49, 0, "P1046", "BATTERY PACK UNBALANCED", "Battery pack unbalanced alarm", false),
   entry(50, 0, "P1047", "BATTERY UNDER CHG TEMP", "Battery under charge temperature alarm", false),
+
+  // ADDED 2026-08-15 from the service-tool data; the type-approval PDF has no
+  // rows for these. Components 51, 52 and 60 are the battery's three statistics
+  // records, and their existence is why this file no longer calls those
+  // component numbers unused — it used to, on the strength of the PDF's gap
+  // alone. The names are the service tool's own titles: the PDF's "DTC NAME"
+  // column is where the terser house names elsewhere in this table come from,
+  // and it has nothing to say here.
+  // MIL is unknown for all six additions, hence `null` — see the ⚠️ note at the top.
+  entry(51, 0, "P1050", "BATTERY STATISTICS INFO1", "Battery statistics info 1", null),
+  entry(52, 0, "P1051", "BATTERY STATISTICS INFO2", "Battery statistics info 2", null),
 
   // Component 53 is the safety micro's own self-check. Every symptom shares the
   // one description "LOW LEVEL SAFETY ERROR"; the detail is in the DTC name.
@@ -309,6 +371,8 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(54, 10, "C1013", "AC LINE ERROR", "AC line error", false),
   entry(54, 11, "C1014", "UNCLASSIFIED CM ERROR", "Unclassified charge manager error", false),
   entry(54, 12, "C1015", "FAST CHARGE NOT PRESENT", "Fast charge not present", false),
+  // Added 2026-08-15 from the service-tool data (see the note at component 51). MIL unknown.
+  entry(54, 13, "C1018", "CURRENT SET POINT EXCEEDED BY EVSE", "Current set point exceeded by EVSE", null),
 
   entry(55, 0, "P2637", "TORQUE MANAGEMENT FEEDBACK SIGNAL 'A'", "Torque feedback error", false),
 
@@ -319,13 +383,26 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(58, 0, "P0605", "INTERNAL CONTROL MODULE READ ONLY MEMORY (ROM) ERROR", "Flash read/write error", false),
   entry(59, 0, "U0412", "INVALID DATA RECEIVED FROM BATTERY ENERGY CONTROL MODULE A", "BMS status error", false),
 
+  // Added 2026-08-15 from the service-tool data (see the note at component 51). MIL unknown.
+  entry(60, 0, "P1052", "BATTERY STATISTICS INFO3", "Battery statistics info 3", null),
+
   entry(61, 0, "P0500", "VEHICLE SPEED SENSOR 'A'", "Front wheel speed sensor failure", false),
   entry(61, 1, "P2158", "VEHICLE SPEED SENSOR 'B'", "Rear wheel speed sensor failure", false),
+  // ⚠️ CORRECTED 2026-08-15: this was recorded as the dual code "P2158+P0500",
+  // named "VEHICLE SPEED SENSOR 'A' + VEHICLE SPEED SENSOR 'B'". That was a
+  // deliberate reading, not a slip — the PDF's cell does appear to name both
+  // sensors' codes for the both-failed case, and the interface carried a special
+  // note for it. The service-tool data gives one ordinary code instead, C0065,
+  // and that wins: it was the only "two codes at once" entry in either source,
+  // and a scan tool has one code slot per fault to receive it in, so the dual
+  // form could never have been transmitted as written. The name below is the
+  // service tool's title, since the PDF's name described the pair rather than
+  // C0065.
   entry(
     61,
     2,
-    "P2158+P0500",
-    "VEHICLE SPEED SENSOR 'A' + VEHICLE SPEED SENSOR 'B'",
+    "C0065",
+    "FRONT AND REAR WHEEL SPEED SENSORS FAILURE",
     "Front and rear wheel speed sensors failure",
     false
   ),
@@ -339,6 +416,12 @@ export const DTC_TABLE: DtcTableEntry[] = [
     "ABS timeout communication error",
     false
   ),
+
+  // Added 2026-08-15 from the service-tool data (see the note at component 51). MIL unknown.
+  // Component 63 is the rear position lights, and it is the reason the component
+  // range above now reads 1…63: the PDF's table stops at 62.
+  entry(63, 0, "B1019", "REAR POSITION LIGHTS OPEN CIRCUIT FAULT", "Rear position lights open circuit fault", null),
+  entry(63, 1, "B1020", "REAR POSITION LIGHTS SHORT CIRCUIT FAULT", "Rear position lights short circuit fault", null),
 ];
 
 /** The table entry for a (component, symptom) pair, or null if it isn't listed. */
@@ -347,7 +430,7 @@ export function lookupByComponentSymptom(component: number, symptom: number): Dt
 }
 
 /**
- * The table entry for an OBD code such as "P1046", or null. Two codes appear
+ * The table entry for an OBD code such as "P1046", or null. One code appears
  * twice in the table (U0182 under components 39 and 40); the first is returned,
  * so prefer lookupByComponentSymptom whenever the component is known.
  */
@@ -386,7 +469,7 @@ function entry(
   obdCode: string,
   name: string,
   description: string,
-  illuminatesMil: boolean
+  illuminatesMil: boolean | null
 ): DtcTableEntry {
   return { component, symptom, obdCode, name, description, illuminatesMil };
 }

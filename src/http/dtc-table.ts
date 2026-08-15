@@ -3,11 +3,11 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { DTC_TABLE, dtcSignalKey } from "../diagnostics/dtc-table.ts";
 
 // GET /dtc-table — Energica's code table, so the dashboard can say
-// "P0A07 — Water pump open circuit fault" instead of "0044/0".
+// "P0A05 — Water pump open circuit fault" instead of "0044/0".
 //
 // Why an endpoint rather than a JS copy in public/: the dashboard has no build
 // step, so it cannot import the TypeScript table, and a hand-maintained JS
-// duplicate of 148 transcribed codes would drift silently the first time one is
+// duplicate of 154 transcribed codes would drift silently the first time one is
 // corrected — in a direction nobody would notice, because a wrong description
 // still *looks* like an answer.
 //
@@ -26,7 +26,8 @@ export interface DtcTableRow {
   obdCode: string;
   name: string;
   description: string;
-  illuminatesMil: boolean;
+  /** null ⇒ no source states it; see DtcTableEntry.illuminatesMil. */
+  illuminatesMil: boolean | null;
 }
 
 export function handleDtcTableEndpoint(req: IncomingMessage, res: ServerResponse): void {

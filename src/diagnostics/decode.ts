@@ -36,15 +36,16 @@ import { formatObdDtc, lookupByComponentSymptom, lookupByObdCode, type DtcTableE
 //
 // ✅ THE LOW 16 BITS ARE THE COMPONENT NUMBER — `matchedBy: "component"`. Every
 // non-zero field seen so far is raw 0x0002C: component 44, which dtc-table.ts
-// gives as P0A07 "Water pump open circuit fault". That is the one fault on this
-// bike known to be real independently of anything on the bus — the coolant pump is
-// wired to the heated-grip output, leaving the VCU's own pump driver open. Reading
-// the same bytes as a binary OBD-II DTC gives "P002C", which is nowhere in the
-// table. One non-zero field decides that much.
+// gives as P0A05 "Water pump open circuit fault" (it said P0A07 until the
+// 2026-08-15 service-tool reconciliation swapped symptoms 0 and 2). That is the
+// one fault on this bike known to be real independently of anything on the bus
+// — the coolant pump is wired to the heated-grip output, leaving the VCU's own
+// pump driver open. Reading the same bytes as a binary OBD-II DTC gives "P002C",
+// which is nowhere in the table. One non-zero field decides that much.
 //
 // 🟡 THE TOP NIBBLE BEING *SYMPTOM* IS STILL UNTESTED. It has been 0 in every
 // reply ever received, so "symptom" and "padding" and "flags" all predict exactly
-// what we have seen — P0A07 is symptom 0, so the match above would have worked
+// what we have seen — P0A05 is symptom 0, so the match above would have worked
 // under any of them. Nothing here distinguishes them until a code with a non-zero
 // top nibble arrives. `flags` keeps carrying that nibble separately for that
 // reason. Do not upgrade this marker on the strength of more symptom-0 codes.

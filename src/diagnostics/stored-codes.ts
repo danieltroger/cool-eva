@@ -149,7 +149,8 @@ export function recordTroubleCodeRead(result: DtcReadOutcome, list: DtcListKind)
   if (current.state === "codes") {
     for (const code of current.codes) {
       const named = code.description ?? "not in Energica's table";
-      console.log(`obd-dtc:   ${code.obdCode} — ${named}${code.illuminatesMil ? " [MIL]" : ""}`);
+      const mil = code.illuminatesMil === null ? " [MIL?]" : code.illuminatesMil ? " [MIL]" : "";
+      console.log(`obd-dtc:   ${code.obdCode} — ${named}${mil}`);
     }
   }
 }
