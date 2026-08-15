@@ -380,23 +380,33 @@ export const SIGNALS: SignalDef[] = [
   { key: "charge_port_unlocked", unit: "", group: "charge", source: "stream" },
   { key: "moving", unit: "", group: "drive", source: "stream" }, // b2 bit7, .xdbc: speed > 1 km/h
 
-  // 0x102 b4-7 — accelerometers. Both the `_raw` suffix and the BLANK unit say the same
-  // thing: the .xdbc names the axes in g but gives no scale, so these are raw counts and
-  // must not be plotted as if they were g (see decode.ts).
+  // 0x102 b4-7 — the attitude sensor's roll and pitch, in degrees. Logged until
+  // 2026-08-15 as `accel_lateral_raw` / `accel_frontal_raw`, unitless counts, on the
+  // .xdbc's word that they were accelerations. They are not accelerations; src/can/
+  // attitude.ts carries the evidence and the sign conventions. The old keys keep their
+  // 15 455 rows — still correct, just in units of 0.1° under a wrong name — and the
+  // Grafana panel reads old and new together, scaling the old ones by ÷10, so the
+  // history stays one continuous trace across the rename.
   //
-  // The deadband is set for the worst case rather than the measured one, because the two
-  // errors are not symmetric. A parked bike jitters ~5 counts, so anything above ~20
-  // stays quiet at rest — but at 100 Hz these are the only signals here that can log at
-  // the full frame rate, and the ride that would show that is the ride whose log it
-  // swamps. Scale estimate for the arithmetic: a sidestand lean of 25-30° is ~0.45 g and
-  // reads ~-103 counts, so ~200-250 counts/g, which puts 20 counts at ~0.1 g — crossed
-  // sample-to-sample more or less continuously on real tarmac, i.e. 2 × 100 Hz = 200
-  // rows/s, which is the row rate the iso_test_* comment above already calls
-  // unaffordable. 100 counts is ~0.5 g at that estimate: still well inside braking and
-  // cornering, and it cannot run away. Tighten it once the scale has been measured and
-  // one ride's rows have been counted — that direction is recoverable, the other is not.
-  { key: "accel_lateral_raw", unit: "", group: "imu", source: "stream", deadband: 100 },
-  { key: "accel_frontal_raw", unit: "", group: "imu", source: "stream", deadband: 100 },
+  // ⚠️ Gravity-referenced, so neither means what a rider would assume from the name.
+  // attitude_roll_deg reads ≈0 in a steady corner, because the bike leans into the
+  // resultant, and outside one 230 ms transient it never left ±17.9° over a week of
+  // riding that reached 186 km/h; attitude_pitch_deg mostly reports braking and
+  // acceleration rather than gradient. They answer "which way is down, as far as the
+  // bike can tell" — not "how far over is the bike".
+  //
+  // 1.0° replaces the old 100 counts, which under the wrong scale was believed to be
+  // ~0.5 g and is really 10° — coarse enough to quantise a lean trace into three or four
+  // levels, which is what made the Grafana panel unreadable. The old comment's objection
+  // was row rate, so here is the measured answer. Summing |Δ| across the rows already
+  // logged puts a 1.0° deadband at ≥161 000 rows for pitch and ≥6 600 for roll over the
+  // seven days of ride log that exist; over that same window throttle_pct logged
+  // 1 038 747 rows, speed_can_kmh 828 304 and inst_consumption_wh 1 745 373. Those
+  // floors are floors — they cannot see the movement the old 10° deadband hid — but the
+  // headroom is an order of magnitude, and the instantaneous ceiling is still the 100 Hz
+  // frame rate. Count a real ride's rows before tightening further.
+  { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
+  { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
 
   // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only
