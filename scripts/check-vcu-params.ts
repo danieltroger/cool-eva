@@ -18,6 +18,8 @@ import {
 } from "../src/vcu/param-table.ts";
 import { diffSnapshots, toParameterRow, type VcuParameterSnapshot } from "../src/vcu/snapshot.ts";
 import { createVcuKwpClient, type VcuReadOutcome } from "../src/vcu/kwp-client.ts";
+import { exportableRowCount, snapshotToBackupCsv } from "../src/vcu/backup-csv.ts";
+import { tallyOf } from "../src/vcu/read-runner.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 import { CAPTURED_FRAMES, KNOWN_VARIANT_DIFFERENCES, LIVE_BANK1_READS, parseHexBytes } from "./captured-vcu-records.ts";
 
@@ -247,7 +249,100 @@ expect(diffSnapshots(before, before).length === 0, "a snapshot compared with its
 // otherwise be exercised for the first time in a garage.
 await checkTransport();
 
-// ── 8. Optional: the full stored A9 dump ───────────────────────────────────
+// ── 8. The energica_tool.py backup CSV, against that tool's own bytes ──────
+// The export format is another owner's, not ours, so the check is byte equality
+// against output taken from their writer rather than against our idea of "CSV".
+// GOLDEN_BACKUP_CSV below was produced on 2026-08-15 by executing
+// energica_tool.py's `_params_save_backup` body under Python 3 with a
+// `_param_cur` of exactly these ids — see the provenance note in
+// src/vcu/backup-csv.ts. The `\r\n` after the LAST row is not a typo: Python's
+// csv.writer terminates every row, so the file ends with a newline.
+const GOLDEN_BACKUP_CSV =
+  "id_hex,name,value\r\n" +
+  "0x06,CHARGE_RESTART_HOLDOFF,20\r\n" +
+  "0x07,INLET_LOCK_DEVICE,1\r\n" +
+  "0x08,DC_DC_OVER_CURRENT,40000\r\n" +
+  "0x0F,MODEL,358\r\n" +
+  "0x30,TORQUE_LIMIT,2300\r\n" +
+  "0xFF,SPEED_ODO_FINALGEAR,4140\r\n";
+
+const backupSnapshot = snapshotOf([
+  reading(6, "14"),
+  reading(7, "01"),
+  reading(8, "9C 40"),
+  reading(15, "01 66"),
+  reading(48, "08 FC"),
+  reading(255, "10 2C"),
+]);
+expect(
+  snapshotToBackupCsv(backupSnapshot) === GOLDEN_BACKUP_CSV,
+  `the backup CSV should match energica_tool.py byte for byte, got ${JSON.stringify(snapshotToBackupCsv(backupSnapshot))}`
+);
+expect(exportableRowCount(backupSnapshot) === 6, "all six readable rows should be exportable");
+
+// A signed parameter has to come out with its minus sign — that tool writes
+// `str(int)` and its restore path reads `int(...)`, so `-350` round-trips and
+// 65186 would silently become a different calibration.
+expect(
+  snapshotToBackupCsv(snapshotOf([reading(93, "FE A2")])) === "id_hex,name,value\r\n0x5D,PACK_LPA,-350\r\n",
+  "a signed value should export as a negative decimal, not as its unsigned reading"
+);
+
+// The ten parameters at 256…277 are past the one-byte local id energica_tool.py
+// reads with, so it can neither read nor write them — but they are this bike's
+// real charging limits and they belong in this bike's backup. Three hex digits is
+// what f"0x{pid:02X}" produces for them; that tool's restore skips ids its table
+// does not know, so the extra rows are ignored rather than misread.
+expect(
+  snapshotToBackupCsv(snapshotOf([reading(258, "4B")])) === "id_hex,name,value\r\n0x102,MAX_DC_CHG_CURRENT,75\r\n",
+  "index 258 should export as 0x102 with this bike's 75, not be dropped for being out of that tool's reach"
+);
+
+// Rows that are not a value must not become one. A parameter the bike never
+// answered has no place in a file whose reader does int(row["value"]).
+const withFailures = snapshotOf([reading(6, "14"), silent(7), reading(8, "9C 40")]);
+expect(
+  snapshotToBackupCsv(withFailures) ===
+    "id_hex,name,value\r\n0x06,CHARGE_RESTART_HOLDOFF,20\r\n0x08,DC_DC_OVER_CURRENT,40000\r\n",
+  "a parameter that did not answer should be absent from the export, not exported as a reason"
+);
+expect(exportableRowCount(withFailures) === 2, "only the two that answered should count towards the export");
+
+// The whole point of keeping a zero-read run distinct: an export of it is empty,
+// and the endpoint refuses rather than handing over a header-only file that would
+// look like a bike with no parameters.
+expect(exportableRowCount(snapshotOf([silent(6), silent(7)])) === 0, "a snapshot that read nothing exports nothing");
+
+// A width the table contradicts keeps its raw bytes in the snapshot but has no
+// honest typed value, so it cannot go in a column of typed values.
+expect(
+  exportableRowCount(snapshotOf([reading(258, "00 4B")])) === 0,
+  "a record whose width contradicts the table should be withheld from the export, not guessed at"
+);
+
+// ── 9. The read-runner's tally, which is what makes a failure legible ───────
+// Pure, so it is checked here rather than by starting a child process. The
+// distinction that matters: "the A8 never woke up" must not read as "44
+// parameters vanished", and the statuses must not collapse into one count.
+const tally = tallyOf(
+  snapshotOf([reading(6, "14"), reading(8, "9C 40"), silent(7), noSession(231), noSession(232)]).rows
+);
+expect(tally.total === 5 && tally.read === 2, "the tally should count 5 rows of which 2 read");
+expect(
+  tally.byStatus["no-session"] === 2 && tally.byStatus["no-response"] === 1,
+  "silence and a micro that never opened a session must stay separate counts"
+);
+expect(
+  tally.micros.length === 2 &&
+    tally.micros[0].micro === "A8" &&
+    tally.micros[0].read === 0 &&
+    tally.micros[0].failed === 2 &&
+    tally.micros[1].read === 2,
+  "the per-micro split should say the A8 answered nothing while the A9 answered twice"
+);
+expect(tallyOf([]).read === 0 && tallyOf([]).micros.length === 0, "an empty sweep should tally to nothing, not throw");
+
+// ── 10. Optional: the full stored A9 dump ──────────────────────────────────
 if (dumpPath) {
   await replayStoredDump(dumpPath);
 } else {
@@ -261,7 +356,9 @@ if (failures.length > 0) {
   }
   process.exit(1);
 }
-console.log("✓ table, request encoding, framing, live 2026-08-08 reads, interpretation and diff all check out");
+console.log(
+  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV and the read tally all check out"
+);
 
 /**
  * Drives the real client against a simulated A9 and A8.
@@ -475,6 +572,19 @@ function reading(index: number, rawHex: string): VcuReadOutcome {
 function silent(index: number): VcuReadOutcome {
   const parameter = parameterAtIndex(index);
   return { micro: parameter?.micro ?? "A9", index, identifier: identifierForIndex(index), status: "no-response" };
+}
+
+/** A parameter on a micro that never opened a session — the shape "the bike was asleep" takes. */
+function noSession(index: number): VcuReadOutcome {
+  const parameter = parameterAtIndex(index);
+  const micro = parameter?.micro ?? "A9";
+  return {
+    micro,
+    index,
+    identifier: identifierForIndex(index),
+    status: "no-session",
+    reason: `${micro} did not answer 10 81`,
+  };
 }
 
 function snapshotOf(outcomes: VcuReadOutcome[]): VcuParameterSnapshot {

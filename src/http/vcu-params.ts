@@ -48,7 +48,14 @@ export async function handleVcuParamsEndpoint(res: ServerResponse, directory: st
   res.end(body);
 }
 
-async function loadLatestSnapshot(directory: string): Promise<VcuParamsResponse> {
+/**
+ * The last snapshot on this Pi, as one of the three things it can be.
+ *
+ * Exported so ./vcu-read.ts and ./vcu-backup.ts do not each re-derive where
+ * `latest.json` lives or re-decide what a missing one means. There is one answer to
+ * "has this bike been read here", and this is it.
+ */
+export async function loadLatestSnapshot(directory: string): Promise<VcuParamsResponse> {
   const path = join(directory, LATEST_FILE);
   let text: string;
   try {

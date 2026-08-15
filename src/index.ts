@@ -8,6 +8,9 @@ import { handleStatusEndpoint } from "./http/status.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
+import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
+import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
+import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -51,6 +54,10 @@ const CAN_IFACE = "can0";
 //   VCU_PARAM_DIR=… → where scripts/read-vcu-params.ts leaves its snapshots, which
 //     /vcu-params serves. Nothing here ever writes there or reads the parameters
 //     itself: this process never puts a diagnostic request on the bus for them.
+//     Service mode's /vcu-read does not change that — it RUNS that script as a
+//     child process and watches the files it leaves behind, so the sweep is still
+//     the on-demand one, just started from a button instead of over ssh. See
+//     src/vcu/read-runner.ts.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -196,6 +203,11 @@ if (BLE_ENABLED) {
   console.log("ble: disabled (BLE_ENABLED=0)");
 }
 
+// --- Service mode: on-demand VCU parameter reads, started from the dashboard ---
+// Holds no bus resources and starts nothing on its own; it exists so that /vcu-read
+// has somewhere to keep "is a sweep running" across requests.
+const vcuReadRunner = createVcuReadRunner({ root: ROOT, outputDirectory: VCU_PARAM_DIR });
+
 // --- HTTP + WebSocket server ---
 const staticFiles = await loadStaticFiles(join(ROOT, "public"));
 console.log(
@@ -240,6 +252,21 @@ const server = createServer(async (req, res) => {
     await handleVcuParamsEndpoint(res, VCU_PARAM_DIR);
     return;
   }
+  // Service mode. The ONE endpoint here that causes traffic on the bike's bus, and
+  // it does it by running scripts/read-vcu-params.ts rather than by asking the
+  // micros anything from this process — read-only either way, since that script's
+  // codec cannot express a write. See src/vcu/read-runner.ts for why the button is
+  // not a contradiction of the "never at startup, never on a timer" rule.
+  if (url.pathname === "/vcu-read") {
+    await handleVcuReadEndpoint(req, res, vcuReadRunner, VCU_PARAM_DIR);
+    return;
+  }
+  // The same snapshot /vcu-params serves, in another owner's energica_tool.py
+  // backup format. Serves a file; never touches the bus.
+  if (url.pathname === "/vcu-backup.csv") {
+    await handleVcuBackupEndpoint(res, VCU_PARAM_DIR);
+    return;
+  }
   if (staticFiles.serve(url.pathname, res)) {
     return;
   }
@@ -261,6 +288,11 @@ async function shutdown(): Promise<void> {
   console.log("\nShutting down…");
   stopObd?.();
   void bleClient?.stop();
+  // SIGTERM, not orphaned: a sweep left running past the restart that killed its
+  // parent would keep the bus busy with nobody watching. The script handles the
+  // signal, keeps every row it has and writes its archive, and the next run
+  // resumes from the partial file — so stopping it here costs nothing.
+  vcuReadRunner.stop();
   // Awaited, not fire-and-forget: sealing the last segment is async, and
   // process.exit() below would otherwise kill it and lose the final buffer.
   await closeEncryptedLog();
