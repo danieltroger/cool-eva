@@ -1,11 +1,19 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, isStale, valueOf } from "../lib/store.js";
+import { chartTick, isStale, knownKeys, peek, valueOf } from "../lib/store.js";
 import { Fact, PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
-import { ring } from "../lib/svg.js";
+import { heatmap, meter, ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import { power, whole } from "../lib/format.js";
+import {
+  COOLANT_FLOW_LPH,
+  coolantDelta,
+  coolantHeatRemovedWatts,
+  isOnboardChargerLive,
+  resistiveLossWatts,
+} from "../lib/derive.js";
+import { CELL_COUNT, MODULE_COUNT, MODULE_SENSORS, cellVoltageKeys, moduleTemperatureKey } from "../lib/cells.js";
 
 const { div, span } = van.tags;
 
@@ -32,6 +40,50 @@ export function ChargeView() {
     { class: "view" },
     ChargeHero(),
     SectionLabel("Delivery"),
+    // Which tiles even exist depends on where the charge is coming from. On DC the
+    // charger frames are silent, so the AC-sourced tiles below would sit there
+    // showing the last values of a session that ended — which is what made this
+    // screen useless at a fast charger. See isOnboardChargerLive().
+    () => (onboardChargerLive() ? AcDelivery() : DcDelivery()),
+    SectionLabel("Pack"),
+    DerateTile(),
+    ThermalBalanceTile(),
+    BalanceTile(),
+    PairTile({
+      label: "Pack temp",
+      keys: ["batt_temp_lo", "batt_temp_hi"],
+      format: value => value.toFixed(0),
+      unit: "°C",
+      color: colors.temperature,
+      caption: "min / max across the pack",
+      chart: true,
+      minSpan: 5,
+    }),
+    SignalTile({
+      key: "coolant_out",
+      label: "Coolant out",
+      format: value => value.toFixed(1),
+      unit: "°C",
+      color: colors.temperature,
+      chart: true,
+      minSpan: 2,
+    }),
+    HeatmapTile(),
+    IsolationTile()
+  );
+}
+
+/** True while the onboard AC charger is talking; false at a DC fast charger. */
+function onboardChargerLive() {
+  return isOnboardChargerLive(isStale, CHARGER_LIVE_MS);
+}
+
+/**
+ * AC: the charger tells you what it is doing, so show it.
+ */
+function AcDelivery() {
+  return div(
+    { class: "subgrid" },
     SignalTile({
       key: "dc_a",
       label: "Current",
@@ -59,43 +111,43 @@ export function ChargeView() {
         return amps == null ? "" : `${amps.toFixed(1)} A drawn`;
       },
     }),
-    LimitsTile(),
-    SectionLabel("Pack"),
-    BalanceTile(),
-    // The same pair the riding screen shows, rather than pack_temp_avg.
-    //
-    // The average was never wrong — across 287 samples of rides.db it sits between
-    // the min and the max on 277 of them, the rest being pairing lag on
-    // log-on-change signals — but it is a different statistic under a label that
-    // did not say so, and a lone "37" next to the riding screen's "37 / 38" reads
-    // as a third unrelated number rather than the middle of that pair.
-    //
-    // Cost of the switch, worth knowing: batt_temp_lo/hi are deliberately sparse
-    // (src/can/pack-temperature.ts) and are not written until the frames establish
-    // which BMS config is flashed, while pack_temp_avg is emitted from the first
-    // 0x660. So this tile can be absent for a few seconds after a restart where
-    // the old one showed a number immediately. The pair is still the honest thing
-    // to show: a gap says "not established yet", which is what is true.
-    PairTile({
-      label: "Pack temp",
-      keys: ["batt_temp_lo", "batt_temp_hi"],
-      format: value => value.toFixed(0),
-      unit: "°C",
-      color: colors.temperature,
-      caption: "min / max across the pack",
+    LimitsTile()
+  );
+}
+
+/**
+ * DC: nothing on the charger side is talking, but the pack is — and what the pack
+ * is taking is the charge, measured closer to the thing you care about than the
+ * charger's own claim would be anyway.
+ */
+function DcDelivery() {
+  return div(
+    { class: "subgrid" },
+    SignalTile({
+      key: "pack_kw",
+      label: "Charging at",
+      format: value => power(Math.abs(value)),
+      unit: "kW",
+      color: () => colors.CALM,
+      className: "span2",
       chart: true,
       minSpan: 5,
+      sub: () => "measured at the pack — the DC charger reports nothing on this bus",
     }),
     SignalTile({
-      key: "coolant_out",
-      label: "Coolant out",
-      format: value => value.toFixed(1),
-      unit: "°C",
-      color: colors.temperature,
-      chart: true,
-      minSpan: 2,
+      key: "pack_a",
+      label: "Current",
+      format: value => Math.abs(value).toFixed(0),
+      unit: "A",
+      color: () => colors.CALM,
     }),
-    IsolationTile()
+    SignalTile({
+      key: "pack_v",
+      label: "Pack",
+      format: value => value.toFixed(0),
+      unit: "V",
+      color: () => colors.CALM,
+    })
   );
 }
 
@@ -193,6 +245,206 @@ function BalanceTile() {
       return `${range}${balancing ? "balancing now" : "not balancing"}${cells}`;
     },
   });
+}
+
+/**
+ * How close the pack is to the temperature where DC charging is throttled.
+ *
+ * This is the number that decides how long you stand at the charger, and it was
+ * invisible on this screen. Measured over the DC session of 2026-08-09: at 50-53 °C
+ * the pack pulled 18.5-18.9 kW steadily, at 54 °C it started dipping, and at 55 °C
+ * the average collapsed to 8.7 kW — less than half. The knee below is that
+ * observation, not a figure from a datasheet, which is also why it is stated as
+ * "measured" on screen.
+ */
+const DERATE_KNEE_C = 55;
+
+/** Bottom of the bar. Below this the pack is nowhere near derating. */
+const DERATE_SCALE_FROM_C = 30;
+
+function DerateTile() {
+  const headroom = () => {
+    const hot = valueOf("batt_temp_hi");
+    return hot == null ? null : DERATE_KNEE_C - hot;
+  };
+  return div(
+    { class: "tile span2" },
+    div({ class: "label" }, "Charge derate"),
+    div(
+      {
+        class: "value",
+        style: () => {
+          const left = headroom();
+          if (left == null) {
+            return `color:${colors.MUTED}`;
+          }
+          return `color:${left <= 0 ? colors.BAD : left <= 2 ? colors.WARN : left <= 5 ? colors.WATCH : colors.GOOD}`;
+        },
+      },
+      () => {
+        const left = headroom();
+        if (left == null) {
+          return "–";
+        }
+        return left <= 0 ? "throttled" : `${left.toFixed(0)}`;
+      },
+      () => span({ class: "unit" }, (headroom() ?? 1) <= 0 ? "" : "°C to go")
+    ),
+    () => {
+      const hot = valueOf("batt_temp_hi");
+      const span = DERATE_KNEE_C - DERATE_SCALE_FROM_C;
+      const fraction = hot == null ? null : (hot - DERATE_SCALE_FROM_C) / span;
+      const left = headroom();
+      const color = left == null ? colors.MUTED : left <= 0 ? colors.BAD : left <= 2 ? colors.WARN : colors.GOOD;
+      return meter({ fraction, color, marker: 1 });
+    },
+    div({ class: "sub" }, () => {
+      const hot = valueOf("batt_temp_hi");
+      if (hot == null) {
+        return `pack temperature not established yet · measured knee ${DERATE_KNEE_C} °C`;
+      }
+      return `hottest cell ${hot.toFixed(0)} °C · measured: charge halves at ${DERATE_KNEE_C} °C`;
+    })
+  );
+}
+
+/**
+ * Heat going into the pack against heat the loop is taking out.
+ *
+ * The two halves are not equally solid and the caption says so. Heat in is
+ * I²R from the BMS's own resistance estimate, which is sparse and swings several
+ * fold. Heat out is ṁ·cp·ΔT with ṁ assumed from the pump's rating — the ΔT is
+ * measured, the flow is not. Together they still answer the question the loop was
+ * built to answer, which no single number does: is it keeping up.
+ */
+function ThermalBalanceTile() {
+  return div(
+    { class: "tile span2" },
+    div({ class: "label" }, "Heat in / out"),
+    div(
+      { class: "value" },
+      () => {
+        const into = resistiveLossWatts();
+        const out = coolantHeatRemovedWatts();
+        if (into == null && out == null) {
+          return "–";
+        }
+        return `${into == null ? "?" : Math.round(into)} / ${out == null ? "?" : Math.round(out)}`;
+      },
+      span({ class: "unit" }, "W")
+    ),
+    () => {
+      const into = resistiveLossWatts();
+      const out = coolantHeatRemovedWatts();
+      if (into == null || out == null || into <= 0) {
+        return meter({ fraction: null, color: colors.MUTED });
+      }
+      const keepingUp = out / into;
+      const color = keepingUp >= 0.9 ? colors.GOOD : keepingUp >= 0.6 ? colors.WATCH : colors.WARN;
+      return meter({ fraction: Math.min(keepingUp, 1), color });
+    },
+    div({ class: "sub" }, () => {
+      const delta = coolantDelta();
+      const deltaText = delta == null ? "no coolant probes" : `coolant ΔT ${delta.toFixed(2)} °C`;
+      return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h`;
+    })
+  );
+}
+
+/**
+ * The pack, module by module.
+ *
+ * Temperature first: during a fast charge heat is what limits the charge, so the
+ * question is which module is running hot, and the 81-cell voltage strip cannot
+ * answer it. Voltage is a tap away for when balance is the question instead.
+ */
+const heatmapMode = van.state(/** @type {"temperature" | "voltage"} */ ("temperature"));
+
+function HeatmapTile() {
+  return div(
+    { class: "tile span2" },
+    div({ class: "label" }, () => (heatmapMode.val === "temperature" ? "Module temperatures" : "Cell voltages")),
+    () => {
+      chartTick.val;
+      return heatmapMode.val === "temperature" ? TemperatureGrid() : VoltageGrid();
+    },
+    div(
+      { class: "toggle-row" },
+      .../** @type {const} */ (["temperature", "voltage"]).map(mode =>
+        van.tags.button(
+          {
+            class: () => (heatmapMode.val === mode ? "on" : ""),
+            onclick: () => {
+              heatmapMode.val = mode;
+            },
+          },
+          mode === "temperature" ? "Temperature" : "Voltage"
+        )
+      )
+    )
+  );
+}
+
+/** Rows are modules, columns are that module's battery and two board sensors. */
+function TemperatureGrid() {
+  const rows = [];
+  let seen = 0;
+  for (let module = 1; module <= MODULE_COUNT; module++) {
+    const cells = MODULE_SENSORS.map(sensor => {
+      const key = moduleTemperatureKey(module, sensor);
+      const value = key == null ? null : peek(key);
+      if (value != null) {
+        seen += 1;
+      }
+      return { value, color: colors.temperature(value) };
+    });
+    rows.push({ label: String(module), cells });
+  }
+  if (seen === 0) {
+    return div({ class: "sub" }, "Module temperatures: waiting for 0x664");
+  }
+  return div(heatmap({ rows }), div({ class: "sub" }, `${seen} sensors · battery, board 1, board 2 per module`));
+}
+
+/** Rows are modules, columns are the cells in them; colour is millivolts below the best. */
+function VoltageGrid() {
+  const keys = cellVoltageKeys(knownKeys.val);
+  if (keys.length === 0) {
+    return div({ class: "sub" }, `Cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
+  }
+  /** @type {Map<number, number[]>} */
+  const byModule = new Map();
+  let highest = -Infinity;
+  for (const key of keys) {
+    const match = /^lmu(\d+)_cell(\d+)_mv$/.exec(key);
+    if (!match) {
+      continue;
+    }
+    const value = peek(key);
+    if (value == null) {
+      continue;
+    }
+    highest = Math.max(highest, value);
+    const module = Number(match[1]);
+    const list = byModule.get(module) ?? [];
+    list.push(value);
+    byModule.set(module, list);
+  }
+  const rows = [];
+  for (let module = 1; module <= MODULE_COUNT; module++) {
+    const values = byModule.get(module) ?? [];
+    rows.push({
+      label: String(module),
+      // Absolute millivolts below the best cell, matching the strip on the
+      // hypermiling screen — a relative scale paints a healthy pack red.
+      cells: values.map(value => ({ value, color: colors.spread(highest - value) })),
+    });
+  }
+  const total = [...byModule.values()].reduce((sum, list) => sum + list.length, 0);
+  return div(
+    heatmap({ rows, columns: 8 }),
+    div({ class: "sub" }, `${total} of ${CELL_COUNT} cells · mV below the best`)
+  );
 }
 
 /**

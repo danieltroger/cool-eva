@@ -194,3 +194,78 @@ export function barStrip({ bars, low, high, height = 60 }) {
   });
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "strip" }, ...rects);
 }
+
+/**
+ * A labelled grid of coloured cells — the pack, module by module.
+ *
+ * Rows are modules and columns are the sensors or cells within one, so the shape on
+ * screen is the shape of the pack. That is the whole point over the flat 81-bar
+ * strip: a strip shows that something is drifting, a grid shows *which module*, and
+ * during a fast charge that is the difference between a curiosity and something you
+ * can act on.
+ *
+ * Cells with no reading are drawn as an empty outline rather than skipped, so the
+ * grid keeps its geometry — modules 6 and 8 have no battery sensor, and a hole
+ * there should look like a missing sensor, not like a shifted row.
+ *
+ * @param {object} options
+ * @param {Array<{ label: string, cells: Array<{ value: number | null, color: string }> }>} options.rows
+ * @param {number} [options.columns] widest row; defaults to the longest supplied
+ * @returns {Element}
+ */
+export function heatmap({ rows, columns }) {
+  const width = 100;
+  const labelWidth = 7;
+  const rowHeight = 8;
+  const gap = 0.6;
+  const columnCount = columns ?? Math.max(...rows.map(row => row.cells.length), 1);
+  const cellWidth = (width - labelWidth) / columnCount;
+  const height = rows.length * rowHeight;
+
+  /** @type {Element[]} */
+  const children = [];
+  rows.forEach((row, rowIndex) => {
+    const y = rowIndex * rowHeight;
+    children.push(
+      svgTags.text(
+        {
+          x: labelWidth - 1.5,
+          y: y + rowHeight / 2 + 1.6,
+          "text-anchor": "end",
+          "font-size": 4,
+          fill: MUTED,
+        },
+        row.label
+      )
+    );
+    row.cells.forEach((cell, columnIndex) => {
+      const x = labelWidth + columnIndex * cellWidth;
+      if (cell.value == null) {
+        children.push(
+          svgTags.rect({
+            x: x + gap / 2,
+            y: y + gap / 2,
+            width: cellWidth - gap,
+            height: rowHeight - gap,
+            fill: "none",
+            stroke: TRACK,
+            "stroke-width": 0.4,
+          })
+        );
+        return;
+      }
+      children.push(
+        svgTags.rect({
+          x: x + gap / 2,
+          y: y + gap / 2,
+          width: cellWidth - gap,
+          height: rowHeight - gap,
+          rx: 0.8,
+          fill: cell.color,
+        })
+      );
+    });
+  });
+
+  return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "heatmap" }, ...children);
+}

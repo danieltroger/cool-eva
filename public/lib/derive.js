@@ -419,3 +419,66 @@ export function isChargingSampled() {
 function isChargingWith(read) {
   return read("bms_state_charge") === 1 || read("bms_state_trickle") === 1 || read("bms_state_maintenance") === 1;
 }
+
+// --- Charging thermals -------------------------------------------------------
+//
+// Two numbers that only mean something next to each other: the heat the pack is
+// making, and the heat the loop is taking away.
+
+/**
+ * Rated delivery of the coolant pump, in litres per hour.
+ *
+ * Bosch PAD 12 V, part 0 392 023 004: 850 dm³/h at 0.1 bar and 13 V. There is no
+ * flow sensor on this bike, so this is the one number here that is specified rather
+ * than measured, and it is an UPPER bound — the datasheet's characteristic curve
+ * falls away as back-pressure rises, and a cold plate plus hoses plus a radiator is
+ * more restrictive than 0.1 bar. Glycol is also thicker than the water it is rated
+ * with.
+ *
+ * Independently supported, which is why it is worth showing at all: an energy
+ * balance over the 40-minute DC charge of 2026-08-09 — I²R heat in against the
+ * integral of coolant ΔT — implies ~15.4 L/min if the loop were removing all of it,
+ * against the datasheet's 14.2. Two unrelated routes agreeing to 8% is about as
+ * good as this gets without a flow meter.
+ */
+export const COOLANT_FLOW_LPH = 850;
+
+/** 50/50 ethylene glycol: ~3800 J/(kg·K), ~1.05 kg/L. Water would be 4180 and 1.0. */
+const COOLANT_SPECIFIC_HEAT_J_PER_KG_K = 3800;
+const COOLANT_DENSITY_KG_PER_L = 1.05;
+
+/** Watts the loop carries away per kelvin of ΔT across the pack, at rated flow. */
+export const COOLANT_WATTS_PER_KELVIN =
+  (COOLANT_FLOW_LPH / 3600) * COOLANT_DENSITY_KG_PER_L * COOLANT_SPECIFIC_HEAT_J_PER_KG_K;
+
+/**
+ * Heat the loop is currently removing, in watts.
+ *
+ * ṁ·cp·ΔT, with ṁ assumed from the pump's rating — so this inherits every caveat on
+ * COOLANT_FLOW_LPH above and is a best estimate, not a measurement. ΔT itself is
+ * measured, and it is the term that actually moves.
+ * @returns {number | null}
+ */
+export function coolantHeatRemovedWatts() {
+  const delta = coolantDelta();
+  if (delta == null) {
+    return null;
+  }
+  return delta * COOLANT_WATTS_PER_KELVIN;
+}
+
+/**
+ * True while the onboard AC charger is talking.
+ *
+ * 0x300, 0x305, 0x306 and 0x10a's AC setpoint are silent on DC fast charging —
+ * verified across a full 40-minute DC session on 2026-08-09, where every one of
+ * mains_v, mains_a, dc_v, dc_a, charger_max_dc_v, charger_max_dc_a, charger_enabled
+ * and charge_limit_a logged exactly zero readings. So their freshness, not the
+ * state bitfield, is what separates AC from DC — and anything sourced from them
+ * has to be hidden on DC rather than left showing the last AC value.
+ * @param {(key: string, maxAgeMs: number) => boolean} stale
+ * @param {number} withinMs
+ */
+export function isOnboardChargerLive(stale, withinMs) {
+  return ["mains_v", "mains_a", "dc_v", "dc_a"].some(key => !stale(key, withinMs));
+}
