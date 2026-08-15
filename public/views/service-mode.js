@@ -77,6 +77,9 @@ function ReadButton() {
   return button(
     {
       class: "action",
+      // Disabled only for STARTING. A sweep already running when the flag was set
+      // must still be stoppable, which is why this reads `isRunning()` first.
+      disabled: () => !isRunning() && state.val !== null && !state.val.enabled,
       onclick: () => {
         if (isRunning()) {
           void request("DELETE");
@@ -93,6 +96,9 @@ function ReadButton() {
     () => {
       if (isRunning()) {
         return "⏹  Stop the parameter read";
+      }
+      if (state.val !== null && !state.val.enabled) {
+        return "🔒  Reads are off on this Pi (SERVICE_MODE_ENABLED=0)";
       }
       if (armed.val) {
         return "⚠  Tap again — this puts ~277 requests on the bus";
@@ -194,12 +200,46 @@ function ExportButton() {
       if (!summary || summary.rows === 0) {
         return div();
       }
+      // The AGE leads, because this button does not export what the progress line
+      // above it just said. It exports `latest.json`, and the script deliberately
+      // leaves that file alone when a run reads nothing — so a sweep that found the
+      // bike asleep leaves "0 of 277 read" directly above "Export 233 parameters",
+      // both true, and the natural reading of the second one wrong. An age is what
+      // makes it obvious the file is from another day, and this is a file people
+      // send to other owners as their bike's calibration.
       return div(
         { class: "action-note" },
-        `Byte-compatible with energica_tool.py's “Save backup…”, so another owner can open it${summary.complete ? "" : " · from an INCOMPLETE sweep"}`
+        `From a snapshot read ${describeAge(summary.readAt)}${summary.complete ? "" : " · from an INCOMPLETE sweep"} · byte-compatible with energica_tool.py's “Save backup…”`
       );
     }
   );
+}
+
+/**
+ * How old the snapshot behind the export is.
+ *
+ * Computed on the PHONE against a Pi timestamp, which ../lib/clock.js otherwise
+ * forbids — for the same reason ../lib/params-page.js does it: the Pi has no RTC
+ * and steps its own clock from GPS, so of the two clocks in this pairing the
+ * phone's is the one worth trusting. The number is a rough age on a label, not a
+ * duration anything depends on, and a Pi that has not had a fix yet will show an
+ * absurd one — which is itself the right thing to see.
+ *
+ * @param {number | null} readAt
+ */
+function describeAge(readAt) {
+  if (readAt === null) {
+    return "at an unknown time";
+  }
+  const minutes = Math.round((Date.now() - readAt) / 60000);
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 90) {
+    return `${minutes} min ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
 }
 
 /**
@@ -213,7 +253,15 @@ function ExportButton() {
  */
 async function request(method) {
   try {
-    const response = await fetch("/vcu-read", { method, cache: "no-store" });
+    const response = await fetch("/vcu-read", {
+      method,
+      cache: "no-store",
+      // Not a secret and not authentication. A header a CORS-simple request cannot
+      // set is what stops some other page in this browser starting a sweep on the
+      // bike's bus without the owner — see the header of src/http/vcu-read.ts. Our
+      // own page is same-origin, so it costs no preflight.
+      headers: { "X-Cool-Eva": "service-mode" },
+    });
     // The body carries the state on every status this endpoint returns, including
     // 409 and 202, so it is read before the status is judged.
     const payload = /** @type {VcuReadResponse} */ (await response.json());

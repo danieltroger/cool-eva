@@ -30,6 +30,29 @@ import { loadLatestSnapshot } from "./vcu-params.ts";
 // returns, and GET is how the page follows along — which also means closing the
 // page, or riding out of wifi range, does not stop the sweep.
 
+// ── Why starting a read needs a header ──────────────────────────────────────
+// A bare `POST` with no body and no custom headers is a CORS-SIMPLE request: any
+// page open in the phone's browser while it is on the bike's hotspot can fire one
+// at this endpoint (`fetch(url, {method: "POST", mode: "no-cors"})`, or a plain
+// cross-origin `<form method=post>`) without a preflight. It never sees the
+// response — but here the side effect IS the point, and it is the only side effect
+// in this repo that reaches the bus. The two-tap arming on the page guards against
+// a thumb, not against that.
+//
+// Requiring a header a simple request cannot set makes the browser send a
+// preflight first; nothing here answers OPTIONS, so the browser blocks the request
+// and the sweep never starts. Same-origin fetches from our own page need no
+// preflight, so the dashboard is unaffected. `curl` can still start a read, which
+// is correct — anything with a shell on that network can just run the script.
+//
+// DELETE needs no such guard: a non-simple method already forces a preflight, and
+// stopping a sweep is never the dangerous direction anyway.
+
+/** Header the dashboard sends to start a read. Its VALUE is not a secret — being unsettable cross-origin is the point. */
+export const SERVICE_MODE_HEADER = "x-cool-eva";
+
+export const SERVICE_MODE_HEADER_VALUE = "service-mode";
+
 export interface VcuReadExportSummary {
   /** How many rows an export would carry right now. Zero is a real answer, not "unknown". */
   rows: number;
@@ -41,32 +64,66 @@ export interface VcuReadExportSummary {
 
 export interface VcuReadResponse {
   run: VcuReadState;
+  /**
+   * False when SERVICE_MODE_ENABLED=0. The page then labels the button as off
+   * rather than letting it fail, and — the part that matters — a Pi configured this
+   * way has no reachable control that puts anything on the bus at all.
+   */
+  enabled: boolean;
   /** What /vcu-backup.csv would hand over, so the page can label the button without fetching 277 rows to count them. */
   export: VcuReadExportSummary;
   /** Why a POST or DELETE did nothing. Null on a GET and on a request that did what it said. */
   message: string | null;
 }
 
+export interface VcuReadEndpointOptions {
+  runner: VcuReadRunner;
+  directory: string;
+  /**
+   * Whether a read may be STARTED. Every other subsystem that touches the bus has
+   * an off switch (CAN_ENABLED, OBD_ENABLED, ELOCK_ENABLED, BLE_ENABLED); this is
+   * the one for the only control in the dashboard that does. Reading the snapshot
+   * and exporting it stay available either way — neither goes near the bike.
+   */
+  enabled: boolean;
+}
+
 export async function handleVcuReadEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
-  runner: VcuReadRunner,
-  directory: string
+  options: VcuReadEndpointOptions
 ): Promise<void> {
   switch (req.method) {
     case "GET":
-      await respond(res, 200, runner, directory, null);
+      await respond(res, 200, options, null);
       return;
     case "POST": {
-      const { started, reason } = runner.start();
+      if (!hasServiceModeHeader(req)) {
+        // See the header. This is the one request in the repo whose SIDE EFFECT is
+        // the point, so it is the one that has to be unavailable to a page the
+        // owner did not open.
+        res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end(`starting a read needs the ${SERVICE_MODE_HEADER}: ${SERVICE_MODE_HEADER_VALUE} header\n`);
+        return;
+      }
+      if (!options.enabled) {
+        // 403 rather than 404: the endpoint exists and is answering, it is the
+        // action that is switched off, and the page says which switch.
+        await respond(res, 403, options, "service mode is switched off on this Pi (SERVICE_MODE_ENABLED=0)");
+        return;
+      }
+      const { started, reason } = options.runner.start();
       // 409, not 500: "one is already running" is the endpoint working correctly,
       // and the page shows the reason rather than an error.
-      await respond(res, started ? 202 : 409, runner, directory, reason);
+      await respond(res, started ? 202 : 409, options, reason);
       return;
     }
     case "DELETE": {
-      const cancelled = runner.cancel();
-      await respond(res, cancelled ? 202 : 409, runner, directory, cancelled ? null : "no sweep is running");
+      // Always allowed, even switched off: stopping something is never the
+      // dangerous direction, and a sweep could still be running from before the
+      // flag was set.
+      const cancelled = options.runner.cancel();
+      await respond(res, cancelled ? 202 : 409, options, cancelled ? null : "no sweep is running");
       return;
     }
     default:
@@ -75,16 +132,21 @@ export async function handleVcuReadEndpoint(
   }
 }
 
+/** Node lower-cases incoming header names, so this needs no case folding of its own. */
+function hasServiceModeHeader(req: IncomingMessage): boolean {
+  return req.headers[SERVICE_MODE_HEADER] === SERVICE_MODE_HEADER_VALUE;
+}
+
 async function respond(
   res: ServerResponse,
   statusCode: number,
-  runner: VcuReadRunner,
-  directory: string,
+  options: VcuReadEndpointOptions,
   message: string | null
 ): Promise<void> {
   const payload: VcuReadResponse = {
-    run: await runner.state(),
-    export: await summariseExport(directory),
+    run: await options.runner.state(),
+    enabled: options.enabled,
+    export: await summariseExport(options.directory),
     message,
   };
   const body = Buffer.from(JSON.stringify(payload), "utf-8");

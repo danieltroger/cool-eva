@@ -379,16 +379,26 @@ async function readPartialRows(directory: string): Promise<VcuParameterRow[]> {
     return [];
   }
   const rows: VcuParameterRow[] = [];
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  for (const [position, line] of lines.entries()) {
     if (line.trim().length === 0) {
       continue;
     }
     try {
       rows.push(JSON.parse(line) as VcuParameterRow);
-    } catch {
-      // The last line of a file being appended to as we read it. Expected, common,
-      // and not worth a log line every time the page polls — the row it describes
-      // arrives whole on the next read a moment later.
+    } catch (err) {
+      // Only the LAST line can be a torn append — a file being written to as we
+      // read it. That one is expected, common, and not worth a log line every time
+      // the page polls: the row arrives whole on the next read a moment later.
+      //
+      // A bad line anywhere else is a damaged file (an interrupted write, a bad
+      // block on the SD card) and would otherwise just quietly lower the count,
+      // which is the silent-failure shape CLAUDE.md forbids. The script's own
+      // reader draws the same line — see loadPartial() in
+      // scripts/read-vcu-params.ts.
+      if (position !== lines.length - 1) {
+        console.warn(`vcu-read: ${PARTIAL_FILE} line ${position + 1} is not valid JSON, skipping it:`, err);
+      }
       continue;
     }
   }

@@ -58,6 +58,10 @@ const CAN_IFACE = "can0";
 //     child process and watches the files it leaves behind, so the sweep is still
 //     the on-demand one, just started from a button instead of over ssh. See
 //     src/vcu/read-runner.ts.
+//   SERVICE_MODE_ENABLED=0 → the dashboard cannot start a parameter read. The one
+//     control here that causes traffic on the bike's bus, with the same kind of off
+//     switch as every other subsystem that touches it. Reading the last snapshot
+//     and exporting it are unaffected: neither goes near the bike.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -67,6 +71,7 @@ const RIDE_LOG_PUBKEY = process.env.RIDE_LOG_PUBKEY ?? join(ROOT, "ride-log-key.
 const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
 const VCU_PARAM_DIR = process.env.VCU_PARAM_DIR ?? join(ROOT, "vcu-params");
+const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
 
 // --- Signal registry ---
 defineSignals(SIGNALS);
@@ -207,6 +212,11 @@ if (BLE_ENABLED) {
 // Holds no bus resources and starts nothing on its own; it exists so that /vcu-read
 // has somewhere to keep "is a sweep running" across requests.
 const vcuReadRunner = createVcuReadRunner({ root: ROOT, outputDirectory: VCU_PARAM_DIR });
+console.log(
+  SERVICE_MODE_ENABLED
+    ? "service-mode: the dashboard may start an on-demand VCU parameter read (SERVICE_MODE_ENABLED=0 to forbid it)"
+    : "service-mode: disabled (SERVICE_MODE_ENABLED=0) — the snapshot is still served and exported, but nothing here can ask the bike"
+);
 
 // --- HTTP + WebSocket server ---
 const staticFiles = await loadStaticFiles(join(ROOT, "public"));
@@ -258,7 +268,11 @@ const server = createServer(async (req, res) => {
   // codec cannot express a write. See src/vcu/read-runner.ts for why the button is
   // not a contradiction of the "never at startup, never on a timer" rule.
   if (url.pathname === "/vcu-read") {
-    await handleVcuReadEndpoint(req, res, vcuReadRunner, VCU_PARAM_DIR);
+    await handleVcuReadEndpoint(req, res, {
+      runner: vcuReadRunner,
+      directory: VCU_PARAM_DIR,
+      enabled: SERVICE_MODE_ENABLED,
+    });
     return;
   }
   // The same snapshot /vcu-params serves, in another owner's energica_tool.py
