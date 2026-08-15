@@ -1,6 +1,6 @@
 # Grafana dashboards
 
-Provisioned from `grafana/dashboards/*.json` against the `frser-sqlite-datasource` plugin (uid `cool-eva-sqlite`), reading `temperatures.db` decrypted from a `/dl` download. `docker compose up -d` brings the whole thing up.
+Provisioned from `grafana/dashboards/*.json` against the `frser-sqlite-datasource` plugin (uid `cool-eva-sqlite`), reading `rides.db` decrypted from a `/dl` download. `docker compose up -d` brings the whole thing up.
 
 Everything below cost at least one debugging round. None of it is in the plugin's documentation.
 
@@ -83,4 +83,4 @@ A **state timeline needs only the left seed**: its regions run until the next sa
 
 ## Verifying a dashboard before shipping it
 
-Run every `rawQueryText` against `temperatures.db` with `$__from`/`$__to` and the template variables substituted, and confirm each returns rows. A panel that renders "No data" is indistinguishable from a broken bike, so it has to be ruled out at the query level first. Check `EXPLAIN QUERY PLAN` shows `SEARCH … USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?)`: the only index on `reading` leads with `signal_id`, so a query filtered on `ts` alone scans. SQLite does flatten derived tables and push a `signal.key` predicate down through the join, so a subquery filtered only on `ts` is not automatically a scan — check the plan rather than assuming either way.
+Run every `rawQueryText` against `rides.db` with `$__from`/`$__to` and the template variables substituted, and confirm each returns rows. A panel that renders "No data" is indistinguishable from a broken bike, so it has to be ruled out at the query level first. Check `EXPLAIN QUERY PLAN` shows `SEARCH … USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?)`: the only index on `reading` leads with `signal_id`, so a query filtered on `ts` alone scans. SQLite does flatten derived tables and push a `signal.key` predicate down through the join, so a subquery filtered only on `ts` is not automatically a scan — check the plan rather than assuming either way.

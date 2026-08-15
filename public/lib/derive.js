@@ -298,7 +298,7 @@ export function rollingConsumption(now) {
  * signal pushed on change — pack_kw carries a 0.05 kW deadband, so a value that
  * has not been re-sent has not moved — but only while samples are actually
  * arriving. A gap in the ring has two indistinguishable causes: the value genuinely
- * held, or nothing arrived at all (WebSocket drop, `systemctl restart thermometer`,
+ * held, or nothing arrived at all (WebSocket drop, `systemctl restart cool-eva`,
  * wifi fading at the edge of the garage, iOS suspending a backgrounded tab while
  * the monotonic clock keeps running).
  *

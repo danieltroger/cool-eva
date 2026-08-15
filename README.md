@@ -208,7 +208,16 @@ The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to 
 
 ### Configuration
 
-Every option is an environment variable, and every default is what the bike in the photo runs. To set one for the service, add it to `/etc/systemd/system/cool-eva.service` under `[Service]` as `Environment=NAME=value`, then `sudo systemctl daemon-reload && sudo systemctl restart cool-eva`.
+Every option is an environment variable, and every default is what the bike in the photo runs. Set them in **`/etc/default/cool-eva`**, one `NAME=value` per line:
+
+```bash
+sudo tee /etc/default/cool-eva <<'EOF'
+COOLANT_ENABLED=0
+EOF
+sudo systemctl restart cool-eva
+```
+
+Not in the unit file — `scripts/setup-service.ts` rewrites that every time it runs, which is exactly what you do to migrate a Pi or after a Node upgrade, and anything configured there would be silently discarded.
 
 | Variable | Default | What it does |
 | --- | --- | --- |

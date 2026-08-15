@@ -21,7 +21,7 @@ import {
 } from "../src/vcu/snapshot.ts";
 
 // Reads the VCU's calibration parameters off the bike, by name. ON DEMAND — this is
-// a script you run, not something the thermometer service does. See §Why not in the
+// a script you run, not something the cool-eva service does. See §Why not in the
 // service, below.
 //
 //   # everything, both micros (~277 reads, well under a minute)
@@ -38,7 +38,7 @@ import {
 // exception, and on 2026-08-08 it cost a whole result set mid-read
 // (obd-garage/DIAG_ADDRESSES.md §6). ssh dying takes an attached process with it:
 //
-//   ssh pi@cool-eva.local 'cd thermometer && nohup setsid node --experimental-strip-types \
+//   ssh pi@cool-eva.local 'cd cool-eva && nohup setsid node --experimental-strip-types \
 //     scripts/read-vcu-params.ts > /tmp/vcu-params.log 2>&1 & echo started'
 //   ssh pi@cool-eva.local 'tail -f /tmp/vcu-params.log'   # reconnect as often as you like
 //
@@ -51,7 +51,7 @@ import {
 // Every byte this puts on the bus comes from src/vcu/param-codec.ts, which cannot
 // express a write; the services it must never gain are listed in that file's
 // header. This script also never touches `bringUpCan`, so it cannot reconfigure
-// can0 and cannot knock the running thermometer service off the bus — it shares
+// can0 and cannot knock the running cool-eva service off the bus — it shares
 // the interface as it finds it. (The two do not confuse each other: our replies
 // arrive on 0x7E0 with 0xF1 in byte 0, and the service's OBD handler rejects
 // anything whose first nibble is not 0x0.)
@@ -401,7 +401,7 @@ async function warnIfListenOnly(iface: string): Promise<void> {
     if (/listen-only\s+on|\blisten-only\b(?!\s+off)/.test(stdout)) {
       console.warn(
         `⚠️  ${iface} is in LISTEN-ONLY mode: nothing can be transmitted and every read will time out.\n` +
-          `   The thermometer service brings it up ACTIVE unless OBD_ENABLED=0.`
+          `   The cool-eva service brings it up ACTIVE unless OBD_ENABLED=0.`
       );
     }
   } catch (err) {
