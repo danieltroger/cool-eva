@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, knownKeys, peek, valueOf } from "../lib/store.js";
-import { Fact, PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
+import { Fact, PairTile, STALE_MS, SectionLabel, SignalTile } from "../lib/tiles.js";
 import { heatmap, meter, ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import { power, whole } from "../lib/format.js";
@@ -13,7 +13,16 @@ import {
   isOnboardChargerLive,
   resistiveLossWatts,
 } from "../lib/derive.js";
-import { CELL_COUNT, MODULE_COUNT, MODULE_SENSORS, cellVoltageKeys, moduleTemperatureKey } from "../lib/cells.js";
+import {
+  CELL_COUNT,
+  CELL_VOLTAGE_PATTERN,
+  MAX_CELLS_PER_MODULE,
+  MODULE_COUNT,
+  MODULE_SENSORS,
+  cellVoltageKeys,
+  cellsInModule,
+  moduleTemperatureKey,
+} from "../lib/cells.js";
 
 const { div, span } = van.tags;
 
@@ -44,7 +53,7 @@ export function ChargeView() {
     // charger frames are silent, so the AC-sourced tiles below would sit there
     // showing the last values of a session that ended — which is what made this
     // screen useless at a fast charger. See isOnboardChargerLive().
-    () => (onboardChargerLive() ? AcDelivery() : DcDelivery()),
+    () => (chargerLive.val ? AcDelivery() : DcDelivery()),
     SectionLabel("Pack"),
     DerateTile(),
     ThermalBalanceTile(),
@@ -77,6 +86,19 @@ export function ChargeView() {
 function onboardChargerLive() {
   return isOnboardChargerLive(isStale, CHARGER_LIVE_MS);
 }
+
+/**
+ * The same answer as a boolean state, so the DOM binding above only fires when AC/DC
+ * actually flips.
+ *
+ * isStale() reads serverTime, which apply() writes on EVERY message including 20 Hz
+ * pack_a patches — so binding the subgrid straight to onboardChargerLive() would
+ * tear down and rebuild four tiles at frame rate, sparklines included, defeating the
+ * chartTick pacing they exist to have. Assigning an unchanged value to a VanJS state
+ * is a no-op, so this derive absorbs the churn: it still re-runs per message, but
+ * that is four Map lookups rather than four tiles and an SVG.
+ */
+const chargerLive = van.derive(onboardChargerLive);
 
 /**
  * AC: the charger tells you what it is doing, so show it.
@@ -181,8 +203,10 @@ function ChargeHero() {
  * interesting part is over.
  */
 function chargeModeText() {
-  const onboardLive = ["mains_v", "mains_a", "dc_v", "dc_a"].some(key => !isStale(key, CHARGER_LIVE_MS));
-  const kind = onboardLive ? "AC" : "DC";
+  // The same rule the delivery section switches on, not a second copy of the list:
+  // if a fifth charger signal turns out to be the reliable one, the hero must not be
+  // able to say "AC" while the tiles below show the DC set.
+  const kind = onboardChargerLive() ? "AC" : "DC";
   if (valueOf("bms_state_charge_complete") === 1) {
     return `${kind} · complete`;
   }
@@ -271,13 +295,25 @@ const DERATE_KNEE_C = 55;
 /** Bottom of the bar. Below this the pack is nowhere near derating. */
 const DERATE_SCALE_FROM_C = 30;
 
+/**
+ * Hand-built tiles get no staleness for free, which is the fault this PR calls out
+ * in BMS grants — so these two do not get to repeat it. A tile whose inputs have all
+ * gone quiet is dimmed rather than left presenting the last number at full
+ * brightness, and keys that have never arrived do not count as stale.
+ * @param {string[]} keys
+ */
+function inputsStale(keys) {
+  const live = keys.filter(key => valueOf(key) != null);
+  return live.length > 0 && live.every(key => isStale(key, STALE_MS));
+}
+
 function DerateTile() {
   const headroom = () => {
     const hot = valueOf("batt_temp_hi");
     return hot == null ? null : DERATE_KNEE_C - hot;
   };
   return div(
-    { class: "tile span2" },
+    { class: () => `tile span2${inputsStale(["batt_temp_hi"]) ? " stale" : ""}` },
     div({ class: "label" }, "Charge derate"),
     div(
       {
@@ -328,7 +364,12 @@ function DerateTile() {
  */
 function ThermalBalanceTile() {
   return div(
-    { class: "tile span2" },
+    {
+      // Both halves have their own inputs; the tile is only old when nothing feeding
+      // either of them is current.
+      class: () =>
+        `tile span2${inputsStale(["pack_a", "pack_resistance_mohm", "coolant_in", "coolant_out"]) ? " stale" : ""}`,
+    },
     div({ class: "label" }, "Heat in / out"),
     div(
       { class: "value" },
@@ -421,38 +462,49 @@ function VoltageGrid() {
   if (keys.length === 0) {
     return div({ class: "sub" }, `Cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
   }
-  /** @type {Map<number, number[]>} */
+  // Indexed by cell number, not appended: a missing cell has to leave a hole rather
+  // than shift every later cell in its module one column left, or the grid stops
+  // meaning what the position says — which is the whole reason for drawing a grid.
+  // Not hypothetical here: 0x663/0x664 have been observed never sampling modules 1
+  // and 2, and a 0xFFFF rejected by bounds.js does the same thing, which is exactly
+  // when you want to see the gap.
+  /** @type {Map<number, Array<number | null>>} */
   const byModule = new Map();
   let highest = -Infinity;
   for (const key of keys) {
-    const match = /^lmu(\d+)_cell(\d+)_mv$/.exec(key);
+    const match = CELL_VOLTAGE_PATTERN.exec(key);
     if (!match) {
       continue;
     }
+    const module = Number(match[1]);
+    const cells = byModule.get(module) ?? Array.from({ length: MAX_CELLS_PER_MODULE }, () => null);
+    byModule.set(module, cells);
     const value = peek(key);
     if (value == null) {
       continue;
     }
     highest = Math.max(highest, value);
-    const module = Number(match[1]);
-    const list = byModule.get(module) ?? [];
-    list.push(value);
-    byModule.set(module, list);
+    cells[Number(match[2]) - 1] = value;
   }
   const rows = [];
+  let seen = 0;
   for (let module = 1; module <= MODULE_COUNT; module++) {
-    const values = byModule.get(module) ?? [];
+    const values = byModule.get(module) ?? Array.from({ length: cellsInModule(module) }, () => null);
     rows.push({
       label: String(module),
       // Absolute millivolts below the best cell, matching the strip on the
       // hypermiling screen — a relative scale paints a healthy pack red.
-      cells: values.map(value => ({ value, color: colors.spread(highest - value) })),
+      cells: values.slice(0, cellsInModule(module)).map(value => {
+        if (value != null) {
+          seen += 1;
+        }
+        return { value, color: value == null ? "" : colors.spread(highest - value) };
+      }),
     });
   }
-  const total = [...byModule.values()].reduce((sum, list) => sum + list.length, 0);
   return div(
-    heatmap({ rows, columns: 8 }),
-    div({ class: "sub" }, `${total} of ${CELL_COUNT} cells · mV below the best`)
+    heatmap({ rows, columns: MAX_CELLS_PER_MODULE }),
+    div({ class: "sub" }, `${seen} of ${CELL_COUNT} cells · mV below the best`)
   );
 }
 

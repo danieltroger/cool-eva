@@ -52,6 +52,17 @@ const MODULES_WITHOUT_BATTERY_SENSOR = [6, 8];
 /** Modules in the pack, 1-indexed. */
 export const MODULE_COUNT = 11;
 
+/** Widest module. Mirrors cellsInLmu() in src/can/decode-bms.ts: 8 for modules 1-4. */
+export const MAX_CELLS_PER_MODULE = 8;
+
+/**
+ * How many cells a module has. Mirrors cellsInLmu().
+ * @param {number} moduleNumber
+ */
+export function cellsInModule(moduleNumber) {
+  return moduleNumber <= 4 ? 8 : 7;
+}
+
 /**
  * The key a module's temperature sensor reports under, or null where that sensor
  * does not exist. Mirrors `lmuTemperatureKey()` in src/can/decode-bms.ts, which
