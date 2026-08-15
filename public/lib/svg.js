@@ -208,6 +208,11 @@ export function barStrip({ bars, low, high, height = 60 }) {
  * grid keeps its geometry — modules 6 and 8 have no battery sensor, and a hole
  * there should look like a missing sensor, not like a shifted row.
  *
+ * Row labels are HTML beside the SVG, not <text> inside it. The grid stretches to
+ * the tile width with preserveAspectRatio="none" so the cells stay big enough to
+ * read, and that stretch would render glyphs about 1.9x wider than tall — by a
+ * different amount in each mode, since the two grids have different viewBox heights.
+ *
  * @param {object} options
  * @param {Array<{ label: string, cells: Array<{ value: number | null, color: string }> }>} options.rows
  * @param {number} [options.columns] widest row; defaults to the longest supplied
@@ -215,7 +220,7 @@ export function barStrip({ bars, low, high, height = 60 }) {
  */
 export function heatmap({ rows, columns }) {
   const width = 100;
-  const labelWidth = 7;
+  const labelWidth = 0;
   const rowHeight = 8;
   const gap = 0.6;
   const columnCount = columns ?? Math.max(...rows.map(row => row.cells.length), 1);
@@ -226,18 +231,6 @@ export function heatmap({ rows, columns }) {
   const children = [];
   rows.forEach((row, rowIndex) => {
     const y = rowIndex * rowHeight;
-    children.push(
-      svgTags.text(
-        {
-          x: labelWidth - 1.5,
-          y: y + rowHeight / 2 + 1.6,
-          "text-anchor": "end",
-          "font-size": 4,
-          fill: MUTED,
-        },
-        row.label
-      )
-    );
     row.cells.forEach((cell, columnIndex) => {
       const x = labelWidth + columnIndex * cellWidth;
       if (cell.value == null) {
@@ -267,5 +260,9 @@ export function heatmap({ rows, columns }) {
     });
   });
 
-  return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "heatmap" }, ...children);
+  return van.tags.div(
+    { class: "heatmap-wrap" },
+    van.tags.div({ class: "heatmap-labels" }, ...rows.map(row => van.tags.div(row.label))),
+    svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "heatmap" }, ...children)
+  );
 }

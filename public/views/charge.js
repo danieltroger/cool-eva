@@ -8,6 +8,7 @@ import * as colors from "../lib/colors.js";
 import { power, whole } from "../lib/format.js";
 import {
   COOLANT_FLOW_LPH,
+  isCharging,
   coolantDelta,
   coolantHeatRemovedWatts,
   isOnboardChargerLive,
@@ -53,7 +54,16 @@ export function ChargeView() {
     // charger frames are silent, so the AC-sourced tiles below would sit there
     // showing the last values of a session that ended — which is what made this
     // screen useless at a fast charger. See isOnboardChargerLive().
-    () => (chargerLive.val ? AcDelivery() : DcDelivery()),
+    () => {
+      switch (deliveryMode.val) {
+        case "ac":
+          return AcDelivery();
+        case "dc":
+          return DcDelivery();
+        default:
+          return NotCharging();
+      }
+    },
     SectionLabel("Pack"),
     DerateTile(),
     ThermalBalanceTile(),
@@ -98,7 +108,30 @@ function onboardChargerLive() {
  * is a no-op, so this derive absorbs the churn: it still re-runs per message, but
  * that is four Map lookups rather than four tiles and an SVG.
  */
-const chargerLive = van.derive(onboardChargerLive);
+const deliveryMode = van.derive(() => (!isCharging() ? "idle" : onboardChargerLive() ? "ac" : "dc"));
+
+/**
+ * Charge is a tab, so this screen is reachable mid-ride. Without this the DC branch
+ * would render "Charging at 41 kW" from pack_kw with its discharge sign stripped by
+ * Math.abs() — confidently wrong, and not caught by staleness because pack_kw is
+ * perfectly live while riding. The old AC-only tiles failed safe only by accident,
+ * their signals being silent off the charger.
+ */
+function NotCharging() {
+  return div(
+    { class: "tile span2" },
+    div({ class: "label" }, "Not charging"),
+    div({ class: "sub" }, () => {
+      const kilowatts = valueOf("pack_kw");
+      if (kilowatts == null) {
+        return "plug in to see delivery";
+      }
+      return kilowatts < 0
+        ? `the pack is delivering ${power(Math.abs(kilowatts))} kW, not taking it`
+        : "plug in to see delivery";
+    })
+  );
+}
 
 /**
  * AC: the charger tells you what it is doing, so show it.
