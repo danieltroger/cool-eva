@@ -278,7 +278,9 @@ async function ensureSession(context: ClientContext, micro: VcuMicro): Promise<b
  * cool-eva service restarts (CLAUDE.md), so that is a thing that happens.
  */
 type ExchangeResult =
-  { kind: "reply"; frame: VcuAddressedFrame } | { kind: "timeout" } | { kind: "not-sent"; reason: string };
+  | { kind: "reply"; frame: VcuAddressedFrame }
+  | { kind: "timeout" }
+  | { kind: "not-sent"; reason: string };
 
 /**
  * One request, one reply window. Resolves whatever happens; never rejects.
