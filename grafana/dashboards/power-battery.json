@@ -1,0 +1,666 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Power in kW and battery percentage, and nothing else. Charge power is derived (dc_v x dc_a); pack power is measured.",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Last soc sample at or before the end of the window. Not restricted to the window: soc is logged on change and can go a whole day without moving, so a window-only query would blank on any quiet stretch.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "green",
+                "value": 40
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.value AS \"Battery\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.value BETWEEN 0 AND 100 AND r.ts <= $__to\nORDER BY r.ts DESC\nLIMIT 1",
+          "queryText": "SELECT r.value AS \"Battery\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'soc' AND r.value BETWEEN 0 AND 100 AND r.ts <= $__to\nORDER BY r.ts DESC\nLIMIT 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Battery",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Highest power flowing INTO the pack while the bike is stationary, which is what makes this correct for both charge types. It is taken from pack_kw, not from the charger signals: DC fast charging bypasses the onboard charger and never shows on dc_v/dc_a, so a dc_v x dc_a definition reported 1.8 kW on a 22.7 kW DC session. The stationary test excludes regen, which is also power into the pack.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "green",
+            "mode": "fixed"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kW"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH samples AS (\n  -- \"Charge power\" is defined as power INTO the pack while the bike is stationary, not as\n  -- anything read off a charging signal. That is the only definition that covers both paths:\n  -- AC charging goes through the onboard charger and shows on dc_v/dc_a, but DC fast charging\n  -- bypasses it entirely and never touches those signals (on 2026-08-08 dc_a peaked at 6.3 A\n  -- through a 22.7 kW session). pack_kw sees both. The stationary test is what separates\n  -- charging from regen, which is also positive pack_kw - without it this reads 25.94 kW off a\n  -- hard regen event rather than 22.95 kW off the actual fast charge.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'speed_can_kmh' THEN 1 END AS speed_row,\n         CASE WHEN s.key = 'pack_kw' AND r.value BETWEEN -200 AND 200 THEN r.value END AS kw,\n         CASE WHEN s.key = 'speed_can_kmh' AND r.value BETWEEN 0 AND 400 THEN r.value END AS kmh\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('pack_kw', 'speed_can_kmh') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- A week of lookback for the speed seed: the bike can sit for days between rides, and with no\n  -- carried speed every sample is excluded and the tile reads \"No data\" on a real charge.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN 0 AND 400 THEN r.value END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'speed_can_kmh' AND r.ts < $__from AND r.ts >= $__from - 604800000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, kw, kmh,\n         COUNT(speed_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS speed_run\n  FROM samples\n),\nheld AS (\n  SELECT ts, kw, MAX(kmh) OVER (PARTITION BY speed_run ORDER BY ts) AS kmh_held\n  FROM runs\n)\nSELECT MAX(kw) AS \"Peak charge power\"\nFROM held\nWHERE kw > 0 AND kmh_held IS NOT NULL AND kmh_held < 1",
+          "queryText": "WITH samples AS (\n  -- \"Charge power\" is defined as power INTO the pack while the bike is stationary, not as\n  -- anything read off a charging signal. That is the only definition that covers both paths:\n  -- AC charging goes through the onboard charger and shows on dc_v/dc_a, but DC fast charging\n  -- bypasses it entirely and never touches those signals (on 2026-08-08 dc_a peaked at 6.3 A\n  -- through a 22.7 kW session). pack_kw sees both. The stationary test is what separates\n  -- charging from regen, which is also positive pack_kw - without it this reads 25.94 kW off a\n  -- hard regen event rather than 22.95 kW off the actual fast charge.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'speed_can_kmh' THEN 1 END AS speed_row,\n         CASE WHEN s.key = 'pack_kw' AND r.value BETWEEN -200 AND 200 THEN r.value END AS kw,\n         CASE WHEN s.key = 'speed_can_kmh' AND r.value BETWEEN 0 AND 400 THEN r.value END AS kmh\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('pack_kw', 'speed_can_kmh') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- A week of lookback for the speed seed: the bike can sit for days between rides, and with no\n  -- carried speed every sample is excluded and the tile reads \"No data\" on a real charge.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN 0 AND 400 THEN r.value END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'speed_can_kmh' AND r.ts < $__from AND r.ts >= $__from - 604800000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, kw, kmh,\n         COUNT(speed_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS speed_run\n  FROM samples\n),\nheld AS (\n  SELECT ts, kw, MAX(kmh) OVER (PARTITION BY speed_run ORDER BY ts) AS kmh_held\n  FROM runs\n)\nSELECT MAX(kw) AS \"Peak charge power\"\nFROM held\nWHERE kw > 0 AND kmh_held IS NOT NULL AND kmh_held < 1",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Peak charge power",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Most negative pack_kw in the window. Negative is power leaving the pack, matching the sign convention on the chart below, so the hardest acceleration is the most negative number rather than the largest.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "orange",
+            "mode": "fixed"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kW"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT MIN(r.value) AS \"Peak discharge\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.value BETWEEN -200 AND 200\n  AND r.ts BETWEEN $__from AND $__to",
+          "queryText": "SELECT MIN(r.value) AS \"Peak discharge\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.value BETWEEN -200 AND 200\n  AND r.ts BETWEEN $__from AND $__to",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Peak discharge",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "Every kW the pack sees, on one sign convention: positive is energy going in, negative is energy coming out. Pack power (pack_kw) is the line that always tells the truth - it covers riding, regen, AC charging and DC fast charging alike. Onboard charger is dc_v x dc_a, the output of the AC charger, and it is here as a cross-check rather than as the charge curve: during AC charging it should sit just above pack power, and the gap is charger-to-pack loss (2.94 vs 2.83 kW, about 4%, on 2026-08-04). It reads ~0 through a DC fast charge, because DC bypasses the onboard charger completely and never appears on dc_v/dc_a - on 2026-08-08 dc_a peaked at 6.3 A while the pack was taking 22.7 kW. So on a DC session, read the orange line. Values are logged on change with a deadband, so a flat stretch means unchanged, not missing - hence stepAfter and spanNulls. The axis spans the full riding range, so zoom to a session to read a charge curve: 3 kW of AC is a flat line next to a 113 kW launch.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:kW"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Battery"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "battery"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Onboard charger"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pack power"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH dc_samples AS (\n  -- Same carry-forward shape as cooling.json's probe pairing: `*_row` marks that the\n  -- signal reported at all and drives the partition, the value column carries it only\n  -- when it is in range, and `*_at` carries the sample's own timestamp so the hold can\n  -- expire. dc_a is far sparser than dc_v (it only moves in 0.1 A steps), so without the\n  -- hold the product would exist at almost no timestamps at all.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'dc_v' THEN 1 END AS volts_row,\n         CASE WHEN s.key = 'dc_a' THEN 1 END AS amps_row,\n         CASE WHEN s.key = 'dc_v' AND r.value BETWEEN 0 AND 500 THEN r.value END AS volts,\n         CASE WHEN s.key = 'dc_a' AND r.value BETWEEN 0 AND 100 THEN r.value END AS amps,\n         CASE WHEN s.key = 'dc_v' AND r.value BETWEEN 0 AND 500 THEN r.ts END AS volts_at,\n         CASE WHEN s.key = 'dc_a' AND r.value BETWEEN 0 AND 100 THEN r.ts END AS amps_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('dc_v', 'dc_a') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed each operand with its last sample from before the window, or zooming into the\n  -- middle of a charge draws nothing: both operands are logged on change and neither is\n  -- guaranteed to move inside a short window.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN 0 AND 500 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN 0 AND 500 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'dc_v' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN 0 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN 0 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'dc_a' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, volts, amps, volts_at, amps_at,\n         COUNT(volts_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS volts_run,\n         COUNT(amps_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS amps_run\n  FROM dc_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(volts) OVER (PARTITION BY volts_run ORDER BY ts) AS volts_held,\n         MAX(amps) OVER (PARTITION BY amps_run ORDER BY ts) AS amps_held,\n         MAX(volts_at) OVER (PARTITION BY volts_run ORDER BY ts) AS volts_at_held,\n         MAX(amps_at) OVER (PARTITION BY amps_run ORDER BY ts) AS amps_at_held\n  FROM runs\n)\nSELECT ts / 1000.0 AS time, volts_held * amps_held / 1000.0 AS \"Onboard charger\"\nFROM held\nWHERE ts >= $__from\n  AND volts_held IS NOT NULL AND amps_held IS NOT NULL\n  AND ts - volts_at_held <= 3600000\n  AND ts - amps_at_held <= 3600000\nORDER BY time",
+          "queryText": "WITH dc_samples AS (\n  -- Same carry-forward shape as cooling.json's probe pairing: `*_row` marks that the\n  -- signal reported at all and drives the partition, the value column carries it only\n  -- when it is in range, and `*_at` carries the sample's own timestamp so the hold can\n  -- expire. dc_a is far sparser than dc_v (it only moves in 0.1 A steps), so without the\n  -- hold the product would exist at almost no timestamps at all.\n  SELECT r.ts AS ts, r.rowid AS rid,\n         CASE WHEN s.key = 'dc_v' THEN 1 END AS volts_row,\n         CASE WHEN s.key = 'dc_a' THEN 1 END AS amps_row,\n         CASE WHEN s.key = 'dc_v' AND r.value BETWEEN 0 AND 500 THEN r.value END AS volts,\n         CASE WHEN s.key = 'dc_a' AND r.value BETWEEN 0 AND 100 THEN r.value END AS amps,\n         CASE WHEN s.key = 'dc_v' AND r.value BETWEEN 0 AND 500 THEN r.ts END AS volts_at,\n         CASE WHEN s.key = 'dc_a' AND r.value BETWEEN 0 AND 100 THEN r.ts END AS amps_at\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('dc_v', 'dc_a') AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  -- Seed each operand with its last sample from before the window, or zooming into the\n  -- middle of a charge draws nothing: both operands are logged on change and neither is\n  -- guaranteed to move inside a short window.\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, 1, NULL,\n           CASE WHEN r.value BETWEEN 0 AND 500 THEN r.value END, NULL,\n           CASE WHEN r.value BETWEEN 0 AND 500 THEN r.ts END, NULL\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'dc_v' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts, r.rowid, NULL, 1,\n           NULL, CASE WHEN r.value BETWEEN 0 AND 100 THEN r.value END,\n           NULL, CASE WHEN r.value BETWEEN 0 AND 100 THEN r.ts END\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'dc_a' AND r.ts < $__from AND r.ts >= $__from - 3600000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n),\nruns AS (\n  SELECT ts, volts, amps, volts_at, amps_at,\n         COUNT(volts_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS volts_run,\n         COUNT(amps_row) OVER (ORDER BY ts, rid ROWS UNBOUNDED PRECEDING) AS amps_run\n  FROM dc_samples\n),\nheld AS (\n  SELECT ts,\n         MAX(volts) OVER (PARTITION BY volts_run ORDER BY ts) AS volts_held,\n         MAX(amps) OVER (PARTITION BY amps_run ORDER BY ts) AS amps_held,\n         MAX(volts_at) OVER (PARTITION BY volts_run ORDER BY ts) AS volts_at_held,\n         MAX(amps_at) OVER (PARTITION BY amps_run ORDER BY ts) AS amps_at_held\n  FROM runs\n)\nSELECT ts / 1000.0 AS time, volts_held * amps_held / 1000.0 AS \"Onboard charger\"\nFROM held\nWHERE ts >= $__from\n  AND volts_held IS NOT NULL AND amps_held IS NOT NULL\n  AND ts - volts_at_held <= 3600000\n  AND ts - amps_at_held <= 3600000\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Pack power\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.value BETWEEN -200 AND 200\n  AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "queryText": "SELECT r.ts / 1000.0 AS time, r.value AS \"Pack power\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'pack_kw' AND r.value BETWEEN -200 AND 200\n  AND r.ts BETWEEN $__from AND $__to\nORDER BY time",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT time, \"Battery\" FROM (\n  -- Seeded the same way as the dc operands, and for the same reason: soc logged 536 rows\n  -- across the whole archive, so most windows contain no change at all and a window-only\n  -- query would draw an empty right axis on a battery that plainly has a charge level.\n  SELECT r.ts / 1000.0 AS time, r.value AS \"Battery\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'soc' AND r.value BETWEEN 0 AND 100\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts / 1000.0, r.value\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'soc' AND r.value BETWEEN 0 AND 100\n      AND r.ts < $__from AND r.ts >= $__from - 86400000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n)\nORDER BY time",
+          "queryText": "SELECT time, \"Battery\" FROM (\n  -- Seeded the same way as the dc operands, and for the same reason: soc logged 536 rows\n  -- across the whole archive, so most windows contain no change at all and a window-only\n  -- query would draw an empty right axis on a battery that plainly has a charge level.\n  SELECT r.ts / 1000.0 AS time, r.value AS \"Battery\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'soc' AND r.value BETWEEN 0 AND 100\n    AND r.ts BETWEEN $__from AND $__to\n  UNION ALL\n  SELECT * FROM (\n    SELECT r.ts / 1000.0, r.value\n    FROM reading r JOIN signal s ON s.id = r.signal_id\n    WHERE s.key = 'soc' AND r.value BETWEEN 0 AND 100\n      AND r.ts < $__from AND r.ts >= $__from - 86400000\n    ORDER BY r.ts DESC LIMIT 1\n  )\n)\nORDER BY time",
+          "refId": "C",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Power and battery",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "How hot the pack gets, split by what the sensor is actually on. BAT1 sits on the cells; PCB1/PCB2 sit on the module board next to the balancing resistors, so under charge the boards run far hotter than the cells they are bolted to - on the 2026-08-04 session the cells peaked at 37 C while boards reached 56 C. Reading the board number as a cell temperature is the mistake this panel exists to prevent, which is why they are separate series rather than one hottest-sensor line. The gap between hottest and coldest cell is the pack's thermal spread; it widening through a charge is the thing to watch. Values are logged on change and carried forward onto a 240-step grid, so a flat line means unchanged, not missing. The two charge types look completely different here: through the 3 kW AC session on 2026-08-04 the cells drift DOWN from 38 C to 28 C, while the 22 kW DC session on 2026-08-08 pushes them UP from 45 C to 54 C in half an hour. AC charging is thermally uneventful; DC is the case this panel exists for.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hottest cell"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 10
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Coldest cell"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hottest board"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH RECURSIVE\n  -- Same 240-step grid the per-module heatmap below uses, so the two panels line up\n  -- step for step and a band in one can be read against a line in the other.\n  window_bounds AS (\n    SELECT $__from AS window_start, $__to AS window_end,\n           MAX(($__to - $__from) / 240, 5000) AS step_ms\n  ),\n  time_grid (bucket_ts) AS (\n    SELECT window_start FROM window_bounds\n    UNION ALL\n    SELECT bucket_ts + (SELECT step_ms FROM window_bounds) FROM time_grid\n    WHERE bucket_ts + (SELECT step_ms FROM window_bounds) <= (SELECT window_end FROM window_bounds)\n  ),\n  series AS (\n    -- BAT1 sits on the cells, PCB1/PCB2 on the module's board (CAN_MAP.md, frame 664\n    -- b5 vs b6-7). They are kept apart because they answer different questions and\n    -- differ by ~20 C under charge: pooling them would report a board temperature as\n    -- if the cells had reached it. 9 BAT1 (LMU 6 and 8 have it disabled) + 22 PCB = 31.\n    SELECT s.id AS signal_id,\n           CASE WHEN s.key GLOB 'lmu*_bat1_c' THEN 'cell' ELSE 'board' END AS kind\n    FROM signal s\n    WHERE s.key GLOB 'lmu*_c' AND s.key NOT GLOB '*_cell*'\n  ),\n  held AS (\n    -- -40..100 is the decoder's own band; it rejects the 122 C pad the BMS writes into\n    -- a slot it has no reading for. Without it the hottest-anything line would spike to\n    -- 122 C every time a module had not been polled yet.\n    SELECT g.bucket_ts, series.kind,\n           (SELECT r.value FROM reading r\n             WHERE r.signal_id = series.signal_id AND r.ts <= g.bucket_ts\n               AND r.value BETWEEN -40 AND 100\n             ORDER BY r.ts DESC LIMIT 1) AS held_value\n    FROM time_grid g CROSS JOIN series\n  )\nSELECT bucket_ts / 1000.0 AS time,\n       MAX(CASE WHEN kind = 'cell' THEN held_value END) AS \"Hottest cell\",\n       MIN(CASE WHEN kind = 'cell' THEN held_value END) AS \"Coldest cell\",\n       MAX(CASE WHEN kind = 'board' THEN held_value END) AS \"Hottest board\"\nFROM held\nWHERE held_value IS NOT NULL\nGROUP BY bucket_ts\nORDER BY time",
+          "queryText": "WITH RECURSIVE\n  -- Same 240-step grid the per-module heatmap below uses, so the two panels line up\n  -- step for step and a band in one can be read against a line in the other.\n  window_bounds AS (\n    SELECT $__from AS window_start, $__to AS window_end,\n           MAX(($__to - $__from) / 240, 5000) AS step_ms\n  ),\n  time_grid (bucket_ts) AS (\n    SELECT window_start FROM window_bounds\n    UNION ALL\n    SELECT bucket_ts + (SELECT step_ms FROM window_bounds) FROM time_grid\n    WHERE bucket_ts + (SELECT step_ms FROM window_bounds) <= (SELECT window_end FROM window_bounds)\n  ),\n  series AS (\n    -- BAT1 sits on the cells, PCB1/PCB2 on the module's board (CAN_MAP.md, frame 664\n    -- b5 vs b6-7). They are kept apart because they answer different questions and\n    -- differ by ~20 C under charge: pooling them would report a board temperature as\n    -- if the cells had reached it. 9 BAT1 (LMU 6 and 8 have it disabled) + 22 PCB = 31.\n    SELECT s.id AS signal_id,\n           CASE WHEN s.key GLOB 'lmu*_bat1_c' THEN 'cell' ELSE 'board' END AS kind\n    FROM signal s\n    WHERE s.key GLOB 'lmu*_c' AND s.key NOT GLOB '*_cell*'\n  ),\n  held AS (\n    -- -40..100 is the decoder's own band; it rejects the 122 C pad the BMS writes into\n    -- a slot it has no reading for. Without it the hottest-anything line would spike to\n    -- 122 C every time a module had not been polled yet.\n    SELECT g.bucket_ts, series.kind,\n           (SELECT r.value FROM reading r\n             WHERE r.signal_id = series.signal_id AND r.ts <= g.bucket_ts\n               AND r.value BETWEEN -40 AND 100\n             ORDER BY r.ts DESC LIMIT 1) AS held_value\n    FROM time_grid g CROSS JOIN series\n  )\nSELECT bucket_ts / 1000.0 AS time,\n       MAX(CASE WHEN kind = 'cell' THEN held_value END) AS \"Hottest cell\",\n       MIN(CASE WHEN kind = 'cell' THEN held_value END) AS \"Coldest cell\",\n       MAX(CASE WHEN kind = 'board' THEN held_value END) AS \"Hottest board\"\nFROM held\nWHERE held_value IS NOT NULL\nGROUP BY bucket_ts\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Pack temperature — cells vs boards",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The same per-module heatmap as the Battery & cell balancing dashboard, repeated here so pack heating can be read directly under the charge curve. This is per module, not per cell: the pack has no per-cell temperature sensors. Each of the 11 LMU modules reports up to three — BAT1 on the cells, PCB1 and PCB2 on its board — which is 31 rows, not 81. Sensors are sampled onto a common 240-step time grid and each step carries the last value logged at or before it, so a flat band means the value has not changed, not that data is missing. Rows are named sensor-first (`bat1 LMU01`, not `LMU01 bat1`) so the nine BAT1 rows sit as one block above the 22 board rows — the heatmap sorts rows by series name and ignores the query's ORDER BY, so the label is the only thing that controls it. There are no cell numbers in this panel at all. Readings outside -40 to 100 °C are dropped, the same band the decoder now applies: the BMS pads a module slot it has not freshly polled with 0x7A = 122 °C, and rows logged before that guard existed are still in the database. Held forward across the grid, one of them would take over the colour scale for the whole panel.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      },
+      "id": 6,
+      "options": {
+        "calculate": false,
+        "cellGap": 0,
+        "cellValues": {
+          "decimals": 1,
+          "unit": "celsius"
+        },
+        "color": {
+          "mode": "scheme",
+          "scheme": "Turbo",
+          "steps": 64,
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "reverse": false
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": -1000000000.0
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "WITH RECURSIVE\n  window_bounds AS (\n    SELECT $__from AS window_start, $__to AS window_end,\n           MAX(($__to - $__from) / 240, 5000) AS step_ms\n  ),\n  time_grid (bucket_ts) AS (\n    SELECT window_start FROM window_bounds\n    UNION ALL\n    SELECT bucket_ts + (SELECT step_ms FROM window_bounds) FROM time_grid\n    WHERE bucket_ts + (SELECT step_ms FROM window_bounds) <= (SELECT window_end FROM window_bounds)\n  ),\n  series AS (\n    SELECT s.id AS signal_id,\n           -- Sensor first, module second: 'bat1 LMU01', not 'LMU01 bat1'. The heatmap sorts its\n           -- rows by series name and ignores the order they arrive in -- adding a grouping key to\n           -- the ORDER BY below changes the frame and moves nothing on screen (measured against\n           -- Grafana 11.3). So the label is the only thing that controls row order, and naming it\n           -- this way is what puts the nine BAT1 sensors in one block above the 22 board ones.\n           -- Worth the slightly odd reading order: BAT1 is on the cells and PCB1/PCB2 are on the\n           -- module board, and under charge the two differ by ~20 C, so the question this panel\n           -- gets asked is almost always about one group or the other, not about one module.\n           printf('%s LMU%02d',\n                  REPLACE(SUBSTR(s.key, INSTR(s.key, '_') + 1), '_c', ''),\n                  CAST(SUBSTR(s.key, 4, INSTR(s.key, '_') - 4) AS INTEGER)) AS row_label\n    FROM signal s\n    WHERE s.key GLOB 'lmu*_c' AND s.key NOT GLOB '*_cell*'\n  ),\n  held AS (\n    SELECT g.bucket_ts, series.row_label,\n           (SELECT r.value FROM reading r\n             WHERE r.signal_id = series.signal_id AND r.ts <= g.bucket_ts\n               AND r.value BETWEEN -40 AND 100\n             ORDER BY r.ts DESC LIMIT 1) AS held_value\n    FROM time_grid g CROSS JOIN series\n  ),\n  sampled AS (SELECT * FROM held WHERE held_value IS NOT NULL)\nSELECT bucket_ts / 1000.0 AS time, row_label, held_value AS \"Value\"\nFROM sampled\nORDER BY time, row_label",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Per-module temperature (°C) — 31 sensors, not 81 cells",
+      "type": "heatmap"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Cool Eva — Power & battery",
+  "uid": "cool-eva-power",
+  "version": 1,
+  "weekStart": ""
+}
