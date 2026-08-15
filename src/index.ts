@@ -32,7 +32,9 @@ const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
 
-// Config (env overrides):
+// Config (env overrides) — all of these are documented in the README's Configuration
+// section, which is the copy a newcomer will actually find:
+//   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU

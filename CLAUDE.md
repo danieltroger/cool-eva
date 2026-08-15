@@ -24,12 +24,12 @@ Pi-based telemetry for a watercooled Energica Eva Ribelle: MAX31865 coolant prob
 
 ## Runtime notes
 
-- Runs as the `thermometer` systemd service on the Pi (Node 24, TypeScript via `--experimental-strip-types`). Relative imports use explicit `.ts` extensions.
+- Runs as the `cool-eva` systemd service on the Pi (Node 24, TypeScript via `--experimental-strip-types`). Relative imports use explicit `.ts` extensions. Renamed from `thermometer` in 2026-08; `scripts/setup-service.ts` deletes the old unit when it finds one, so re-running it is how an existing Pi migrates.
 - `socketcan` is an optionalDependency (Linux-only native build) with a type shim in `src/types.d.ts`, so `tsc` / `npm ci` still work on macOS and CI. `node-ble` is pure JS over D-Bus, so it needs no native build and is a normal dependency.
 
 ## Deploying to the Pi (learned the hard way)
 
-- Deploy is a `git pull` in `/home/pi/thermometer` on the Pi, then `sudo systemctl restart thermometer`. Logs: `journalctl -u thermometer -f`. To try a branch, check it out on the Pi the same way: `git fetch origin && git checkout <branch> && git pull`.
+- Deploy is a `git pull` in `/home/pi/thermometer` on the Pi (the checkout kept its old directory name through the service rename — the unit takes its `WorkingDirectory` from wherever the script is run, so the two need not match), then `sudo systemctl restart cool-eva`. Logs: `journalctl -u cool-eva -f`. To try a branch, check it out on the Pi the same way: `git fetch origin && git checkout <branch> && git pull`.
 - **Only run `npm install` on the Pi when a dependency actually changed** — and check `node_modules/socketcan/build/Release/can.node` still exists afterwards. `package-lock.json` is committed but generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi prunes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will keep insisting it's "up to date" — even with `--force`. The fix is `rm package-lock.json && npm install` **on the Pi** (~4 min, rebuilds the native module). A plain `git pull` without `npm install` is safe: it never touches `node_modules`.
 - **Restarting the service re-initialises `can0`**, which kills any other raw-CAN socket with `OSError 100 Network is down`. Expected when you have a scratch script running, not a fault.
 - **The Connectivity Hub accepts one BLE connection at a time** and the service holds it. Stop the service before running a scratch BLE probe, or the two fight over the link.

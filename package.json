@@ -1,8 +1,11 @@
 {
-  "name": "thermometer",
+  "name": "cool-eva",
   "version": "1.0.0",
-  "description": "",
+  "description": "Telemetry for a watercooled Energica Eva Ribelle: CAN/OBD-II + coolant probes → sealed ride log, live dashboard, Grafana",
   "main": "index.js",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
@@ -11,7 +14,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",
