@@ -37,6 +37,31 @@ function hasEverArrived(key) {
 }
 
 /**
+ * A tick-paced trace of one signal's recent history.
+ *
+ * Bound to the tick, not to the signal: redrawing a polyline on every frame of a
+ * 20 Hz signal is pure battery drain for motion no eye can use. The colour is
+ * sampled off the ring rather than read from the signal state for the same reason
+ * — reading `.val` here would re-subscribe this binding to the signal and cancel
+ * the throttle entirely.
+ *
+ * Shared by SignalTile and PairTile so the pacing rule has one home; it is exactly
+ * the kind of thing that gets fixed in one copy and not the other.
+ * @param {string} key
+ * @param {((value: number | null) => string) | undefined} color
+ * @param {number} chartWindowMs
+ * @param {number} minSpan
+ */
+function trace(key, color, chartWindowMs, minSpan) {
+  return () => {
+    chartTick.val;
+    const ring = ringFor(key);
+    const { values } = ring.since(chartWindowMs, monotonicNow());
+    return sparkline({ values, color: color ? color(ring.latest()) : CALM, minSpan });
+  };
+}
+
+/**
  * The standard readout: small label, large number, small unit, optional second line.
  * @param {object} options
  * @param {string} options.label
@@ -98,20 +123,7 @@ export function SignalTile({
     return reading ? reading.value : null;
   };
 
-  const extra = chart
-    ? [
-        () => {
-          // Bound to the tick, not to the signal: redrawing a polyline on every
-          // frame of a 20 Hz signal is pure battery drain for motion no eye can use.
-          // The colour is sampled off the ring rather than read from the state for
-          // the same reason — currentValue() reads `.val`, which would re-subscribe
-          // this binding to the signal and cancel the throttle entirely.
-          chartTick.val;
-          const { values } = ringFor(key).since(chartWindowMs, monotonicNow());
-          return sparkline({ values, color: color ? color(ringFor(key).latest()) : CALM, minSpan });
-        },
-      ]
-    : [];
+  const extra = chart ? [trace(key, color, chartWindowMs, minSpan)] : [];
 
   return div(
     {
@@ -164,10 +176,28 @@ export function SignalTile({
  * @param {(value: number | null) => string} [options.color]
  * @param {string} [options.caption]
  * @param {string} [options.className]
+ * @param {boolean} [options.chart] trace the upper key over the last few minutes
+ * @param {number} [options.chartWindowMs]
+ * @param {number} [options.minSpan]
  */
-export function PairTile({ label, keys, format, unit = "", color, caption = "", className = "" }) {
+export function PairTile({
+  label,
+  keys,
+  format,
+  unit = "",
+  color,
+  caption = "",
+  className = "",
+  chart = false,
+  chartWindowMs = 10 * 60_000,
+  minSpan = 1,
+}) {
   const first = signalState(keys[0]);
   const second = signalState(keys[1]);
+  // The upper key carries the trace: for a min/max pair it is the hot end that
+  // decides when the BMS starts derating, and two overlaid lines a few degrees
+  // apart read as one thick line at this size anyway.
+  const extra = chart ? [trace(keys[1], color, chartWindowMs, minSpan)] : [];
   return div(
     {
       // Staleness matters more on a pair than on a single value, because
@@ -178,7 +208,11 @@ export function PairTile({ label, keys, format, unit = "", color, caption = "", 
       // this the tile would keep presenting the last good pair as current, which
       // is the one thing that file goes out of its way not to do.
       class: () => {
-        const stale = (first.val || second.val) && isStale(keys[0], STALE_MS) && isStale(keys[1], STALE_MS);
+        // OR, not AND: half a pair going quiet is already reason not to read the
+        // number as current. Requiring both meant a frozen high value stayed at
+        // full brightness for as long as the low kept arriving.
+        const seen = first.val || second.val;
+        const stale = seen && (isStale(keys[0], STALE_MS) || isStale(keys[1], STALE_MS));
         return `tile ${className}${stale ? " stale" : ""}`;
       },
       style: () => (hasEverArrived(keys[0]) || hasEverArrived(keys[1]) ? "" : "display:none"),
@@ -202,7 +236,24 @@ export function PairTile({ label, keys, format, unit = "", color, caption = "", 
       },
       unit ? span({ class: "unit" }, unit) : null
     ),
-    div({ class: "sub" }, caption)
+    () => {
+      // Same fault notice SignalTile carries, for the same reason: a reading
+      // rejected by the plausibility gate never reaches signalState, so without
+      // this the tile keeps presenting the last good pair as current — the
+      // "silently dropped" outcome bounds.js exists to prevent. batt_temp_hi is a
+      // signed byte off 0x660, so a garbage 0x7F or 0x80 is a real possibility
+      // rather than a theoretical one. Paced at 2 Hz so the notice expires.
+      chartTick.val;
+      const faulted = keys
+        .map((key, index) => ({ fault: faultState(key).val, end: index === 0 ? "low" : "high" }))
+        .filter(entry => entry.fault && peekServerTime() - entry.fault.ts < FAULT_MEMORY_MS);
+      if (faulted.length > 0) {
+        const detail = faulted.map(entry => `${entry.end} ${entry.fault?.value.toFixed(0)}`).join(", ");
+        return div({ class: "sub fault" }, `sensor fault (${detail})`);
+      }
+      return div({ class: "sub" }, caption);
+    },
+    ...extra
   );
 }
 
