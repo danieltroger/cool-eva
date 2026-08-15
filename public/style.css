@@ -511,3 +511,70 @@ body {
 .view > div:not(.tile):not(.hero):not(.section):not(.filter) {
   grid-column: 1 / -1;
 }
+
+/* The charge screen swaps its whole delivery section between AC and DC, so those
+   tiles live inside a wrapper rather than directly in the view grid. */
+.subgrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.heatmap-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 0.3rem;
+  margin: 0.35rem 0 0.1rem;
+}
+
+/* One label per row, sharing the grid's height so they line up without the SVG
+   having to carry glyphs through its own horizontal stretch. */
+.heatmap-labels {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 1.1rem;
+  text-align: right;
+  font-size: 0.6rem;
+  color: var(--label);
+  font-variant-numeric: tabular-nums;
+}
+
+.heatmap-labels > div {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.heatmap {
+  flex: 1;
+  min-width: 0;
+  /* Tall enough that eleven module rows stay tappable-sized on a phone, and the
+     labels do not collapse into each other. */
+  height: 180px;
+  display: block;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.toggle-row button {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--tile-edge);
+  border-radius: 0.5rem;
+  color: var(--label);
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.45rem 0.3rem;
+  cursor: pointer;
+}
+
+.toggle-row button.on {
+  color: var(--fg);
+  border-color: var(--good);
+}

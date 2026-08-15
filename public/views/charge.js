@@ -1,11 +1,29 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, isStale, valueOf } from "../lib/store.js";
-import { Fact, PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
-import { ring } from "../lib/svg.js";
+import { chartTick, isStale, knownKeys, peek, valueOf } from "../lib/store.js";
+import { Fact, PairTile, STALE_MS, SectionLabel, SignalTile } from "../lib/tiles.js";
+import { heatmap, meter, ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import { power, whole } from "../lib/format.js";
+import {
+  COOLANT_FLOW_LPH,
+  isCharging,
+  coolantDelta,
+  coolantHeatRemovedWatts,
+  isOnboardChargerLive,
+  resistiveLossWatts,
+} from "../lib/derive.js";
+import {
+  CELL_COUNT,
+  CELL_VOLTAGE_PATTERN,
+  MAX_CELLS_PER_MODULE,
+  MODULE_COUNT,
+  MODULE_SENSORS,
+  cellVoltageKeys,
+  cellsInModule,
+  moduleTemperatureKey,
+} from "../lib/cells.js";
 
 const { div, span } = van.tags;
 
@@ -32,6 +50,95 @@ export function ChargeView() {
     { class: "view" },
     ChargeHero(),
     SectionLabel("Delivery"),
+    // Which tiles even exist depends on where the charge is coming from. On DC the
+    // charger frames are silent, so the AC-sourced tiles below would sit there
+    // showing the last values of a session that ended — which is what made this
+    // screen useless at a fast charger. See isOnboardChargerLive().
+    () => {
+      switch (deliveryMode.val) {
+        case "ac":
+          return AcDelivery();
+        case "dc":
+          return DcDelivery();
+        default:
+          return NotCharging();
+      }
+    },
+    SectionLabel("Pack"),
+    DerateTile(),
+    ThermalBalanceTile(),
+    BalanceTile(),
+    PairTile({
+      label: "Pack temp",
+      keys: ["batt_temp_lo", "batt_temp_hi"],
+      format: value => value.toFixed(0),
+      unit: "°C",
+      color: colors.temperature,
+      caption: "min / max across the pack",
+      chart: true,
+      minSpan: 5,
+    }),
+    SignalTile({
+      key: "coolant_out",
+      label: "Coolant out",
+      format: value => value.toFixed(1),
+      unit: "°C",
+      color: colors.temperature,
+      chart: true,
+      minSpan: 2,
+    }),
+    HeatmapTile(),
+    IsolationTile()
+  );
+}
+
+/** True while the onboard AC charger is talking; false at a DC fast charger. */
+function onboardChargerLive() {
+  return isOnboardChargerLive(isStale, CHARGER_LIVE_MS);
+}
+
+/**
+ * The same answer as a boolean state, so the DOM binding above only fires when AC/DC
+ * actually flips.
+ *
+ * isStale() reads serverTime, which apply() writes on EVERY message including 20 Hz
+ * pack_a patches — so binding the subgrid straight to onboardChargerLive() would
+ * tear down and rebuild four tiles at frame rate, sparklines included, defeating the
+ * chartTick pacing they exist to have. Assigning an unchanged value to a VanJS state
+ * is a no-op, so this derive absorbs the churn: it still re-runs per message, but
+ * that is four Map lookups rather than four tiles and an SVG.
+ */
+const deliveryMode = van.derive(() => (!isCharging() ? "idle" : onboardChargerLive() ? "ac" : "dc"));
+
+/**
+ * Charge is a tab, so this screen is reachable mid-ride. Without this the DC branch
+ * would render "Charging at 41 kW" from pack_kw with its discharge sign stripped by
+ * Math.abs() — confidently wrong, and not caught by staleness because pack_kw is
+ * perfectly live while riding. The old AC-only tiles failed safe only by accident,
+ * their signals being silent off the charger.
+ */
+function NotCharging() {
+  return div(
+    { class: "tile span2" },
+    div({ class: "label" }, "Not charging"),
+    div({ class: "sub" }, () => {
+      const kilowatts = valueOf("pack_kw");
+      if (kilowatts == null) {
+        return "plug in to see delivery";
+      }
+      return kilowatts < 0
+        ? `the pack is delivering ${power(Math.abs(kilowatts))} kW, not taking it`
+        : "plug in to see delivery";
+    })
+  );
+}
+
+/**
+ * AC: the charger tells you what it is doing, so show it.
+ */
+function AcDelivery() {
+  return div(
+    { class: "subgrid" },
     SignalTile({
       key: "dc_a",
       label: "Current",
@@ -59,43 +166,43 @@ export function ChargeView() {
         return amps == null ? "" : `${amps.toFixed(1)} A drawn`;
       },
     }),
-    LimitsTile(),
-    SectionLabel("Pack"),
-    BalanceTile(),
-    // The same pair the riding screen shows, rather than pack_temp_avg.
-    //
-    // The average was never wrong — across 287 samples of rides.db it sits between
-    // the min and the max on 277 of them, the rest being pairing lag on
-    // log-on-change signals — but it is a different statistic under a label that
-    // did not say so, and a lone "37" next to the riding screen's "37 / 38" reads
-    // as a third unrelated number rather than the middle of that pair.
-    //
-    // Cost of the switch, worth knowing: batt_temp_lo/hi are deliberately sparse
-    // (src/can/pack-temperature.ts) and are not written until the frames establish
-    // which BMS config is flashed, while pack_temp_avg is emitted from the first
-    // 0x660. So this tile can be absent for a few seconds after a restart where
-    // the old one showed a number immediately. The pair is still the honest thing
-    // to show: a gap says "not established yet", which is what is true.
-    PairTile({
-      label: "Pack temp",
-      keys: ["batt_temp_lo", "batt_temp_hi"],
-      format: value => value.toFixed(0),
-      unit: "°C",
-      color: colors.temperature,
-      caption: "min / max across the pack",
+    LimitsTile()
+  );
+}
+
+/**
+ * DC: nothing on the charger side is talking, but the pack is — and what the pack
+ * is taking is the charge, measured closer to the thing you care about than the
+ * charger's own claim would be anyway.
+ */
+function DcDelivery() {
+  return div(
+    { class: "subgrid" },
+    SignalTile({
+      key: "pack_kw",
+      label: "Charging at",
+      format: value => power(Math.abs(value)),
+      unit: "kW",
+      color: () => colors.CALM,
+      className: "span2",
       chart: true,
       minSpan: 5,
+      sub: () => "measured at the pack — the DC charger reports nothing on this bus",
     }),
     SignalTile({
-      key: "coolant_out",
-      label: "Coolant out",
-      format: value => value.toFixed(1),
-      unit: "°C",
-      color: colors.temperature,
-      chart: true,
-      minSpan: 2,
+      key: "pack_a",
+      label: "Current",
+      format: value => Math.abs(value).toFixed(0),
+      unit: "A",
+      color: () => colors.CALM,
     }),
-    IsolationTile()
+    SignalTile({
+      key: "pack_v",
+      label: "Pack",
+      format: value => value.toFixed(0),
+      unit: "V",
+      color: () => colors.CALM,
+    })
   );
 }
 
@@ -129,8 +236,10 @@ function ChargeHero() {
  * interesting part is over.
  */
 function chargeModeText() {
-  const onboardLive = ["mains_v", "mains_a", "dc_v", "dc_a"].some(key => !isStale(key, CHARGER_LIVE_MS));
-  const kind = onboardLive ? "AC" : "DC";
+  // The same rule the delivery section switches on, not a second copy of the list:
+  // if a fifth charger signal turns out to be the reliable one, the hero must not be
+  // able to say "AC" while the tiles below show the DC set.
+  const kind = onboardChargerLive() ? "AC" : "DC";
   if (valueOf("bms_state_charge_complete") === 1) {
     return `${kind} · complete`;
   }
@@ -193,6 +302,243 @@ function BalanceTile() {
       return `${range}${balancing ? "balancing now" : "not balancing"}${cells}`;
     },
   });
+}
+
+/**
+ * How close the pack is to the temperature where DC charging is throttled.
+ *
+ * This is the number that decides how long you stand at the charger, and it was
+ * invisible on this screen.
+ *
+ * The knee is exact rather than fitted, because it is what the BMS config does: the
+ * pack reports a flat 35 °C to the VCU and only starts telling the truth once a cell
+ * reaches 55 °C, at which point the VCU sees the real number and throttles. Visible
+ * in the log — across every sample where the true batt_temp_hi read 50, 51, 52, 53
+ * or 54 °C, batt_temp_hi_vcu was exactly 35.0; at 55 °C it jumps to the real value.
+ *
+ * The DC session of 2026-08-09 shows the consequence: 18.5-18.9 kW steady from
+ * 50-53 °C, dipping at 54, and 8.7 kW average at 55 — less than half.
+ *
+ * So the tile counts down against the TRUE temperature (batt_temp_hi, sourced from
+ * 0x660), not the clamped one the VCU reads, which is flat at 35 and would show no
+ * approach at all.
+ */
+const DERATE_KNEE_C = 55;
+
+/** Bottom of the bar. Below this the pack is nowhere near derating. */
+const DERATE_SCALE_FROM_C = 30;
+
+/**
+ * Hand-built tiles get no staleness for free, which is the fault this PR calls out
+ * in BMS grants — so these two do not get to repeat it. A tile whose inputs have all
+ * gone quiet is dimmed rather than left presenting the last number at full
+ * brightness, and keys that have never arrived do not count as stale.
+ * @param {string[]} keys
+ */
+function inputsStale(keys) {
+  const live = keys.filter(key => valueOf(key) != null);
+  return live.length > 0 && live.every(key => isStale(key, STALE_MS));
+}
+
+function DerateTile() {
+  const headroom = () => {
+    const hot = valueOf("batt_temp_hi");
+    return hot == null ? null : DERATE_KNEE_C - hot;
+  };
+  return div(
+    { class: () => `tile span2${inputsStale(["batt_temp_hi"]) ? " stale" : ""}` },
+    div({ class: "label" }, "Charge derate"),
+    div(
+      {
+        class: "value",
+        style: () => {
+          const left = headroom();
+          if (left == null) {
+            return `color:${colors.MUTED}`;
+          }
+          return `color:${left <= 0 ? colors.BAD : left <= 2 ? colors.WARN : left <= 5 ? colors.WATCH : colors.GOOD}`;
+        },
+      },
+      () => {
+        const left = headroom();
+        if (left == null) {
+          return "–";
+        }
+        return left <= 0 ? "throttled" : `${left.toFixed(0)}`;
+      },
+      () => span({ class: "unit" }, (headroom() ?? 1) <= 0 ? "" : "°C to go")
+    ),
+    () => {
+      const hot = valueOf("batt_temp_hi");
+      const span = DERATE_KNEE_C - DERATE_SCALE_FROM_C;
+      const fraction = hot == null ? null : (hot - DERATE_SCALE_FROM_C) / span;
+      const left = headroom();
+      const color = left == null ? colors.MUTED : left <= 0 ? colors.BAD : left <= 2 ? colors.WARN : colors.GOOD;
+      return meter({ fraction, color, marker: 1 });
+    },
+    div({ class: "sub" }, () => {
+      const hot = valueOf("batt_temp_hi");
+      if (hot == null) {
+        return `pack temperature not established yet · the VCU starts throttling at ${DERATE_KNEE_C} °C`;
+      }
+      return `hottest cell ${hot.toFixed(0)} °C · BMS reports a flat 35 °C to the VCU until ${DERATE_KNEE_C} °C, then the truth`;
+    })
+  );
+}
+
+/**
+ * Heat going into the pack against heat the loop is taking out.
+ *
+ * The two halves are not equally solid and the caption says so. Heat in is
+ * I²R from the BMS's own resistance estimate, which is sparse and swings several
+ * fold. Heat out is ṁ·cp·ΔT with ṁ assumed from the pump's rating — the ΔT is
+ * measured, the flow is not. Together they still answer the question the loop was
+ * built to answer, which no single number does: is it keeping up.
+ */
+function ThermalBalanceTile() {
+  return div(
+    {
+      // Both halves have their own inputs; the tile is only old when nothing feeding
+      // either of them is current.
+      class: () =>
+        `tile span2${inputsStale(["pack_a", "pack_resistance_mohm", "coolant_in", "coolant_out"]) ? " stale" : ""}`,
+    },
+    div({ class: "label" }, "Heat in / out"),
+    div(
+      { class: "value" },
+      () => {
+        const into = resistiveLossWatts();
+        const out = coolantHeatRemovedWatts();
+        if (into == null && out == null) {
+          return "–";
+        }
+        return `${into == null ? "?" : Math.round(into)} / ${out == null ? "?" : Math.round(out)}`;
+      },
+      span({ class: "unit" }, "W")
+    ),
+    () => {
+      const into = resistiveLossWatts();
+      const out = coolantHeatRemovedWatts();
+      if (into == null || out == null || into <= 0) {
+        return meter({ fraction: null, color: colors.MUTED });
+      }
+      const keepingUp = out / into;
+      const color = keepingUp >= 0.9 ? colors.GOOD : keepingUp >= 0.6 ? colors.WATCH : colors.WARN;
+      return meter({ fraction: Math.min(keepingUp, 1), color });
+    },
+    div({ class: "sub" }, () => {
+      const delta = coolantDelta();
+      const deltaText = delta == null ? "no coolant probes" : `coolant ΔT ${delta.toFixed(2)} °C`;
+      return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h`;
+    })
+  );
+}
+
+/**
+ * The pack, module by module.
+ *
+ * Temperature first: during a fast charge heat is what limits the charge, so the
+ * question is which module is running hot, and the 81-cell voltage strip cannot
+ * answer it. Voltage is a tap away for when balance is the question instead.
+ */
+const heatmapMode = van.state(/** @type {"temperature" | "voltage"} */ ("temperature"));
+
+function HeatmapTile() {
+  return div(
+    { class: "tile span2" },
+    div({ class: "label" }, () => (heatmapMode.val === "temperature" ? "Module temperatures" : "Cell voltages")),
+    () => {
+      chartTick.val;
+      return heatmapMode.val === "temperature" ? TemperatureGrid() : VoltageGrid();
+    },
+    div(
+      { class: "toggle-row" },
+      .../** @type {const} */ (["temperature", "voltage"]).map(mode =>
+        van.tags.button(
+          {
+            class: () => (heatmapMode.val === mode ? "on" : ""),
+            onclick: () => {
+              heatmapMode.val = mode;
+            },
+          },
+          mode === "temperature" ? "Temperature" : "Voltage"
+        )
+      )
+    )
+  );
+}
+
+/** Rows are modules, columns are that module's battery and two board sensors. */
+function TemperatureGrid() {
+  const rows = [];
+  let seen = 0;
+  for (let module = 1; module <= MODULE_COUNT; module++) {
+    const cells = MODULE_SENSORS.map(sensor => {
+      const key = moduleTemperatureKey(module, sensor);
+      const value = key == null ? null : peek(key);
+      if (value != null) {
+        seen += 1;
+      }
+      return { value, color: colors.temperature(value) };
+    });
+    rows.push({ label: String(module), cells });
+  }
+  if (seen === 0) {
+    return div({ class: "sub" }, "Module temperatures: waiting for 0x664");
+  }
+  return div(heatmap({ rows }), div({ class: "sub" }, `${seen} sensors · battery, board 1, board 2 per module`));
+}
+
+/** Rows are modules, columns are the cells in them; colour is millivolts below the best. */
+function VoltageGrid() {
+  const keys = cellVoltageKeys(knownKeys.val);
+  if (keys.length === 0) {
+    return div({ class: "sub" }, `Cell voltages: waiting for 0x662–0x664 (0 of ${CELL_COUNT})`);
+  }
+  // Indexed by cell number, not appended: a missing cell has to leave a hole rather
+  // than shift every later cell in its module one column left, or the grid stops
+  // meaning what the position says — which is the whole reason for drawing a grid.
+  // Not hypothetical here: 0x663/0x664 have been observed never sampling modules 1
+  // and 2, and a 0xFFFF rejected by bounds.js does the same thing, which is exactly
+  // when you want to see the gap.
+  /** @type {Map<number, Array<number | null>>} */
+  const byModule = new Map();
+  let highest = -Infinity;
+  for (const key of keys) {
+    const match = CELL_VOLTAGE_PATTERN.exec(key);
+    if (!match) {
+      continue;
+    }
+    const module = Number(match[1]);
+    const cells = byModule.get(module) ?? Array.from({ length: MAX_CELLS_PER_MODULE }, () => null);
+    byModule.set(module, cells);
+    const value = peek(key);
+    if (value == null) {
+      continue;
+    }
+    highest = Math.max(highest, value);
+    cells[Number(match[2]) - 1] = value;
+  }
+  const rows = [];
+  let seen = 0;
+  for (let module = 1; module <= MODULE_COUNT; module++) {
+    const values = byModule.get(module) ?? Array.from({ length: cellsInModule(module) }, () => null);
+    rows.push({
+      label: String(module),
+      // Absolute millivolts below the best cell, matching the strip on the
+      // hypermiling screen — a relative scale paints a healthy pack red.
+      cells: values.slice(0, cellsInModule(module)).map(value => {
+        if (value != null) {
+          seen += 1;
+        }
+        return { value, color: value == null ? "" : colors.spread(highest - value) };
+      }),
+    });
+  }
+  return div(
+    heatmap({ rows, columns: MAX_CELLS_PER_MODULE }),
+    div({ class: "sub" }, `${seen} of ${CELL_COUNT} cells · mV below the best`)
+  );
 }
 
 /**
