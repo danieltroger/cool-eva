@@ -251,11 +251,20 @@ function BalanceTile() {
  * How close the pack is to the temperature where DC charging is throttled.
  *
  * This is the number that decides how long you stand at the charger, and it was
- * invisible on this screen. Measured over the DC session of 2026-08-09: at 50-53 °C
- * the pack pulled 18.5-18.9 kW steadily, at 54 °C it started dipping, and at 55 °C
- * the average collapsed to 8.7 kW — less than half. The knee below is that
- * observation, not a figure from a datasheet, which is also why it is stated as
- * "measured" on screen.
+ * invisible on this screen.
+ *
+ * The knee is exact rather than fitted, because it is what the BMS config does: the
+ * pack reports a flat 35 °C to the VCU and only starts telling the truth once a cell
+ * reaches 55 °C, at which point the VCU sees the real number and throttles. Visible
+ * in the log — across every sample where the true batt_temp_hi read 50, 51, 52, 53
+ * or 54 °C, batt_temp_hi_vcu was exactly 35.0; at 55 °C it jumps to the real value.
+ *
+ * The DC session of 2026-08-09 shows the consequence: 18.5-18.9 kW steady from
+ * 50-53 °C, dipping at 54, and 8.7 kW average at 55 — less than half.
+ *
+ * So the tile counts down against the TRUE temperature (batt_temp_hi, sourced from
+ * 0x660), not the clamped one the VCU reads, which is flat at 35 and would show no
+ * approach at all.
  */
 const DERATE_KNEE_C = 55;
 
@@ -301,9 +310,9 @@ function DerateTile() {
     div({ class: "sub" }, () => {
       const hot = valueOf("batt_temp_hi");
       if (hot == null) {
-        return `pack temperature not established yet · measured knee ${DERATE_KNEE_C} °C`;
+        return `pack temperature not established yet · the VCU starts throttling at ${DERATE_KNEE_C} °C`;
       }
-      return `hottest cell ${hot.toFixed(0)} °C · measured: charge halves at ${DERATE_KNEE_C} °C`;
+      return `hottest cell ${hot.toFixed(0)} °C · BMS reports a flat 35 °C to the VCU until ${DERATE_KNEE_C} °C, then the truth`;
     })
   );
 }
