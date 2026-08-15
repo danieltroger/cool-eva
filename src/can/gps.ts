@@ -7,7 +7,7 @@
 // odometer (04) replies our own BLE client asks for every 10 s.
 //
 // This is the hub's own broadcast, not a mirror of whatever it happens to be
-// sending a connected phone: with the thermometer service stopped and therefore no
+// sending a connected phone: with the cool-eva service stopped and therefore no
 // BLE session at all, 30 s of the same capture still carried 58 × `1A 00`, 58 ×
 // `1A 01`, 58 × `1A FE` and 59 × `00 FF`. Position on CAN does not depend on the
 // Bluetooth link being up, which is the whole point of reading it here.

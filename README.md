@@ -2,12 +2,81 @@
 
 Telemetry for a **watercooled 2021 Energica Eva Ribelle**. A Raspberry Pi inside the bike logs the temperatures of a custom watercooling loop on the battery pack, **plus** the bike's own battery / charge / cell / drive telemetry read straight off the CAN bus — all into an encrypted, write-only ride log, surfaced as a live phone dashboard and (after decryption on the laptop) a Grafana dashboard for post-ride analysis.
 
-## Hardware & setup
+## Hardware
 
 - **Raspberry Pi Zero 2 W** running the app as a `systemd` service (Node.js, runs as root).
-- **2× MAX31865 + PT100 probes** over SPI — coolant **in** and **out** of the custom battery watercooling loop.
 - **[8devices Korlan USB2CAN](https://shop.8devices.com/usb2can/korlan/)** plugged into the bike's OBD port → `can0` (in-kernel `usb_8dev`, no driver install). 500 kbit, 11-bit. The app reads broadcast frames _and_ actively polls standard OBD-II PIDs (**read-only** — no diagnostic writes).
+- **2× MAX31865 + PT100 probes** over SPI — coolant **in** and **out** of the custom battery watercooling loop. **Optional**: this is the one piece of hardware most Energicas don't have. Without it everything else works and the coolant tiles simply don't appear.
 - **Networking:** the Pi joins my **phone's hotspot**, so it's reachable at **`http://cool-eva.local`** from the phone's browser. It's a bit janky (have to open hotspot page in phone settings for ~20s at the start of every ride), but it works for an at-a-glance dash while riding/charging.
+
+### If you have a stock Energica
+
+The Korlan alone gets you most of this. Everything under [What it logs](#what-it-logs) works on a stock, unmodified bike except the sections explicitly marked otherwise — no watercooling loop, no probes and no BMS reflash required. Set `COOLANT_ENABLED=0` and the coolant probes are never attempted.
+
+Two caveats worth knowing before you spend money:
+
+- It is developed against a **2021 Eva Ribelle**. The pack shape is hardcoded in places — 81 cells in 11 modules, a 400 A discharge and 120 A regen ceiling, a 130 kW power bar — and nothing detects a mismatch. On another bike in the same pack family the readings are right and those scale limits may not be; on a differently-packed model (Experia) treat the whole thing as untested. Reports welcome.
+- The bike's **CAN bus is not a toy**. This app only ever reads, but it does transmit standard OBD-II _read_ requests to do so (see [Notes](#notes)). If you would rather it never spoke at all, `OBD_ENABLED=0` makes it passive-only.
+
+## Setup
+
+From a blank SD card to a dashboard. Steps 1–5 are the Pi, step 6 is your laptop, and **step 6 is the one people skip and regret** — without it the dashboard works perfectly and nothing at all is saved.
+
+**1. Flash Raspberry Pi OS (64-bit).** In Raspberry Pi Imager, open the gear icon and set:
+
+- **hostname `cool-eva`** — this is what makes `http://cool-eva.local` work. Skip it and your Pi is `raspberrypi.local`.
+- **Enable SSH**, with a password or your public key. There is no screen on the bike, so this is the only way in — including for every future update.
+- **Wi-Fi: your phone's hotspot** (SSID and password), so it connects on the road. Add your home Wi-Fi too, from the Pi later, or you'll be swapping the card to get it back.
+
+**2. Join the phone hotspot** (if you didn't set it in the Imager). Bookworm uses NetworkManager:
+
+```bash
+sudo nmcli device wifi connect "<your hotspot SSID>" password "<password>"
+sudo nmcli connection modify "<your hotspot SSID>" connection.autoconnect yes
+```
+
+On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix.
+
+**3. Install Node 24.** Raspberry Pi OS's `apt` Node is far too old — the app is TypeScript run directly, which needs `--experimental-strip-types` (Node 22.6.0 at the very oldest; 24 is what this is tested on).
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt install -y nodejs
+node --version   # must be v22.6 or newer
+```
+
+**4. Clone and install.**
+
+```bash
+git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva
+cd ~/cool-eva
+npm install
+```
+
+`npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`). On a Pi Zero 2 W that takes **several minutes** and wants swap enabled — if it gets killed, that's memory, not a bug.
+
+**5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
+
+**6. Generate the ride-log keypair — on your laptop, not the Pi.** Nothing is persisted until the Pi has a public key. See [Encrypted ride log](#encrypted-ride-log) for why it works this way.
+
+```bash
+# on the LAPTOP, in a clone of this repo
+node --experimental-strip-types scripts/generate-log-key.ts
+# back the PRIVATE key up now (password manager) — it is the only thing that
+# can ever read your logs, and there is no recovery path
+scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
+```
+
+**7. Install the service** (back on the Pi):
+
+```bash
+sudo $(which node) --experimental-strip-types scripts/setup-service.ts
+sudo journalctl -u cool-eva -f    # follow the logs
+```
+
+The installer refuses to run on too-old a Node, removes the old `thermometer` unit if you're upgrading, and tells you if the ride-log key is still missing. In the log you want to see `ride-log: encrypting to …`; if you see the `NO PUBLIC KEY` banner instead, step 6 didn't land.
+
+Then open **`http://cool-eva.local`** on your phone.
 
 ## What it logs
 
@@ -20,11 +89,19 @@ Everything is logged **on change** (so steady values don't spam the log) into th
 | **Cells** | `cell_min_mv`, `cell_avg_mv`, `cell_max_mv`, `cell_spread_mv`, `cell_deviation_mv` (the BMS's own ΔV), `cell_lowest_v_idx`, `cell_highest_v_idx` (which cell is at each extreme _right now_ — at a few mV of spread that ranking is noise, not a health verdict), `cells_connected`, `cell_voltage_sum_v` | CAN `0x203`/`0x205`/`0x207` |
 | **BMS state & faults** | `charge_state` (raw System State bitfield) + decoded `bms_state_*` (discharge / charge / balancing / trickle / idle / charge complete / maintenance), `bms_error_flags`, `bms_warning_flags` (raw words) + booleans for the ones worth acting on: cell over/under voltage, over temperature, leak detected, leak detection failed, contactor faults, low SOC, balancing required | CAN `0x201` |
 | **Isolation** | `iso_test_1`, `iso_test_2`, `iso_test_total` (10-bit ADC, 512 = ideal), `bms_io_state`, `lmu_comm_warnings` | CAN `0x207`/`0x206` |
-| **Charge** | `charge_state`, `dc_v`, `dc_a`, `mains_v`, `mains_a`, `charge_limit_a`, `charger_enabled`, `charger_max_dc_v`, `charger_max_dc_a` | CAN `0x201`/`0x305`/`0x306`/`0x10a`/`0x300` |
-| **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah` | CAN `0x025`/`0x10A`/`0x205` |
-| **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` |
+| **Charge** | `charge_state`, `dc_v`, `dc_a`, `mains_v`, `mains_a`, `charge_limit_a`, `charger_enabled`, `charger_max_dc_v`, `charger_max_dc_a`, `bms_post_processor_1` (purpose unknown, logged raw so a ride can name it) | CAN `0x201`/`0x305`/`0x306`/`0x10a`/`0x300` |
+| **Energy** | `inst_consumption_wh`, `residual_energy_wh` (available energy), `bms_remaining_energy_raw`, `remaining_ah`, plus the hub's own trip figures: `range_km`, `avg_consumption_wh_km`, `km_per_kwh`, `kwh_per_100km` (the last two emit nonsense at a standstill and are gated on the dashboard) | CAN `0x025`/`0x10A`/`0x205` + hub |
+| **Drive** | `throttle_pct`, `speed_kmh`, `motor_rpm`, `motor_load_pct`, `dist_since_clear_km`, `motor_torque_nm`, `motor_power_kw` (Bluetooth only — on no CAN frame and no OBD PID we know of), `odometer_km`, `trip_km`, `vehicle_state`, `vehicle_substate` | CAN `0x109` + OBD-II `0D`/`0C`/`04`/`31` + hub |
+| **Drive, second opinion** | `speed_can_kmh`, `motor_rpm_can`, `odometer_can_km`, `reverse_gear` — deliberately **not** merged into the keys above, because comparing the two over a ride is the point and one key with two writers just flaps. Plus the inverter's own limits `current_max_out_a`, `current_max_regen_a`, `current_other_a` (unidentified; logged so a ride can name it) | CAN `0x104`/`0x109` |
+| **GPS** | `gps_lat`, `gps_lon`, `gps_altitude_m`, `gps_speed_kmh`, `gps_course_deg`, `gps_satellites`, `gps_fix`, `gps_epoch_s` (satellite UTC, logged raw — the Pi has no RTC, so a no-network boot's timestamps stay repairable). Arrives over **both** transports; position is not Bluetooth-only | CAN `0x410` + hub over BLE |
+| **Powertrain temps** | `inverter_igbt_min_c`, `inverter_igbt_c`, `inverter_igbt_max_c`, `inverter_gate_c`, `motor_temp_c` (°C) — separate sensors from the OBD poller's `bike_coolant_temp`, and they move differently under load | CAN `0x020`/`0x022` |
+| **Controls & vehicle state** | `high_beam` (which is also how you change dashboard screens), `brake`, `blinker_left`, `blinker_right`, `horn`, `energized`, `go_request`, `go`, `key_on`, `stand_up` (sidestand retracted), `ignition_button`, `throttle_on`, `moving`, `charging`, `charge_port_unlocked` | CAN `0x102` |
+| **IMU** | `accel_lateral_raw`, `accel_frontal_raw` — raw counts, **not** g: the `.xdbc` names the axes in g but gives no scale, so they must not be plotted as if they were | CAN `0x102` b4-7 |
+| **Security** | `key_fob_id` (which fob started the bike — part of why the log is sealed), `keys_paired` (read once at startup from the E-LOCK ECU) | CAN `0x480` + E-LOCK `0x791` |
 | **OBD-II (1 Hz)** | `bike_coolant_temp` (motor/coolant °C), `oil_temp` (°C), `ambient_temp` (°C), `aux_12v` (V), `soh_pid` (%) | OBD-II `05`/`5C`/`46`/`42`/`5B` |
-| **Trouble codes** | `mil_on`, `dtc_count` (stored, per PID `01`), `dtc_stored_count` (the mode-03 list's own length — the same number down a second path), `dtc_list_count` (the bike's _active_ list, a different thing), `freeze_frame_dtc` (the code that lit the lamp), plus one 1/0 signal per code Energica documents. See [Trouble codes](#trouble-codes) | OBD-II `01`/`02` + **mode 03** · CAN `0x410` |
+| **Trouble codes** | `mil_on`, `dtc_count` (stored, per PID `01`), `dtc_stored_count` (the mode-03 list's own length — the same number down a second path), `dtc_list_count` (the bike's _active_ list, a different thing), `dtc_unrecognised_count`, `freeze_frame_dtc` (the code that lit the lamp), plus one 1/0 signal per code Energica documents. `dtc_pending_count` and `dtc_permanent_count` are written **only if** modes 07/0A ever answer — on this bike they never have, and their absence is the honest record of that. See [Trouble codes](#trouble-codes) | OBD-II `01`/`02` + **mode 03** · CAN `0x410` |
+| **Service counters** | `time_since_clear_min` (monotonic ⇒ an hour meter), `warmups_since_clear`, `dist_with_mil_km`, `time_with_mil_min` | OBD-II `4E`/`30`/`21`/`4D` |
+| **Waypoints** | `waypoint_seq`, `waypoint_lat`, `waypoint_lon` — written only when you ask, from the dashboard button or Siri. See [Saving a waypoint from Siri](#saving-a-waypoint-from-siri) | `GET /waypoint` |
 
 ### Signals that need the custom BMS config
 
@@ -34,13 +111,14 @@ The frames below only exist once the pack's LiBAL BMS has been reflashed with th
 
 | Group | Signals | Source |
 | --- | --- | --- |
-| **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — the individual cells, multiplexed by module at 20 Hz. Known gap: cells 4-8 of LMU 1 and 2 never get sampled, because the CAN transmit order is phase-locked to the BMS's module poll (see `obd-garage/CAN_MAP.md`) | CAN `0x662`–`0x664` |
-| **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells | CAN `0x664` |
+| **Per-cell voltages** | `lmu1_cell1_mv` … `lmu11_cell7_mv` — the individual cells, multiplexed by module at 20 Hz. Known gap: cells 4-8 of LMU 1 and 2 never get sampled, because the CAN transmit order is phase-locked to the BMS's module poll (see `src/can/decode-bms.ts`) | CAN `0x662`–`0x664` |
+| **Per-module temps** | `lmu1_bat1_c`, `lmu1_pcb1_c`, `lmu1_pcb2_c` … — each module's battery and board sensors, keyed off the same module number as its cells. Modules 6 and 8 have no battery sensor enabled, so they never report one: configuration, not a fault | CAN `0x664` |
+| **Module selector** | `lmu_cell_mux` — the raw module number the per-cell frames are currently carrying, logged so that "byte 0 isn't the LMU number after all" stays distinguishable from "the frames never arrived". Deadbanded to one row per boot | CAN `0x662`–`0x664` b0 |
 | **Pack temps** | `pack_temp_avg` (°C), `lmu_temp_high_idx`, `lmu_temp_low_idx`; in the clamp config also the true `batt_temp_lo`/`batt_temp_hi` plus the clamp's own arithmetic (`clamp_gate`, `clamp_amount`, `batt_temp_hi_vcu_echo`) | CAN `0x660` |
 | **Energy / hours** | `bms_remaining_energy_wh` (1 Wh resolution), `bms_uptime_min` (BMCU hour meter) | CAN `0x661` |
 | **Cell limits** | `cell_cutoff_mv`, `cell_end_of_life_mv`, `cell_overvoltage_mv`, `cell_target_mv` — the thresholds the BMS is actually configured with, so nothing downstream has to hardcode them | CAN `0x665` |
 
-> VIN and BMS writes are still **not** reachable from the OBD port (on the standard pins, haven't tried the other pins yet). Per-cell voltages **are** — they just have to be enabled in the BMS's own configuration first; see `obd-garage/CAN_MAP.md`.
+> VIN and BMS writes are still **not** reachable from the OBD port (on the standard pins, haven't tried the other pins yet). Per-cell voltages **are** — they just have to be enabled in the BMS's own configuration first, which needs the vendor's BMS tooling and is not something this repo can do for you.
 
 #### `CUSTOM_BMS_CONFIG` — set this only if you flashed the custom config
 
@@ -86,7 +164,7 @@ Energica BT hub ─┘
 
 ## The dashboard
 
-Four screens, switched from the tab bar — or by **flashing the high beam three times**, which is the only control that works with both hands on the bars.
+Five screens, switched from the tab bar — or by **flashing the high beam three times**, which is the only control that works with both hands on the bars.
 
 | Screen | For |
 | --- | --- |
@@ -94,8 +172,9 @@ Four screens, switched from the tab bar — or by **flashing the high beam three
 | **Hypermile** | Weakest cell's headroom above cut-off (instantaneous **and** sag-compensated), the BMS's 60 s cut-off timer, allowed current, rolling Wh/km, resistive loss, all 81 cells as a strip |
 | **Charge** | A / V / kW, what the BMS is granting the charger, balancing state, cell spread trend, pack temperature, isolation |
 | **All** | Every signal the bike is producing, grouped and filterable |
+| **Faults** | Stored and active trouble codes, named from Energica's own table, with the history behind each. Carries the ⚠ itself, so a code appearing mid-ride is visible without costing space on the screen you're looking at |
 
-**Ride** and **Charge** are what you leave it on; the other two the bike picks for you. It switches to Charge when the BMS reports a charging state, and to Hypermile below 5 % SOC **or** when the weakest cell drops within 150 mV of cut-off — SOC near empty comes from an OCV table that was never re-characterised for these cells, so it can't be the only trigger. The switch is edge-triggered: once it has moved you, you can move back and it stays put.
+**Ride** and **Charge** are what you leave it on; Hypermile and Charge the bike picks for you. It switches to Charge when the BMS reports a charging state, and to Hypermile below 5 % SOC **or** when the weakest cell drops within 150 mV of cut-off — SOC near empty comes from an OCV table that was never re-characterised for these cells, so it can't be the only trigger. The switch is edge-triggered: once it has moved you, you can move back and it stays put.
 
 Design notes for the hypermiling numbers are in `HYPERMILING.md`; the derivations all live in `public/lib/derive.js` and nothing derived is ever logged.
 
@@ -114,7 +193,9 @@ node --experimental-strip-types scripts/replay-capture.ts <capture.log> --speed 
 # → dashboard on http://localhost:8080, fed by the real decoders
 ```
 
-Replays a `candump -tA` capture through the actual decode path, so what's on screen has taken the same route it does on the Pi. Captures and what's in each are listed in `cool-eva-archive/CAPTURES.md`; `capture-20260802-185513-563dd217.log` is the only one containing a real charging session.
+Replays a `candump -tA` capture through the actual decode path, so what's on screen has taken the same route it does on the Pi.
+
+The captures this was developed against are one motorcycle's ride history and aren't in the repo, so you'll need your own: `candump -tA can0 > capture.log` on the Pi while the bike is awake, and anything from a few seconds up will do. `scripts/decode-dtc-response.ts` does run standalone — it replays a real, committed trouble-code transfer and needs no capture at all.
 
 ### Saving a waypoint from Siri
 
@@ -124,25 +205,61 @@ A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, 
 
 ## Running it
 
-The app is a `systemd` service on the Pi (Node 24, TypeScript run directly via `--experimental-strip-types`), serving `http://<pi>/` on port 80.
+The app is the `cool-eva` `systemd` service on the Pi (Node 24, TypeScript run directly via `--experimental-strip-types`), serving `http://<pi>/` on port 80. First install is under [Setup](#setup); after that, deploying is a pull and a restart:
 
 ```bash
-npm install                       # builds better-sqlite3 + socketcan (Linux only)
-sudo node scripts/setup-service.ts   # install + enable + start the systemd service
-
-# deploy an update
-git pull && npm ci && sudo systemctl restart thermometer
-sudo journalctl -u thermometer -f    # follow logs
+git pull && sudo systemctl restart cool-eva
+sudo journalctl -u cool-eva -f    # follow logs
 ```
+
+> ⚠️ **Don't run `npm install` or `npm ci` on the Pi unless a dependency actually changed.** `package-lock.json` is generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi deletes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will insist it's "up to date" even with `--force` — the fix is `rm package-lock.json && npm install` **on the Pi** (~4 min). A plain `git pull` never touches `node_modules` and is always safe.
 
 The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, ~10x smaller than the old SQLite download, and safe to fetch over any network because it's ciphertext. Decrypt it on the laptop (see below) to get a `.db` for Grafana.
 
-### Grafana
+### Configuration
+
+Every option is an environment variable, and every default is what the bike in the photo runs. Set them in **`/etc/default/cool-eva`**, one `NAME=value` per line:
 
 ```bash
-docker compose up -d     # Grafana at http://localhost:3000, reads temperatures.db
-                         # (build that file from a /dl download: see "Encrypted ride log")
+sudo tee /etc/default/cool-eva <<'EOF'
+COOLANT_ENABLED=0
+EOF
+sudo systemctl restart cool-eva
 ```
+
+Not in the unit file — `scripts/setup-service.ts` rewrites that every time it runs, which is exactly what you do to migrate a Pi or after a Node upgrade, and anything configured there would be silently discarded.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `COOLANT_ENABLED` | on | `0` skips the MAX31865 probes entirely. Set this on a bike with no watercooling loop. |
+| `CAN_ENABLED` | on | `0` skips CAN altogether — coolant probes only. |
+| `OBD_ENABLED` | on | `0` makes the bus **listen-only**: broadcasts are decoded, nothing is ever transmitted. Costs you the OBD-II PIDs and the trouble-code list. |
+| `ELOCK_ENABLED` | on | `0` skips the one-shot keys-paired read from the E-LOCK ECU at startup. |
+| `BLE_ENABLED` | on | `0` skips the Bluetooth link to the Connectivity Hub (torque/power, odometer, vehicle state). GPS also arrives over CAN, so you keep position either way. |
+| `BLE_MAC` | discover | Pin the hub's address instead of finding it by advertised name. |
+| `GPS_TIME_SYNC` | on | `0` never steps the system clock from satellite time. The Pi has no RTC, so leave it on unless you have another time source. |
+| `CUSTOM_BMS_CONFIG` | unset | Set to `1` **only** if the pack's BMS has been reflashed with the custom config — see [below](#custom_bms_config--set-this-only-if-you-flashed-the-custom-config). Leave unset on a stock bike. |
+| `RIDE_LOG_PUBKEY` | `./ride-log-key.public.pem` | Where the sealing key lives. |
+| `RIDE_LOG_DIR` | `./ride-logs` | Where sealed `.celog` segments are written. |
+| `VCU_PARAM_DIR` | `./vcu-params` | Where `scripts/read-vcu-params.ts` leaves snapshots for `/vcu-params` to serve. |
+
+### Grafana
+
+The whole path from a ride to a chart, on the laptop. Grafana reads a plaintext SQLite file, and the bike only ever produces sealed segments, so decrypting is a step you cannot skip:
+
+```bash
+# 1. park within wifi range and pull the sealed log off the bike
+curl -O http://cool-eva.local/dl        # or just open http://cool-eva.local/dl on your phone
+
+# 2. decrypt it into the file the datasource expects. Needs the PRIVATE key
+#    from step 6 of Setup, in the current directory.
+node --experimental-strip-types scripts/decrypt-log.ts cool-eva-2026-08-01.celog --out rides.db
+
+# 3. Grafana at http://localhost:3000 — no login, dashboards already provisioned
+docker compose up -d
+```
+
+The datasource points at `/repo/rides.db` (`grafana/provisioning/datasources/sqlite.yml`), which is this repo's directory mounted into the container — so `rides.db` must sit at the repo root. Decrypt more `.celog` files into the same `rides.db` later and they append; every panel says **No data** until step 2 has run at least once.
 
 Six dashboards are provisioned from `grafana/dashboards/`, one file each:
 
@@ -164,8 +281,10 @@ Set it up once, on the laptop:
 ```bash
 node --experimental-strip-types scripts/generate-log-key.ts   # writes both keys
 # back the PRIVATE key up (password manager) — it is the only thing that can ever read the logs
-scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/thermometer/
+scp ride-log-key.public.pem pi@cool-eva.local:/home/pi/cool-eva/
 ```
+
+The pair is generated on the laptop and never on the Pi, deliberately: the bike is supposed to hold a public key only, and a Pi that generated the pair would have had the private half on the SD card — which is exactly what the sealed log exists to make worthless. `scripts/setup-service.ts` checks for the key and prints these commands with your hostname filled in if it's missing.
 
 Restart the service; it logs `ride-log: encrypting to …` once it finds the key. Sealed segments land in `ride-logs/*.celog`. To read them back:
 
@@ -181,7 +300,7 @@ RIDE_LOG_PRIVATE_KEY=~/Documents/cool-eva/ride-log-key.private.pem \
 
 That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged.
 
-> ⚠️ The Grafana datasource points at `/repo/temperatures.db` (`grafana/provisioning/datasources/sqlite.yml`), so either decrypt with `--out temperatures.db` **in a directory that doesn't already hold your pre-encryption archive** — the tool would append into it — or repoint the datasource at `rides.db`. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
+> ⚠️ Decrypting **appends** into whatever `--out` names, so point it at a fresh file rather than at an existing archive you care about. The Grafana datasource reads `/repo/rides.db`, which is why the walkthrough above uses that name. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
 
 Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. Segments are independently sealed, so damage is contained: the reader resyncs on the next segment and reports what it couldn't read rather than stopping. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
 
@@ -240,3 +359,8 @@ A sweep survives the link dropping: each row is appended to `vcu-params/sweep.pa
 - The CAN bus is **read-only**: passive broadcast decode, standard OBD-II _read_ requests, and the KWP `0x22` parameter reads above. No writes of any kind. Nothing here can clear a trouble code: OBD-II **mode 04 is not implemented and must not be** — it would erase the history above, on a bike that has been accumulating it since before anyone was reading. `0x2E`, `0x3B`, `0x27`, `0x31`, `0x11` and `0x2F` are likewise absent, and `src/vcu/param-codec.ts` is built so they cannot be expressed rather than merely left unwritten.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.
+- The one thing that _does_ write to the bike is the Bluetooth handshake: enrolling with the Connectivity Hub claims its single authorised-device slot, and after several unanswered attempts the client also tries the hub's own address. If the bike is already paired to something else, that pairing can be replaced, and the way back is clearing the stored device from the bike's own dashboard. `BLE_ENABLED=0` avoids the whole question.
+
+## Licence
+
+AGPL-3.0 — see [`LICENSE`](LICENSE). It reverse-engineers a vehicle you own and talks to safety-relevant hardware; there is no warranty of any kind, and what you plug into your own motorcycle is your responsibility.

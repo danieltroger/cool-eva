@@ -28,7 +28,7 @@ import type { VcuMicro } from "./param-table.ts";
 // never be added, and why.
 //
 // ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which
-// kills every other raw-CAN socket on the Pi including the running thermometer
+// kills every other raw-CAN socket on the Pi including the running cool-eva
 // service's (CLAUDE.md). This client only ever opens a channel on an interface
 // that is already up, so a parameter read can be taken alongside the live service
 // instead of interrupting it. The cost is that it cannot rescue a listen-only
@@ -275,7 +275,7 @@ async function ensureSession(context: ClientContext, micro: VcuMicro): Promise<b
  * they are claims about different things: one says the micro did not answer, the
  * other says we never managed to ask. Collapsing them would put our own dead socket
  * on the screen as the bike refusing to talk — `can0` goes down whenever the
- * thermometer service restarts (CLAUDE.md), so that is a thing that happens.
+ * cool-eva service restarts (CLAUDE.md), so that is a thing that happens.
  */
 type ExchangeResult =
   | { kind: "reply"; frame: VcuAddressedFrame }
