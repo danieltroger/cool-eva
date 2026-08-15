@@ -164,10 +164,37 @@ export function SignalTile({
  * @param {(value: number | null) => string} [options.color]
  * @param {string} [options.caption]
  * @param {string} [options.className]
+ * @param {boolean} [options.chart] trace the upper key over the last few minutes
+ * @param {number} [options.chartWindowMs]
+ * @param {number} [options.minSpan]
  */
-export function PairTile({ label, keys, format, unit = "", color, caption = "", className = "" }) {
+export function PairTile({
+  label,
+  keys,
+  format,
+  unit = "",
+  color,
+  caption = "",
+  className = "",
+  chart = false,
+  chartWindowMs = 10 * 60_000,
+  minSpan = 1,
+}) {
   const first = signalState(keys[0]);
   const second = signalState(keys[1]);
+  // The upper key carries the trace: for a min/max pair it is the hot end that
+  // decides when the BMS starts derating, and two overlaid lines a few degrees
+  // apart read as one thick line at this size anyway.
+  const trace = chart
+    ? [
+        () => {
+          // Tick-paced and peeked, for the reasons in SignalTile above.
+          chartTick.val;
+          const { values } = ringFor(keys[1]).since(chartWindowMs, monotonicNow());
+          return sparkline({ values, color: color ? color(ringFor(keys[1]).latest()) : CALM, minSpan });
+        },
+      ]
+    : [];
   return div(
     {
       // Staleness matters more on a pair than on a single value, because
@@ -202,7 +229,8 @@ export function PairTile({ label, keys, format, unit = "", color, caption = "", 
       },
       unit ? span({ class: "unit" }, unit) : null
     ),
-    div({ class: "sub" }, caption)
+    div({ class: "sub" }, caption),
+    ...trace
   );
 }
 

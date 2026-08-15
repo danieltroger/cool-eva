@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, valueOf } from "../lib/store.js";
-import { Fact, SectionLabel, SignalTile } from "../lib/tiles.js";
+import { Fact, PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
 import { ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import { power, whole } from "../lib/format.js";
@@ -62,12 +62,27 @@ export function ChargeView() {
     LimitsTile(),
     SectionLabel("Pack"),
     BalanceTile(),
-    SignalTile({
-      key: "pack_temp_avg",
+    // The same pair the riding screen shows, rather than pack_temp_avg.
+    //
+    // The average was never wrong — across 287 samples of rides.db it sits between
+    // the min and the max on 277 of them, the rest being pairing lag on
+    // log-on-change signals — but it is a different statistic under a label that
+    // did not say so, and a lone "37" next to the riding screen's "37 / 38" reads
+    // as a third unrelated number rather than the middle of that pair.
+    //
+    // Cost of the switch, worth knowing: batt_temp_lo/hi are deliberately sparse
+    // (src/can/pack-temperature.ts) and are not written until the frames establish
+    // which BMS config is flashed, while pack_temp_avg is emitted from the first
+    // 0x660. So this tile can be absent for a few seconds after a restart where
+    // the old one showed a number immediately. The pair is still the honest thing
+    // to show: a gap says "not established yet", which is what is true.
+    PairTile({
       label: "Pack temp",
+      keys: ["batt_temp_lo", "batt_temp_hi"],
       format: value => value.toFixed(0),
       unit: "°C",
       color: colors.temperature,
+      caption: "min / max across the pack",
       chart: true,
       minSpan: 5,
     }),
