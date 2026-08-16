@@ -1,4 +1,4 @@
-import { ExtendedIsoTpReassembler } from "../diagnostics/extended-iso-tp.ts";
+import { ExtendedIsoTpReassembler, maxFramesFor } from "../diagnostics/extended-iso-tp.ts";
 import {
   TESTER_ADDRESS,
   buildFlowControlFrame,
@@ -132,16 +132,36 @@ export interface RunningMultiFrameTransfer {
 }
 
 /**
- * Absolute ceiling on frames handled in one exchange, over and above the
- * reassembler's own cap.
+ * How many frames that contribute NOTHING to a payload one exchange may absorb.
+ *
+ * The only such frame a well-behaved micro sends is a flow control answering our
+ * `0x35` — one of them, or a few if it says WAIT first. 16 is generous for that
+ * and still a hard bound on a micro that only ever says WAIT.
+ */
+const FLOW_CONTROL_FRAME_ALLOWANCE = 16;
+
+/**
+ * Ceiling on frames handled in one exchange, over and above the reassembler's own
+ * cap.
  *
  * The reassembler bounds frames that CONTRIBUTE to a payload. This bounds the
- * ones that do not: a micro repeating flow-control frames, or replying to
- * somebody else on our id, would otherwise keep this alive doing nothing until
- * the timer saved us. The timer would save us — this is the cheaper guard, and it
- * makes the loop terminate on its own terms rather than on the clock's.
+ * ones that do not: a micro repeating flow-control frames — which the reassembler
+ * deliberately ignores, so nothing there counts them — would otherwise keep this
+ * alive doing nothing until the timer saved us. The timer would save us; this is
+ * the cheaper guard, and it makes the loop terminate on its own terms rather than
+ * on the clock's.
+ *
+ * ⚠️ DERIVED from the payload cap rather than fixed, and for the same reason
+ * `maxFramesFor` itself is. As a constant the two caps only stayed ordered while
+ * the payload cap was small: a caller that raised it past ~380 bytes would have
+ * seen a legitimate long reply abandoned as "more than 64 frames in one exchange"
+ * — a true statement about the wrong number, and a guard firing where it was
+ * never meant to. Being strictly above the reassembler's cap is what keeps the
+ * accurate message the one a caller sees.
  */
-const MAX_FRAMES_PER_EXCHANGE = 64;
+function maxFramesPerExchange(maxPayloadBytes: number): number {
+  return maxFramesFor(maxPayloadBytes) + FLOW_CONTROL_FRAME_ALLOWANCE;
+}
 
 /**
  * Starts one multi-frame exchange and sends the first frame of the request.
@@ -221,8 +241,9 @@ function handleFrame(context: TransferContext, data: Buffer): boolean {
     // busy.
     return false;
   }
-  if (context.framesHandled >= MAX_FRAMES_PER_EXCHANGE) {
-    settle(context, { kind: "abandoned", reason: `more than ${MAX_FRAMES_PER_EXCHANGE} frames in one exchange` });
+  const frameBudget = maxFramesPerExchange(context.options.maxPayloadBytes);
+  if (context.framesHandled >= frameBudget) {
+    settle(context, { kind: "abandoned", reason: `more than ${frameBudget} frames in one exchange` });
     return true;
   }
   context.framesHandled += 1;
@@ -283,7 +304,7 @@ function handleFlowControlFromMicro(context: TransferContext, flowControl: VcuFl
     // but it changes nothing.
     //
     // Logged ONCE per transfer, not once per frame. A micro that repeats these is
-    // bounded only by MAX_FRAMES_PER_EXCHANGE, and 64 identical lines in the
+    // bounded only by the frame budget, and dozens of identical lines in the
     // journal would bury whatever else went wrong in the same second.
     if (!context.sawFlowControlFromMicro) {
       console.log(`vcu: flow control from ${context.options.target} with no request frames outstanding, ignoring`);
@@ -294,6 +315,17 @@ function handleFlowControlFromMicro(context: TransferContext, flowControl: VcuFl
   context.sawFlowControlFromMicro = true;
   switch (flowControl.status) {
     case "clear-to-send":
+      // ⚠️ The window this timer was guarding has CLOSED — the micro answered. It
+      // must be cleared here and not only on the branches that re-arm it, because
+      // the ordinary pacing branch of `sendNextRequestFrame` re-arms nothing: a
+      // separation time longer than the timer's remainder would let
+      // `onRequestFlowControlTimeout` fire mid-send, warn that no flow control
+      // came when one just did — on the one question this transfer exists to
+      // settle — and then discard the separation time the micro had asked for.
+      if (context.timer !== null) {
+        clearTimeout(context.timer);
+        context.timer = null;
+      }
       context.consecutiveFramesUntilNextFlowControl = flowControl.blockSize;
       context.separationTimeMs = flowControl.separationTimeMs;
       // A second clear-to-send arriving while the first one's paced send is still

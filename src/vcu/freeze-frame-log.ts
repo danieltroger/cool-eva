@@ -123,6 +123,19 @@ export interface FreezeFrameLogProgress {
   elapsedMs: number;
 }
 
+/** How the closing `0x37` went. */
+export type FreezeFrameLogExit =
+  /** Sent, and the micro answered `77`. The transfer is closed. */
+  | "acknowledged"
+  /** Sent, and the micro did not answer. It may still be holding an open upload. */
+  | "unacknowledged"
+  /**
+   * Not sent, because nothing was opened — the micro REFUSED the `0x35`, there was
+   * no session, or the frame never left our socket. Sending one anyway would be
+   * noise, and reporting it as a failed close would be a warning about nothing.
+   */
+  | "not-owed";
+
 /** How a whole log read ended. */
 export type FreezeFrameLogCompletion =
   /** The micro said the upload was over. The only outcome that means "this is the whole log". */
@@ -147,13 +160,16 @@ export interface FreezeFrameLogResult {
   /** What the `75` reply said, or null if the upload never opened. */
   grant: VcuUploadGrant | null;
   /**
-   * Whether the `0x37` that closes the transfer was acknowledged.
+   * How the closing `0x37` went.
    *
-   * False is not a failure of the READ — every block already in `blocks` is still
-   * good — but it does mean the micro may still think an upload is open, which is
-   * worth knowing before the next attempt is called broken.
+   * Three states rather than a boolean, because "we did not close it" and "there
+   * was nothing to close" are different claims and only one of them is worth a
+   * warning. Neither is a failure of the READ — every block already in `blocks` is
+   * good regardless — but `unacknowledged` means the micro may still think an
+   * upload is open, which is worth knowing before the next attempt is called
+   * broken.
    */
-  exitAcknowledged: boolean;
+  exit: FreezeFrameLogExit;
   elapsedMs: number;
 }
 
@@ -207,7 +223,7 @@ interface LogReadState {
 async function runLogRead(state: LogReadState): Promise<FreezeFrameLogResult> {
   const bus = acquireBus("a freeze-frame log read");
   if (!bus.ok) {
-    return finish(state, "failed", `the bus is busy with ${bus.heldBy}`, false);
+    return finish(state, "failed", `the bus is busy with ${bus.heldBy}`, "not-owed");
   }
   try {
     return await readWithBus(state);
@@ -222,13 +238,24 @@ async function readWithBus(state: LogReadState): Promise<FreezeFrameLogResult> {
   const opened = await client.multiFrameRead(VCU_SAFETY_MICRO, { kind: "request-upload-freeze-frame-log" });
   const openFailure = describeFailure(opened, "35 RequestUpload");
   if (openFailure !== null) {
-    // Nothing to close: the upload never opened, so no `0x37` is owed.
-    return finish(state, state.cancellation === null ? "failed" : "cancelled", openFailure, false);
+    // ⚠️ A failed `0x35` does NOT mean no upload is open, and this used to assume
+    // it did. Only three outcomes prove the micro has nothing to close: it
+    // REFUSED the request, we never opened a session, or the frame never left our
+    // socket. Everything else — silence, a scrambled reply, a cancel — means the
+    // request reached the bus and A8 may have opened an upload whose grant we
+    // never saw. Leaving that open is what makes the NEXT read's `0x35` get
+    // refused, which is the exact failure this module's header promises to avoid.
+    const nothingWasOpened =
+      opened.status === "no-session" ||
+      opened.status === "not-sent" ||
+      (opened.status === "reply" && opened.reply.kind === "refused");
+    const exit = nothingWasOpened ? "not-owed" : await closeTransfer(state);
+    return finish(state, state.cancellation === null ? "failed" : "cancelled", openFailure, exit);
   }
   if (opened.status !== "reply" || opened.reply.kind !== "positive") {
     // Unreachable — describeFailure covers every other shape — and here so that a
     // later widening cannot fall through into reading `.body` off a refusal.
-    return finish(state, "failed", "35 RequestUpload answered in a shape this read does not define", false);
+    return finish(state, "failed", "35 RequestUpload answered in a shape this read does not define", "not-owed");
   }
   state.grant = readUploadGrant(opened.reply.body);
   if (!state.grant.asCaptured) {
@@ -244,8 +271,8 @@ async function readWithBus(state: LogReadState): Promise<FreezeFrameLogResult> {
   const completion = await readBlocks(state);
   // Always, on every path including a cancel and a failure. See the header: an
   // upload left open is state on the micro, and `0x37` transfers nothing.
-  const exitAcknowledged = await closeTransfer(state);
-  return finish(state, completion.completion, completion.reason, exitAcknowledged);
+  const exit = await closeTransfer(state);
+  return finish(state, completion.completion, completion.reason, exit);
 }
 
 async function readBlocks(
@@ -299,16 +326,16 @@ async function readBlocks(
  * Never throws and never turns a good read into a bad one: the blocks already
  * collected are unaffected by how this goes.
  */
-async function closeTransfer(state: LogReadState): Promise<boolean> {
+async function closeTransfer(state: LogReadState): Promise<FreezeFrameLogExit> {
   const exit = await state.options.client.multiFrameRead(VCU_SAFETY_MICRO, { kind: "request-transfer-exit" });
   if (exit.status === "reply" && exit.reply.kind === "positive") {
-    return true;
+    return "acknowledged";
   }
   const failure = describeFailure(exit, "37 RequestTransferExit") ?? "an unrecognised reply";
   // A warning rather than an error: the read itself may have gone perfectly, and
   // this only says the micro was not told we had finished.
   console.warn(`vcu: could not close the freeze-frame upload — ${failure}`);
-  return false;
+  return "unacknowledged";
 }
 
 /** One line naming what went wrong with an exchange, or null when nothing did. */
@@ -343,14 +370,14 @@ function finish(
   state: LogReadState,
   completion: FreezeFrameLogCompletion,
   reason: string | null,
-  exitAcknowledged: boolean
+  exit: FreezeFrameLogExit
 ): FreezeFrameLogResult {
   return {
     completion,
     reason,
     blocks: state.blocks,
     grant: state.grant,
-    exitAcknowledged,
+    exit,
     elapsedMs: Math.round(since(state.startedAt)),
   };
 }
@@ -360,7 +387,10 @@ export function describeFreezeFrameLogResult(result: FreezeFrameLogResult): stri
   const size = result.blocks.reduce((total, body) => total + body.length, 0);
   const scale = `${result.blocks.length} block(s), ${size} byte(s) in ${(result.elapsedMs / 1000).toFixed(1)} s`;
   const grant = result.grant ? ` — grant "${result.grant.rawHex}"` : "";
-  const untidy = result.exitAcknowledged ? "" : " ⚠️ the 37 close was not acknowledged";
+  // Only `unacknowledged` earns a warning. `not-owed` means nothing was opened,
+  // and warning about an unclosed transfer that never existed is how a log line
+  // teaches people to ignore it.
+  const untidy = result.exit === "unacknowledged" ? " ⚠️ the 37 close was not acknowledged" : "";
   switch (result.completion) {
     case "finished":
       return `freeze-frame log: complete, ${scale}${grant}${untidy}`;

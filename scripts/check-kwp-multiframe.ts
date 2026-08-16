@@ -1,4 +1,5 @@
 import { ExtendedIsoTpReassembler } from "../src/diagnostics/extended-iso-tp.ts";
+import { monotonicNow, since } from "../src/monotonic.ts";
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
 import { describeFreezeFrameLogResult, startFreezeFrameLogRead } from "../src/vcu/freeze-frame-log.ts";
 import { createVcuKwpClient } from "../src/vcu/kwp-client.ts";
@@ -196,6 +197,41 @@ check(
   parseFlowControlFrame(parseHexFrame("A8 30 FF 00")) === null,
   "our own outbound flow control is not addressed to us"
 );
+
+// ⚠️ Regression: the flow-control WINDOW's timer must be cleared when the micro
+// answers, not only when a branch happens to re-arm it.
+//
+// The micro says "clear to send, but leave 40 ms between frames" while the window
+// this transfer was given is 20 ms. The window is over — it was answered — so
+// nothing should fire. With the timer left armed it fires mid-send, logs that no
+// flow control came when one just did (on the ONE question this transfer exists to
+// settle), and resets the separation time to 0, so the rest of the request ignores
+// the only thing the micro asked for. Timing is the observable difference.
+{
+  const transmittedAt: number[] = [];
+  const startedAt = monotonicNow();
+  const transfer = startMultiFrameTransfer({
+    target: "A8",
+    requestPayload: encodeMultiFrameRequestPayload({ kind: "request-upload-freeze-frame-log" }),
+    send: () => transmittedAt.push(Math.round(since(startedAt))),
+    maxPayloadBytes: 256,
+    firstReplyTimeoutMs: 60,
+    transferTimeoutMs: 60,
+    requestFlowControlTimeoutMs: 20,
+  });
+  // `30 00 28` — clear to send, unlimited block size, 40 ms separation.
+  setTimeout(() => transfer.handleFrame(Buffer.from(parseHexFrame("F1 30 00 28"))), 2);
+  const result = await transfer.finished;
+  check(transmittedAt.length === 3, `all three request frames should go out, got ${transmittedAt.length}`);
+  check(
+    result.kind === "timeout" && result.stage === "first-reply",
+    `and then wait for a reply, got ${describe(result)}`
+  );
+  // The gap between the two consecutive frames is what the micro asked for. A
+  // stale timer firing at 20 ms would have sent the second one early.
+  const separation = transmittedAt[2] - transmittedAt[1];
+  check(separation >= 35, `the micro's 40 ms separation time must be honoured, frames were ${separation} ms apart`);
+}
 
 console.log("✓ the 0x35 request segments to the frame captured on 2026-08-08, and round-trips");
 
@@ -419,7 +455,7 @@ for (const sendsRequestFlowControl of [true, false]) {
     read.grant?.rawHex === UPLOAD_GRANT_BODY && read.grant.asCaptured,
     `${label}: the grant should be "${UPLOAD_GRANT_BODY}"`
   );
-  check(read.exitAcknowledged, `${label}: the 0x37 close should be acknowledged`);
+  check(read.exit === "acknowledged", `${label}: the 0x37 close should be acknowledged`);
 
   // The micro refuses a `0x35` whose reassembled length is not 12, so this also
   // proves the consecutive frames arrived and were reassembled correctly on the
@@ -464,9 +500,61 @@ for (const sendsRequestFlowControl of [true, false]) {
   // different claims, and only one of them means the log is whole.
   check(read.completion === "failed", `a refusal after the last block should fail, got "${read.completion}"`);
   check(read.blocks.length === UPLOAD_BLOCK_BODIES.length, "and the blocks already read must be kept");
-  check(read.exitAcknowledged, "and the transfer should still be closed politely");
+  check(read.exit === "acknowledged", "and the transfer should still be closed politely");
   client.stop();
   console.log(`  ✓ refusal after the last block: ${describeFreezeFrameLogResult(read)}`);
+}
+
+// ⚠️ Regression: a `0x35` that FAILS is not the same as a `0x35` that opened
+// nothing.
+//
+// The micro here opens the upload and then says nothing — the reply is lost, or
+// the window expires under a busy bus. The read has to fail, but it must still
+// send `0x37`, because A8 is now holding an upload that would make the NEXT read's
+// `0x35` get refused. Only a refusal, a dead session or a dead socket prove there
+// is nothing to close.
+{
+  const bus = simulateVcuMicros([
+    {
+      target: "A8",
+      records: new Map(),
+      silentServices: [0x35],
+      upload: { grantBody: parseHexFrame(UPLOAD_GRANT_BODY), blocks: UPLOAD_BLOCK_BODIES.map(parseHexFrame) },
+    },
+  ]);
+  const client = createVcuKwpClient(bus.channel, {
+    paceMs: 1,
+    responseTimeoutMs: 40,
+    multiFrame: { firstReplyTimeoutMs: 60, requestFlowControlTimeoutMs: 20 },
+  });
+  bus.channel.addListener("onMessage", message => client.handleFrame(message.id, message.data));
+  const read = await startFreezeFrameLogRead({ client, paceMs: 1 }).finished;
+  check(read.completion === "failed", `a silent 0x35 should fail the read, got "${read.completion}"`);
+  check(read.blocks.length === 0, "and collect nothing");
+  check(read.exit === "acknowledged", "but it MUST still close the upload it may have opened");
+  check(
+    bus.sentRequests.filter(request => request === "A8 37").length === 1,
+    "0x37 should go out exactly once after a silent 0x35"
+  );
+  client.stop();
+  console.log(`  ✓ silent 0x35: ${describeFreezeFrameLogResult(read)}`);
+}
+
+// The other side of that rule: a micro that REFUSES the 0x35 has opened nothing,
+// so there is nothing to close and no frame is owed.
+{
+  const bus = simulateVcuMicros([{ target: "A8", records: new Map() }]);
+  const client = createVcuKwpClient(bus.channel, { paceMs: 1, responseTimeoutMs: 60 });
+  bus.channel.addListener("onMessage", message => client.handleFrame(message.id, message.data));
+  const read = await startFreezeFrameLogRead({ client, paceMs: 1 }).finished;
+  check(read.completion === "failed", `a refused 0x35 should fail the read, got "${read.completion}"`);
+  check(
+    !bus.sentRequests.includes("A8 37"),
+    "a refusal means nothing was opened, so no 0x37 is owed — sending one would be noise"
+  );
+  check(read.exit === "not-owed", `and that must be reported as not-owed, not as a failed close, got "${read.exit}"`);
+  client.stop();
+  console.log(`  ✓ refused 0x35: ${describeFreezeFrameLogResult(read)}`);
 }
 
 // The block ceiling, so a micro that never stops still does.
@@ -510,7 +598,7 @@ for (const sendsRequestFlowControl of [true, false]) {
   check(read.reason === "the owner pressed stop", `and carry the reason, got "${read.reason}"`);
   check(read.blocks.length > 0 && read.blocks.length < 500, `and keep what it read, got ${read.blocks.length} blocks`);
   // The courtesy that stops the next attempt inheriting a half-open upload.
-  check(read.exitAcknowledged, "a cancelled read must still close the transfer with 0x37");
+  check(read.exit === "acknowledged", "a cancelled read must still close the transfer with 0x37");
   check(
     bus.sentRequests.filter(request => request === "A8 37").length === 1,
     "0x37 should go out exactly once, on the way out"

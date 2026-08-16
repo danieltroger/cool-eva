@@ -53,6 +53,15 @@ export interface SimulatedMicro {
   /** The bulk `0x35`/`0x36`/`0x37` upload this micro will serve, if any. */
   upload?: SimulatedUpload;
   /**
+   * Services this micro hears and does not answer, even with a session open.
+   *
+   * Silence is not a refusal, and on this bus it is the commoner failure of the
+   * two: a micro that opened an upload and then said nothing leaves the tester
+   * holding a transfer it must still close. Modelled separately from
+   * `silentIndices` because that one is about a parameter, not a service.
+   */
+  silentServices?: number[];
+  /**
    * Whether this micro answers OUR multi-frame request's First Frame with a flow
    * control of its own.
    *
@@ -244,6 +253,16 @@ function respond(context: BusContext, payload: Uint8Array): Uint8Array | null {
   // Any accepted request refreshes the idle timer, which is what lets a sweep that
   // keeps moving never need a second `10 81`.
   sessionOpenedAt.set(addressOf(micro), monotonicNow());
+
+  if (micro.silentServices?.includes(payload[0])) {
+    // Heard, acted on internally, and not answered. For `0x35` that means the
+    // upload really does open — which is exactly the state a tester must not walk
+    // away from.
+    if (payload[0] === SERVICE_REQUEST_UPLOAD && micro.upload) {
+      conversationFor(context).uploadPosition = 0;
+    }
+    return null;
+  }
 
   switch (payload[0]) {
     case SERVICE_TESTER_PRESENT:

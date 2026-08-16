@@ -96,7 +96,7 @@ const MAX_PAYLOAD_BYTES = 64;
  * about the wrong number. Bounds a responder that keeps sending frames
  * contributing nothing: a loop rather than a leak, but it still has to terminate.
  */
-function maxFramesFor(maxPayloadBytes: number): number {
+export function maxFramesFor(maxPayloadBytes: number): number {
   return Math.ceil((maxPayloadBytes - FIRST_FRAME_PAYLOAD_BYTES) / CONSECUTIVE_FRAME_PAYLOAD_BYTES) + 1;
 }
 
