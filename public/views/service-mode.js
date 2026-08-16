@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { monotonicNow, since } from "../lib/clock.js";
 import { duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
+import { VcuProbe } from "./vcu-probe.js";
 
 const { a, button, div } = van.tags;
 
@@ -76,7 +77,14 @@ export function ServiceMode() {
     div(
       { class: "action-note" },
       a({ href: "/params.html", style: `color:${MUTED}` }, "Open the full parameter table →")
-    )
+    ),
+    // The sweep covers the 277 parameters the name table describes. This is how you
+    // reach anything else — another bank, or another ECU. It is handed the same
+    // "can we reach the bike" answer this section already has, rather than fetching
+    // its own: both are governed by the same gate and the same switch, and two
+    // sections deciding separately could only disagree.
+    div({ class: "sheet-title" }, "Probe one identifier"),
+    VcuProbe(() => state.val !== null && state.val.enabled && state.val.gate.safe)
   );
 }
 
@@ -95,7 +103,16 @@ function GateNote() {
       return div({ style: `color:${MUTED}` }, "…");
     }
     if (current.gate.safe) {
-      return div({ style: `color:${MUTED}` }, "✅  Stationary and out of drive — safe to service.");
+      // A charging bike is allowed in, and it is worth saying so explicitly rather
+      // than letting "out of drive" stand next to a bike whose drive is plainly
+      // energized. The evidence is named because this is the one place the gate
+      // relaxes a check, and a relaxation nobody can see is one nobody can audit.
+      return div(
+        { style: `color:${MUTED}` },
+        current.gate.chargingEvidence === null
+          ? "✅  Stationary and out of drive — safe to service."
+          : `🔌  Stationary and charging — safe to service. (${current.gate.chargingEvidence}, so the drive being energized is expected.)`
+      );
     }
     return div(
       "🚫  Service mode is not available:",

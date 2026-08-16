@@ -1,6 +1,6 @@
 import type { CanMessage, RawChannel, RxFilter } from "socketcan";
 import { monotonicNow, since } from "../src/monotonic.ts";
-import { KWP_REQUEST_CAN_ID, KWP_RESPONSE_CAN_ID, TESTER_ADDRESS } from "../src/vcu/param-codec.ts";
+import { TESTER_ADDRESS, canIdsFor, type VcuTarget } from "../src/vcu/param-codec.ts";
 
 // A stand-in for the VCU micros on a stand-in CAN channel, so the TRANSPORT half of
 // reading parameters can be exercised on a laptop. The codec is pure and checks out
@@ -20,10 +20,16 @@ import { KWP_REQUEST_CAN_ID, KWP_RESPONSE_CAN_ID, TESTER_ADDRESS } from "../src/
 // not that the bike is.
 
 export interface SimulatedMicro {
-  /** 0xA9 or 0xA8 — byte 0 of a request. */
-  address: number;
+  /** Which target this stands in for. Decides its address AND which CAN ids it speaks on. */
+  target: VcuTarget;
   /** Bank-1 index → the record it answers with. */
   records: Map<number, Uint8Array>;
+  /**
+   * Bank-2 index → record. Bank 2 is live data on the real bus, so a probe of it
+   * must be modelled separately from the calibration bank rather than aliased onto
+   * it — otherwise a bank bug in the encoder would pass here.
+   */
+  liveRecords?: Map<number, Uint8Array>;
   /** Indices that answer nothing at all, the way an unowned parameter does. */
   silentIndices?: number[];
   /** Indices that answer `7F 22 <nrc>`. */
@@ -57,17 +63,20 @@ export function simulateVcuMicros(micros: SimulatedMicro[]): SimulatedBus {
       listeners.push(callback);
     },
     send(message: CanMessage): number {
-      if (message.id !== KWP_REQUEST_CAN_ID) {
-        throw new Error(`simulated bus: request on 0x${message.id.toString(16)}, expected 0x7C0`);
-      }
       const address = message.data[0];
       const payload = message.data.subarray(2, 2 + message.data[1]);
       sentRequests.push([address, ...payload].map(toHexByte).join(" "));
-      const micro = micros.find(candidate => candidate.address === address);
+      // Matched on the id AND the address, so a request sent to the right ECU on the
+      // wrong CAN id gets the silence it would get on the real bus. That is the whole
+      // point of modelling the charge manager's 0x7C3 separately: if the pairing in
+      // param-codec.ts is wrong, this must not paper over it.
+      const micro = micros.find(
+        candidate => addressOf(candidate) === address && canIdsFor(candidate.target).request === message.id
+      );
       if (micro) {
         const reply = respond(micro, payload, sessionOpenedAt);
         if (reply) {
-          setTimeout(() => deliver(listeners, reply), REPLY_DELAY_MS);
+          setTimeout(() => deliver(listeners, canIdsFor(micro.target).response, reply), REPLY_DELAY_MS);
         }
       }
       return message.data.length;
@@ -86,11 +95,11 @@ export function simulateVcuMicros(micros: SimulatedMicro[]): SimulatedBus {
 
 /** The reply payload, or null for the silence that is this bus's most common answer. */
 function respond(micro: SimulatedMicro, payload: Uint8Array, sessionOpenedAt: Map<number, number>): Uint8Array | null {
-  const openedAt = sessionOpenedAt.get(micro.address);
+  const openedAt = sessionOpenedAt.get(addressOf(micro));
   const sessionOpen = openedAt !== undefined && since(openedAt) < (micro.sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS);
 
   if (payload[0] === SERVICE_START_SESSION) {
-    sessionOpenedAt.set(micro.address, monotonicNow());
+    sessionOpenedAt.set(addressOf(micro), monotonicNow());
     return Uint8Array.from([SERVICE_START_SESSION + 0x40, payload[1]]);
   }
   if (!sessionOpen) {
@@ -99,7 +108,7 @@ function respond(micro: SimulatedMicro, payload: Uint8Array, sessionOpenedAt: Ma
   }
   // Any accepted request refreshes the idle timer, which is what lets a sweep that
   // keeps moving never need a second `10 81`.
-  sessionOpenedAt.set(micro.address, monotonicNow());
+  sessionOpenedAt.set(addressOf(micro), monotonicNow());
 
   if (payload[0] === SERVICE_TESTER_PRESENT) {
     return Uint8Array.from([SERVICE_TESTER_PRESENT + 0x40]);
@@ -110,24 +119,39 @@ function respond(micro: SimulatedMicro, payload: Uint8Array, sessionOpenedAt: Ma
     // last place that can still say so.
     throw new Error(`simulated micro: refusing to model service 0x${toHexByte(payload[0])} — this bus is read-only`);
   }
-  const index = ((payload[1] << 8) | payload[2]) & 0x0fff;
-  if (micro.silentIndices?.includes(index)) {
+  const identifier = (payload[1] << 8) | payload[2];
+  const bank = identifier >> 12;
+  const index = identifier & 0x0fff;
+  // The bank is honoured rather than masked away. DIAG_ADDRESSES.md §3 records bank 0
+  // being refused with NRC 0x12 subFunctionNotSupported — so a bank nothing is
+  // configured for answers by name here, which is how a probe of an empty bank is
+  // told apart from a probe of an ECU that is not there.
+  const bankRecords = bank === 1 ? micro.records : bank === 2 ? micro.liveRecords : undefined;
+  if (!bankRecords) {
+    return Uint8Array.from([0x7f, SERVICE_READ_BY_COMMON_IDENTIFIER, 0x12]);
+  }
+  if (bank === 1 && micro.silentIndices?.includes(index)) {
     return null;
   }
-  const record = micro.records.get(index);
-  if (!record || micro.refusedIndices?.includes(index)) {
+  const record = bankRecords.get(index);
+  if (!record || (bank === 1 && micro.refusedIndices?.includes(index))) {
     return Uint8Array.from([0x7f, SERVICE_READ_BY_COMMON_IDENTIFIER, 0x31]);
   }
   return Uint8Array.from([SERVICE_READ_BY_COMMON_IDENTIFIER + 0x40, payload[1], payload[2], ...record]);
 }
 
-function deliver(listeners: ((message: CanMessage) => void)[], payload: Uint8Array): void {
+/** Byte 0 of a request addressed to this stand-in. The real mapping lives in param-codec.ts. */
+function addressOf(micro: SimulatedMicro): number {
+  return { A8: 0xa8, A9: 0xa9, A4: 0xa4 }[micro.target];
+}
+
+function deliver(listeners: ((message: CanMessage) => void)[], responseCanId: number, payload: Uint8Array): void {
   const data = Buffer.alloc(8);
   data[0] = TESTER_ADDRESS;
   data[1] = payload.length;
   Buffer.from(payload).copy(data, 2);
   for (const listener of listeners) {
-    listener({ id: KWP_RESPONSE_CAN_ID, data });
+    listener({ id: responseCanId, data });
   }
 }
 

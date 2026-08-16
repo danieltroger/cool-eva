@@ -33,7 +33,6 @@ import { fileURLToPath } from "url";
 // Only checks that pass or fail on their own, with no bike and no local-only files,
 // belong in `npm test`. The rest of scripts/ is left out on purpose:
 //
-//   read-vcu-params.ts    reads the VCU over can0 — the bike, by definition
 //   setup-service.ts      installs a systemd unit, and wants root to do it
 //   generate-log-key.ts   writes the keypair once and refuses to overwrite it
 //   decrypt-log.ts        needs the private key and .celog segments, neither in the repo

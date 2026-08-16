@@ -10,6 +10,7 @@ import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
 import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
+import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
@@ -288,6 +289,13 @@ const server = createServer(async (req, res) => {
       directory: VCU_PARAM_DIR,
       enabled: SERVICE_MODE_ENABLED,
     });
+    return;
+  }
+  // One identifier off one ECU, on demand — the replacement for the deleted script's
+  // `--index N`, and the only way to reach bank 2 (live data) or the charge manager
+  // at all. Same header, same gate and same single-flight as /vcu-read.
+  if (url.pathname === "/vcu-probe") {
+    await handleVcuProbeEndpoint(req, res, url, { runner: vcuReadRunner, enabled: SERVICE_MODE_ENABLED });
     return;
   }
   // The same snapshot /vcu-params serves, in another owner's energica_tool.py

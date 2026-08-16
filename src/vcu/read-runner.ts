@@ -2,6 +2,7 @@ import type { RawChannel } from "socketcan";
 import { ageMs, latestValue } from "../can/signals.ts";
 import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
+import { startProbe, type RunningProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
 import { PARAMETER_TABLE, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
 
@@ -88,6 +89,15 @@ export interface VcuReadRunner {
   /** The gate as it reads right now, for the page to show whether service mode is available. */
   gate: () => ServiceGateVerdict;
   /**
+   * Reads ONE identifier off ONE target — service mode's probe.
+   *
+   * Behind the same gate and the same single-flight as a sweep: two things must not
+   * share the bus, and there is one reply id per target with no request tag to match
+   * on, so a probe running alongside a sweep would be answered by whichever frame
+   * landed first. Resolves with a refusal rather than throwing.
+   */
+  probe: (request: VcuProbeRequest) => Promise<VcuProbeOutcomeOrRefusal>;
+  /**
    * Feed CAN frames here; true when consumed. No-op unless a sweep is running, so
    * the service's frame router pays one null check per OBD-range frame and nothing
    * at all the rest of the time.
@@ -99,6 +109,9 @@ export interface VcuReadRunner {
    */
   stop: () => Promise<void>;
 }
+
+/** A probe's answer, or the reason there is not one. Never throws into an HTTP handler. */
+export type VcuProbeOutcomeOrRefusal = { ok: true; reading: VcuProbeReading } | { ok: false; reason: string };
 
 export interface VcuReadRunnerOptions {
   /**
@@ -145,6 +158,8 @@ const ROW_STATUSES: VcuParameterRow["status"][] = [
 
 interface RunnerContext extends VcuReadRunnerOptions {
   sweep: RunningParameterSweep | null;
+  /** At most one of `sweep` and `probe` is ever set. Both put frames on the same bus. */
+  probe: RunningProbe | null;
   startedAt: number | null;
   finishedAt: number | null;
   /** Null while running and once a run ended cleanly; a sentence for a cancel, a gate exit or a crash. */
@@ -159,6 +174,7 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
   const context: RunnerContext = {
     ...options,
     sweep: null,
+    probe: null,
     startedAt: null,
     finishedAt: null,
     failure: null,
@@ -171,7 +187,9 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
     cancel: () => cancel(context),
     state: () => readState(context),
     gate: () => readGate(),
-    handleCanFrame: (id, data) => context.sweep?.handleFrame(id, data) ?? false,
+    probe: request => runProbe(context, request),
+    // Whichever is running gets the frame; neither running means it was not ours.
+    handleCanFrame: (id, data) => (context.sweep ?? context.probe)?.handleFrame(id, data) ?? false,
     stop: () => stop(context),
   };
 }
@@ -199,23 +217,11 @@ function readGate(): ServiceGateVerdict {
  * lockfile to go stale on a Pi that loses power.
  */
 function start(context: RunnerContext): { started: boolean; reason: string | null } {
-  if (context.sweep) {
-    return { started: false, reason: "a parameter read is already running" };
+  const ready = checkPreconditions(context);
+  if (!ready.ok) {
+    return { started: false, reason: ready.reason };
   }
-  const channel = context.channel();
-  if (!channel) {
-    return { started: false, reason: "CAN is switched off on this Pi (CAN_ENABLED=0) — there is no bus to read" };
-  }
-  if (!context.busIsActive) {
-    return {
-      started: false,
-      reason: "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so every read would time out",
-    };
-  }
-  const verdict = readGate();
-  if (!verdict.safe) {
-    return { started: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
-  }
+  const channel = ready.channel;
 
   const sweep = startParameterSweep({
     channel,
@@ -257,6 +263,76 @@ function start(context: RunnerContext): { started: boolean; reason: string | nul
   return { started: true, reason: null };
 }
 
+/**
+ * Everything that has to be true before ANY frame goes out, in one place.
+ *
+ * Shared by the sweep and the probe deliberately: two entry points that each decided
+ * for themselves whether the bike was safe would be two things to keep in step, and
+ * the one that drifted would be the one nobody was looking at.
+ */
+function checkPreconditions(context: RunnerContext): { ok: true; channel: RawChannel } | { ok: false; reason: string } {
+  if (context.sweep) {
+    return { ok: false, reason: "a parameter read is already running" };
+  }
+  if (context.probe) {
+    return { ok: false, reason: "a probe is already running" };
+  }
+  const channel = context.channel();
+  if (!channel) {
+    return { ok: false, reason: "CAN is switched off on this Pi (CAN_ENABLED=0) — there is no bus to read" };
+  }
+  if (!context.busIsActive) {
+    return {
+      ok: false,
+      reason: "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so every read would time out",
+    };
+  }
+  const verdict = readGate();
+  if (!verdict.safe) {
+    return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
+  }
+  return { ok: true, channel };
+}
+
+/**
+ * One probe, start to finish.
+ *
+ * Awaited rather than fire-and-forget, unlike a sweep: this is two reply windows at
+ * worst, so the HTTP request can simply hold until it answers and the page gets the
+ * reading in the response it asked for. There is no progress to follow and nothing
+ * to resume.
+ *
+ * The gate watchdog runs for it too. A single read is short, but "short" here means
+ * up to ~1.2 s of a bike that might have started moving, and the rule this feature
+ * rests on is that nothing transmits once the gate shuts — not that nothing
+ * transmits for long.
+ */
+async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promise<VcuProbeOutcomeOrRefusal> {
+  const ready = checkPreconditions(context);
+  if (!ready.ok) {
+    return { ok: false, reason: ready.reason };
+  }
+  const probe = startProbe({ ...request, channel: ready.channel });
+  context.probe = probe;
+  const watchdog = startWatchdog(reason => probe.abort(reason));
+  console.log(
+    `vcu-probe: reading bank ${request.bank} index ${request.index} off ${request.target} — the bike checked out as safe to service`
+  );
+  try {
+    const reading = await probe.finished;
+    console.log(`vcu-probe: ${request.target} 0x${reading.identifier.toString(16)} → ${reading.status}`);
+    return { ok: true, reading };
+  } catch (err) {
+    // Never swallowed, and never allowed to reject into the HTTP handler: a probe
+    // that threw looks the same as a silent bike on screen unless it is said out loud.
+    console.error("vcu-probe: the probe failed:", err);
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearInterval(watchdog);
+    context.probe = null;
+  }
+}
+
 function cancel(context: RunnerContext): boolean {
   if (!context.sweep) {
     return false;
@@ -281,6 +357,10 @@ function cancel(context: RunnerContext): boolean {
 async function stop(context: RunnerContext): Promise<void> {
   const sweep = context.sweep;
   stopGateWatchdog(context);
+  // A probe is at most two reply windows long and holds no file handle and no
+  // partial state, so it is aborted and not waited for — unlike a sweep, which has
+  // an archive to write.
+  context.probe?.abort("the service is shutting down");
   if (!sweep) {
     return;
   }
@@ -312,23 +392,42 @@ async function stop(context: RunnerContext): Promise<void> {
  */
 function startGateWatchdog(context: RunnerContext, sweep: RunningParameterSweep): void {
   stopGateWatchdog(context);
-  context.watchdog = setInterval(() => {
-    const verdict = readGate();
-    if (verdict.safe) {
-      return;
-    }
-    console.warn(`vcu-read: leaving service mode mid-sweep — ${verdict.blockers.join("; ")}`);
-    sweep.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
+  context.watchdog = startWatchdog(reason => {
+    sweep.abort(reason);
     // One abort is the whole job. Left running, this would re-fire every 200 ms
     // through the sweep's wind-down — the file close, the archive write, the
     // 277-row diff — printing the same blocker line two or three times for one
     // event. `abort` is idempotent so it did no harm, but a log that repeats reads
     // as three things happening.
     stopGateWatchdog(context);
+  });
+}
+
+/**
+ * A timer that re-reads the gate and calls `onUnsafe` once when it shuts.
+ *
+ * Shared by the sweep and the probe so there is one interval, one threshold and one
+ * log line to reason about. The caller decides what stopping means; this only
+ * decides when.
+ */
+function startWatchdog(onUnsafe: (reason: string) => void): ReturnType<typeof setInterval> {
+  let fired = false;
+  const timer = setInterval(() => {
+    if (fired) {
+      return;
+    }
+    const verdict = readGate();
+    if (verdict.safe) {
+      return;
+    }
+    fired = true;
+    console.warn(`vcu-read: leaving service mode — ${verdict.blockers.join("; ")}`);
+    onUnsafe(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
   }, GATE_WATCH_INTERVAL_MS);
-  // The sweep must never be the reason a `systemctl stop` hangs, and this timer must
-  // never be the reason the process stays alive on its own.
-  context.watchdog.unref?.();
+  // Neither a sweep nor a probe may be the reason a `systemctl stop` hangs, and this
+  // timer must never be the reason the process stays alive on its own.
+  timer.unref?.();
+  return timer;
 }
 
 function stopGateWatchdog(context: RunnerContext): void {

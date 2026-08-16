@@ -15,6 +15,12 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // would mean adding a variant to that union and a branch to the switch, in a file
 // that says this, which is the point.
 //
+// ⚠️ What a caller CAN choose, since 2026-08-16: the target ECU, the bank and the
+// index — i.e. WHICH thing is read, so that service mode can probe an identifier the
+// name table does not describe. What a caller still cannot choose is the SERVICE and
+// the VALUE, and those are the two that make a write. Keep that line where it is:
+// widening "which" is recoverable, widening "what to do to it" is not.
+//
 // Never implement, here or anywhere: 0x2E WriteDataByCommonIdentifier, 0x3B
 // WriteDataByLocalIdentifier, 0x27 SecurityAccess, 0x31 StartRoutineByLocalId,
 // 0x11 ECUReset, 0x2F InputOutputControl, or OBD Mode 04. This is the bike's
@@ -25,8 +31,12 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // NRC 0x12 subFunctionNotSupported, not 0x33, so 0x27 would not open it anyway).
 //
 // ── The framing, from obd-garage/CAN_MAP.md and DIAG_ADDRESSES.md §3 ─────────
-// Request  0x7C0: [target] [PCI] [service] …      target = 0xA9 / 0xA8
+// Request  0x7C0: [target] [PCI] [service] …      target = 0xA9 / 0xA8  (VCU micros)
 // Response 0x7E0: [0xF1]   [PCI] [service+0x40] … 0xF1 is the tester's address
+//
+// The charge manager is the same framing on a different pair: request 0x7C3,
+// response 0x7E3, target 0xA4. See VcuTarget below — it is not a variant of the
+// protocol, only a different address to send it to.
 //
 // That is ISO-TP with EXTENDED addressing — byte 0 is the address of whoever the
 // frame is for, and everything else shifts one along. Byte 1 is an ordinary ISO-TP
@@ -62,8 +72,28 @@ export type VcuRequest =
   | { kind: "start-session" }
   /** `3E` TesterPresent — holds an open session open. Carries no sub-function on this bike. */
   | { kind: "tester-present" }
-  /** `22 [0x10|hi] [lo]` ReadDataByCommonIdentifier against bank 1. */
-  | { kind: "read-parameter"; index: number };
+  /**
+   * `22 [hi] [lo]` ReadDataByCommonIdentifier, where the identifier is
+   * `(bank << 12) | index`.
+   *
+   * ⚠️ The BANK is a parameter now, and the identifier is therefore something a
+   * caller can choose. That is a real widening and it is worth naming precisely,
+   * because the read-only argument in this file's header rests on what a caller can
+   * and cannot express:
+   *
+   *   • A caller CAN now name any identifier in the 16-bit space. Every one of them
+   *     is still a READ — `22` has no write semantics in KWP, whatever you point it
+   *     at, and the bank an ECU does not serve answers with a negative response
+   *     (DIAG_ADDRESSES.md §3 records bank 0 refusing with NRC 0x12).
+   *   • A caller still CANNOT name a service. The union has the same three members
+   *     it always had, and `READ_ONLY_SERVICES` still checks the emitted byte.
+   *   • A caller still CANNOT name a value. There is nowhere in this union to put
+   *     one, which is what makes a write unexpressible rather than merely absent.
+   *
+   * Bank 1 is the EEPROM calibration the parameter table describes. Bank 2 is live
+   * data. Both are read the same way; the difference is only which numbers come back.
+   */
+  | { kind: "read-parameter"; bank: number; index: number };
 
 const SERVICE_START_DIAGNOSTIC_SESSION = 0x10;
 const SERVICE_TESTER_PRESENT = 0x3e;
@@ -85,14 +115,54 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([
 /** The tester's own address, which every reply is addressed to. */
 export const TESTER_ADDRESS = 0xf1;
 
-/** 11-bit CAN id every request goes out on. */
-export const KWP_REQUEST_CAN_ID = 0x7c0;
+/**
+ * Everything on this bus that answers a bank read.
+ *
+ * `A8` and `A9` are the two VCU micros the parameter table describes, and until
+ * 2026-08-16 they were the only things anything here had ever addressed.
+ *
+ * ⚠️ `A4` is the CHARGE MANAGER, and it is on a different pair of CAN ids. Every
+ * sweep this project ever ran went out on 0x7C0, so the charge manager was not
+ * silent — it was never asked. That is why `CM_ERROR`, `CM_ERROR_SOURCE` and the
+ * `CM_ERROR_CODE_*` pair looked absent: they are its, not the VCU's.
+ *
+ * A7 is deliberately absent: it answers no read on any bank.
+ */
+export type VcuTarget = VcuMicro | "A4";
 
-/** 11-bit CAN id every reply comes back on. */
-export const KWP_RESPONSE_CAN_ID = 0x7e0;
+/** Byte 0 of a request: the ECU being addressed, under extended addressing. */
+const TARGET_ADDRESS: Record<VcuTarget, number> = { A8: 0xa8, A9: 0xa9, A4: 0xa4 };
 
-/** Byte 0 of a request: the micro being addressed. A7 is deliberately absent — it answers no read on any bank. */
-const MICRO_ADDRESS: Record<VcuMicro, number> = { A8: 0xa8, A9: 0xa9 };
+/**
+ * Which 11-bit CAN ids each target speaks on.
+ *
+ * ⚠️ The A4 pair is UNVERIFIED — recorded 2026-08-16 from the charge-manager notes,
+ * never yet exercised against the bike. If it is wrong the symptom is silence
+ * (`no-session`), which is the safe direction: a request to an id nothing listens on
+ * is eight bytes on a bus that ignores them, not a wrong answer. The A8/A9 pair has
+ * been live since 2026-08-08.
+ */
+const TARGET_CAN_IDS: Record<VcuTarget, { request: number; response: number }> = {
+  A8: { request: 0x7c0, response: 0x7e0 },
+  A9: { request: 0x7c0, response: 0x7e0 },
+  A4: { request: 0x7c3, response: 0x7e3 },
+};
+
+/** Where a request to this target goes, and where its reply comes back. */
+export function canIdsFor(target: VcuTarget): { request: number; response: number } {
+  return TARGET_CAN_IDS[target];
+}
+
+/** Every id a reply can arrive on, so a shared socket can be filtered without knowing who is being asked. */
+export function kwpResponseCanIds(): number[] {
+  return [...new Set(Object.values(TARGET_CAN_IDS).map(ids => ids.response))];
+}
+
+/** 11-bit CAN id the VCU micros' requests go out on. Kept for callers that only ever talk to A8/A9. */
+export const KWP_REQUEST_CAN_ID = TARGET_CAN_IDS.A9.request;
+
+/** 11-bit CAN id the VCU micros' replies come back on. */
+export const KWP_RESPONSE_CAN_ID = TARGET_CAN_IDS.A9.response;
 
 const NEGATIVE_RESPONSE_SERVICE = 0x7f;
 const POSITIVE_RESPONSE_OFFSET = 0x40;
@@ -113,7 +183,7 @@ const MAX_SINGLE_FRAME_PAYLOAD = 6;
  * own code, so a bad one is a bug to fix now, not a condition to handle. The
  * read-only assertion at the end is the one that must never be removed.
  */
-export function buildRequestFrame(micro: VcuMicro, request: VcuRequest): Uint8Array {
+export function buildRequestFrame(target: VcuTarget, request: VcuRequest): Uint8Array {
   const payload = encodeRequestPayload(request);
   if (!READ_ONLY_SERVICES.has(payload[0])) {
     // Unreachable through the union above, which is exactly why it is here.
@@ -123,18 +193,33 @@ export function buildRequestFrame(micro: VcuMicro, request: VcuRequest): Uint8Ar
     throw new Error(`vcu: request payload of ${payload.length} bytes does not fit one frame`);
   }
   const frame = new Uint8Array(8);
-  frame[0] = MICRO_ADDRESS[micro];
+  frame[0] = TARGET_ADDRESS[target];
   frame[1] = payload.length;
   frame.set(payload, 2);
   return frame;
 }
 
-/** The bank-1 CommonIdentifier for a parameter index: `0x1000 | index`. */
-export function identifierForIndex(index: number): number {
-  if (!Number.isInteger(index) || index < 0 || index > 0x0fff) {
-    throw new Error(`vcu: parameter index ${index} is outside bank ${CALIBRATION_BANK}`);
+/**
+ * The CommonIdentifier for a bank and an index: `(bank << 12) | index`.
+ *
+ * Throws on anything outside the 16-bit space rather than truncating into it, which
+ * is the difference between "you asked for something impossible" and "you silently
+ * read a different parameter". Both halves are checked, because a caller-supplied
+ * bank is now a thing that exists.
+ */
+export function identifierFor(bank: number, index: number): number {
+  if (!Number.isInteger(bank) || bank < 0 || bank > 0xf) {
+    throw new Error(`vcu: bank ${bank} is not one of the 16 banks a CommonIdentifier can name`);
   }
-  return (CALIBRATION_BANK << 12) | index;
+  if (!Number.isInteger(index) || index < 0 || index > 0x0fff) {
+    throw new Error(`vcu: index ${index} does not fit the 12 bits a bank has`);
+  }
+  return (bank << 12) | index;
+}
+
+/** The bank-1 CommonIdentifier for a parameter index: `0x1000 | index`. The whole parameter table is bank 1. */
+export function identifierForIndex(index: number): number {
+  return identifierFor(CALIBRATION_BANK, index);
 }
 
 function encodeRequestPayload(request: VcuRequest): Uint8Array {
@@ -144,7 +229,7 @@ function encodeRequestPayload(request: VcuRequest): Uint8Array {
     case "tester-present":
       return Uint8Array.from([SERVICE_TESTER_PRESENT]);
     case "read-parameter": {
-      const identifier = identifierForIndex(request.index);
+      const identifier = identifierFor(request.bank, request.index);
       return Uint8Array.from([SERVICE_READ_BY_COMMON_IDENTIFIER, identifier >> 8, identifier & 0xff]);
     }
     default:

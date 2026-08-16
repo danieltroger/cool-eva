@@ -27,6 +27,9 @@ import {
   type ServiceGateReadings,
 } from "../src/vcu/service-gate.ts";
 import { decodeFrame } from "../src/can/decode.ts";
+import { describeProbe, parseProbeRequest } from "../src/vcu/probe.ts";
+import { canIdsFor, identifierFor } from "../src/vcu/param-codec.ts";
+import type { VcuProbeOutcome } from "../src/vcu/kwp-client.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 import { CAPTURED_FRAMES, KNOWN_VARIANT_DIFFERENCES, LIVE_BANK1_READS, parseHexBytes } from "./captured-vcu-records.ts";
 
@@ -84,11 +87,11 @@ expect(parametersNamed("NO_SUCH_PARAMETER").length === 0, "an unknown name shoul
 // ── 2. Requests, and the read-only guard ────────────────────────────────────
 // Whole 8-byte frames, zero-padded, which is what actually goes on the wire.
 expect(
-  toHex(buildRequestFrame("A9", { kind: "read-parameter", index: 258 })) === "A9 03 22 11 02 00 00 00",
+  toHex(buildRequestFrame("A9", { kind: "read-parameter", bank: 1, index: 258 })) === "A9 03 22 11 02 00 00 00",
   "reading 258 on the A9 should be A9 03 22 11 02"
 );
 expect(
-  toHex(buildRequestFrame("A8", { kind: "read-parameter", index: 231 })) === "A8 03 22 10 E7 00 00 00",
+  toHex(buildRequestFrame("A8", { kind: "read-parameter", bank: 1, index: 231 })) === "A8 03 22 10 E7 00 00 00",
   "reading 231 on the A8 should be A8 03 22 10 E7"
 );
 expect(
@@ -527,6 +530,160 @@ expect(
   "a stale REQUIRED signal must still block — only the corroborator is excused"
 );
 
+// ── Stationary AND CHARGING must be allowed in ────────────────────────────
+// The state the whole feature is for: you cannot test a DC charge-current limit on
+// a bike that is not plugged in. `energized` is 1 throughout a charge, so it is the
+// one check a charge session excuses — and nothing else is.
+
+// b1 gains 0x02 energized on top of the parked 0x10 key_on, which is exactly the
+// transition CAN_MAP.md records at the start of the 2026-08-04 DC session
+// (0x102 b1 0x10 → 0x12).
+const CHARGING_BODY_FRAME = "80 12 02 44 99 FF D8 FF";
+// …and the same with 0x102 b2 bit0, the AC charging bit, also set.
+const AC_CHARGING_BODY_FRAME = "80 12 03 44 99 FF D8 FF";
+// 0x305 — the charger's own frame: mains 5.0 A, DC 20.0 A, DC 400.0 V. Its VALUES
+// are never consulted; that it arrived at all is the evidence.
+const CHARGER_FRAME = "00 32 00 C8 00 A0 0F 00";
+
+const energizedNotCharging = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, CHARGING_BODY_FRAME],
+    [0x104, PARKED_DRIVE_FRAME],
+  ])
+);
+expect(!energizedNotCharging.safe, "an energized bike with nothing plugged in should still be refused");
+expect(energizedNotCharging.chargingEvidence === null, "…and no charge evidence should be claimed");
+
+const dcCharging = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, CHARGING_BODY_FRAME],
+    [0x104, PARKED_DRIVE_FRAME],
+    [0x305, CHARGER_FRAME],
+  ])
+);
+expect(
+  dcCharging.safe,
+  `a stationary charging bike must be allowed in, blocked by: ${dcCharging.blockers.join(" · ")}`
+);
+expect(dcCharging.chargingEvidence !== null, "…and the verdict should name what says it is charging");
+expect(
+  dcCharging.checks.find(check => check.key === "energized")?.state === "excused-by-charging",
+  "…with energized reported as excused rather than silently ok, so the page can say why"
+);
+
+// ⚠️ The regression guard that matters most here: `charging` (0x102 b2 bit0) is
+// NOT the charging bit — rides.db 2026-08-16 has it equal to `high_beam` at 421 of
+// 421 timestamps, set at 100-142 km/h, and clear through all 25 real charging
+// sessions. If it were treated as charge evidence, switching on the high beam would
+// excuse the drive being energized. It must carry no weight at all.
+const highBeamOnly = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, AC_CHARGING_BODY_FRAME],
+    [0x104, PARKED_DRIVE_FRAME],
+  ])
+);
+expect(!highBeamOnly.safe, "0x102 b2 bit0 is the high beam and must not excuse anything");
+expect(highBeamOnly.chargingEvidence === null, "…and must not be claimed as charge evidence");
+
+// ⚠️ The trap this must not fall into: `liveState` keeps `dc_v` for ever, so an
+// unplugged bike still reports 400 V from whenever it last charged. Only the AGE
+// separates "plugged in" from "was plugged in, once".
+const staleCharger = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, CHARGING_BODY_FRAME],
+    [0x104, PARKED_DRIVE_FRAME],
+    [0x305, CHARGER_FRAME, 30_000],
+  ])
+);
+expect(!staleCharger.safe, "a charger frame 30 s old is not a bike that is plugged in");
+expect(staleCharger.chargingEvidence === null, "…and must not be claimed as evidence");
+
+// The excuse is narrow: it covers `energized` and nothing else. A charging bike that
+// somehow reports motion, or drive, is still refused.
+for (const [label, frames] of [
+  [
+    "motion",
+    [
+      [0x102, CHARGING_BODY_FRAME],
+      [0x104, ROLLING_DRIVE_FRAME],
+      [0x305, CHARGER_FRAME],
+    ],
+  ],
+  [
+    "drive",
+    [
+      [0x102, "80 1A 02 44 99 FF D8 FF"],
+      [0x104, PARKED_DRIVE_FRAME],
+      [0x305, CHARGER_FRAME],
+    ],
+  ],
+] as [string, [number, string, number?][]][]) {
+  const verdict = evaluateServiceGate(gateReadingsFrom(frames));
+  expect(!verdict.safe, `a charging bike showing ${label} must still be refused`);
+  expect(
+    verdict.chargingEvidence !== null && !verdict.blockers.some(blocker => blocker.includes("not energized")),
+    `…and the refusal should be about the ${label}, not about energized, got: ${verdict.blockers.join(" · ")}`
+  );
+}
+
+// ⚠️ A charging bike STOPS BROADCASTING 0x104 — rides.db has not one live
+// `speed_can_kmh` sample inside any of the 25 charging sessions. So while a charger
+// is attached those two signals may be absent, and the 0x102 bits are what still
+// prove the bike is awake and still.
+const chargingNo104 = evaluateServiceGate({
+  ...gateReadingsFrom([[0x102, CHARGING_BODY_FRAME]]),
+  ...gateReadingsFrom([[0x305, CHARGER_FRAME]]),
+});
+expect(
+  chargingNo104.safe,
+  `a charging bike that has stopped sending 0x104 should still be allowed in, blocked by: ${chargingNo104.blockers.join(" · ")}`
+);
+expect(
+  chargingNo104.checks.find(check => check.key === "speed_can_kmh")?.state === "excused-by-charging",
+  "…with the missing speed reported as excused rather than silently ok"
+);
+
+// …but only while charging. The same absence with nothing plugged in must refuse —
+// this is the trap the data documents, where forward-filling the last value hands
+// you 47 km/h for a bike that has been parked for seven hours.
+expect(
+  !evaluateServiceGate(gateReadingsFrom([[0x102, PARKED_BODY_FRAME]])).safe,
+  "a bike with no 0x104 and no charger must refuse — absence is not zero"
+);
+
+// …and the excuse is for ABSENCE only. A fresh 0x104 that says the wheel is turning
+// blocks whether or not something is plugged in.
+const chargingButRolling = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, CHARGING_BODY_FRAME],
+    [0x104, ROLLING_DRIVE_FRAME],
+    [0x305, CHARGER_FRAME],
+  ])
+);
+expect(!chargingButRolling.safe, "a fresh speed reading still blocks while charging");
+expect(
+  chargingButRolling.blockers.some(blocker => blocker.includes("road speed is zero")),
+  `…naming the speed, got: ${chargingButRolling.blockers.join(" · ")}`
+);
+
+// A stale 0x104 while charging is excused; a stale 0x102 is not, because 0x102 is
+// what proves the bike is awake at all.
+expect(
+  evaluateServiceGate({
+    ...gateReadingsFrom([[0x102, CHARGING_BODY_FRAME]]),
+    ...gateReadingsFrom([[0x104, ROLLING_DRIVE_FRAME, 30_000]]),
+    ...gateReadingsFrom([[0x305, CHARGER_FRAME]]),
+  }).safe,
+  "a 30 s old 0x104 is excused while charging — even one that used to say 9.5 km/h"
+);
+expect(
+  !evaluateServiceGate({
+    ...gateReadingsFrom([[0x102, CHARGING_BODY_FRAME, 30_000]]),
+    ...gateReadingsFrom([[0x305, CHARGER_FRAME]]),
+  }).safe,
+  "a stale 0x102 must still block — it is the proof the bike is awake and not moving"
+);
+
 // The signals deliberately left out must stay out. Every one of them reads
 // "parked-looking" on some capture where the bike is not, or has never been seen in
 // the state the gate would need — the reasoning is in service-gate.ts and this is
@@ -538,7 +695,105 @@ expect(
     .join(", ")}`
 );
 
-// ── 11. Optional: the full stored A9 dump ──────────────────────────────────
+// ── 11. Probing one identifier: banks, targets and what a reply means ──────
+// The replacement for the deleted script's `--index N`, and it reaches further:
+// any bank on any of three ECUs. Both halves are pure, so both are checked here.
+
+// The identifier really is (bank << 12) | index, and both halves are range-checked
+// rather than truncated into a different, valid-looking read.
+expect(identifierFor(1, 6) === 0x1006, "bank 1 index 6 should be 0x1006");
+expect(identifierFor(2, 5) === 0x2005, "bank 2 index 5 should be 0x2005 — live data, not calibration");
+expect(identifierFor(0, 0) === 0x0000 && identifierFor(15, 4095) === 0xffff, "the whole 16-bit space is reachable");
+expectThrows(() => identifierFor(16, 0), "a bank past 15 should be refused, not wrapped");
+expectThrows(() => identifierFor(1, 0x1000), "an index past 4095 should be refused, not truncated into the bank");
+
+// The charge manager is a different pair of CAN ids, and that is the entire reason
+// it has never answered: every sweep this project ran went out on 0x7C0.
+expect(canIdsFor("A9").request === 0x7c0 && canIdsFor("A9").response === 0x7e0, "the VCU micros are 0x7C0/0x7E0");
+expect(canIdsFor("A8").request === 0x7c0, "both VCU micros share one pair of ids — they differ by address byte");
+expect(canIdsFor("A4").request === 0x7c3 && canIdsFor("A4").response === 0x7e3, "the charge manager is 0x7C3/0x7E3");
+
+// …and the frame addressed to it carries 0xA4, with the bank in the identifier.
+expect(
+  toHex(buildRequestFrame("A4", { kind: "read-parameter", bank: 2, index: 5 })) === "A4 03 22 20 05 00 00 00",
+  `a bank-2 read on the charge manager should be A4 03 22 20 05, got ${toHex(buildRequestFrame("A4", { kind: "read-parameter", bank: 2, index: 5 }))}`
+);
+
+// A probe request is a person typing into a box, so every field is validated and a
+// bad one is a message rather than a throw out of an HTTP handler.
+const goodProbe = parseProbeRequest({ target: "A9", bank: "1", index: "258" });
+expect(goodProbe.ok && goodProbe.request.index === 258, "a plain decimal index should parse");
+const hexProbe = parseProbeRequest({ target: "a4", bank: "2", index: "0x102" });
+expect(
+  hexProbe.ok && hexProbe.request.index === 258 && hexProbe.request.target === "A4" && hexProbe.request.bank === 2,
+  "hex should parse and the target should be case-insensitive — both are how an address arrives from a manual"
+);
+for (const [raw, why] of [
+  [{ target: "A7", bank: "1", index: "1" }, "a target that answers no read on any bank"],
+  [{ target: null, bank: "1", index: "1" }, "no target at all"],
+  [{ target: "A9", bank: "16", index: "1" }, "a bank past 15"],
+  [{ target: "A9", bank: "1", index: "4096" }, "an index past 4095"],
+  [{ target: "A9", bank: "1", index: "" }, "an empty index"],
+  [{ target: "A9", bank: "1", index: "1.5" }, "a fractional index"],
+  [{ target: "A9", bank: "-1", index: "1" }, "a negative bank"],
+] as [{ target: string | null; bank: string | null; index: string | null }, string][]) {
+  const parsed = parseProbeRequest(raw);
+  expect(!parsed.ok, `${why} should be refused with a reason`);
+  expect(!parsed.ok && parsed.reason.length > 0, `${why} should say why`);
+}
+
+// What a reply MEANS. The name table describes bank 1 on the VCU micros and nothing
+// else, so it is consulted only there — attaching a calibration parameter's name and
+// sign to a live-data reading would be a wrong answer that looks informative.
+const bank1Probe = describeProbe(probeOutcome("A9", 1, 258, "4B"));
+expect(
+  bank1Probe.name === "MAX_DC_CHG_CURRENT" && bank1Probe.value === 75 && bank1Probe.unsigned === 75,
+  "a bank-1 index the table describes should come back named and typed"
+);
+const bank2Probe = describeProbe(probeOutcome("A9", 2, 258, "4B"));
+expect(
+  bank2Probe.name === null && bank2Probe.value === null,
+  "the same index in bank 2 is live data and must NOT borrow the calibration parameter's name"
+);
+expect(
+  bank2Probe.unsigned === 75 && bank2Probe.signed === 75 && bank2Probe.rawHex === "4B",
+  "…but the bytes and both readings of them are still returned"
+);
+expect(bank2Probe.note !== null, "…with a note saying the width and sign are not known");
+expect(
+  describeProbe(probeOutcome("A4", 1, 258, "4B")).name === null,
+  "the charge manager is not in the VCU's name table, whatever the bank"
+);
+// Both readings, always — this is the case where picking one would be wrong.
+const negative = describeProbe(probeOutcome("A9", 2, 1, "FE A2"));
+expect(negative.unsigned === 65186 && negative.signed === -350, "a probe should report the bytes both ways");
+const refused = describeProbe({
+  target: "A4",
+  bank: 2,
+  index: 5,
+  identifier: 0x2005,
+  status: "refused",
+  negativeResponseCode: 0x31,
+  description: "requestOutOfRange",
+});
+expect(refused.status === "refused" && refused.rawHex === null, "a refusal carries no bytes");
+expect(
+  refused.note?.includes("will not serve") === true,
+  `a refusal should say the ECU is there and declining, got: ${refused.note}`
+);
+expect(
+  describeProbe({
+    target: "A4",
+    bank: 1,
+    index: 1,
+    identifier: 0x1001,
+    status: "no-session",
+    reason: "A4 did not answer 10 81",
+  }).note?.includes("nothing is at this address") === true,
+  "silence at an address should read as “nothing there or asleep”, not as a refusal"
+);
+
+// ── 12. Optional: the full stored A9 dump ──────────────────────────────────
 if (dumpPath) {
   await replayStoredDump(dumpPath);
 } else {
@@ -553,7 +808,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV, the read tally and the service-mode safety gate all check out"
+  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV, the read tally, the service-mode safety gate and the identifier probe all check out"
 );
 
 /**
@@ -568,7 +823,7 @@ console.log(
 async function checkTransport(): Promise<void> {
   const bus = simulateVcuMicros([
     {
-      address: 0xa9,
+      target: "A9",
       // Real values off this bike, so a wrong route or a wrong width shows up as a
       // wrong number rather than as an arbitrary one.
       records: new Map([
@@ -578,7 +833,7 @@ async function checkTransport(): Promise<void> {
       silentIndices: [1],
       sessionIdleMs: 400,
     },
-    { address: 0xa8, records: new Map([[231, parseHexBytes("01 90")]]) },
+    { target: "A8", records: new Map([[231, parseHexBytes("01 90")]]) },
   ]);
   const client = createVcuKwpClient(bus.channel, { paceMs: 1, responseTimeoutMs: 60 });
   bus.channel.addListener("onMessage", message => client.handleFrame(message.id, message.data));
@@ -753,6 +1008,18 @@ function expectThrows(action: () => unknown, message: string): void {
   failures.push(message);
 }
 
+/** A probe outcome that answered, for the pure describeProbe() checks. */
+function probeOutcome(target: "A9" | "A8" | "A4", bank: number, index: number, rawHex: string): VcuProbeOutcome {
+  return {
+    target,
+    bank,
+    index,
+    identifier: identifierFor(bank, index),
+    status: "read",
+    record: parseHexBytes(rawHex),
+  };
+}
+
 /** A read outcome for a parameter that answered, as toParameterRow() would see it. */
 function reading(index: number, rawHex: string): VcuReadOutcome {
   const parameter = parameterAtIndex(index);
@@ -791,11 +1058,14 @@ function noSession(index: number): VcuReadOutcome {
  * about this file. `ageMs` is supplied because a gate reading is a value AND its
  * age, and neither is a reading on its own.
  */
-function gateReadingsFrom(frames: [number, string][], ageMs = 50): ServiceGateReadings {
+function gateReadingsFrom(frames: [number, string, number?][], ageMs = 50): ServiceGateReadings {
   const readings: ServiceGateReadings = {};
-  for (const [id, hex] of frames) {
+  for (const [id, hex, frameAgeMs] of frames) {
     for (const { key, value } of decodeFrame(id, Buffer.from(parseHexBytes(hex)))) {
-      readings[key] = { value, ageMs };
+      // Per-frame age, because "the charger frames stopped arriving" is a different
+      // situation from "the bike stopped broadcasting", and the charging excuse turns
+      // on exactly that difference.
+      readings[key] = { value, ageMs: frameAgeMs ?? ageMs };
     }
   }
   return readings;
