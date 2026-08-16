@@ -87,6 +87,11 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-can-decoders.ts",
+    covers:
+      "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
+  },
+  {
     script: "scripts/check-vcu-params.ts",
     covers:
       "VCU parameter table, request encoding and the read-only guard, framing against frames captured 2026-08-08, " +

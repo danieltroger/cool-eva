@@ -68,6 +68,68 @@ const BY_KEY = {
   // signal renders whatever arrives, which is the one outcome this file exists to
   // prevent. Same reasoning as the `buttons` group, applied one signal at a time.
   "fast_dc_contactor": [0, 1],
+  // 0x501, the PSU monitor. These three MUST be named here, and the first two are the
+  // reason this comment exists: their unit is "mV", and BY_UNIT's mV fallback is
+  // [0, 5000] because it was written for cell voltages. A healthy 12 704 mV rail would
+  // fall straight through it and be drawn as a dead sensor — the exact failure this
+  // whole file exists to prevent, arrived at from the opposite direction. 20 000 mV is
+  // well above anything a 12 V system produces and well below the 65 535 a decode
+  // failure would show.
+  "psu_12v_mv": [0, 20_000],
+  "psu_12v_lowpower_mv": [0, 20_000],
+  // The DC-DC's own u16 tops out at 65 535 mA; this bike's converter is nowhere near
+  // 60 A, so anything above that is a decode failure rather than a load.
+  "psu_12v_load_ma": [0, 60_000],
+  // 0x0A0 wheel speeds. Same 0…300 as speed_kmh and gps_speed_kmh. The field is a u16
+  // at 0.05625 km/h per count, so a botched decode reaches 3686 km/h and is caught.
+  "wheel_speed_front_kmh": [0, 300],
+  "wheel_speed_rear_kmh": [0, 300],
+  // 0x0A0 front brake pressure. A u8 in bar cannot be negative or exceed 255, so this
+  // gate can only catch a future widening of the field — worth having anyway, because
+  // 255 bar on a brake tile would be believed by anyone reading it quickly.
+  "front_brake_pressure_bar": [0, 250],
+  // 0x127's two throttle channels are 12-bit ADC counts, so 4095 is the ceiling by
+  // construction. Their unit is blank and their group is not a boolean one, which means
+  // without this they would be entirely ungated.
+  "throttle_sensor_a_raw": [0, 4095],
+  "throttle_sensor_b_raw": [0, 4095],
+  // 0x10B, the VCU's own consumption — the same two quantities as km_per_kwh /
+  // kwh_per_100km above, down a different path, and deliberately NOT given the same
+  // band. The hub's pair is smoothed; this one is instantaneous at 10 Hz, and an
+  // instantaneous km/kWh is unbounded above by construction — coast or regen for a
+  // moment and you cover distance on no net energy at all. Replaying the 2026-08-02 lap
+  // through this gate at the hub's [0.5, 200] rejected 159 of 448 readings, a third of a
+  // healthy signal drawn as a dead sensor, which is this file's own failure mode.
+  //
+  // Those readings are real, not decode noise: the peak, 3379.3 km/kWh, pairs with
+  // 0.030 kWh/100 km in the same frame, and 3379.3 × 0.0296 = 100 exactly as the
+  // reciprocal requires. So the honest bound is the whole range the field can still
+  // express once the decoder has dropped the ≥ 65000 saturation clamp — 6499.9 and
+  // 64.999. Wide, but a narrower one here would be a guess about the bike rather than
+  // about the decode, and only the decode is knowable from this side.
+  "km_per_kwh_can": [0, 6500],
+  "kwh_per_100km_can": [0, 65],
+  // The 100 m averages are the same two quantities over a different window, read
+  // unsigned and saturation-guarded exactly like the pair above, so they get the same
+  // band. See src/can/consumption.ts for why unsigned, against Energica's own `short`.
+  "km_per_kwh_100m_can": [0, 6500],
+  "kwh_per_100km_100m_can": [0, 65],
+  // ⚠️ NOT a 1/0 flag, despite living in `diag` with a blank unit. Energica's
+  // `A_WARN_LAMP` is `byte 4 mask 0x0C >> 2` — TWO bits, so 0…3 — and the mask is kept
+  // as the vendor wrote it rather than narrowed to the one bit this bike has been seen
+  // to use. Without this entry the group-wide boolean rule would gate it to [0, 1] and
+  // reject lamp states 2 and 3 as a dead sensor, precisely when the lamp has something
+  // to say. BY_KEY is consulted before BOOLEAN_GROUPS, so naming it here is what wins.
+  "abs_warning_lamp": [0, 3],
+  // 0x125's two channels are raw counts with a blank unit in a non-boolean group, which
+  // is the combination that falls through every rule in this file and ends up ungated —
+  // the same miss `fast_dc_contactor` above had to be fixed for. There is no scale to
+  // bound them by (see src/can/drive.ts), so the bound is derived from the one thing
+  // that is known: at the measured ~109-117 counts per km/h this bike's 200 km/h top
+  // speed is at most ~23 400 counts, so 40 000 cannot reject a real reading and does
+  // reject the wild value a wrong offset or width would produce.
+  "speed_redundant_a_raw": [0, 40_000],
+  "speed_redundant_b_raw": [0, 40_000],
 };
 
 /**
@@ -111,10 +173,19 @@ const COUNTER_KEYS = new Set([
 const BY_UNIT = {
   "°C": [-40, 200],
   "%": [0, 100],
+  // Written for cell voltages, which is why psu_12v_mv and psu_12v_lowpower_mv are
+  // named individually above instead of falling through to it.
   "mV": [0, 5000],
   "V": [-50, 900],
   "A": [-1000, 1000],
   "kW": [-300, 300],
+  // Added 2026-08-16 with the frames that introduced these units. Nm covers the
+  // inverter's torque pair from 0x02C and, from the same change, motor_torque_nm off
+  // the Connectivity Hub, which had been ungated: this platform's peak is ~215 Nm, so
+  // ±400 cannot reject a real reading and does reject a wrong-endian or wrong-scale one.
+  "Nm": [-400, 400],
+  "bar": [0, 250],
+  "mA": [-100_000, 100_000],
 };
 
 /**

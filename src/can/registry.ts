@@ -457,6 +457,146 @@ export const SIGNALS: SignalDef[] = [
   // BOOLEAN_GROUP so it gets the same 0/1 gate.
   { key: "cruise_active", unit: "", group: "controls", source: "stream" },
 
+  // --- Frames named by Energica's own signal database, added 2026-08-16 --------------
+  // Every row-rate figure below is MEASURED, by replaying the 2026-08-02 garage lap (409 s,
+  // 545 882 frames) through the same log-on-change rule signals.ts applies and counting what
+  // came out. Two caveats on reading them: that lap is mostly at a standstill, so a real ride
+  // writes more; and each frame's own rate is the hard ceiling (10 Hz = 36 000 rows/h).
+  //
+  // The whole block costs 3820 rows over that lap — 33 700 rows/h of bike-on time, against
+  // 64 100/h for the 224 signals already logged from the same capture. So this is a ~53 %
+  // increase in the ride log's row rate while riding, for 31 signals, and the three biggest
+  // contributors are the torque pair and the 12 V load current: between them they are more
+  // than half of it, and 0x100's fourteen flags are 14 rows in total. That is the number to
+  // argue with if the SD card starts complaining; the deadbands most worth revisiting first
+  // are noted per signal below, and every one of them was chosen off a measured curve rather
+  // than a round number.
+  //
+  // 0x0A0 — the ABS module. See src/can/abs.ts for what the capture proves and what it can't.
+  //
+  // The two wheel speeds get 0.25 km/h rather than the 0.5 that speed_can_kmh uses. They are
+  // the finer measurement (0.05625 km/h per count against 0.1 for 0x104) and the one a video
+  // overlay wants next to brake pressure, and 0.25 measured 1348 and 1163 rows/h against 3057
+  // and 2802 at log-on-change — so the deadband is already doing most of the work available.
+  { key: "wheel_speed_front_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25 },
+  { key: "wheel_speed_rear_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25 },
+  // ⚠️ NOT a 1/0 flag, even though it has only ever been seen as 0 or 1: Energica's mask is
+  // `byte 4 mask 0x0C >> 2`, two bits, so the field's range is 0…3 and the decoder keeps the
+  // vendor's mask rather than narrowing it. public/lib/bounds.js therefore names it explicitly
+  // at [0, 3]; without that the `diag` group's blank-unit boolean rule would gate it to [0, 1]
+  // and reject states 2 and 3 as a dead sensor. It must also not carry a deadband — at 1 the
+  // logging rule would be inconsistent rather than merely silent (|2 − 0| > 1 passes where
+  // |1 − 0| > 1 does not), so a lamp stepping 0 → 1 → 2 would log some transitions and drop
+  // others. It moved ONCE in the whole lap, 2 rows, so there is nothing to tame anyway.
+  { key: "abs_warning_lamp", unit: "", group: "diag", source: "stream" },
+  // Whole bar, so log-on-change is one row per bar of change: 50 rows for the lap's braking,
+  // 441/h. Nothing to smooth, and a deadband of 1 here would swallow every single-bar step,
+  // which on a 0-17 signal is most of it.
+  { key: "front_brake_pressure_bar", unit: "bar", group: "controls", source: "stream" },
+
+  // 0x127 — the throttle position sensor's two channels, 12-bit counts, at 4 Hz. Blank unit on
+  // purpose: these are ADC counts and converting them to a percentage would need 0x109's own
+  // 🟡 throttle scale (see src/can/drive.ts). No deadband — the frame is only 4 Hz (1330 and
+  // 1815 rows/h at log-on-change), and the whole reason to log both is to catch the two
+  // channels diverging, which is the P0120/P0121 fault. A deadband is a filter on exactly the
+  // small persistent offset that fault looks like.
+  { key: "throttle_sensor_a_raw", unit: "", group: "drive", source: "stream" },
+  { key: "throttle_sensor_b_raw", unit: "", group: "drive", source: "stream" },
+
+  // 0x02C — the inverter's torque command and feedback, 0.1 Nm at 50 Hz. 0.5 Nm is the same
+  // deadband motor_torque_nm carries, deliberately: the BLE hub's torque and the inverter's own
+  // feedback are two paths to one quantity, and comparing them is only honest if they are
+  // logged at the same fidelity. Measured 6881 and 6872 rows/h against 14 537 and 15 982 at
+  // log-on-change. The ceiling is the thing to watch before anyone tightens this — 50 Hz across
+  // two signals is 360 000 rows/h if a ride ever keeps both moving continuously, where the BMS
+  // pair this borrows its reasoning from is 10 Hz.
+  { key: "drive_torque_cmd_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
+  { key: "drive_torque_feedback_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
+
+  // 0x501 — the PSU/DC-DC monitor at 10 Hz. All three channels move on nearly every frame
+  // (23 806, 30 846 and 34 872 rows/h at log-on-change, i.e. essentially the frame rate), so
+  // all three need a deadband or they are the chattiest thing on the bus after the BMS cells.
+  //
+  // The two rails: 30 mV, measured 2493 and 405 rows/h against 23 806 and 30 846. There is a
+  // cliff just past that worth knowing about before anyone tunes it — the rails only moved 64
+  // and 47 mV across the WHOLE lap, so a 50 mV deadband logs exactly one row each and then goes
+  // silent, and what these exist to catch is a rail sagging. 30 mV resolves a 0.24 % drift on a
+  // 12.7 V rail, which is early-warning territory; hundreds of millivolts is what an actually
+  // failing converter does, and either band sees that.
+  //
+  // 400 mA on the load current, measured 2229 rows/h against 34 872 (250 mA would be 9110 — the
+  // cliff is between 300 and 400 here too). Sized against the SMALLEST load step actually
+  // identified on this bike, the brake light at +693 mA: 400 is 58 % of it, so every switching
+  // event still crosses with margin while the 10 Hz measurement dither does not. The high beam
+  // (+1788 mA) and blinker (+1030 mA) clear it by 4.5× and 2.6×.
+  { key: "psu_12v_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30 },
+  { key: "psu_12v_lowpower_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30 },
+  { key: "psu_12v_load_ma", unit: "mA", group: "powertrain", source: "stream", deadband: 400 },
+
+  // 0x10B — the VCU's own consumption figures, 10 Hz. Separate keys from the Connectivity Hub's
+  // km_per_kwh / kwh_per_100km for the same reason odometer_can_km is separate from odometer_km:
+  // the point is to compare two sources over a ride, and one key with two writers just flaps.
+  // Same 0.05 deadbands as the hub's pair, again to keep them comparable.
+  //
+  // What actually controls the volume here is not the deadband but the decoder dropping the
+  // saturated pair (src/can/consumption.ts): 3639 of the lap's 4088 frames carry no measurement
+  // at all, so these two wrote 413 and 413 rows for the 449 frames that did. Expect gaps
+  // wherever the bike was stopped — that is the intended shape, not a dropout.
+  { key: "km_per_kwh_can", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05 },
+  { key: "kwh_per_100km_can", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05 },
+  // The 100 m averages. 🟡 — only two distinct values in the entire lap, so their scaling is
+  // carried over by position from the instantaneous pair rather than confirmed. 2 rows for the
+  // whole capture, so log-on-change costs nothing and a real ride is what settles them.
+  { key: "km_per_kwh_100m_can", unit: "km/kWh", group: "energy", source: "stream" },
+  { key: "kwh_per_100km_100m_can", unit: "kWh/100km", group: "energy", source: "stream" },
+
+  // 0x125 — the safety micro's two road-speed channels, 55 Hz, RAW COUNTS with no unit because
+  // no scale survived the capture (src/can/drive.ts). 55 counts is ~0.5 km/h at the measured
+  // ~109 counts per km/h — i.e. deliberately the same fidelity speed_can_kmh gets, on a channel
+  // that is redundant with it. Without a deadband this pair is 38 194 rows/h, the highest of
+  // anything added here and more than the confirmed speed signal it duplicates; at 55 it is
+  // 1357 and 1189. The number is odd because the scale is; if a ride ever pins the constant,
+  // this deadband should be restated in km/h at the same time.
+  { key: "speed_redundant_a_raw", unit: "", group: "drive", source: "stream", deadband: 55 },
+  { key: "speed_redundant_b_raw", unit: "", group: "drive", source: "stream", deadband: 55 },
+
+  // 0x100 — the VCU's own 64-bit error/status bitfield, 10 Hz. Free to log: across all
+  // 105 736 frames of it on disk the payload takes FOUR distinct values, so the whole block
+  // below writes about a dozen rows a day. NO DEADBANDS anywhere here, and on the booleans
+  // that is load-bearing rather than a default — |1 − 0| > 1 is false, so a deadband of 1
+  // would log the first sample after boot and then go silent forever, which is exactly the
+  // shape of "this fault never fired". scripts/check-can-decoders.ts fails the build on it.
+  //
+  // The two raw words are the same arrangement bms_error_flags / bms_warning_flags have on
+  // 0x201: every one of the 64 bits is recorded whether or not it has a name here, so a flag
+  // this file does not break out is still in the log and a wrong bit position costs a re-read
+  // rather than a lost event. Group "vcu" and not "diag" ON PURPOSE — "diag" is a
+  // BOOLEAN_GROUP in public/lib/bounds.js, and a u32 bitfield gated to 0/1 would be rejected
+  // as a dead sensor on every frame where anything is set.
+  { key: "vcu_flags_low", unit: "", group: "vcu", source: "stream" }, // b0-3 LE, all ERR_*
+  { key: "vcu_flags_high", unit: "", group: "vcu", source: "stream" }, // b4-7 LE, mixed ERR_/WARN_/status
+  // The booleans go in "diag" precisely because it IS a BOOLEAN_GROUP, so they inherit the
+  // 0/1 gate with no per-key bounds entry — the same treatment the 154 generated dtc_* flags
+  // get, which is the company these belong in.
+  //
+  // ⚠️ Only four of these have ever been observed to take both values (see src/can/vcu-flags.ts):
+  // check_modules, check_modules_status, soc_misaligned and 12v_power_good. The rest read 0 in
+  // every frame of every capture, including a complete DC fast charge — so they are Energica's
+  // bit positions, not measured ones, and a 1 from any of them is a lead to corroborate rather
+  // than a confirmed fault.
+  { key: "vcu_err_charge_manager", unit: "", group: "diag", source: "stream" }, // b7 bit1 ERR_ChargeCM_Out
+  { key: "vcu_err_check_modules", unit: "", group: "diag", source: "stream" }, // b2 bit7
+  { key: "vcu_check_modules_status", unit: "", group: "diag", source: "stream" }, // b4 bit3
+  { key: "vcu_warn_soc_misaligned", unit: "", group: "diag", source: "stream" }, // b6 bit4
+  { key: "vcu_12v_power_good", unit: "", group: "diag", source: "stream" }, // b7 bit0 V_PGood12V
+  { key: "vcu_err_system_fault", unit: "", group: "diag", source: "stream" }, // b0 bit0
+  { key: "vcu_err_battery_ot", unit: "", group: "diag", source: "stream" }, // b3 bit4
+  { key: "vcu_err_motor_ot", unit: "", group: "diag", source: "stream" }, // b3 bit5
+  { key: "vcu_err_system_fatal_fault", unit: "", group: "diag", source: "stream" }, // b3 bit6
+  { key: "vcu_err_system_blocking_fault", unit: "", group: "diag", source: "stream" }, // b3 bit7
+  { key: "vcu_err_drive_ot", unit: "", group: "diag", source: "stream" }, // b4 bit1
+  { key: "vcu_err_leak_detect", unit: "", group: "diag", source: "stream" }, // b6 bit0
+
   // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only
   // when asked for, which is why they carry no deadband. The position is copied
