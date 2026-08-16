@@ -2883,7 +2883,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "accel_lateral_raw and accel_frontal_raw exactly as they come off the bus. Deliberately unitless: the scale factor is not known, so labelling these in g would be a guess. Useful for shape and for spotting lean or braking events, not for absolute numbers.",
+      "description": "Roll and pitch from the VCU's attitude sensor, CAN 0x102 b4-7, in degrees. Roll is positive leaning right; pitch is positive nose-down, i.e. braking. Both are gravity-referenced and not fused with a gyro, so they report the direction of the measured vertical rather than the bike's true attitude: a steady corner reads close to zero, because the bike leans into the resultant, and most of what pitch shows is braking and acceleration rather than gradient. Rows before 2026-08-15 were logged as accel_lateral_raw / accel_frontal_raw — the same angles in units of 0.1°, under a wrong name — so each query divides those by 10 and the history stays continuous across the rename. The axis is soft-limited to at least ±45° so that a parked window cannot autoscale a degree of noise into a dramatic chart; it is deliberately not hard-limited, so the rare atan2 wrap transient (±170° for a few frames after a hard hit) will still stretch it, and is meant to. The full evidence is in src/can/attitude.ts.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2891,10 +2891,12 @@
           },
           "custom": {
             "axisBorderShow": false,
-            "axisCenteredZero": false,
+            "axisCenteredZero": true,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
+            "axisSoftMax": 45,
+            "axisSoftMin": -45,
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
@@ -2912,7 +2914,7 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "always",
+            "showPoints": "auto",
             "spanNulls": true,
             "stacking": {
               "group": "A",
@@ -2922,7 +2924,7 @@
               "mode": "off"
             }
           },
-          "decimals": 0,
+          "decimals": 1,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -2933,7 +2935,7 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "degree"
         },
         "overrides": []
       },
@@ -2963,7 +2965,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Lateral (counts)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'accel_lateral_raw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Roll (right +)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'attitude_roll_deg' AND r.ts BETWEEN $__from AND $__to\nUNION ALL\nSELECT r.ts/1000.0, r.value/10.0\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'accel_lateral_raw' AND r.ts BETWEEN $__from AND $__to\nORDER BY 1",
           "refId": "A",
           "timeColumns": ["time"]
         },
@@ -2973,12 +2975,12 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Frontal (counts)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'accel_frontal_raw' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Pitch (nose-down +)\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'attitude_pitch_deg' AND r.ts BETWEEN $__from AND $__to\nUNION ALL\nSELECT r.ts/1000.0, r.value/10.0\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'accel_frontal_raw' AND r.ts BETWEEN $__from AND $__to\nORDER BY 1",
           "refId": "B",
           "timeColumns": ["time"]
         }
       ],
-      "title": "Accelerometer (raw counts)",
+      "title": "Attitude — roll & pitch (gravity-referenced)",
       "type": "timeseries"
     }
   ],

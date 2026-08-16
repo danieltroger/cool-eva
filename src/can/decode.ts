@@ -1,9 +1,11 @@
 // Pure per-frame decoders for the Energica broadcast frames we log. Each decoder
 // takes one frame's bytes and returns the (signal key, value) pairs it carries;
 // unknown IDs return []. No I/O, no clock reads, no cross-frame state — that's what
-// makes them testable by replaying a capture when the bike is out of reach. The one
-// frame that can't be stateless is 0x410, where a GPS fix spans three sub-frames; it
-// keeps that state in gps.ts and this file only routes to it.
+// makes them testable by replaying a capture when the bike is out of reach. Two frames
+// can't be stateless and neither keeps its state here: 0x410, where a GPS fix spans
+// three sub-frames (gps.ts), and 0x102's attitude pair, whose out-of-range warning fires
+// once per axis per process rather than at the frame rate (attitude.ts). This file only
+// routes to both, and each exports a reset so replaying a second capture starts clean.
 //
 // The frames below are reverse-engineered from the wire and cross-checked against the
 // bike's engineering menu (see obd-garage/CAN_MAP.md). The BMS's own frames are a
@@ -17,6 +19,7 @@
 // and where it contradicts something measured on this bike (0x102's blinkers) ours
 // wins. Confidence markers below and in obd-garage/CAN_MAP.md say which is which.
 
+import { decodeAttitudeFrame } from "./attitude.ts";
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
 import { type DecodedValue, bit, bitFieldLe, i16le, u16le } from "./frame.ts";
 import { decodeGpsCanFrame, GPS_CAN_ID } from "./gps.ts";
@@ -178,7 +181,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return values;
     }
 
-    // 0x102 — body/lights, vehicle state and the accelerometers (100 Hz).
+    // 0x102 — body/lights, vehicle state and the attitude angles (100 Hz).
     //
     // b0 bit6 (0x40) = high beam (bit7 0x80 = low beam). b2 mixes lamps and state: 0x04
     // L blinker, 0x08 R blinker, 0x10 horn, 0x20 front brake, 0x40 rear brake. Those
@@ -236,20 +239,15 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "charge_port_unlocked", value: bit(lampsAndState, 1) },
         { key: "moving", value: bit(lampsAndState, 7) },
       ];
-      // b4-5 / b6-7 LE s16 — lateral and frontal acceleration. THE SCALE IS UNVERIFIED:
-      // the .xdbc gives the unit as "g" but no multiplier, and there is nothing on the
-      // bus to calibrate against, so these are the raw counts and the keys say `_raw`
-      // rather than `_g`. Parked they read −108…−103 lateral and −40…−35 frontal, the
-      // right shape for a bike leaning on its sidestand, but that is a plausibility
-      // check and not a calibration — do not plot them as g until one is measured.
-      // Guarded separately so a short frame still yields the light and brake bits,
+      // b4-5 / b6-7 LE s16 — the attitude sensor's roll and pitch, in units of 0.1°.
+      // NOT the two accelerations the .xdbc calls them: Energica's own bank-2
+      // `AttitudeSensor_Phi` reads the same bytes on the side stand, and the values sit
+      // on an arctangent lattice that a scaled count cannot produce. attitude.ts has the
+      // full argument, the sign conventions, what is still only inferred, and the
+      // warning for a count outside the ±180.0° an atan2 can reach. It applies
+      // its own length guard, so a short frame still yields the light and brake bits,
       // which are the confirmed ones.
-      if (data.length >= 8) {
-        values.push(
-          { key: "accel_lateral_raw", value: i16le(data[4], data[5]) },
-          { key: "accel_frontal_raw", value: i16le(data[6], data[7]) }
-        );
-      }
+      values.push(...decodeAttitudeFrame(data));
       return values;
     }
 
