@@ -13,14 +13,18 @@ import { DTC_TABLE, dtcSignalKey, type DtcTableEntry } from "../src/diagnostics/
 // inline as a SQL `VALUES` CTE. Without a second datasource that copy cannot be
 // deleted, so this makes it derived instead.
 //
-// WHY IT HAD TO BE GENERATED — it drifted, in the direction nobody notices. When
-// (44,0) and (44,2) were corrected on 2026-08-15 the JSON kept the old pairing, so
-// Grafana went on labelling THIS BIKE'S OWN FAULT `dtc_0044_0` as "P0A07 — water
-// pump locked" when it is P0A05, an open circuit: a seized pump instead of an
-// unwired one, on the fault the cooling work turns on. A wrong name still looks
-// like an answer, which is why it survived being stared at. src/http/dtc-table.ts
-// already refuses this duplication for the phone dashboard; this is the same
-// argument applied to the copy that cannot be removed.
+// WHY IT HAD TO BE GENERATED, 2026-08-16 — it drifted, in the direction nobody
+// notices. When (44,0) and (44,2) were corrected on 2026-08-15 the JSON kept the
+// old pairing, so Grafana went on labelling THIS BIKE'S OWN FAULT `dtc_0044_0` as
+// "P0A07 — water pump locked" when it is P0A05, an open circuit: a seized pump
+// instead of an unwired one, on the fault the cooling work turns on. A wrong name
+// still looks like an answer, which is why it survived being stared at.
+// src/http/dtc-table.ts already refuses this duplication for the phone dashboard;
+// this is the same argument applied to the copy that cannot be removed.
+//
+// Measured, not assumed: both panels' queries were run against rides.db before and
+// after the regeneration. Same rows out of every panel, only the names changed —
+// 486 for the timeline, 4 for the table, 633 for the counts.
 //
 // HOW — the rewrite is textual, splicing only the bytes between the CTE header and
 // its closing paren, so no other byte of the dashboard can move: panel ids, field
@@ -182,6 +186,10 @@ function replaceValuesList(sql: string, valuesList: string): string {
  * nothing else is re-serialised. Both markers are plain ASCII, so their encoded
  * forms are unambiguous, and a row can never contain the terminator: every line
  * inside the list begins with spaces, never with `)`.
+ *
+ * This rewrites EVERY occurrence in the file, not only the ones staleness is
+ * detected through — a copy of the table that had ended up somewhere other than a
+ * query field would still be a copy, and would still be wrong.
  */
 function spliceValuesLists(dashboardJson: string, valuesList: string): string {
   const header = encodeJsonStringBody(VALUES_HEADER);
@@ -213,8 +221,13 @@ function spliceValuesLists(dashboardJson: string, valuesList: string): string {
  */
 function encodeJsonStringBody(value: string): string {
   const encoded = JSON.stringify(value).slice(1, -1);
-  return encoded.replaceAll(/[^\x20-\x7e]/gu, character => {
-    return `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+  // No `u` flag on purpose: it would match an astral character as one two-unit
+  // string, and charCodeAt(0) would then emit its high surrogate and silently drop
+  // the low one. Matching code units instead gives the surrogate pair the two
+  // \uXXXX escapes JSON wants. Nothing in the table needs it today; a name
+  // arriving with an emoji in it should not be the thing that finds this out.
+  return encoded.replaceAll(/[^\x20-\x7e]/g, codeUnit => {
+    return `\\u${codeUnit.charCodeAt(0).toString(16).padStart(4, "0")}`;
   });
 }
 
