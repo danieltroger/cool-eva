@@ -10,7 +10,7 @@ import { HypermileView } from "./views/hypermile.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
-import { Sheet, hasTroubleCodes, refreshStatus, sheetOpen } from "./views/sheet.js";
+import { Sheet, hasTroubleCodes, openSheet, refreshStatus } from "./views/sheet.js";
 import { monotonicNow } from "./lib/clock.js";
 
 const { button, div, span } = van.tags;
@@ -69,10 +69,10 @@ function Header() {
     button(
       {
         class: "menu",
-        onclick: () => {
-          sheetOpen.val = true;
-          void refreshStatus();
-        },
+        // openSheet() rather than setting the flag here: the sheet's sections fetch
+        // when they become visible, and it owns the list of what has to be
+        // refreshed so this button cannot fall behind it.
+        onclick: () => openSheet(),
       },
       // The Faults tab carries the warning now, and it leads somewhere that names
       // the code. Two ⚠ for one fault is how a warning stops being read.

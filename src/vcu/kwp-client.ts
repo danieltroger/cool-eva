@@ -4,14 +4,17 @@ import {
   KWP_REQUEST_CAN_ID,
   KWP_RESPONSE_CAN_ID,
   buildRequestFrame,
+  canIdsFor,
   decodeParameterReply,
+  identifierFor,
   identifierForIndex,
   isSessionOpened,
   parseResponseFrame,
   type VcuAddressedFrame,
   type VcuRequest,
+  type VcuTarget,
 } from "./param-codec.ts";
-import type { VcuMicro } from "./param-table.ts";
+import { CALIBRATION_BANK, type VcuMicro } from "./param-table.ts";
 
 // The transport half of reading VCU calibration parameters: put a frame on the
 // bus, wait for the reply, keep the diagnostic session alive, give up on time.
@@ -30,10 +33,10 @@ import type { VcuMicro } from "./param-table.ts";
 // ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which
 // kills every other raw-CAN socket on the Pi including the running cool-eva
 // service's (CLAUDE.md). This client only ever opens a channel on an interface
-// that is already up, so a parameter read can be taken alongside the live service
-// instead of interrupting it. The cost is that it cannot rescue a listen-only
-// bus — it will just see nothing, which scripts/read-vcu-params.ts checks for and
-// explains rather than leaving as a mystery.
+// that is already up — in practice the service's own, since the sweep moved
+// in-process (../vcu/sweep.ts). The cost is that it cannot rescue a listen-only
+// bus: it would just see nothing, which is why ./read-runner.ts refuses to start a
+// sweep when OBD_ENABLED=0 rather than leaving it as a mystery.
 //
 // ── What the bus does, per obd-garage/DIAG_ADDRESSES.md §3 (live 2026-08-08) ──
 // The micros answer NOTHING until a session is open — `A9 01 3E` alone is silence,
@@ -55,30 +58,50 @@ export interface VcuReadTarget {
   identifier: number;
 }
 
+/**
+ * How a read came out, minus the identity of what was asked.
+ *
+ * Factored out so the sweep and the probe share ONE set of outcomes rather than two
+ * that drift: the sweep's identity is a micro and a bank-1 index, the probe's is any
+ * target, bank and index, and everything downstream of "what happened" is the same
+ * question either way.
+ */
+export type VcuReadResult =
+  | { status: "read"; record: Uint8Array }
+  /** The micro answered, by name, that it will not. */
+  | { status: "refused"; negativeResponseCode: number; description: string }
+  /** A session was open and the read got silence. NOT "the parameter does not exist". */
+  | { status: "no-response" }
+  /** The micro would not open a session, so nothing was even asked of it. */
+  | { status: "no-session"; reason: string }
+  /**
+   * The reply was a First Frame. Impossible for a bank-1 record (see the codec's
+   * header), so it means an assumption is wrong; reported rather than assembled.
+   */
+  | { status: "multi-frame"; totalLength: number }
+  /** Something answered in a shape the service does not define. */
+  | { status: "unrecognised"; reason: string }
+  /**
+   * Never reached the bus — our socket, not the bike. Kept apart from
+   * `no-response` for the same reason src/can/obd-dtc.ts keeps `not-sent` apart:
+   * one is a claim about the VCU, the other a claim about us.
+   */
+  | { status: "not-sent"; reason: string };
+
 /** How one parameter read came out. Resolves; nothing here rejects. */
-export type VcuReadOutcome = VcuReadTarget &
-  (
-    | { status: "read"; record: Uint8Array }
-    /** The micro answered, by name, that it will not. */
-    | { status: "refused"; negativeResponseCode: number; description: string }
-    /** A session was open and the read got silence. NOT "the parameter does not exist". */
-    | { status: "no-response" }
-    /** The micro would not open a session, so nothing was even asked of it. */
-    | { status: "no-session"; reason: string }
-    /**
-     * The reply was a First Frame. Impossible for a bank-1 record (see the codec's
-     * header), so it means an assumption is wrong; reported rather than assembled.
-     */
-    | { status: "multi-frame"; totalLength: number }
-    /** Something answered in a shape the service does not define. */
-    | { status: "unrecognised"; reason: string }
-    /**
-     * Never reached the bus — our socket, not the bike. Kept apart from
-     * `no-response` for the same reason src/can/obd-dtc.ts keeps `not-sent` apart:
-     * one is a claim about the VCU, the other a claim about us.
-     */
-    | { status: "not-sent"; reason: string }
-  );
+export type VcuReadOutcome = VcuReadTarget & VcuReadResult;
+
+/** What was asked in a one-off probe: any target, any bank, any index. */
+export interface VcuProbeTarget {
+  target: VcuTarget;
+  bank: number;
+  index: number;
+  /** `(bank << 12) | index`, carried so a caller never recomputes it. */
+  identifier: number;
+}
+
+/** How one probe came out. Same outcomes as a sweep read — only the identity differs. */
+export type VcuProbeOutcome = VcuProbeTarget & VcuReadResult;
 
 export interface VcuKwpClient {
   /**
@@ -86,12 +109,20 @@ export interface VcuKwpClient {
    * so a caller sharing the socket knows not to look at it as well.
    */
   handleFrame: (id: number, data: Buffer) => boolean;
-  /** Opens (or re-opens) a diagnostic session. Resolves false if the micro will not. */
-  openSession: (micro: VcuMicro) => Promise<boolean>;
-  /** `3E` TesterPresent — a pre-flight "is this micro there?" that needs a session first. */
-  ping: (micro: VcuMicro) => Promise<boolean>;
-  /** Reads one bank-1 parameter. Resolves whatever happens. */
+  /** Opens (or re-opens) a diagnostic session. Resolves false if the target will not. */
+  openSession: (target: VcuTarget) => Promise<boolean>;
+  /** `3E` TesterPresent — a pre-flight "is this target there?" that needs a session first. */
+  ping: (target: VcuTarget) => Promise<boolean>;
+  /** Reads one bank-1 parameter off a VCU micro. What the sweep uses. Resolves whatever happens. */
   readParameter: (micro: VcuMicro, index: number) => Promise<VcuReadOutcome>;
+  /**
+   * Reads ONE identifier off any target in any bank — service mode's probe.
+   *
+   * Same three request kinds and the same encoder as everything else here; the only
+   * difference from `readParameter` is that the caller says which target and which
+   * bank instead of those being the sweep's fixed A8/A9 and bank 1.
+   */
+  probe: (target: VcuTarget, bank: number, index: number) => Promise<VcuProbeOutcome>;
   /** Stops accepting work and clears any timer, so the process can exit. */
   stop: () => void;
 }
@@ -137,8 +168,14 @@ interface ClientContext {
     abandon: (result: { kind: "timeout" } | { kind: "not-sent"; reason: string }) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null;
-  /** Monotonic mark of the last reply from each micro; null while no session is believed open. */
-  lastExchangeAt: Record<VcuMicro, number | null>;
+  /** Monotonic mark of the last reply from each target; null while no session is believed open. */
+  lastExchangeAt: Partial<Record<VcuTarget, number | null>>;
+  /**
+   * The CAN id the request in flight expects its reply on. Held rather than assumed,
+   * because the charge manager answers on 0x7E3 while the VCU micros answer on 0x7E0
+   * — so "is this frame for us" is a question about who we last asked, not a constant.
+   */
+  pendingResponseCanId: number | null;
   stopped: boolean;
 }
 
@@ -154,20 +191,26 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
     responseTimeoutMs: options.responseTimeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS,
     paceMs: options.paceMs ?? DEFAULT_PACE_MS,
     pending: null,
-    lastExchangeAt: { A8: null, A9: null },
+    lastExchangeAt: { A8: null, A9: null, A4: null },
+    pendingResponseCanId: null,
     stopped: false,
   };
   return {
     handleFrame: (id, data) => handleFrame(context, id, data),
-    openSession: micro => openSession(context, micro),
-    ping: micro => ping(context, micro),
+    openSession: target => openSession(context, target),
+    ping: target => ping(context, target),
     readParameter: (micro, index) => readParameter(context, micro, index),
+    probe: (target, bank, index) => probe(context, target, bank, index),
     stop: () => stop(context),
   };
 }
 
 function handleFrame(context: ClientContext, id: number, data: Buffer): boolean {
-  if (id !== KWP_RESPONSE_CAN_ID) {
+  // Matched against the id the request IN FLIGHT expects, not against a constant.
+  // With nothing in flight there is nothing of ours on the bus, so nothing here is
+  // ours to consume — which also keeps this a strict no-op for the shared socket in
+  // src/index.ts between sweeps.
+  if (context.pendingResponseCanId === null || id !== context.pendingResponseCanId) {
     return false;
   }
   const frame = parseResponseFrame(data);
@@ -190,15 +233,40 @@ function handleFrame(context: ClientContext, id: number, data: Buffer): boolean 
 }
 
 async function readParameter(context: ClientContext, micro: VcuMicro, index: number): Promise<VcuReadOutcome> {
-  const target: VcuReadTarget = { micro, index, identifier: identifierForIndex(index) };
+  const identity: VcuReadTarget = { micro, index, identifier: identifierForIndex(index) };
+  return { ...identity, ...(await performRead(context, micro, CALIBRATION_BANK, index)) };
+}
+
+/**
+ * One identifier off any target in any bank.
+ *
+ * `identifierFor` is called BEFORE anything reaches the bus, so a bank or index a
+ * CommonIdentifier cannot express throws here rather than being truncated into a
+ * different, valid-looking read. That matters more for a probe than for the sweep:
+ * the sweep's indices come from a table this repo owns, a probe's come from whoever
+ * is holding the phone.
+ */
+async function probe(context: ClientContext, target: VcuTarget, bank: number, index: number): Promise<VcuProbeOutcome> {
+  const identity: VcuProbeTarget = { target, bank, index, identifier: identifierFor(bank, index) };
+  return { ...identity, ...(await performRead(context, target, bank, index)) };
+}
+
+/** The read itself, shared by the sweep and the probe so there is one session/retry/decode path. */
+async function performRead(
+  context: ClientContext,
+  micro: VcuTarget,
+  bank: number,
+  index: number
+): Promise<VcuReadResult> {
+  const target = { identifier: identifierFor(bank, index) };
   if (context.stopped) {
-    return { ...target, status: "not-sent", reason: "client stopped" };
+    return { status: "not-sent", reason: "client stopped" };
   }
   if (!(await ensureSession(context, micro))) {
-    return { ...target, status: "no-session", reason: `${micro} did not answer 10 81` };
+    return { status: "no-session", reason: `${micro} did not answer 10 81` };
   }
 
-  let result = await exchange(context, micro, { kind: "read-parameter", index });
+  let result = await exchange(context, micro, { kind: "read-parameter", bank, index });
   if (result.kind === "timeout") {
     // Far and away the likeliest cause of silence is the session having expired
     // while we were doing something else, so re-open and ask once more before
@@ -206,43 +274,41 @@ async function readParameter(context: ClientContext, micro: VcuMicro, index: num
     // silence is information, and hammering a shared bus to re-establish it is not
     // a trade worth making (same reasoning as obd-dtc.ts' "only a stall is retried").
     if (!(await openSession(context, micro))) {
-      return { ...target, status: "no-session", reason: `${micro} stopped answering 10 81 mid-read` };
+      return { status: "no-session", reason: `${micro} stopped answering 10 81 mid-read` };
     }
-    result = await exchange(context, micro, { kind: "read-parameter", index });
+    result = await exchange(context, micro, { kind: "read-parameter", bank, index });
   }
   if (result.kind === "not-sent") {
-    return { ...target, status: "not-sent", reason: result.reason };
+    return { status: "not-sent", reason: result.reason };
   }
   if (result.kind === "timeout") {
-    return { ...target, status: "no-response" };
+    return { status: "no-response" };
   }
   if (result.frame.kind === "multi-frame") {
-    return { ...target, status: "multi-frame", totalLength: result.frame.totalLength };
+    return { status: "multi-frame", totalLength: result.frame.totalLength };
   }
 
   const reply = decodeParameterReply(result.frame.payload, target.identifier);
   switch (reply.kind) {
     case "record":
-      return { ...target, status: "read", record: reply.record };
+      return { status: "read", record: reply.record };
     case "refused":
       return {
-        ...target,
         status: "refused",
         negativeResponseCode: reply.negativeResponseCode,
         description: reply.description,
       };
     case "identifier-mismatch":
       return {
-        ...target,
         status: "unrecognised",
         reason: `reply echoed identifier 0x${reply.received.toString(16)}, not 0x${reply.expected.toString(16)}`,
       };
     case "unrecognised":
-      return { ...target, status: "unrecognised", reason: reply.reason };
+      return { status: "unrecognised", reason: reply.reason };
   }
 }
 
-async function openSession(context: ClientContext, micro: VcuMicro): Promise<boolean> {
+async function openSession(context: ClientContext, micro: VcuTarget): Promise<boolean> {
   const result = await exchange(context, micro, { kind: "start-session" });
   const opened = result.kind === "reply" && result.frame.kind === "payload" && isSessionOpened(result.frame.payload);
   // Cleared rather than left stale on failure: believing a session is open when it
@@ -251,7 +317,7 @@ async function openSession(context: ClientContext, micro: VcuMicro): Promise<boo
   return opened;
 }
 
-async function ping(context: ClientContext, micro: VcuMicro): Promise<boolean> {
+async function ping(context: ClientContext, micro: VcuTarget): Promise<boolean> {
   if (!(await ensureSession(context, micro))) {
     return false;
   }
@@ -260,8 +326,8 @@ async function ping(context: ClientContext, micro: VcuMicro): Promise<boolean> {
 }
 
 /** Opens a session only when the last one is believed to have expired. */
-async function ensureSession(context: ClientContext, micro: VcuMicro): Promise<boolean> {
-  const lastExchangeAt = context.lastExchangeAt[micro];
+async function ensureSession(context: ClientContext, micro: VcuTarget): Promise<boolean> {
+  const lastExchangeAt = context.lastExchangeAt[micro] ?? null;
   if (lastExchangeAt !== null && since(lastExchangeAt) < SESSION_IDLE_LIMIT_MS) {
     return true;
   }
@@ -290,7 +356,7 @@ type ExchangeResult =
  * flight would be answered by whichever frame lands first. A caller that tries is
  * told so rather than being given a plausible wrong answer.
  */
-function exchange(context: ClientContext, micro: VcuMicro, request: VcuRequest): Promise<ExchangeResult> {
+function exchange(context: ClientContext, micro: VcuTarget, request: VcuRequest): Promise<ExchangeResult> {
   if (context.stopped) {
     // Nothing reaches the bus after stop(), whichever entry point asked. readParameter()
     // already checks this, but openSession() and ping() route straight through here, so
@@ -305,11 +371,13 @@ function exchange(context: ClientContext, micro: VcuMicro, request: VcuRequest):
     return Promise.resolve({ kind: "not-sent", reason });
   }
   const frame = Buffer.from(buildRequestFrame(micro, request));
+  const canIds = canIdsFor(micro);
   return new Promise<ExchangeResult>(resolve => {
     const settle = (result: ExchangeResult): void => {
       if (result.kind === "reply") {
         context.lastExchangeAt[micro] = monotonicNow();
       }
+      context.pendingResponseCanId = null;
       // Paced on the way OUT rather than by the caller, so every path through this
       // client is polite to the bus by default instead of by remembering to be.
       setTimeout(() => resolve(result), context.paceMs);
@@ -319,9 +387,10 @@ function exchange(context: ClientContext, micro: VcuMicro, request: VcuRequest):
       settle({ kind: "timeout" });
     }, context.responseTimeoutMs);
     context.pending = { resolve: frame => settle({ kind: "reply", frame }), timer, abandon: settle };
+    context.pendingResponseCanId = canIds.response;
 
     try {
-      context.channel.send({ id: KWP_REQUEST_CAN_ID, ext: false, rtr: false, data: frame });
+      context.channel.send({ id: canIds.request, ext: false, rtr: false, data: frame });
     } catch (err) {
       clearTimeout(timer);
       context.pending = null;
@@ -335,6 +404,7 @@ function exchange(context: ClientContext, micro: VcuMicro, request: VcuRequest):
 
 function stop(context: ClientContext): void {
   context.stopped = true;
+  context.pendingResponseCanId = null;
   if (context.pending) {
     const waiting = context.pending;
     context.pending = null;

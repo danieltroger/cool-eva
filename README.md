@@ -251,7 +251,8 @@ Not in the unit file — `scripts/setup-service.ts` rewrites that every time it 
 | `CUSTOM_BMS_CONFIG` | unset | Set to `1` **only** if the pack's BMS has been reflashed with the custom config — see [below](#custom_bms_config--set-this-only-if-you-flashed-the-custom-config). Leave unset on a stock bike. |
 | `RIDE_LOG_PUBKEY` | `./ride-log-key.public.pem` | Where the sealing key lives. |
 | `RIDE_LOG_DIR` | `./ride-logs` | Where sealed `.celog` segments are written. |
-| `VCU_PARAM_DIR` | `./vcu-params` | Where `scripts/read-vcu-params.ts` leaves snapshots for `/vcu-params` to serve. |
+| `VCU_PARAM_DIR` | `./vcu-params` | Where service mode leaves parameter snapshots for `/vcu-params` and `/vcu-backup.csv` to serve. |
+| `SERVICE_MODE_ENABLED` | on | `0` forbids the dashboard from starting a VCU parameter read. That read is the only thing here that puts requests on the bike's bus on purpose; the snapshot is still served and exported either way. The safety gate applies regardless — see [Service mode](#service-mode). |
 
 ### Grafana
 
@@ -353,16 +354,26 @@ The VCU's calibration EEPROM — throttle maps, cell limits, current thresholds,
 
 `src/vcu/param-table.ts` carries a copy of that file — 277 names, widths and micro assignments — so nothing depends on a path in one person's iCloud folder. **Its values are another bike's**: the file came from a different variant, and 21 of the 233 parameters the A9 serves read differently here (`MAX_DC_CHG_CURRENT` is 75 A on this bike against the file's 60). It is a name table, and the column showing its values is labelled as another bike's everywhere it appears.
 
+### Service mode
+
+Reading them is a thing you **do**, from the phone: **Menu → Service mode → `🔧 Read VCU parameters from the bike`** (two taps — the first arms it). Live progress, `⏹ Stop`, and then `⬇ Export N parameters as vcu_backup.csv`, which is byte-compatible with another owner's `energica_tool.py`.
+
+**It only starts with the bike proved parked**, and it stops by itself if that stops being true. `src/vcu/service-gate.ts` requires road speed zero on CAN `0x104`, the motor at zero rpm, the VCU's own `moving` bit clear, and `go` / `go_request` / `throttle_on` clear — every one of them fresh, from 100 Hz broadcasts. OBD PID `0D` corroborates the speed when it is answering. Anything stale, missing or contradictory refuses: the gate fails closed, so a bus that has gone quiet reads as "I cannot tell", never as "it is fine". The same check runs again before **every single request** the sweep sends, and a watchdog re-runs it five times a second, so riding away ends the read rather than racing it.
+
+**Stationary and charging is allowed**, deliberately — you cannot test a DC charge-current limit on a bike that is not plugged in. While the charger's own frames (`0x305`/`0x306`) are arriving, two things relax: `energized` may be set, because a charging bike's HV side is up by definition; and `speed_can_kmh`/`motor_rpm_can` may be absent, because the bike stops broadcasting `0x104` while it charges. Nothing else relaxes — the `0x102` bits must still be live and clear, and a fresh speed reading that says the wheel is turning still refuses.
+
+### Probing one identifier
+
+The sweep covers the 277 parameters `src/vcu/param-table.ts` describes: bank 1 on the two VCU micros. **Menu → Service mode → Probe one identifier** reaches anything else — pick the ECU, the bank and the index, and it reads that one. Two things live out there that nothing here could reach before: **bank 2 is live data** rather than stored settings, and the **charge manager** is a separate ECU on CAN `0x7C3`/`0x7E3` (every sweep this project ever ran went out on `0x7C0`, which is why `CM_ERROR` and friends looked absent — they were never asked). Same header, same gate and same single-flight as a sweep.
+
+**It is on demand, never automatic.** These are configuration: they do not move while riding, so logging them as time series would spend SD-card writes re-recording constants, and 277 more keys in the WebSocket snapshot would cost every dashboard update. Nothing starts a sweep at boot, on a timer or per page load. What is worth knowing is that one _changed_ — so every run diffs against the previous snapshot and says so loudly in the journal. `GET /vcu-params` and `/params.html` serve that snapshot from disk and **never touch the bus**.
+
+A sweep survives being interrupted: each row is appended to `vcu-params/sweep.partial.jsonl` as it arrives, and starting another one resumes from there rather than beginning again — so a stop, a gate exit or a `systemctl restart` costs only the parameters not yet read. Snapshots are gitignored — they are one motorcycle's — while the name table needed to take your own is committed.
+
 ```bash
-# on the Pi, bike awake — run it detached, the link drops
-node --experimental-strip-types scripts/read-vcu-params.ts                     # all 277
-node --experimental-strip-types scripts/read-vcu-params.ts MAX_DC_CHG_CURRENT  # just this one
-node --experimental-strip-types scripts/check-vcu-params.ts                    # on a laptop, no bike
+node --experimental-strip-types scripts/check-vcu-params.ts   # on a laptop, no bike:
+                                                              # codec, name table, backup CSV and the safety gate
 ```
-
-**It is on demand, not something the service does.** These are configuration: they do not move while riding, so logging them as time series would spend SD-card writes re-recording constants, and 277 more keys in the WebSocket snapshot would cost every dashboard update. What is worth knowing is that one _changed_ — so every run diffs against the previous snapshot and says so loudly. `GET /vcu-params` and `/params.html` serve that snapshot from disk and **never touch the bus**, so the result is a tap away on the phone while the read itself stays deliberate and rare.
-
-A sweep survives the link dropping: each row is appended to `vcu-params/sweep.partial.jsonl` as it arrives, and re-running the same command resumes from there rather than starting again. Snapshots are gitignored — they are one motorcycle's — while the name table needed to take your own is committed.
 
 ## Notes
 

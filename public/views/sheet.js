@@ -5,6 +5,7 @@ import { chartTick, knownKeys, valueOf } from "../lib/store.js";
 import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
 import { bytes, compass, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
+import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 
 const { button, div, span } = van.tags;
 
@@ -17,6 +18,21 @@ const { button, div, span } = van.tags;
 /** @typedef {import("../../src/http/status.ts").StatusPayload} StatusPayload */
 
 export const sheetOpen = van.state(false);
+
+/**
+ * Opens the sheet and refreshes everything in it.
+ *
+ * The single entry point on purpose: each section here fetches its own endpoint
+ * when it becomes visible rather than polling in the background, so an opener that
+ * set `sheetOpen` directly would show one section's stale numbers next to
+ * another's fresh ones. Service mode is handed a way to ask whether the sheet is
+ * still open, which is half of what stops it polling forever.
+ */
+export function openSheet() {
+  sheetOpen.val = true;
+  void refreshStatus();
+  refreshServiceMode(() => sheetOpen.val);
+}
 
 const status = van.state(/** @type {StatusPayload | null} */ (null));
 const waypointMessage = van.state("");
@@ -41,6 +57,11 @@ export function Sheet() {
       div({ class: "sheet-title" }, "Actions"),
       WaypointButton(),
       DownloadButton(),
+      // Last of the doing-things sections and first of the reading-things ones,
+      // because it is the only control here that causes traffic on the bike's bus
+      // — worth a heading of its own rather than a third entry under "Actions".
+      div({ class: "sheet-title" }, "Service mode"),
+      ServiceMode(),
       div({ class: "sheet-title" }, "Stored codes"),
       TroubleCodes(),
       div({ class: "sheet-title" }, "Link"),

@@ -53,9 +53,10 @@
 // Hence: never derive routing from an index range, always read `micro`.
 //
 // (CAN_MAP.md logs 45 records for A8 bank 1 against these 44. The 45th is
-// unidentified — this variant's file may simply not name it. `--index` on
-// scripts/read-vcu-params.ts is how to go looking; an identifier with no table
-// entry reads back as raw bytes rather than failing.)
+// unidentified — this variant's file may simply not name it. A sweep reads the
+// whole table and nothing beyond it, so going looking would mean adding the index
+// here; an identifier with no table entry reads back as raw bytes rather than
+// failing, which is what makes that safe to try.)
 //
 // ── ⚠️ Names are NOT unique ──────────────────────────────────────────────────
 // Four names appear twice — `VSM_DUMMY_WORD8`/`9`/`10`/`11` at indices 11-14 and

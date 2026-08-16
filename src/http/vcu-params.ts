@@ -7,7 +7,7 @@ import type { VcuParameterRow, VcuParameterSnapshot } from "../vcu/snapshot.ts";
 // bike, so /params.html can show them by name on a phone in the garage.
 //
 // ⚠️ IT NEVER TOUCHES THE BUS, and that is the design rather than an implementation
-// detail. It serves a file that scripts/read-vcu-params.ts wrote; refreshing the
+// detail. It serves a file that a previous sweep wrote; refreshing the
 // page cannot make the bike answer anything, cannot open a diagnostic session and
 // cannot take bus time away from the OBD poller. Same standing rule as
 // /stored-dtcs, and here it is what lets the read be deliberate and rare while the
@@ -33,7 +33,7 @@ export type VcuParamsResponse =
   /** There is a file and it could not be read or parsed. Never silently rendered as "never read". */
   | { state: "unreadable"; directory: string; reason: string };
 
-/** Written by scripts/read-vcu-params.ts at the end of every run, complete or not. */
+/** Written by src/vcu/snapshot-store.ts at the end of every sweep that read something. */
 const LATEST_FILE = "latest.json";
 
 export async function handleVcuParamsEndpoint(res: ServerResponse, directory: string): Promise<void> {
@@ -48,7 +48,14 @@ export async function handleVcuParamsEndpoint(res: ServerResponse, directory: st
   res.end(body);
 }
 
-async function loadLatestSnapshot(directory: string): Promise<VcuParamsResponse> {
+/**
+ * The last snapshot on this Pi, as one of the three things it can be.
+ *
+ * Exported so ./vcu-read.ts and ./vcu-backup.ts do not each re-derive where
+ * `latest.json` lives or re-decide what a missing one means. There is one answer to
+ * "has this bike been read here", and this is it.
+ */
+export async function loadLatestSnapshot(directory: string): Promise<VcuParamsResponse> {
   const path = join(directory, LATEST_FILE);
   let text: string;
   try {
@@ -58,7 +65,7 @@ async function loadLatestSnapshot(directory: string): Promise<VcuParamsResponse>
       return {
         state: "never-read",
         directory,
-        hint: "run: node --experimental-strip-types scripts/read-vcu-params.ts (on the Pi, bike awake)",
+        hint: "start one from the dashboard: Menu → Service mode, with the bike awake, parked and out of drive",
       };
     }
     // Not swallowed and not disguised as "never read": a permissions problem or a

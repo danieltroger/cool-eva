@@ -578,3 +578,36 @@ body {
   color: var(--fg);
   border-color: var(--good);
 }
+
+/* Service mode's "probe index N" form. Three fields on one row, because on a phone
+   the whole point is that it fits above the button that uses them. */
+.probe-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.probe-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.probe-label {
+  font-size: 0.62rem;
+  color: var(--label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.2rem 0.2rem;
+}
+
+.probe-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+  border-radius: 0.6rem;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.65rem 0.5rem;
+}
