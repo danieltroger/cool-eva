@@ -288,6 +288,14 @@ async function stop(context: RunnerContext): Promise<void> {
   // Never rejects into the shutdown path: the sweep's own failure is already
   // reported by the handler in start(), and a throw here would skip everything
   // after this call in index.ts's shutdown.
+  //
+  // ⚠️ This works ONLY because ../vcu/sweep.ts awaits writeSnapshot() inside
+  // runSweep, before the promise settles. Move the archive write out of that
+  // promise — into a `.then`, a listener, anything — and awaiting here stops
+  // meaning anything: `process.exit(0)` is a few lines behind us and the write
+  // would not have happened. This resolves one microtask before start()'s
+  // `.finally()`, so `lastTally` and `finishedAt` are still unset at exit; that is
+  // fine, because nothing reads them after a shutdown.
   await sweep.finished.catch(() => undefined);
 }
 
@@ -311,6 +319,12 @@ function startGateWatchdog(context: RunnerContext, sweep: RunningParameterSweep)
     }
     console.warn(`vcu-read: leaving service mode mid-sweep — ${verdict.blockers.join("; ")}`);
     sweep.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
+    // One abort is the whole job. Left running, this would re-fire every 200 ms
+    // through the sweep's wind-down — the file close, the archive write, the
+    // 277-row diff — printing the same blocker line two or three times for one
+    // event. `abort` is idempotent so it did no harm, but a log that repeats reads
+    // as three things happening.
+    stopGateWatchdog(context);
   }, GATE_WATCH_INTERVAL_MS);
   // The sweep must never be the reason a `systemctl stop` hangs, and this timer must
   // never be the reason the process stays alive on its own.

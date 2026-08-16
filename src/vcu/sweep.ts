@@ -190,7 +190,20 @@ async function runSweep(options: ParameterSweepOptions, state: SweepState): Prom
   // A slot that refuses or stays silent is a finding in its own right and must not
   // make a finished sweep look truncated for ever — the same distinction
   // src/diagnostics/stored-codes.ts draws between "no codes" and "no answer".
-  const complete = state.stoppedBecause === null && targets.every(target => state.rows.has(target.index));
+  //
+  // ⚠️ `stoppedBecause` is CAPTURED here, on the same line as `complete`, and the
+  // captured copy is what is returned. Re-reading `state.stoppedBecause` after the
+  // `await` below would read it at a different moment: writing two JSON files and
+  // diffing 277 rows takes a few hundred milliseconds on a Pi's SD card, the
+  // watchdog is still armed for the first tick or two of that, and rolling the bike
+  // the instant `277/277 read` scrolls past is the natural thing for an owner to
+  // do. That would have returned `complete: true` in the snapshot and a gate exit
+  // as the reason, and read-runner.ts checks the reason first — so a sweep that
+  // asked about all 277 and deleted its own resume file would have rendered as
+  // "Stopped: the bike stopped being safe to service". Same shape as the
+  // wall-clock bug the first review found, and the same fix: read the fact once.
+  const stoppedBecause = state.stoppedBecause;
+  const complete = stoppedBecause === null && targets.every(target => state.rows.has(target.index));
   const snapshot: VcuParameterSnapshot = {
     readAt: Date.now(),
     complete,
@@ -198,7 +211,7 @@ async function runSweep(options: ParameterSweepOptions, state: SweepState): Prom
     rows: [...state.rows.values()].sort((left, right) => left.index - right.index),
   };
   await writeSnapshot(options.directory, snapshot);
-  return { snapshot, stoppedBecause: state.stoppedBecause };
+  return { snapshot, stoppedBecause };
 }
 
 /**
@@ -218,15 +231,28 @@ async function pingMicros(options: ParameterSweepOptions, state: SweepState): Pr
 }
 
 /**
- * The gate check that sits between the loop and the socket.
+ * The gate check between the loop and the socket.
  *
- * Called before every request rather than on a timer of its own, which is what
- * makes the guarantee simple enough to state: **no frame is transmitted after the
- * bike stops being safe to service.** The worst case is one request already in
- * flight when the bike moves — a single 8-byte frame that was on the wire before
- * the wheel turned — and its reply window (300 ms) is the whole of the delay before
- * the sweep is written down and over. A timer would have raced that instead of
- * preceding it.
+ * ⚠️ This is HALF of the auto-exit and it is worth being precise about which half,
+ * because "no frame after unsafe" is the sentence someone will quote when deciding
+ * whether the other half can be dropped.
+ *
+ * What this call guarantees on its own is weaker than it looks: it runs once per
+ * PARAMETER, and one parameter can put up to three frames on the bus — the read,
+ * then on a timeout a `10 81` to re-open the session and a second read
+ * (kwp-client.ts `readParameter`). `pingMicros` below is checked once per micro and
+ * `ping` sends two frames. So a gate transition landing just after a check here can
+ * be followed by another frame up to a reply window later.
+ *
+ * What actually bounds it is `stopped` inside kwp-client.ts's `exchange`, which
+ * refuses to transmit at all and is set by `abort` — reached from here AND from the
+ * 200 ms watchdog in ../vcu/read-runner.ts. Since 200 ms is shorter than the 300 ms
+ * reply window, at most one already-in-flight frame gets out.
+ *
+ * This check is still worth having: it is what makes the sweep correct on its own
+ * terms rather than dependent on a caller remembering to watch it, and in the
+ * common case (a read that answers in milliseconds) it is what stops the sweep,
+ * with the watchdog never firing. But the tight bound is the watchdog's.
  */
 function mayContinue(options: ParameterSweepOptions, state: SweepState): boolean {
   if (state.stoppedBecause !== null) {

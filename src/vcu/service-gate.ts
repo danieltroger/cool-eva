@@ -358,9 +358,22 @@ export function evaluateServiceGate(readings: ServiceGateReadings): ServiceGateV
     if (check.state === "ok") {
       continue;
     }
-    if (check.state === "missing" && !rule.required) {
-      // A corroborator that has never arrived. Recorded in `checks` so it is
-      // visible on the page, but it cannot block: see the rule's own note.
+    if ((check.state === "missing" || check.state === "stale") && !rule.required) {
+      // A corroborator we have not heard from lately, or at all. Recorded in
+      // `checks` so it stays visible on the page, but it cannot block.
+      //
+      // ⚠️ `stale` is the one that matters, and excusing only `missing` was wrong.
+      // `missing` describes just the window before the OBD poller's first
+      // successful PID 0D reply — after that `lastSeenMonotonic` keeps the mark
+      // for ever, so from then on the only way this rule can ever say "our own
+      // poller has gone quiet" is `stale`. Blocking on it made a corroborator
+      // required in everything but name, contradicting `required`'s own contract.
+      //
+      // Worse, a running sweep is the likeliest CAUSE of it. ~277 requests share
+      // a bus src/can/obd-dtc.ts measures as the scarce resource, so a poller
+      // starved past the 10 s budget would have aborted the very sweep that
+      // starved it — and then done it again on the next attempt. A silence we
+      // caused ourselves is not evidence about the motorcycle.
       continue;
     }
     blockers.push(describeBlocker(check));

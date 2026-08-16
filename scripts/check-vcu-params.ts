@@ -367,10 +367,19 @@ const PARKED_DRIVE_FRAME = "8D 99 02 00 00 00 00 00";
 // 400 rpm, measured against OBD PID 0D (10) and PID 0C (411).
 const ROLLING_DRIVE_FRAME = "8D 99 02 00 5F 00 32 00";
 
-// The bike stationary with the drive up: b1 gains 0x02 energized and 0x08 go on top
-// of the parked 0x10 key_on. Constructed rather than captured — no capture of this
-// state exists — which is exactly why it is labelled as such.
-const ENERGIZED_BODY_FRAME = "80 1A 02 44 99 FF D8 FF";
+// Constructed rather than captured — no capture of these states exists, which is
+// exactly why they are labelled as such. Each sets one more bit of b1 on top of the
+// parked 0x10 key_on, so each isolates ONE rule's blocking path. The two weakest
+// signals in the gate (`go_request`, whose manufacturer name is "Engine Switch",
+// and `go`, which that table does not list at all) and the earliest-moving one
+// (`throttle_on`) each get their own case, because those are the three most worth
+// knowing are wired to something.
+const ENERGIZED_BODY_FRAME = "80 1A 02 44 99 FF D8 FF"; // + 0x02 energized, 0x08 go
+const GO_REQUEST_BODY_FRAME = "80 14 02 44 99 FF D8 FF"; // + 0x04 go_request alone
+const THROTTLE_BODY_FRAME = "80 90 02 44 99 FF D8 FF"; // + 0x80 throttle_on alone
+// b2 gains 0x80 `moving` while 0x104 still says zero: the bike's own opinion
+// contradicting the wheel. Either alone must be enough to refuse.
+const MOVING_BODY_FRAME = "80 10 82 44 99 FF D8 FF";
 
 const parkedReadings = gateReadingsFrom([
   [0x102, PARKED_BODY_FRAME],
@@ -428,12 +437,43 @@ expect(
   `energized and go should both block, got: ${energized.blockers.join(" · ")}`
 );
 
+// One bit at a time, so each rule is shown to be wired to the bit it names rather
+// than riding along with a neighbour that happened to be set in the same fixture.
+for (const [frame, requirement, label] of [
+  [GO_REQUEST_BODY_FRAME, "nobody is asking for drive", "go_request"],
+  [THROTTLE_BODY_FRAME, "the throttle is closed", "throttle_on"],
+  [MOVING_BODY_FRAME, "the bike is not moving", "moving"],
+] as const) {
+  const verdict = evaluateServiceGate(
+    gateReadingsFrom([
+      [0x102, frame],
+      [0x104, PARKED_DRIVE_FRAME],
+    ])
+  );
+  expect(!verdict.safe, `${label} set should close the gate on its own`);
+  expect(
+    verdict.blockers.length === 1 && verdict.blockers[0].includes(requirement),
+    `${label} should be the only blocker, got: ${verdict.blockers.join(" · ")}`
+  );
+}
+
 // Fail closed, three ways. Each of these looks like a safe bike to anything that
 // reads the VALUE without asking how old it is or whether it exists.
-expect(!evaluateServiceGate({}).safe, "a gate with no readings at all must refuse");
+const nothing = evaluateServiceGate({});
+expect(!nothing.safe, "a gate with no readings at all must refuse");
+// Asserted by NAME rather than by count: a count would still pass if some other
+// rule quietly became the excused one.
 expect(
-  evaluateServiceGate({}).blockers.length === serviceGateSignalKeys().length - 1,
-  "every required signal should be named when nothing has arrived — and only the corroborator excused"
+  nothing.checks
+    .filter(check => check.key !== "speed_kmh")
+    .every(check =>
+      nothing.blockers.some(blocker => blocker.includes(check.key) || blocker.includes(check.requirement))
+    ),
+  `every required signal should be named when nothing has arrived, got: ${nothing.blockers.join(" · ")}`
+);
+expect(
+  !nothing.blockers.some(blocker => blocker.includes("speed_kmh")),
+  "the OBD corroborator must not block by being absent"
 );
 const stale = evaluateServiceGate(
   gateReadingsFrom(
@@ -465,6 +505,26 @@ expect(!contradiction.safe, "OBD saying 12 km/h while CAN says 0 is a contradict
 expect(
   evaluateServiceGate({ ...parkedReadings, speed_kmh: { value: 0, ageMs: 400 } }).safe,
   "an OBD speed that agrees should leave the gate open"
+);
+// The case that matters most, and the one this file used to miss: `missing` only
+// ever describes the window before the poller's FIRST reply. After that the only
+// way the corroborator can report "our own poller has gone quiet" is `stale` — and
+// a running sweep is the likeliest cause of it, since it competes for the same bus.
+// A gate that blocked on this would have aborted the sweep that caused it.
+const staleCorroborator = evaluateServiceGate({ ...parkedReadings, speed_kmh: { value: 0, ageMs: 30_000 } });
+expect(staleCorroborator.safe, `a stale OBD speed must not block, got: ${staleCorroborator.blockers.join(" · ")}`);
+expect(
+  staleCorroborator.checks.find(check => check.key === "speed_kmh")?.state === "stale",
+  "…and it should still be REPORTED as stale, so the page can show it"
+);
+expect(
+  evaluateServiceGate({ ...parkedReadings, speed_kmh: { value: 12, ageMs: 30_000 } }).safe,
+  "a stale OBD speed is excused whatever it says — a 30 s old 12 km/h is not a claim about now"
+);
+// A required signal, by contrast, is never excused for being stale.
+expect(
+  !evaluateServiceGate({ ...parkedReadings, speed_can_kmh: { value: 0, ageMs: 30_000 } }).safe,
+  "a stale REQUIRED signal must still block — only the corroborator is excused"
 );
 
 // The signals deliberately left out must stay out. Every one of them reads

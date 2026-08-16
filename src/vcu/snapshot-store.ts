@@ -17,12 +17,14 @@ import type { FileHandle } from "fs/promises";
 //  3. **A partial snapshot is kept and labelled, never discarded.** Half the
 //     parameters off a real bike is half a set of facts. `complete: false` is what
 //     stops anything downstream reading it as all of them.
-//  4. **A run that read NOTHING never clobbers `latest.json`.** That file is the
-//     diff baseline and what GET /vcu-params and /vcu-backup.csv serve. A run where
-//     the bike was asleep is a fact about the run — the timestamped archive records
-//     it — and must not replace a file full of real values with one full of
-//     failures, or the next run diffs against that and reports 277 status changes
-//     with any genuine value-changed buried underneath.
+//  4. **A worse run never clobbers `latest.json`.** That file is the diff baseline
+//     and what GET /vcu-params and /vcu-backup.csv serve. A run where the bike was
+//     asleep, or one the safety gate cut short after three parameters, is a fact
+//     about the run — the timestamped archive records it — and must not replace a
+//     file full of real values with one that is nearly empty. Otherwise the export
+//     button offers three parameters as this bike's calibration, and the next run
+//     diffs against them and reports 274 disappearances with any genuine
+//     value-changed buried underneath.
 //
 // All four came from scripts/read-vcu-params.ts, which is where this sweep used to
 // live as a separate process. They are the reason the sweep was worth moving rather
@@ -129,14 +131,38 @@ export async function writeSnapshot(directory: string, snapshot: VcuParameterSna
   await writeFile(archivePath, serialised, "utf-8");
 
   const read = snapshot.rows.filter(row => row.status === "read").length;
-  if (read > 0) {
+  const baselineRead = baseline?.rows.filter(row => row.status === "read").length ?? 0;
+  // Rule 4, and it is a comparison rather than `read > 0`.
+  //
+  // `read > 0` only catches the fully-empty run. The failure the rule is actually
+  // about is A BAD RUN REPLACING A GOOD FILE, and the service gate has made a new
+  // way for that to happen routine: a complete sweep deletes the resume file, so
+  // the next one starts from nothing — and if the owner rolls the bike three
+  // parameters in, the auto-exit is working exactly as designed and `read === 3`
+  // is still greater than zero. That three-row snapshot would become what
+  // /vcu-params serves, what /vcu-backup.csv exports as this bike's calibration,
+  // and the baseline the next run diffs against (reporting 274 disappearances).
+  // The 277-row archive would still be on disk, and nothing in the dashboard can
+  // reach an archive.
+  //
+  // So a snapshot has to be at least as good as the one it replaces: complete, or
+  // carrying at least as many real values. A complete sweep wins even with fewer
+  // rows — a bike that answered 200 of 277 today is a true reading of the bike,
+  // and the diff saying so is the point.
+  const replacesLatest = read > 0 && (snapshot.complete || read >= baselineRead);
+  if (replacesLatest) {
     await writeFile(join(directory, LATEST_FILE), serialised, "utf-8");
   }
   console.log(
     `vcu-sweep: ${read}/${snapshot.rows.length} read${snapshot.complete ? "" : "  ⚠️ INCOMPLETE — start it again to resume"}` +
-      (read > 0
+      (replacesLatest
         ? ` · wrote ${archivePath} and ${LATEST_FILE}`
-        : ` · wrote ${archivePath}; left ${LATEST_FILE} as it was — nothing was read, so the baseline stands`)
+        : read > 0
+          ? // Said out loud rather than done quietly: "your export button still says
+            // 277 because we kept the older, fuller snapshot" is exactly the kind of
+            // thing that is baffling when it is silent.
+            ` · wrote ${archivePath}; KEPT the previous ${LATEST_FILE} — it holds ${baselineRead} read values against this run's ${read}`
+          : ` · wrote ${archivePath}; left ${LATEST_FILE} as it was — nothing was read, so the baseline stands`)
   );
 
   if (snapshot.complete) {
