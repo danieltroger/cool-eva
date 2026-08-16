@@ -302,6 +302,21 @@ console.log(`\n── the floor, which is the only calendar bound there is `.pad
   if (zeroedDateField >= GPS_UTC_FLOOR_EPOCH_S) {
     failures.push("a zeroed date field decodes as 2000-01-01 and must be below the floor");
   }
+
+  // NaN fails every comparison, so it would pass the corroboration test rather than
+  // fail it. Nothing can produce one today; this is here because the failure mode is
+  // silent acceptance and would stay silent.
+  const nanGate = new GpsClockGate();
+  let nanAccepted = 0;
+  for (let index = 0; index < 10; index += 1) {
+    if (nanGate.offer(Number.NaN, 1786214100, 1786214100000 + index * 1000).step) {
+      nanAccepted += 1;
+    }
+  }
+  if (nanAccepted !== 0) {
+    failures.push(`NaN must never corroborate, but was accepted ${nanAccepted} time(s)`);
+  }
+  console.log(`  ✓ ten NaN readings → ${nanAccepted} steps`);
 }
 
 // --------------------------------------------------------------- the decoder

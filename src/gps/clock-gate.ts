@@ -164,7 +164,7 @@ export type ClockStepVerdict =
   | {
       step: false;
       reason:
-        | "sync-disabled"
+        | "not-a-time"
         | "before-floor"
         | "awaiting-corroboration"
         | "disagrees-with-known-good"
@@ -200,6 +200,15 @@ export class GpsClockGate {
    *   clock, which is the thing being corrected and jumps under us mid-sequence
    */
   offer(epochSeconds: number, systemEpochSeconds: number, monotonicMs: number): ClockStepVerdict {
+    // NaN fails every comparison below, including `disagreement > tolerance`, so it
+    // would sail through corroboration rather than be caught by it. ./decode.ts cannot
+    // currently produce one — Date.UTC only returns NaN past year 275760 and the field
+    // is 7 bits — but this is a public entry point and the failure mode is silent
+    // acceptance, which is the one thing this module must never do.
+    if (!Number.isFinite(epochSeconds)) {
+      return { step: false, reason: "not-a-time", detail: `${epochSeconds} is not a satellite time` };
+    }
+
     // Below the floor there is nothing to corroborate: a fix from before this code
     // existed is not a fix. Keeping it out of the window also stops a receiver stuck
     // in a week-rollover 1999 from corroborating itself.
@@ -263,14 +272,21 @@ export class GpsClockGate {
       return { step: false, reason: "in-agreement", detail: `${offsetSeconds.toFixed(1)} s off GPS` };
     }
 
+    // The system clock is implausible when it is somewhere no working clock could be:
+    // before the floor, or — now that several readings agree on the real time — further
+    // from that than any drift could explain. The 2060 case is the second one, since a
+    // clock stepped 34 years FORWARD is nowhere near the floor.
+    //
+    // This is the whole recovery path. The cooldown exists to stop a tug-of-war with
+    // systemd-timesyncd over fractions of a second, and timesyncd never leaves the
+    // clock an hour out — so an hour of disagreement is not thrashing, it is a broken
+    // clock, and waiting the cooldown out is exactly what turned one corrupt frame into
+    // 299.9 s and 501.5 s of corrupt rows.
     const sinceLastStepMs =
       this.#lastStepAtMonotonicMs === undefined ? Infinity : monotonicMs - this.#lastStepAtMonotonicMs;
-    const clockIsImplausible = systemEpochSeconds < GPS_UTC_FLOOR_EPOCH_S;
-    const cooldownApplies =
-      sinceLastStepMs < MIN_SECONDS_BETWEEN_STEPS * 1000 &&
-      Math.abs(offsetSeconds) < COOLDOWN_OVERRIDE_SECONDS &&
-      !clockIsImplausible;
-    if (cooldownApplies) {
+    const clockIsImplausible =
+      systemEpochSeconds < GPS_UTC_FLOOR_EPOCH_S || Math.abs(offsetSeconds) >= COOLDOWN_OVERRIDE_SECONDS;
+    if (sinceLastStepMs < MIN_SECONDS_BETWEEN_STEPS * 1000 && !clockIsImplausible) {
       return {
         step: false,
         reason: "cooling-down",
@@ -279,19 +295,18 @@ export class GpsClockGate {
     }
 
     this.#lastStepAtMonotonicMs = monotonicMs;
+    // Cold boot first, because it explains the step best and is checked for the
+    // absence of an anchor rather than the size of the jump: a genuine cold-boot step
+    // is routinely bigger than an hour (20 h 46 m and 20 h 38 m in the log) and would
+    // otherwise be reported as a broken clock. "clock-implausible" is the other one —
+    // we HAD a good time and the wall clock is a long way from it anyway, which is
+    // recovery from a bad step rather than a first sync.
     return {
       step: true,
       epochSeconds,
       offsetSeconds,
-      reason: clockIsImplausible ? "clock-implausible" : wasColdBoot ? "cold-boot" : "drift",
+      reason: wasColdBoot ? "cold-boot" : clockIsImplausible ? "clock-implausible" : "drift",
     };
-  }
-
-  /** Drops all state. Only for replaying several captured sequences in one process. */
-  reset(): void {
-    this.#window = [];
-    this.#knownGood = undefined;
-    this.#lastStepAtMonotonicMs = undefined;
   }
 }
 
@@ -302,9 +317,12 @@ export class GpsClockGate {
  *
  * Monotonic, not wall clock, on purpose: this runs in a process that steps its own
  * wall clock, so a Date.now() difference here would be corrupted by the very event the
- * gate exists to police. Returns 0 for a window of one, which is why the caller checks
- * the window length separately — a single reading agreeing with itself is not
- * corroboration.
+ * gate exists to police.
+ *
+ * The newest reading is in the window too and trivially agrees with itself, so a full
+ * window of five is four independent comparisons. That is also why the caller checks
+ * the window length separately: a window of one returns 0 here, and a single reading
+ * agreeing with itself is not corroboration.
  */
 function worstDisagreementSeconds(window: TimeReading[], epochSeconds: number, monotonicMs: number): number {
   let worst = 0;
