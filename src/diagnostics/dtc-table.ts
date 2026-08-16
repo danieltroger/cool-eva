@@ -9,10 +9,12 @@
 // are kept outside this repo, with the rest of the source material. That is a
 // second path to the same data — a shipped binary rather than a PDF read by eye
 // — so where the two agree the transcription below is corroborated, not merely
-// careful. They share 147 (component, symptom) pairs and 144 of those carry an
-// IDENTICAL OBD code. The disagreements are argued at the entries themselves:
-// (44,0) and (44,2), where the PDF wins on the bike's own evidence, and (61,2),
-// where the service-tool data replaced a dual code with a single one.
+// careful. Against the 2021 extract they share 147 (component, symptom) pairs
+// and 144 of those carry an IDENTICAL OBD code; the 2024 extract adds two pairs
+// and changes none of those numbers otherwise. The disagreements are argued at
+// the entries themselves: (44,0) and (44,2), where the PDF wins on the bike's
+// own evidence, and (61,2), where the service-tool data replaced a dual code
+// with a single one.
 //
 // ⚠️ THE TWO SERVICE-TOOL VINTAGES ARE ONE SOURCE, NOT TWO. Both the 2021 tool
 // (153 records) and the 2024 tool (155) were extracted; the 2024 table is a
@@ -26,11 +28,13 @@
 // that source does not carry either. It is a real gap, listed here so the next
 // reader does not have to re-derive the extract to find it.
 //
-// Coverage differs in both directions and neither gap proves anything about the
-// other source: the service-tool data adds six codes the PDF omits (51/0, 52/0,
-// 54/13, 60/0, 63/0, 63/1).
+// Coverage is one-directional once both tool vintages are counted: the PDF has
+// nothing the 2024 tool lacks, and the tool carries seven codes the PDF omits —
+// 51/0, 52/0, 54/13, 60/0, 63/0, 63/1, all six of which are below, plus (35,2)
+// B1021, which is not. "Coverage differs in both directions" was the 2021
+// reading and it died with the U0115 retraction above.
 //
-// ⚠️ MIL IS UNKNOWN FOR THOSE SIX SERVICE-TOOL-ONLY CODES, and they carry `null`
+// ⚠️ MIL IS UNKNOWN FOR THE SIX SERVICE-TOOL-ONLY CODES BELOW, and they carry `null`
 // to say so. Only the PDF has a MIL column and it does not list them; the
 // service tool's JSON has no MIL field at all, for any code. `false` would have
 // been a claim — the dashboard renders it as "warning lamp: no" and sorts the
@@ -45,8 +49,9 @@
 // U0182 appears under both component 39 and 40. So (component, symptom) is the
 // primary key here.
 //
-// 154 codes — the union of the two sources. A code the bike reports that is in
-// neither is reported as unrecognised rather than guessed at.
+// 154 codes — the union of the two sources, less (35,2) B1021, which the note
+// above explains. A code the bike reports that is in neither is reported as
+// unrecognised rather than guessed at.
 
 export interface DtcTableEntry {
   /** "COD." column — the VCU's component number. */
@@ -317,14 +322,17 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // pump is not connected to that driver and so cannot seize. Run
   // `node --experimental-strip-types scripts/decode-dtc-response.ts` to see it.
   //
-  // ✅ THE LIST IS IN COMPONENT ORDER, which pins the slot as well as the code.
-  // The 39 codes walk components 1,3,4,4,5,6,7,10,11,12,12,16,20,22,34…40,41,42,
-  // **44**,46,48,49,53,53,54×6,56,56,61,62 — strictly ascending, symptoms
-  // ascending within a component. P0A07 sits between P0121 (42,0) and P1044
-  // (46,0). Everything either side of it in that run is a symptom-0 open-circuit
-  // accessory fault (B1000 position lights, B1002 stop, B1004/B1006 indicators,
-  // B1009 low beam, B1012 high beam, all "…open circuit fault"). Reading the pump
-  // entry as symptom 2 makes it the only non-minimal symptom in the run.
+  // ✅ THE LIST IS IN COMPONENT ORDER, which is a check on the reading rather
+  // than an argument for it. The 39 codes walk components 1,3,4,4,5,6,7,10,11,
+  // 12,12,16,20,22,34…40,41,42,44,46,48,49,53,53,54×6,56,56,61,62 — strictly
+  // ascending, symptoms ascending within a component. P0A07 lands between P0121
+  // (42,0) and P1044 (46,0), i.e. in component 44's slot. That is worth nothing
+  // as evidence about WHICH symptom, since both readings put the code on
+  // component 44; it only confirms the code was read off the right row. Do not
+  // stretch it further — the list carries plenty of non-minimal symptoms (P0514
+  // is (4,2), P1012 (10,2), P1016 (11,2), P1020 (12,2), P1021 (12,3), P0601
+  // (53,4), and the charge-manager block reaches symptom 11), so "symptom 2
+  // would be the odd one out" is FALSE and was claimed here once.
   //
   // ❌ WHY THE SAE J2012 ARGUMENT FOR THE SWAP DOES NOT HOLD. It ran: an "open
   // circuit" description under a "CIRCUIT HIGH" name is self-contradictory, so
@@ -349,6 +357,18 @@ export const DTC_TABLE: DtcTableEntry[] = [
   // looks faults up by (code, symptom) and prints the id, so an id that never
   // matched the transmitted DTC would never misbehave for a technician. That is
   // exactly the kind of field that rots unnoticed.
+  //
+  // 📌 THE ROW THAT STILL LOOKS WRONG, AND WHY IT ISN'T EVIDENCE. Symptom 2 now
+  // reads P0A05 "…CONTROL CIRCUIT/OPEN" against the description "Water pump
+  // locked", which is the same shape of mismatch #48 pointed at. Saying so here
+  // so round three does not start from it: the `name` column is the code's
+  // GENERIC SAE name and `description` is what Energica means by it ON THIS
+  // VEHICLE, and those two are allowed to diverge — that is the whole reason the
+  // table has both columns. More to the point the mismatch is symmetric and so
+  // decides nothing: a locked rotor is not a circuit fault at all, so whichever
+  // of the three codes Energica hands it will carry a name that does not fit.
+  // Under the 2026-08-15 swap the very same complaint applied to P0A07 "…CIRCUIT
+  // HIGH" = "locked". Only symptom 0 has a name that must fit, and it does.
   //
   // ⚠️ SYMPTOM 0 IS THIS BIKE'S OWN FAULT — the coolant pump is wired to the
   // heated-grip output, leaving the VCU's pump driver open. It is P0A07, as older
