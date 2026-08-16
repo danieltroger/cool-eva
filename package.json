@@ -28,7 +28,7 @@
     "socketcan": "^4.2.1"
   },
   "devDependencies": {
-    "prettier": "^3.8.4",
+    "prettier": "3.8.4",
     "typescript": "^6.0.3"
   }
 }
