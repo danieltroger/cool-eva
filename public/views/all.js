@@ -4,20 +4,14 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, faultState, groupOf, knownKeys, isStale, signalState } from "../lib/store.js";
 import { STALE_MS } from "../lib/tiles.js";
 import { MUTED } from "../lib/colors.js";
-import { pressTracker, secondsSincePress } from "../lib/press.js";
+// The handlebar buttons are momentary — a 30 ms press is one frame of a 60 Hz display
+// — so a raw 1/0 readout cannot be watched, and BUTTON_GROUP is the switch that picks
+// the tile below. Everything else about the group, including that it exists and where
+// it sorts, falls out of the registry's `group` field exactly as every other group
+// here does.
+import { BUTTON_GROUP, pressTracker, secondsSincePress } from "../lib/press.js";
 
 const { div, input, span } = van.tags;
-
-/**
- * The one group that does not render as a plain number.
- *
- * The handlebar buttons are momentary — a 30 ms press is one frame of a 60 Hz display
- * — so a raw 1/0 readout cannot be watched. press.js explains the latch; this constant
- * is only the switch that picks the tile. Everything else about the group, including
- * that it exists and where it sorts, falls out of the registry's `group` field exactly
- * as every other group here does.
- */
-const BUTTON_GROUP = "buttons";
 
 // Every signal the bike is producing, grouped and searchable.
 //
@@ -125,16 +119,22 @@ function RawTile(key) {
  */
 function ButtonTile(key) {
   const state = signalState(key);
+  const fault = faultState(key);
   const tracker = pressTracker(key);
   return div(
     { class: () => `raw${tracker.lit.val ? " pressed" : ""}${state.val && isStale(key, STALE_MS) ? " stale" : ""}` },
     div({ class: "raw-key" }, key),
     div({ class: "raw-value" }, () => {
       if (!state.val) {
-        // Distinct from "0": the frame has never arrived, so nothing is known about
-        // this button at all. On 0x400's four bits that is also what a missing RX
-        // filter would look like, which is worth being able to tell apart.
-        return "–";
+        // Three different nothings, and they must not look alike. A REJECTED reading
+        // is shown as the fault it is: bounds.js gates this group to 0/1 precisely so
+        // that a decoder returning the masked byte (`handlebar & 0x20` is 32, not 1)
+        // cannot pass for a button at rest, and swallowing it here would undo that.
+        // A plain "–" means the frame has never arrived at all — which on 0x400's four
+        // bits is also what a missing RX filter looks like, and is worth telling apart
+        // from a button nobody has pressed.
+        const rejected = fault.val;
+        return rejected ? `⚠ ${rejected.value}` : "–";
       }
       return tracker.lit.val ? "PRESSED" : "idle";
     }),

@@ -341,10 +341,18 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 
 // 0x102 byte 0's low bits — the left pod's momentary buttons, as VCU discretes.
 //
-// Added 2026-08-16. Bits 6 and 7 are the beams and are read in the case above; these
-// four are the ones Energica's free-frame table names `Left/Right/Enter Mode Switch`
-// and `RST Switch`. Bits 3 and 4 are the indicator switches themselves and are left
-// undecoded on purpose — see below.
+// Added 2026-08-16. These four are the ones Energica's free-frame table names
+// `Left/Right/Enter Mode Switch` and `RST Switch`. Bits 3 and 4 are the indicator
+// switches and are left undecoded on purpose — see below.
+//
+// Of the other two: bit 6 is `high_beam`, read in the case above (set in 137 of the
+// 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture
+// counts). Bit 7 is NOT decoded anywhere and has no registry key. The byte map at the
+// top of the 0x102 case calls it the low beam and the captures neither confirm nor
+// deny that: it is set in 50.64 % of frames, so it is plainly a level rather than a
+// press, but "on whenever the bike is awake" is equally what a permanently-lit EU
+// headlight and a bare awake flag look like, and nothing recorded separates them. It
+// stays undecoded rather than named on a table's word.
 //
 // Evidence is 1 103 000 frames of 0x102 across the same 14 captures as 0x400. What
 // makes these more than "the bit moves" is that the six low bits split cleanly into
