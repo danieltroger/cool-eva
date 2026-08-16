@@ -14,11 +14,14 @@ import { DTC_TABLE, dtcSignalKey, type DtcTableEntry } from "../src/diagnostics/
 // deleted, so this makes it derived instead.
 //
 // WHY IT HAD TO BE GENERATED, 2026-08-16 — it drifted, in the direction nobody
-// notices. When (44,0) and (44,2) were corrected on 2026-08-15 the JSON kept the
-// old pairing, so Grafana went on labelling THIS BIKE'S OWN FAULT `dtc_0044_0` as
-// "P0A07 — water pump locked" when it is P0A05, an open circuit: a seized pump
-// instead of an unwired one, on the fault the cooling work turns on. A wrong name
-// still looks like an answer, which is why it survived being stared at.
+// notices. When (44,0) and (44,2) were swapped on 2026-08-15 the JSON kept the
+// old pairing, so for a day Grafana and the phone dashboard named THIS BIKE'S OWN
+// FAULT `dtc_0044_0` differently — a seized pump on one screen, an unwired one on
+// the other, on the fault the cooling work turns on. (The swap itself was reverted
+// the next day, on the bike's own mode-03 reply; see the (44,0) note in
+// src/diagnostics/dtc-table.ts. Which way round it belongs is exactly the argument
+// this script exists to stop having twice.) A wrong name still looks like an
+// answer, which is why it survived being stared at.
 // src/http/dtc-table.ts already refuses this duplication for the phone dashboard;
 // this is the same argument applied to the copy that cannot be removed.
 //

@@ -92,7 +92,7 @@ npm run check:grafana-dtc      # the same thing as `--check`; also checks the pr
 
 `npm test` runs that check along with the rest of `scripts/run-checks.ts`, so a stale dashboard is a red build and not something you have to remember to look for.
 
-It was hand-maintained until 2026-08-16 and it had already gone stale: a correction to the water-pump codes in the TypeScript table never reached the JSON, so the dashboard spent months labelling this bike's own `dtc_0044_0` as "P0A07 — water pump locked" when it is P0A05, an open circuit. Nothing looks wrong on screen when a lookup table is wrong; the panel renders a confident name either way. That is the whole argument for generating it.
+It was hand-maintained until 2026-08-16 and it had already gone stale: a change to the water-pump codes in the TypeScript table never reached the JSON, so for a day the dashboard and the phone screen gave this bike's own `dtc_0044_0` two different names — a seized pump on one, an unwired one on the other. (That change was itself reverted on 2026-08-16 once the bike's own mode-03 reply was read; the entry in `src/diagnostics/dtc-table.ts` argues it out.) Nothing looks wrong on screen when a lookup table is wrong; the panel renders a confident name either way. That is the whole argument for generating it.
 
 ## Verifying a dashboard before shipping it
 
