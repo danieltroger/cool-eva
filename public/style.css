@@ -515,6 +515,32 @@ body {
   white-space: nowrap;
 }
 
+/* The open/closed marker on a code line that has a shortlist. Pushed to the right
+   edge and given a fixed width so the caret does not shift the description text
+   when it flips, and so lines without one do not lose alignment. */
+.code-line-more {
+  flex: 0 0 0.9rem;
+  text-align: right;
+  color: var(--label);
+  font-size: 0.7rem;
+}
+
+/* Energica's field list under an opened code. Indented to the width of the code
+   column so it reads as belonging to the line above rather than as a new row. */
+.code-fields {
+  margin: 0.15rem 0 0.5rem 4.1rem;
+  font-size: 0.72rem;
+  line-height: 1.7;
+}
+
+.code-field {
+  font-variant-numeric: tabular-nums;
+  /* The names are Energica's internal identifiers — long, and full of
+     underscores. Wrapping beats clipping here: a truncated `ai_WaterPumpCurr…`
+     is exactly the name you needed to read. */
+  overflow-wrap: anywhere;
+}
+
 .code-toggle {
   align-self: flex-start;
   background: none;

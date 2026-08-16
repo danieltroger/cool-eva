@@ -6,6 +6,7 @@ import { loadStaticFiles } from "./http/static.ts";
 import { handleWaypointEndpoint } from "./http/waypoint.ts";
 import { handleStatusEndpoint } from "./http/status.ts";
 import { handleDtcTableEndpoint } from "./http/dtc-table.ts";
+import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
@@ -311,6 +312,11 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/dtc-table") {
     handleDtcTableEndpoint(req, res);
+    return;
+  }
+  // Energica's per-fault telemetry shortlists — static data, no bus, no bike.
+  if (url.pathname === "/fault-infokeys") {
+    handleFaultInfokeysEndpoint(req, res);
     return;
   }
   // The codes the bike currently has stored, as last read by the OBD poller. Serves

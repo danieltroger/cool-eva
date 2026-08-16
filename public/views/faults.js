@@ -86,6 +86,24 @@ const stored = van.state(/** @type {TroubleCodeSnapshot | null} */ (null));
 const storedError = van.state(/** @type {string | null} */ (null));
 /** Whether the full stored list is expanded. Off by default; 39 rows is a lot of thumb. */
 const storedExpanded = van.state(false);
+
+/**
+ * Energica's per-fault telemetry shortlists, from /fault-infokeys. Null until the
+ * fetch lands; a failure leaves it null and the lines simply stay un-expandable,
+ * which is why there is no error state here — nothing on screen would be wrong,
+ * there would just be less of it.
+ */
+const infokeys = van.state(/** @type {FaultInfokeysPayload | null} */ (null));
+
+/**
+ * Which code's shortlist is open, as `"component/symptom"`, or null.
+ *
+ * One at a time. Thirty-nine codes each unfolding six field names would be a
+ * screen you cannot navigate, and the question this answers — "what does Energica
+ * say to measure for THIS code" — is asked about one code at a time anyway.
+ */
+const openShortlist = van.state(/** @type {string | null} */ (null));
+
 /** Monotonic mark of the last successful fetch, for the refresh above. */
 let storedFetchedAt = /** @type {number | null} */ (null);
 
@@ -98,6 +116,7 @@ let storedFetchedAt = /** @type {number | null} */ (null);
 /** @typedef {import("../../src/http/stored-dtcs.ts").TroubleCodeSnapshot} TroubleCodeSnapshot */
 /** @typedef {import("../../src/http/stored-dtcs.ts").TroubleCodeListState} TroubleCodeListState */
 /** @typedef {import("../../src/http/stored-dtcs.ts").TroubleCodeRow} TroubleCodeRow */
+/** @typedef {import("../../src/http/fault-infokeys.ts").FaultInfokeysPayload} FaultInfokeysPayload */
 
 /**
  * @typedef {{ key: string, active: boolean, lastSeenMs: number | null,
@@ -106,6 +125,7 @@ let storedFetchedAt = /** @type {number | null} */ (null);
 
 export function FaultsView() {
   void loadTable();
+  void loadInfokeys();
   void refreshStoredCodes();
   return div(
     { class: "view" },
@@ -453,13 +473,101 @@ function CodeLine(row, freezeFrame) {
   const isFreezeFrame = row.obdCode === freezeFrame;
   const accent = isFreezeFrame ? colors.BAD : row.illuminatesMil ? colors.WARN : colors.MUTED;
   const note = isFreezeFrame ? " · freeze frame" : row.illuminatesMil ? " · lamp" : "";
+  // Null for a code Energica's table does not list: with no (component, symptom)
+  // there is no shortlist to look up, and the OBD code is not a usable key —
+  // U0182 is filed under two components. The line then just does not open.
+  const key = row.component === null || row.symptom === null ? null : `${row.component}/${row.symptom}`;
   return div(
-    { class: "code-line" },
-    span({ class: "code-line-id", style: `color:${accent}` }, row.obdCode),
-    span(
-      { class: "code-line-text", style: `color:${row.description ? colors.CALM : colors.MUTED}` },
-      (row.description ?? "not in Energica's code table") + note
-    )
+    div(
+      {
+        class: "code-line",
+        // A div rather than a <button>, because the line is a flex row of two
+        // spans and .code-line-text relies on `text-overflow: ellipsis` across
+        // it — a button resets enough of that to be worth avoiding. The cost is
+        // that the keyboard affordances have to be spelled out: role, tabindex
+        // AND a key handler. role without the handler would be worse than no
+        // role at all, since it advertises a control that then does not work.
+        ...(key === null
+          ? {}
+          : {
+              role: "button",
+              tabindex: "0",
+              onclick: () => toggleShortlist(key),
+              onkeydown: (/** @type {KeyboardEvent} */ event) => {
+                if (event.key !== "Enter" && event.key !== " ") {
+                  return;
+                }
+                // Space scrolls the page otherwise, which on a 39-row list moves
+                // the thing you just tried to open off the screen.
+                event.preventDefault();
+                toggleShortlist(key);
+              },
+            }),
+      },
+      span({ class: "code-line-id", style: `color:${accent}` }, row.obdCode),
+      span(
+        { class: "code-line-text", style: `color:${row.description ? colors.CALM : colors.MUTED}` },
+        (row.description ?? "not in Energica's code table") + note
+      ),
+      key === null ? null : span({ class: "code-line-more" }, () => (openShortlist.val === key ? "▴" : "▾"))
+    ),
+    () => (key !== null && openShortlist.val === key ? Shortlist(key) : div())
+  );
+}
+
+/**
+ * Opens this code's shortlist, or closes it if it is already the open one.
+ * @param {string} key
+ */
+function toggleShortlist(key) {
+  openShortlist.val = openShortlist.val === key ? null : key;
+}
+
+/**
+ * Energica's own shortlist for one code: the telemetry the manufacturer's service
+ * tool shows when this fault is selected.
+ *
+ * This is NOT what the bike recorded. It is the list of fields a freeze frame for
+ * this code would contain — the question "what should I go and measure", answered
+ * offline, with no bus traffic at all. The values themselves need a `0x17` read,
+ * which nothing here does yet; the caption says so rather than letting six field
+ * names imply readings.
+ * @param {string} key
+ */
+function Shortlist(key) {
+  const payload = infokeys.val;
+  if (!payload) {
+    return div({ class: "code-fields", style: `color:${colors.MUTED}` }, "Loading Energica's field list…");
+  }
+  const ids = payload.shortlists[key];
+  if (!ids) {
+    return div(
+      { class: "code-fields", style: `color:${colors.MUTED}` },
+      "Energica's tool lists no fields for this code."
+    );
+  }
+  // An EMPTY list is a real answer and not a missing one — (60,0) P1052 has one in
+  // Energica's own data. Saying so beats rendering an empty box.
+  if (ids.length === 0) {
+    return div({ class: "code-fields", style: `color:${colors.MUTED}` }, "Energica records no fields for this code.");
+  }
+  return div(
+    { class: "code-fields" },
+    div({ style: `color:${colors.MUTED}` }, "Energica's freeze-frame fields for this code:"),
+    ...ids.map(id => {
+      const field = payload.fields[String(id)];
+      // A dangling id cannot happen — all 944 references resolve, and
+      // scripts/check-freeze-frame.ts asserts it — so if one ever shows up it
+      // should say what it is rather than render as an empty row.
+      if (!field) {
+        return div({ style: `color:${colors.WARN}` }, `unknown field ${id}`);
+      }
+      return div(
+        { class: "code-field" },
+        span({ style: `color:${colors.CALM}` }, field.name),
+        span({ style: `color:${colors.MUTED}` }, field.unit ? ` · ${field.unit}` : "")
+      );
+    })
   );
 }
 
@@ -617,6 +725,8 @@ function rawLabel(key) {
  * Coming back to the tab retries.
  */
 let fetchInFlight = false;
+/** Same guard for /fault-infokeys, which is fetched once and never refreshed. */
+let infokeysInFlight = false;
 
 /**
  * Fetches /stored-dtcs when the local copy is older than STORED_REFRESH_MS, and
@@ -684,5 +794,31 @@ async function loadTable() {
     console.warn("faults: could not load /dtc-table —", error);
   } finally {
     fetchInFlight = false;
+  }
+}
+
+/**
+ * Loads Energica's per-fault shortlists, once.
+ *
+ * No error state on screen, unlike /dtc-table: a code with no shortlist simply
+ * does not open, and nothing already rendered becomes wrong. The failure still
+ * gets a log line — a silent catch would hide a broken endpoint on a bike we
+ * cannot attach a debugger to.
+ */
+async function loadInfokeys() {
+  if (infokeys.val || infokeysInFlight) {
+    return;
+  }
+  infokeysInFlight = true;
+  try {
+    const response = await fetch("/fault-infokeys");
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    infokeys.val = /** @type {FaultInfokeysPayload} */ (await response.json());
+  } catch (error) {
+    console.warn("faults: could not load /fault-infokeys — code lines will not open:", error);
+  } finally {
+    infokeysInFlight = false;
   }
 }
