@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { monotonicNow } from "../monotonic.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 import { GpsClockGate } from "./clock-gate.ts";
 import type { ClockStepVerdict } from "./clock-gate.ts";
 
@@ -29,6 +29,7 @@ const gate = new GpsClockGate();
 let warnedNotRoot = false;
 let failedSteps = 0;
 let lastQuietReason: string | undefined;
+let lastQuietReasonAt = monotonicNow();
 
 /**
  * Steps the system clock to GPS UTC when several satellite readings agree that it
@@ -83,25 +84,48 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
   }
 }
 
+/** Reasons that mean the clock may never sync at all, not just "not yet". */
+const ALARMING: ReadonlySet<string> = new Set([
+  "not-a-time",
+  "before-floor",
+  "inconsistent-readings",
+  "disagrees-with-known-good",
+]);
+
+/**
+ * How long the same non-step reason may go unmentioned. Every state below except
+ * "in-agreement" is one the clock can be stuck in forever, so a reason that stops
+ * changing must not stop being said — it would be indistinguishable from the startup
+ * transient that prints the identical line.
+ */
+const REPEAT_REASON_AFTER_MS = 300_000;
+
 /**
  * Says why no step happened, without saying it 3.6 times a second.
  *
- * "in-agreement" and "awaiting-corroboration" are the normal states and would drown
- * the journal, so only a CHANGE of reason is printed. The two that mean something is
- * wrong — a frame below the floor, and five corroborated readings that contradict a
- * time we already trusted — are the corruption this module exists for, so they are
- * warnings rather than logs. Never silent: a decoder quietly refusing every frame is
- * exactly the failure that would otherwise look like a healthy clock.
+ * Only a CHANGE of reason is printed, plus a repeat every REPEAT_REASON_AFTER_MS so a
+ * stuck state cannot masquerade as a transient one. The reasons that mean something is
+ * actually wrong — a frame below the floor, a window contradicting itself, corroborated
+ * readings that contradict a time we already trusted — are warnings; the two normal
+ * states are logs.
+ *
+ * `awaiting-corroboration` in particular is a state the gate can never leave on its own
+ * if the transports drift more than CONSISTENCY_TOLERANCE_SECONDS apart, and the clock
+ * then simply never syncs. Never silent: a gate quietly refusing every frame is exactly
+ * the failure that would otherwise look like a healthy clock.
  */
 function reportQuietly(verdict: Extract<ClockStepVerdict, { step: false }>): void {
   // Keyed on the reason, not the whole line: the detail carries a live offset that
   // changes every frame, so including it would defeat the deduplication entirely.
-  if (verdict.reason === lastQuietReason) {
+  const changed = verdict.reason !== lastQuietReason;
+  if (!changed && since(lastQuietReasonAt) < REPEAT_REASON_AFTER_MS) {
     return;
   }
   lastQuietReason = verdict.reason;
-  const line = `clock: ${verdict.reason} — ${verdict.detail}`;
-  if (verdict.reason === "before-floor" || verdict.reason === "disagrees-with-known-good") {
+  lastQuietReasonAt = monotonicNow();
+  const stillFor = changed ? "" : ` (unchanged for ${REPEAT_REASON_AFTER_MS / 60_000} min)`;
+  const line = `clock: ${verdict.reason} — ${verdict.detail}${stillFor}`;
+  if (ALARMING.has(verdict.reason)) {
     console.warn(line);
     return;
   }

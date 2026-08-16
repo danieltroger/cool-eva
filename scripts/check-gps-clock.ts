@@ -68,6 +68,12 @@ const CORRUPT_SEQUENCES: ReplaySequence[] = [
       [1786214426629, 1786214427.003],
       [1786214427729, 1786214428.004],
       [1786214428826, 1786214429.005],
+      [1786214429376, 1786214430.0],
+      [1786214430487, 1786214431.001],
+      [1786214431578, 1786214432.002],
+      [1786214432677, 1786214433.003],
+      [1786214433779, 1786214434.004],
+      [1786214434329, 1786214435.0],
     ],
   },
   {
@@ -86,6 +92,12 @@ const CORRUPT_SEQUENCES: ReplaySequence[] = [
       [1786219709638, 1786219710.004],
       [1786219710743, 1786219711.005],
       [1786219711289, 1786219712.0],
+      [1786219712391, 1786219713.001],
+      [1786219713486, 1786219714.002],
+      [1786219714596, 1786219715.003],
+      [1786219715694, 1786219716.004],
+      [1786219716248, 1786219717.0],
+      [1786219717344, 1786219718.001],
     ],
   },
   {
@@ -104,6 +116,12 @@ const CORRUPT_SEQUENCES: ReplaySequence[] = [
       [1786237346426, 1786237346.005],
       [1786237346967, 1786237347.0],
       [1786237348067, 1786237348.001],
+      [1786237349179, 1786237349.002],
+      [1786237350269, 1786237350.003],
+      [1786237351376, 1786237351.004],
+      [1786237351930, 1786237352.0],
+      [1786237353032, 1786237353.001],
+      [1786237354122, 1786237354.002],
     ],
   },
   {
@@ -122,6 +140,12 @@ const CORRUPT_SEQUENCES: ReplaySequence[] = [
       [1786280791408, 1786280791.002],
       [1786280792508, 1786280792.003],
       [1786280793169, 1786280793.0],
+      [1786280794361, 1786280794.002],
+      [1786280795465, 1786280795.003],
+      [1786280796572, 1786280796.004],
+      [1786280797671, 1786280797.005],
+      [1786280798211, 1786280798.0],
+      [1786280799322, 1786280799.001],
     ],
   },
 ];
@@ -167,8 +191,19 @@ const COLD_BOOT_SEQUENCES: ReplaySequence[] = [
   },
 ];
 
-/** Ten years on, to prove the rule has no expiry date built into it. */
-const TEN_YEARS_MS = 10 * 365.25 * 86_400_000;
+/**
+ * How far forward to shift a whole replay, to prove the rule has no expiry date.
+ *
+ * Two shifts, not one, and the big one is the point. +10 years only proves there is no
+ * calendar ceiling BELOW 2036 — a reintroduced ceiling of 2049 would pass it, since the
+ * shifted good data lands at 2036 and the shifted corrupt frames at 2070. +100 years
+ * puts the good data at 2126, above any ceiling anyone would plausibly write down, so
+ * between them there is nowhere left to hide one.
+ */
+const REPLAY_SHIFTS_MS: [string, number][] = [
+  ["+10 years", 10 * 365.25 * 86_400_000],
+  ["+100 years", 100 * 365.25 * 86_400_000],
+];
 
 const failures: string[] = [];
 
@@ -178,12 +213,14 @@ for (const sequence of CORRUPT_SEQUENCES) {
   runCorruptCase(sequence, 0, failures);
 }
 
-// Same four, ten years later. Every verdict must be identical: nothing in the rule
-// names a year, so nothing about it can stop working in 2036 — which is the whole
+// Same four, shifted forward. Every verdict must be identical: nothing in the rule
+// names a year, so nothing about it can stop working later — which is the whole
 // objection to a hard-coded 2024–2035 window.
-console.log(`\n── the same four, replayed in 2036 `.padEnd(78, "─"));
-for (const sequence of CORRUPT_SEQUENCES) {
-  runCorruptCase(sequence, TEN_YEARS_MS, failures);
+for (const [label, shiftMs] of REPLAY_SHIFTS_MS) {
+  console.log(`\n── the same four, replayed ${label} `.padEnd(78, "─"));
+  for (const sequence of CORRUPT_SEQUENCES) {
+    runCorruptCase(sequence, shiftMs, failures);
+  }
 }
 
 // ------------------------------------------------------------------- cold boots
@@ -191,9 +228,11 @@ console.log(`\n── real cold boots, which must still step `.padEnd(78, "─")
 for (const sequence of COLD_BOOT_SEQUENCES) {
   runColdBootCase(sequence, 0, failures);
 }
-console.log(`\n── the same cold boots, replayed in 2036 `.padEnd(78, "─"));
-for (const sequence of COLD_BOOT_SEQUENCES) {
-  runColdBootCase(sequence, TEN_YEARS_MS, failures);
+for (const [label, shiftMs] of REPLAY_SHIFTS_MS) {
+  console.log(`\n── the same cold boots, replayed ${label} `.padEnd(78, "─"));
+  for (const sequence of COLD_BOOT_SEQUENCES) {
+    runColdBootCase(sequence, shiftMs, failures);
+  }
 }
 
 // ------------------------------------------------------- the recoverable cooldown
@@ -281,6 +320,32 @@ console.log(`\n── an anchor that cannot be reconfirmed must expire `.padEnd(
       firstAcceptedAfterMs = monotonic - start;
     }
   }
+  // …and the case that expiry alone would turn into an oscillator: two sources
+  // disagreeing by 607 s, alternating frame by frame, which is what the +607 s cluster
+  // in rides.db looks like if it had a second source interleaved with it. Neither may
+  // win: no window is ever self-consistent, so the gate must refuse both and SAY SO,
+  // rather than adopting whichever happened to be talking when the anchor expired.
+  const contested = new GpsClockGate();
+  let contestedSteps = 0;
+  let saidSomethingIsWrong = false;
+  for (let index = 0; index < 2000; index += 1) {
+    const monotonic = 1786214100000 + index * 1000;
+    const truth = 1786214100 + index;
+    const verdict = contested.offer(index % 2 === 0 ? truth : truth + 607, truth, monotonic);
+    if (verdict.step) {
+      contestedSteps += 1;
+    } else if (verdict.reason === "inconsistent-readings") {
+      saidSomethingIsWrong = true;
+    }
+  }
+  if (contestedSteps > 0) {
+    failures.push(`two sources 607 s apart must not make the clock oscillate, but it stepped ${contestedSteps} times`);
+  }
+  if (!saidSomethingIsWrong) {
+    failures.push("a permanently self-contradicting stream must be reported as inconsistent-readings, not stay quiet");
+  }
+  console.log(`  ✓ two sources 607 s apart, alternating → ${contestedSteps} steps, reported as inconsistent`);
+
   if (firstAcceptedAfterMs < 0) {
     failures.push("a persistently disagreeing satellite time must eventually be accepted — the anchor never expired");
   } else {
@@ -310,8 +375,16 @@ console.log(`\n── the floor, which is the only calendar bound there is `.pad
   // decrypt-log.ts and replay-capture.ts would silently lose gps_epoch_s out of
   // history. The 2026-08 sequences replayed above are the live half of that check;
   // this is the half that names the reason.
-  if (GPS_UTC_FLOOR_EPOCH_S > CORRUPT_SEQUENCES[0].readings[0][0] / 1000) {
-    failures.push("the floor has been raised above rides.db's own history — old segments would lose their UTC");
+  // Pinned to the OLDEST data this repo can be handed, not to the newest fixture here.
+  // Against the fixtures the floor could be raised to 2026-07 and stay green while
+  // decrypt-log.ts quietly dropped gps_epoch_s from every April–June segment — which is
+  // the exact regression the floor's own comment says this check exists to catch.
+  const OLDEST_DATA_THIS_REPO_HOLDS = Date.UTC(2026, 3, 1) / 1000; // April 2026, the legacy coolant history
+  if (GPS_UTC_FLOOR_EPOCH_S > OLDEST_DATA_THIS_REPO_HOLDS) {
+    failures.push(
+      "the floor has been raised above the oldest data in the repo (April 2026) — decrypt-log.ts and " +
+        "replay-capture.ts would silently drop gps_epoch_s out of history"
+    );
   }
   const zeroedDateField = Date.UTC(2000, 0, 1) / 1000;
   if (zeroedDateField >= GPS_UTC_FLOOR_EPOCH_S) {
@@ -357,6 +430,21 @@ console.log(`\n── the decoder `.padEnd(78, "─"));
     failures.push("a 2024 UTC is below the floor and must not decode");
   }
   console.log("  ✓ a 2024 UTC is below the floor and does not decode");
+
+  // The decoder has to keep working on years the field can still express. `year` is
+  // 7 bits, so 2000+year spans 2000–2127 and the 2000 pivot does not expire — provided
+  // the hub keeps counting past 99 rather than wrapping, which is the one part of this
+  // no capture can settle. Anything past 2127 is beyond what the frame can say at all.
+  for (const year of [36, 99, 100, 127]) {
+    const decoded = decoder
+      .decode(timeFrame({ year, month: 8, day: 16, hours: 12, minutes: 0, seconds: 0 }))
+      .find(value => value.key === "gps_epoch_s");
+    const decodedYear = decoded === undefined ? undefined : new Date(decoded.value * 1000).getUTCFullYear();
+    if (decodedYear !== 2000 + year) {
+      failures.push(`year field ${year} should decode as ${2000 + year}, got ${decodedYear}`);
+    }
+  }
+  console.log("  ✓ year fields 36, 99, 100 and 127 decode as 2036, 2099, 2100 and 2127");
 
   // Altitude is two's complement, not sign-and-magnitude: 0xFFFF is −1 m, not
   // −32 767 m. rides.db has 145 rows between −32 756 and −32 767 and none between
@@ -416,7 +504,10 @@ function runCorruptCase(sequence: ReplaySequence, offsetMs: number, collected: s
   const gate = new GpsClockGate();
   const shiftedSeconds = offsetMs / 1000;
   let steppedToACorruptTime = 0;
-  let corroboratedGoodReadings = 0;
+  let corroboratedBefore = 0;
+  let corroboratedAfter = 0;
+  let seenCorrupt = false;
+  let refusedByCorroboration = false;
 
   for (const [rowMs, gpsSeconds] of sequence.readings) {
     const monotonicMs = rowMs + offsetMs;
@@ -425,24 +516,48 @@ function runCorruptCase(sequence: ReplaySequence, offsetMs: number, collected: s
     // service actually had at that instant.
     const verdict = gate.offer(gps, rowMs / 1000 + shiftedSeconds, monotonicMs);
     const isCorruptFrame = Math.abs(gpsSeconds - rowMs / 1000) > 2 * 365 * 86_400;
-    if (verdict.step && isCorruptFrame) {
-      steppedToACorruptTime += 1;
+    if (isCorruptFrame) {
+      seenCorrupt = true;
+      if (verdict.step) {
+        steppedToACorruptTime += 1;
+      } else if (verdict.reason === "inconsistent-readings") {
+        // WHICH rule refused it, not merely that something did. Without this the
+        // check would pass just as happily with a hard-coded year ceiling doing the
+        // work — the thing the whole design is trying not to depend on.
+        refusedByCorroboration = true;
+      }
+      continue;
     }
-    if (!isCorruptFrame && verdict.step === false && verdict.reason === "in-agreement") {
-      corroboratedGoodReadings += 1;
+    if (verdict.step === false && verdict.reason === "in-agreement") {
+      if (seenCorrupt) {
+        corroboratedAfter += 1;
+      } else {
+        corroboratedBefore += 1;
+      }
     }
   }
 
   if (steppedToACorruptTime > 0) {
     collected.push(`${sequence.name}: stepped to the corrupt time ${steppedToACorruptTime} time(s)`);
   }
-  if (corroboratedGoodReadings === 0) {
+  if (!refusedByCorroboration) {
+    collected.push(`${sequence.name}: the corrupt frame was not refused BY CORROBORATION — some other rule caught it`);
+  }
+  if (corroboratedBefore === 0) {
     collected.push(
       `${sequence.name}: no good reading corroborated — the rule is rejecting everything, not just the corruption`
     );
   }
+  // The lesson of this whole PR was that the guard against thrashing was also the
+  // guard against recovery, so "it refused the bad frame" is only half a pass. The
+  // stream has to come back: one corrupt reading poisons the window until it ages
+  // out, and these fixtures carry enough trailing readings to show it doing so.
+  if (corroboratedAfter === 0) {
+    collected.push(`${sequence.name}: the stream never recovered after the corrupt frame`);
+  }
   console.log(
-    `  ✓ ${sequence.name}\n      corrupt steps ${steppedToACorruptTime}, good readings corroborated ${corroboratedGoodReadings}`
+    `  ✓ ${sequence.name}\n      corrupt steps ${steppedToACorruptTime}, refused by corroboration, ` +
+      `corroborated ${corroboratedBefore} before / ${corroboratedAfter} after`
   );
 }
 

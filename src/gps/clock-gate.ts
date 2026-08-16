@@ -86,7 +86,7 @@ export const MIN_SECONDS_BETWEEN_STEPS = 300;
  * one corrupt frame into 299.9 s and 501.5 s of corrupt rows.
  *
  * An hour rather than something tighter because a legitimate, correctly corroborated
- * cold-boot step is routinely far larger than that (the log has 20.8 h and 13.6 h),
+ * cold-boot step is routinely far larger than that (the log has 20 h 46 m and 20 h 38 m),
  * and those must not be made to wait either.
  */
 export const COOLDOWN_OVERRIDE_SECONDS = 3600;
@@ -120,6 +120,13 @@ export const REQUIRED_CONSISTENT_READINGS = 5;
  * corrupt frame produces: the four in the log disagree with their neighbours by
  * 1 057 967 999.9 s, 1 073 001 599.7 s, 1 058 745 599.5 s and 1 057 276 799.5 s. There
  * is no value between "transport jitter" and "34 years" to be careful about.
+ *
+ * ⚠️ Read the margin carefully: the percentiles above are PER PAIR, but the rule is the
+ * worst of the whole window against its newest reading. One reading over the line kills
+ * the window, so with an observed worst pair of 2.1 s the real headroom is 0.9 s, not
+ * the 2.5 s the median and p90 suggest. If the transports ever drift further apart this
+ * is the constant that gives, and it gives by refusing to sync at all — which is why
+ * `inconsistent-readings` is warned about rather than logged.
  */
 export const CONSISTENCY_TOLERANCE_SECONDS = 3;
 
@@ -137,11 +144,35 @@ export const READING_WINDOW_MAX_AGE_MS = 30_000;
  * one and something now disagrees with it", which need different rules — a cold boot
  * SHOULD step by hours, an established session should not. It has to expire, or a
  * session that once had a good time could never re-establish one and would be locked
- * out of correcting itself forever. Five minutes of GPS silence (a garage, a tunnel, a
+ * out of correcting itself forever. Ten minutes of GPS silence (a garage, a tunnel, a
  * hub that stopped talking) is long enough that we would rather re-derive the time
  * from scratch than keep projecting a stale anchor forward.
+ *
+ * ⚠️ Deliberately NOT equal to MIN_SECONDS_BETWEEN_STEPS. They were both 300 by
+ * accident, which meant the anchor's life and the anti-thrash cooldown expired in
+ * lockstep and the cooldown damped nothing at exactly the period the expiry can
+ * generate. Keeping this at least twice the cooldown means a flip always costs a full
+ * cooldown as well as a full anchor life.
  */
-export const KNOWN_GOOD_MAX_AGE_MS = 300_000;
+export const KNOWN_GOOD_MAX_AGE_MS = 600_000;
+
+/**
+ * How many consecutive agreeing readings it takes to displace an anchor that expired
+ * while being CONTRADICTED, rather than while starved of readings.
+ *
+ * The two are not the same event and must not cost the same. An anchor that went stale
+ * because the hub stopped talking tells us nothing — cold-boot rules are right. An
+ * anchor that went stale because something spent ten minutes disagreeing with it is a
+ * fight between two sources, and letting whichever one happens to be present at the
+ * moment of expiry win by default makes the clock an oscillator: adopt A, refuse B for
+ * an anchor life, adopt B, refuse A for an anchor life, forever.
+ *
+ * So the contradicting time has to work harder, not less hard. 30 readings is 8–30 s of
+ * unbroken agreement at the measured rates — nothing to a genuinely new correct time,
+ * and out of reach of the sporadic single-frame corruption that is the only kind this
+ * bike has ever produced.
+ */
+export const READINGS_TO_DISPLACE_CONTESTED_ANCHOR = 30;
 
 /**
  * Once we hold a fresh known-good time, how far a new candidate may sit from that
@@ -167,6 +198,7 @@ export type ClockStepVerdict =
         | "not-a-time"
         | "before-floor"
         | "awaiting-corroboration"
+        | "inconsistent-readings"
         | "disagrees-with-known-good"
         | "in-agreement"
         | "cooling-down";
@@ -190,6 +222,15 @@ export class GpsClockGate {
   #window: TimeReading[] = [];
   #knownGood: TimeReading | undefined;
   #lastStepAtMonotonicMs: number | undefined;
+  /** Consecutive readings that have agreed, uncapped — the window is capped, this is not. */
+  #consecutiveConsistent = 0;
+  /**
+   * Whether the anchor we are currently without went stale while something was actively
+   * contradicting it, as opposed to while nothing was arriving at all. Latched when a
+   * contradiction is refused and cleared when a time is finally adopted, so it survives
+   * the expiry it exists to qualify.
+   */
+  #anchorWasContested = false;
 
   /**
    * Offers one satellite time to the gate.
@@ -226,14 +267,28 @@ export class GpsClockGate {
       this.#window = this.#window.slice(-REQUIRED_CONSISTENT_READINGS);
     }
 
+    // "Still filling" and "full but contradicting itself" are different events and used
+    // to share a reason, which put the exact thing this module exists to catch — a
+    // window holding a reading 34 years out — at the same log level as ordinary
+    // start-up. Split, so ./clock.ts can warn about one and not the other.
+    const needed = this.#anchorWasContested ? READINGS_TO_DISPLACE_CONTESTED_ANCHOR : REQUIRED_CONSISTENT_READINGS;
     const disagreement = worstDisagreementSeconds(this.#window, epochSeconds, monotonicMs);
-    if (this.#window.length < REQUIRED_CONSISTENT_READINGS || disagreement > CONSISTENCY_TOLERANCE_SECONDS) {
+    if (disagreement > CONSISTENCY_TOLERANCE_SECONDS) {
+      this.#consecutiveConsistent = 1;
+      return {
+        step: false,
+        reason: "inconsistent-readings",
+        detail:
+          `${this.#window.length} readings in the window disagree by up to ${disagreement.toFixed(3)} s ` +
+          `(limit ${CONSISTENCY_TOLERANCE_SECONDS} s) — one of them is not a real time`,
+      };
+    }
+    this.#consecutiveConsistent += 1;
+    if (this.#window.length < REQUIRED_CONSISTENT_READINGS || this.#consecutiveConsistent < needed) {
       return {
         step: false,
         reason: "awaiting-corroboration",
-        detail:
-          `${this.#window.length}/${REQUIRED_CONSISTENT_READINGS} readings, worst disagreement ` +
-          `${disagreement.toFixed(3)} s (limit ${CONSISTENCY_TOLERANCE_SECONDS} s)`,
+        detail: `${Math.min(this.#consecutiveConsistent, needed)}/${needed} consistent readings`,
       };
     }
 
@@ -252,6 +307,11 @@ export class GpsClockGate {
         // trusted. Loud, because it is either a corruption mode we have not seen or
         // the anchor was wrong, and both are worth knowing about on a bike we cannot
         // attach a debugger to.
+        //
+        // Remembered, too: if this goes on long enough for the anchor to expire, the
+        // time that displaces it has to earn it (READINGS_TO_DISPLACE_CONTESTED_ANCHOR)
+        // rather than simply be the one that happened to be talking at the time.
+        this.#anchorWasContested = true;
         return {
           step: false,
           reason: "disagrees-with-known-good",
@@ -266,6 +326,7 @@ export class GpsClockGate {
     // reference, whether or not we go on to step the wall clock to it.
     const wasColdBoot = anchor === undefined;
     this.#knownGood = { epochSeconds, monotonicMs };
+    this.#anchorWasContested = false;
 
     const offsetSeconds = epochSeconds - systemEpochSeconds;
     if (Math.abs(offsetSeconds) <= DRIFT_THRESHOLD_SECONDS) {

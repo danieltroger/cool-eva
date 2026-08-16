@@ -97,3 +97,29 @@ It was hand-maintained until 2026-08-16 and it had already gone stale: a change 
 ## Verifying a dashboard before shipping it
 
 Run every `rawQueryText` against `rides.db` with `$__from`/`$__to` and the template variables substituted, and confirm each returns rows. A panel that renders "No data" is indistinguishable from a broken bike, so it has to be ruled out at the query level first. Check `EXPLAIN QUERY PLAN` shows `SEARCH … USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?)`: the only index on `reading` leads with `signal_id`, so a query filtered on `ts` alone scans. SQLite does flatten derived tables and push a `signal.key` predicate down through the join, so a subquery filtered only on `ts` is not automatically a scan — check the plan rather than assuming either way.
+
+## Rows already in `rides.db` that this repo now decodes differently
+
+Two decoder fixes on 2026-08-16 changed what the code produces, but neither can change what is already stored: the sealed ride log holds the values the Pi decoded at the time, so re-running `decrypt-log.ts` reproduces them faithfully. Grafana reads those rows raw. Both are left as-is deliberately — this is the only copy of the data and correcting it in place is a one-way trip — but the queries below are here so the decision is yours and the SQL is not something you have to re-derive.
+
+**`gps_altitude_m` sign convention (145 rows).** The field is 16-bit two's complement and was read as a 15-bit magnitude plus a sign bit, so a true −1 m was stored as −32 767 (see `src/gps/decode.ts`). **The "Elevation range" tile on `ride-summary.json` computes `MAX − MIN` over raw rows**, so on history it reports a spread of about 32 km. `public/lib/bounds.js` already gates these out of the phone dashboard; Grafana does not gate anything. The mapping is exactly invertible:
+
+```sql
+-- inspect first; 145 rows, all between -32756 and -32767
+SELECT value, COUNT(*) FROM reading
+WHERE signal_id = (SELECT id FROM signal WHERE key = 'gps_altitude_m') AND value < 0
+GROUP BY value ORDER BY value;
+
+-- corrected = -32768 - old, for old < 0 only
+UPDATE reading SET value = -32768 - value
+WHERE signal_id = (SELECT id FROM signal WHERE key = 'gps_altitude_m')
+  AND value < 0 AND seq IS NULL;
+```
+
+The `seq IS NULL` is what keeps this idempotent and safe to run twice: rows written by a Pi carrying the fix arrive from v2 ride-log segments and have a write-order counter, so a NULL `seq` means "decoded before 2026-08-16" — which is exactly the set that needs correcting.
+
+**49 772 rows stamped 2060** (`ts` between `2844182125379` and `2859221509504`). One corrupt GPS frame stepped the Pi's clock 34 years forward and the anti-thrash cooldown held it there; see the Clock section of the top-level README. Their `gps_epoch_s` is intact, so the true time is recoverable per row, but there is no single offset to subtract — the two bursts are 34 years and different months apart. Easiest is to exclude them from any range that matters:
+
+```sql
+AND r.ts < 2000000000000   -- anything past year 2033 is the 2060 corruption
+```

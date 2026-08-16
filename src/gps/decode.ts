@@ -82,6 +82,9 @@ export class GpsMessageDecoder {
    */
   suppressedFixes = 0;
 
+  /** Fixes actually published, so a watcher can talk about the RATIO, not a raw count. */
+  emittedFixes = 0;
+
   decode(frame: Uint8Array): DecodedValue[] {
     // CAN 0x410 multiplexes the hub's whole message set onto one id, so the type
     // check is load-bearing there, not just belt-and-braces as it is over BLE.
@@ -174,7 +177,15 @@ export class GpsMessageDecoder {
       const bothAxesFresh = this.#haveLatitude && this.#haveLongitude && this.#fix !== 0;
       if (bothAxesFresh && (latitude !== 0 || longitude !== 0)) {
         values.push({ key: "gps_lat", value: latitude }, { key: "gps_lon", value: longitude });
-      } else {
+        this.emittedFixes += 1;
+      } else if (this.#fix !== 0 && !(this.#haveLatitude && this.#haveLongitude)) {
+        // Counted ONLY for the case the counter is named after: the hub has a fix and
+        // is still sending time, but one of the coordinate sub-frames did not arrive.
+        // Not for #fix === 0 — that is a garage, where the hub sends all three
+        // sub-frames perfectly well and simply has nothing to report (the committed
+        // 2026-08-02 capture is 90 s of exactly that) — and not for the null island
+        // before the first fix. Counting those would make ../can/gps.ts cry "the hub
+        // is only sending half a position" at every ride that starts indoors.
         this.suppressedFixes += 1;
       }
       // Consume them either way: a fix we refused is not a reason to blend the next
