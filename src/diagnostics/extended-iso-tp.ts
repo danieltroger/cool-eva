@@ -25,7 +25,15 @@
 // from the other direction. Two small correct readers beat one parameterised one
 // whose caller has to remember which mode it is in.
 //
-// ── ⚠️ THE FLOW-CONTROL FRAME IS WHY NOTHING CALLS THIS YET ─────────────────
+// ── ⚠️ THE FLOW-CONTROL FRAME, AND WHO SENDS IT ────────────────────────────
+// Since 2026-08-16 somebody does: src/vcu/multiframe-transfer.ts drives this
+// class, answers a First Frame with `<target> 30 FF 00` synchronously from its
+// frame handler, and takes a lease from src/vcu/bus-lease.ts before it starts.
+// The paragraph below is kept because it is still the reason this split exists —
+// and because the property it worries about was preserved rather than spent: the
+// flow control is addressed to the target the CALLER named, never to an address
+// read off the bus.
+//
 // A multi-frame reply does not arrive unless the tester answers the First Frame
 // with `<target> 30 FF 00`. Verified on this bike for the OBD channel on
 // 2026-08-04: with no flow control, 0 of 8 mode-03 requests produced a single
@@ -78,12 +86,19 @@ const TESTER_ADDRESS = 0xf1;
 const MAX_PAYLOAD_BYTES = 64;
 
 /**
- * Frame-count guard, derived from the byte cap so the two cannot drift: a First
- * Frame carries 5 bytes and each Consecutive Frame at most 6, plus the First
- * Frame itself. Bounds a responder that keeps sending frames contributing
- * nothing — a loop rather than a leak, but it still has to terminate.
+ * The frame-count guard for a given byte cap: a First Frame carries 5 bytes and
+ * each Consecutive Frame at most 6, plus the First Frame itself.
+ *
+ * Derived rather than picked so the two cannot drift apart, and computed from
+ * whatever cap an instance was given rather than from the default — otherwise a
+ * caller that raised the byte cap would hit a frame cap sized for the old one and
+ * see a long reply abandoned as "too many frames", which is a true statement
+ * about the wrong number. Bounds a responder that keeps sending frames
+ * contributing nothing: a loop rather than a leak, but it still has to terminate.
  */
-const MAX_FRAMES = Math.ceil((MAX_PAYLOAD_BYTES - 5) / 6) + 1;
+export function maxFramesFor(maxPayloadBytes: number): number {
+  return Math.ceil((maxPayloadBytes - FIRST_FRAME_PAYLOAD_BYTES) / CONSECUTIVE_FRAME_PAYLOAD_BYTES) + 1;
+}
 
 const SINGLE_FRAME = 0x0;
 const FIRST_FRAME = 0x1;
@@ -110,6 +125,34 @@ export class ExtendedIsoTpReassembler {
   #expectedSequenceNumber = 1;
   #frames = 0;
   #receiving = false;
+  readonly #maxPayloadBytes: number;
+  readonly #maxFrames: number;
+
+  /**
+   * `maxPayloadBytes` defaults to the freeze-frame figure argued above. It is a
+   * parameter because the other multi-frame reads on this channel are not freeze
+   * frames and are not bounded by the same table: a `0x18` ReadDTCByStatus reply
+   * is `58 <count>` plus a 3-byte record per stored code, so 63 components would
+   * be 191 bytes and a cap of 64 would abandon a perfectly good list.
+   *
+   * It is deliberately not "large enough for anything". The cap exists to bound
+   * what a stuck or hostile responder can make this process hold, so a caller
+   * states the largest reply IT can justify rather than inheriting a number
+   * argued for a different service.
+   */
+  constructor(maxPayloadBytes: number = MAX_PAYLOAD_BYTES) {
+    if (!Number.isInteger(maxPayloadBytes) || maxPayloadBytes <= MAX_SINGLE_FRAME_PAYLOAD) {
+      // A cap that a single frame already satisfies would abandon every transfer
+      // this class exists to assemble. A caller bug, so it is loud immediately
+      // rather than at the first First Frame.
+      throw new Error(
+        `extended-iso-tp: a payload cap of ${maxPayloadBytes} cannot hold a multi-frame reply ` +
+          `(it must exceed the ${MAX_SINGLE_FRAME_PAYLOAD} bytes a single frame carries)`
+      );
+    }
+    this.#maxPayloadBytes = maxPayloadBytes;
+    this.#maxFrames = maxFramesFor(maxPayloadBytes);
+  }
 
   push(frame: Uint8Array): ExtendedIsoTpResult {
     if (frame.length < 2) {
@@ -120,8 +163,8 @@ export class ExtendedIsoTpReassembler {
       // Handed back rather than swallowed — the caller shares this socket.
       return { status: "ignored", reason: `addressed to 0x${frame[0].toString(16)}, not the tester` };
     }
-    if (this.#frames >= MAX_FRAMES) {
-      const reason = `more than ${MAX_FRAMES} frames in one transfer`;
+    if (this.#frames >= this.#maxFrames) {
+      const reason = `more than ${this.#maxFrames} frames in one transfer`;
       this.reset();
       return { status: "abandoned", reason };
     }
@@ -184,8 +227,8 @@ export class ExtendedIsoTpReassembler {
       // for a Consecutive Frame that is never coming.
       return { status: "ignored", reason: `first frame declares only ${totalLength} bytes` };
     }
-    if (totalLength > MAX_PAYLOAD_BYTES) {
-      const reason = `first frame declares ${totalLength} bytes, over the ${MAX_PAYLOAD_BYTES} cap`;
+    if (totalLength > this.#maxPayloadBytes) {
+      const reason = `first frame declares ${totalLength} bytes, over the ${this.#maxPayloadBytes} cap`;
       this.reset();
       return { status: "abandoned", reason };
     }

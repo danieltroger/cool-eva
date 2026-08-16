@@ -39,6 +39,12 @@ import { fileURLToPath } from "url";
 //   replay-capture.ts     needs a candump capture — gitignored, and one bike's ride
 //                         history — and serves a dashboard to look at rather than
 //                         asserting anything, so there is no verdict to collect
+//   read-freeze-frame.ts  TALKS TO THE BIKE. It is the live test for the multi-frame
+//                         KWP transport and the only thing in the repo that opens a
+//                         socket outside the service, so it must never be in this
+//                         list — CHECK_TIMEOUT_MS exists precisely to catch a check
+//                         that started waiting on a bus that is not there. Its own
+//                         replayable half is scripts/check-kwp-multiframe.ts
 //
 // captured-dtc-transfer.ts, captured-vcu-records.ts, freeze-frame-fixtures.ts and
 // simulated-vcu-micro.ts are fixtures and a test double: data and a stand-in bus,
@@ -119,6 +125,11 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-gps-clock.ts",
     covers:
       "the GPS clock gate against the four corrupt frames in rides.db and two real cold boots, replayed again ten years on to prove the rule has no expiry date, plus the recoverable cooldown, the week-rollover floor, the two's-complement altitude and the blended-fix guard",
+  },
+  {
+    script: "scripts/check-kwp-multiframe.ts",
+    covers:
+      "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
   },
   {
     script: "scripts/decode-dtc-response.ts",

@@ -359,7 +359,8 @@ The bike keeps several completely different fault records, and the Faults tab sh
 | **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity Hub message type 25, over Bluetooth and mirrored onto CAN `0x410` |
 | **Stored** | Everything that has _ever_ been wrong and not been cleared. It only climbs | **39** | OBD-II **mode 03**, over ISO-TP |
 | **Pending / permanent** | Would be OBD-II modes 07 and 0A | — | **no response.** See below |
-| **Freeze frames** | The conditions the bike recorded _at the moment_ one specific code latched | not read yet | KWP `0x17` on the A8 micro. Decoder and tables are in; the read is not. See [Freeze frames](#freeze-frames) |
+| **Freeze frames** | The conditions the bike recorded _at the moment_ one specific code latched | not read yet | KWP `0x17` on the A8 micro. Decoder, tables and transport are in; the wire format is unverified. See [Freeze frames](#freeze-frames) |
+| **Freeze-frame log** | The whole stored history of the above, **with timestamps** | not read yet | KWP `0x35`/`0x36`/`0x37` bulk upload on A8 — the factory tool pulled 1198 records in one ~7-minute transfer. See [The multi-frame transport](#the-multi-frame-transport) |
 
 Mode 03's reply is 80 bytes, so it needs ISO-TP: a First Frame, a flow-control frame back from us, then eleven Consecutive Frames. `src/can/iso-tp.ts` reassembles it and `src/diagnostics/obd-dtc.ts` decodes it — both pure, bytes in and codes out, so a captured transfer replays on a laptop:
 
@@ -391,9 +392,37 @@ node --experimental-strip-types scripts/check-freeze-frame.ts
 #   two freeze-frame transfers through the real reassembler and decoder
 ```
 
-> ⚠️ **The read itself is not wired up, and the wire format is not verified.** The _request_ is proven twice over — the factory tool sent `0x17` to A8 29 times in a 2026-08-08 capture and got 29 positive replies, and Energica's own code builds exactly that frame. The _response layout_ has never been captured: it is reconstructed from how the manufacturer's tool decodes it, and one detail (whether the header carries a record-count byte) is genuinely open. So `scripts/check-freeze-frame.ts` replays **constructed** fixtures, not a real transfer, and says so. Every decoded frame carries `trailingHex` and `headerBytesThatFit`, which is how the first read against the bike will settle it.
+> ⚠️ **The wire format is not verified.** The _request_ is proven twice over — the factory tool sent `0x17` to A8 29 times in a 2026-08-08 capture and got 29 positive replies, and Energica's own code builds exactly that frame. The _response layout_ has never been captured: it is reconstructed from how the manufacturer's tool decodes it, and one detail (whether the header carries a record-count byte) is genuinely open. So `scripts/check-freeze-frame.ts` replays **constructed** fixtures, not a real transfer, and says so. Every decoded frame carries `trailingHex` and `headerBytesThatFit`, which is how the first read against the bike will settle it.
+
+### The multi-frame transport
+
+Every freeze frame is multi-frame — the header alone is 5 bytes and an extended-addressed single frame holds 6 — so reading one means **transmitting between the request and the rest of the reply**. `src/vcu/kwp-client.ts` was built never to do that. It now can, and the property that made the old rule worth having is intact: the flow-control frame is addressed to the target the **caller** named, never to an address read off the bus.
+
+|  |  |
+| --- | --- |
+| **`src/vcu/multiframe-codec.ts`** | Pure. A closed union of the five multi-frame **reads** — `0x17` freeze frame, `0x18` DTC list, `0x35`/`0x36`/`0x37` upload — with a throwing default and an allowlist re-check on the emitted service byte. No raw-bytes entry point, nowhere to put a value. Plus ISO-TP segmentation and flow control for extended addressing. |
+| **`src/vcu/multiframe-transfer.ts`** | One exchange over the bus: answers a First Frame with `<target> 30 FF 00` **synchronously from the frame handler** (delaying it measurably cost transfers on the OBD channel), segments a request that does not fit one frame, and bounds a stuck responder with a frame cap, a payload cap and per-stage timeouts. |
+| **`src/vcu/freeze-frame-log.ts`** | The bulk read: `0x35`, then N × `0x36`, then `0x37`. Takes a bus lease, paces itself, yields between blocks, is cancellable mid-transfer, and sends the closing `0x37` on every path out — including a cancel. |
+
+A reply that **under-fills** is abandoned, never completed at its declared length. That is the specific failure this is built around: a short Consecutive Frame mid-transfer leaves the sequence numbers running 1, 2, 3…, so nothing looks wrong, and taking what arrived shifts every later field into numbers that still have units on them. `scripts/check-kwp-multiframe.ts` asserts it, along with the gapped, oversized, foreign and flooding replies.
+
+```bash
+node --experimental-strip-types scripts/check-kwp-multiframe.ts   # no bike
+```
+
+Reading it off the actual bike is `scripts/read-freeze-frame.ts`, and that script is **the only way to run this** — a First Frame has to be answered within milliseconds, which is not something you can type into `cansend` in time. Stop the service first and bring `can0` up ACTIVE yourself; the script's header has the exact commands and the reason it does not do it for you.
+
+```bash
+node --experimental-strip-types scripts/read-freeze-frame.ts --list           # 0x18: which components have a code
+node --experimental-strip-types scripts/read-freeze-frame.ts --component 44   # 0x17: one freeze frame
+node --experimental-strip-types scripts/read-freeze-frame.ts --log            # the whole stored log, minutes
+```
+
+Every reply is printed as **raw hex first**, before any decode. That is the point of the run: the reply layouts are unverified, so the bytes are the result and the decode is a hypothesis printed beside them.
+
+> ⚠️ **The request side is proven; the reply side is not.** The check asserts that this repo's segmenter reproduces `A8 10 0C 35 12 FF FF FF` — a frame captured off this bike — byte for byte, and that the `0x18` request matches the one recovered from the manufacturer's code. But **no multi-frame reply and no flow-control frame has ever been captured on this channel**, in either direction. The one reply replayed with real bytes behind it is A8's bank-2 identifier `0x2001`, reconstructed from two independent live records that had to agree and did. Everything else is constructed from the documented framing.
 >
-> Wiring the read also needs something this repo deliberately does not have: every freeze frame is multi-frame, so it needs a flow-control frame sent back mid-reply, and `src/vcu/kwp-client.ts` is built never to transmit one.
+> Three things are outright guesses, each marked at its definition: **seven of the ten operand bytes** after `35 12` (only `FF FF FF` was captured, in the First Frame), whether `0x36` carries a block-sequence counter, and whether the micro sends a flow control before our request's Consecutive Frames. All three are settleable **offline**, from `capture-20260808-182129-600daf87.log` on the Pi — the census that produced these notes filtered by service byte, and a Consecutive Frame has none, so the bytes are still in that file.
 
 ## VCU parameters, by name
 
