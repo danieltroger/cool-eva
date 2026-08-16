@@ -279,11 +279,16 @@ export const FAULT_INFOKEYS: readonly FaultInfokeys[] = [
 /**
  * The largest field payload any fault in the table can produce, in bytes.
  *
- * Derived from the table rather than written down, so it cannot drift: it is
- * (51,0) `P1050`'s twelve fields. ./freeze-frame.ts uses it as a hard cap on a
- * reassembly, which is what stops a corrupt length byte asking for a buffer the
- * protocol cannot justify — the same guard src/can/iso-tp.ts applies for the same
- * reason.
+ * Derived from the table rather than written down: it is (51,0) `P1050`'s twelve
+ * fields, and adding a longer shortlist moves it automatically.
+ *
+ * ⚠️ Its only reader is scripts/check-freeze-frame.ts, which asserts it is 20.
+ * That is on purpose, and it is worth saying because the obvious guess is wrong:
+ * ./extended-iso-tp.ts does NOT cap reassembly with this. It uses a deliberately
+ * larger fixed cap, because a cap at the expected size would discard the one
+ * reply that could show the layout in ./freeze-frame.ts is wrong. The check's
+ * assertion is what ties the two together — grow the table past 20 bytes and the
+ * build goes red, pointing at both this constant and that cap.
  */
 export const MAX_FREEZE_FRAME_FIELD_BYTES: number = FAULT_INFOKEYS.reduce(
   (widest, entry) => Math.max(widest, freezeFrameFieldBytes(entry)),

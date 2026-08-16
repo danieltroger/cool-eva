@@ -342,11 +342,19 @@ export interface FreezeFrame {
   rawHex: string;
 }
 
-/** How one freeze-frame read came out. */
+/**
+ * How one freeze-frame read came out.
+ *
+ * ⚠️ EVERY variant carries `rawHex`, not just the successful one, and that is
+ * deliberate: on the first read against a real bike the LIKELIEST outcome is
+ * `unrecognised` — the header below is an inference — and that is precisely the
+ * reply whose bytes would say what the layout actually is. A one-line reason with
+ * the payload thrown away would waste the only run that could settle it.
+ */
 export type FreezeFrameResponse =
   | { kind: "frame"; frame: FreezeFrame }
-  /** The micro said no, by name. */
-  | { kind: "refused"; service: number; negativeResponseCode: number; description: string }
+  /** The micro said no to THIS service, by name. */
+  | { kind: "refused"; service: number; negativeResponseCode: number; description: string; rawHex: string }
   /**
    * A well-formed frame about a DIFFERENT component. Kept apart from
    * `unrecognised` for the reason src/vcu/param-codec.ts keeps
@@ -354,9 +362,9 @@ export type FreezeFrameResponse =
    * answer to another question, and filing them under the component we asked
    * about is the exact silent wrong answer this repo refuses to produce.
    */
-  | { kind: "component-mismatch"; requested: number; received: number }
+  | { kind: "component-mismatch"; requested: number; received: number; rawHex: string }
   /** Something answered in a shape this service does not define. */
-  | { kind: "unrecognised"; reason: string };
+  | { kind: "unrecognised"; reason: string; rawHex: string };
 
 /**
  * Decodes one reassembled `0x17` reply.
@@ -375,26 +383,51 @@ export type FreezeFrameResponse =
 export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponent: number): FreezeFrameResponse {
   const rawHex = toHex(payload);
   if (payload.length === 0) {
-    return { kind: "unrecognised", reason: "empty payload" };
+    return { kind: "unrecognised", reason: "empty payload", rawHex };
   }
   if (payload[0] === NEGATIVE_RESPONSE_SERVICE) {
     if (payload.length < 3) {
-      return { kind: "unrecognised", reason: "negative response without a service and a code" };
+      return { kind: "unrecognised", reason: "negative response without a service and a code", rawHex };
     }
+    if (payload[1] !== SERVICE_READ_DTC_INFORMATION) {
+      // Somebody else's refusal on the shared response id — this repo's own
+      // parameter sweep asks `0x22` on 0x7C0 and is answered on 0x7E0, so a
+      // `7F 22 31` landing in our reply window is a thing that happens rather
+      // than a hypothetical. Filing it as ours would report the freeze-frame read
+      // as refused when the micro never heard the question, and `service` sitting
+      // in the result does not help: the KIND already claims it answered us.
+      return {
+        kind: "unrecognised",
+        reason: `refusal names service 0x${payload[1].toString(16)}, not 0x17`,
+        rawHex,
+      };
+    }
+    // ⚠️ NRC 0x78 responsePending is in here too, and it is a WAIT, not a
+    // refusal — the micro is saying "ask again shortly". Whoever wires the
+    // transport must keep the reply window open after one instead of treating
+    // this kind as terminal; `negativeResponseCode` is what to switch on.
     return {
       kind: "refused",
       service: payload[1],
       negativeResponseCode: payload[2],
       description: describeNegativeResponseCode(payload[2]),
+      rawHex,
     };
   }
   if (payload[0] !== SERVICE_READ_DTC_INFORMATION + POSITIVE_RESPONSE_OFFSET) {
-    return { kind: "unrecognised", reason: `reply names service 0x${payload[0].toString(16)}, not 0x57` };
+    return { kind: "unrecognised", reason: `reply names service 0x${payload[0].toString(16)}, not 0x57`, rawHex };
   }
   if (payload.length < FREEZE_FRAME_HEADER_BYTES) {
+    // ⚠️ A reply of exactly 4 bytes is the interesting case here: that is a valid
+    // empty-shortlist frame UNDER THE 4-BYTE READING this file's header says is
+    // still on the table, i.e. the one reply shape that would falsify the choice.
+    // It is still reported rather than decoded — reading it would mean silently
+    // switching layouts mid-flight — but `rawHex` carries the bytes out, which is
+    // what makes it actionable instead of merely rejected.
     return {
       kind: "unrecognised",
       reason: `positive reply of ${payload.length} bytes is shorter than the ${FREEZE_FRAME_HEADER_BYTES}-byte header`,
+      rawHex,
     };
   }
 
@@ -402,7 +435,7 @@ export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponen
   const component = (payload[2] << 8) | payload[3];
   const status = payload[4];
   if (component !== requestedComponent) {
-    return { kind: "component-mismatch", requested: requestedComponent, received: component };
+    return { kind: "component-mismatch", requested: requestedComponent, received: component, rawHex };
   }
   // The symptom is part of the code's identity, not a status flag: component 8
   // symptom 3 is U0113 and symptom 4 is U0114. EMsuite's own DTCode.FindDTCFrom

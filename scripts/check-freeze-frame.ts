@@ -15,6 +15,7 @@ import {
   formatFreezeFrameValue,
   toHex,
   type FreezeFrame,
+  type FreezeFrameResponse,
 } from "../src/diagnostics/freeze-frame.ts";
 import { INFOKEY_TABLE, lookupInfokey, scaleInfokeyValue } from "../src/diagnostics/infokey-table.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
@@ -101,6 +102,23 @@ const duplicateKeys = FAULT_INFOKEYS.filter(
     FAULT_INFOKEYS.findIndex(other => other.component === entry.component && other.symptom === entry.symptom) !== index
 );
 check(duplicateKeys.length === 0, `(component, symptom) must be unique; duplicated: ${duplicateKeys.length}`);
+
+// …and both halves must be in range, which the uniqueness check above does NOT
+// imply. The lookup map hashes `component * 16 + symptom`, so a typo'd symptom of
+// 16 would collide (54,16) with (55,0): two distinct rows, one bucket, last one
+// wins. Nothing on the wire can produce it — the decoder takes the symptom from a
+// nibble — but a data-entry error would pass a pairwise uniqueness test and then
+// hand a real freeze frame the wrong struct definition, which decodes into
+// plausible numbers rather than failing.
+const outOfRange = FAULT_INFOKEYS.filter(
+  entry => entry.component < 1 || entry.component > 63 || entry.symptom < 0 || entry.symptom > 15
+);
+check(
+  outOfRange.length === 0,
+  `component must be 1…63 and symptom 0…15, or the lookup key collides; bad rows: ${outOfRange
+    .map(entry => `${entry.component}/${entry.symptom}`)
+    .join(", ")}`
+);
 
 check(
   MAX_FREEZE_FRAME_FIELD_BYTES === 20,
@@ -253,7 +271,11 @@ if (lampFrame) {
 // The layout's own prediction: a reply is the header plus the shortlist's bytes,
 // and nothing else. If this ever disagrees with a real capture, the header
 // comment in src/diagnostics/freeze-frame.ts is what needs correcting.
-const pumpShortlist = infokeysFor(FREEZE_FRAME_P0A07_COMPONENT, 2);
+// Symptom 0, matching the fixture and dtc-table.ts' (44,0) = P0A07. All three of
+// component 44's symptoms carry the same shortlist, so picking the wrong one
+// would still pass — which is exactly why it is worth being explicit here, on the
+// one pair this project has already had to reconcile twice.
+const pumpShortlist = infokeysFor(FREEZE_FRAME_P0A07_COMPONENT, 0);
 if (pumpShortlist) {
   check(
     expectedFreezeFramePayloadBytes(pumpShortlist) === 17,
@@ -285,6 +307,31 @@ check(
 const foreign = decodeSingle("F1 05 62 10 E7 01 90", FREEZE_FRAME_P0A07_COMPONENT);
 check(foreign.kind === "unrecognised", `a 0x62 parameter reply must not decode as a freeze frame, got ${foreign.kind}`);
 
+// …and somebody else's REFUSAL, which is the same hazard wearing a 7F. The
+// parameter sweep asks 0x22 on the same pair, so `7F 22 31` in our reply window
+// happens; reporting it as a refusal of OUR read would be a wrong answer wearing
+// the right shape.
+const foreignRefusal = decodeSingle("F1 03 7F 22 31", FREEZE_FRAME_P0A07_COMPONENT);
+check(
+  foreignRefusal.kind === "unrecognised",
+  `7F 22 31 refuses a parameter read, not ours — expected unrecognised, got ${foreignRefusal.kind}`
+);
+
+// Every non-frame outcome must carry the bytes out. On the first live read the
+// likeliest outcome is `unrecognised`, and its payload is the evidence for what
+// the layout really is — a reason string alone would waste that run.
+for (const [label, outcome] of /** @type {const} */ [
+  ["refusal", refusal],
+  ["foreign service", foreign],
+  ["foreign refusal", foreignRefusal],
+  ["component mismatch", mismatch],
+]) {
+  check(
+    typeof outcome === "object" && outcome !== null && "rawHex" in outcome && outcome.rawHex.length > 0,
+    `${label} must carry rawHex so the bytes survive the failure`
+  );
+}
+
 // Addressed to another tester: not ours to consume at all.
 const notOurs = new ExtendedIsoTpReassembler().push(parseHexFrame("F2 10 11 57 01 00 2C 2D"));
 check(notOurs.status === "ignored", `a frame addressed to 0xF2 should be ignored, got ${notOurs.status}`);
@@ -303,6 +350,28 @@ check(
 check(
   gapResults.some(result => result.status === "abandoned"),
   "a transfer missing a consecutive frame must be abandoned out loud"
+);
+
+// A short Consecutive Frame must be abandoned, not under-filled. Taking what
+// arrived would put the NEXT frame's bytes 4 bytes early, the sequence numbers
+// would still run 1, 2, 3…, and the transfer would complete at its declared
+// length with every later field shifted — into int16s with °C on them and an
+// empty trailingHex. The sequence check would not see it; nothing would.
+const shortCf = new ExtendedIsoTpReassembler();
+shortCf.push(parseHexFrame(FREEZE_FRAME_P0A07_FRAMES[0]));
+const shortCfResult = shortCf.push(parseHexFrame("F1 21 03 00"));
+check(
+  shortCfResult.status === "abandoned",
+  `a consecutive frame carrying 2 bytes where 6 were needed must be abandoned, got ${shortCfResult.status}`
+);
+// …but the LAST one may legitimately be short, down to whatever is still
+// outstanding. The P0514 transfer's final frame carries 5 of a possible 6, so
+// this must NOT be caught by the guard above.
+const lastShort = new ExtendedIsoTpReassembler();
+const lastShortResults = freezeFrameBytes(FREEZE_FRAME_P0514_FRAMES).map(frame => lastShort.push(frame));
+check(
+  lastShortResults.some(result => result.status === "complete"),
+  "a final consecutive frame shorter than 6 payload bytes is legitimate and must still complete"
 );
 
 // A First Frame claiming more than the cap must be refused rather than allocated for.
@@ -388,7 +457,7 @@ if (failures.length > 0) {
 console.log(
   "\n✓ 120 infokeys, 155 shortlists and 944 references check out against dtc-table.ts;" +
     " both constructed transfers reassemble and decode; refusals, wrong components, gapped," +
-    " oversized, truncated, surplus and foreign replies all handled"
+    " short, oversized, truncated, surplus and foreign replies all rejected, with their bytes kept"
 );
 console.log("⚠️  the transfers are CONSTRUCTED — no 0x17 payload has ever been captured. See the PR.");
 
@@ -431,10 +500,17 @@ function replayRaw(frames: readonly string[], component: number) {
 }
 
 /** Decodes a single-frame reply given as one hex frame. */
-function decodeSingle(frame: string, component: number) {
+function decodeSingle(frame: string, component: number): FreezeFrameResponse {
   const result = new ExtendedIsoTpReassembler().push(parseHexFrame(frame));
   if (result.status !== "complete") {
-    return { kind: "unrecognised" as const, reason: `frame did not reassemble: ${result.status}` };
+    // Kept in the same shape the decoder returns, rawHex included, so a caller
+    // asserting "every failure carries its bytes" cannot be satisfied by a hole
+    // this helper punched rather than by the code under test.
+    return {
+      kind: "unrecognised",
+      reason: `frame did not reassemble: ${result.status}`,
+      rawHex: toHex(parseHexFrame(frame)),
+    };
   }
   return decodeFreezeFrameResponse(result.payload, component);
 }

@@ -60,8 +60,11 @@ const TESTER_ADDRESS = 0xf1;
  * Longest payload this will assemble.
  *
  * The largest freeze frame Energica's own table can describe is 25 bytes — a
- * 5-byte header plus (51,0) P1050's twelve fields — so this is deliberately well
- * ABOVE the expectation rather than equal to it. That is the whole point: if the
+ * 5-byte header plus (51,0) P1050's twelve fields, which is
+ * `MAX_FREEZE_FRAME_FIELD_BYTES` in ./fault-infokeys.ts and is asserted at 20 by
+ * scripts/check-freeze-frame.ts. This is deliberately well ABOVE that rather than
+ * derived from it, so the two are tied together by that assertion rather than by
+ * an import. That slack is the whole point: if the
  * layout inferred in ./freeze-frame.ts is wrong, the reply will be some other
  * length, and a cap set at 25 would throw away the one piece of evidence that
  * would show it. A generous cap keeps the bytes so the decoder can report them;
@@ -209,9 +212,24 @@ export class ExtendedIsoTpReassembler {
 
     const remaining = this.#payload.length - this.#filled;
     const available = Math.max(0, frame.length - 2);
-    const take = Math.min(CONSECUTIVE_FRAME_PAYLOAD_BYTES, remaining, available);
-    this.#payload.set(frame.subarray(2, 2 + take), this.#filled);
-    this.#filled += take;
+    const wanted = Math.min(CONSECUTIVE_FRAME_PAYLOAD_BYTES, remaining);
+    if (available < wanted) {
+      // Only the LAST consecutive frame may carry fewer than six payload bytes,
+      // and then only down to `remaining` — which is what `wanted` already
+      // accounts for. Anything shorter than that is a truncated DLC, i.e. missing
+      // bytes, and taking what arrived would write the NEXT frame's bytes at the
+      // wrong offset. The sequence numbers would still run 1, 2, 3…, so nothing
+      // would be abandoned and the transfer would complete at its declared length
+      // with every field after the short frame shifted — decoding into int16s
+      // with °C on them and an empty `trailingHex`, which is indistinguishable
+      // from a good read. Exactly the hazard the sequence check above exists for,
+      // with a different cause.
+      const reason = `consecutive frame carries ${available} bytes where ${wanted} were needed`;
+      this.reset();
+      return { status: "abandoned", reason };
+    }
+    this.#payload.set(frame.subarray(2, 2 + wanted), this.#filled);
+    this.#filled += wanted;
 
     if (this.#filled < this.#payload.length) {
       return { status: "incomplete" };
