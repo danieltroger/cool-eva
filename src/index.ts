@@ -322,7 +322,10 @@ async function shutdown(): Promise<void> {
   // leaves every row it had already appended to `sweep.partial.jsonl`, so the next
   // run resumes from there. Deploy is `git pull` + `systemctl restart`, so this is
   // not a rare path.
-  vcuReadRunner.stop();
+  //
+  // Awaited, like closeEncryptedLog below and for the same reason: process.exit()
+  // is a few lines away and the sweep still has its archive to write.
+  await vcuReadRunner.stop();
   // Awaited, not fire-and-forget: sealing the last segment is async, and
   // process.exit() below would otherwise kill it and lose the final buffer.
   await closeEncryptedLog();

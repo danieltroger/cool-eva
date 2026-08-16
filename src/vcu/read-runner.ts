@@ -93,8 +93,11 @@ export interface VcuReadRunner {
    * at all the rest of the time.
    */
   handleCanFrame: (id: number, data: Buffer) => boolean;
-  /** Stops any running sweep, for shutdown. */
-  stop: () => void;
+  /**
+   * Stops any running sweep, for shutdown. Resolves once it has written itself
+   * down — await it, or `process.exit()` takes the archive with it.
+   */
+  stop: () => Promise<void>;
 }
 
 export interface VcuReadRunnerOptions {
@@ -263,9 +266,29 @@ function cancel(context: RunnerContext): boolean {
   return true;
 }
 
-function stop(context: RunnerContext): void {
-  context.sweep?.abort("the service is shutting down — everything read so far was kept");
+/**
+ * Shutdown. Awaited by src/index.ts, and that matters.
+ *
+ * `abort` settles the request in flight straight away and blocks every transmit
+ * after it, but the sweep then still has to close the resume file and write its
+ * archive — tens of milliseconds of local I/O. `process.exit(0)` follows immediately
+ * in the shutdown path, so a fire-and-forget stop would take the archive with it and
+ * a run cut short by a `systemctl restart` (which is what deploy IS here) would
+ * leave no record of itself. Nothing READ would be lost either way — every row is
+ * already in `sweep.partial.jsonl` — but "0 of 277" and "we stopped at 41" are
+ * different claims and the second one is the true one.
+ */
+async function stop(context: RunnerContext): Promise<void> {
+  const sweep = context.sweep;
   stopGateWatchdog(context);
+  if (!sweep) {
+    return;
+  }
+  sweep.abort("the service is shutting down — everything read so far was kept");
+  // Never rejects into the shutdown path: the sweep's own failure is already
+  // reported by the handler in start(), and a throw here would skip everything
+  // after this call in index.ts's shutdown.
+  await sweep.finished.catch(() => undefined);
 }
 
 /**
