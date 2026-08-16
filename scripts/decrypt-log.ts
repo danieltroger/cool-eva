@@ -36,6 +36,9 @@ interface DecodedRecord {
   ts: number;
   key: string;
   value: number;
+  /** Undefined for v1 segments, sealed before the write-order counter existed. */
+  session?: string;
+  seq?: number;
 }
 
 interface SignalMeta {
@@ -99,7 +102,9 @@ async function main(): Promise<void> {
         record.value,
         sealed?.unit ?? fallback?.unit ?? "",
         sealed?.group ?? fallback?.group ?? "misc",
-        sealed?.source ?? fallback?.source ?? "stream"
+        sealed?.source ?? fallback?.source ?? "stream",
+        record.session,
+        record.seq
       );
     }
     flushNow();
@@ -275,19 +280,28 @@ async function openSegment(
 }
 
 function readBody(body: string, records: DecodedRecord[], meta: Map<string, SignalMeta>): void {
+  // Which run of the Pi wrote the lines that follow. Set by each segment header, so
+  // it has to be tracked across lines rather than read once per file: one .celog is
+  // a day's worth of segments and a reboot mid-day starts a new session in the same
+  // file. Undefined until a header says otherwise, which is what a v1 segment does.
+  let session: string | undefined;
   for (const line of body.split("\n")) {
     if (line.length === 0) {
       continue;
     }
     const parsed: unknown = JSON.parse(line);
     if (Array.isArray(parsed)) {
-      const [ts, key, value] = parsed as [number, string, number];
-      records.push({ ts, key, value });
+      // Four elements since v2; a v1 line has three and leaves seq undefined, which
+      // is stored as NULL rather than guessed at.
+      const [ts, key, value, seq] = parsed as [number, string, number, number?];
+      records.push({ ts, key, value, session, seq });
       continue;
     }
-    // Segment header: the signal definitions for the readings that follow.
-    const signals = (parsed as { signals?: Record<string, [string, string, SignalSource]> }).signals ?? {};
-    for (const [key, [unit, group, source]] of Object.entries(signals)) {
+    // Segment header: the signal definitions for the readings that follow, and from
+    // v2 the session that wrote them.
+    const header = parsed as { session?: string; signals?: Record<string, [string, string, SignalSource]> };
+    session = header.session;
+    for (const [key, [unit, group, source]] of Object.entries(header.signals ?? {})) {
       meta.set(key, { unit, group, source });
     }
   }

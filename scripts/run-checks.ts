@@ -97,6 +97,11 @@ const CHECKS: SelfCheck[] = [
       "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
   },
   {
+    script: "scripts/check-gps-clock.ts",
+    covers:
+      "the GPS clock gate against the four corrupt frames in rides.db and two real cold boots, replayed again ten years on to prove the rule has no expiry date, plus the recoverable cooldown, the week-rollover floor, the two's-complement altitude and the blended-fix guard",
+  },
+  {
     script: "scripts/decode-dtc-response.ts",
     covers:
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",

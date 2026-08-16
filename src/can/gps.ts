@@ -23,9 +23,35 @@ export const GPS_CAN_ID = 0x410;
 
 let busGpsDecoder = new GpsMessageDecoder();
 
+/**
+ * How many suppressed fixes we have already complained about, so a hub that has
+ * genuinely stopped sending a coordinate sub-frame says so once rather than at
+ * 1.8 Hz. Reset with the decoder.
+ */
+let reportedSuppressedFixes = 0;
+
+/**
+ * A handful at the start of a stream is normal — the first time sub-frame can
+ * arrive before either coordinate one. A hub that is really only sending half a
+ * position keeps climbing past this within seconds.
+ */
+const SUPPRESSED_FIX_COMPLAINT_THRESHOLD = 20;
+
 /** Non-GPS frames on 0x410 (seed, vehicle status, odometer) decode to nothing. */
 export function decodeGpsCanFrame(data: Buffer): DecodedValue[] {
-  return busGpsDecoder.decode(data);
+  const values = busGpsDecoder.decode(data);
+  // The decoder is pure and cannot complain for itself, so the transport does it.
+  // Before 2026-08-16 this condition had no symptom at all: a missing coordinate
+  // sub-frame was silently filled in from the last one, which is how rides.db
+  // ended up with single-sample position jumps of 21 km.
+  if (busGpsDecoder.suppressedFixes - reportedSuppressedFixes >= SUPPRESSED_FIX_COMPLAINT_THRESHOLD) {
+    reportedSuppressedFixes = busGpsDecoder.suppressedFixes;
+    console.warn(
+      `gps: ${busGpsDecoder.suppressedFixes} fixes suppressed — the hub is sending time but not both ` +
+        "coordinate sub-frames, so position is being withheld rather than blended from a stale half"
+    );
+  }
+  return values;
 }
 
 /**
@@ -37,4 +63,5 @@ export function decodeGpsCanFrame(data: Buffer): DecodedValue[] {
  */
 export function resetGpsCanDecoder(): void {
   busGpsDecoder = new GpsMessageDecoder();
+  reportedSuppressedFixes = 0;
 }
