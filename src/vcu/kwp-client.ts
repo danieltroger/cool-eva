@@ -172,8 +172,10 @@ interface ClientContext {
   lastExchangeAt: Partial<Record<VcuTarget, number | null>>;
   /**
    * The CAN id the request in flight expects its reply on. Held rather than assumed,
-   * because the charge manager answers on 0x7E3 while the VCU micros answer on 0x7E0
-   * — so "is this frame for us" is a question about who we last asked, not a constant.
+   * because a second ECU on its own pair of ids was briefly a thing here — so "is
+   * this frame for us" was made a question about who we last asked rather than a
+   * constant. Both remaining targets share 0x7E0, so it answers the same today; it is
+   * kept as a question because the next ECU added will not.
    */
   pendingResponseCanId: number | null;
   stopped: boolean;
@@ -191,7 +193,7 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
     responseTimeoutMs: options.responseTimeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS,
     paceMs: options.paceMs ?? DEFAULT_PACE_MS,
     pending: null,
-    lastExchangeAt: { A8: null, A9: null, A4: null },
+    lastExchangeAt: { A8: null, A9: null },
     pendingResponseCanId: null,
     stopped: false,
   };

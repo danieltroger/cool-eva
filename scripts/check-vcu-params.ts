@@ -27,8 +27,8 @@ import {
   type ServiceGateReadings,
 } from "../src/vcu/service-gate.ts";
 import { decodeFrame } from "../src/can/decode.ts";
-import { describeProbe, parseProbeRequest } from "../src/vcu/probe.ts";
-import { canIdsFor, identifierFor } from "../src/vcu/param-codec.ts";
+import { PROBE_TARGETS, describeProbe, parseProbeRequest } from "../src/vcu/probe.ts";
+import { canIdsFor, identifierFor, kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 import type { VcuProbeOutcome } from "../src/vcu/kwp-client.ts";
 import {
   buildWriteFrame,
@@ -735,29 +735,35 @@ expect(identifierFor(0, 0) === 0x0000 && identifierFor(15, 4095) === 0xffff, "th
 expectThrows(() => identifierFor(16, 0), "a bank past 15 should be refused, not wrapped");
 expectThrows(() => identifierFor(1, 0x1000), "an index past 4095 should be refused, not truncated into the bank");
 
-// The charge manager is a different pair of CAN ids, and that is the entire reason
-// it has never answered: every sweep this project ran went out on 0x7C0.
 expect(canIdsFor("A9").request === 0x7c0 && canIdsFor("A9").response === 0x7e0, "the VCU micros are 0x7C0/0x7E0");
 expect(canIdsFor("A8").request === 0x7c0, "both VCU micros share one pair of ids — they differ by address byte");
-expect(canIdsFor("A4").request === 0x7c3 && canIdsFor("A4").response === 0x7e3, "the charge manager is 0x7C3/0x7E3");
 
-// …and the frame addressed to it carries 0xA4, with the bank in the identifier.
+// ⚠️ The probe may address the two VCU micros and NOTHING else. A third target, `A4`
+// on 0x7C3/0x7E3, was added and removed on 2026-08-16: 0x7E3 is DashboardV2's request
+// id, so that option could have questioned the dashboard while the page said "charge
+// manager". Checked as a LIST rather than as "A4 is absent", so that adding any new
+// target has to come past this line and whatever justifies it.
 expect(
-  toHex(buildRequestFrame("A4", { kind: "read-parameter", bank: 2, index: 5 })) === "A4 03 22 20 05 00 00 00",
-  `a bank-2 read on the charge manager should be A4 03 22 20 05, got ${toHex(buildRequestFrame("A4", { kind: "read-parameter", bank: 2, index: 5 }))}`
+  PROBE_TARGETS.join(",") === "A9,A8",
+  `a probe should reach exactly the two VCU micros, reaches ${PROBE_TARGETS}`
+);
+expect(
+  kwpResponseCanIds().join(",") === "2016",
+  `only 0x7E0 should be a KWP reply id — 0x7E3 in this list means the dashboard's request id is back, got ${kwpResponseCanIds()}`
 );
 
 // A probe request is a person typing into a box, so every field is validated and a
 // bad one is a message rather than a throw out of an HTTP handler.
 const goodProbe = parseProbeRequest({ target: "A9", bank: "1", index: "258" });
 expect(goodProbe.ok && goodProbe.request.index === 258, "a plain decimal index should parse");
-const hexProbe = parseProbeRequest({ target: "a4", bank: "2", index: "0x102" });
+const hexProbe = parseProbeRequest({ target: "a8", bank: "2", index: "0x102" });
 expect(
-  hexProbe.ok && hexProbe.request.index === 258 && hexProbe.request.target === "A4" && hexProbe.request.bank === 2,
+  hexProbe.ok && hexProbe.request.index === 258 && hexProbe.request.target === "A8" && hexProbe.request.bank === 2,
   "hex should parse and the target should be case-insensitive — both are how an address arrives from a manual"
 );
 for (const [raw, why] of [
   [{ target: "A7", bank: "1", index: "1" }, "a target that answers no read on any bank"],
+  [{ target: "A4", bank: "1", index: "1" }, "the removed charge-manager target, whose id pair was the dashboard's"],
   [{ target: null, bank: "1", index: "1" }, "no target at all"],
   [{ target: "A9", bank: "16", index: "1" }, "a bank past 15"],
   [{ target: "A9", bank: "1", index: "4096" }, "an index past 4095"],
@@ -788,15 +794,11 @@ expect(
   "…but the bytes and both readings of them are still returned"
 );
 expect(bank2Probe.note !== null, "…with a note saying the width and sign are not known");
-expect(
-  describeProbe(probeOutcome("A4", 1, 258, "4B")).name === null,
-  "the charge manager is not in the VCU's name table, whatever the bank"
-);
 // Both readings, always — this is the case where picking one would be wrong.
 const negative = describeProbe(probeOutcome("A9", 2, 1, "FE A2"));
 expect(negative.unsigned === 65186 && negative.signed === -350, "a probe should report the bytes both ways");
 const refused = describeProbe({
-  target: "A4",
+  target: "A8",
   bank: 2,
   index: 5,
   identifier: 0x2005,
@@ -811,12 +813,12 @@ expect(
 );
 expect(
   describeProbe({
-    target: "A4",
+    target: "A8",
     bank: 1,
     index: 1,
     identifier: 0x1001,
     status: "no-session",
-    reason: "A4 did not answer 10 81",
+    reason: "A8 did not answer 10 81",
   }).note?.includes("nothing is at this address") === true,
   "silence at an address should read as “nothing there or asleep”, not as a refusal"
 );
@@ -1596,7 +1598,7 @@ function expectThrows(action: () => unknown, message: string): void {
 }
 
 /** A probe outcome that answered, for the pure describeProbe() checks. */
-function probeOutcome(target: "A9" | "A8" | "A4", bank: number, index: number, rawHex: string): VcuProbeOutcome {
+function probeOutcome(target: "A9" | "A8", bank: number, index: number, rawHex: string): VcuProbeOutcome {
   return {
     target,
     bank,

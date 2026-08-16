@@ -13,9 +13,12 @@ const { button, div, input, option, select, span } = van.tags;
 //  • **Any bank.** The identifier is `(bank << 12) | index`. The sweep reads bank 1,
 //    the calibration EEPROM. **Bank 2 is live data** — the running values rather
 //    than the stored settings — and nothing in this project had ever read one.
-//  • **Any of three ECUs**, including the CHARGE MANAGER. Every sweep ever run here
-//    went out on CAN 0x7C0, which is the VCU micros; the charge manager is 0x7C3.
-//    So `CM_ERROR` and friends were never silent, they were never asked.
+//
+// ⚠️ It offered a CHARGE MANAGER target for part of 2026-08-16 and no longer does.
+// The id pair it was given, 0x7C3/0x7E3, is not the charge manager's: **0x7E3 is the
+// dashboard's request id**, so that option could have questioned the dashboard while
+// this page said otherwise. The real charge manager is 29-bit ISO-TP and needs
+// transport work this form cannot fake. See src/vcu/param-codec.ts above `VcuTarget`.
 //
 // ── Why it is a form and not a link ─────────────────────────────────────────
 // Because you do not know what you want until you are standing there. The whole use
@@ -60,12 +63,10 @@ export function VcuProbe(canReach) {
               target.val = /** @type {HTMLSelectElement} */ (event.target).value;
             },
           },
-          // A9 and A8 are the VCU micros the parameter table describes. A4 is the
-          // charge manager, on its own pair of CAN ids — labelled, because "A4"
-          // means nothing to anyone who has not read param-codec.ts.
+          // The two VCU micros the parameter table describes, and nothing else — see
+          // the header for the charge-manager option that used to be here.
           option({ value: "A9" }, "A9 — VCU"),
-          option({ value: "A8" }, "A8 — VCU"),
-          option({ value: "A4" }, "A4 — charge mgr")
+          option({ value: "A8" }, "A8 — VCU")
         )
       ),
       Field("Bank", () =>
@@ -119,7 +120,7 @@ function ProbeResult() {
     if (!current) {
       return div(
         { style: `color:${MUTED}` },
-        "Reads one identifier and shows you the bytes. Bank 1 is what the sweep already covers; bank 2 is live data, and the charge manager has never been read at all."
+        "Reads one identifier and shows you the bytes. Bank 1 is what the sweep already covers; bank 2 is live data — the running values rather than the stored settings — and nothing here has ever read one."
       );
     }
     if (!current.reading) {

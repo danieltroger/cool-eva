@@ -178,6 +178,13 @@ const MAX_SINGLE_FRAME_PAYLOAD = 6;
  * negative, and `+` would then be subtracting. That is a wrong key, which costs one
  * of the ~3 attempts before the micro locks out until a power cycle (§8) — the most
  * expensive silent bug this file could contain.
+ *
+ * ⚠️ THIS IS THE VCU FAMILY'S ALGORITHM AND ONLY THE VCU FAMILY'S. It covers A8 and
+ * A9, which is everything this repo addresses. It does NOT cover the rest of the
+ * bike, and the differences are not subtle: the dashboard uses a four-round
+ * multiply/xor/rotate then `^0xFFFFFFFF`, and the charge manager uses a CRC-16/CCITT
+ * level-9 scheme. Pointing this function at either would produce a wrong key and
+ * spend an attempt on an ECU whose lockout nobody here has ever cleared.
  */
 export function securityKeyForSeed(seed: number): number {
   const value = seed >>> 0;

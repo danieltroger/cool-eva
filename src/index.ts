@@ -341,8 +341,8 @@ const server = createServer(async (req, res) => {
     return;
   }
   // One identifier off one ECU, on demand — the replacement for the deleted script's
-  // `--index N`, and the only way to reach bank 2 (live data) or the charge manager
-  // at all. Same header, same gate and same single-flight as /vcu-read.
+  // `--index N`, and the only way to reach bank 2 (live data) at all. Same header,
+  // same gate and same single-flight as /vcu-read.
   if (url.pathname === "/vcu-probe") {
     await handleVcuProbeEndpoint(req, res, url, { runner: vcuReadRunner, enabled: SERVICE_MODE_ENABLED });
     return;
