@@ -18,7 +18,7 @@ import { formatObdDtc, lookupByObdCode, type DtcTableEntry } from "./dtc-table.t
 // table is keyed. Mode 03 sends the 16-bit binary DTC a generic scan tool would
 // print — so the table is reached through its OBD column instead, via
 // lookupByObdCode(). Feeding one encoding to the other's lookup silently produces
-// wrong names rather than no names: the hub's `2C 00 00` reads as P0A05 under the
+// wrong names rather than no names: the hub's `2C 00 00` reads as P0A07 under the
 // component reading and as P002C under the binary one.
 //
 // ✅ PROVEN ON THE BIKE 2026-08-04. Mode 03 returns, byte-identical across five
