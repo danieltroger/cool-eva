@@ -87,8 +87,10 @@ A **state timeline needs only the left seed**: its regions run until the next sa
 
 ```
 npm run generate:grafana-dtc   # after any change to the code table
-npm run check:grafana-dtc      # what CI runs; also checks the prose counts
+npm run check:grafana-dtc      # the same thing as `--check`; also checks the prose counts
 ```
+
+`npm test` runs that check along with the rest of `scripts/run-checks.ts`, so a stale dashboard is a red build and not something you have to remember to look for.
 
 It was hand-maintained until 2026-08-16 and it had already gone stale: a correction to the water-pump codes in the TypeScript table never reached the JSON, so the dashboard spent months labelling this bike's own `dtc_0044_0` as "P0A07 — water pump locked" when it is P0A05, an open circuit. Nothing looks wrong on screen when a lookup table is wrong; the panel renders a confident name either way. That is the whole argument for generating it.
 
