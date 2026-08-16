@@ -1,0 +1,29 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# `npm ci` builds better-sqlite3 and socketcan natively, so this job runs install
+# scripts out of the dependency tree. Nothing here needs to write to the repo, and
+# the default GITHUB_TOKEN is read/write unless the workflow says otherwise, so it
+# is narrowed rather than left at whatever the org default happens to be.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The runner has no can0 and no bike, which is the point: scripts/run-checks.ts
+      # only runs checks that replay committed fixtures. See its header for what is
+      # deliberately left out.
+      - run: npm test

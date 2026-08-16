@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --experimental-strip-types scripts/run-checks.ts"
   },
   "keywords": [],
   "author": "",
@@ -28,7 +28,7 @@
     "socketcan": "^4.2.1"
   },
   "devDependencies": {
-    "prettier": "^3.8.4",
+    "prettier": "3.8.4",
     "typescript": "^6.0.3"
   }
 }

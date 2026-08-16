@@ -14,12 +14,14 @@ import { formatObdDtc } from "../src/diagnostics/dtc-table.ts";
 // reason: the bike is reachable for a few minutes at a time in a garage with no
 // reception, and `socketcan` does not build on macOS anyway.
 //
-// It is also how those two modules are checked. There is no test runner in this
-// repo (`npm test` is still the npm placeholder) and this is not the place to
-// introduce one, so the decoder is kept trivially callable instead and its fixture
-// kept honest: the default input is a REAL transfer, copied frame for frame out of
-// a candump taken 2026-08-04, and the assertions at the bottom fail the process if
-// either module stops reproducing it.
+// It is also how those two modules are checked. There is no test framework in this
+// repo and this is not the place to introduce one, so the decoder is kept trivially
+// callable instead and its fixture kept honest: the default input is a REAL transfer,
+// copied frame for frame out of a candump taken 2026-08-04, and the assertions at the
+// bottom fail the process if either module stops reproducing it.
+//
+// Since 2026-08-16 `npm test` runs this, via scripts/run-checks.ts — with no
+// arguments, which is the only form that asserts anything.
 //
 //   node --experimental-strip-types scripts/decode-dtc-response.ts
 //   node --experimental-strip-types scripts/decode-dtc-response.ts "10 50 43 27 …" "21 …"
