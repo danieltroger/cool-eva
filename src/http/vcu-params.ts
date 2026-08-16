@@ -1,7 +1,12 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { ServerResponse } from "http";
-import type { VcuParameterRow, VcuParameterSnapshot } from "../vcu/snapshot.ts";
+import {
+  reportTableType,
+  type TableTypeReport,
+  type VcuParameterRow,
+  type VcuParameterSnapshot,
+} from "../vcu/snapshot.ts";
 
 // GET /vcu-params — the VCU's calibration parameters as they were last read off the
 // bike, so /params.html can show them by name on a phone in the garage.
@@ -19,7 +24,7 @@ import type { VcuParameterRow, VcuParameterSnapshot } from "../vcu/snapshot.ts";
 // /stored-dtcs' `ageMs`.
 
 /** Re-exported so public/lib/params-page.js has one place to import the wire shape from. */
-export type { VcuParameterRow, VcuParameterSnapshot };
+export type { TableTypeReport, VcuParameterRow, VcuParameterSnapshot };
 
 export type VcuParamsResponse =
   /**
@@ -28,8 +33,18 @@ export type VcuParamsResponse =
    * only one of them is true. The hint is the command that fixes it.
    */
   | { state: "never-read"; directory: string; hint: string }
-  /** The last snapshot, whole. `complete: false` inside it means the sweep was cut short. */
-  | { state: "snapshot"; snapshot: VcuParameterSnapshot }
+  /**
+   * The last snapshot, whole. `complete: false` inside it means the sweep was cut short.
+   *
+   * `tableType` is derived here rather than in the browser, and that is deliberate:
+   * deciding whether a `TABLE_TYPE` reading matches means knowing which of Energica's
+   * 28 parameter tables src/vcu/param-table.ts encodes, and the page has no way to
+   * import a TypeScript module at runtime. Re-implementing the comparison in
+   * public/lib/params-page.js would put a second copy of "which table are we" in a
+   * file that cannot be checked against the first — which is the same drift this
+   * banner exists to catch.
+   */
+  | { state: "snapshot"; snapshot: VcuParameterSnapshot; tableType: TableTypeReport }
   /** There is a file and it could not be read or parsed. Never silently rendered as "never read". */
   | { state: "unreadable"; directory: string; reason: string };
 
@@ -74,11 +89,28 @@ export async function loadLatestSnapshot(directory: string): Promise<VcuParamsRe
     console.warn(`vcu-params: could not read ${path}:`, err);
     return { state: "unreadable", directory, reason: describeError(err) };
   }
+  let snapshot: VcuParameterSnapshot;
   try {
-    return { state: "snapshot", snapshot: JSON.parse(text) as VcuParameterSnapshot };
+    snapshot = JSON.parse(text) as VcuParameterSnapshot;
   } catch (err) {
     console.warn(`vcu-params: ${path} is not valid JSON:`, err);
     return { state: "unreadable", directory, reason: `${LATEST_FILE} is not valid JSON — ${describeError(err)}` };
+  }
+  // Kept OUT of the parse's catch on purpose. `reportTableType` walks `snapshot.rows`,
+  // so a file that is valid JSON but not a snapshot — `{}`, `null`, a truncated write
+  // that still parses — throws here, and folding that into the block above would
+  // report a well-formed file as "not valid JSON". Both are unreadable; they are not
+  // the same fault, and the reason string is what someone standing in a garage has to
+  // work from.
+  try {
+    return { state: "snapshot", snapshot, tableType: reportTableType(snapshot) };
+  } catch (err) {
+    console.warn(`vcu-params: ${path} parsed but is not a parameter snapshot:`, err);
+    return {
+      state: "unreadable",
+      directory,
+      reason: `${LATEST_FILE} parsed but is not a parameter snapshot — ${describeError(err)}`,
+    };
   }
 }
 

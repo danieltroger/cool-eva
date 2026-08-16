@@ -3,6 +3,7 @@
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParamsResponse} VcuParamsResponse */
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParameterRow} VcuParameterRow */
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParameterSnapshot} VcuParameterSnapshot */
+/** @typedef {import("../../src/http/vcu-params.ts").TableTypeReport} TableTypeReport */
 
 // The VCU parameter table, searchable by name. Plain DOM, no VanJS: this is a
 // static list you read once in a garage, not a live gauge, so there is nothing to
@@ -26,6 +27,7 @@ const statusLine = required("status");
 const search = /** @type {HTMLInputElement} */ (required("search"));
 const tableBody = required("rows");
 const summary = required("summary");
+const tableTypeLine = required("tabletype");
 
 search.addEventListener("input", render);
 void load();
@@ -59,8 +61,42 @@ function show(payload) {
   }
   allRows = payload.snapshot.rows;
   statusLine.textContent = describeSnapshot(payload.snapshot);
+  showTableType(payload.tableType);
   search.disabled = false;
   render();
+}
+
+/**
+ * Whether the names in the table below describe the bike that answered.
+ *
+ * The whole point of this line: every name on this page is a claim that the bike runs
+ * Energica's parameter table 16407, and the bike will say so itself if asked. It was
+ * asked on 2026-06-14, the answer sat unread in a dump for two months, and the table
+ * embedded here was one revision out the whole time — right about 276 of 277 names and
+ * silently wrong about the 277th. A wrong table is invisible in every other way:
+ * routing and record widths are identical across all 28 of Energica's tables, so a
+ * bike on the wrong one reads and writes perfectly and merely means something else by
+ * every name.
+ *
+ * The verdict is computed on the Pi (src/vcu/snapshot.ts, `reportTableType`) so there
+ * is exactly one copy of "which table are we" — see the note on the wire shape in
+ * src/http/vcu-params.ts.
+ *
+ * @param {TableTypeReport} report
+ */
+function showTableType(report) {
+  tableTypeLine.textContent = report.lines.join("\n");
+  // Three states, three appearances. "A micro never answered" must not render
+  // identically to "both agree" with only an emoji between them — that is the state
+  // this bike is in today, and rendering it as normal is the whole failure this line
+  // was added to stop.
+  const alarming = report.mismatched || report.unusable.length > 0;
+  tableTypeLine.className = alarming ? "mismatch" : report.confirmed ? "" : "unconfirmed";
+  if (alarming) {
+    // Also into the console, because this is the one finding on this page worth
+    // pasting into a bug report verbatim.
+    console.error("params: VCU parameter table not confirmed —", report.lines.join(" "));
+  }
 }
 
 /**

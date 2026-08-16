@@ -78,6 +78,18 @@ export const LIVE_BANK1_READS: LiveBank1Read[] = [
   { micro: "A9", index: 263, name: "EE_EVSE_DUMMY_3", rawHex: "00 00", value: 0 },
   { micro: "A9", index: 264, name: "CHARGER_TYPE", rawHex: "00 01", value: 1 },
   { micro: "A9", index: 265, name: "EVSE_DUMMY_WORD4", rawHex: "00 00", value: 0 },
+  // ⚠️ Not from 2026-08-08 and not from DIAG_ADDRESSES.md — this one is line 233 of
+  // obd-garage/kwp_scan_raw.txt, the full A9 dump taken 2026-06-14:
+  //
+  //     A9 B1 0114 2 4017
+  //
+  // It is here because it is the single most load-bearing value on this list. It is
+  // the bike naming its own parameter table — 0x4017 = 16407 — and it is the whole
+  // evidence that src/vcu/param-table.ts describes THIS motorcycle rather than the
+  // one params.ecf came from, which reports 16406. That dump is local-only, so
+  // without this row the claim would leave the repo with it. See PARAM_TABLES.md in
+  // the same folder for the 28-table comparison behind it.
+  { micro: "A9", index: 276, name: "TABLE_TYPE_uC", rawHex: "40 17", value: 16407 },
 ];
 
 /**
@@ -89,6 +101,10 @@ export const LIVE_BANK1_READS: LiveBank1Read[] = [
 export const KNOWN_VARIANT_DIFFERENCES: { index: number; name: string; thisBike: number; otherBike: number }[] = [
   { index: 258, name: "MAX_DC_CHG_CURRENT", thisBike: 75, otherBike: 60 },
   { index: 264, name: "CHARGER_TYPE", thisBike: 1, otherBike: 0 },
+  // The difference that turned out to matter. Not a variant tuning like the two
+  // above: it is the two bikes running different REVISIONS of Energica's parameter
+  // table, which is why 249 is called R_BRAKE_POPUP here and LM_TYPE in the file.
+  { index: 276, name: "TABLE_TYPE_uC", thisBike: 16407, otherBike: 16406 },
 ];
 
 /**

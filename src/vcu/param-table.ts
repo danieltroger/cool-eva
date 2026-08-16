@@ -11,6 +11,46 @@
 // text (rather than 277 hand-typed object literals) means it can still be diffed
 // against the original, and a name stays greppable.
 //
+// ── ⚠️ WHICH TABLE THIS IS: 16407, and the embedded text is 16406 ────────────
+// Energica ships 28 different parameter tables and the VCU says which one it is
+// running, in parameter 276 `TABLE_TYPE_uC`. **This bike reports 16407** (`0x4017`).
+// That is measured, not inferred: obd-garage/kwp_scan_raw.txt line 233 reads
+//
+//     A9 B1 0114 2 4017
+//
+// — identifier `0x0114` = index 276, a 2-byte record holding `0x4017` = 16407, off
+// this bike's A9 on 2026-06-14. `TABLE_TYPE = (family << 12) | revision`, so that is
+// family 4, revision `0x017`; see decodeTableType() below.
+//
+// **The file text at the bottom of this module is table 16406, one revision older**,
+// because `params.ecf` came off a different bike (see the value warning below — that
+// bike's own 276/277 read 16406, which is why the last two rows say so). Compared
+// across all 277 ids — name, storage type, signedness and micro — 16406 and 16407
+// differ at **exactly one id, and only in its name**:
+//
+//     249 (A8, WORD signed):  16406 calls it LM_TYPE · 16407 calls it R_BRAKE_POPUP
+//
+// So the embedded text is kept as the carrier of the `[SECTION]` headings and the
+// other bike's values — neither of which Energica's own bundles contain at all,
+// their `vehicleValue` being null in all 28 — and id 249 is corrected on top of it
+// by TABLE_16407_CORRECTIONS below. Swapping wholesale to a 16407 bundle would buy
+// one name and lose both of those.
+//
+// Established offline on 2026-08-16 from Energica's EMSuite 2024 build, whose 28
+// parameter tables are ZIP archives stored as .NET resources named `_<TABLE_TYPE>`;
+// obd-garage/PARAM_TABLES.md carries the extraction method and the full 28-table
+// comparison. Independently re-derived here against the same 28 tables as exported
+// by another owner's tool, which agrees id for id.
+//
+// ⚠️ **Still pending: the A8's own copy.** Parameter 277 `TABLE_TYPE_uS` lives on the
+// A8, no A8 dump exists, and **249 is an A8 parameter** — so the one id where the two
+// tables disagree sits on the micro whose table type has never been read. The two
+// micros hold separate EEPROMs. On the `params.ecf` bike they agreed, which is why
+// 16407 is the working assumption for both, but that is one sample from another bike.
+// The read is one frame, read-only, no SecurityAccess: `22 11 15` to the A8 in a
+// `10 81` session. A sweep already does it — see checkTableType(), which is what
+// makes the answer arrive as a shout rather than as silence.
+//
 // ⚠️⚠️ THE VALUES IN IT ARE NOT THIS BIKE'S. ⚠️⚠️
 // The file came off a DIFFERENT Energica — `MODEL` 8452 where this bike reads 358,
 // `CELL_COUNT` 80 where this bike reads 81. Of the 233 parameters the A9 serves,
@@ -105,14 +145,45 @@ export function recordLengthFor(type: ParameterStorageType): number {
 }
 
 /**
- * Every parameter the name table knows, in file order.
+ * The whole difference between the embedded 16406 text and this bike's 16407.
  *
- * Parsed once at module load from the embedded file text. The parser is strict and
- * throws on anything it does not fully understand, so a bad edit to the table below
- * fails immediately and visibly rather than silently dropping a row — which would
- * turn a named parameter into an "unknown identifier" much later and much quieter.
+ * One entry, and it is a rename with nothing else attached: id 249 is a signed WORD
+ * on the A8 in both tables, at the same identifier, in the same `[LIGHTS]` block.
+ * Which is precisely why it was worth correcting rather than shrugging at — a write
+ * aimed at "LM_TYPE" would have gone to the right micro with the right width, been
+ * accepted, and read back exactly as sent. It would simply have been a different
+ * parameter. Nothing in this repo has ever read or written id 249 (the allowlist in
+ * ./write-targets.ts holds 16, 48, 49, 258 and 259, all identical in both tables, and
+ * there is no A8 dump), so this corrects a hazard rather than a mistake.
+ *
+ * `wasCalled` is not decoration. If someone re-copies `params.ecf` from a bike on a
+ * different table, or Energica ships a 16408, the row this correction lands on will
+ * not be the row it was written for — and applyTable16407Corrections() throws at
+ * module load instead of quietly renaming whatever now sits at 249.
+ *
+ * Above PARAMETER_TABLE rather than down with the helpers because a `const` is not
+ * hoisted the way a function declaration is, and PARAMETER_TABLE is built at load.
  */
-export const PARAMETER_TABLE: VcuParameter[] = parseParameterFile(PARAMETER_FILE_TEXT());
+export const TABLE_16407_CORRECTIONS: { index: number; wasCalled: string; isCalled: string }[] = [
+  { index: 249, wasCalled: "LM_TYPE", isCalled: "R_BRAKE_POPUP" },
+];
+
+/**
+ * Every parameter the name table knows, in file order — as THIS BIKE's table 16407.
+ *
+ * Parsed once at module load from the embedded file text, which is table 16406, and
+ * then corrected to 16407 (see the header, and TABLE_16407_CORRECTIONS). The parse is
+ * kept separate from the correction on purpose: parseParameterFile() stays a plain
+ * reader of `params.ecf` text, so the embedded copy can still be diffed against the
+ * original file, and the one place this repo departs from that file is a named,
+ * greppable, self-checking step rather than an edit hidden in 294 lines of data.
+ *
+ * The parser is strict and throws on anything it does not fully understand, so a bad
+ * edit to the table below fails immediately and visibly rather than silently dropping
+ * a row — which would turn a named parameter into an "unknown identifier" much later
+ * and much quieter.
+ */
+export const PARAMETER_TABLE: VcuParameter[] = applyTable16407Corrections(parseParameterFile(PARAMETER_FILE_TEXT()));
 
 const BY_INDEX = new Map(PARAMETER_TABLE.map(parameter => [parameter.index, parameter]));
 
@@ -136,6 +207,126 @@ export function ambiguousParameterNames(): string[] {
   return [...BY_NAME.entries()].filter(([, matches]) => matches.length > 1).map(([name]) => name);
 }
 
+// ── The table type: how the bike says which of the 28 tables it is running ───
+// Every claim this module makes about a name is only as good as the assumption that
+// the bike runs table 16407. The bike is willing to be asked — so ask it, and say so
+// loudly when the answer is not the one everything here was built on. That is the
+// durable half of the 2026-08-16 correction; id 249 is only today's instance of it.
+
+/** `TABLE_TYPE` decomposed. Energica packs it as `(family << 12) | revision`. */
+export interface VcuTableType {
+  /** The raw 16-bit word, e.g. 16407. */
+  raw: number;
+  /** The high nibble. A vehicle-line tag: 1, 2, 3, 4, 5, 6 and 15 all exist. */
+  family: number;
+  /** The low 12 bits. Revisions `0x005`…`0x017` exist; this bike is `0x017`. */
+  revision: number;
+}
+
+/**
+ * The table this module's names describe: **16407**, read off this bike's A9 on
+ * 2026-06-14. Everything in PARAMETER_TABLE is a claim about a bike running this.
+ */
+export const EXPECTED_TABLE_TYPE = 0x4017;
+
+/**
+ * The table the embedded `params.ecf` text is, before TABLE_16407_CORRECTIONS: 16406,
+ * the previous revision, off another bike. Exported so a mismatch message can name
+ * what the data would have been had the correction not been applied.
+ */
+export const EMBEDDED_TABLE_TYPE = 0x4016;
+
+/**
+ * 16407's content-identical twin. Family 4 revision `0x017` and family 1 revision
+ * `0x017` are byte-for-byte the same 277 parameters, so a bike reporting either is
+ * described correctly by this module. Only the vehicle-line nibble differs, and
+ * nothing here reads it.
+ */
+const TABLE_TYPE_TWIN = 0x1017;
+
+/** Indices 276 `TABLE_TYPE_uC` (A9) and 277 `TABLE_TYPE_uS` (A8) — the two micros' own copies. */
+export const TABLE_TYPE_INDICES: readonly number[] = [276, 277];
+
+/** Splits a raw `TABLE_TYPE` word into its family and revision halves. */
+export function decodeTableType(raw: number): VcuTableType {
+  return { raw, family: (raw >> 12) & 0xf, revision: raw & 0xfff };
+}
+
+/** `16407 (0x4017 — family 4, revision 0x017)`. The form every message below uses. */
+export function describeTableType(raw: number): string {
+  const decoded = decodeTableType(raw);
+  const hex = `0x${raw.toString(16).toUpperCase().padStart(4, "0")}`;
+  return `${raw} (${hex} — family ${decoded.family}, revision 0x${decoded.revision.toString(16).toUpperCase().padStart(3, "0")})`;
+}
+
+/** What a `TABLE_TYPE` reading means for the names in this module. */
+export interface TableTypeVerdict {
+  index: number;
+  /** 276 is the A9's copy, 277 the A8's. Which one disagrees matters — see `matches`. */
+  micro: VcuMicro;
+  value: number;
+  /** True when this module's names describe the table the bike just named. */
+  matches: boolean;
+  /** One line, ready to log or render. Loud when `matches` is false. */
+  message: string;
+}
+
+/**
+ * Judges a `TABLE_TYPE` reading against the table this module actually encodes.
+ *
+ * Returns null for any index that is not 276 or 277, so a caller can run it over a
+ * whole snapshot without knowing which rows to pick out.
+ *
+ * ⚠️ A mismatch is not cosmetic. Routing (`id → micro`) and record width
+ * (`id → datatype`) are invariant across all 28 of Energica's tables, so a wrong
+ * table still reads and still writes the right number of bytes to the right micro —
+ * it just believes the wrong NAME for them. 151 of 278 ids carry a different name in
+ * at least one other table. That is exactly the failure this function exists to make
+ * audible: a write aimed at a name would land on whatever id this table happens to
+ * give it, succeed, and read back cleanly.
+ */
+export function checkTableType(index: number, value: number): TableTypeVerdict | null {
+  const parameter = parameterAtIndex(index);
+  if (!parameter || !TABLE_TYPE_INDICES.includes(index)) {
+    return null;
+  }
+  const matches = value === EXPECTED_TABLE_TYPE || value === TABLE_TYPE_TWIN;
+  const identity = `${parameter.name} (${index}, ${parameter.micro})`;
+  if (matches) {
+    return {
+      index,
+      micro: parameter.micro,
+      value,
+      matches: true,
+      message: `${identity} = ${describeTableType(value)} — the table src/vcu/param-table.ts encodes`,
+    };
+  }
+  // ⚠️ Id 249 lives on the A8, so this sentence must not tell a reader looking at 276
+  // — the A9's copy — that 249 is LM_TYPE. The whole reason the two micros get
+  // separate verdicts is that they can disagree, and a diagnostic meant to be pasted
+  // verbatim into a bug report is the last place to get the disputed id backwards.
+  const wasEmbedded =
+    value === EMBEDDED_TABLE_TYPE
+      ? " That is the table params.ecf came from. Its one disputed id is 249, which is LM_TYPE there and " +
+        "R_BRAKE_POPUP in 16407" +
+        (parameter.micro === "A8"
+          ? " — and 249 lives on the A8, so it is this micro's."
+          : " — but 249 lives on the A8, so read 277 before concluding anything about it.")
+      : "";
+  return {
+    index,
+    micro: parameter.micro,
+    value,
+    matches: false,
+    message:
+      `*** ${identity} = ${describeTableType(value)}, but src/vcu/param-table.ts encodes ` +
+      `${describeTableType(EXPECTED_TABLE_TYPE)}. *** Every parameter NAME this software shows for the ` +
+      `${parameter.micro} may be wrong — routing and record widths are the same across all of Energica's ` +
+      `tables, so a wrong name still reads and still writes cleanly.${wasEmbedded} ` +
+      "Do not write anything by name until this is resolved; see obd-garage/PARAM_TABLES.md.",
+  };
+}
+
 function groupByName(parameters: VcuParameter[]): Map<string, VcuParameter[]> {
   const grouped = new Map<string, VcuParameter[]>();
   for (const parameter of parameters) {
@@ -151,8 +342,53 @@ function groupByName(parameters: VcuParameter[]): Map<string, VcuParameter[]> {
 }
 
 /**
+ * Turns the parsed 16406 file text into this bike's 16407.
+ *
+ * Throws rather than skipping a correction it cannot place. A silently-unapplied
+ * rename is the same class of failure as the one it exists to prevent: everything
+ * would keep working, and one parameter would keep the wrong name.
+ */
+function applyTable16407Corrections(parameters: VcuParameter[]): VcuParameter[] {
+  // Checked before the map, because the map can only catch a row that EXISTS and is
+  // named something unexpected. A correction whose index has no row at all would
+  // simply never run — the file gets shorter or renumbered, the rename lands nowhere,
+  // and PARAMETER_TABLE is plain 16406 again with nothing said. That is the same
+  // silent-wrong-name failure this whole module exists to prevent.
+  for (const correction of TABLE_16407_CORRECTIONS) {
+    if (!parameters.some(parameter => parameter.index === correction.index)) {
+      throw new Error(
+        `param-table: the 16407 correction for index ${correction.index} (“${correction.wasCalled}” → ` +
+          `“${correction.isCalled}”) has no row to land on — the embedded params.ecf does not describe that ` +
+          "index, and skipping the correction would leave the name silently uncorrected"
+      );
+    }
+  }
+  return parameters.map(parameter => {
+    const correction = TABLE_16407_CORRECTIONS.find(candidate => candidate.index === parameter.index);
+    if (!correction) {
+      return parameter;
+    }
+    if (parameter.name.toUpperCase() !== correction.wasCalled.toUpperCase()) {
+      throw new Error(
+        `param-table: the 16407 correction expects index ${correction.index} to be called ` +
+          `“${correction.wasCalled}” in the embedded file, but it is called “${parameter.name}” — ` +
+          "the embedded params.ecf is not the table this correction was derived against, so renaming " +
+          "it to “" +
+          correction.isCalled +
+          "” would be a guess"
+      );
+    }
+    return { ...parameter, name: correction.isCalled };
+  });
+}
+
+/**
  * Parses the embedded file. Exported so scripts/check-vcu-params.ts can point it at
  * a fresh copy of params.ecf and prove the two still agree.
+ *
+ * ⚠️ Returns the file AS WRITTEN — table 16406 — not this bike's table. PARAMETER_TABLE
+ * is this function's output with applyTable16407Corrections() on top; anything wanting
+ * the names the bike actually uses wants PARAMETER_TABLE.
  *
  * Format, one parameter per line, whitespace-separated:
  *   <index> <NAME> <BYTE|WORD|BOOL> <S|U> <A8|A9> <value>

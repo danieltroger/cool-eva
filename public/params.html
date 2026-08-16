@@ -22,10 +22,37 @@
         margin-bottom: 0.3rem;
       }
       #status,
-      #summary {
+      #summary,
+      #tabletype {
         color: var(--sub);
         font-size: 0.85rem;
         margin-bottom: 0.5rem;
+      }
+      /* There is no snapshot to judge in the never-read and unreadable states, so the
+         line stays empty and takes no room rather than opening a gap. */
+      #tabletype:empty {
+        display: none;
+      }
+      /* One verdict per micro, one per line — showTableType() joins them with \n. On
+         the base selector rather than under .mismatch: a bike whose 276 and 277 both
+         answer produces two AGREEING lines, and they would otherwise run together. */
+      #tabletype {
+        white-space: pre-line;
+      }
+      /* A micro that never answered leaves its half of the table unverified. Not
+         alarming — nothing has disagreed — but not the same as both micros confirming,
+         which is what grey would say. This is the page's normal state today: 277 lives
+         on the A8 and has never been read. */
+      #tabletype.unconfirmed {
+        color: var(--fg);
+      }
+      /* A bike that names a parameter table this software does not encode makes every
+         NAME on this page a guess, so it does not get to look like the other two grey
+         lines. Routing and widths are the same across all of Energica's tables, so
+         nothing else on screen would look wrong. */
+      #tabletype.mismatch {
+        color: var(--fg);
+        font-weight: 600;
       }
       #search {
         width: 100%;
@@ -89,16 +116,23 @@
   </head>
   <body>
     <h1>VCU parameters</h1>
-    <!-- Both warnings sit above the table on purpose. The first is what stops
-         someone reading the last column as this bike's; the second is what stops
-         them reading a stale snapshot as live. -->
+    <!-- All three warnings sit above the table on purpose. The first is what stops
+         someone reading a stale snapshot as live; the second is what stops them
+         trusting the NAMES if the bike turns out to run a different parameter table;
+         the third is what stops them reading the last column as this bike's. -->
     <p id="status">loading…</p>
     <p id="summary"></p>
+    <!-- Set once from show(), never from render(): #summary is rewritten on every
+         keystroke in the search box, and a warning that vanishes when you type is
+         not a warning. -->
+    <p id="tabletype"></p>
     <p id="provenance" style="color: var(--sub); font-size: 0.8rem; margin-bottom: 0.7rem">
       Names, widths and routing come from <code>params.ecf</code>, a parameter file from a
-      <strong>different</strong> Energica. The <em>values</em> in the last column are that other bike's and are shown
-      only for comparison — this bike's readings are the “This bike” column. Read on demand with
-      <strong>Menu → Service mode</strong> on the dashboard; nothing here polls the bus.
+      <strong>different</strong> Energica, corrected to this bike's parameter table <strong>16407</strong> (the bike
+      reports it itself, at 276 <code>TABLE_TYPE_uC</code> — the line above says whether it still does). The
+      <em>values</em> in the last column are that other bike's and are shown only for comparison — this bike's readings
+      are the “This bike” column. Read on demand with <strong>Menu → Service mode</strong> on the dashboard; nothing
+      here polls the bus.
     </p>
     <input id="search" type="search" placeholder="filter by name, section, index or micro…" disabled />
     <div class="scroll">

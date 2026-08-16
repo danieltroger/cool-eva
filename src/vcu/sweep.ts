@@ -1,7 +1,13 @@
 import type { RawChannel } from "socketcan";
 import { createVcuKwpClient } from "./kwp-client.ts";
 import { PARAMETER_TABLE, type VcuMicro, type VcuParameter } from "./param-table.ts";
-import { toParameterRow, describeRow, type VcuParameterRow, type VcuParameterSnapshot } from "./snapshot.ts";
+import {
+  describeRow,
+  reportTableType,
+  toParameterRow,
+  type VcuParameterRow,
+  type VcuParameterSnapshot,
+} from "./snapshot.ts";
 import { loadPartialRows, openPartialSweepLog, writeSnapshot } from "./snapshot-store.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
 
@@ -210,8 +216,39 @@ async function runSweep(options: ParameterSweepOptions, state: SweepState): Prom
     micros: MICROS,
     rows: [...state.rows.values()].sort((left, right) => left.index - right.index),
   };
+  reportTableTypeToConsole(snapshot);
   await writeSnapshot(options.directory, snapshot);
   return { snapshot, stoppedBecause };
+}
+
+/**
+ * Says whether the bike agrees it runs the parameter table these 277 names came from.
+ *
+ * Printed after the rows and before the archive is written, because it is the caption
+ * for everything above it: 277 name/value pairs just scrolled past, and this is the
+ * line that says whether the names on them were the bike's own.
+ *
+ * Every sweep, not once per process — unlike the `warnedThermalFrame*` flags in
+ * ../can/pack-temperature.ts, which guard a warning that would otherwise fire on every
+ * CAN frame. A sweep is a deliberate act an owner performs perhaps once a day, so
+ * "once" is already what it means, and a run whose table type disagreed would be
+ * exactly the run where a suppressed second copy is the one you needed.
+ */
+function reportTableTypeToConsole(snapshot: VcuParameterSnapshot): void {
+  const report = reportTableType(snapshot);
+  // Three levels, because there are three outcomes and journalctl grades on them:
+  //   error — a micro named a table this software does not encode, or answered with a
+  //           record the table's width forbids. Either invalidates the NAME of every
+  //           row just printed; this is the software describing a different bike.
+  //   warn  — read, no disagreement, but a micro never answered. Expected today (the
+  //           A8's 277 has never been read) and still notable every time, because the
+  //           A8 is the micro that owns the one disputed id.
+  //   log   — both micros answered and agreed. Routine, and worth recording as such.
+  const write =
+    report.mismatched || report.unusable.length > 0 ? console.error : report.confirmed ? console.log : console.warn;
+  for (const line of report.lines) {
+    write(`vcu-sweep: ${line}`);
+  }
 }
 
 /**

@@ -1,5 +1,15 @@
 import { interpretRecord } from "./param-codec.ts";
-import { parameterAtIndex, type ParameterStorageType, type VcuMicro } from "./param-table.ts";
+import {
+  EXPECTED_TABLE_TYPE,
+  TABLE_TYPE_INDICES,
+  checkTableType,
+  describeTableType,
+  parameterAtIndex,
+  recordLengthFor,
+  type ParameterStorageType,
+  type TableTypeVerdict,
+  type VcuMicro,
+} from "./param-table.ts";
 import type { VcuReadOutcome } from "./kwp-client.ts";
 
 // What a parameter read looks like once it has been written down: one flat row per
@@ -113,6 +123,142 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
       ? `record is ${outcome.record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
       : null,
   };
+}
+
+/** What a snapshot says about which of Energica's 28 parameter tables this bike runs. */
+export interface TableTypeReport {
+  /**
+   * One per `TABLE_TYPE` index that yielded a usable typed value. NOT one per index
+   * that was read — see `unusable`, where a row answered and still named no table.
+   */
+  verdicts: TableTypeVerdict[];
+  /**
+   * ⚠️ True only when BOTH micros answered usably and both named the expected table.
+   *
+   * One micro answering is not confirmation of the other, and treating it as such
+   * would render today's actual state — A9 read, A8 never read, and 249 living on the
+   * A8 — as a clean green line. `unread` and `unusable` say which are missing and why.
+   */
+  confirmed: boolean;
+  /** Indices in TABLE_TYPE_INDICES that this snapshot has no reading for at all. */
+  unread: number[];
+  /**
+   * ⚠️ Indices that DID answer, with a record whose length contradicts the table — so
+   * they named no table, and the reply itself is the finding. `TABLE_TYPE` is a plain
+   * 2-byte WORD on both micros; a reply of any other length means the record framing
+   * is off, which puts every other typed value on the same sweep in question too.
+   * Kept apart from `unread` because telling someone to go and read a parameter that
+   * already replied sends them after the wrong fault.
+   */
+  unusable: number[];
+  /**
+   * ⚠️ True when a micro named a table this software does not encode. Its parameter
+   * NAMES are then not to be trusted, and nothing should be written by name.
+   */
+  mismatched: boolean;
+  /** Ready to log or render, worst first. Never empty — "not read" is itself a finding. */
+  lines: string[];
+}
+
+/**
+ * Reads a snapshot's own answer to "which parameter table is this bike running".
+ *
+ * This is the check that stops the 2026-08-16 correction from being a one-off. The
+ * embedded name table was 16406 for a week while the bike had been reporting 16407
+ * since 2026-06-14 — in a dump that had already been taken, in a parameter that had
+ * already been read. Nobody looked. Every name in the UI was therefore a claim about
+ * a table nobody had checked, and it happened to be wrong at exactly one id.
+ *
+ * So: every sweep now reads its own table type back out and says whether the names it
+ * just printed describe the bike that answered. Pure, like everything else here — the
+ * caller decides whether that becomes a log line, a banner, or both.
+ *
+ * ⚠️ The two micros are asked SEPARATELY and can disagree. 276 `TABLE_TYPE_uC` is the
+ * A9's, 277 `TABLE_TYPE_uS` is the A8's, they sit in separate EEPROMs, and as of
+ * 2026-08-16 only the A9's has ever been read on this bike. Id 249 — the one id where
+ * 16406 and 16407 disagree — is an A8 parameter, so the A8's answer is the one still
+ * outstanding. A per-micro verdict is what makes "they disagree" expressible at all.
+ */
+export function reportTableType(snapshot: VcuParameterSnapshot): TableTypeReport {
+  const readRows = new Map(snapshot.rows.filter(row => row.status === "read").map(row => [row.index, row]));
+  const verdicts: TableTypeVerdict[] = [];
+  const unread: number[] = [];
+  const unusable: [index: number, row: VcuParameterRow][] = [];
+  for (const index of TABLE_TYPE_INDICES) {
+    const row = readRows.get(index);
+    // `value` only, never falling back to `unsigned`. For these two indices `value` is
+    // null in exactly one case — the reply's width contradicted the table — and that is
+    // precisely where the raw bytes must NOT be compared: a 1-byte reply read as a
+    // number would name some other table and be reported as a mismatch, when what
+    // actually happened is that the record was malformed.
+    const verdict = row?.value == null ? null : checkTableType(index, row.value);
+    if (verdict) {
+      verdicts.push(verdict);
+    } else if (row) {
+      unusable.push([index, row]);
+    } else {
+      unread.push(index);
+    }
+  }
+  const mismatched = verdicts.some(verdict => !verdict.matches);
+  // Worst first: a micro that named the wrong table, then one whose reply was
+  // malformed, then one nobody asked, then the ones that agree. The malformed reply
+  // outranks the unasked micro deliberately — "the record framing is off" is a bigger
+  // problem than "this parameter has not been read", and it questions the whole sweep.
+  const lines = [
+    ...verdicts.filter(verdict => !verdict.matches).map(verdict => `🚨  ${verdict.message}`),
+    ...unusable.map(([index, row]) => `🚨  ${describeUnusableTableType(index, row)}`),
+    ...unread.map(index => `⚠️  ${describeUnreadTableType(index)}`),
+    ...verdicts.filter(verdict => verdict.matches).map(verdict => `✅  ${verdict.message}`),
+  ];
+  return {
+    verdicts,
+    confirmed: unread.length === 0 && unusable.length === 0 && !mismatched,
+    unread,
+    unusable: unusable.map(([index]) => index),
+    mismatched,
+    lines,
+  };
+}
+
+/**
+ * One line for a micro that answered with a record the table's width column forbids.
+ *
+ * It is NOT "was not read": the parameter replied, and telling someone to go and read
+ * it again sends them after the wrong fault. What is wrong is the reply. `TABLE_TYPE`
+ * is a 2-byte WORD on both micros, so any other length means the record framing or the
+ * KWP layer is off — which makes every other typed value on the same sweep suspect,
+ * not just this one. That is why it is filed with the mismatches rather than with the
+ * unasked micros.
+ */
+function describeUnusableTableType(index: number, row: VcuParameterRow): string {
+  const parameter = parameterAtIndex(index);
+  const identity = parameter ? `${parameter.name} (${index}, ${parameter.micro})` : `parameter ${index}`;
+  const expected = parameter ? `${recordLengthFor(parameter.type)}-byte ${parameter.type}` : "2-byte WORD";
+  const got = row.rawHex === null ? "nothing" : `[${row.rawHex}]`;
+  return (
+    `*** ${identity} answered ${got}, which the name table says should be a ${expected}. *** It has named no ` +
+    "table, and a wrong-width record here puts the framing of every other value in this sweep in question."
+  );
+}
+
+/**
+ * One line for a micro that did not name its table.
+ *
+ * Not silence, and not folded into "some micro said 16407 so we are fine". As of
+ * 2026-08-16 this is the line 277 produces on every sweep, and it is the honest state:
+ * the A8 owns id 249, id 249 is the only id where 16406 and 16407 disagree, and the A8
+ * has never been asked. A green report that omitted it would be the feature failing in
+ * exactly the case it was built for.
+ */
+function describeUnreadTableType(index: number): string {
+  const parameter = parameterAtIndex(index);
+  const identity = parameter ? `${parameter.name} (${index}, ${parameter.micro})` : `parameter ${index}`;
+  const owner = parameter ? `the ${parameter.micro}'s` : "this micro's";
+  return (
+    `${identity} was not read, so nothing confirms ${owner} names are the ` +
+    `${describeTableType(EXPECTED_TABLE_TYPE)} table's. Reading it costs one frame in a 10 81 session.`
+  );
 }
 
 /** What changed between two snapshots. */
