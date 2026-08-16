@@ -39,6 +39,13 @@
       #tabletype {
         white-space: pre-line;
       }
+      /* A micro that never answered leaves its half of the table unverified. Not
+         alarming — nothing has disagreed — but not the same as both micros confirming,
+         which is what grey would say. This is the page's normal state today: 277 lives
+         on the A8 and has never been read. */
+      #tabletype.unconfirmed {
+        color: var(--fg);
+      }
       /* A bike that names a parameter table this software does not encode makes every
          NAME on this page a guess, so it does not get to look like the other two grey
          lines. Routing and widths are the same across all of Energica's tables, so

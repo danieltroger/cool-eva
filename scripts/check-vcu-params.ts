@@ -216,11 +216,22 @@ expect(
 );
 
 // A row that answered with a width the table did not predict has no honest typed
-// value, so it counts as unread rather than as an answer.
-const wrongWidthSweep = reportTableType(snapshotOf([reading(276, "40")]));
+// value, so it names no table — but it is NOT unread, and must not be described as
+// such: the parameter replied, and sending someone to go and read it again would send
+// them after the wrong fault. `TABLE_TYPE` is a 2-byte WORD, so a reply of any other
+// length means the record framing is off and the whole sweep is in question.
+const wrongWidthSweep = reportTableType(snapshotOf([reading(276, "40"), reading(277, "40 17")]));
 expect(
-  !wrongWidthSweep.confirmed && wrongWidthSweep.unread.includes(276),
-  "a TABLE_TYPE row whose width contradicts the table has named nothing and must not confirm anything"
+  !wrongWidthSweep.confirmed && wrongWidthSweep.unusable.includes(276) && !wrongWidthSweep.unread.includes(276),
+  "a TABLE_TYPE row whose width contradicts the table has named nothing, but it was READ — unusable, not unread"
+);
+expect(
+  wrongWidthSweep.lines[0].startsWith("🚨") && !wrongWidthSweep.lines[0].includes("was not read"),
+  "the wrong-width line must lead and must not claim the parameter went unread"
+);
+expect(
+  wrongWidthSweep.lines[0].includes("[40]") && wrongWidthSweep.lines[0].includes("2-byte WORD"),
+  "it should quote what came back and what the table expected, so the fault is identifiable"
 );
 
 // ── 2. Requests, and the read-only guard ────────────────────────────────────

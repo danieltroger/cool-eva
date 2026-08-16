@@ -236,11 +236,18 @@ async function runSweep(options: ParameterSweepOptions, state: SweepState): Prom
  */
 function reportTableTypeToConsole(snapshot: VcuParameterSnapshot): void {
   const report = reportTableType(snapshot);
+  // Three levels, because there are three outcomes and journalctl grades on them:
+  //   error — a micro named a table this software does not encode, or answered with a
+  //           record the table's width forbids. Either invalidates the NAME of every
+  //           row just printed; this is the software describing a different bike.
+  //   warn  — read, no disagreement, but a micro never answered. Expected today (the
+  //           A8's 277 has never been read) and still notable every time, because the
+  //           A8 is the micro that owns the one disputed id.
+  //   log   — both micros answered and agreed. Routine, and worth recording as such.
+  const write =
+    report.mismatched || report.unusable.length > 0 ? console.error : report.confirmed ? console.log : console.warn;
   for (const line of report.lines) {
-    // console.error rather than warn for a mismatch: this invalidates the NAME of
-    // every row the sweep just printed, and it is the only outcome here that means
-    // the software is describing a different motorcycle than the one on the bus.
-    (report.mismatched ? console.error : console.log)(`vcu-sweep: ${line}`);
+    write(`vcu-sweep: ${line}`);
   }
 }
 

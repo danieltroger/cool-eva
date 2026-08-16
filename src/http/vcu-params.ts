@@ -89,12 +89,28 @@ export async function loadLatestSnapshot(directory: string): Promise<VcuParamsRe
     console.warn(`vcu-params: could not read ${path}:`, err);
     return { state: "unreadable", directory, reason: describeError(err) };
   }
+  let snapshot: VcuParameterSnapshot;
   try {
-    const snapshot = JSON.parse(text) as VcuParameterSnapshot;
-    return { state: "snapshot", snapshot, tableType: reportTableType(snapshot) };
+    snapshot = JSON.parse(text) as VcuParameterSnapshot;
   } catch (err) {
     console.warn(`vcu-params: ${path} is not valid JSON:`, err);
     return { state: "unreadable", directory, reason: `${LATEST_FILE} is not valid JSON — ${describeError(err)}` };
+  }
+  // Kept OUT of the parse's catch on purpose. `reportTableType` walks `snapshot.rows`,
+  // so a file that is valid JSON but not a snapshot — `{}`, `null`, a truncated write
+  // that still parses — throws here, and folding that into the block above would
+  // report a well-formed file as "not valid JSON". Both are unreadable; they are not
+  // the same fault, and the reason string is what someone standing in a garage has to
+  // work from.
+  try {
+    return { state: "snapshot", snapshot, tableType: reportTableType(snapshot) };
+  } catch (err) {
+    console.warn(`vcu-params: ${path} parsed but is not a parameter snapshot:`, err);
+    return {
+      state: "unreadable",
+      directory,
+      reason: `${LATEST_FILE} parsed but is not a parameter snapshot — ${describeError(err)}`,
+    };
   }
 }
 

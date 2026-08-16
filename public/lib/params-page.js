@@ -86,11 +86,16 @@ function show(payload) {
  */
 function showTableType(report) {
   tableTypeLine.textContent = report.lines.join("\n");
-  tableTypeLine.className = report.mismatched ? "mismatch" : "";
-  if (report.mismatched) {
+  // Three states, three appearances. "A micro never answered" must not render
+  // identically to "both agree" with only an emoji between them — that is the state
+  // this bike is in today, and rendering it as normal is the whole failure this line
+  // was added to stop.
+  const alarming = report.mismatched || report.unusable.length > 0;
+  tableTypeLine.className = alarming ? "mismatch" : report.confirmed ? "" : "unconfirmed";
+  if (alarming) {
     // Also into the console, because this is the one finding on this page worth
     // pasting into a bug report verbatim.
-    console.error("params: VCU parameter table mismatch —", report.lines.join(" "));
+    console.error("params: VCU parameter table not confirmed —", report.lines.join(" "));
   }
 }
 
