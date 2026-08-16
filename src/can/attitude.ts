@@ -18,7 +18,7 @@
 //     `AttitudeSensor_Phi` — as the *same bytes*, `ff99` = −103. That same block's
 //     gravity vector (Gx 53, Gy −179, Gz 982 mg, |G| = 999.6 mg) independently gives
 //     atan2(Gy, Gz) = −10.33°. So −103 is −10.3° of roll: the bike leaning left on its
-//     side stand, which is where it was. See obd-garage/EMSUITE_FILES.md §2.2.
+//     side stand, which is where it was. See the service-tool analysis in obd-garage/.
 //  2. The values lie on an arctangent lattice. Across the 15 455 rows logged under the
 //     old keys the pair only ever takes values whose spacing SHRINKS with magnitude —
 //     ~5.7 apart near zero, ~3.4 apart near 400. A count scaled by a constant cannot do
@@ -53,8 +53,9 @@
 // independent copy of the same sensor. Bit-identical Phi bytes on the side stand is
 // strong, but the two were read on different days over different transports. Reading A9
 // bank 2 ids 0x87-0x8C live while tilting the bike settles it, and is the outstanding
-// experiment (EMSUITE_FILES.md §2.5). Also inferred: the pitch sign convention above is
-// measured off this bike's brake and throttle bits, not read out of any document.
+// experiment (see the service-tool analysis in obd-garage/). Also inferred: the pitch
+// sign convention above is measured off this bike's brake and throttle bits, not read
+// out of any document.
 
 import { type DecodedValue, i16le } from "./frame.ts";
 
