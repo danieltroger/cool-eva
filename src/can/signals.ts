@@ -111,6 +111,25 @@ export function ageMs(key: string): number | null {
   return mark === undefined ? null : since(mark);
 }
 
+/**
+ * The latest value of one signal, or null if it has never arrived.
+ *
+ * The per-key counterpart to `ageMs()` above, and the two are meant to be read
+ * together: a value with no age attached is not evidence about the bike.
+ *
+ * It reads `liveState`, which is refreshed on EVERY decoded sample — the deadband
+ * gates the ride log and the WebSocket patch, never this. So a 100 Hz signal with a
+ * 0.5 km/h deadband still answers here at 100 Hz, which is what makes this usable
+ * for a decision rather than only for a display.
+ *
+ * Exists so a caller wanting two or three signals does not go through `snapshot()`,
+ * which copies all ~230 of them. src/vcu/service-gate.ts asks eight times a second
+ * while a parameter sweep runs.
+ */
+export function latestValue(key: string): number | null {
+  return liveState.get(key)?.value ?? null;
+}
+
 export function snapshot(): Record<string, LiveValue> {
   const out: Record<string, LiveValue> = {};
   for (const [k, v] of liveState) out[k] = v;

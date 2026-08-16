@@ -1,20 +1,23 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { exportableRowCount } from "../vcu/backup-csv.ts";
 import type { VcuReadRunner, VcuReadState } from "../vcu/read-runner.ts";
+import type { ServiceGateVerdict } from "../vcu/service-gate.ts";
 import { loadLatestSnapshot } from "./vcu-params.ts";
 
 // /vcu-read — service mode's control surface: start a parameter sweep, watch it,
 // stop it.
 //
-//   GET     how the current or last sweep is going
+//   GET     how the current or last sweep is going, and whether the bike may be serviced
 //   POST    start one (refused, not queued, if one is already running)
 //   DELETE  ask a running one to stop, keeping what it has
 //
 // ⚠️ This is the ONE endpoint in this repo that causes traffic on the bike's bus,
-// and it does it by running `scripts/read-vcu-params.ts` rather than by talking to
-// the micros itself — see the header of src/vcu/read-runner.ts for why that
-// distinction is load-bearing and not a technicality. The service process still
-// contains no path from an HTTP request to a CAN frame.
+// and since the sweep moved in-process (src/vcu/sweep.ts) it is also the only path
+// from an HTTP request to a CAN frame that exists at all. What stands between the
+// two is src/vcu/service-gate.ts: a POST is refused unless the bike is PROVED
+// stationary and out of drive, and a sweep already running is put out the moment
+// that stops being true. The gate is on the wire below so the page can say why the
+// button is unavailable rather than leaving it to fail.
 //
 // ⚠️ Still read-only. A sweep can only ask `10 81`, `3E` and `22`: those three are
 // the whole of param-codec.ts's request union, and its encoder throws on anything
@@ -28,8 +31,9 @@ import { loadLatestSnapshot } from "./vcu-params.ts";
 // that would freeze the phone's request, time out on garage wifi, and leave the
 // dashboard unable to say what had been read so far. So POST starts it and
 // returns, and GET is how the page follows along — which also means closing the
-// page, or riding out of wifi range, does not stop the sweep.
-
+// page, or walking out of wifi range, does not stop the sweep. Riding away does,
+// but that is the gate rather than the HTTP layer.
+//
 // ── Why starting a read needs a header ──────────────────────────────────────
 // A bare `POST` with no body and no custom headers is a CORS-SIMPLE request: any
 // page open in the phone's browser while it is on the bike's hotspot can fire one
@@ -43,7 +47,12 @@ import { loadLatestSnapshot } from "./vcu-params.ts";
 // preflight first; nothing here answers OPTIONS, so the browser blocks the request
 // and the sweep never starts. Same-origin fetches from our own page need no
 // preflight, so the dashboard is unaffected. `curl` can still start a read, which
-// is correct — anything with a shell on that network can just run the script.
+// is correct — anything with a shell on that network already has the bus.
+//
+// The gate does not replace this and this does not replace the gate. One answers
+// "did the owner ask for this", the other "can the motorcycle move". A parked bike
+// is exactly when a drive-by request would succeed, so the cheap check still earns
+// its keep.
 //
 // DELETE needs no such guard: a non-simple method already forces a preflight, and
 // stopping a sweep is never the dangerous direction anyway.
@@ -64,6 +73,12 @@ export interface VcuReadExportSummary {
 
 export interface VcuReadResponse {
   run: VcuReadState;
+  /**
+   * Whether the bike is safe to service right now, and why not when it is not.
+   * Sampled per request, so the page shows the gate as it stands rather than as it
+   * stood when the sheet opened.
+   */
+  gate: ServiceGateVerdict;
   /**
    * False when SERVICE_MODE_ENABLED=0. The page then labels the button as off
    * rather than letting it fail, and — the part that matters — a Pi configured this
@@ -112,9 +127,14 @@ export async function handleVcuReadEndpoint(
         await respond(res, 403, options, "service mode is switched off on this Pi (SERVICE_MODE_ENABLED=0)");
         return;
       }
+      // The gate lives in the runner rather than here, so that the check a POST
+      // makes and the check the sweep makes before every frame are the same code
+      // reading the same signals. An endpoint that decided for itself would be a
+      // second opinion to keep in step.
       const { started, reason } = options.runner.start();
-      // 409, not 500: "one is already running" is the endpoint working correctly,
-      // and the page shows the reason rather than an error.
+      // 409, not 500: "the bike is moving" and "one is already running" are both the
+      // endpoint working correctly, and the page shows the reason rather than an
+      // error.
       await respond(res, started ? 202 : 409, options, reason);
       return;
     }
@@ -144,7 +164,8 @@ async function respond(
   message: string | null
 ): Promise<void> {
   const payload: VcuReadResponse = {
-    run: await options.runner.state(),
+    run: options.runner.state(),
+    gate: options.runner.gate(),
     enabled: options.enabled,
     export: await summariseExport(options.directory),
     message,
@@ -153,8 +174,9 @@ async function respond(
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": String(body.length),
-    // Progress with a timestamp in it. A cached copy would freeze the count on
-    // screen while the sweep carried on, which is worse than no count at all.
+    // Progress and a live gate reading. A cached copy would freeze the count on
+    // screen while the sweep carried on — and, far worse, show a stale "safe to
+    // service" for a bike that has since been ridden off.
     "Cache-Control": "no-store",
   });
   res.end(body);

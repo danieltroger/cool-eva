@@ -179,7 +179,7 @@ ride-log-key.private.pem
 ride-logs
 *.celog
 
-# VCU parameter snapshots written by scripts/read-vcu-params.ts. Generated output,
+# VCU parameter snapshots written by service mode (src/vcu/sweep.ts). Generated output,
 # and specific to one motorcycle — the name table it is read against IS committed
 # (src/vcu/param-table.ts), so another owner gets everything they need to take their
 # own. Committing one deliberately, as a reference set of real Eva Ribelle values,

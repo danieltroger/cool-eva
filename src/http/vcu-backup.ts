@@ -9,7 +9,7 @@ import { loadLatestSnapshot } from "./vcu-params.ts";
 // src/vcu/backup-csv.ts for what "byte-compatible" was checked to mean.
 //
 // ⚠️ IT NEVER TOUCHES THE BUS. Same standing rule as /vcu-params and /stored-dtcs:
-// it serves a file scripts/read-vcu-params.ts wrote. Downloading cannot make the
+// it serves a file a previous sweep wrote. Downloading cannot make the
 // bike answer anything. /vcu-read is where a fresh read is asked for.
 //
 // ⚠️ What the receiving tool can do with this file is a WRITE. energica_tool.py's

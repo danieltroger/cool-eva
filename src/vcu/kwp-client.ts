@@ -30,10 +30,10 @@ import type { VcuMicro } from "./param-table.ts";
 // ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which
 // kills every other raw-CAN socket on the Pi including the running cool-eva
 // service's (CLAUDE.md). This client only ever opens a channel on an interface
-// that is already up, so a parameter read can be taken alongside the live service
-// instead of interrupting it. The cost is that it cannot rescue a listen-only
-// bus — it will just see nothing, which scripts/read-vcu-params.ts checks for and
-// explains rather than leaving as a mystery.
+// that is already up — in practice the service's own, since the sweep moved
+// in-process (../vcu/sweep.ts). The cost is that it cannot rescue a listen-only
+// bus: it would just see nothing, which is why ./read-runner.ts refuses to start a
+// sweep when OBD_ENABLED=0 rather than leaving it as a mystery.
 //
 // ── What the bus does, per obd-garage/DIAG_ADDRESSES.md §3 (live 2026-08-08) ──
 // The micros answer NOTHING until a session is open — `A9 01 3E` alone is silence,

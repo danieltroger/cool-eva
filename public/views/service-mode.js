@@ -16,13 +16,23 @@ const { a, button, div } = van.tags;
 // to a parked bike. The sheet is already where the actions that are worth having
 // when you stop live — the waypoint, the ride-log download.
 //
+// ── The gate is shown, not just enforced ─────────────────────────────────────
+// The read only starts with the bike stationary and out of drive, and it stops by
+// itself the moment that changes (src/vcu/service-gate.ts). The page therefore
+// leads with what the gate currently says, because a button that is disabled with
+// no reason given is indistinguishable from one that is broken — and the reason is
+// specific enough to act on ("the bike is not in drive — it reads 1" tells you to
+// switch the bike off, not to reload the page). The server is still the authority:
+// this page never decides that a read may start, it only reports what the Pi said.
+//
 // ── Nothing here blocks ──────────────────────────────────────────────────────
 // A sweep is ~277 reads over a link that drops as routine, so the button starts it
-// and returns. Progress comes from polling /vcu-read once a second WHILE a sweep
-// is running and the sheet is open, and stops on both counts — a dashboard left
-// open on a workbench must not poll the Pi for the rest of the day. Closing the
-// sheet, locking the phone or riding out of wifi range does not stop the sweep;
-// it is a process on the Pi, and re-opening the sheet picks the story back up.
+// and returns. Progress comes from polling /vcu-read once a second while the sheet
+// is open AND there is something to watch — a sweep running, or a gate that is
+// refusing and might stop refusing. Idle and safe, it does not poll at all: a
+// dashboard left open on a workbench must not poll the Pi for the rest of the day.
+// Closing the sheet, locking the phone or walking out of wifi range does not stop
+// a sweep; it runs on the Pi, and re-opening the sheet picks the story back up.
 //
 // ── Why the button arms first ────────────────────────────────────────────────
 // This is the only control in the dashboard that causes traffic on the bike's
@@ -36,6 +46,7 @@ const { a, button, div } = van.tags;
 /** @typedef {import("../../src/http/vcu-read.ts").VcuReadResponse} VcuReadResponse */
 /** @typedef {import("../../src/vcu/read-runner.ts").VcuReadState} VcuReadState */
 /** @typedef {import("../../src/vcu/read-runner.ts").VcuReadTally} VcuReadTally */
+/** @typedef {import("../../src/vcu/service-gate.ts").ServiceGateVerdict} ServiceGateVerdict */
 
 const state = van.state(/** @type {VcuReadResponse | null} */ (null));
 const armed = van.state(false);
@@ -57,6 +68,7 @@ let polling = false;
 
 export function ServiceMode() {
   return div(
+    GateNote(),
     ReadButton(),
     () => (message.val ? div({ class: "action-note" }, message.val) : div()),
     ProgressNote(),
@@ -69,6 +81,30 @@ export function ServiceMode() {
 }
 
 /**
+ * What the safety gate currently says, above the button rather than instead of it.
+ *
+ * Every blocker is listed rather than only the first, because "speed unknown AND
+ * the bike is in drive" is a different situation from either alone — and because
+ * one of them naming a signal that has never arrived is how you find out that the
+ * CAN side is not running at all, rather than that the bike is moving.
+ */
+function GateNote() {
+  return div({ class: "action-note" }, () => {
+    const current = state.val;
+    if (!current) {
+      return div({ style: `color:${MUTED}` }, "…");
+    }
+    if (current.gate.safe) {
+      return div({ style: `color:${MUTED}` }, "✅  Stationary and out of drive — safe to service.");
+    }
+    return div(
+      "🚫  Service mode is not available:",
+      ...current.gate.blockers.map(blocker => div({ style: `color:${MUTED}` }, `· ${blocker}`))
+    );
+  });
+}
+
+/**
  * Starts a sweep, or stops the one that is running. One button rather than two:
  * while a sweep is running, stopping it is the only thing you can usefully do to
  * it, and a dead "Read" button next to a live "Stop" is a worse thing to hit.
@@ -77,9 +113,11 @@ function ReadButton() {
   return button(
     {
       class: "action",
-      // Disabled only for STARTING. A sweep already running when the flag was set
-      // must still be stoppable, which is why this reads `isRunning()` first.
-      disabled: () => !isRunning() && state.val !== null && !state.val.enabled,
+      // Disabled only for STARTING — a sweep already running must stay stoppable
+      // whether the flag was set or the bike started moving, which is why this
+      // reads `isRunning()` first. Both reasons to be disabled are the server's,
+      // read off the last response; the page decides nothing here.
+      disabled: () => !isRunning() && state.val !== null && (!state.val.enabled || !state.val.gate.safe),
       onclick: () => {
         if (isRunning()) {
           void request("DELETE");
@@ -99,6 +137,11 @@ function ReadButton() {
       }
       if (state.val !== null && !state.val.enabled) {
         return "🔒  Reads are off on this Pi (SERVICE_MODE_ENABLED=0)";
+      }
+      if (state.val !== null && !state.val.gate.safe) {
+        // Deliberately not repeating the reasons: they are in full directly above,
+        // and a button caption is the wrong place for four of them.
+        return "🚫  The bike is not parked and out of drive";
       }
       if (armed.val) {
         return "⚠  Tap again — this puts ~277 requests on the bus";
@@ -128,7 +171,7 @@ function ProgressNote() {
       case "idle":
         return div(
           { style: `color:${MUTED}` },
-          "No read has been started since the Pi last booted. Takes well under a minute; the bike has to be awake."
+          "No read has been started since the Pi last booted. Takes well under a minute; the bike has to be awake, parked and out of drive, and the read stops by itself if that changes."
         );
       case "running":
         return div(
@@ -271,10 +314,10 @@ async function request(method) {
       if (watchingSince === null) {
         watchingSince = monotonicNow();
       }
-      startPolling();
     } else {
       watchingSince = null;
     }
+    startPolling();
   } catch (error) {
     // Loud. The usual cause is the phone having dropped off the bike's hotspot,
     // and a button that silently does nothing is the worst version of that.
@@ -284,15 +327,18 @@ async function request(method) {
 }
 
 /**
- * Polls while a sweep runs and the sheet is open.
+ * Polls while the sheet is open and there is something to watch.
  *
  * Self-scheduling rather than a standing `setInterval`, so the loop ends by simply
  * not scheduling itself again — there is no timer left behind to leak, and no
- * traffic at all once the sweep is over. `sheetOpen` is passed in rather than
+ * traffic at all once there is nothing to see. `sheetOpen` is passed in rather than
  * imported to keep this module free of a circular import with ./sheet.js.
  */
 function startPolling() {
-  if (polling) {
+  // Checked before the first timer is armed, not only inside the loop: called after
+  // every response, this would otherwise cost one wasted request each time the sheet
+  // is opened on an idle, parked bike — the common case.
+  if (polling || !shouldKeepPolling()) {
     return;
   }
   polling = true;
@@ -330,8 +376,20 @@ export function refreshServiceMode(isOpen) {
   void request("GET");
 }
 
+/**
+ * Two things are worth following, and neither of them is "the sheet is open".
+ *
+ * A running sweep, obviously. And a gate that is currently refusing — because the
+ * bike being wheeled into the garage is exactly the moment someone is standing here
+ * waiting for the button to come alive, and making them close and re-open the sheet
+ * to find out would be silly. An idle, safe service mode polls nothing: that is the
+ * state a phone forgotten on the workbench is in.
+ */
 function shouldKeepPolling() {
-  return isRunning() && sheetIsOpen();
+  if (!sheetIsOpen()) {
+    return false;
+  }
+  return isRunning() || state.val?.gate.safe === false;
 }
 
 function isRunning() {

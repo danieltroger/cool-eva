@@ -20,6 +20,13 @@ import { diffSnapshots, toParameterRow, type VcuParameterSnapshot } from "../src
 import { createVcuKwpClient, type VcuReadOutcome } from "../src/vcu/kwp-client.ts";
 import { exportableRowCount, snapshotToBackupCsv } from "../src/vcu/backup-csv.ts";
 import { tallyOf } from "../src/vcu/read-runner.ts";
+import {
+  evaluateServiceGate,
+  serviceGateExcludedKeys,
+  serviceGateSignalKeys,
+  type ServiceGateReadings,
+} from "../src/vcu/service-gate.ts";
+import { decodeFrame } from "../src/can/decode.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 import { CAPTURED_FRAMES, KNOWN_VARIANT_DIFFERENCES, LIVE_BANK1_READS, parseHexBytes } from "./captured-vcu-records.ts";
 
@@ -342,7 +349,136 @@ expect(
 );
 expect(tallyOf([]).read === 0 && tallyOf([]).micros.length === 0, "an empty sweep should tally to nothing, not throw");
 
-// ── 10. Optional: the full stored A9 dump ──────────────────────────────────
+// ── 10. The service-mode safety gate, against real captured frames ─────────
+// The gate decides whether ~277 diagnostic requests may go on the bus of a bike
+// that might be about to be ridden, so it is checked against BYTES rather than
+// against invented numbers: the frames below are the ones src/can/decode.ts cites,
+// and they are put through the real decoder on the way in. What that buys is the
+// two claims worth making without the motorcycle — the gate can be opened at all,
+// and it shuts on the one moving capture this project has.
+
+// The parked bike, 2026-08-02. `0x102` is quoted verbatim in decode.ts's header;
+// `0x104` is that day's odometer with the speed and rpm fields at the zero they
+// held for the whole capture.
+const PARKED_BODY_FRAME = "80 10 02 44 99 FF D8 FF";
+const PARKED_DRIVE_FRAME = "8D 99 02 00 00 00 00 00";
+
+// The garage lap the same afternoon: `5F 00 32 00` in b4-7 decodes to 9.5 km/h and
+// 400 rpm, measured against OBD PID 0D (10) and PID 0C (411).
+const ROLLING_DRIVE_FRAME = "8D 99 02 00 5F 00 32 00";
+
+// The bike stationary with the drive up: b1 gains 0x02 energized and 0x08 go on top
+// of the parked 0x10 key_on. Constructed rather than captured — no capture of this
+// state exists — which is exactly why it is labelled as such.
+const ENERGIZED_BODY_FRAME = "80 1A 02 44 99 FF D8 FF";
+
+const parkedReadings = gateReadingsFrom([
+  [0x102, PARKED_BODY_FRAME],
+  [0x104, PARKED_DRIVE_FRAME],
+]);
+const parked = evaluateServiceGate(parkedReadings);
+expect(parked.safe, `a parked bike should pass the gate, blocked by: ${parked.blockers.join(" · ")}`);
+expect(
+  parked.checks.every(check => check.state === "ok" || check.key === "speed_kmh"),
+  "every gated signal should read ok on the parked capture"
+);
+
+// The single most important assertion in this file: the frames really do decode to
+// the states the gate is asserting, so a passing gate is a fact about the bike and
+// not about the fixture agreeing with itself.
+expect(
+  parkedReadings["speed_can_kmh"]?.value === 0 &&
+    parkedReadings["motor_rpm_can"]?.value === 0 &&
+    parkedReadings["energized"]?.value === 0 &&
+    parkedReadings["go"]?.value === 0 &&
+    parkedReadings["moving"]?.value === 0,
+  "the parked capture should decode to zero speed, zero rpm and a drive that is down"
+);
+
+const rolling = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, PARKED_BODY_FRAME],
+    [0x104, ROLLING_DRIVE_FRAME],
+  ])
+);
+expect(!rolling.safe, "9.5 km/h should not pass the gate");
+expect(
+  rolling.blockers.some(blocker => blocker.includes("road speed is zero")) &&
+    rolling.blockers.some(blocker => blocker.includes("the motor is not turning")),
+  `speed and rpm should each be named as blockers, got: ${rolling.blockers.join(" · ")}`
+);
+// A bike being pushed shows speed without the body frame changing, which is why the
+// gate does not rest on the 0x102 state bits alone.
+expect(
+  !rolling.blockers.some(blocker => blocker.includes("energized")),
+  "a rolling bike with the drive down should be blocked on motion, not misreported as energized"
+);
+
+const energized = evaluateServiceGate(
+  gateReadingsFrom([
+    [0x102, ENERGIZED_BODY_FRAME],
+    [0x104, PARKED_DRIVE_FRAME],
+  ])
+);
+expect(!energized.safe, "a stationary bike with the drive up should not pass the gate");
+expect(
+  energized.blockers.length === 2 &&
+    energized.blockers.some(blocker => blocker.includes("not energized")) &&
+    energized.blockers.some(blocker => blocker.includes("not in drive")),
+  `energized and go should both block, got: ${energized.blockers.join(" · ")}`
+);
+
+// Fail closed, three ways. Each of these looks like a safe bike to anything that
+// reads the VALUE without asking how old it is or whether it exists.
+expect(!evaluateServiceGate({}).safe, "a gate with no readings at all must refuse");
+expect(
+  evaluateServiceGate({}).blockers.length === serviceGateSignalKeys().length - 1,
+  "every required signal should be named when nothing has arrived — and only the corroborator excused"
+);
+const stale = evaluateServiceGate(
+  gateReadingsFrom(
+    [
+      [0x102, PARKED_BODY_FRAME],
+      [0x104, PARKED_DRIVE_FRAME],
+    ],
+    30_000
+  )
+);
+expect(!stale.safe, "readings 30 s old must not pass, however parked they say the bike is");
+expect(
+  stale.blockers.every(blocker => blocker.includes("too old to go on")),
+  `a stale gate should say so rather than reporting the values, got: ${stale.blockers.join(" · ")}`
+);
+expect(
+  !evaluateServiceGate({ ...parkedReadings, speed_can_kmh: { value: 0, ageMs: null } }).safe,
+  "a value with no age is not a reading and must not pass"
+);
+
+// The OBD corroborator: never blocks by being absent (that is a fact about our
+// poller), always blocks by disagreeing (that is two paths contradicting).
+expect(
+  evaluateServiceGate({ ...parkedReadings, speed_kmh: { value: null, ageMs: null } }).safe,
+  "a missing OBD speed should not block — its absence is about our polling, not the bike"
+);
+const contradiction = evaluateServiceGate({ ...parkedReadings, speed_kmh: { value: 12, ageMs: 400 } });
+expect(!contradiction.safe, "OBD saying 12 km/h while CAN says 0 is a contradiction, not a pass");
+expect(
+  evaluateServiceGate({ ...parkedReadings, speed_kmh: { value: 0, ageMs: 400 } }).safe,
+  "an OBD speed that agrees should leave the gate open"
+);
+
+// The signals deliberately left out must stay out. Every one of them reads
+// "parked-looking" on some capture where the bike is not, or has never been seen in
+// the state the gate would need — the reasoning is in service-gate.ts and this is
+// what stops it being quietly undone.
+expect(
+  serviceGateExcludedKeys().every(key => !serviceGateSignalKeys().includes(key)),
+  `a signal excluded from the gate has been wired back into it: ${serviceGateExcludedKeys()
+    .filter(key => serviceGateSignalKeys().includes(key))
+    .join(", ")}`
+);
+
+// ── 11. Optional: the full stored A9 dump ──────────────────────────────────
 if (dumpPath) {
   await replayStoredDump(dumpPath);
 } else {
@@ -357,7 +493,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV and the read tally all check out"
+  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV, the read tally and the service-mode safety gate all check out"
 );
 
 /**
@@ -585,6 +721,24 @@ function noSession(index: number): VcuReadOutcome {
     status: "no-session",
     reason: `${micro} did not answer 10 81`,
   };
+}
+
+/**
+ * Real CAN frames → what the gate would see, all at the same age.
+ *
+ * Deliberately routed through the actual `decodeFrame`, not through hand-written
+ * values: that is what makes a passing gate evidence about the capture rather than
+ * about this file. `ageMs` is supplied because a gate reading is a value AND its
+ * age, and neither is a reading on its own.
+ */
+function gateReadingsFrom(frames: [number, string][], ageMs = 50): ServiceGateReadings {
+  const readings: ServiceGateReadings = {};
+  for (const [id, hex] of frames) {
+    for (const { key, value } of decodeFrame(id, Buffer.from(parseHexBytes(hex)))) {
+      readings[key] = { value, ageMs };
+    }
+  }
+  return readings;
 }
 
 function snapshotOf(outcomes: VcuReadOutcome[]): VcuParameterSnapshot {

@@ -51,17 +51,16 @@ const CAN_IFACE = "can0";
 //     the temperatures on 0x200 (by a config-dependent amount, not a constant) and moves
 //     the true ones onto 0x660. Leave unset on a stock Energica. Only affects temperature
 //     routing; every other decode is correct either way, and the frames override a wrong flag.
-//   VCU_PARAM_DIR=… → where scripts/read-vcu-params.ts leaves its snapshots, which
-//     /vcu-params serves. Nothing here ever writes there or reads the parameters
-//     itself: this process never puts a diagnostic request on the bus for them.
-//     Service mode's /vcu-read does not change that — it RUNS that script as a
-//     child process and watches the files it leaves behind, so the sweep is still
-//     the on-demand one, just started from a button instead of over ssh. See
-//     src/vcu/read-runner.ts.
-//   SERVICE_MODE_ENABLED=0 → the dashboard cannot start a parameter read. The one
-//     control here that causes traffic on the bike's bus, with the same kind of off
-//     switch as every other subsystem that touches it. Reading the last snapshot
-//     and exporting it are unaffected: neither goes near the bike.
+//   VCU_PARAM_DIR=… → where service mode leaves its parameter snapshots, which
+//     /vcu-params and /vcu-backup.csv serve.
+//   SERVICE_MODE_ENABLED=0 → the dashboard cannot start a parameter read. That read
+//     is the one thing here that puts requests on the bike's bus on purpose, so it
+//     has the same kind of off switch as every other subsystem that touches it.
+//     Reading the last snapshot and exporting it are unaffected: neither goes near
+//     the bike. Note this is the SECOND lock on that door — the first is
+//     src/vcu/service-gate.ts, which will not let a read start unless the bike is
+//     stationary and out of drive, and stops one that is running when it stops
+//     being either.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -111,6 +110,24 @@ try {
 let channel: RawChannel | undefined;
 let stopObd: (() => void) | undefined;
 
+// --- Service mode: on-demand VCU parameter reads, started from the dashboard ---
+// Built before the bus so the frame router below can hand it replies. It holds no
+// bus resources, opens no socket of its own and starts nothing: it exists so that
+// /vcu-read has somewhere to keep "is a sweep running" across requests, and so that
+// the safety gate has one place to be asked from.
+const vcuReadRunner = createVcuReadRunner({
+  channel: () => channel ?? null,
+  // A listen-only interface swallows every request silently, which looks exactly
+  // like a switched-off bike. Refused up front instead.
+  busIsActive: OBD_ENABLED,
+  directory: VCU_PARAM_DIR,
+});
+console.log(
+  SERVICE_MODE_ENABLED
+    ? "service-mode: the dashboard may start an on-demand VCU parameter read while the bike is parked and out of drive (SERVICE_MODE_ENABLED=0 to forbid it)"
+    : "service-mode: disabled (SERVICE_MODE_ENABLED=0) — the snapshot is still served and exported, but nothing here can ask the bike"
+);
+
 if (CAN_ENABLED) {
   try {
     await bringUpCan(CAN_IFACE, OBD_ENABLED); // ACTIVE only when we intend to TX OBD reads
@@ -129,6 +146,15 @@ if (CAN_ENABLED) {
     channel.addListener("onMessage", msg => {
       const data = msg.data;
       if (isObdResponse(msg.id)) {
+        // Service mode's KWP replies land in this same 0x7E0–0x7EF range (the VCU
+        // micros answer on 0x7E0 under EXTENDED addressing, so byte 0 is the
+        // tester's own address 0xF1). Offered to the sweep first, and it consumes
+        // only frames addressed to 0xF1 — which no OBD-II reply is, since byte 0
+        // there is an ISO-TP length nibble — so this takes nothing away from the
+        // poller. It is also a no-op unless a sweep is actually running.
+        if (vcuReadRunner.handleCanFrame(msg.id, data)) {
+          return;
+        }
         handleResponse(msg.id, data);
         return;
       }
@@ -208,16 +234,6 @@ if (BLE_ENABLED) {
   console.log("ble: disabled (BLE_ENABLED=0)");
 }
 
-// --- Service mode: on-demand VCU parameter reads, started from the dashboard ---
-// Holds no bus resources and starts nothing on its own; it exists so that /vcu-read
-// has somewhere to keep "is a sweep running" across requests.
-const vcuReadRunner = createVcuReadRunner({ root: ROOT, outputDirectory: VCU_PARAM_DIR });
-console.log(
-  SERVICE_MODE_ENABLED
-    ? "service-mode: the dashboard may start an on-demand VCU parameter read (SERVICE_MODE_ENABLED=0 to forbid it)"
-    : "service-mode: disabled (SERVICE_MODE_ENABLED=0) — the snapshot is still served and exported, but nothing here can ask the bike"
-);
-
 // --- HTTP + WebSocket server ---
 const staticFiles = await loadStaticFiles(join(ROOT, "public"));
 console.log(
@@ -254,19 +270,18 @@ const server = createServer(async (req, res) => {
     handleStoredDtcsEndpoint(res);
     return;
   }
-  // The VCU's calibration parameters, as scripts/read-vcu-params.ts last read them.
-  // Also never touches the bus — this process never asks the micros anything, by
-  // design (see the script's header for why the sweep is on-demand rather than
-  // something the service does at startup).
+  // The VCU's calibration parameters, as service mode last read them. Serves the
+  // snapshot from disk and never touches the bus, so refreshing the page cannot make
+  // the bike answer anything.
   if (url.pathname === "/vcu-params") {
     await handleVcuParamsEndpoint(res, VCU_PARAM_DIR);
     return;
   }
   // Service mode. The ONE endpoint here that causes traffic on the bike's bus, and
-  // it does it by running scripts/read-vcu-params.ts rather than by asking the
-  // micros anything from this process — read-only either way, since that script's
-  // codec cannot express a write. See src/vcu/read-runner.ts for why the button is
-  // not a contradiction of the "never at startup, never on a timer" rule.
+  // the only path in this repo from an HTTP request to a CAN frame. Read-only —
+  // src/vcu/param-codec.ts's request union cannot express a write — and gated on the
+  // bike being stationary and out of drive, checked before the read starts and again
+  // before every frame it sends. See src/vcu/service-gate.ts.
   if (url.pathname === "/vcu-read") {
     await handleVcuReadEndpoint(req, res, {
       runner: vcuReadRunner,
@@ -276,7 +291,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   // The same snapshot /vcu-params serves, in another owner's energica_tool.py
-  // backup format. Serves a file; never touches the bus.
+  // backup format. Serves what is on disk; never touches the bus.
   if (url.pathname === "/vcu-backup.csv") {
     await handleVcuBackupEndpoint(res, VCU_PARAM_DIR);
     return;
@@ -302,10 +317,11 @@ async function shutdown(): Promise<void> {
   console.log("\nShutting down…");
   stopObd?.();
   void bleClient?.stop();
-  // SIGTERM, not orphaned: a sweep left running past the restart that killed its
-  // parent would keep the bus busy with nobody watching. The script handles the
-  // signal, keeps every row it has and writes its archive, and the next run
-  // resumes from the partial file — so stopping it here costs nothing.
+  // A sweep in flight is stopped rather than left to be killed with the process:
+  // aborting settles the request in flight, stops the client transmitting, and
+  // leaves every row it had already appended to `sweep.partial.jsonl`, so the next
+  // run resumes from there. Deploy is `git pull` + `systemctl restart`, so this is
+  // not a rare path.
   vcuReadRunner.stop();
   // Awaited, not fire-and-forget: sealing the last segment is async, and
   // process.exit() below would otherwise kill it and lose the final buffer.

@@ -1,53 +1,52 @@
-import { spawn, type ChildProcess } from "child_process";
-import { readdir, readFile } from "fs/promises";
-import { join } from "path";
+import type { RawChannel } from "socketcan";
+import { ageMs, latestValue } from "../can/signals.ts";
+import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
+import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { PARAMETER_TABLE, type VcuMicro } from "./param-table.ts";
-import type { VcuParameterRow, VcuParameterSnapshot } from "./snapshot.ts";
+import type { VcuParameterRow } from "./snapshot.ts";
 
-// Service mode's engine: start a parameter sweep on demand, watch it, stop it.
+// Service mode's engine: decide whether the bike may be serviced, run one parameter
+// sweep in this process while that stays true, and put service mode straight back
+// out the moment it does not.
 //
-// ── ⚠️ This does NOT put anything on the bus, and that is deliberate ─────────
-// It spawns `scripts/read-vcu-params.ts` — the same command CLAUDE.md and that
-// script's own header tell you to run over ssh — and watches the files it leaves
-// behind. The cool-eva process still opens no CAN socket for VCU parameters, still
-// builds no KWP frame and still contains no code path from an HTTP request to
-// `channel.send`. The read-only argument therefore does not move an inch: every
-// byte that reaches the micros is built by src/vcu/param-codec.ts, whose request
-// union has three members and no writes in it.
+// ── What changed, and why the old rule no longer applies ─────────────────────
+// This used to `spawn` scripts/read-vcu-params.ts and watch the files it left
+// behind, so that the always-on service could truthfully say it never asked the
+// micros anything. That rule bought one thing — a bright line nobody could cross by
+// accident — and cost three: a second copy of the resume/partial/baseline rules, a
+// progress feed parsed back off disk, and a cross-process clock comparison to work
+// out which archive belonged to which run.
 //
-// What DOES change is who decides when to spend the bus time. The standing rule in
-// read-vcu-params.ts is "not at startup, not on a timer, not per page load",
-// because a ~277-request burst competes with the OBD poller, the BLE link and the
-// DTC reads for a bus that src/can/obd-dtc.ts measured as the scarce resource. A
-// button is none of those things: it is the owner, parked, deciding once. Service
-// mode is exactly the case that rule was carving out, not an exception to it.
+// The bright line is now drawn somewhere better. Service mode is entered only with
+// the bike PROVED stationary and out of drive (./service-gate.ts), and it is left
+// automatically the instant that stops being true — so "the service does not touch
+// the micros" becomes "the service touches the micros only when the motorcycle
+// cannot move", which is the property that was actually wanted. Reading is still
+// read-only by construction: ./param-codec.ts's request union has three members and
+// its encoder throws on anything else, and nothing in this file or in the HTTP layer
+// can name a service, an identifier or a value.
 //
-// ── Why shell out instead of importing the sweep ─────────────────────────────
-// 1. The script is the tested path. It resumes from `sweep.partial.jsonl`, keeps a
-//    partial snapshot rather than discarding it, refuses to clobber a good
-//    `latest.json` with a run that read nothing, and stops cleanly on a signal.
-//    Re-implementing that in-process would mean a second copy of all four rules.
-// 2. `socketcan` is a Linux-only optionalDependency. The script imports it lazily
-//    so that the rest of it still runs on a laptop; importing the sweep into the
-//    always-on service would drag that decision into this file for no gain.
-// 3. A child process can be killed. An in-process sweep holding a 300 ms reply
-//    window 277 times cannot be taken back once started, and "cancel" is the one
-//    control this feature genuinely needs (the link to the bike drops — that is
-//    the normal case, not the exception).
+// ── The exit path, which is the part that matters ────────────────────────────
+// Two independent things stop a sweep, and both end in the same `abort`:
 //
-// ── Where progress comes from ────────────────────────────────────────────────
-// Not from parsing the child's stdout, which is prose meant for a human and would
-// break the first time a log line is reworded. The script appends one JSON row to
-// `<out>/sweep.partial.jsonl` the moment each parameter arrives, so that file IS
-// the progress feed, already in the shape the dashboard wants. It is read when the
-// page asks rather than on a timer of our own — there is no polling loop here.
+//  1. The sweep asks the gate before EVERY request (./sweep.ts, `mayContinue`), so
+//     the check precedes the socket rather than racing it.
+//  2. A watchdog here re-checks the gate every GATE_WATCH_INTERVAL_MS and calls
+//     `abort` from outside the loop. That is what bounds the worst case: one
+//     `readParameter` can spend ~1.2 s inside itself (a reply window, a session
+//     re-open, a second reply window), and without the watchdog a bike that started
+//     moving during one would keep four more frames on the bus until the loop came
+//     back round.
 //
-// The catch is the end of a sweep: on a COMPLETE run the script deletes the
-// partial file and writes `latest.json` (and even that only if something was
-// read). So the final numbers come from the timestamped archive the script writes
-// on every run, complete or not, read-something or not — the one artefact that is
-// always there. That is what keeps "the bike was asleep, 277 no-session" legible
-// as its own result instead of silently showing the previous good snapshot.
+// `abort` calls `client.stop()`, which clears the pending request and refuses every
+// subsequent transmit, so the sweep cannot emit one more frame on its way out. The
+// diagnostic session it opened is left to expire by itself after ~2.5 s of silence,
+// which is the documented behaviour and is why there is no closing frame to send —
+// see the note on `abort` in ./sweep.ts.
+//
+// Nothing read is lost on the way out: every row was appended to the resume file as
+// it arrived, the partial snapshot is written and labelled `complete: false`, and
+// starting again resumes from where it stopped.
 
 /** How the last (or current) sweep is going. A closed union so the page cannot render a state we did not mean. */
 export type VcuReadState =
@@ -55,15 +54,15 @@ export type VcuReadState =
   | { phase: "idle" }
   | { phase: "running"; startedAt: number; expected: number; tally: VcuReadTally }
   /**
-   * The sweep ran to the end of its list. `complete` is the script's own flag —
+   * The sweep ran to the end of its list. `complete` is the sweep's own flag —
    * every parameter was ASKED ABOUT, which is not the same as every one answering,
    * and `tally` is where that difference shows.
    */
   | { phase: "finished"; startedAt: number; finishedAt: number; complete: boolean; tally: VcuReadTally }
   /**
-   * Stopped early, or never got going. Kept apart from `finished` with an empty
-   * tally because "we could not start" and "the bike answered nothing" are
-   * different claims, and only the second one is about the motorcycle.
+   * Stopped early, or never got going. Kept apart from `finished` with its own
+   * reason because "we could not start", "the owner stopped it" and "the bike
+   * started moving" are different claims, and only one of them is about a fault.
    */
   | { phase: "failed"; startedAt: number; finishedAt: number; reason: string; tally: VcuReadTally };
 
@@ -80,44 +79,55 @@ export interface VcuReadTally {
 }
 
 export interface VcuReadRunner {
-  /** Starts a sweep. Resolves with why not, rather than throwing, when one is already running. */
+  /** Starts a sweep. Answers with why not, rather than throwing, when it may not. */
   start: () => { started: boolean; reason: string | null };
-  /** Asks a running sweep to stop. The script's SIGTERM handler keeps what it has. Returns false if none is running. */
+  /** Asks a running sweep to stop, keeping what it has. False if none is running. */
   cancel: () => boolean;
-  /** Reads the current state off disk. Cheap enough to call per page poll; no timers, no cached staleness. */
-  state: () => Promise<VcuReadState>;
-  /** Kills any running sweep, for shutdown. */
+  /** The current state. Synchronous and allocation-cheap: everything is in memory. */
+  state: () => VcuReadState;
+  /** The gate as it reads right now, for the page to show whether service mode is available. */
+  gate: () => ServiceGateVerdict;
+  /**
+   * Feed CAN frames here; true when consumed. No-op unless a sweep is running, so
+   * the service's frame router pays one null check per OBD-range frame and nothing
+   * at all the rest of the time.
+   */
+  handleCanFrame: (id: number, data: Buffer) => boolean;
+  /** Stops any running sweep, for shutdown. */
   stop: () => void;
 }
 
 export interface VcuReadRunnerOptions {
-  /** Repo root — the child's working directory, so its relative paths mean what they mean over ssh. */
-  root: string;
-  /** Where snapshots and the resume file live. Passed to the script as `--out` so the two cannot disagree. */
-  outputDirectory: string;
+  /**
+   * The service's CAN channel, already up and started; null when CAN_ENABLED=0 or
+   * bring-up failed, in which case a read is refused rather than attempted.
+   *
+   * A getter rather than the channel itself so the runner can be built BEFORE the
+   * bus is, which is what lets `handleCanFrame` be wired into the frame router in
+   * the same breath as the router is created. Capturing the channel would have made
+   * this file's construction order load-bearing in src/index.ts.
+   */
+  channel: () => RawChannel | null;
+  /**
+   * False when the bus was brought up listen-only (OBD_ENABLED=0). A listen-only
+   * interface swallows every request silently and the result is indistinguishable
+   * from a switched-off bike, so this is refused up front rather than reported as
+   * 277 no-sessions — the same trap scripts/read-vcu-params.ts used to warn about
+   * by shelling out to `ip`.
+   */
+  busIsActive: boolean;
+  /** Where the resume file and the snapshots go. */
+  directory: string;
 }
 
-const SCRIPT_PATH = "scripts/read-vcu-params.ts";
-const PARTIAL_FILE = "sweep.partial.jsonl";
-const LATEST_FILE = "latest.json";
-
 /**
- * How many stderr characters to keep for the failure message.
+ * How often the gate is re-checked while a sweep runs.
  *
- * The FIRST ones, not the last. Verified 2026-08-15 by running this against the
- * real script on a laptop: the script prints its own explanation ("socketcan is
- * not available here — this script has to run on the Pi…") and only then does Node
- * dump the stack trace and its version banner. Keeping the tail put `}` and
- * `Node.js v24.15.0` on the dashboard and threw the sentence that says what to do
- * away, which is the exact opposite of a legible failure.
+ * 200 ms is twenty frames of a 100 Hz broadcast, so it cannot miss a state change,
+ * and it is two thirds of one reply window — short enough that a `readParameter`
+ * caught mid-retry is stopped inside it rather than after it.
  */
-const STDERR_KEEP = 2000;
-
-/**
- * How many lines of that to show. Three is enough for the script's own multi-line
- * messages and short enough to fit the sheet on a phone.
- */
-const STDERR_LINES = 3;
+const GATE_WATCH_INTERVAL_MS = 200;
 
 /** Every status a row can carry, so a tally always has all the keys and the page never sees `undefined`. */
 const ROW_STATUSES: VcuParameterRow["status"][] = [
@@ -131,209 +141,198 @@ const ROW_STATUSES: VcuParameterRow["status"][] = [
 ];
 
 interface RunnerContext extends VcuReadRunnerOptions {
-  child: ChildProcess | null;
+  sweep: RunningParameterSweep | null;
   startedAt: number | null;
   finishedAt: number | null;
-  /** Null while running, or once a run ended cleanly. Set for a non-zero exit, a spawn error or a cancel. */
+  /** Null while running and once a run ended cleanly; a sentence for a cancel, a gate exit or a crash. */
   failure: string | null;
-  stderr: string;
-  cancelled: boolean;
-  /**
-   * The archives that already existed when this run started, so the one it writes
-   * can be told from its predecessors without consulting a clock. Null before the
-   * first start.
-   */
-  archivesAtStart: Promise<Set<string>> | null;
+  /** The tally of the run that just ended, kept so `state()` needs no disk and no clock. */
+  lastTally: VcuReadTally | null;
+  lastComplete: boolean;
+  watchdog: ReturnType<typeof setInterval> | null;
 }
 
 export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunner {
   const context: RunnerContext = {
     ...options,
-    child: null,
+    sweep: null,
     startedAt: null,
     finishedAt: null,
     failure: null,
-    stderr: "",
-    cancelled: false,
-    archivesAtStart: null,
+    lastTally: null,
+    lastComplete: false,
+    watchdog: null,
   };
   return {
     start: () => start(context),
     cancel: () => cancel(context),
     state: () => readState(context),
+    gate: () => readGate(),
+    handleCanFrame: (id, data) => context.sweep?.handleFrame(id, data) ?? false,
     stop: () => stop(context),
   };
 }
 
 /**
- * Single-flight WITHIN this process. Two sweeps at once would fight over the bus,
- * over `sweep.partial.jsonl` and over the one reply id every micro answers on.
+ * The gate as it reads right now.
  *
- * It cannot see a sweep the owner started by hand over ssh — nothing here takes a
- * lock, and adding one would be a lockfile to go stale on a Pi that loses power.
- * The consequence is honest rather than hidden: two overlapping sweeps produce
- * timeouts and a noisy log, not wrong values, because every reply carries the
- * identifier it answers and param-codec.ts refuses one that does not match.
+ * Sampling lives here and the DECISION lives in ./service-gate.ts, which is what
+ * keeps every branch of the decision reachable from a laptop. `ageMs` is the
+ * monotonic age from src/can/signals.ts and never a `Date.now()` difference — on a
+ * Pi that steps its own clock, a backwards step would otherwise make a stale
+ * reading look fresh, and on this particular decision that means declaring a moving
+ * motorcycle parked.
+ */
+function readGate(): ServiceGateVerdict {
+  const readings = Object.fromEntries(
+    serviceGateSignalKeys().map(key => [key, { value: latestValue(key), ageMs: ageMs(key) }])
+  );
+  return evaluateServiceGate(readings);
+}
+
+/**
+ * Single-flight WITHIN this process, which is now the whole story: the sweep runs
+ * here, so there is no longer a second copy of it anyone can start over ssh, and no
+ * lockfile to go stale on a Pi that loses power.
  */
 function start(context: RunnerContext): { started: boolean; reason: string | null } {
-  if (context.child) {
+  if (context.sweep) {
     return { started: false, reason: "a parameter read is already running" };
   }
-  // Kicked off BEFORE the spawn and deliberately not awaited: start() stays
-  // synchronous so the HTTP handler answers immediately, and the listing only has
-  // to win a race against a child that has not been forked yet.
-  context.archivesAtStart = listArchives(context.outputDirectory);
+  const channel = context.channel();
+  if (!channel) {
+    return { started: false, reason: "CAN is switched off on this Pi (CAN_ENABLED=0) — there is no bus to read" };
+  }
+  if (!context.busIsActive) {
+    return {
+      started: false,
+      reason: "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so every read would time out",
+    };
+  }
+  const verdict = readGate();
+  if (!verdict.safe) {
+    return { started: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
+  }
 
-  const child = spawn(
-    process.execPath,
-    // The invocation CLAUDE.md documents, kept identical so there is one way to run
-    // this and one thing to get wrong. Type stripping is on by default in Node 24,
-    // so the flag is redundant today and harmless; it is what the README, the
-    // systemd unit and the script's own header all say.
-    [
-      "--experimental-strip-types",
-      join(context.root, SCRIPT_PATH),
-      "--out",
-      context.outputDirectory,
-      // No `--fresh`: a sweep that was cut short last time resumes, which on a link
-      // that drops mid-read is the whole reason the resume file exists.
-    ],
-    { cwd: context.root, stdio: ["ignore", "pipe", "pipe"] }
-  );
-
-  context.child = child;
+  const sweep = startParameterSweep({
+    channel,
+    directory: context.directory,
+    checkGate: readGate,
+  });
+  context.sweep = sweep;
   context.startedAt = Date.now();
   context.finishedAt = null;
   context.failure = null;
-  context.stderr = "";
-  context.cancelled = false;
+  context.lastTally = null;
+  context.lastComplete = false;
+  startGateWatchdog(context, sweep);
 
-  // Piped rather than inherited so a sweep's 277 log lines do not interleave with
-  // the service's own journal, and so the tail is available to put on screen.
-  child.stdout?.on("data", chunk => console.log(`vcu-read: ${String(chunk).trimEnd()}`));
-  child.stderr?.on("data", chunk => {
-    // Kept from the front and then capped, so a long crash dump cannot push the
-    // script's own explanation out of the buffer. The whole thing still reaches
-    // the journal below either way.
-    if (context.stderr.length < STDERR_KEEP) {
-      context.stderr = `${context.stderr}${String(chunk)}`.slice(0, STDERR_KEEP);
-    }
-    console.warn(`vcu-read: ${String(chunk).trimEnd()}`);
-  });
-  child.on("error", error => {
-    // Never swallowed: this is "we could not even start node", which looks
-    // identical to a silent bike on screen unless it is said out loud.
-    console.error("vcu-read: could not start the sweep:", error);
-    context.failure = error instanceof Error ? error.message : String(error);
-    context.child = null;
-    context.finishedAt = Date.now();
-  });
-  child.on("exit", (code, signal) => {
-    context.child = null;
-    context.finishedAt = Date.now();
-    context.failure = describeExit(context, code, signal);
-    console.log(`vcu-read: sweep ended (${context.failure ?? "clean"})`);
-  });
+  // Fire-and-forget on purpose: start() answers the HTTP request immediately and the
+  // page follows along with GET. Every outcome, including a throw, lands in the
+  // context below — nothing here can reject into an unhandled rejection.
+  void sweep.finished
+    .then(result => {
+      context.lastComplete = result.snapshot.complete;
+      context.failure = result.stoppedBecause;
+      console.log(`vcu-read: sweep ended (${result.stoppedBecause ?? "complete"})`);
+    })
+    .catch((err: unknown) => {
+      // Never swallowed: a sweep that threw looks identical to a silent bike on
+      // screen unless it is said out loud, and this is a bike we cannot attach a
+      // debugger to.
+      console.error("vcu-read: the sweep failed:", err);
+      context.failure = err instanceof Error ? err.message : String(err);
+    })
+    .finally(() => {
+      context.lastTally = tallyOf(sweep.rows());
+      context.finishedAt = Date.now();
+      context.sweep = null;
+      stopGateWatchdog(context);
+    });
 
-  console.log(`vcu-read: started ${SCRIPT_PATH} → ${context.outputDirectory}`);
+  console.log("vcu-read: started an in-process parameter sweep — the bike checked out as parked and out of drive");
   return { started: true, reason: null };
 }
 
 function cancel(context: RunnerContext): boolean {
-  if (!context.child) {
+  if (!context.sweep) {
     return false;
   }
-  // SIGTERM, not SIGKILL: the script handles it, stops the loop, closes the partial
-  // file and writes the archive. SIGKILL would lose the archive and with it the
-  // "which micro answered" breakdown for everything read so far.
-  context.cancelled = true;
-  context.child.kill("SIGTERM");
+  context.sweep.abort("stopped from the dashboard — everything read so far was kept");
   console.log("vcu-read: cancel requested");
   return true;
 }
 
 function stop(context: RunnerContext): void {
-  if (context.child) {
-    context.child.kill("SIGTERM");
-  }
-}
-
-/** Null when the run ended the way it was supposed to; a sentence otherwise. */
-function describeExit(context: RunnerContext, code: number | null, signal: string | null): string | null {
-  if (context.cancelled) {
-    return "stopped from the dashboard — everything read so far was kept";
-  }
-  if (signal) {
-    return `the sweep was killed by ${signal}`;
-  }
-  if (code !== 0) {
-    const explanation = summariseStderr(context.stderr);
-    return `the sweep exited with code ${code}${explanation ? ` — ${explanation}` : ""}`;
-  }
-  return null;
+  context.sweep?.abort("the service is shutting down — everything read so far was kept");
+  stopGateWatchdog(context);
 }
 
 /**
- * The readable part of a crashed child's stderr.
+ * Re-checks the gate on a timer while a sweep runs, and stops it from outside the
+ * loop.
  *
- * A Node crash is mostly frames and a version banner wrapped around one sentence
- * that says what went wrong. Those are dropped so the sentence survives — the
- * whole of stderr is in the journal for anyone who wants the trace, and what
- * reaches the phone should be the bit that tells the owner what to do about it.
+ * This is the half of auto-exit that bounds the worst case. The sweep's own check
+ * runs between parameters, which is every ~310 ms in the good case but up to ~1.2 s
+ * when a read times out and the session is re-opened; a bike that starts moving
+ * during one of those would otherwise keep several more frames on the bus. Calling
+ * `abort` from here settles the request in flight immediately and blocks every
+ * transmit after it.
  */
-function summariseStderr(stderr: string): string {
-  const meaningful = stderr
-    .split("\n")
-    .map(line => line.trim())
-    .filter(
-      line =>
-        line.length > 0 &&
-        !line.startsWith("at ") &&
-        !line.startsWith("Node.js v") &&
-        // `}`, `^`, `        ^^^` and friends: the punctuation V8 draws its error
-        // pointers with, which carries no information away from its own context.
-        /[a-z0-9]/i.test(line)
-    );
-  return meaningful.slice(0, STDERR_LINES).join(" · ");
+function startGateWatchdog(context: RunnerContext, sweep: RunningParameterSweep): void {
+  stopGateWatchdog(context);
+  context.watchdog = setInterval(() => {
+    const verdict = readGate();
+    if (verdict.safe) {
+      return;
+    }
+    console.warn(`vcu-read: leaving service mode mid-sweep — ${verdict.blockers.join("; ")}`);
+    sweep.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
+  }, GATE_WATCH_INTERVAL_MS);
+  // The sweep must never be the reason a `systemctl stop` hangs, and this timer must
+  // never be the reason the process stays alive on its own.
+  context.watchdog.unref?.();
 }
 
-async function readState(context: RunnerContext): Promise<VcuReadState> {
-  if (context.child && context.startedAt !== null) {
+function stopGateWatchdog(context: RunnerContext): void {
+  if (context.watchdog) {
+    clearInterval(context.watchdog);
+    context.watchdog = null;
+  }
+}
+
+function readState(context: RunnerContext): VcuReadState {
+  if (context.sweep && context.startedAt !== null) {
     return {
       phase: "running",
       startedAt: context.startedAt,
-      // What a full sweep will ask about. The script takes no filters from here, so
-      // this is the whole table rather than a number that could drift from it.
+      // What a full sweep will ask about — the whole table, so this cannot drift
+      // from what the sweep actually does.
       expected: PARAMETER_TABLE.length,
-      tally: tallyOf(await readPartialRows(context.outputDirectory)),
+      tally: tallyOf(context.sweep.rows()),
     };
   }
-  if (context.startedAt === null || context.finishedAt === null) {
-    // Either nothing has run, or a start is somehow half-recorded. Both mean there
-    // is no run of ours to describe; the snapshot on disk is still served by
-    // /vcu-params either way.
+  if (context.startedAt === null || context.finishedAt === null || context.lastTally === null) {
+    // Either nothing has run, or a run is half-recorded between its two callbacks.
+    // Both mean there is no run of ours to describe; the snapshot on disk is still
+    // served by /vcu-params either way.
     return { phase: "idle" };
   }
-  const snapshot = await loadRunArchive(context.outputDirectory, context.archivesAtStart);
-  const tally = tallyOf(snapshot?.rows ?? (await readPartialRows(context.outputDirectory)));
   if (context.failure) {
     return {
       phase: "failed",
       startedAt: context.startedAt,
       finishedAt: context.finishedAt,
       reason: context.failure,
-      tally,
+      tally: context.lastTally,
     };
   }
   return {
     phase: "finished",
     startedAt: context.startedAt,
     finishedAt: context.finishedAt,
-    // Absent an archive we cannot claim the sweep covered everything. Saying "not
-    // complete" about a complete run costs a re-run; the other way round hides a
-    // truncated one, which is the mistake that matters.
-    complete: snapshot?.complete ?? false,
-    tally,
+    complete: context.lastComplete,
+    tally: context.lastTally,
   };
 }
 
@@ -357,118 +356,4 @@ export function tallyOf(rows: VcuParameterRow[]): VcuReadTally {
     byStatus,
     micros: [...perMicro.values()].sort((left, right) => left.micro.localeCompare(right.micro)),
   };
-}
-
-/**
- * The rows a sweep has written down so far.
- *
- * A resumed sweep's file also holds rows from the run before it. They are counted,
- * because they are part of the result this run will produce — the script does not
- * re-ask a parameter that already answered.
- */
-async function readPartialRows(directory: string): Promise<VcuParameterRow[]> {
-  let text: string;
-  try {
-    text = await readFile(join(directory, PARTIAL_FILE), "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      // Not fatal — progress is a nicety and the archive is the real record — but a
-      // permissions problem here would otherwise show as a sweep reading nothing.
-      console.warn(`vcu-read: could not read the progress file in ${directory}:`, err);
-    }
-    return [];
-  }
-  const rows: VcuParameterRow[] = [];
-  const lines = text.split("\n");
-  for (const [position, line] of lines.entries()) {
-    if (line.trim().length === 0) {
-      continue;
-    }
-    try {
-      rows.push(JSON.parse(line) as VcuParameterRow);
-    } catch (err) {
-      // Only the LAST line can be a torn append — a file being written to as we
-      // read it. That one is expected, common, and not worth a log line every time
-      // the page polls: the row arrives whole on the next read a moment later.
-      //
-      // A bad line anywhere else is a damaged file (an interrupted write, a bad
-      // block on the SD card) and would otherwise just quietly lower the count,
-      // which is the silent-failure shape CLAUDE.md forbids. The script's own
-      // reader draws the same line — see loadPartial() in
-      // scripts/read-vcu-params.ts.
-      if (position !== lines.length - 1) {
-        console.warn(`vcu-read: ${PARTIAL_FILE} line ${position + 1} is not valid JSON, skipping it:`, err);
-      }
-      continue;
-    }
-  }
-  return rows;
-}
-
-/**
- * The snapshot this run left behind.
- *
- * Every run writes a timestamped archive, complete or not, whether or not anything
- * was read — unlike `latest.json`, which the script deliberately leaves alone when
- * a run read nothing so a good baseline is not clobbered by a bike that was
- * asleep. That is exactly the distinction service mode has to keep, so the archive
- * is what is read here and `latest.json` is never consulted.
- *
- * ⚠️ Which archive is OURS is decided by "it was not there when we started", not
- * by comparing its `readAt` against our `startedAt`. Both of those are `Date.now()`
- * on a Pi with no RTC that steps its own clock from GPS mid-run (src/gps/clock.ts),
- * so that comparison is exactly the cross-clock arithmetic ../monotonic.ts exists
- * to forbid: a backward step between our start and the script's finish would make a
- * PREVIOUS run's archive look like ours, and put its 277 reads on screen under a
- * sweep that managed none. Sorting the filenames has the same flaw, since they are
- * timestamps too. A set difference has no clock in it at all.
- *
- * The listing is taken at start and deliberately not awaited there, so a child that
- * wrote its archive within microseconds of spawning could be mistaken for a
- * pre-existing one. A sweep is ~277 reads over a 300 ms reply window; a readdir is
- * not, so this is theoretical rather than a race to design around.
- *
- * Returns null when nothing new appeared — the script died before writing one, or
- * never got far enough to run.
- */
-async function loadRunArchive(
-  directory: string,
-  archivesAtStart: Promise<Set<string>> | null
-): Promise<VcuParameterSnapshot | null> {
-  if (!archivesAtStart) {
-    return null;
-  }
-  const before = await archivesAtStart;
-  const written = [...(await listArchives(directory))].filter(entry => !before.has(entry)).sort();
-  // Sorted so a run that somehow produced two takes the later one. Only a
-  // tie-break; it is not what decides whether an archive is ours.
-  const ours = written.at(-1);
-  if (!ours) {
-    return null;
-  }
-  try {
-    return JSON.parse(await readFile(join(directory, ours), "utf-8")) as VcuParameterSnapshot;
-  } catch (err) {
-    console.warn(`vcu-read: could not read the archive ${ours}:`, err);
-    return null;
-  }
-}
-
-/**
- * The snapshot archives in a directory. `latest.json` is excluded: it is a COPY of
- * whichever archive last read something, so counting it would make a run that read
- * nothing appear to have written two files.
- *
- * A directory that cannot be listed yields an empty set rather than throwing —
- * which then reads as "no new archive", i.e. an honest "we do not know how that run
- * ended" instead of a crash inside a progress poll.
- */
-async function listArchives(directory: string): Promise<Set<string>> {
-  try {
-    const entries = await readdir(directory);
-    return new Set(entries.filter(entry => entry.endsWith(".json") && entry !== LATEST_FILE));
-  } catch (err) {
-    console.warn(`vcu-read: could not list ${directory}:`, err);
-    return new Set();
-  }
 }
