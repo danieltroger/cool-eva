@@ -85,8 +85,18 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //
 // A_WARN_LAMP: ✅ set in 3564 of 3601 standstill frames (99.0 %) and in 0 of 192 frames above
 // 6 km/h, which is the ABS self-test — it needs road speed to clear, and cannot clear on a
-// bike that never moved. b4 takes exactly two values in the whole lap, 0x00 and 0x04, so bit 2
-// is the only bit of the 0x0C mask ever seen set; the mask is Energica's and is kept as-is.
+// bike that never moved.
+//
+// ⚠️ It is a TWO-BIT field, not a flag. Energica's mask is 0x0C >> 2, so the range is 0…3, and
+// the mask is kept as the vendor wrote it rather than narrowed to the one bit this bike has
+// been seen to use — b4 takes exactly two values in the whole lap, 0x00 and 0x04, so bit 2 is
+// the only bit of the pair ever observed set. Narrowing it to `? 1 : 0` would throw away
+// whatever a second lamp state means the first time this bike produces one, on a signal whose
+// entire purpose is to be read when something is wrong. Two consequences are handled elsewhere
+// and are worth knowing about here: public/lib/bounds.js names it at [0, 3] so the `diag`
+// group's boolean rule cannot reject a 2 or a 3 as a dead sensor, and it carries no deadband,
+// because at 1 the logging rule would pass |2 − 0| while failing |1 − 0| and log transitions
+// inconsistently.
 //
 // ⚠️ NOT decoded, and this is the honest reason: b1, b3, b6 and b7 are constant 0x00 across
 // all 4087 frames. That takes `A_FSENS_FAIL`, `A_RSENS_FAIL` and `A_EVENT` (all in b4) and

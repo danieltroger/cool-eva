@@ -1,5 +1,8 @@
 import { STREAM_IDS, decodeFrame } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
+// The dashboard's own plausibility gate, imported rather than reimplemented — see the
+// boolean-deadband check below for why asking it beats keeping a copy of its rules.
+import { boundsFor } from "../public/lib/bounds.js";
 import { resetAttitudeDecoder } from "../src/can/attitude.ts";
 import { resetGpsCanDecoder } from "../src/can/gps.ts";
 import type { DecodedValue } from "../src/can/frame.ts";
@@ -32,9 +35,10 @@ import type { DecodedValue } from "../src/can/frame.ts";
 // with a blank unit, which switches off the dashboard's plausibility gate for it (see
 // public/lib/bounds.js — a blank unit in a non-boolean group is unbounded).
 //
-// No boolean signal may carry a deadband of 1 or more. `Math.abs(1 - 0) > 1` is false, so
-// such a signal logs its first sample after boot and then never logs again — a trap that
-// looks exactly like a flag which never changed.
+// No signal bounds.js gates to 0/1 may carry a deadband of 1 or more. `Math.abs(1 - 0) > 1` is
+// false, so such a signal logs its first sample after boot and then never logs again — a trap
+// that looks exactly like a flag which never changed. Which signals those are is asked of
+// bounds.js directly rather than restated here, so the two cannot disagree.
 
 const failures: string[] = [];
 
@@ -133,19 +137,33 @@ if (undeclared.length > 0) {
 }
 console.log(`${emitted.size} distinct keys emitted, all declared in the registry`);
 
-// bounds.js treats a blank unit in the "controls" or "diag" group as a 1/0 flag. Mirror that
-// rule here: any such signal with a deadband of 1 or more can only ever log once per boot.
-const BOOLEAN_GROUPS = new Set(["controls", "diag"]);
+// Which signals are 1/0 flags is bounds.js's decision, not this file's — it depends on a group
+// set (`BOOLEAN_GROUPS`) and a per-key table that both grow, and "buttons" joined that set on
+// 2026-08-16 without this check noticing. So ask bounds.js instead of keeping a second copy of
+// its rule: a signal it gates to exactly [0, 1] is a flag by definition, whatever route inside
+// that file arrived at the answer. The two cannot drift, because there is only one of them.
+//
+// A deadband of 1 or more on such a signal is a trap in two directions. `Math.abs(1 - 0) > 1`
+// is false, so a true 0/1 flag logs its first sample after boot and then never logs again —
+// silently, forever, looking exactly like a flag that never changed. And on a field that is
+// gated to 0/1 but can actually carry more (abs_warning_lamp is a two-bit field, which is why
+// it is named at [0, 3] in bounds.js rather than left to the group rule) it would be worse than
+// silent: |2 − 0| passes where |1 − 0| does not, so some transitions log and some vanish.
+let booleanSignalCount = 0;
 for (const signal of SIGNALS) {
+  const range = boundsFor(signal.key, signal.unit, signal.group);
+  if (!range || range[0] !== 0 || range[1] !== 1) {
+    continue;
+  }
+  booleanSignalCount += 1;
   const deadband = signal.deadband ?? 0;
-  if (BOOLEAN_GROUPS.has(signal.group) && signal.unit === "" && deadband >= 1) {
+  if (deadband >= 1) {
     failures.push(
-      `${signal.key} is a 1/0 flag (group "${signal.group}", blank unit) with deadband ${deadband} — |1 − 0| > ${deadband} is false, so it would log once and then never again`
+      `${signal.key} is gated to 0/1 by bounds.js (group "${signal.group}", unit "${signal.unit}") but carries deadband ${deadband} — |1 − 0| > ${deadband} is false, so it would log once after boot and then never again`
     );
   }
 }
-const booleanSignalCount = SIGNALS.filter(signal => BOOLEAN_GROUPS.has(signal.group) && signal.unit === "").length;
-console.log(`${booleanSignalCount} boolean signals checked for a swallowing deadband`);
+console.log(`${booleanSignalCount} signals bounds.js gates to 0/1, all checked for a swallowing deadband`);
 
 // ---------------------------------------------------------------------------------------
 // 3. Replay of real frames, copied byte for byte out of the 2026-08-02 garage lap
@@ -264,6 +282,13 @@ const REPLAY: ReplayCase[] = [
     frame: "59 01 57 0B 85 00 4C 1D",
     why: "the only other 100 m average the lap ever produced, 13.3 km/kWh against 7.500 kWh/100 km — which IS reciprocal, unlike the 139.2/0.741 pair it replaced",
     expect: { km_per_kwh_100m_can: 13.3, kwh_per_100km_100m_can: 7.5 },
+  },
+  {
+    id: 0x10b,
+    frame: "59 01 54 0B 00 00 E8 FD",
+    why: "⚠️ SYNTHETIC — the 100 m pair saturated while the instantaneous pair is live. Never seen in the capture, but the two pairs are the same quantity over different windows, so the state must exist for both; unguarded and read signed, 65000 would arrive as −53.6 km/kWh, small enough to pass any sane bound and read as regen",
+    expect: { km_per_kwh_can: 34.5, kwh_per_100km_can: 2.9 },
+    absent: ["km_per_kwh_100m_can", "kwh_per_100km_100m_can"],
   },
   {
     id: 0x100,

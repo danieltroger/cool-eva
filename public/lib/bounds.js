@@ -109,10 +109,27 @@ const BY_KEY = {
   // about the decode, and only the decode is knowable from this side.
   "km_per_kwh_can": [0, 6500],
   "kwh_per_100km_can": [0, 65],
-  // The 100 m averages are read as signed (Energica declares them so; a 100 m window of
-  // net regen would be negative), so their range is the s16 one either side of zero.
-  "km_per_kwh_100m_can": [-3300, 3300],
-  "kwh_per_100km_100m_can": [-33, 33],
+  // The 100 m averages are the same two quantities over a different window, read
+  // unsigned and saturation-guarded exactly like the pair above, so they get the same
+  // band. See src/can/consumption.ts for why unsigned, against Energica's own `short`.
+  "km_per_kwh_100m_can": [0, 6500],
+  "kwh_per_100km_100m_can": [0, 65],
+  // ⚠️ NOT a 1/0 flag, despite living in `diag` with a blank unit. Energica's
+  // `A_WARN_LAMP` is `byte 4 mask 0x0C >> 2` — TWO bits, so 0…3 — and the mask is kept
+  // as the vendor wrote it rather than narrowed to the one bit this bike has been seen
+  // to use. Without this entry the group-wide boolean rule would gate it to [0, 1] and
+  // reject lamp states 2 and 3 as a dead sensor, precisely when the lamp has something
+  // to say. BY_KEY is consulted before BOOLEAN_GROUPS, so naming it here is what wins.
+  "abs_warning_lamp": [0, 3],
+  // 0x125's two channels are raw counts with a blank unit in a non-boolean group, which
+  // is the combination that falls through every rule in this file and ends up ungated —
+  // the same miss `fast_dc_contactor` above had to be fixed for. There is no scale to
+  // bound them by (see src/can/drive.ts), so the bound is derived from the one thing
+  // that is known: at the measured ~109-117 counts per km/h this bike's 200 km/h top
+  // speed is at most ~23 400 counts, so 40 000 cannot reject a real reading and does
+  // reject the wild value a wrong offset or width would produce.
+  "speed_redundant_a_raw": [0, 40_000],
+  "speed_redundant_b_raw": [0, 40_000],
 };
 
 /**

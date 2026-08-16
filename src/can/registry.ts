@@ -480,10 +480,14 @@ export const SIGNALS: SignalDef[] = [
   // and 2802 at log-on-change — so the deadband is already doing most of the work available.
   { key: "wheel_speed_front_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25 },
   { key: "wheel_speed_rear_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25 },
-  // A 1/0 lamp, so log-on-change is exactly one row per transition: it moved ONCE in the whole
-  // lap, 2 rows. It must not carry a deadband at all — |1 − 0| > 1 is false, so any deadband
-  // of 1 or more would log the first sample and then never log again, which looks identical to
-  // a lamp that never changed.
+  // ⚠️ NOT a 1/0 flag, even though it has only ever been seen as 0 or 1: Energica's mask is
+  // `byte 4 mask 0x0C >> 2`, two bits, so the field's range is 0…3 and the decoder keeps the
+  // vendor's mask rather than narrowing it. public/lib/bounds.js therefore names it explicitly
+  // at [0, 3]; without that the `diag` group's blank-unit boolean rule would gate it to [0, 1]
+  // and reject states 2 and 3 as a dead sensor. It must also not carry a deadband — at 1 the
+  // logging rule would be inconsistent rather than merely silent (|2 − 0| > 1 passes where
+  // |1 − 0| > 1 does not), so a lamp stepping 0 → 1 → 2 would log some transitions and drop
+  // others. It moved ONCE in the whole lap, 2 rows, so there is nothing to tame anyway.
   { key: "abs_warning_lamp", unit: "", group: "diag", source: "stream" },
   // Whole bar, so log-on-change is one row per bar of change: 50 rows for the lap's braking,
   // 441/h. Nothing to smooth, and a deadband of 1 here would swallow every single-bar step,

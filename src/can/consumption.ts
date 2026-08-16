@@ -11,8 +11,7 @@
 // Worth knowing against #39, which measures consumption by integrating pack power: the bike
 // broadcasts its own answer at 10 Hz and has done all along.
 
-import type { DecodedValue } from "./frame.ts";
-import { i16le, u16le } from "./frame.ts";
+import { type DecodedValue, u16le } from "./frame.ts";
 
 export const CONSUMPTION_CAN_ID = 0x10b;
 
@@ -37,10 +36,14 @@ export function decodeConsumptionFrame(data: Buffer): DecodedValue[] {
       { key: "kwh_per_100km_can", value: instantKwhPer100Km / 1000 }
     );
   }
-  values.push(
-    { key: "km_per_kwh_100m_can", value: i16le(data[4], data[5]) / 10 },
-    { key: "kwh_per_100km_100m_can", value: i16le(data[6], data[7]) / 1000 }
-  );
+  const average100mKmPerKwh = u16le(data[4], data[5]);
+  const average100mKwhPer100Km = u16le(data[6], data[7]);
+  if (!isSaturated(average100mKmPerKwh) && !isSaturated(average100mKwhPer100Km)) {
+    values.push(
+      { key: "km_per_kwh_100m_can", value: average100mKmPerKwh / 10 },
+      { key: "kwh_per_100km_100m_can", value: average100mKwhPer100Km / 1000 }
+    );
+  }
   return values;
 }
 
@@ -82,11 +85,29 @@ const isSaturated = (raw: number): boolean => raw === 0 || raw >= SATURATED_HIGH
 // km/kWh one. Read the other way round it would claim the parked bike is using no energy per
 // km and returning 6500 km/kWh, which is backwards.
 //
-// 🟡 The 100 m averages carry the same scalings by position, and Energica declares them SIGNED
-// where the instantaneous pair is unsigned — so a 100 m window of net regen would read negative,
-// which is physically sensible and is why they are read as s16 here (the same call 0x020's
-// temperatures already make). But this lap only ever produced TWO values for them, 1392/741
-// held for 3833 frames and 133/7500 for 255, one change in seven minutes. 133/7500 is
+// 🟡 The 100 m averages carry the same scalings by position, and get the same saturation guard,
+// for the same reason: they are the same two quantities over a different window, so the state
+// where consumption is undefined has to exist for them too. This lap never showed it — but a
+// clamped 65000 arriving unguarded is worse here than in the instantaneous pair, because it is
+// small enough to look like an ordinary reading rather than an obvious sentinel.
+//
+// ⚠️ They are read UNSIGNED, and this is the one place this file disagrees with Energica, which
+// declares them `short` where the instantaneous pair is `ushort`. A signed read is tempting —
+// it is the call src/can/decode.ts already makes for 0x020's temperatures, where the argument is
+// that signed "cannot regress anything" because no real temperature reaches 3276.7 °C. That
+// argument does NOT carry over: km/kWh × 10 demonstrably does exceed 32767, because the
+// instantaneous field on this very frame reached 33793 (3379.3 km/kWh) during the garage lap,
+// paired with 0.030 kWh/100 km exactly as the reciprocal requires. So a signed read here would
+// turn a real high-coasting average into a large negative — a plausible-looking regen figure —
+// which is precisely the failure the unsigned read cannot produce.
+//
+// The residual announces itself instead of hiding, which is why unsigned is the safe direction:
+// if these fields really are signed and a 100 m window of net regen ever occurs, it shows up as
+// a value near 6553.5 km/kWh. That is impossible rather than plausible, and it is the signal to
+// revisit this. A quietly negative number would not be.
+//
+// The other reason to keep them 🟡: this lap only ever produced TWO values, 1392/741 held for
+// 3833 frames and 133/7500 for 255, one change in seven minutes. 133/7500 is
 // reciprocal-consistent under these scalings and 1392/741 is not — which is what two
 // independently averaged quantities do, and also what a wrong scale would do. Two samples is
 // not a confirmation. They are logged (at one row per capture they cost nothing) so a real ride
