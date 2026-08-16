@@ -207,8 +207,30 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x0a0,
     frame: "6E 00 63 00 00 00 00 00",
-    why: "18:20:25.255 — rolling with the lamp clear; front 110 counts against rear 99, the ~9 % channel disagreement that stops either being called calibrated km/h",
+    why: "18:20:25.255 — rolling with the lamp clear; front 110 counts against rear 99, which is the garage lap's front/rear spread. NOT a channel disagreement: it is steering geometry at walking pace, and on the road the same ratio is 0.995 (see src/can/abs.ts)",
     expect: { wheel_speed_front_kmh: 6.1875, wheel_speed_rear_kmh: 5.56875, abs_warning_lamp: 0 },
+  },
+  {
+    id: 0x0a0,
+    frame: "A1 06 B7 06 00 00 00 00",
+    why: "2026-08-04 18:08:10.545 in capture-20260804-035631-c8fe853f.log — 97 km/h on the motorway, the only replay case where the wheel-speed HIGH bytes are non-zero, so it is what actually exercises the LE u16 read (the garage lap never passed 255 counts). GPS read 97 km/h with a fix and 9 satellites 0.19 s earlier and 0.37 s later, against 95.46/96.69 km/h here and 100.9 from 0x104 — the whole calibration story in one frame",
+    expect: {
+      wheel_speed_front_kmh: 95.45625,
+      wheel_speed_rear_kmh: 96.69375,
+      abs_warning_lamp: 0,
+      front_brake_pressure_bar: 0,
+    },
+  },
+  {
+    id: 0x0a0,
+    frame: "FF FF FF FF 00 00 00 00",
+    why: "the wheel-count sentinel, 10 frames across the two 2026-08-04 road captures. Passed through as 3686.34 km/h ON PURPOSE — bounds.js gates the wheel speeds to [0, 300] so it shows as a fault, where 0x10B's 65000 has to be dropped in the decoder because 65 kWh/100 km would pass bounds. Pinning it here so neither behaviour gets 'made consistent' with the other",
+    expect: {
+      wheel_speed_front_kmh: 3686.34375,
+      wheel_speed_rear_kmh: 3686.34375,
+      abs_warning_lamp: 0,
+      front_brake_pressure_bar: 0,
+    },
   },
   {
     id: 0x127,

@@ -109,7 +109,27 @@ export function decodeRedundantSpeedFrame(data: Buffer): DecodedValue[] {
 // round constant under any reading — not ×100, not the motor's 42.0 rpm/km/h, not the ABS
 // front-wheel scale (105.2 counts per ABS km/h). Per-sample ratios spread 108.8-116.8 across the
 // interquartile range. Publishing that as km/h would put a made-up divisor on the dashboard next
-// to a speed that IS calibrated. If a future ride pins it, the counts already logged convert.
+// to a speed that IS calibrated. (That ride has since happened — see the correction below.)
+//
+// ⚠️ 2026-08-16: that ~109 came from the garage lap fitted against `speed_can_kmh`, and BOTH
+// halves of that are now known to be bad — 0x104 reads 3.5 % fast against GPS, and the garage lap
+// never passed 11.5 km/h, which is enough to distort a fit on its own (see src/can/abs.ts, where
+// the same two mistakes cost the ABS scale 4 % and invented a 9 % channel disagreement).
+// Re-fitted against `gps_speed_kmh` over 199 steady-state samples at 40-100 km/h from the two
+// 2026-08-04 road captures: **105.1 and 103.7 counts per true km/h**, IQR 104.7-105.5 and
+// 103.3-104.0. Note that is NOT 109 × 1.035 = 113 — the garage-lap number was not merely biased
+// by the reference, it was wrong in the other direction too, so it cannot be rescued by scaling.
+//
+// The conclusion survives unchanged: 105.1 is no rounder than 109 was, so these still log as raw
+// counts. Two claims above do NOT survive and are corrected here rather than left standing:
+//   • "BYTE-IDENTICAL in 19 823 of 22 480" is garage-lap-only. At road speed (both channels above
+//     4000 counts, n = 36 195) they are identical in 15 frames — 0.04 % — and otherwise sit a
+//     steady +112 counts apart, b0-1 above b2-3 by 1.5 %. A fixed offset at steady state, not a
+//     lag: the gap is the same in the steady-state windows as in the raw frames.
+//   • the 108.8-116.8 interquartile spread is also garage-lap-only; against GPS the spread is
+//     under 1 %, so these channels are far better behaved than that range suggested.
+// Still not converted to km/h, and now for a better reason than "no scale is known": there are
+// two channels 1.5 % apart, and picking one to publish would be picking which to believe.
 //
 // ❓ b4-7 is left alone: two more 16-bit channels, both always EVEN (all 22 480 frames), ranging
 // to 65530, correlating with speed at only r = +0.67 and stepping by neither 1 nor 2 between
