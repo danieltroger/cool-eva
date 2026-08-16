@@ -140,7 +140,16 @@ export type FreezeFrameLogExit =
 export type FreezeFrameLogCompletion =
   /** The micro said the upload was over. The only outcome that means "this is the whole log". */
   | "finished"
-  /** `cancel()`, a closing service gate, or a shutdown. What was read is still returned. */
+  /**
+   * `cancel()`, or a closing service gate calling it. What was read is still
+   * returned, and the transfer was closed with `0x37` on the way out.
+   *
+   * ⚠️ NOT a `client.stop()`. That is a harder stop — it refuses every subsequent
+   * transmit, so the closing `0x37` cannot go out either — and a read that ends
+   * with the micro possibly still holding an open upload is `failed`, with
+   * "client stopped" as its reason. The two look similar from the outside and
+   * differ in the one way that matters to the next read.
+   */
   | "cancelled"
   /** `maxBlocks` reached. The log is longer than we were willing to read in one go. */
   | "block-cap"
@@ -281,6 +290,7 @@ async function readBlocks(
   const { client, onProgress } = state.options;
   const paceMs = state.options.paceMs ?? DEFAULT_PACE_MS;
   const maxBlocks = state.options.maxBlocks ?? DEFAULT_MAX_BLOCKS;
+  let bytesSoFar = 0;
 
   while (state.blocks.length < maxBlocks) {
     if (state.cancellation !== null) {
@@ -305,11 +315,11 @@ async function readBlocks(
       return { completion: "finished", reason: null };
     }
     state.blocks.push(block.reply.body);
-    onProgress?.({
-      blocks: state.blocks.length,
-      bytes: state.blocks.reduce((total, body) => total + body.length, 0),
-      elapsedMs: Math.round(since(state.startedAt)),
-    });
+    // Accumulated rather than re-reduced. Re-summing the whole array on every
+    // block is O(n²) over a read that can run to thousands of them, and a running
+    // total costs nothing.
+    bytesSoFar += block.reply.body.length;
+    onProgress?.({ blocks: state.blocks.length, bytes: bytesSoFar, elapsedMs: Math.round(since(state.startedAt)) });
     // Scheduled, not spun. This is the yield that keeps the OBD poller and the
     // dashboard alive across a read that runs for a minute or more.
     await sleep(paceMs);

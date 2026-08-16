@@ -178,6 +178,7 @@ export function startMultiFrameTransfer(options: MultiFrameTransferOptions): Run
     consecutiveFramesUntilNextFlowControl: 0,
     separationTimeMs: 0,
     sawFlowControlFromMicro: false,
+    sawStrayFlowControl: false,
     framesHandled: 0,
     settled: false,
     settle: () => {},
@@ -219,7 +220,14 @@ interface TransferContext {
   consecutiveFramesUntilNextFlowControl: number;
   /** The gap the micro asked for between our Consecutive Frames. */
   separationTimeMs: number;
+  /**
+   * The micro answered one of OUR multi-frame requests with a flow control. This
+   * is the answer to the open question and rides out on the result; it is set only
+   * where request frames were actually outstanding.
+   */
   sawFlowControlFromMicro: boolean;
+  /** A flow control arrived with nothing outstanding. Logged, not reported as the above. */
+  sawStrayFlowControl: boolean;
   framesHandled: number;
   settled: boolean;
   settle: (result: MultiFrameResult) => void;
@@ -303,13 +311,20 @@ function handleFlowControlFromMicro(context: TransferContext, flowControl: VcuFl
     // it is addressed to the tester and no other reader on this socket wants it —
     // but it changes nothing.
     //
+    // ⚠️ And it deliberately does NOT set `sawFlowControlFromMicro`. That flag is
+    // the evidence for the one genuinely open question about this channel — does
+    // A8 answer a multi-frame REQUEST with a flow control? — and every `0x36` in a
+    // 1198-block read is a single-frame request with nothing outstanding. Counting
+    // a stray frame here would answer that question "yes" from a transfer that
+    // never asked it. The log line below is how a stray one is reported instead.
+    //
     // Logged ONCE per transfer, not once per frame. A micro that repeats these is
     // bounded only by the frame budget, and dozens of identical lines in the
     // journal would bury whatever else went wrong in the same second.
-    if (!context.sawFlowControlFromMicro) {
+    if (!context.sawStrayFlowControl) {
       console.log(`vcu: flow control from ${context.options.target} with no request frames outstanding, ignoring`);
     }
-    context.sawFlowControlFromMicro = true;
+    context.sawStrayFlowControl = true;
     return true;
   }
   context.sawFlowControlFromMicro = true;
