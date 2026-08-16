@@ -17,6 +17,7 @@
 // A new device is ignored until the old one is cleared from the dashboard.
 
 import { FRAME_SIZE, GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
+import { SuppressedFixWatcher } from "../gps/fix-watch.ts";
 
 // The GPS sub-frames are byte-identical on CAN 0x410, so their bit unpacking lives
 // in ../gps/decode.ts and is shared with src/can/gps.ts rather than duplicated. The
@@ -112,6 +113,11 @@ function unsigned32(byte3: number, byte2: number, byte1: number, byte0: number):
  */
 export class BleTelemetryDecoder {
   #gps = new GpsMessageDecoder();
+  // BLE needs its own watcher, not a share of the CAN one: the two transports have
+  // separate decoders and therefore separate counts, and this is the transport where a
+  // half-assembled fix was first seen (see the sub-0xFE note in ../gps/decode.ts). One
+  // watcher per session, like the decoder it watches.
+  #suppressedFixes = new SuppressedFixWatcher(this.#gps, "ble");
 
   decode(frame: Uint8Array): DecodedValue[] {
     switch (frame[0]) {
@@ -121,8 +127,11 @@ export class BleTelemetryDecoder {
         return this.#decodeOutput(frame);
       case TYPE_ODOMETER:
         return this.#decodeOdometer(frame);
-      case GPS_MESSAGE_TYPE:
-        return this.#gps.decode(frame);
+      case GPS_MESSAGE_TYPE: {
+        const values = this.#gps.decode(frame);
+        this.#suppressedFixes.check();
+        return values;
+      }
       default:
         return [];
     }

@@ -17,15 +17,23 @@
 // deliberately stateless. One instance is correct: one hub, one bus.
 
 import { GpsMessageDecoder } from "../gps/decode.ts";
+import { SuppressedFixWatcher } from "../gps/fix-watch.ts";
 import type { DecodedValue } from "./frame.ts";
 
 export const GPS_CAN_ID = 0x410;
 
 let busGpsDecoder = new GpsMessageDecoder();
+let suppressedFixWatcher = new SuppressedFixWatcher(busGpsDecoder, "can");
 
 /** Non-GPS frames on 0x410 (seed, vehicle status, odometer) decode to nothing. */
 export function decodeGpsCanFrame(data: Buffer): DecodedValue[] {
-  return busGpsDecoder.decode(data);
+  const values = busGpsDecoder.decode(data);
+  // The decoder is pure and cannot complain for itself, so the transport does it.
+  // Before 2026-08-16 this condition had no symptom at all: a missing coordinate
+  // sub-frame was silently filled in from the last one, which is how rides.db
+  // ended up with single-sample position jumps of 21 km.
+  suppressedFixWatcher.check();
+  return values;
 }
 
 /**
@@ -37,4 +45,5 @@ export function decodeGpsCanFrame(data: Buffer): DecodedValue[] {
  */
 export function resetGpsCanDecoder(): void {
   busGpsDecoder = new GpsMessageDecoder();
+  suppressedFixWatcher = new SuppressedFixWatcher(busGpsDecoder, "can");
 }
