@@ -23,9 +23,12 @@ import { CAPTURED_FRAMES, KNOWN_VARIANT_DIFFERENCES, LIVE_BANK1_READS, parseHexB
 
 // Checks the VCU parameter codec, name table and snapshot diff on a laptop, with no
 // bike — the same trick scripts/decode-dtc-response.ts plays for trouble codes, and
-// for the same reason. There is no test runner in this repo (`npm test` is still
-// the npm placeholder) and this is not the place to introduce one, so the pure
-// modules are kept trivially callable and their fixtures kept real.
+// for the same reason. There is no test framework in this repo and this is not the
+// place to introduce one, so the pure modules are kept trivially callable and their
+// fixtures kept real.
+//
+// Since 2026-08-16 `npm test` runs this, via scripts/run-checks.ts. It is still meant
+// to be run directly as well — that is the only way to pass --dump.
 //
 //   node --experimental-strip-types scripts/check-vcu-params.ts
 //   node --experimental-strip-types scripts/check-vcu-params.ts --dump obd-garage/kwp_scan_raw.txt
