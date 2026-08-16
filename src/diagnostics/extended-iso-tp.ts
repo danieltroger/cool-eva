@@ -35,10 +35,15 @@
 //
 // src/vcu/kwp-client.ts, which owns the only KWP session machinery in this repo,
 // deliberately never sends one: "no flow-control frame is ever sent: this module
-// derives no transmit address from anything the bus said". That property is
-// preserved here — a flow-control frame would go to the target the CALLER named,
-// not to anything read off the bus — but wiring it up is a change to
-// src/vcu/, which is not this branch's to make. See the PR.
+// derives no transmit address from anything the bus said". That property survives
+// a freeze-frame read — the flow-control frame goes to the target the CALLER
+// named, never to anything read off the bus — but the transport still has to be
+// taught to send it, and that is a change to src/vcu/, not to this file.
+//
+// Whoever does it: take a lease from src/vcu/bus-lease.ts first. The micros answer
+// on ONE CAN id with no request/response tag, so a freeze-frame reply and a
+// parameter read in flight together are resolved by whichever frame lands first —
+// and a multi-frame read holds the bus for several frames rather than one.
 
 /** What one frame did to the transfer. Mirrors src/can/iso-tp.ts' vocabulary on purpose. */
 export type ExtendedIsoTpResult =
