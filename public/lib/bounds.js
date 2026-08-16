@@ -60,6 +60,14 @@ const BY_KEY = {
   // would reject most of the range. 0 is meaningful too: it is the bike's own way
   // of saying no freeze frame is stored.
   "freeze_frame_dtc": [0, 65_535],
+  // The DC fast-charge contactor monitor: a 1/0 flag that lives in a group full of
+  // real measurements. It needs this per-key entry because neither of the other two
+  // routes reaches it — `charge` is not a BOOLEAN_GROUP and must not become one
+  // (`mains_v` and `dc_a` live there), and its unit is "" precisely so it cannot fall
+  // into BY_UNIT's numeric ranges. Without this line boundsFor() returns null and the
+  // signal renders whatever arrives, which is the one outcome this file exists to
+  // prevent. Same reasoning as the `buttons` group, applied one signal at a time.
+  "fast_dc_contactor": [0, 1],
 };
 
 /**

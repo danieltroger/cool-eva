@@ -19,6 +19,7 @@ import {
 import { diffSnapshots, toParameterRow, type VcuParameterSnapshot } from "../src/vcu/snapshot.ts";
 import { createVcuKwpClient, type VcuReadOutcome } from "../src/vcu/kwp-client.ts";
 import { exportableRowCount, snapshotToBackupCsv } from "../src/vcu/backup-csv.ts";
+import { SIGNALS } from "../src/can/registry.ts";
 import { tallyOf } from "../src/vcu/read-runner.ts";
 import {
   evaluateServiceGate,
@@ -704,6 +705,20 @@ expect(
   `a signal excluded from the gate has been wired back into it: ${serviceGateExcludedKeys()
     .filter(key => serviceGateSignalKeys().includes(key))
     .join(", ")}`
+);
+
+// …and every one of them must still be a signal that EXISTS. Raised in review of the
+// 2026-08-16 beam rename, which is exactly the case it guards: the check above only
+// asks "is this name absent from RULES", and a name nothing produces is trivially
+// absent from everything. So `"charging"` would have sat in that list for ever after
+// the signal it names stopped being decoded, still passing, while the reasoning
+// attached to it quietly stopped applying to anything — a list of names with no
+// spelling check is a comment wearing a check's clothes.
+const registeredKeys = new Set(SIGNALS.map(signal => signal.key));
+const unknownExclusions = serviceGateExcludedKeys().filter(key => !registeredKeys.has(key));
+expect(
+  unknownExclusions.length === 0,
+  `the gate excludes signals that no longer exist, so their reasoning guards nothing: ${unknownExclusions.join(", ")}`
 );
 
 // ── 11. Probing one identifier: banks, targets and what a reply means ──────

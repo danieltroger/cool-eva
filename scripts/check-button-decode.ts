@@ -269,6 +269,26 @@ for (const key of BUTTON_KEYS) {
   }
 }
 
+// The same gate, for the 1/0 signals this frame carries that are NOT in the buttons
+// group. Checked separately and by name because they get there by a different route:
+// `controls` is a BOOLEAN_GROUP, while `fast_dc_contactor` sits in `charge` alongside
+// real measurements and needs its own BY_KEY entry. Raised in review, where it turned
+// out to be the one flag added here that had fallen through both routes and was
+// rendering unbounded.
+for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp"]) {
+  const signal = defined.get(key);
+  if (!signal) {
+    failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
+    continue;
+  }
+  const bounds = boundsFor(key, signal.unit, signal.group);
+  if (!bounds || bounds[0] !== 0 || bounds[1] !== 1) {
+    failures.push(
+      `public/lib/bounds.js does not gate ${key} (group "${signal.group}", unit "${signal.unit}") to 0…1 — got ${JSON.stringify(bounds)}`
+    );
+  }
+}
+
 console.log("");
 if (failures.length > 0) {
   console.error("FAILED:");

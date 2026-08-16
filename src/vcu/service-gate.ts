@@ -49,8 +49,8 @@
 //    PIDs 0D and 0C, and the gate must refuse it.
 //  • Six days of real riding (rides.db, 6.2 M rows, analysed 2026-08-16) settled
 //    four things the captures alone could not, and every one of them changed this
-//    file: the bit then called `charging` is the high beam; a charging bike stops sending 0x104
-//    entirely; `go_request` does not lead `go`; and `go`/`energized` both read 0
+//    file: the bit then called `charging` is the high beam; a charging bike stops
+//    sending 0x104 entirely; `go_request` does not lead `go`; and `go`/`energized` read 0
 //    while the bike rolls at up to 6.7 km/h. The notes are at each rule.
 //  • What CANNOT be checked without the bike is the thing the gate exists for: that
 //    these bits move the instant a real motorcycle starts to roll away, and that the
