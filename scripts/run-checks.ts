@@ -94,7 +94,9 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-vcu-params.ts",
     covers:
-      "VCU parameter table, request encoding and the read-only guard, framing against frames captured 2026-08-08, " +
+      "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +
+      "parameter 276, and that a bike naming any other one is shouted about rather than silently mislabelled — " +
+      "request encoding and the read-only guard, framing against frames captured 2026-08-08, " +
       "the live bank-1 reads, interpretation, the snapshot diff, the KWP transport against a simulated micro, and — " +
       "since the service-write PR — the write allowlist and its per-parameter ranges, the refusal of every " +
       "non-allowlisted identifier, the seed→key algorithm against four seed/key pairs captured off this bike's own " +

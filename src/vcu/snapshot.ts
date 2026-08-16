@@ -1,5 +1,14 @@
 import { interpretRecord } from "./param-codec.ts";
-import { parameterAtIndex, type ParameterStorageType, type VcuMicro } from "./param-table.ts";
+import {
+  EXPECTED_TABLE_TYPE,
+  TABLE_TYPE_INDICES,
+  checkTableType,
+  describeTableType,
+  parameterAtIndex,
+  type ParameterStorageType,
+  type TableTypeVerdict,
+  type VcuMicro,
+} from "./param-table.ts";
 import type { VcuReadOutcome } from "./kwp-client.ts";
 
 // What a parameter read looks like once it has been written down: one flat row per
@@ -112,6 +121,79 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
     note: interpreted.widthMismatch
       ? `record is ${outcome.record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
       : null,
+  };
+}
+
+/** What a snapshot says about which of Energica's 28 parameter tables this bike runs. */
+export interface TableTypeReport {
+  /** One per `TABLE_TYPE` parameter the sweep actually read. Empty when it read neither. */
+  verdicts: TableTypeVerdict[];
+  /** True only when at least one was read and every one that was read is the expected table. */
+  confirmed: boolean;
+  /**
+   * ⚠️ True when a micro named a table this software does not encode. Its parameter
+   * NAMES are then not to be trusted, and nothing should be written by name.
+   */
+  mismatched: boolean;
+  /** Ready to log or render, worst first. Never empty — "not read" is itself a finding. */
+  lines: string[];
+}
+
+/**
+ * Reads a snapshot's own answer to "which parameter table is this bike running".
+ *
+ * This is the check that stops the 2026-08-16 correction from being a one-off. The
+ * embedded name table was 16406 for a week while the bike had been reporting 16407
+ * since 2026-06-14 — in a dump that had already been taken, in a parameter that had
+ * already been read. Nobody looked. Every name in the UI was therefore a claim about
+ * a table nobody had checked, and it happened to be wrong at exactly one id.
+ *
+ * So: every sweep now reads its own table type back out and says whether the names it
+ * just printed describe the bike that answered. Pure, like everything else here — the
+ * caller decides whether that becomes a log line, a banner, or both.
+ *
+ * ⚠️ The two micros are asked SEPARATELY and can disagree. 276 `TABLE_TYPE_uC` is the
+ * A9's, 277 `TABLE_TYPE_uS` is the A8's, they sit in separate EEPROMs, and as of
+ * 2026-08-16 only the A9's has ever been read on this bike. Id 249 — the one id where
+ * 16406 and 16407 disagree — is an A8 parameter, so the A8's answer is the one still
+ * outstanding. A per-micro verdict is what makes "they disagree" expressible at all.
+ */
+export function reportTableType(snapshot: VcuParameterSnapshot): TableTypeReport {
+  const verdicts: TableTypeVerdict[] = [];
+  for (const row of snapshot.rows) {
+    if (row.status !== "read") {
+      continue;
+    }
+    // `value` over `unsigned` because the table's S/U column is what decides how the
+    // bytes read; they agree here (both are WORD U) and would not for a signed one.
+    const value = row.value ?? row.unsigned;
+    const verdict = value === null ? null : checkTableType(row.index, value);
+    if (verdict) {
+      verdicts.push(verdict);
+    }
+  }
+  const mismatched = verdicts.some(verdict => !verdict.matches);
+  if (verdicts.length === 0) {
+    return {
+      verdicts,
+      confirmed: false,
+      mismatched: false,
+      // Not silence. A sweep that skipped both is a sweep whose every name is
+      // unverified, and that is worth one line rather than none.
+      lines: [
+        `⚠️  Neither ${TABLE_TYPE_INDICES.join(" nor ")} was read, so nothing confirms this bike runs the ` +
+          `${describeTableType(EXPECTED_TABLE_TYPE)} table these names come from.`,
+      ],
+    };
+  }
+  return {
+    verdicts,
+    confirmed: !mismatched,
+    mismatched,
+    lines: verdicts
+      .slice()
+      .sort((left, right) => Number(left.matches) - Number(right.matches))
+      .map(verdict => `${verdict.matches ? "✅" : "🚨"}  ${verdict.message}`),
   };
 }
 

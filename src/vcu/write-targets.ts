@@ -32,6 +32,22 @@ import { registerWritePlanVerifier } from "./write-codec.ts";
 // a bound that is too loose costs a calibration EEPROM. Where a number IS anchored to
 // something measured, the anchor is named.
 //
+// ── ⚠️ The list is a list of NAMES, and a name is a claim about a table ──────
+// Every entry below pairs a name with an index, and which parameter that index IS
+// depends on which of Energica's 28 parameter tables the bike runs. This one runs
+// 16407 (./param-table.ts explains how that was established, 2026-08-16). All five
+// ids here — 16, 48, 49, 258, 259 — are identical in 16406 and 16407, so none of them
+// was ever affected; the one id that differs is 249, which is deliberately not on
+// this list and never was.
+//
+// That is luck rather than design, and parameterFor() below is the part that is not:
+// it re-checks every entry's name against the table at module load, so a bike on a
+// table that renames one of these five refuses to start the service instead of
+// writing 80 into whatever now sits at 258. What it cannot see is a rename in the
+// OTHER direction — a table where some other id is called `MAX_DC_CHG_CURRENT` — which
+// is why ./snapshot.ts's reportTableType() exists and why a sweep says out loud which
+// table the bike named.
+//
 // ── ⚠️ NONE OF THIS HAS BEEN TRANSMITTED (2026-08-16) ────────────────────────
 // The write SERVICE, framing and auth rule are proven — obd-garage/DIAG_ADDRESSES.md
 // §9 is passive analysis of Energica's own software writing to this bike's A8, and

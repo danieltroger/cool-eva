@@ -10,13 +10,18 @@ import {
   type VcuRequest,
 } from "../src/vcu/param-codec.ts";
 import {
+  EMBEDDED_TABLE_TYPE,
+  EXPECTED_TABLE_TYPE,
   PARAMETER_TABLE,
+  TABLE_16407_CORRECTIONS,
   ambiguousParameterNames,
+  checkTableType,
+  decodeTableType,
   parameterAtIndex,
   parametersNamed,
   recordLengthFor,
 } from "../src/vcu/param-table.ts";
-import { diffSnapshots, toParameterRow, type VcuParameterSnapshot } from "../src/vcu/snapshot.ts";
+import { diffSnapshots, reportTableType, toParameterRow, type VcuParameterSnapshot } from "../src/vcu/snapshot.ts";
 import { createVcuKwpClient, type VcuReadOutcome } from "../src/vcu/kwp-client.ts";
 import { exportableRowCount, snapshotToBackupCsv } from "../src/vcu/backup-csv.ts";
 import { SIGNALS } from "../src/can/registry.ts";
@@ -113,6 +118,70 @@ expect(parametersNamed("VSM_DUMMY_WORD10").length === 2, "VSM_DUMMY_WORD10 shoul
 expect(parametersNamed("max_dc_chg_current")[0]?.index === 258, "name lookup should be case-insensitive");
 expect(parametersNamed("NO_SUCH_PARAMETER").length === 0, "an unknown name should resolve to nothing, not to a guess");
 
+// ── 1b. WHICH table this is: 16407, not the 16406 the file text is ──────────
+// The embedded params.ecf is table 16406, off another bike; this one reports 16407 at
+// parameter 276. The two differ at exactly one id and only in its name, and
+// src/vcu/param-table.ts corrects that id rather than swapping the whole file (which
+// would lose the [SECTION] headings and the other bike's values — Energica's own
+// bundles carry neither). See obd-garage/PARAM_TABLES.md.
+expect(EXPECTED_TABLE_TYPE === 16407, `this bike's table should be 16407, the module says ${EXPECTED_TABLE_TYPE}`);
+expect(EMBEDDED_TABLE_TYPE === 16406, `the embedded file should be 16406, the module says ${EMBEDDED_TABLE_TYPE}`);
+const decodedTableType = decodeTableType(EXPECTED_TABLE_TYPE);
+expect(
+  decodedTableType.family === 4 && decodedTableType.revision === 0x017,
+  `TABLE_TYPE = (family << 12) | revision, so 0x4017 is family 4 revision 0x017 — got ${decodedTableType.family}/${decodedTableType.revision}`
+);
+
+// The correction itself. One entry, applied, and nothing else moved. That the module
+// LOADED at all is half the check: applyTable16407Corrections() throws unless the
+// embedded text still calls 249 what 16406 calls it, so a re-copied params.ecf from
+// some other table cannot be silently renamed.
+expect(
+  TABLE_16407_CORRECTIONS.length === 1,
+  `16406 and 16407 differ at one id; the module corrects ${TABLE_16407_CORRECTIONS.length}`
+);
+const corrected = parameterAtIndex(249);
+expect(corrected?.name === "R_BRAKE_POPUP", `249 is R_BRAKE_POPUP in table 16407, the table says ${corrected?.name}`);
+expect(
+  corrected?.micro === "A8" && corrected?.type === "WORD" && corrected?.signed === true,
+  "249 is a signed WORD on the A8 in BOTH tables — which is exactly why a write under the wrong name would have succeeded"
+);
+expect(
+  parametersNamed("LM_TYPE").length === 0,
+  "LM_TYPE is 16406's name for 249 and must not resolve here, or a write aimed at it would land on R_BRAKE_POPUP"
+);
+expect(parametersNamed("R_BRAKE_POPUP")[0]?.index === 249, "R_BRAKE_POPUP should resolve to 249");
+
+// The runtime check, which is the part with a future. A bike that names a table this
+// module does not encode must be shouted about, not averaged into the page.
+const tableTypeMatch = checkTableType(276, 0x4017);
+expect(tableTypeMatch?.matches === true && tableTypeMatch.micro === "A9", "276 = 0x4017 should be recognised as ours");
+expect(
+  checkTableType(276, 0x1017)?.matches === true,
+  "family 1 revision 0x017 is byte-identical content, so 4119 must not be reported as a mismatch"
+);
+expect(checkTableType(276, 0x4016)?.matches === false, "276 = 16406 is the OTHER bike's table and is a mismatch");
+expect(checkTableType(277, 0x4017)?.matches === true, "277 is the A8's copy and is judged the same way");
+expect(checkTableType(258, 0x4017) === null, "an index that is not a TABLE_TYPE parameter has no verdict");
+
+// …and through a whole snapshot, which is how the sweep and /vcu-params reach it.
+const matchingSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 17")]));
+expect(matchingSweep.confirmed && !matchingSweep.mismatched, "a sweep that read 276 = 0x4017 should be confirmed");
+const wrongTableSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 16")]));
+expect(
+  wrongTableSweep.mismatched && !wrongTableSweep.confirmed,
+  "a sweep whose 276 says 16406 must report a mismatch — every NAME it printed would be that table's"
+);
+expect(
+  wrongTableSweep.lines.some(line => line.includes("LM_TYPE")),
+  "the 16406 mismatch should name the one parameter that actually changes, rather than only saying “mismatch”"
+);
+const unaskedSweep = reportTableType(snapshotOf([reading(258, "4B")]));
+expect(
+  !unaskedSweep.confirmed && !unaskedSweep.mismatched && unaskedSweep.lines.length === 1,
+  "a sweep that read neither TABLE_TYPE is unconfirmed rather than confirmed, and says so"
+);
+
 // ── 2. Requests, and the read-only guard ────────────────────────────────────
 // Whole 8-byte frames, zero-padded, which is what actually goes on the wire.
 expect(
@@ -192,9 +261,11 @@ expect(
   "a frame addressed to a micro rather than the tester should be ignored"
 );
 
-// ── 4. The live 2026-08-08 reads, through the real decode path ─────────────
+// ── 4. The live reads, through the real decode path ────────────────────────
 // The record bytes and values are quoted; the frame around them is RECONSTRUCTED
 // here (the notes did not record it), which is why §3 above exists separately.
+// Mostly 2026-08-08; the last row is 276 TABLE_TYPE_uC from the 2026-06-14 A9 dump,
+// and it is the row that proves this table is the right one at all.
 for (const read of LIVE_BANK1_READS) {
   const parameter = parameterAtIndex(read.index);
   if (!parameter) {
@@ -1420,7 +1491,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV, " +
+  "✓ table, its identity as 16407 and the mismatch alarm, request encoding, framing, the live reads, " +
+    "interpretation, diff, the energica_tool.py backup CSV, " +
     "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +
     "seed/key pairs, the write allowlist and its ranges, the RTC frame against two frames that really went out, " +
     "the service stamp, mode 04, the bus lease and the write request parser all check out"
