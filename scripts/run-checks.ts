@@ -42,8 +42,12 @@ import { fileURLToPath } from "url";
 //                         asserting anything, so there is no verdict to collect
 //
 // captured-dtc-transfer.ts, captured-vcu-records.ts and simulated-vcu-micro.ts are
-// fixtures and a test double: data and a stand-in bus, not checks. The two scripts
-// below are what replay them.
+// fixtures and a test double: data and a stand-in bus, not checks. The two replay
+// scripts in CHECKS are what read them.
+//
+// generate-grafana-dtc.ts is in CHECKS but only ever as `--check`. Run bare it rewrites
+// grafana/dashboards/trouble-codes.json and exits 0, which is a generator, not a check;
+// SelfCheck.args is what keeps the distinction in the list rather than in a habit.
 //
 // ## No bike — and no waiting for one
 //
@@ -66,6 +70,17 @@ const CHECK_TIMEOUT_MS = 120_000;
 interface SelfCheck {
   /** Path from the repo root — the same thing you would type to run it by hand. */
   script: string;
+  /**
+   * Fixed flags this script needs to be a check at all. Not argument forwarding — see
+   * runCheck() for why the runner's own argv never reaches a script — but part of the
+   * entry, so what runs here is what the `covers` line claims and cannot drift with
+   * however the suite happens to be invoked.
+   *
+   * generate-grafana-dtc.ts is why this exists: with no flag it REWRITES the dashboard
+   * and exits 0, which under `npm test` would be a check that silently edits a tracked
+   * file and never fails. `--check` is what makes it report instead of act.
+   */
+  args?: string[];
   /** What it covers. Printed as a header, so a red log names what went rather than a path. */
   covers: string;
 }
@@ -81,6 +96,12 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/decode-dtc-response.ts",
     covers:
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",
+  },
+  {
+    script: "scripts/generate-grafana-dtc.ts",
+    args: ["--check"],
+    covers:
+      "the copy of the DTC table embedded in grafana/dashboards/trouble-codes.json as a SQL VALUES list, its NULL-MIL arm and the queryText that claims to mirror it, plus every prose sentence that states how many codes there are",
   },
 ];
 
@@ -123,13 +144,15 @@ type CheckOutcome = { passed: true } | { passed: false; reason: string };
  * one that failed.
  */
 async function runCheck(check: SelfCheck): Promise<CheckOutcome> {
-  // Deliberately no argument forwarding. The checks take different flags, and one of
-  // them takes bare arguments: check-vcu-params.ts has --dump <path>, while
-  // decode-dtc-response.ts reads its arguments as CAN frames to decode *instead of*
-  // the committed capture — which would skip the assertions that make it a check at
+  // Deliberately no forwarding of *this* process's argv. The checks take different
+  // flags, and one of them takes bare arguments: check-vcu-params.ts has --dump <path>,
+  // while decode-dtc-response.ts reads its arguments as CAN frames to decode *instead
+  // of* the committed capture — which would skip the assertions that make it a check at
   // all. A shared argv would therefore mean something different, and wrong, to each.
-  // Run a script directly when you want to pass it something.
-  const child = spawn(process.execPath, ["--experimental-strip-types", check.script], {
+  // Run a script directly when you want to pass it something. check.args is the
+  // opposite of that: fixed per entry, written down next to what the entry claims to
+  // cover, and the same on every run.
+  const child = spawn(process.execPath, ["--experimental-strip-types", check.script, ...(check.args ?? [])], {
     cwd: projectDir,
     stdio: "inherit",
   });

@@ -33,7 +33,7 @@ The corollary is worth checking when you inherit a dashboard: a `time series` pa
 
 **State timelines ignore value mappings on numeric fields.** They label each region with its threshold bucket instead (`-∞+`, or `< 1` if you add a step). Return named text states from SQL — `CASE WHEN value <> 0 THEN 'ACTIVE' ELSE 'clear' END` — and the colours and legend come out right.
 
-**A state timeline whose series are not known in advance needs `queryType: "table"` plus `partitionByValues`.** The pivoted one-column-per-series form only works when you can write the columns out at authoring time — fine for `bms_io_state`'s eight IO lines, impossible for diagnostic codes, where which of the 148 appear is a runtime fact. Measured against Grafana 11.3 with this plugin, on a `(time, metric, state)` query:
+**A state timeline whose series are not known in advance needs `queryType: "table"` plus `partitionByValues`.** The pivoted one-column-per-series form only works when you can write the columns out at authoring time — fine for `bms_io_state`'s eight IO lines, impossible for diagnostic codes, where which of the 154 appear is a runtime fact. Measured against Grafana 11.3 with this plugin, on a `(time, metric, state)` query:
 
 | shape                           | result                                                         |
 | ------------------------------- | -------------------------------------------------------------- |
@@ -80,6 +80,19 @@ A **state timeline needs only the left seed**: its regions run until the next sa
 **A flat line means "no change larger than the deadband", not "no change".** Where the deadband is large (10 counts on `iso_test_*`, 100 on `lmu_cell_mux`) say so on the panel — otherwise the axis implies a resolution the data does not carry. Signals whose deadband exceeds their real range only ever produce one row per boot, so a count of them is a count of service restarts.
 
 **A silent sensor and a steady one are not distinguishable from the value stream.** A state timeline draws its last region to the end of the range whichever it is — that is the panel type, not `spanNulls`, which only bridges nulls _between_ points. And a bounded `spanNulls` cannot separate them here: a healthy module goes 48 minutes between logged samples at a constant 28 °C in the 2026-08-02 file, so any cutoff short enough to catch a dropout fires constantly on settled hardware. Use a dedicated signal — `lmu_comm_warnings` (0x206) — rather than trying to infer it from silence.
+
+## Generated queries
+
+**`trouble-codes.json`'s code table is generated — do not hand-edit it.** Grafana can see the ride log and nothing else, and the ride log stores `dtc_0044_0 = 1`, not "water pump open circuit", so the two panels that name a code carry all 154 of them inline as a SQL `VALUES` CTE. That copy cannot be deleted without a second datasource, so it is derived instead: `scripts/generate-grafana-dtc.ts` rewrites the `VALUES` list from `src/diagnostics/dtc-table.ts` and nothing else in the file.
+
+```
+npm run generate:grafana-dtc   # after any change to the code table
+npm run check:grafana-dtc      # the same thing as `--check`; also checks the prose counts
+```
+
+`npm test` runs that check along with the rest of `scripts/run-checks.ts`, so a stale dashboard is a red build and not something you have to remember to look for.
+
+It was hand-maintained until 2026-08-16 and it had already gone stale: a correction to the water-pump codes in the TypeScript table never reached the JSON, so the dashboard spent months labelling this bike's own `dtc_0044_0` as "P0A07 — water pump locked" when it is P0A05, an open circuit. Nothing looks wrong on screen when a lookup table is wrong; the panel renders a confident name either way. That is the whole argument for generating it.
 
 ## Verifying a dashboard before shipping it
 

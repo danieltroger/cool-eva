@@ -203,7 +203,7 @@ The captures this was developed against are one motorcycle's ride history and ar
 npm test        # about a second; no bike, no can0, no capture
 ```
 
-Runs the self-checks that replay **committed** fixtures: the trouble-code transfer above, and `scripts/check-vcu-params.ts` (parameter table, request encoding, framing, the live reads, interpretation, the snapshot diff, and the KWP transport against a simulated micro). CI runs the same command on every PR, so a change that breaks a decoder or the parameter table goes red rather than green.
+Runs the self-checks that replay **committed** fixtures: the trouble-code transfer above, and `scripts/check-vcu-params.ts` (parameter table, request encoding, framing, the live reads, interpretation, the snapshot diff, and the KWP transport against a simulated micro). It also runs `scripts/generate-grafana-dtc.ts --check`, which compares the fault-code table Grafana carries inline against `src/diagnostics/dtc-table.ts` — a copy that once went stale for months without anything on screen looking wrong. CI runs the same command on every PR, so a change that breaks a decoder, the parameter table or that dashboard goes red rather than green.
 
 There is no test framework — `scripts/run-checks.ts` runs each check as its own process and fails if any of them does, which keeps them runnable by hand exactly as their own headers document. Anything that opens a CAN socket, wants root, or needs a local-only file is deliberately excluded; that list, with a reason for each, is at the top of the runner.
 

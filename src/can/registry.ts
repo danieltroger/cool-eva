@@ -423,7 +423,7 @@ export const SIGNALS: SignalDef[] = [
 
 // One 1/0 signal per trouble code Energica documents, so an active code lands in
 // the ride log with a real unit and group instead of falling through to "misc".
-// Generated from the table for the same reason the cell signals are: 148
+// Generated from the table for the same reason the cell signals are: 154
 // hand-written near-identical lines would bury everything above, and they could
 // drift from the keys the decoder emits.
 //
