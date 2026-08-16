@@ -1,6 +1,6 @@
 import { GpsMessageDecoder } from "../src/gps/decode.ts";
 import { GPS_UTC_FLOOR_EPOCH_S } from "../src/gps/decode.ts";
-import { GpsClockGate, REQUIRED_CONSISTENT_READINGS } from "../src/gps/clock-gate.ts";
+import { GpsClockGate, MIN_SECONDS_BETWEEN_STEPS, REQUIRED_CONSISTENT_READINGS } from "../src/gps/clock-gate.ts";
 
 // Replays real GPS sequences out of rides.db through the real decoder and the real
 // clock gate, on a laptop, with no bike — the same trick scripts/decode-dtc-response.ts
@@ -204,24 +204,39 @@ console.log(`\n── the cooldown must not lock in a bad step `.padEnd(78, "─
   // every one of those corrections; that is what made one frame cost five minutes.
   const gate = new GpsClockGate();
   const start = 1786214100000;
-  let stepped = 0;
-  for (let index = 0; index < 20; index += 1) {
+  const CLOCK_GOES_BAD_AT = 8;
+  let firstRecoveryMs = -1;
+  for (let index = 0; index < 400; index += 1) {
     const monotonic = start + index * 1000;
     const gps = 1786214100 + index;
-    // Pretend the clock was stepped to 2060 at index 5, as the bug did.
-    const systemClock = index < 5 ? gps : gps + 1_057_968_000;
-    if (gate.offer(gps, systemClock, monotonic).step) {
-      stepped += 1;
+    // A normal session, then at index 8 the wall clock is 34 years out — as it was
+    // for 299.9 s and 501.5 s in the log — and the satellites go on saying so.
+    const systemClock = index < CLOCK_GOES_BAD_AT ? gps : gps + 1_057_968_000;
+    const verdict = gate.offer(gps, systemClock, monotonic);
+    if (verdict.step && index >= CLOCK_GOES_BAD_AT && firstRecoveryMs < 0) {
+      firstRecoveryMs = monotonic - (start + CLOCK_GOES_BAD_AT * 1000);
+      if (verdict.reason !== "clock-implausible") {
+        failures.push(`recovery from a bad step should be reported as clock-implausible, got ${verdict.reason}`);
+      }
     }
   }
-  // Corroboration takes REQUIRED_CONSISTENT_READINGS, then the recovery step fires
-  // immediately rather than 300 s later; after that the clock is notionally right and
-  // the same offer would stop asking. Two steps is the fix working; one is it never
-  // recovering, which is the bug.
-  if (stepped < 2) {
-    failures.push(`a clock left 34 years out must be re-stepped despite the cooldown, but stepped ${stepped} time(s)`);
+  // The number that matters. Before 2026-08-16 this was MIN_SECONDS_BETWEEN_STEPS —
+  // 300 s of rows stamped 2060 — because the cooldown swallowed every correction. It
+  // should now be one reading: the clock is already known-bad, so nothing has to be
+  // re-corroborated. Asserting the bound rather than "it stepped at all" is the point;
+  // a count alone would pass even with the cooldown deleted outright.
+  const RECOVERY_BUDGET_MS = 5_000;
+  if (firstRecoveryMs < 0) {
+    failures.push("a clock left 34 years out was never re-stepped — the cooldown is still locking the damage in");
+  } else if (firstRecoveryMs > RECOVERY_BUDGET_MS) {
+    failures.push(
+      `recovery from a bad step took ${firstRecoveryMs / 1000} s, budget ${RECOVERY_BUDGET_MS / 1000} s ` +
+        `(it was ${MIN_SECONDS_BETWEEN_STEPS} s before the fix)`
+    );
   }
-  console.log(`  ✓ clock stranded at 2060 → ${stepped} steps requested, cooldown overridden`);
+  console.log(
+    `  ✓ clock stranded at 2060 → re-stepped ${firstRecoveryMs / 1000} s later, not ${MIN_SECONDS_BETWEEN_STEPS} s`
+  );
 
   // …and the cooldown must still do its actual job, which is not thrashing over a
   // couple of minutes' drift while systemd-timesyncd disciplines the clock too.
