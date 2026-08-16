@@ -30,8 +30,35 @@ import { decodeFrame } from "../src/can/decode.ts";
 import { describeProbe, parseProbeRequest } from "../src/vcu/probe.ts";
 import { canIdsFor, identifierFor } from "../src/vcu/param-codec.ts";
 import type { VcuProbeOutcome } from "../src/vcu/kwp-client.ts";
+import {
+  buildWriteFrame,
+  decodeParameterWriteReply,
+  decodeRoutineReply,
+  decodeSecurityAccessReply,
+  routineIdFor,
+  securityKeyForSeed,
+} from "../src/vcu/write-codec.ts";
+import { WRITE_TARGETS, planBitWrite, planWrite, writeTargetNames } from "../src/vcu/write-targets.ts";
+import {
+  SERVICE_STAMP_IDENTIFIERS,
+  buildClearDtcsFrame,
+  buildRtcSyncFrame,
+  checkPiClock,
+  decodeClearDtcsReply,
+  decodeRtcSyncFrame,
+  interpretServiceStamp,
+} from "../src/vcu/service-actions.ts";
+import { acquireBus, busHeldBy } from "../src/vcu/bus-lease.ts";
+import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
-import { CAPTURED_FRAMES, KNOWN_VARIANT_DIFFERENCES, LIVE_BANK1_READS, parseHexBytes } from "./captured-vcu-records.ts";
+import {
+  CAPTURED_FRAMES,
+  CAPTURED_RTC_FRAMES,
+  CAPTURED_SECURITY_PAIRS,
+  KNOWN_VARIANT_DIFFERENCES,
+  LIVE_BANK1_READS,
+  parseHexBytes,
+} from "./captured-vcu-records.ts";
 
 // Checks the VCU parameter codec, name table and snapshot diff on a laptop, with no
 // bike — the same trick scripts/decode-dtc-response.ts plays for trouble codes, and
@@ -793,7 +820,518 @@ expect(
   "silence at an address should read as “nothing there or asleep”, not as a refusal"
 );
 
-// ── 12. Optional: the full stored A9 dump ──────────────────────────────────
+// ── 13. The write codec: security keys, frames and replies ─────────────────
+// Everything in the write path is unexercised against the bike (2026-08-16), so the
+// only claims worth anything are the ones that can be checked here. This is the one
+// with genuine ground truth: four real A8 seed/key pairs captured off this bike's own
+// bus on 2026-08-08 while Energica's software was connected (DIAG_ADDRESSES.md §9.3).
+//
+// Getting this wrong costs one of about three SecurityAccess attempts, and the
+// lockout clears only on a VCU power cycle — so it is checked against every captured
+// pair rather than one.
+for (const [seedHex, keyHex] of CAPTURED_SECURITY_PAIRS) {
+  const produced = securityKeyForSeed(Number.parseInt(seedHex, 16));
+  expect(
+    produced === Number.parseInt(keyHex, 16),
+    `seed 0x${seedHex} should key as 0x${keyHex}, produced 0x${produced.toString(16).toUpperCase().padStart(8, "0")}`
+  );
+}
+// The trap that would silently break all four: JavaScript's bitwise operators are
+// signed, so a seed with bit 30 set makes `(seed & 0x55555555) << 1` negative and the
+// addition becomes a subtraction. 0xEF2BA23F above already covers it; this states it.
+expect(securityKeyForSeed(0x40000000) >= 0, "a seed with bit 30 set must not produce a negative key");
+expect(securityKeyForSeed(0xffffffff) <= 0xffffffff, "the key stays inside 32 bits");
+// §8's disambiguation case: seed 8 separates `(A|B) − offset` from `A | (B − offset)`.
+expect(securityKeyForSeed(8) === 0xc1a0bac2, "seed 0x00000008 should key as 0xC1A0BAC2, i.e. the (A|B) parse");
+
+expect(
+  toHex(buildWriteFrame("A8", { kind: "security-seed" })) === "A8 02 27 01 00 00 00 00",
+  "a seed request should be A8 02 27 01"
+);
+expect(
+  toHex(buildWriteFrame("A8", { kind: "security-key", key: 0x1c5f69e2 })) === "A8 06 27 02 1C 5F 69 E2",
+  "a key send should be A8 06 27 02 + the key big-endian"
+);
+// ⚠️ The routine is named, never numbered, and this is the assertion that says so.
+// `31 FB` — one digit away, and the routine that WIPES BATTERY STATISTICS — has no
+// name in the codec and so cannot be built at all.
+expect(
+  toHex(buildWriteFrame("A8", { kind: "start-routine", routine: "set-service-point" })) === "A8 02 31 FC 00 00 00 00",
+  "Set Service Point should be A8 02 31 FC"
+);
+expect(routineIdFor("set-service-point") === 0xfc, "the only named routine is 0xFC");
+expectThrows(
+  () => buildWriteFrame("A8", { kind: "start-routine", routine: "reset-battery-statistics" } as never),
+  "a routine the codec does not name must be refused, not encoded — 31 FB must stay unreachable"
+);
+expectThrows(
+  () => buildWriteFrame("A8", { kind: "ecu-reset" } as never),
+  "a request kind outside the write union must be refused, not encoded"
+);
+
+// The replies, including the two negative ones the factory capture actually recorded.
+expect(
+  decodeSecurityAccessReply(parseHexBytes("67 01 A5 7D 5F 18")).kind === "seed",
+  "67 01 + four bytes should decode as a seed"
+);
+const seedReply = decodeSecurityAccessReply(parseHexBytes("67 01 A5 7D 5F 18"));
+expect(seedReply.kind === "seed" && seedReply.seed === 0xa57d5f18, "the seed should be read big-endian");
+const topBitSeed = decodeSecurityAccessReply(parseHexBytes("67 01 FF FF FF FF"));
+expect(
+  topBitSeed.kind === "seed" && topBitSeed.seed === 0xffffffff,
+  "a seed with the top bit set must not read as negative"
+);
+expect(decodeSecurityAccessReply(parseHexBytes("67 02 34")).kind === "unlocked", "67 02 34 should decode as unlocked");
+const badKey = decodeSecurityAccessReply(parseHexBytes("7F 27 35"));
+expect(
+  badKey.kind === "refused" && badKey.negativeResponseCode === 0x35,
+  "7F 27 35 should decode as a refusal with invalidKey — the one that spends an attempt"
+);
+expect(
+  decodeParameterWriteReply(parseHexBytes("6E 13 EE"), 0x13ee).kind === "accepted",
+  "6E 13 EE should decode as an accepted write of 0x13EE"
+);
+// The failure that would otherwise be invisible: a well-formed acknowledgement of a
+// DIFFERENT identifier. Filing it as success would mean reporting a write to a cell
+// nobody asked about.
+expect(
+  decodeParameterWriteReply(parseHexBytes("6E 13 EF"), 0x13ee).kind === "identifier-mismatch",
+  "an acknowledgement of another identifier must not read as success"
+);
+const staleUnlock = decodeParameterWriteReply(parseHexBytes("7F 2E 33"), 0x13ee);
+expect(
+  staleUnlock.kind === "refused" && staleUnlock.negativeResponseCode === 0x33,
+  "7F 2E 33 should decode as securityAccessDenied — the stale-unlock case the capture recorded twice"
+);
+expect(
+  decodeRoutineReply(parseHexBytes("71 FC"), "set-service-point").kind === "started",
+  "71 FC should read as started"
+);
+expect(
+  decodeRoutineReply(parseHexBytes("71 FB"), "set-service-point").kind === "routine-mismatch",
+  "an echo of 0xFB must never read as the service point having run"
+);
+// ⚠️ `71 FC` is INFERRED, never logged. So an unexpected shape has to come back as
+// "unknown" and not as failure OR success — the routine is irreversible.
+expect(
+  decodeRoutineReply(parseHexBytes("71"), "set-service-point").kind === "unrecognised",
+  "a 71 with no routine echo means the outcome is unknown, not that it worked"
+);
+
+// ── 14. THE ALLOWLIST, and everything that may not get past it ─────────────
+// The core of the write feature's safety, and the part that is fully testable with no
+// bike at all — which is the reason it is shaped as a pure function in the first place.
+
+expect(WRITE_TARGETS.length === 5, `the allowlist should hold 5 parameters, holds ${WRITE_TARGETS.length}`);
+expect(
+  writeTargetNames().join(",") === "MAX_DC_CHG_CURRENT,FCHG_CURRENT_GAIN,TORQUE_LIMIT,REGEN_TORQUE_LIMIT,VSM_CONFIG_1",
+  `the allowlist should be exactly the five parameters asked for, is ${writeTargetNames().join(",")}`
+);
+// Every entry must agree with params.ecf about what it is. The allowlist carries both
+// an index and a name so that a renumbered variant file is a startup error rather
+// than a write to whatever now sits at 258.
+for (const target of WRITE_TARGETS) {
+  const parameter = parameterAtIndex(target.index);
+  expect(
+    parameter?.name.toUpperCase() === target.name.toUpperCase(),
+    `the allowlist calls index ${target.index} ${target.name}, params.ecf calls it ${parameter?.name}`
+  );
+}
+
+// ⚠️ THE REJECTION. Anything not on the list is refused in the PURE LAYER, with a
+// reason, and never becomes a plan — so it can never become a frame. These are the
+// neighbours that would hurt most: a cell limit, a throttle map, the current limit.
+for (const name of [
+  "CELL_OVERVOLTAGE",
+  "THROTTLE_MAX_TH",
+  "ACTIVE_CURRENT_LIMIT",
+  "LIMP_MIN_CELL",
+  "WATER_PUMP_MIN_CURR_TH",
+  "SPEED_LIMIT",
+  "MODEL",
+  "NOT_A_PARAMETER_AT_ALL",
+]) {
+  const refused = planWrite(name, 1, 0);
+  expect(!refused.ok, `${name} is not on the allowlist and must be refused`);
+  expect(!refused.ok && refused.reason.includes(name), `${name}'s refusal should name what was asked for`);
+  expect(
+    !refused.ok && refused.reason.includes("MAX_DC_CHG_CURRENT"),
+    `${name}'s refusal should list what IS writable, so nobody goes hunting for identifiers`
+  );
+}
+// Case-insensitively, because a name arrives from a manual or a URL.
+expect(planWrite("max_dc_chg_current", 80, 75).ok, "the allowlist should match names case-insensitively");
+
+// The write the owner actually wants, end to end through the pure layer.
+const dcPlan = planWrite("MAX_DC_CHG_CURRENT", 80, 75);
+expect(dcPlan.ok && dcPlan.plan.identifier === 0x1102, "MAX_DC_CHG_CURRENT should address CID 0x1102");
+expect(dcPlan.ok && dcPlan.plan.micro === "A9", "MAX_DC_CHG_CURRENT lives on the A9");
+expect(dcPlan.ok && toHex(dcPlan.plan.record) === "50", "80 should encode as the single byte 0x50");
+expect(
+  dcPlan.ok &&
+    toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: dcPlan.plan })) === "A9 04 2E 11 02 50 00 00",
+  `writing 80 should be A9 04 2E 11 02 50, got ${dcPlan.ok ? toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: dcPlan.plan })) : "(no plan)"}`
+);
+
+// ⚠️ THE RANGES, enforced in the pure layer so they are testable without a bike.
+// Each bound is policy, written down with its reasoning in write-targets.ts; what is
+// checked here is that the policy is actually applied.
+for (const [name, value, allowed] of [
+  ["MAX_DC_CHG_CURRENT", 80, true], // the factory's own 80 A option
+  ["MAX_DC_CHG_CURRENT", 75, true],
+  ["MAX_DC_CHG_CURRENT", 0, true],
+  ["MAX_DC_CHG_CURRENT", 81, false], // one past the highest value Energica ever shipped
+  ["MAX_DC_CHG_CURRENT", 127, false], // the datatype's own ceiling is NOT the policy's
+  ["MAX_DC_CHG_CURRENT", -1, false],
+  ["FCHG_CURRENT_GAIN", 225, true],
+  ["FCHG_CURRENT_GAIN", 255, true],
+  ["FCHG_CURRENT_GAIN", 256, true],
+  ["FCHG_CURRENT_GAIN", 513, false],
+  ["TORQUE_LIMIT", 2300, true],
+  ["TORQUE_LIMIT", 2760, true], // +20 %, the same step already taken on regen
+  ["TORQUE_LIMIT", 2761, false],
+  ["REGEN_TORQUE_LIMIT", 600, true],
+  ["REGEN_TORQUE_LIMIT", 900, true],
+  ["REGEN_TORQUE_LIMIT", 901, false],
+] as [string, number, boolean][]) {
+  // previousValue is deliberately something else, so a rejected value is rejected for
+  // being out of range and not for being a no-op.
+  const planned = planWrite(name, value, value === 0 ? 1 : 0);
+  expect(planned.ok === allowed, `${name} = ${value} should be ${allowed ? "allowed" : "refused"}`);
+  if (!allowed) {
+    expect(!planned.ok && planned.reason.includes(String(value)), `${name} = ${value} should be refused by name`);
+  }
+}
+// A fractional value is refused rather than rounded into a neighbouring one.
+expect(!planWrite("MAX_DC_CHG_CURRENT", 79.5, 75).ok, "a fractional value must be refused, not rounded");
+expect(!planWrite("MAX_DC_CHG_CURRENT", Number.NaN, 75).ok, "NaN must be refused");
+
+// ⚠️ VSM_CONFIG_1 is a BIT TOGGLE and nothing else. There is no input to the pure
+// layer that writes a whole word into it — which is the protection against a
+// fat-fingered word reconfiguring the PSU type (0x0760) or Bluetooth (0x3000).
+expect(!planWrite("VSM_CONFIG_1", 0x1117, 0x1113).ok, "VSM_CONFIG_1 must not be writable as a word");
+expect(!planWrite("VSM_CONFIG_1", 4, 0x1113).ok, "…not even with the value Energica's own option data quotes");
+expect(!planBitWrite("MAX_DC_CHG_CURRENT", "anything", true, 75).ok, "a value parameter has no bits to toggle");
+
+// The toggle the owner wants: 0x1113 → 0x1117, one bit, nothing else.
+const gripsOn = planBitWrite("VSM_CONFIG_1", "heated-handlebars", true, 0x1113);
+expect(
+  gripsOn.ok && gripsOn.plan.value === 0x1117,
+  `enabling grips should make 0x1117, made ${gripsOn.ok ? gripsOn.plan.value.toString(16) : "nothing"}`
+);
+expect(gripsOn.ok && toHex(gripsOn.plan.record) === "11 17", "…encoded as the WORD 11 17");
+const gripsOff = planBitWrite("VSM_CONFIG_1", "heated-handlebars", false, 0x1117);
+expect(gripsOff.ok && gripsOff.plan.value === 0x1113, "turning it off again should give 0x1113 back");
+// The load-bearing property: WHATEVER the current word is, only the one mask moves.
+// This is what makes "a bit toggle cannot reconfigure the PSU type" a fact about the
+// arithmetic rather than about the caller.
+for (const currentWord of [0x0000, 0x1113, 0x1117, 0xffff, 0x0760, 0x3000, 0x8421]) {
+  for (const on of [true, false]) {
+    const planned = planBitWrite("VSM_CONFIG_1", "heated-handlebars", on, currentWord);
+    expect(planned.ok, `a toggle against 0x${currentWord.toString(16)} should plan`);
+    if (planned.ok) {
+      const changed = (planned.plan.value ^ currentWord) >>> 0;
+      expect(
+        changed === 0 || changed === 0x0004,
+        `toggling grips against 0x${currentWord.toString(16)} moved mask 0x${changed.toString(16)}`
+      );
+      expect(
+        (planned.plan.value & 0x0760) >>> 0 === (currentWord & 0x0760) >>> 0,
+        "the PSU-type field must never move"
+      );
+      expect(
+        (planned.plan.value & 0x3000) >>> 0 === (currentWord & 0x3000) >>> 0,
+        "the Bluetooth field must never move"
+      );
+    }
+  }
+}
+expect(
+  !planBitWrite("VSM_CONFIG_1", "fast-charge", true, 0x1113).ok,
+  "only the bits the allowlist names may be toggled"
+);
+expect(
+  !planBitWrite("VSM_CONFIG_1", "heated-handlebars", true, 0x10000).ok,
+  "a current word outside 16 bits must be refused, not masked"
+);
+expect(!planBitWrite("VSM_CONFIG_1", "heated-handlebars", true, -1).ok, "a negative current word must be refused");
+
+// Widths and signs come from params.ecf, and a value that does not fit is refused
+// rather than truncated. A truncated write is the worst outcome available here: it
+// would be accepted and leave a number nobody chose.
+const torque = planWrite("TORQUE_LIMIT", 2300, 2000);
+expect(torque.ok && toHex(torque.plan.record) === "08 FC", "a WORD should encode big-endian across two bytes");
+expect(torque.ok && torque.plan.record.length === 2, "TORQUE_LIMIT is a WORD");
+expect(dcPlan.ok && dcPlan.plan.record.length === 1, "MAX_DC_CHG_CURRENT is a BYTE");
+
+// ⚠️ THE CODEC'S OWN GUARD. A plan forged by hand — deserialised from JSON, built by
+// a future caller that skipped write-targets.ts — is refused at the last moment,
+// before the bytes exist. This is what makes "the codec cannot write a
+// non-allowlisted identifier" true of the CODEC and not only of today's callers.
+expectThrows(
+  () =>
+    buildWriteFrame("A9", {
+      kind: "write-parameter",
+      plan: {
+        name: "CELL_OVERVOLTAGE",
+        index: 78,
+        micro: "A9",
+        identifier: 0x104e,
+        record: Uint8Array.from([0x10, 0xcc]),
+        value: 4300,
+        previousValue: 4200,
+        description: "forged",
+      },
+    }),
+  "a hand-built plan for a parameter that is not on the allowlist must be refused by the codec"
+);
+expectThrows(
+  () =>
+    buildWriteFrame("A9", {
+      kind: "write-parameter",
+      // An allowlisted NAME with an out-of-range value and bytes to match. The name
+      // check alone would pass this; re-deriving the plan is what catches it.
+      plan: {
+        name: "MAX_DC_CHG_CURRENT",
+        index: 258,
+        micro: "A9",
+        identifier: 0x1102,
+        record: Uint8Array.from([0x7f]),
+        value: 127,
+        previousValue: 75,
+        description: "forged",
+      },
+    }),
+  "a forged plan carrying an out-of-range value must be refused by the codec"
+);
+expectThrows(
+  () =>
+    buildWriteFrame("A9", {
+      kind: "write-parameter",
+      // An allowlisted name and an in-range value, with BYTES that say something
+      // else. The bytes are what reach the bus, so the bytes are what is compared.
+      plan: {
+        name: "MAX_DC_CHG_CURRENT",
+        index: 258,
+        micro: "A9",
+        identifier: 0x1102,
+        record: Uint8Array.from([0x63]),
+        value: 80,
+        previousValue: 75,
+        description: "forged",
+      },
+    }),
+  "a forged plan whose bytes disagree with its value must be refused by the codec"
+);
+
+// ── 15. The clock: the bike's RTC frame, and whether the Pi may set it ─────
+// ✅ The two frames below really went out, on 2026-08-16, from another owner's tool.
+// They are the only end-to-end ground truth for the bit packing, so the builder is
+// checked against them and the decoder is checked against the builder.
+for (const [hex, iso] of CAPTURED_RTC_FRAMES) {
+  const built = buildRtcSyncFrame(new Date(iso));
+  expect(toHex(built) === hex, `${iso} should pack as ${hex}, packed as ${toHex(built)}`);
+  const decoded = decodeRtcSyncFrame(parseHexBytes(hex));
+  const when = new Date(iso);
+  expect(
+    decoded !== null &&
+      decoded.hour === when.getUTCHours() &&
+      decoded.minute === when.getUTCMinutes() &&
+      decoded.second === when.getUTCSeconds() &&
+      decoded.day === when.getUTCDate() &&
+      decoded.month === when.getUTCMonth() + 1 &&
+      decoded.year === when.getUTCFullYear() &&
+      decoded.weekday === when.getUTCDay(),
+    `${hex} should decode back to ${iso}`
+  );
+}
+// Every field crosses a byte boundary except the year, so a round trip over a spread
+// of instants is what proves the shifts rather than one lucky one.
+for (const iso of [
+  "2026-01-01T00:00:00Z",
+  "2026-12-31T23:59:59Z",
+  "2026-08-16T06:03:29Z",
+  "2027-02-28T13:37:07Z",
+  "2030-06-30T19:45:33Z",
+]) {
+  const when = new Date(iso);
+  const decoded = decodeRtcSyncFrame(buildRtcSyncFrame(when));
+  expect(
+    decoded !== null &&
+      decoded.hour === when.getUTCHours() &&
+      decoded.minute === when.getUTCMinutes() &&
+      decoded.second === when.getUTCSeconds() &&
+      decoded.day === when.getUTCDate() &&
+      decoded.month === when.getUTCMonth() + 1 &&
+      decoded.weekday === when.getUTCDay() &&
+      decoded.year === when.getUTCFullYear(),
+    `${iso} should survive a pack/unpack round trip`
+  );
+}
+// 0x120 carries other opcodes — the charge-current setpoint traffic uses 0x98, 0x9A,
+// 0x96, 0xAC — so a frame on that id that is not ours must read as "not ours".
+expect(
+  decodeRtcSyncFrame(parseHexBytes("98 FF 4B 00 00 00 00 00")) === null,
+  "a charge-setpoint frame is not a clock frame"
+);
+
+// ⚠️ The Pi's own clock. Fails closed: no satellite time is a refusal, because a Pi
+// with no RTC and no fix is exactly the machine whose clock is wrong.
+const goodClock = Date.UTC(2026, 7, 16, 12, 0, 0);
+expect(
+  checkPiClock({ systemEpochMs: goodClock, gpsEpochSeconds: goodClock / 1000, gpsAgeMs: 500 }).trustworthy,
+  "a clock agreeing with a fresh GPS fix should be trusted"
+);
+expect(
+  !checkPiClock({ systemEpochMs: goodClock, gpsEpochSeconds: null, gpsAgeMs: null }).trustworthy,
+  "no satellite time at all must refuse — that is the state a Pi with no RTC boots into"
+);
+expect(
+  !checkPiClock({ systemEpochMs: goodClock, gpsEpochSeconds: goodClock / 1000, gpsAgeMs: 600_000 }).trustworthy,
+  "a ten-minute-old fix cannot vouch for the clock now"
+);
+expect(
+  !checkPiClock({ systemEpochMs: goodClock, gpsEpochSeconds: goodClock / 1000 + 3600, gpsAgeMs: 500 }).trustworthy,
+  "an hour away from satellite time must refuse — gps/clock.ts steps past 60 s, so it has not managed to"
+);
+// ⚠️ The one that is not hypothetical: a GPS date-decode bug stamped 49 772 rows of
+// this bike's log as the year 2060.
+const year2060 = Date.UTC(2060, 0, 1);
+expect(
+  !checkPiClock({ systemEpochMs: year2060, gpsEpochSeconds: year2060 / 1000, gpsAgeMs: 500 }).trustworthy,
+  "a clock reading 2060 must refuse even when a fresh GPS reading agrees with it"
+);
+expect(
+  !checkPiClock({ systemEpochMs: Date.UTC(2020, 0, 1), gpsEpochSeconds: Date.UTC(2020, 0, 1) / 1000, gpsAgeMs: 500 })
+    .trustworthy,
+  "a clock before this code was written must refuse — a Pi with no RTC boots to a filesystem timestamp"
+);
+
+// ── 16. The service stamp, mode 04, the bus lease and the request parser ───
+// A8's last-service block, decoded the way EMsuite's own GetMotorbikeService() does.
+// ⚠️ Untried on this bike: these four identifiers sit outside params.ecf's 1…277 and
+// no sweep has ever reached them.
+const stampNow = Date.UTC(2026, 7, 16, 12, 0, 0);
+expect(SERVICE_STAMP_IDENTIFIERS.dateLow.identifier === 0x13e8, "the service date's low word is 0x13E8");
+expect(SERVICE_STAMP_IDENTIFIERS.odometerHigh.identifier === 0x13eb, "the odometer's high word is 0x13EB");
+// 2026-06-01T00:00:00Z is 833 587 200 s after 2000-01-01 = 0x31AF_8800.
+const realStamp = interpretServiceStamp(
+  { dateLow: 0x8800, dateHigh: 0x31af, odometerLow: 0xa410, odometerHigh: 0x0000 },
+  stampNow
+);
+expect(
+  realStamp.dateIso === "2026-06-01T00:00:00.000Z",
+  `the stamp should decode to 2026-06-01, decoded ${realStamp.dateIso}`
+);
+expect(realStamp.odometer === 42000, `the odometer should be (high << 16) | low, got ${realStamp.odometer}`);
+expect(realStamp.implausible === null, "a 2026 stamp on a 2026 clock is plausible");
+// The readings that are NOT dates, said plainly instead of rendered as 2000-01-01.
+expect(
+  interpretServiceStamp({ dateLow: 0, dateHigh: 0, odometerLow: 0, odometerHigh: 0 }, stampNow).implausible !== null,
+  "an all-zero stamp must be called out, not shown as New Year's Day 2000"
+);
+expect(
+  interpretServiceStamp({ dateLow: 0xffff, dateHigh: 0xffff, odometerLow: 0, odometerHigh: 0 }, stampNow)
+    .implausible !== null,
+  "an erased EEPROM cell must be called out"
+);
+expect(
+  interpretServiceStamp({ dateLow: 0x8800, dateHigh: 0x31af, odometerLow: 0, odometerHigh: 0 }, Date.UTC(2020, 0, 1))
+    .implausible !== null,
+  "a stamp in the future must be called out — either the bike's clock is wrong or ours is"
+);
+// The high word really is the high word. Swapping them would decode to a wrong date
+// that still looks like a date, which is why it is checked rather than assumed.
+expect(
+  interpretServiceStamp({ dateLow: 0x31af, dateHigh: 0x8800, odometerLow: 0, odometerHigh: 0 }, stampNow)
+    .dateSeconds !== realStamp.dateSeconds,
+  "the two halves must not be interchangeable"
+);
+
+// Mode 04. Plain OBD framing, not the micros' extended addressing.
+expect(toHex(buildClearDtcsFrame()) === "01 04 00 00 00 00 00 00", "mode 04 should be a one-byte payload, 01 04");
+expect(decodeClearDtcsReply(parseHexBytes("01 44 00 00 00 00 00 00")).kind === "cleared", "01 44 means cleared");
+const clearRefused = decodeClearDtcsReply(parseHexBytes("03 7F 04 22 00 00 00 00"));
+expect(
+  clearRefused.kind === "refused" && clearRefused.negativeResponseCode === 0x22,
+  "7F 04 22 should decode as conditionsNotCorrect"
+);
+// ⚠️ The artefact this bus really produces: something answers `03 7F 00 33`, a
+// refusal of a service 0x00 that does not exist and that we never sent. Reading it as
+// our answer is what made the mode-03 transfer look impossible for a while.
+expect(
+  decodeClearDtcsReply(parseHexBytes("03 7F 00 33 00 00 00 00")).kind === "unrecognised",
+  "a refusal naming a service we did not send must not be read as our answer"
+);
+
+// The bus lease: one thing at a time, across files.
+const firstLease = acquireBus("a parameter read");
+expect(firstLease.ok, "the first caller should get the bus");
+const blocked = acquireBus("a service write");
+expect(!blocked.ok && blocked.heldBy === "a parameter read", "a second caller should be told who has it");
+expect(busHeldBy() === "a parameter read", "busHeldBy should name the holder");
+if (firstLease.ok) {
+  firstLease.lease.release();
+}
+expect(busHeldBy() === null, "releasing should free it");
+// A late release must not free somebody ELSE's lease — the bug that would let two
+// callers both believe the bus was idle. Two leases with the SAME name, because that
+// is the case a name comparison would get wrong.
+const departingLease = acquireBus("a probe");
+expect(!acquireBus("a probe").ok, "the bus is still held while the first probe has it");
+if (departingLease.ok) {
+  departingLease.lease.release();
+  // Releasing twice is safe, and is what a `finally` on a retried path does.
+  departingLease.lease.release();
+}
+const successorLease = acquireBus("a probe");
+expect(successorLease.ok, "the bus should be free once its holder released");
+if (successorLease.ok) {
+  if (departingLease.ok) {
+    // The departed lease releasing again must NOT take the new holder's away.
+    departingLease.lease.release();
+  }
+  expect(busHeldBy() === "a probe", "a stale release must not free the current holder's lease");
+  successorLease.lease.release();
+}
+expect(busHeldBy() === null, "the bus should be idle again at the end of the checks");
+
+// The HTTP request parser. Every rejection is a person typing, so each is a reason.
+const nowForParse = Date.UTC(2026, 7, 16, 14, 3, 30);
+expect(utcMinute(nowForParse) === "2026-08-16T14:03Z", "the confirmation minute should be minute-resolution UTC");
+for (const [query, why] of [
+  ["action=parameter&name=MAX_DC_CHG_CURRENT&value=80", "a write with no expected= (the compare-and-swap needs one)"],
+  ["action=parameter&value=80&expected=75", "a write with no name"],
+  ["action=parameter&name=MAX_DC_CHG_CURRENT&value=eighty&expected=75", "a non-numeric value"],
+  ["action=bit&name=VSM_CONFIG_1&bit=heated-handlebars&expected=4371", "a bit toggle with no on="],
+  ["action=bit&name=VSM_CONFIG_1&bit=heated-handlebars&on=2&expected=4371", "on= that is not 0 or 1"],
+  ["action=set-service-point", "the irreversible routine without confirm="],
+  ["action=set-service-point&confirm=yes", "…or with the wrong confirmation"],
+  ["action=clear-dtcs", "clearing DTCs without confirm="],
+  ["action=sync-clock", "a clock sync with no confirmed minute"],
+  ["action=sync-clock&confirm=2026-08-16T13:59Z", "a clock sync confirming a minute that has passed"],
+  ["action=ecu-reset", "an action that does not exist"],
+  ["", "no action at all"],
+] as [string, string][]) {
+  const parsed = parseWriteRequest(new URLSearchParams(query), nowForParse);
+  expect(!parsed.ok, `${why} should be refused`);
+  expect(!parsed.ok && parsed.reason.length > 0, `${why} should say why`);
+}
+expect(
+  parseWriteRequest(new URLSearchParams("action=parameter&name=MAX_DC_CHG_CURRENT&value=80&expected=75"), nowForParse)
+    .ok,
+  "a complete parameter write should parse"
+);
+expect(
+  parseWriteRequest(new URLSearchParams("action=sync-clock&confirm=2026-08-16T14:03Z"), nowForParse).ok,
+  "a clock sync confirming the current minute should parse"
+);
+expect(
+  parseWriteRequest(new URLSearchParams("action=set-service-point&confirm=set-service-point"), nowForParse).ok,
+  "the routine with its confirmation should parse"
+);
+
+// ── 17. Optional: the full stored A9 dump ──────────────────────────────────
 if (dumpPath) {
   await replayStoredDump(dumpPath);
 } else {
@@ -808,7 +1346,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV, the read tally, the service-mode safety gate and the identifier probe all check out"
+  "✓ table, request encoding, framing, live 2026-08-08 reads, interpretation, diff, the energica_tool.py backup CSV, " +
+    "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +
+    "seed/key pairs, the write allowlist and its ranges, the RTC frame against two frames that really went out, " +
+    "the service stamp, mode 04, the bus lease and the write request parser all check out"
 );
 
 /**

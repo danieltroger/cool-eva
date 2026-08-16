@@ -1,5 +1,6 @@
 import type { RawChannel } from "socketcan";
 import { ageMs, latestValue } from "../can/signals.ts";
+import { acquireBus, type BusLease } from "./bus-lease.ts";
 import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type RunningProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
@@ -160,6 +161,17 @@ interface RunnerContext extends VcuReadRunnerOptions {
   sweep: RunningParameterSweep | null;
   /** At most one of `sweep` and `probe` is ever set. Both put frames on the same bus. */
   probe: RunningProbe | null;
+  /**
+   * The bus lease held by whichever of the two is running, or null.
+   *
+   * ⚠️ Added 2026-08-16 alongside service WRITES, which live in their own runner
+   * (./write-runner.ts) and therefore cannot be excluded by the two nullable fields
+   * above. The lease is what makes single-flight hold ACROSS files. Released in the
+   * same place the field is cleared, on every path including a throw — a leaked
+   * lease would make service mode permanently refuse itself, which is why the two
+   * always move together.
+   */
+  lease: BusLease | null;
   startedAt: number | null;
   finishedAt: number | null;
   /** Null while running and once a run ended cleanly; a sentence for a cancel, a gate exit or a crash. */
@@ -175,6 +187,7 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
     ...options,
     sweep: null,
     probe: null,
+    lease: null,
     startedAt: null,
     finishedAt: null,
     failure: null,
@@ -217,11 +230,12 @@ function readGate(): ServiceGateVerdict {
  * lockfile to go stale on a Pi that loses power.
  */
 function start(context: RunnerContext): { started: boolean; reason: string | null } {
-  const ready = checkPreconditions(context);
+  const ready = checkPreconditions(context, "a parameter read");
   if (!ready.ok) {
     return { started: false, reason: ready.reason };
   }
   const channel = ready.channel;
+  context.lease = ready.lease;
 
   const sweep = startParameterSweep({
     channel,
@@ -256,6 +270,12 @@ function start(context: RunnerContext): { started: boolean; reason: string | nul
       context.lastTally = tallyOf(sweep.rows());
       context.finishedAt = Date.now();
       context.sweep = null;
+      // Released in the same breath the field is cleared, on every path including a
+      // throw — the `.catch` above is what makes this `.finally` reachable after one.
+      // A lease that outlived its sweep would make service mode refuse itself for as
+      // long as the process stayed up.
+      context.lease?.release();
+      context.lease = null;
       stopGateWatchdog(context);
     });
 
@@ -270,7 +290,10 @@ function start(context: RunnerContext): { started: boolean; reason: string | nul
  * for themselves whether the bike was safe would be two things to keep in step, and
  * the one that drifted would be the one nobody was looking at.
  */
-function checkPreconditions(context: RunnerContext): { ok: true; channel: RawChannel } | { ok: false; reason: string } {
+function checkPreconditions(
+  context: RunnerContext,
+  what: string
+): { ok: true; channel: RawChannel; lease: BusLease } | { ok: false; reason: string } {
   if (context.sweep) {
     return { ok: false, reason: "a parameter read is already running" };
   }
@@ -291,7 +314,14 @@ function checkPreconditions(context: RunnerContext): { ok: true; channel: RawCha
   if (!verdict.safe) {
     return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
   }
-  return { ok: true, channel };
+  // Taken LAST, so no refusal above holds the bus while it is reported. This is what
+  // excludes a service WRITE, which runs from another file and so cannot be seen by
+  // the two nullable fields above.
+  const lease = acquireBus(what);
+  if (!lease.ok) {
+    return { ok: false, reason: `${lease.heldBy} is using the bus — one thing at a time` };
+  }
+  return { ok: true, channel, lease: lease.lease };
 }
 
 /**
@@ -308,7 +338,7 @@ function checkPreconditions(context: RunnerContext): { ok: true; channel: RawCha
  * transmits for long.
  */
 async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promise<VcuProbeOutcomeOrRefusal> {
-  const ready = checkPreconditions(context);
+  const ready = checkPreconditions(context, "a probe");
   if (!ready.ok) {
     return { ok: false, reason: ready.reason };
   }
@@ -330,6 +360,7 @@ async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promi
   } finally {
     clearInterval(watchdog);
     context.probe = null;
+    ready.lease.release();
   }
 }
 

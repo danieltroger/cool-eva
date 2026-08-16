@@ -5,6 +5,7 @@ import { monotonicNow, since } from "../lib/clock.js";
 import { duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
 import { VcuProbe } from "./vcu-probe.js";
+import { VcuWrite, refreshVcuWrite } from "./vcu-write.js";
 
 const { a, button, div } = van.tags;
 
@@ -84,7 +85,12 @@ export function ServiceMode() {
     // its own: both are governed by the same gate and the same switch, and two
     // sections deciding separately could only disagree.
     div({ class: "sheet-title" }, "Probe one identifier"),
-    VcuProbe(() => state.val !== null && state.val.enabled && state.val.gate.safe)
+    VcuProbe(() => state.val !== null && state.val.enabled && state.val.gate.safe),
+    // ⚠️ Everything above this line reads. Everything below it can CHANGE the
+    // motorcycle, and it is behind its own switch (SERVICE_WRITE_ENABLED, off by
+    // default) and fetches its own state. It is last on the sheet on purpose: the
+    // things you do most often should not be underneath the things you cannot undo.
+    VcuWrite()
   );
 }
 
@@ -391,6 +397,11 @@ export function refreshServiceMode(isOpen) {
   sheetIsOpen = isOpen;
   armed.val = false;
   void request("GET");
+  // The write section keeps its own state and its own endpoint, so it is refreshed
+  // alongside rather than folded in — and its refresh DISARMS every button it has,
+  // which is the property that matters here: re-opening the sheet must never find a
+  // half-confirmed irreversible action waiting for its second tap.
+  void refreshVcuWrite();
 }
 
 /**

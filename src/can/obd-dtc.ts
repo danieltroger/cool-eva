@@ -19,10 +19,19 @@ import {
 // bus are 0x03, 0x07 and 0x0A — all three are "tell me what is wrong", none of them
 // changes anything in an ECU, and requestTroubleCodeList() throws on anything else
 // rather than trusting its caller. Mode 04 (clear DTCs) is deliberately absent and
-// must stay absent: it would erase the very history this exists to read, and on a
-// bike whose stored list has been accumulating since before we started looking that
+// must stay absent HERE: it would erase the very history this exists to read, and on
+// a bike whose stored list has been accumulating since before we started looking that
 // is not recoverable. SecurityAccess (0x27) is likewise absent. Same standing rule
 // as src/can/elock.ts keeps for the immobilizer ECU.
+//
+// ⚠️ Since 2026-08-16 Mode 04 does exist in the repository, in
+// src/vcu/service-actions.ts, reachable only from service mode's write path. That
+// changes nothing about this module and the rule above is unchanged in the way that
+// matters: THIS is the always-on poller, it runs unattended at 2 Hz while the bike is
+// being ridden, and a service that can erase diagnostic memory on a timer is a
+// different thing from one an owner runs deliberately with the bike parked, behind a
+// safety gate, an off-by-default switch and a two-tap confirmation. The distinction
+// is between what runs by itself and what a person asks for — not between services.
 //
 // ── What the bus actually does, measured 2026-08-04 ──────────────────────────────
 //

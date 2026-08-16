@@ -21,7 +21,7 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // the VALUE, and those are the two that make a write. Keep that line where it is:
 // widening "which" is recoverable, widening "what to do to it" is not.
 //
-// Never implement, here or anywhere: 0x2E WriteDataByCommonIdentifier, 0x3B
+// Never implement IN THIS FILE: 0x2E WriteDataByCommonIdentifier, 0x3B
 // WriteDataByLocalIdentifier, 0x27 SecurityAccess, 0x31 StartRoutineByLocalId,
 // 0x11 ECUReset, 0x2F InputOutputControl, or OBD Mode 04. This is the bike's
 // calibration EEPROM: one wrong word in it is a throttle map, a cell limit or a
@@ -29,6 +29,20 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // A8 and A9 serve banks 1 and 2 with no authentication at all, so there is not
 // even an argument for 0x27 (and per DIAG_ADDRESSES.md §3 the bank-0 refusal is
 // NRC 0x12 subFunctionNotSupported, not 0x33, so 0x27 would not open it anyway).
+//
+// ⚠️ That paragraph used to say "here or anywhere", and since 2026-08-16 that is no
+// longer true of the repository — so it no longer says it. Three of those services
+// (0x27, 0x2E, 0x31) and OBD Mode 04 now exist in ./write-codec.ts, behind their own
+// closed union, their own allowlist of five parameters, their own enable switch
+// (SERVICE_WRITE_ENABLED, off by default) and a read-back after every write.
+//
+// This file is unchanged by that and must stay unchanged: its union still has three
+// members, READ_ONLY_SERVICES still holds three bytes, and there is still nowhere in
+// it to put a value. The two guarantees are deliberately separate rather than merged
+// — a reader who wants to know whether a READ can change something should be able to
+// answer it from this file alone, without reasoning about a flag somewhere else.
+// 0x11 ECUReset, 0x2F InputOutputControl, 0x3B and 0x3D are implemented NOWHERE, and
+// ./write-codec.ts's own header says why each must stay that way.
 //
 // ── The framing, from obd-garage/CAN_MAP.md and DIAG_ADDRESSES.md §3 ─────────
 // Request  0x7C0: [target] [PCI] [service] …      target = 0xA9 / 0xA8  (VCU micros)
