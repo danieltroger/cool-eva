@@ -457,8 +457,18 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
 // frame's eight bytes EXACTLY, with no exceptions, and the frame count per second
 // swings between 0.8× and 1.2× of 0x102's steady 100 Hz depending on what the
 // dashboard is doing (80 Hz through the DC charge, ~120 Hz while riding). So this
-// buys ~100 RX wakeups a second on a Pi Zero for a button byte. It is worth it only
-// because the buttons cannot be read any other way, and log-on-change means an
-// unpressed button still writes exactly one row per boot.
+// buys ~100 RX wakeups a second on a Pi Zero for a button byte, plus four record()
+// calls per frame. It is worth it only because the buttons cannot be read any other
+// way, and log-on-change means an unpressed button still writes exactly one row per
+// boot.
+//
+// 🚨 If that ever does show up on the Pi, the obvious lever — skip a frame whose
+// payload is identical to the last one seen for that id — is a trap, so it is written
+// down here rather than discovered the expensive way. record() is what refreshes
+// liveState[key].ts and lastSeenMonotonic, and it is deliberately outside the deadband
+// branch for exactly that reason (see signals.ts). Skip the repeats and a button that
+// nobody is pressing stops being refreshed: the dashboard greys its tile out as stale
+// and ageMs() reports it as missing, on a bike where "this signal stopped arriving" is
+// a real diagnosis we do not want to fake.
 const VEHICLE_STREAM_IDS = [0x020, 0x022, 0x025, 0x102, 0x104, 0x109, 0x10a, 0x305, 0x306, 0x400, GPS_CAN_ID, 0x480];
 export const STREAM_IDS = [...VEHICLE_STREAM_IDS, ...BMS_STREAM_IDS];
