@@ -60,10 +60,28 @@ const BY_KEY = {
   // would reject most of the range. 0 is meaningful too: it is the bike's own way
   // of saying no freeze frame is stored.
   "freeze_frame_dtc": [0, 65_535],
+  // The DC fast-charge contactor monitor: a 1/0 flag that lives in a group full of
+  // real measurements. It needs this per-key entry because neither of the other two
+  // routes reaches it — `charge` is not a BOOLEAN_GROUP and must not become one
+  // (`mains_v` and `dc_a` live there), and its unit is "" precisely so it cannot fall
+  // into BY_UNIT's numeric ranges. Without this line boundsFor() returns null and the
+  // signal renders whatever arrives, which is the one outcome this file exists to
+  // prevent. Same reasoning as the `buttons` group, applied one signal at a time.
+  "fast_dc_contactor": [0, 1],
 };
 
-/** Signals that are 1/0 flags, where anything else is a bad read. */
-const BOOLEAN_GROUPS = new Set(["controls", "diag"]);
+/**
+ * Signals that are 1/0 flags, where anything else is a bad read.
+ *
+ * `buttons` joined on 2026-08-16 with the handlebar buttons. Today their decoder can
+ * only emit 0 or 1 (it returns `bit()`), so the gate rejects nothing — it is here for
+ * the same reason `controls` is, which is that `high_beam` once read 193. A decoder
+ * that later returns the masked byte instead of the bit (`handlebar & 0x20` is 32, not
+ * 1) would otherwise paint a pressed button as an ordinary number, and a button tile
+ * that lights on 32 but not on 1 is exactly the kind of quiet wrong answer this file
+ * exists to stop.
+ */
+const BOOLEAN_GROUPS = new Set(["controls", "diag", "buttons"]);
 
 /**
  * …except these, which share the `diag` group with the 154 generated `dtc_*`

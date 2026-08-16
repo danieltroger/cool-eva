@@ -57,10 +57,10 @@
         "enable": true,
         "hide": false,
         "iconColor": "orange",
-        "name": "Charging bit (0x102)",
+        "name": "Charge start",
         "target": {
           "queryType": "table",
-          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charging (0x102)' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "rawQueryText": "-- 0x102 b2 bit0 used to feed this annotation under the name `charging`. It is the\n-- HIGH BEAM (renamed high_beam_lamp 2026-08-16, see src/can/decode.ts), so every\n-- flash-to-pass drew a charge marker. These two signals are the real thing, and it\n-- takes both: bms_state_charge never fires on DC, because the BMS sits in Idle\n-- through a fast charge, and fast_dc_contactor fires ONLY on DC.\nWITH edges AS (\n  SELECT r.ts AS ts, r.value AS value,\n         LAG(r.value) OVER (PARTITION BY s.key ORDER BY r.ts) AS previous,\n         CASE s.key WHEN 'bms_state_charge' THEN 'Charge (BMS 0x201)'\n                    ELSE 'DC fast charge (0x102 b3)' END AS label\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('bms_state_charge', 'fast_dc_contactor')\n)\nSELECT ts / 1000.0 AS time, label AS text\nFROM edges\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
@@ -2745,7 +2745,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "Boolean CAN signals as lanes. Each stored row is a change, so a lane holds its value until the next row; spanNulls is on for the same reason. In the 2026-08-02 capture these decoders only started after the lap, so the lanes are short.",
+      "description": "Boolean CAN signals as lanes. Each stored row is a change, so a lane holds its value until the next row; spanNulls is on for the same reason. In the 2026-08-02 capture these decoders only started after the lap, so the lanes are short.\n\nThe two beam lanes read 0x102 b2 bits 0 and 1, which shipped as charging and charge_port_unlocked until 2026-08-16 on a rider-made .xdbc's word. They are the beam lamps: each agrees with its switch in b0 across all 1 103 000 frames of 0x102 in the capture corpus, with zero disagreements, and the old charging bit reads 0 through every real charge. Rows logged before the rename are correct readings of the same bits under the wrong name, so each lane UNIONs its old key in and the history stays continuous — the same treatment the attitude rename got in #49. See src/can/decode.ts for the full argument. The lanes say \"lamp\" on purpose: high_beam (b0 bit6) is the SWITCH and these are the outputs, and the single reason for keeping both keys is the day a bulb fails and they stop agreeing — on which day the panel has to say which of the two it is showing.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2872,6 +2872,26 @@
           "queryType": "table",
           "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Throttle on\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'throttle_on' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
           "refId": "F",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"High beam lamp\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'high_beam_lamp' AND r.ts BETWEEN $__from AND $__to\nUNION ALL\nSELECT r.ts/1000.0,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charging' AND r.ts BETWEEN $__from AND $__to\nORDER BY 1",
+          "refId": "G",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Low beam lamp\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'low_beam_lamp' AND r.ts BETWEEN $__from AND $__to\nUNION ALL\nSELECT r.ts/1000.0,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_port_unlocked' AND r.ts BETWEEN $__from AND $__to\nORDER BY 1",
+          "refId": "H",
           "timeColumns": ["time"]
         }
       ],

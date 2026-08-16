@@ -63,15 +63,15 @@
         "enable": true,
         "hide": false,
         "iconColor": "yellow",
-        "name": "Charging (0x102)",
+        "name": "Charge start",
         "target": {
           "datasource": {
             "type": "frser-sqlite-datasource",
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "queryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nSELECT ts/1000.0 AS time, 'Charging (0x102)' AS text, 'charging' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
-          "rawQueryText": "WITH samples AS (\n  SELECT r.ts, r.value, LAG(r.value) OVER (ORDER BY r.ts) AS previous_value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nSELECT ts/1000.0 AS time, 'Charging (0x102)' AS text, 'charging' AS tags\nFROM samples\nWHERE value = 1 AND (previous_value IS NULL OR previous_value <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "queryText": "-- 0x102 b2 bit0 used to feed this annotation under the name `charging`. It is the\n-- HIGH BEAM (renamed high_beam_lamp 2026-08-16, see src/can/decode.ts), so every\n-- flash-to-pass drew a charge marker. These two signals are the real thing, and it\n-- takes both: bms_state_charge never fires on DC, because the BMS sits in Idle\n-- through a fast charge, and fast_dc_contactor fires ONLY on DC.\nWITH edges AS (\n  SELECT r.ts AS ts, r.value AS value,\n         LAG(r.value) OVER (PARTITION BY s.key ORDER BY r.ts) AS previous,\n         CASE s.key WHEN 'bms_state_charge' THEN 'Charge (BMS 0x201)'\n                    ELSE 'DC fast charge (0x102 b3)' END AS label\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('bms_state_charge', 'fast_dc_contactor')\n)\nSELECT ts / 1000.0 AS time, label AS text, 'charge' AS tags\nFROM edges\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
+          "rawQueryText": "-- 0x102 b2 bit0 used to feed this annotation under the name `charging`. It is the\n-- HIGH BEAM (renamed high_beam_lamp 2026-08-16, see src/can/decode.ts), so every\n-- flash-to-pass drew a charge marker. These two signals are the real thing, and it\n-- takes both: bms_state_charge never fires on DC, because the BMS sits in Idle\n-- through a fast charge, and fast_dc_contactor fires ONLY on DC.\nWITH edges AS (\n  SELECT r.ts AS ts, r.value AS value,\n         LAG(r.value) OVER (PARTITION BY s.key ORDER BY r.ts) AS previous,\n         CASE s.key WHEN 'bms_state_charge' THEN 'Charge (BMS 0x201)'\n                    ELSE 'DC fast charge (0x102 b3)' END AS label\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('bms_state_charge', 'fast_dc_contactor')\n)\nSELECT ts / 1000.0 AS time, label AS text, 'charge' AS tags\nFROM edges\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
@@ -646,7 +646,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "The BMS flags an isolation leak when IsoTestTotal rises above the measured pack voltage, so the two are plotted on one axis and compared directly — the gap between the lines is the margin. Counts and volts share an axis here because the comparison itself is unit-free. IsoTestTotal steps (deadband 10, so it holds between samples); pack voltage is drawn with linear interpolation because it is a densely sampled analogue value that really does move between samples \u2014 but it keeps the panel's default of showing points, because it is also seeded to the window edges and a linear segment from a seed sample would otherwise be an unmarked ramp through values that were never measured. Where the points are far apart, the line between them is drawn, not read. spanNulls on both, since widening two signals with different timestamps into one table inserts nulls that are not gaps in the data.",
+      "description": "The BMS flags an isolation leak when IsoTestTotal rises above the measured pack voltage, so the two are plotted on one axis and compared directly — the gap between the lines is the margin. Counts and volts share an axis here because the comparison itself is unit-free. IsoTestTotal steps (deadband 10, so it holds between samples); pack voltage is drawn with linear interpolation because it is a densely sampled analogue value that really does move between samples — but it keeps the panel's default of showing points, because it is also seeded to the window edges and a linear segment from a seed sample would otherwise be an unmarked ramp through values that were never measured. Where the points are far apart, the line between them is drawn, not read. spanNulls on both, since widening two signals with different timestamps into one table inserts nulls that are not gaps in the data.",
       "fieldConfig": {
         "defaults": {
           "color": {

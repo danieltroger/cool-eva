@@ -49,8 +49,8 @@
 //    PIDs 0D and 0C, and the gate must refuse it.
 //  • Six days of real riding (rides.db, 6.2 M rows, analysed 2026-08-16) settled
 //    four things the captures alone could not, and every one of them changed this
-//    file: `charging` is the high beam; a charging bike stops sending 0x104
-//    entirely; `go_request` does not lead `go`; and `go`/`energized` both read 0
+//    file: the bit then called `charging` is the high beam; a charging bike stops
+//    sending 0x104 entirely; `go_request` does not lead `go`; and `go`/`energized` read 0
 //    while the bike rolls at up to 6.7 km/h. The notes are at each rule.
 //  • What CANNOT be checked without the bike is the thing the gate exists for: that
 //    these bits move the instant a real motorcycle starts to roll away, and that the
@@ -208,10 +208,15 @@ interface ChargeEvidenceRule {
  * precisely what it would be if `energized` had never been in it. It cannot admit a
  * moving bike, and it cannot admit one in drive.
  *
- * ── Why `charging` alone is not enough ───────────────────────────────────────
- * `charging` (0x102 b2 bit0) reads 0 through a DC fast charge — it is the AC bit —
- * so a DC session, the one the owner actually needs, would not be detected by it.
- * The charger frames are what cover that case.
+ * ── Why 0x102 carries no usable charge bit ──────────────────────────────────
+ * It used to look as though it did. `charging` (0x102 b2 bit0) was reasoned about
+ * here as "the AC bit", on the grounds that it reads 0 through a DC fast charge.
+ * That was too generous: it reads 0 through AC charging too, because it is the high
+ * beam — see the block under this list, and decode.ts, where it was renamed to
+ * `high_beam_lamp` on 2026-08-16. 0x102 does now carry ONE real charge signal,
+ * `fast_dc_contactor` (b3 bit0), but it is set only on DC, so it cannot cover the AC
+ * case on its own either. The charger frames cover both, which is why they are the
+ * whole list.
  */
 const CHARGE_EVIDENCE: ChargeEvidenceRule[] = [
   // The charger's own frames, 0x305 and 0x306 at 5 Hz, which decode.ts records as
@@ -239,24 +244,28 @@ const CHARGE_EVIDENCE: ChargeEvidenceRule[] = [
   },
 ];
 
-// ⚠️⚠️ `charging` (0x102 b2 bit0) IS DELIBERATELY NOT IN THAT LIST, and the reason is
-// worth more than the rule: **it is not the charging bit. It is the high beam.**
+// ⚠️⚠️ 0x102 b2 bit0 IS DELIBERATELY NOT IN THAT LIST, and the reason is worth more
+// than the rule: **it is not a charging bit. It is the high beam.** It is now decoded
+// under its real name, `high_beam_lamp`; it was called `charging` until 2026-08-16 and
+// this file refused to depend on it for a fortnight before the rename caught up.
 //
 // Established from rides.db on 2026-08-16, six days of real riding:
-//   • `charging` equals `high_beam` (0x102 b0 bit6) at 421 of 421 timestamps — 100 %.
+//   • it equals `high_beam` (0x102 b0 bit6) at 421 of 421 timestamps — 100 %.
 //   • Every transition of one is within 3 ms of a transition of the other (median 0).
 //   • It reads 1 at 100-142 km/h, for 47 s at a stretch, on clean uninterleaved data.
 //   • It reads **0 through all 25 real charging sessions**.
-// Two different bytes, so this is not decoder aliasing — they are two genuinely
-// distinct bits that move together, the same switch-and-lamp pairing decode.ts
-// already suspects for the blinkers. The third-party .xdbc's "b2 bit0 = charge" is
-// simply wrong, which also dissolves the "no bit claimed twice" argument decode.ts
-// leans on for that byte.
+// Re-measured per frame the same day, over all 1 103 000 frames of 0x102 in the 14
+// candump captures: 1 103 000 / 1 103 000 agreement, zero disagreements either way,
+// while the cross-pair (b2 bit0 against b0 bit7) agrees only 49.35 % — so this is not
+// two nearly-constant bits flattering each other.
+//
+// Two different bytes, so it is not decoder aliasing — they are two genuinely distinct
+// bits that move together, the switch-and-lamp pairing decode.ts had already worked out
+// for the blinkers. The third-party .xdbc's "b2 bit0 = charge" is simply wrong.
 //
 // Using it here would have meant SWITCHING ON THE HIGH BEAM EXCUSED THE DRIVE BEING
-// ENERGIZED. Renaming the signal is a decode change and belongs in its own PR (it
-// touches the registry, the charge screen, the README and Grafana), so this file
-// only refuses to depend on it — and says why, loudly, so nobody adds it back.
+// ENERGIZED. The rename removes the trap's bait; this block stays because the list of
+// things that are NOT charge evidence is worth more than the name that misled us.
 
 /**
  * ⚠️ Why two of the motion checks may go ABSENT while charging, and what still
@@ -506,10 +515,11 @@ const RULES: ServiceGateRule[] = [
  *    charge the BMS sits in `bms_state_idle` and never reports Charge at all
  *    (CAN_MAP.md, 2026-08-04). Neither state distinguishes parked from moving.
  *
- *  • `charging` (0x102 b2 bit0) — **it is the high beam.** Not a gate, and not
- *    charge evidence either; the full argument and the numbers are under
- *    CHARGE_EVIDENCE above. Named here as well because it is the one signal on this
- *    list whose NAME actively invites you to use it.
+ *  • `high_beam_lamp` (0x102 b2 bit0) — **the high beam**, and shipped as `charging`
+ *    until 2026-08-16. Not a gate, and not charge evidence either; the full argument
+ *    and the numbers are under CHARGE_EVIDENCE above. Kept on this list under its new
+ *    name because the old one is still in the ride log, in old Grafana panels and in
+ *    anyone's memory, and it was the one signal here whose NAME invited you to use it.
  *
  *  • `bms_err_contactor` (0x201 error bits 21-25) — a FAULT flag, not contactor
  *    state. It is 0 on a healthy bike whether the contactors are open or closed, so
@@ -522,7 +532,7 @@ const EXCLUDED_FROM_GATE = [
   "stand_up",
   "key_on",
   "throttle_pct",
-  "charging",
+  "high_beam_lamp",
   "bms_state_discharge",
   "bms_state_idle",
   "bms_err_contactor",

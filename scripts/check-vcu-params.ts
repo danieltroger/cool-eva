@@ -19,6 +19,7 @@ import {
 import { diffSnapshots, toParameterRow, type VcuParameterSnapshot } from "../src/vcu/snapshot.ts";
 import { createVcuKwpClient, type VcuReadOutcome } from "../src/vcu/kwp-client.ts";
 import { exportableRowCount, snapshotToBackupCsv } from "../src/vcu/backup-csv.ts";
+import { SIGNALS } from "../src/can/registry.ts";
 import { tallyOf } from "../src/vcu/read-runner.ts";
 import {
   evaluateServiceGate,
@@ -537,17 +538,24 @@ expect(
 
 // b1 gains 0x02 energized on top of the parked 0x10 key_on, which is exactly the
 // transition CAN_MAP.md records at the start of the 2026-08-04 DC session
-// (0x102 b1 0x10 → 0x12).
-const CHARGING_BODY_FRAME = "80 12 02 44 99 FF D8 FF";
-// …and the same with 0x102 b2 bit0, the AC charging bit, also set.
-const AC_CHARGING_BODY_FRAME = "80 12 03 44 99 FF D8 FF";
+// (0x102 b1 0x10 → 0x12). b2 = 0x02 is the low beam lamp, i.e. what any bike with its
+// ignition on looks like.
+//
+// ⚠️ These two were called CHARGING_BODY_FRAME and AC_CHARGING_BODY_FRAME until
+// 2026-08-16. Neither frame ever said "charging": the bit that made the second one
+// look like an AC charge is 0x102 b2 bit0, which is the HIGH BEAM. The old names were
+// the .xdbc's decoder error restated as a fixture, and they made the guard below read
+// as though it were about a charger when it is about a headlight.
+const KEY_ON_ENERGIZED_BODY_FRAME = "80 12 02 44 99 FF D8 FF";
+// …and the same with 0x102 b2 bit0 set as well — the high beam switched on.
+const HIGH_BEAM_ON_BODY_FRAME = "80 12 03 44 99 FF D8 FF";
 // 0x305 — the charger's own frame: mains 5.0 A, DC 20.0 A, DC 400.0 V. Its VALUES
 // are never consulted; that it arrived at all is the evidence.
 const CHARGER_FRAME = "00 32 00 C8 00 A0 0F 00";
 
 const energizedNotCharging = evaluateServiceGate(
   gateReadingsFrom([
-    [0x102, CHARGING_BODY_FRAME],
+    [0x102, KEY_ON_ENERGIZED_BODY_FRAME],
     [0x104, PARKED_DRIVE_FRAME],
   ])
 );
@@ -556,7 +564,7 @@ expect(energizedNotCharging.chargingEvidence === null, "…and no charge evidenc
 
 const dcCharging = evaluateServiceGate(
   gateReadingsFrom([
-    [0x102, CHARGING_BODY_FRAME],
+    [0x102, KEY_ON_ENERGIZED_BODY_FRAME],
     [0x104, PARKED_DRIVE_FRAME],
     [0x305, CHARGER_FRAME],
   ])
@@ -571,14 +579,18 @@ expect(
   "…with energized reported as excused rather than silently ok, so the page can say why"
 );
 
-// ⚠️ The regression guard that matters most here: `charging` (0x102 b2 bit0) is
-// NOT the charging bit — rides.db 2026-08-16 has it equal to `high_beam` at 421 of
-// 421 timestamps, set at 100-142 km/h, and clear through all 25 real charging
-// sessions. If it were treated as charge evidence, switching on the high beam would
-// excuse the drive being energized. It must carry no weight at all.
+// ⚠️ The regression guard that matters most here: 0x102 b2 bit0 is NOT a charging bit.
+// It is the high beam, and since 2026-08-16 it is decoded under that name
+// (`high_beam_lamp`) — rides.db has it equal to `high_beam` at 421 of 421 timestamps,
+// set at 100-142 km/h and clear through all 25 real charging sessions, and a per-frame
+// pass over all 1 103 000 frames of 0x102 in the capture corpus found zero
+// disagreements. If it were treated as charge evidence, switching on the high beam
+// would excuse the drive being energized. It must carry no weight at all — which is
+// why this asserts on the FRAME rather than on a key name, so it still holds however
+// the signal is called next.
 const highBeamOnly = evaluateServiceGate(
   gateReadingsFrom([
-    [0x102, AC_CHARGING_BODY_FRAME],
+    [0x102, HIGH_BEAM_ON_BODY_FRAME],
     [0x104, PARKED_DRIVE_FRAME],
   ])
 );
@@ -590,7 +602,7 @@ expect(highBeamOnly.chargingEvidence === null, "…and must not be claimed as ch
 // separates "plugged in" from "was plugged in, once".
 const staleCharger = evaluateServiceGate(
   gateReadingsFrom([
-    [0x102, CHARGING_BODY_FRAME],
+    [0x102, KEY_ON_ENERGIZED_BODY_FRAME],
     [0x104, PARKED_DRIVE_FRAME],
     [0x305, CHARGER_FRAME, 30_000],
   ])
@@ -604,7 +616,7 @@ for (const [label, frames] of [
   [
     "motion",
     [
-      [0x102, CHARGING_BODY_FRAME],
+      [0x102, KEY_ON_ENERGIZED_BODY_FRAME],
       [0x104, ROLLING_DRIVE_FRAME],
       [0x305, CHARGER_FRAME],
     ],
@@ -631,7 +643,7 @@ for (const [label, frames] of [
 // is attached those two signals may be absent, and the 0x102 bits are what still
 // prove the bike is awake and still.
 const chargingNo104 = evaluateServiceGate({
-  ...gateReadingsFrom([[0x102, CHARGING_BODY_FRAME]]),
+  ...gateReadingsFrom([[0x102, KEY_ON_ENERGIZED_BODY_FRAME]]),
   ...gateReadingsFrom([[0x305, CHARGER_FRAME]]),
 });
 expect(
@@ -655,7 +667,7 @@ expect(
 // blocks whether or not something is plugged in.
 const chargingButRolling = evaluateServiceGate(
   gateReadingsFrom([
-    [0x102, CHARGING_BODY_FRAME],
+    [0x102, KEY_ON_ENERGIZED_BODY_FRAME],
     [0x104, ROLLING_DRIVE_FRAME],
     [0x305, CHARGER_FRAME],
   ])
@@ -670,7 +682,7 @@ expect(
 // what proves the bike is awake at all.
 expect(
   evaluateServiceGate({
-    ...gateReadingsFrom([[0x102, CHARGING_BODY_FRAME]]),
+    ...gateReadingsFrom([[0x102, KEY_ON_ENERGIZED_BODY_FRAME]]),
     ...gateReadingsFrom([[0x104, ROLLING_DRIVE_FRAME, 30_000]]),
     ...gateReadingsFrom([[0x305, CHARGER_FRAME]]),
   }).safe,
@@ -678,7 +690,7 @@ expect(
 );
 expect(
   !evaluateServiceGate({
-    ...gateReadingsFrom([[0x102, CHARGING_BODY_FRAME, 30_000]]),
+    ...gateReadingsFrom([[0x102, KEY_ON_ENERGIZED_BODY_FRAME, 30_000]]),
     ...gateReadingsFrom([[0x305, CHARGER_FRAME]]),
   }).safe,
   "a stale 0x102 must still block — it is the proof the bike is awake and not moving"
@@ -693,6 +705,20 @@ expect(
   `a signal excluded from the gate has been wired back into it: ${serviceGateExcludedKeys()
     .filter(key => serviceGateSignalKeys().includes(key))
     .join(", ")}`
+);
+
+// …and every one of them must still be a signal that EXISTS. Raised in review of the
+// 2026-08-16 beam rename, which is exactly the case it guards: the check above only
+// asks "is this name absent from RULES", and a name nothing produces is trivially
+// absent from everything. So `"charging"` would have sat in that list for ever after
+// the signal it names stopped being decoded, still passing, while the reasoning
+// attached to it quietly stopped applying to anything — a list of names with no
+// spelling check is a comment wearing a check's clothes.
+const registeredKeys = new Set(SIGNALS.map(signal => signal.key));
+const unknownExclusions = serviceGateExcludedKeys().filter(key => !registeredKeys.has(key));
+expect(
+  unknownExclusions.length === 0,
+  `the gate excludes signals that no longer exist, so their reasoning guards nothing: ${unknownExclusions.join(", ")}`
 );
 
 // ── 11. Probing one identifier: banks, targets and what a reply means ──────

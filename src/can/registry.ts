@@ -374,10 +374,30 @@ export const SIGNALS: SignalDef[] = [
   { key: "stand_up", unit: "", group: "controls", source: "stream" }, // b1 bit5, sidestand retracted
   { key: "ignition_button", unit: "", group: "controls", source: "stream" }, // b1 bit6, red button, right bar
   { key: "throttle_on", unit: "", group: "controls", source: "stream" }, // b1 bit7
-  { key: "charging", unit: "", group: "charge", source: "stream" }, // b2 bit0
-  // b2 bit1. Only ever seen as 1 with charging 0, which is also what !charging looks
-  // like — check it across a plug-in before trusting the name (see decode.ts).
-  { key: "charge_port_unlocked", unit: "", group: "charge", source: "stream" },
+  // 0x102 b2 bits 0-1 — the beam LAMPS, renamed 2026-08-16.
+  //
+  // 🚨 These two shipped as `charging` and `charge_port_unlocked`, in group "charge",
+  // from the .xdbc's word. Both were wrong, and rows already exist under both old keys.
+  // Each agrees with its beam switch in all 1 103 000 frames of 0x102 in the capture
+  // corpus, with zero disagreements — see decode.ts for the full argument. The old rows
+  // are not garbage: they are correct readings of these bits under a wrong name, so
+  // grafana/dashboards/ride-summary.json UNIONs the old key into each new lane and the
+  // history stays continuous, the same way the attitude rename did in #49.
+  //
+  // Group moved "charge" → "controls" with the meaning. That is not cosmetic: "controls"
+  // is a BOOLEAN_GROUP in public/lib/bounds.js, so these now get the 0/1 plausibility
+  // gate that "charge" never applied to them.
+  { key: "high_beam_lamp", unit: "", group: "controls", source: "stream" }, // b2 bit0
+  { key: "low_beam_lamp", unit: "", group: "controls", source: "stream" }, // b2 bit1
+  // 0x102 b3 bit0 — the DC fast-charge contactor monitor, added 2026-08-16. Grouped
+  // with `charger_enabled` because that is what it is about and where anyone would look
+  // for it, not with the buttons and beams it shares a frame with. With the two bits
+  // above renamed it is now the ONLY charge-related signal 0x102 carries.
+  //
+  // Unit "" like its neighbours. It must NOT get a unit: "A" or "V" would opt it into
+  // bounds.js's BY_UNIT fallback and there is no sensible range for a flag, while
+  // anything numeric-looking invites a Grafana panel to plot it against real amps.
+  { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
   { key: "moving", unit: "", group: "drive", source: "stream" }, // b2 bit7, .xdbc: speed > 1 km/h
 
   // 0x102 b4-7 — the attitude sensor's roll and pitch, in degrees. Logged until
@@ -407,6 +427,35 @@ export const SIGNALS: SignalDef[] = [
   // frame rate. Count a real ride's rows before tightening further.
   { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
   { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
+
+  // --- Handlebar buttons (0x102 b0, 0x400 b2), added 2026-08-16 --------------
+  // Their own group, so the ALL view lists them together and the owner can press
+  // things and watch them move. `buttons` is registered in public/lib/bounds.js's
+  // BOOLEAN_GROUPS, which gates them to 0/1 — see the note there.
+  //
+  // ⚠️ NO DEADBAND, ever, on any of these, and that is load-bearing rather than a
+  // default. signals.ts logs when `Math.abs(value - lastLogged) > deadband`, so a
+  // deadband of 1 on a 0/1 signal makes `|1 − 0| > 1` false and the signal is never
+  // logged again after its first sample — silently, with no error, forever. The
+  // chatter a deadband would exist to tame does not exist here anyway: the busiest of
+  // these bits moved 141 times in twelve hours of capture.
+  //
+  // The shortest press measured is 30 ms and the median is ~140 ms, against a 10 ms
+  // frame period, so every real press is sampled by at least three frames and both its
+  // edges are logged. What log-on-change cannot do is make a 30 ms press VISIBLE — see
+  // public/lib/press.js, which latches it for the display without touching the log.
+  { key: "btn_mode_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit0
+  { key: "btn_mode_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit1
+  { key: "btn_mode_enter", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit2
+  { key: "btn_indicator_cancel", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit5
+  { key: "btn_set_back", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit0
+  { key: "btn_cruise_enable", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit1
+  { key: "btn_cruise_set", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit2
+  { key: "btn_heated_grip", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit3
+  // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
+  // other 0x102 state bits above rather than in `buttons`; `controls` is already a
+  // BOOLEAN_GROUP so it gets the same 0/1 gate.
+  { key: "cruise_active", unit: "", group: "controls", source: "stream" },
 
   // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only
