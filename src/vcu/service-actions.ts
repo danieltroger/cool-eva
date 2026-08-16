@@ -389,6 +389,46 @@ export function buildClearDtcsFrame(): Uint8Array {
   return frame;
 }
 
+/**
+ * Could this frame be an answer to OUR Mode 04, rather than somebody else's traffic?
+ *
+ * ⚠️ This exists because the always-on OBD poller never stops. `startObdPoller(500)`
+ * keeps sending mode-01 PID requests — and, every 120th round, a multi-frame mode-03
+ * transfer — throughout the 300 ms window a Mode 04 reply is awaited in, and the bus
+ * lease does not cover it (it excludes the two service-mode runners from each other,
+ * not the poller). So the OBD response range carries other people's frames while we
+ * are listening, and "the first frame in 0x7E0-0x7EF" is not our answer.
+ *
+ * The KWP legs of a write need no equivalent because `parseResponseFrame` requires
+ * byte 0 to be the tester's address 0xF1, and no ISO-TP PCI byte can be 0xF1. Mode 04
+ * has no such discriminator built in, so it needs this one.
+ *
+ * Getting it wrong is worse here than elsewhere: a poller reply consumed as ours
+ * would be reported as "nothing confirmed" for an action that may well have erased
+ * the bike's diagnostic memory — inviting a retry of something irreversible — and the
+ * poller would silently lose the frame, which for a Consecutive Frame means losing a
+ * whole trouble-code transfer.
+ *
+ * Deliberately permissive about WHICH ecu answered and strict about WHAT it said: a
+ * functional request may be answered from anywhere in the range, but only `44` or a
+ * refusal naming service `04` can be an answer to `04`.
+ */
+export function isClearDtcsReply(frame: Uint8Array): boolean {
+  if (frame.length < 2 || frame[0] >> 4 !== 0x0) {
+    // Not a single frame. A First/Consecutive/Flow-control frame in this range
+    // belongs to the poller's mode-03 transfer, and taking it would break that.
+    return false;
+  }
+  if (frame[1] === OBD_CLEAR_DTCS_MODE + 0x40) {
+    return true;
+  }
+  // A negative response, but only one that names the service we actually sent. This
+  // bus really does produce `03 7F 00 33` — a refusal of a service 0x00 that does not
+  // exist and that nobody sent — as an artefact of an ECU reading a flow-control
+  // frame as a request.
+  return frame[1] === 0x7f && frame.length >= 3 && frame[2] === OBD_CLEAR_DTCS_MODE;
+}
+
 /** How a Mode 04 request came out. */
 export type ClearDtcsReply =
   /** `44` — the standard positive response to mode 04. */

@@ -47,6 +47,7 @@ import {
   decodeClearDtcsReply,
   decodeRtcSyncFrame,
   interpretServiceStamp,
+  isClearDtcsReply,
 } from "../src/vcu/service-actions.ts";
 import { acquireBus, busHeldBy } from "../src/vcu/bus-lease.ts";
 import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
@@ -1264,6 +1265,26 @@ expect(
   "a refusal naming a service we did not send must not be read as our answer"
 );
 
+// ⚠️ And the discriminator that decides whether a frame in the OBD range is ours AT
+// ALL. The always-on poller is never paused by service mode, so it is sending
+// mode-01 PIDs and sometimes a multi-frame mode-03 transfer while a Mode 04 reply is
+// awaited. Consuming one of those would report "nothing confirmed" for an action that
+// may already have erased the diagnostic memory, and would take the frame away from
+// the poller — losing a whole transfer if it were a Consecutive Frame.
+expect(isClearDtcsReply(parseHexBytes("01 44 00 00 00 00 00 00")), "a positive mode-04 reply is ours");
+expect(isClearDtcsReply(parseHexBytes("03 7F 04 22 00 00 00 00")), "a refusal naming service 04 is ours");
+for (const [hex, why] of [
+  ["04 41 0D 00 00 00 00 00", "a mode-01 PID 0D reply — the poller's, at 2 Hz throughout our window"],
+  ["03 41 0C 1A 2B 00 00 00", "a mode-01 rpm reply"],
+  ["10 50 43 27 05 62 10 00", "the First Frame of a mode-03 transfer"],
+  ["21 10 03 05 14 C1 11 C1", "a Consecutive Frame — taking this loses the whole transfer"],
+  ["03 7F 00 33 00 00 00 00", "the spurious refusal of a service nobody sent"],
+  ["03 7F 03 12 00 00 00 00", "a refusal of mode 03, which is the poller's request and not ours"],
+  ["01 43 00 00 00 00 00 00", "a mode-03 positive reply"],
+] as [string, string][]) {
+  expect(!isClearDtcsReply(parseHexBytes(hex)), `${why} must NOT be consumed as our mode-04 answer`);
+}
+
 // The bus lease: one thing at a time, across files.
 const firstLease = acquireBus("a parameter read");
 expect(firstLease.ok, "the first caller should get the bus");
@@ -1330,6 +1351,31 @@ expect(
   parseWriteRequest(new URLSearchParams("action=set-service-point&confirm=set-service-point"), nowForParse).ok,
   "the routine with its confirmation should parse"
 );
+
+// ⚠️ Hex values, and the sign in particular. `-0x50` used to parse as **+80**: the
+// `-` was stripped, handed to parseInt (which honours it), and then re-applied as a
+// multiplier — applying it twice. A negative that every allowlist entry would have
+// refused with a reason became a positive, in-range value headed for a calibration
+// EEPROM. Caught in review on PR #60, never shipped.
+for (const [raw, expectedValue] of [
+  ["80", 80],
+  ["0x50", 80],
+  ["0X50", 80],
+  ["-0x50", -80],
+  ["-80", -80],
+] as [string, number][]) {
+  const parsed = parseWriteRequest(
+    new URLSearchParams(`action=parameter&name=MAX_DC_CHG_CURRENT&value=${raw}&expected=75`),
+    nowForParse
+  );
+  expect(
+    parsed.ok && parsed.request.kind === "parameter" && parsed.request.value === expectedValue,
+    `value=${raw} should parse as ${expectedValue}, parsed as ${parsed.ok && parsed.request.kind === "parameter" ? parsed.request.value : "a refusal"}`
+  );
+}
+// …and a negative that does get through the parser is refused by the allowlist, which
+// is the second of the two locks doing its job.
+expect(!planWrite("MAX_DC_CHG_CURRENT", -80, 75).ok, "a negative charge current must be refused by the range check");
 
 // ── 17. Optional: the full stored A9 dump ──────────────────────────────────
 if (dumpPath) {

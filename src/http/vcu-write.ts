@@ -212,15 +212,22 @@ export function utcMinute(epochMs: number): string {
   return `${new Date(epochMs).toISOString().slice(0, 16)}Z`;
 }
 
-/** `0x1F` and `31` both, because a value copied out of a hex dump is the common case. */
+/**
+ * `0x1F` and `31` both, because a value copied out of a hex dump is the common case.
+ *
+ * ⚠️ The `-` is moved to the FRONT of the digits and handed to `parseInt`, rather than
+ * stripped and re-applied as a multiplier. The multiplier version applied the sign
+ * twice — `parseInt("-50", 16)` is already −80, and multiplying by −1 turned it back
+ * into **+80**. So `value=-0x50` parsed as 80: a negative that every allowlist entry
+ * would have refused with a reason instead became a positive, in-range value on its
+ * way to a calibration EEPROM. Caught in review, never shipped; §16 covers it now.
+ */
 function parseNumber(raw: string | null): number | null {
   if (raw === null || raw.trim().length === 0) {
     return null;
   }
   const text = raw.trim();
-  const value = /^-?0x[0-9a-f]+$/i.test(text)
-    ? Number.parseInt(text.replace("0x", "").replace("0X", ""), 16) * (text.startsWith("-") ? -1 : 1)
-    : Number(text);
+  const value = /^-?0x[0-9a-f]+$/i.test(text) ? Number.parseInt(text.replace(/^(-?)0x/i, "$1"), 16) : Number(text);
   return Number.isInteger(value) ? value : null;
 }
 

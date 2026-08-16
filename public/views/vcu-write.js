@@ -321,11 +321,20 @@ function ClockAction() {
         disabled: () => busy.val || !canReach() || state.val?.status.clock.trustworthy !== true,
         onclick: () => {
           if (armed.val !== "action:sync-clock") {
-            armed.val = "action:sync-clock";
+            // ⚠️ The FIRST tap refreshes before it arms, so the time the caption then
+            // shows is the Pi's time now rather than the Pi's time when the sheet was
+            // opened. Without this the owner could be asked "Is it 09:15 UTC?" at
+            // 10:20 and truthfully answer no useful question at all.
+            void armClockSync();
             return;
           }
           armed.val = "";
-          void performAction("sync-clock", utcMinute());
+          // ⚠️ The minute CONFIRMED is derived from the one that was DISPLAYED, never
+          // from the phone's own clock. They are two different clocks: sending
+          // `new Date()` would mean the Pi checked the phone's freshness while the
+          // owner had agreed to a statement about the Pi — so a stale caption would
+          // sail through, and a phone a minute out of step could never sync at all.
+          void performAction("sync-clock", confirmedMinute());
         },
       },
       () => {
@@ -440,9 +449,33 @@ function forgetReading() {
   armed.val = "";
 }
 
-/** `2026-08-16T14:03Z` — the same shape src/http/vcu-write.ts checks it against. */
-function utcMinute() {
-  return `${new Date().toISOString().slice(0, 16)}Z`;
+/**
+ * The minute the button is currently SHOWING, in the shape src/http/vcu-write.ts
+ * checks against: `2026-08-16T14:03Z`.
+ *
+ * Sliced out of the Pi's own `clock.iso`, so the value confirmed and the value
+ * displayed are the same string from the same clock. If the sheet has gone stale the
+ * server refuses and names both minutes — which is the intended behaviour, and the
+ * refusal itself refreshes the state so the next attempt shows the right time.
+ */
+function confirmedMinute() {
+  const iso = state.val?.status.clock.iso ?? "";
+  return `${iso.slice(0, 16)}Z`;
+}
+
+/** Refreshes the Pi's clock reading, then arms — so the time in the caption is its time now. */
+async function armClockSync() {
+  busy.val = true;
+  try {
+    await fetchStatus();
+  } finally {
+    busy.val = false;
+  }
+  // Only arms if the refreshed verdict still allows it. A clock that has drifted out
+  // of GPS agreement since the sheet opened must not leave a primed button behind.
+  if (state.val?.status.clock.trustworthy === true) {
+    armed.val = "action:sync-clock";
+  }
 }
 
 async function readCurrent() {
@@ -554,6 +587,17 @@ function Field(label, control) {
 export async function refreshVcuWrite() {
   armed.val = "";
   forgetReading();
+  await fetchStatus();
+}
+
+/**
+ * Just the state — no disarming, no forgetting the reading.
+ *
+ * Kept apart from `refreshVcuWrite` because arming the clock sync needs a fresh
+ * `clock.iso` and must not wipe a parameter reading somebody took thirty seconds ago;
+ * `refreshVcuWrite` is the sheet-opening reset and deliberately does both.
+ */
+async function fetchStatus() {
   try {
     const response = await fetch("/vcu-write", { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());

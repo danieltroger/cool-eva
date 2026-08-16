@@ -30,6 +30,7 @@ import {
   buildRtcSyncFrame,
   decodeClearDtcsReply,
   interpretServiceStamp,
+  isClearDtcsReply,
   OBD_FUNCTIONAL_REQUEST_ID,
   type ServiceStamp,
 } from "./service-actions.ts";
@@ -198,6 +199,20 @@ interface SessionContext {
    * 0x01, not the tester".
    */
   pendingIsObd: boolean;
+  /**
+   * The micro this session has unlocked, or null.
+   *
+   * ⚠️ Kept so the cooldown mark can be pushed forward on EVERY exchange after the
+   * unlock, not only when it was granted. The micro's unlock decays on a ~2.5 s IDLE
+   * timer, and every request re-arms that timer — so stamping only at the start of
+   * `unlock` measured from the wrong end. `runSetServicePoint` is where it bites:
+   * after the unlock come `31 FC` and four stamp read-backs, seven exchanges, up to
+   * ~2.2 s if they all time out. The unlock would then expire at ~4.7 s while the
+   * cooldown cleared at 4.0 s, and the next action's `27 01` would hit a still-
+   * unlocked micro, get invalidKey, and spend one of about three attempts — the exact
+   * outcome the cooldown exists to prevent.
+   */
+  unlockedMicro: string | null;
   stopped: boolean;
   stoppedReason: string | null;
 }
@@ -582,6 +597,7 @@ function newContext(channel: RawChannel): SessionContext {
     pending: null,
     pendingResponseCanId: null,
     pendingIsObd: false,
+    unlockedMicro: null,
     stopped: false,
     stoppedReason: null,
   };
@@ -608,6 +624,20 @@ function handleFrame(context: SessionContext, id: number, data: Buffer): boolean
     // any ECU on it — this VCU answers mode 03 on 0x7EF rather than the 0x7E8 a car
     // would use, so pinning one id would miss the reply.
     if (id < 0x7e0 || id > 0x7ef) {
+      return false;
+    }
+    // ⚠️ …but the id alone is NOT enough to say a frame is ours. The always-on OBD
+    // poller is never paused by service mode — the bus lease excludes the two
+    // service-mode runners from each other, and the poller holds no lease — so it is
+    // sending mode-01 PIDs, and sometimes a multi-frame mode-03 transfer, throughout
+    // the 300 ms we wait in. Consuming one of those would report "nothing confirmed"
+    // for an action that may already have erased the bike's diagnostic memory, AND
+    // take the frame away from the poller (index.ts returns as soon as this says
+    // true), which for a Consecutive Frame loses a whole transfer.
+    //
+    // The KWP legs need no equivalent: parseResponseFrame demands byte 0 == 0xF1 and
+    // no ISO-TP PCI can be 0xF1. Mode 04 has no such discriminator, so it gets one.
+    if (!isClearDtcsReply(data)) {
       return false;
     }
     const waiting = context.pending;
@@ -650,6 +680,10 @@ type UnlockResult =
  * The mark is set BEFORE the key is sent, not after it succeeds: an attempt that
  * failed still left the micro in a state where another `27 01` is a bad idea, and
  * the cooldown exists to protect the attempt counter rather than to track successes.
+ *
+ * On success `unlockedMicro` is set, which makes every LATER exchange in this session
+ * push the mark forward — so the four seconds are counted from the last frame the
+ * operation sent, which is what the micro's own idle timer counts from too.
  */
 async function unlock(context: SessionContext, micro: "A8" | "A9"): Promise<UnlockResult> {
   lastAuthenticatedAt.set(micro, monotonicNow());
@@ -711,6 +745,7 @@ async function unlock(context: SessionContext, micro: "A8" | "A9"): Promise<Unlo
           : keyReply.reason,
     };
   }
+  context.unlockedMicro = micro;
   return { kind: "unlocked" };
 }
 
@@ -809,6 +844,14 @@ function exchangeRaw(
     const settle = (result: ExchangeResult): void => {
       context.pendingResponseCanId = null;
       context.pendingIsObd = false;
+      if (context.unlockedMicro !== null) {
+        // Pushed forward on every exchange once this session holds an unlock, so the
+        // cooldown is measured from the LAST frame of the operation rather than from
+        // the moment SecurityAccess began. The micro's own unlock decays on an idle
+        // timer that each request re-arms, so this is the mark that tracks it. See
+        // `unlockedMicro` on SessionContext for what went wrong without it.
+        lastAuthenticatedAt.set(context.unlockedMicro, monotonicNow());
+      }
       // Paced on the way out, so every path here is polite to the bus by default
       // rather than by a caller remembering to be.
       setTimeout(() => resolve(result), PACE_MS);
