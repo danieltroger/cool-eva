@@ -66,11 +66,14 @@ export function decodeAbsFrame(data: Buffer): DecodedValue[] {
 // 0x1A, so one capture file carries both signals and the pairing needs no clock alignment
 // beyond the candump timestamps. Two independent checks say it can be trusted:
 //   • against speed derived from the hub's own lat/lon track, over 241 straight (heading change
-//     < 2°), steady spans above 40 km/h: reported − track = −0.27 km/h mean, and GPS position
-//     noise inflates a chord-sum track by roughly +0.15 km/h at these speeds, so the field is
-//     unbiased to within ~0.15 km/h. It is whole km/h, and it ROUNDS rather than truncates —
-//     which matters, because a truncated field would sit −0.5 km/h low and that is −0.53 % at
-//     95 km/h, the same size as the effect being measured.
+//     < 2°), steady spans above 40 km/h: reported − track = −0.27 km/h mean. Worth doing because
+//     the field is whole km/h, and whether it ROUNDS or TRUNCATES is worth −0.5 km/h, which at
+//     95 km/h is −0.53 % — the same size as the effect being measured. It rounds: chord-summing
+//     a noisy track inflates the track by roughly +0.15 km/h at these speeds, putting the true
+//     bias near −0.12, against −0.5 for a truncating field. Residual uncertainty is ~0.15 km/h,
+//     so read the fits below as carrying an extra +0.0/+0.2 % systematic on top of their CIs.
+//     Nothing here turns on it — a truncating field would raise BOTH fits by 0.53 % and leave
+//     the front/rear ratio, which is what refutes the circumference model, untouched.
 //   • the bike's own odometer advanced 10.4 km over a window in which the GPS track measured
 //     10.055 km — +3.43 %, matching the speed over-read below, from a completely separate
 //     accumulator.
