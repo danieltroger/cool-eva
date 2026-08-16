@@ -301,9 +301,17 @@ export function checkTableType(index: number, value: number): TableTypeVerdict |
       message: `${identity} = ${describeTableType(value)} — the table src/vcu/param-table.ts encodes`,
     };
   }
+  // ⚠️ Id 249 lives on the A8, so this sentence must not tell a reader looking at 276
+  // — the A9's copy — that 249 is LM_TYPE. The whole reason the two micros get
+  // separate verdicts is that they can disagree, and a diagnostic meant to be pasted
+  // verbatim into a bug report is the last place to get the disputed id backwards.
   const wasEmbedded =
     value === EMBEDDED_TABLE_TYPE
-      ? " That is the table params.ecf came from, so id 249 is LM_TYPE on this micro and not R_BRAKE_POPUP."
+      ? " That is the table params.ecf came from. Its one disputed id is 249, which is LM_TYPE there and " +
+        "R_BRAKE_POPUP in 16407" +
+        (parameter.micro === "A8"
+          ? " — and 249 lives on the A8, so it is this micro's."
+          : " — but 249 lives on the A8, so read 277 before concluding anything about it.")
       : "";
   return {
     index,
@@ -341,6 +349,20 @@ function groupByName(parameters: VcuParameter[]): Map<string, VcuParameter[]> {
  * would keep working, and one parameter would keep the wrong name.
  */
 function applyTable16407Corrections(parameters: VcuParameter[]): VcuParameter[] {
+  // Checked before the map, because the map can only catch a row that EXISTS and is
+  // named something unexpected. A correction whose index has no row at all would
+  // simply never run — the file gets shorter or renumbered, the rename lands nowhere,
+  // and PARAMETER_TABLE is plain 16406 again with nothing said. That is the same
+  // silent-wrong-name failure this whole module exists to prevent.
+  for (const correction of TABLE_16407_CORRECTIONS) {
+    if (!parameters.some(parameter => parameter.index === correction.index)) {
+      throw new Error(
+        `param-table: the 16407 correction for index ${correction.index} (“${correction.wasCalled}” → ` +
+          `“${correction.isCalled}”) has no row to land on — the embedded params.ecf does not describe that ` +
+          "index, and skipping the correction would leave the name silently uncorrected"
+      );
+    }
+  }
   return parameters.map(parameter => {
     const correction = TABLE_16407_CORRECTIONS.find(candidate => candidate.index === parameter.index);
     if (!correction) {

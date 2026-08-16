@@ -164,22 +164,63 @@ expect(checkTableType(276, 0x4016)?.matches === false, "276 = 16406 is the OTHER
 expect(checkTableType(277, 0x4017)?.matches === true, "277 is the A8's copy and is judged the same way");
 expect(checkTableType(258, 0x4017) === null, "an index that is not a TABLE_TYPE parameter has no verdict");
 
+// 249 lives on the A8, so a 16406 verdict for 276 (the A9's copy) must not tell the
+// reader that this micro's 249 is LM_TYPE — that is the A8's parameter, and the two
+// micros are judged separately precisely because they can disagree.
+expect(
+  checkTableType(277, 0x4016)?.message.includes("it is this micro's") === true,
+  "a 16406 verdict on the A8 should say 249 is this micro's"
+);
+expect(
+  checkTableType(276, 0x4016)?.message.includes("read 277 before concluding") === true,
+  "a 16406 verdict on the A9 must point at 277 rather than claim 249 for the A9"
+);
+
 // …and through a whole snapshot, which is how the sweep and /vcu-params reach it.
-const matchingSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 17")]));
-expect(matchingSweep.confirmed && !matchingSweep.mismatched, "a sweep that read 276 = 0x4017 should be confirmed");
-const wrongTableSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 16")]));
+const matchingSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 17"), reading(277, "40 17")]));
+expect(
+  matchingSweep.confirmed && !matchingSweep.mismatched && matchingSweep.unread.length === 0,
+  "a sweep in which both micros named 16407 should be confirmed"
+);
+
+// ⚠️ The state this bike is actually in, and the one the report must not call green:
+// the A9 answered and the A8 never has — and the A8 is the micro that owns 249.
+const onlyA9Sweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 17")]));
+expect(
+  !onlyA9Sweep.confirmed && !onlyA9Sweep.mismatched && onlyA9Sweep.unread.join() === "277",
+  "one micro answering is not confirmation of the other — 277 unread must leave the report unconfirmed"
+);
+expect(
+  onlyA9Sweep.lines.length === 2 && onlyA9Sweep.lines.some(line => line.includes("TABLE_TYPE_uS")),
+  "the unread A8 copy should get its own line rather than being omitted"
+);
+
+const wrongTableSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 16"), reading(277, "40 17")]));
 expect(
   wrongTableSweep.mismatched && !wrongTableSweep.confirmed,
   "a sweep whose 276 says 16406 must report a mismatch — every NAME it printed would be that table's"
 );
 expect(
+  wrongTableSweep.lines[0].startsWith("🚨"),
+  "the mismatch leads, so a journal or a banner shows the worst finding first"
+);
+expect(
   wrongTableSweep.lines.some(line => line.includes("LM_TYPE")),
   "the 16406 mismatch should name the one parameter that actually changes, rather than only saying “mismatch”"
 );
+
 const unaskedSweep = reportTableType(snapshotOf([reading(258, "4B")]));
 expect(
-  !unaskedSweep.confirmed && !unaskedSweep.mismatched && unaskedSweep.lines.length === 1,
-  "a sweep that read neither TABLE_TYPE is unconfirmed rather than confirmed, and says so"
+  !unaskedSweep.confirmed && !unaskedSweep.mismatched && unaskedSweep.lines.length === 2,
+  "a sweep that read neither TABLE_TYPE is unconfirmed rather than confirmed, and says so once per micro"
+);
+
+// A row that answered with a width the table did not predict has no honest typed
+// value, so it counts as unread rather than as an answer.
+const wrongWidthSweep = reportTableType(snapshotOf([reading(276, "40")]));
+expect(
+  !wrongWidthSweep.confirmed && wrongWidthSweep.unread.includes(276),
+  "a TABLE_TYPE row whose width contradicts the table has named nothing and must not confirm anything"
 );
 
 // ── 2. Requests, and the read-only guard ────────────────────────────────────

@@ -128,8 +128,16 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
 export interface TableTypeReport {
   /** One per `TABLE_TYPE` parameter the sweep actually read. Empty when it read neither. */
   verdicts: TableTypeVerdict[];
-  /** True only when at least one was read and every one that was read is the expected table. */
+  /**
+   * ⚠️ True only when BOTH micros answered and both named the expected table.
+   *
+   * One micro answering is not confirmation of the other, and treating it as such
+   * would render today's actual state — A9 read, A8 never read, and 249 living on the
+   * A8 — as a clean green line. `unread` says which are missing.
+   */
   confirmed: boolean;
+  /** Indices in TABLE_TYPE_INDICES that this snapshot has no reading for. */
+  unread: number[];
   /**
    * ⚠️ True when a micro named a table this software does not encode. Its parameter
    * NAMES are then not to be trusted, and nothing should be written by name.
@@ -159,42 +167,53 @@ export interface TableTypeReport {
  * outstanding. A per-micro verdict is what makes "they disagree" expressible at all.
  */
 export function reportTableType(snapshot: VcuParameterSnapshot): TableTypeReport {
+  const readRows = new Map(snapshot.rows.filter(row => row.status === "read").map(row => [row.index, row]));
   const verdicts: TableTypeVerdict[] = [];
-  for (const row of snapshot.rows) {
-    if (row.status !== "read") {
-      continue;
-    }
-    // `value` over `unsigned` because the table's S/U column is what decides how the
-    // bytes read; they agree here (both are WORD U) and would not for a signed one.
-    const value = row.value ?? row.unsigned;
-    const verdict = value === null ? null : checkTableType(row.index, value);
+  const unread: number[] = [];
+  for (const index of TABLE_TYPE_INDICES) {
+    const row = readRows.get(index);
+    // `value` only, never falling back to `unsigned`. For these two indices `value` is
+    // null in exactly one case — the reply's width contradicted the table — and that is
+    // precisely where the raw bytes must NOT be compared: a 1-byte reply read as a
+    // number would name some other table and be reported as a mismatch, when what
+    // actually happened is that the record was malformed. Nothing was named; say so.
+    const verdict = row?.value == null ? null : checkTableType(index, row.value);
     if (verdict) {
       verdicts.push(verdict);
+    } else {
+      // Includes the row-present-but-unreadable case (a width mismatch withholds the
+      // typed value). Either way this micro has not named its table.
+      unread.push(index);
     }
   }
   const mismatched = verdicts.some(verdict => !verdict.matches);
-  if (verdicts.length === 0) {
-    return {
-      verdicts,
-      confirmed: false,
-      mismatched: false,
-      // Not silence. A sweep that skipped both is a sweep whose every name is
-      // unverified, and that is worth one line rather than none.
-      lines: [
-        `⚠️  Neither ${TABLE_TYPE_INDICES.join(" nor ")} was read, so nothing confirms this bike runs the ` +
-          `${describeTableType(EXPECTED_TABLE_TYPE)} table these names come from.`,
-      ],
-    };
-  }
-  return {
-    verdicts,
-    confirmed: !mismatched,
-    mismatched,
-    lines: verdicts
-      .slice()
-      .sort((left, right) => Number(left.matches) - Number(right.matches))
-      .map(verdict => `${verdict.matches ? "✅" : "🚨"}  ${verdict.message}`),
-  };
+  // Worst first: a micro that named the wrong table, then a micro that named none,
+  // then the ones that agree.
+  const lines = [
+    ...verdicts.filter(verdict => !verdict.matches).map(verdict => `🚨  ${verdict.message}`),
+    ...unread.map(index => `⚠️  ${describeUnreadTableType(index)}`),
+    ...verdicts.filter(verdict => verdict.matches).map(verdict => `✅  ${verdict.message}`),
+  ];
+  return { verdicts, confirmed: unread.length === 0 && !mismatched, unread, mismatched, lines };
+}
+
+/**
+ * One line for a micro that did not name its table.
+ *
+ * Not silence, and not folded into "some micro said 16407 so we are fine". As of
+ * 2026-08-16 this is the line 277 produces on every sweep, and it is the honest state:
+ * the A8 owns id 249, id 249 is the only id where 16406 and 16407 disagree, and the A8
+ * has never been asked. A green report that omitted it would be the feature failing in
+ * exactly the case it was built for.
+ */
+function describeUnreadTableType(index: number): string {
+  const parameter = parameterAtIndex(index);
+  const identity = parameter ? `${parameter.name} (${index}, ${parameter.micro})` : `parameter ${index}`;
+  const owner = parameter ? `the ${parameter.micro}'s` : "this micro's";
+  return (
+    `${identity} was not read, so nothing confirms ${owner} names are the ` +
+    `${describeTableType(EXPECTED_TABLE_TYPE)} table's. Reading it costs one frame in a 10 81 session.`
+  );
 }
 
 /** What changed between two snapshots. */
