@@ -143,7 +143,11 @@ export function evaluateTableGate(report: TableTypeReport | null): TableGateVerd
     ...unread.map(describeUnread),
   ];
   const remedies = [
-    ...mismatched.map(describeMismatchRemedy),
+    // ONE sentence however many micros disagree. The reasons above are per-micro
+    // because they carry different findings (which table each named, and which of them
+    // owns the disputed id 249); the remedy is the same paragraph either way, and
+    // printing it twice is how a warning gets skimmed past.
+    ...(mismatched.length > 0 ? [describeMismatchRemedy(mismatched)] : []),
     // A malformed reply and an unasked micro are both answered by asking again — the
     // difference is that one of them has already answered once, which is a fact about
     // the framing rather than about anyone's diligence. Same instruction, and
@@ -171,12 +175,13 @@ function describeMismatch(index: number, value: number): string {
   return checkTableType(index, value)?.message ?? `${identify(index)} named ${describeTableType(value)}.`;
 }
 
-function describeMismatchRemedy(index: number): string {
+function describeMismatchRemedy(indices: number[]): string {
+  const who = indices.map(identify).join(" and ");
   return (
-    `⚠️ No read clears ${identify(index)} — the bike answered, and the answer is the problem. Writing by index ` +
-    "means trusting this software's name for that index, and on the table this micro named the name may belong to " +
-    "a different parameter entirely. The fix is to teach src/vcu/param-table.ts that table (see " +
-    "obd-garage/PARAM_TABLES.md, which carries all 28 and how they were extracted), not to read anything again."
+    `⚠️ No read clears ${who} — the bike answered, and the answer is the problem. Writing by index means ` +
+    "trusting this software's name for that index, and on the table it named the name may belong to a different " +
+    "parameter entirely. The fix is to teach src/vcu/param-table.ts that table (see obd-garage/PARAM_TABLES.md, " +
+    "which carries all 28 and how they were extracted), not to read anything again."
   );
 }
 
@@ -198,27 +203,60 @@ function describeUnread(index: number): string {
 }
 
 /**
- * The read that clears a micro, spelled out to the frame.
+ * The read that clears a micro, spelled out to the frame — and, just as importantly,
+ * spelled out to the thing that RECORDS it.
  *
  * ⚠️ This sentence is why the gate is worth having rather than merely being safe. All
  * of it earns its place for somebody standing next to a parked motorcycle: which
- * micro, which index, where the button is, what the request is on the wire, that it
- * changes nothing and needs no SecurityAccess, and what a good answer looks like. A
- * refusal that stopped at "the table type is not confirmed" would be a refusal nobody
- * could act on, and the honest end of that road is the gate being switched off.
+ * micro, which index, what the request is on the wire, that it changes nothing and
+ * needs no SecurityAccess, what a good answer looks like, and where to do it so the
+ * answer survives. A refusal that stopped at "the table type is not confirmed" would be
+ * a refusal nobody could act on, and the honest end of that road is the gate being
+ * switched off.
+ *
+ * ⚠️⚠️ SEEING THE ANSWER AND RECORDING IT ARE DIFFERENT ACTS, and an earlier version of
+ * this sentence conflated them — which made it worse than saying nothing. This gate is
+ * fed from the last SWEEP's snapshot (`latest.json`, written by ./snapshot-store.ts's
+ * writeSnapshot, called from exactly one place: the end of a sweep). "Probe one
+ * identifier" performs precisely this read and returns it in an HTTP response that
+ * nothing persists — so someone who followed the old wording saw `0x4017` on screen,
+ * went back, and found the button still amber with the identical message and nothing
+ * to explain why. The probe is still named here, because it IS the one-frame way to
+ * find out what the bike says; it is now named as what it is.
  */
 function readInstructionFor(index: number): string {
   const parameter = parameterAtIndex(index);
   const micro = parameter?.micro ?? "the owning micro";
   // Straight off the name table's own identifier, so this cannot drift from what the
-  // probe would actually send: `0x1000 | index`, big-endian, behind service 0x22.
+  // sweep or the probe would actually send: `0x1000 | index`, big-endian, service 0x22.
   const identifier = parameter?.identifier ?? 0;
   const request = `22 ${byteHex(identifier >> 8)} ${byteHex(identifier & 0xff)}`;
   return (
-    `Read parameter ${index} ${parameter?.name ?? "?"} on the ${micro}: Service mode → “Probe one identifier”, ` +
-    `target ${micro}, bank 1, index ${index} — ${request} in a 10 81 session. It is read-only, takes no ` +
-    `SecurityAccess, costs one frame, and should answer ${describeTableType(EXPECTED_TABLE_TYPE)}.`
+    `Read parameter ${index} ${parameter?.name ?? "?"} on the ${micro} — ${request} in a 10 81 session: ` +
+    `read-only, no SecurityAccess, one frame, and it should answer ${describeTableType(EXPECTED_TABLE_TYPE)}. ` +
+    "⚠️ It has to be RECORDED, not merely seen: this gate reads the last parameter sweep's snapshot, so run " +
+    `Service mode → read the parameters and let it finish. ${sweepOrderCaveatFor(index)} ` +
+    `“Probe one identifier” (target ${micro}, bank 1, index ${index}) shows the same answer in one frame and is ` +
+    "the quickest way to find out what the bike says — but it stores nothing, so it cannot open this gate."
   );
+}
+
+/**
+ * ⚠️ How likely a cut-short sweep is to have reached this index — which is not the same
+ * answer for the two micros, and 277 has the unlucky one.
+ *
+ * ../vcu/sweep.ts reads A9 first and A8 second (`MICROS`), each in ascending index
+ * order. The table runs 1…277, 277 is an A8 parameter, so `TABLE_TYPE_uS` is the very
+ * last thing a sweep asks about — and a run the safety gate cuts short is exactly the
+ * run that will not have got there. 276 sits in the A9 pass and is reached far earlier.
+ * Saying "the A8 is swept last" under 276 would be true and irrelevant, so it is not
+ * said there.
+ */
+function sweepOrderCaveatFor(index: number): string {
+  return parameterAtIndex(index)?.micro === "A8"
+    ? `The A8 is swept second and ${index} is at the very end of it, so a sweep the safety gate cut short is ` +
+        "unlikely to have reached it — check it says it finished."
+    : `A sweep reaches ${index} partway through the A9, which is the half it does first.`;
 }
 
 /** `TABLE_TYPE_uS (277, A8)`. The identity every sentence above opens with. */

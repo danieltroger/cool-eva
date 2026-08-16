@@ -14,6 +14,7 @@ import {
   EXPECTED_TABLE_TYPE,
   PARAMETER_TABLE,
   TABLE_16407_CORRECTIONS,
+  TABLE_TYPE_INDICES,
   ambiguousParameterNames,
   checkTableType,
   decodeTableType,
@@ -1333,6 +1334,53 @@ expect(
 );
 expect(unreadGate.remedy.includes("read-only"), "the remedy must say the read changes nothing, or nobody will run it");
 expect(unreadGate.remedy.includes("0x4017"), "the remedy must say what a good answer looks like");
+
+// ⚠️⚠️ AND THE REMEDY HAS TO ACTUALLY WORK — a different claim from the remedy being
+// well worded, and the one that was wrong first time round. This gate is fed from the
+// last SWEEP's snapshot; "Probe one identifier" performs exactly this read and returns
+// it in an HTTP response that nothing persists. A remedy naming only the probe sent
+// someone to do something that could not clear the gate, and left them looking at the
+// identical amber message afterwards with nothing to explain why. So the sentence must
+// name the sweep, and must say the probe alone will not do — and the two properties
+// that make the sweep the right answer are asserted rather than assumed.
+expect(
+  unreadGate.remedy.includes("sweep"),
+  "the remedy must name the thing that RECORDS the answer, not only the thing that shows it"
+);
+expect(
+  unreadGate.remedy.includes("stores nothing"),
+  "…and must say plainly that the probe alone cannot open the gate, or it sends someone round a loop"
+);
+expect(
+  TABLE_TYPE_INDICES.every(index => PARAMETER_TABLE.some(parameter => parameter.index === index)),
+  "a full sweep must cover both TABLE_TYPE indices, or no sweep could ever clear this gate"
+);
+// The other half of that chain: a snapshot in which both micros answered — which is
+// what a finished sweep produces — must be one this gate then permits. `confirmedGate`
+// above is that assertion; this names the connection so the pair cannot drift apart.
+expect(
+  evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "40 17")]))).writesAllowed,
+  "the snapshot a finished sweep produces, with both micros naming 16407, must open the gate"
+);
+// 277 is an A8 parameter and the last index in the table, and the sweep does A9 first —
+// so it is the very last thing a sweep asks about, and a cut-short run is exactly the
+// run that misses it. The remedy says so; this is the fact behind that sentence.
+expect(
+  parameterAtIndex(277)?.micro === "A8" && Math.max(...PARAMETER_TABLE.map(p => p.index)) === 277,
+  "277 must still be an A8 parameter and the highest index, or the remedy's sweep-order caveat is wrong"
+);
+expect(
+  unreadGate.remedy.includes("swept second"),
+  "the remedy must warn that a cut-short sweep will not have reached 277"
+);
+// …and that caveat must NOT be attached to 276, which sits in the A9 half the sweep
+// does first. True-but-irrelevant advice under the wrong index is how a remedy stops
+// being read.
+const onlyA8ReadGate = evaluateTableGate(reportTableType(snapshotOf([reading(277, "40 17")])));
+expect(
+  onlyA8ReadGate.outstanding.join() === "276" && !onlyA8ReadGate.remedy.includes("swept second"),
+  "the sweep-order caveat belongs to 277, not to 276 — the A9 is the half a sweep does first"
+);
 
 // Nothing read at all — no sweep on this Pi — is the same verdict naming both micros.
 const nothingReadGate = evaluateTableGate(null);

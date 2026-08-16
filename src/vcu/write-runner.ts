@@ -320,11 +320,15 @@ async function checkPreconditions(
   if (!verdict.safe) {
     return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
   }
-  // Sampled for every action, including the exempt ones, so that the report threaded
-  // into the codec below is the same one this refusal was decided from. An action that
-  // does not need it simply never looks at it.
-  const tableType = await context.tableType();
+  // Sampled ONLY for the actions that thread it, which is the invariant worth keeping:
+  // the report this refusal is decided from is the same object ./write-codec.ts
+  // re-judges before the bytes, so the two cannot straddle a sweep finishing and
+  // disagree. The exempt actions never look at it, so they do not pay for a read and a
+  // JSON.parse of a 277-row file off an SD card — `sync-clock` least of all, since its
+  // confirmation has a deadline attached.
+  let tableType: TableTypeReport | null = null;
   if (tableGateAppliesTo(request)) {
+    tableType = await context.tableType();
     const table = evaluateTableGate(tableType);
     if (!table.writesAllowed) {
       // The state is named, not just the reason: `mismatched` and `unread` are read by

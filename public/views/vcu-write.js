@@ -87,9 +87,18 @@ function Availability() {
       );
     }
     if (!status.gate.safe) {
+      // ⚠️ The table note is rendered HERE TOO, not only in the safe branch. It is the
+      // same person on the same trip: the reason they cannot write this second is the
+      // vehicle-state gate, and the reason they still will not be able to once they
+      // park is this one. Showing them one at a time means a second walk out to the
+      // bike — and the write button below is rendered whenever writing is enabled, so
+      // it would otherwise be saying "see above" with nothing above it.
       return div(
-        "🚫  Nothing can be written:",
-        ...status.gate.blockers.map(blocker => div({ style: `color:${MUTED}` }, `· ${blocker}`))
+        div(
+          "🚫  Nothing can be written:",
+          ...status.gate.blockers.map(blocker => div({ style: `color:${MUTED}` }, `· ${blocker}`))
+        ),
+        TableTypeNote()
       );
     }
     return div(
@@ -308,7 +317,10 @@ function WriteButton() {
           // remedy are in TableTypeNote() above; this is the short form on the control.
           return table.state === "mismatched"
             ? "🚨  Blocked — this bike's parameter table is not the one this software has"
-            : "⚠️  Blocked — read TABLE_TYPE_uS (277) on the A8 first, above";
+            : // Deliberately "sweep", not "read": the probe shows the answer and stores
+              // nothing, so a caption saying "read 277" sends people round a loop that
+              // never ends. The full sentence is in TableTypeNote() above.
+              "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
         }
         if (current.val === null) {
           return "✏️  Read it first — a write needs to know what is there now";
