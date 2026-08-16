@@ -15,6 +15,7 @@ import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
+import { loadLatestTableType } from "./vcu/snapshot-store.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -76,6 +77,12 @@ const CAN_IFACE = "can0";
 //     Everything else still applies on top — the same safety gate, an allowlist of
 //     five parameters with per-parameter ranges, a compare-and-swap against a fresh
 //     read, a read-back after every write, and an audit journal in VCU_PARAM_DIR.
+//     ⚠️ Plus one precondition this switch cannot satisfy: a PARAMETER write is
+//     refused until a sweep has read the VCU's own TABLE_TYPE and it names a table
+//     src/vcu/param-table.ts encodes (src/vcu/table-gate.ts). As of 2026-08-16 the
+//     A8's copy, parameter 277, has never been read on this bike, so that gate is
+//     shut and setting this variable alone will not open it. The service actions are
+//     not affected — none of them addresses a parameter by index.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -156,6 +163,12 @@ const vcuWriteRunner = createVcuWriteRunner({
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
   // opinions about whether a motorcycle is safe to touch is one opinion too many.
   gate: () => vcuReadRunner.gate(),
+  // ⚠️ What the last sweep says about which of Energica's 28 parameter tables this
+  // bike runs. A parameter is written BY INDEX and an index only means a parameter
+  // relative to a table, so a write with this unconfirmed is refused — see
+  // src/vcu/table-gate.ts. Read per attempt rather than at startup, so the sweep that
+  // confirms it opens the gate without restarting the service.
+  tableType: () => loadLatestTableType(VCU_PARAM_DIR),
 });
 if (SERVICE_WRITE_ENABLED) {
   // Loud, and at WARN. A Pi in this state can change a motorcycle's calibration

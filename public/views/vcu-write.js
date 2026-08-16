@@ -33,6 +33,13 @@ const { button, div, input, option, select, span } = van.tags;
 //     each with its own two taps and its own warning. They are not in a list you can
 //     scroll a thumb through.
 //
+// ── ⚠️ And one lock that is not about care at all ───────────────────────────
+// The table-type gate (src/vcu/table-gate.ts) disables the write button outright until
+// the bike has said which of Energica's 28 parameter tables it runs, because a
+// parameter is written BY INDEX and a name is only a claim about a table. It disables
+// the WRITE button and nothing else: the read button and the service actions stay live,
+// deliberately, because the way out of the blocked state is a READ. See `canWrite`.
+//
 // `confirm()` is deliberately not used, here or anywhere in this dashboard — it is a
 // browser dialog that lands in the wrong place on a phone, and it cannot show a
 // two-line before/after.
@@ -80,18 +87,77 @@ function Availability() {
       );
     }
     if (!status.gate.safe) {
+      // ⚠️ The table note is rendered HERE TOO, not only in the safe branch. It is the
+      // same person on the same trip: the reason they cannot write this second is the
+      // vehicle-state gate, and the reason they still will not be able to once they
+      // park is this one. Showing them one at a time means a second walk out to the
+      // bike — and the write button below is rendered whenever writing is enabled, so
+      // it would otherwise be saying "see above" with nothing above it.
       return div(
-        "🚫  Nothing can be written:",
-        ...status.gate.blockers.map(blocker => div({ style: `color:${MUTED}` }, `· ${blocker}`))
+        div(
+          "🚫  Nothing can be written:",
+          ...status.gate.blockers.map(blocker => div({ style: `color:${MUTED}` }, `· ${blocker}`))
+        ),
+        TableTypeNote()
       );
     }
     return div(
-      { style: `color:${GOOD}` },
-      status.gate.chargingEvidence === null
-        ? "✅  Stationary and out of drive."
-        : `🔌  Stationary and charging (${status.gate.chargingEvidence}) — which is deliberately allowed, because the DC charge parameters cannot be tested unplugged.`
+      div(
+        { style: `color:${GOOD}` },
+        status.gate.chargingEvidence === null
+          ? "✅  Stationary and out of drive."
+          : `🔌  Stationary and charging (${status.gate.chargingEvidence}) — which is deliberately allowed, because the DC charge parameters cannot be tested unplugged.`
+      ),
+      TableTypeNote()
     );
   });
+}
+
+/**
+ * Whether the bike has said which parameter table it runs — and what to do when it
+ * has not.
+ *
+ * ⚠️ The two blocked states are rendered DIFFERENTLY on purpose, in colour and in
+ * words, because they are not the same problem:
+ *
+ *   mismatched (red)   the bike named a table this software does not carry. No read
+ *                      helps; every parameter name on this page may belong to a
+ *                      different parameter, and the fix is in the Pi's source.
+ *   unread (amber)     nobody has asked the bike yet. One read clears it, and the
+ *                      server's `remedy` names exactly which read — parameter, micro,
+ *                      request bytes and expected answer.
+ *
+ * A single "writes are blocked" would send someone hunting for a software bug when the
+ * answer was one frame, or the other way round. The sentences come from the Pi
+ * (src/vcu/table-gate.ts) rather than being written again here: deciding what a
+ * `TABLE_TYPE` reading means needs the parameter table, and a second copy of that
+ * reasoning in a file the checks cannot reach is the exact drift this gate exists to
+ * catch — the same argument /vcu-params makes for computing its banner server-side.
+ */
+function TableTypeNote() {
+  const table = state.val?.status.tableGate;
+  if (!table || table.writesAllowed) {
+    // Silent when confirmed. The line above already says writing is available, and a
+    // green "table confirmed" badge would be one more thing to read past every time.
+    return div();
+  }
+  const mismatched = table.state === "mismatched";
+  return div(
+    div(
+      { style: `color:${mismatched ? BAD : WARN}` },
+      mismatched
+        ? "🚨  Parameter writes are blocked: this bike is running a parameter table this software does not have."
+        : "⚠️  Parameter writes are blocked: nothing has confirmed which parameter table this bike runs."
+    ),
+    div({ style: `color:${MUTED}`, class: "action-note" }, table.reason),
+    // The remedy is the reason this is a gate and not a wall, so it gets the emphasis
+    // rather than the muted grey the reason sits in.
+    div({ style: `color:${mismatched ? BAD : WARN}`, class: "action-note" }, table.remedy),
+    div(
+      { style: `color:${MUTED}`, class: "action-note" },
+      "Reading is unaffected — a read under the wrong table shows a wrong name and changes nothing, and the way out of this is a read. The service actions below are unaffected too: none of them addresses a parameter by index."
+    )
+  );
 }
 
 function ParameterForm() {
@@ -228,10 +294,11 @@ function WriteButton() {
     button(
       {
         class: "action",
-        // Unavailable until there is a fresh reading. This is lock 1 of 4 — the
-        // server enforces the same thing with its compare-and-swap, and the page
-        // simply does not offer a button whose request would be refused.
-        disabled: () => busy.val || !canReach() || current.val === null || wanted.val.trim().length === 0,
+        // Unavailable until there is a fresh reading, and until the bike has named its
+        // parameter table. The server enforces both — the compare-and-swap and the
+        // table gate — and the page simply does not offer a button whose request would
+        // be refused.
+        disabled: () => busy.val || !canWrite() || current.val === null || wanted.val.trim().length === 0,
         onclick: () => {
           if (armed.val !== "write") {
             armed.val = "write";
@@ -242,6 +309,19 @@ function WriteButton() {
         },
       },
       () => {
+        const table = state.val?.status.tableGate;
+        if (table && !table.writesAllowed) {
+          // Ahead of the "read it first" caption: reading the value would not help
+          // here, and a button that asks for a reading it will then refuse to act on is
+          // worse than one that says what is actually wrong. The full sentence and the
+          // remedy are in TableTypeNote() above; this is the short form on the control.
+          return table.state === "mismatched"
+            ? "🚨  Blocked — this bike's parameter table is not the one this software has"
+            : // Deliberately "sweep", not "read": the probe shows the answer and stores
+              // nothing, so a caption saying "read 277" sends people round a loop that
+              // never ends. The full sentence is in TableTypeNote() above.
+              "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
+        }
         if (current.val === null) {
           return "✏️  Read it first — a write needs to know what is there now";
         }
@@ -439,6 +519,24 @@ function selectedTarget() {
 function canReach() {
   const status = state.val?.status;
   return status !== undefined && status.enabled && status.gate.safe;
+}
+
+/**
+ * `canReach` plus the table-type gate. Used by the write button ONLY.
+ *
+ * ⚠️ Kept separate from `canReach` rather than folded into it, and the separation is
+ * the whole design. `canReach` still governs the read button and the four service
+ * actions, so an unconfirmed table blocks writing by index and leaves everything else
+ * exactly as it was — including the read that clears it. Folding this in would produce
+ * a page that refuses to let you fix the thing it is refusing over.
+ *
+ * The server enforces the same precondition twice more regardless (the runner refuses
+ * the request, and src/vcu/write-codec.ts refuses to encode the frame). This is the
+ * page declining to offer a button whose request would be refused, which is the same
+ * relationship it has to the allowlist and the compare-and-swap.
+ */
+function canWrite() {
+  return canReach() && state.val?.status.tableGate.writesAllowed === true;
 }
 
 /** Drops the reading AND the arming. The two must never be out of step. */
