@@ -57,10 +57,10 @@
         "enable": true,
         "hide": false,
         "iconColor": "orange",
-        "name": "Charging bit (0x102)",
+        "name": "Charge start",
         "target": {
           "queryType": "table",
-          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charging (0x102)' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charging'\n)\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "rawQueryText": "-- 0x102 b2 bit0 used to feed this annotation under the name `charging`. It is the\n-- HIGH BEAM (renamed high_beam_lamp 2026-08-16, see src/can/decode.ts), so every\n-- flash-to-pass drew a charge marker. These two signals are the real thing, and it\n-- takes both: bms_state_charge never fires on DC, because the BMS sits in Idle\n-- through a fast charge, and fast_dc_contactor fires ONLY on DC.\nWITH edges AS (\n  SELECT r.ts AS ts, r.value AS value,\n         LAG(r.value) OVER (PARTITION BY s.key ORDER BY r.ts) AS previous,\n         CASE s.key WHEN 'bms_state_charge' THEN 'Charge (BMS 0x201)'\n                    ELSE 'DC fast charge (0x102 b3)' END AS label\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('bms_state_charge', 'fast_dc_contactor')\n)\nSELECT ts / 1000.0 AS time, label AS text\nFROM edges\nWHERE value = 1 AND (previous IS NULL OR previous <> 1)\n  AND ts BETWEEN $__from AND $__to\nORDER BY ts",
           "refId": "Anno",
           "timeColumns": ["time"]
         }
