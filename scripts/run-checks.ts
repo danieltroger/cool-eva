@@ -40,9 +40,12 @@ import { fileURLToPath } from "url";
 //                         history — and serves a dashboard to look at rather than
 //                         asserting anything, so there is no verdict to collect
 //
-// captured-dtc-transfer.ts, captured-vcu-records.ts and simulated-vcu-micro.ts are
-// fixtures and a test double: data and a stand-in bus, not checks. The two replay
-// scripts in CHECKS are what read them.
+// captured-dtc-transfer.ts, captured-vcu-records.ts, freeze-frame-fixtures.ts and
+// simulated-vcu-micro.ts are fixtures and a test double: data and a stand-in bus,
+// not checks. The replay scripts in CHECKS are what read them. Note that
+// freeze-frame-fixtures.ts is the one that is CONSTRUCTED rather than captured,
+// and says so at length — what the check built on it proves is correspondingly
+// narrower.
 //
 // generate-grafana-dtc.ts is in CHECKS but only ever as `--check`. Run bare it rewrites
 // grafana/dashboards/trouble-codes.json and exits 0, which is a generator, not a check;
@@ -106,6 +109,11 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-button-decode.ts",
     covers:
       "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
+  },
+  {
+    script: "scripts/check-freeze-frame.ts",
+    covers:
+      "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",
   },
   {
     script: "scripts/check-gps-clock.ts",

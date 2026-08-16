@@ -11,6 +11,7 @@ import { loadStaticFiles } from "../src/http/static.ts";
 import { handleStatusEndpoint } from "../src/http/status.ts";
 import { handleDtcTableEndpoint } from "../src/http/dtc-table.ts";
 import { handleStoredDtcsEndpoint } from "../src/http/stored-dtcs.ts";
+import { handleFaultInfokeysEndpoint } from "../src/http/fault-infokeys.ts";
 import { setupWs } from "../src/ws.ts";
 import { monotonicNow } from "../src/monotonic.ts";
 import { loadCapturedTroubleCodes } from "./captured-dtc-transfer.ts";
@@ -76,6 +77,12 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/stored-dtcs") {
     handleStoredDtcsEndpoint(res);
+    return;
+  }
+  // Static tables, so the shortlist under each stored code renders in a replay
+  // exactly as it does on the bike.
+  if (url.pathname === "/fault-infokeys") {
+    handleFaultInfokeysEndpoint(req, res);
     return;
   }
   if (staticFiles.serve(url.pathname, res)) {

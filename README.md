@@ -209,7 +209,7 @@ The captures this was developed against are one motorcycle's ride history and ar
 npm test        # about a second; no bike, no can0, no capture
 ```
 
-Runs the self-checks that replay **committed** fixtures: the trouble-code transfer above, and `scripts/check-vcu-params.ts` (parameter table, request encoding, framing, the live reads, interpretation, the snapshot diff, and the KWP transport against a simulated micro). `scripts/check-button-decode.ts` replays eleven real `0x102`/`0x400` frames — including the two the cruise buttons were ever recorded on and the one the fast-charge contactor closed in — and also guards the three ways this feature could be switched off without anything else failing: `0x400` dropping out of the kernel RX filters, a button key missing from the registry, and a deadband on a 0/1 signal, which stops it logging after the first sample and does so silently. It also runs `scripts/generate-grafana-dtc.ts --check`, which compares the fault-code table Grafana carries inline against `src/diagnostics/dtc-table.ts` — a copy that once went stale for months without anything on screen looking wrong. CI runs the same command on every PR, so a change that breaks a decoder, the parameter table or that dashboard goes red rather than green.
+Runs the self-checks that replay **committed** fixtures: the trouble-code transfer above, and `scripts/check-vcu-params.ts` (parameter table, request encoding, framing, the live reads, interpretation, the snapshot diff, and the KWP transport against a simulated micro). `scripts/check-button-decode.ts` replays eleven real `0x102`/`0x400` frames — including the two the cruise buttons were ever recorded on and the one the fast-charge contactor closed in — and also guards the three ways this feature could be switched off without anything else failing: `0x400` dropping out of the kernel RX filters, a button key missing from the registry, and a deadband on a 0/1 signal, which stops it logging after the first sample and does so silently. `scripts/check-freeze-frame.ts` cross-checks Energica's 155 per-fault field shortlists against `src/diagnostics/dtc-table.ts` — a real check across two independently sourced tables, which is why it knows about the two water-pump codes they disagree on — and then replays two freeze-frame transfers through the reassembler and decoder. Those two transfers are **constructed rather than captured**, and both the script and its fixture say so at length: they prove the decoder self-consistent, not the wire format right. It also runs `scripts/generate-grafana-dtc.ts --check`, which compares the fault-code table Grafana carries inline against `src/diagnostics/dtc-table.ts` — a copy that once went stale for months without anything on screen looking wrong. CI runs the same command on every PR, so a change that breaks a decoder, the parameter table or that dashboard goes red rather than green.
 
 `scripts/check-can-decoders.ts` covers the broadcast decoders the same way, from a handful of frames copied byte for byte out of a real capture — and then checks three things about the decoder set that replaying cannot see. The important one is the **RX filter**: `STREAM_IDS` sets the kernel's CAN filters, so an ID missing from it never reaches the decoder and there is no symptom at all — no error, no warning, just a signal that never appears, which looks exactly like a bike that never sent it. That has already cost time here once, on `0x400`. The check probes the decoder across the whole 11-bit ID space and fails if anything that decodes is missing from the filter. It also fails if a decoder emits a key with no registry entry, and if any 1/0 flag carries a deadband of 1 or more — because `|1 − 0| > 1` is false, so such a signal logs once after boot and then goes silent forever.
 
@@ -352,13 +352,14 @@ Does not:
 
 ## Trouble codes
 
-The bike keeps two completely different fault lists, and the Faults tab shows them apart because merging them would be wrong:
+The bike keeps several completely different fault records, and the Faults tab shows them apart because merging them would be wrong — they answer different questions:
 
 |  | What it is | How many, right now | Where from |
 | --- | --- | --- | --- |
 | **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity Hub message type 25, over Bluetooth and mirrored onto CAN `0x410` |
 | **Stored** | Everything that has _ever_ been wrong and not been cleared. It only climbs | **39** | OBD-II **mode 03**, over ISO-TP |
 | **Pending / permanent** | Would be OBD-II modes 07 and 0A | — | **no response.** See below |
+| **Freeze frames** | The conditions the bike recorded _at the moment_ one specific code latched | not read yet | KWP `0x17` on the A8 micro. Decoder and tables are in; the read is not. See [Freeze frames](#freeze-frames) |
 
 Mode 03's reply is 80 bytes, so it needs ISO-TP: a First Frame, a flow-control frame back from us, then eleven Consecutive Frames. `src/can/iso-tp.ts` reassembles it and `src/diagnostics/obd-dtc.ts` decodes it — both pure, bytes in and codes out, so a captured transfer replays on a laptop:
 
@@ -372,6 +373,27 @@ Codes are named from Energica's own type-approval table, reconciled against the 
 **Modes 07 and 0A return nothing at all** — silence, not a refusal, across six attempts. That means "not implemented" and "implemented but withheld" cannot be told apart from here, so the dashboard says **"no response"** rather than "none pending". Those are different claims and only one of them is true.
 
 The transfer is not reliable — the First Frame arrives every time and the Consecutive Frames sometimes never do, at somewhere between 25 % and 70 % per attempt. It is retried, and it is read once a minute from inside the sequential OBD poll loop so nothing else of ours is on the bus while it runs.
+
+### Freeze frames
+
+A stored code says _what_ went wrong. A freeze frame says what the bike was **doing at the moment it latched** — pack voltage, motor speed, air temperature, and for a water-pump code the measured pump current itself. It is a different service on a different bus from either list above: KWP **`0x17`** with a component number, on the **A8** safety micro, after a `10 81` session.
+
+What makes a freeze frame readable rather than a hex dump is Energica's own data, and both halves are now in this repo:
+
+- **`src/diagnostics/infokey-table.ts`** — the 120 telemetry fields the manufacturer's service tool calls _info keys_, each with a name, a unit, a C datatype and a scaling equation. Transcribed from two independent copies of Energica's own table, which agree on all 120 rows.
+- **`src/diagnostics/fault-infokeys.ts`** — **944 curated references** across 155 faults saying which of those fields to show for each code, _in order_. That order is the payload's byte layout, not a display preference.
+
+Tap any stored code on the Faults tab and it opens to show that shortlist: Energica's own answer to "what should I go and measure for this fault". That part needs no bus at all — it is served from `/fault-infokeys`, static and cached.
+
+```bash
+node --experimental-strip-types scripts/check-freeze-frame.ts
+# → checks the 120 fields and 155 shortlists against dtc-table.ts, then replays
+#   two freeze-frame transfers through the real reassembler and decoder
+```
+
+> ⚠️ **The read itself is not wired up, and the wire format is not verified.** The _request_ is proven twice over — the factory tool sent `0x17` to A8 29 times in a 2026-08-08 capture and got 29 positive replies, and Energica's own code builds exactly that frame. The _response layout_ has never been captured: it is reconstructed from how the manufacturer's tool decodes it, and one detail (whether the header carries a record-count byte) is genuinely open. So `scripts/check-freeze-frame.ts` replays **constructed** fixtures, not a real transfer, and says so. Every decoded frame carries `trailingHex` and `headerBytesThatFit`, which is how the first read against the bike will settle it.
+>
+> Wiring the read also needs something this repo deliberately does not have: every freeze frame is multi-frame, so it needs a flow-control frame sent back mid-reply, and `src/vcu/kwp-client.ts` is built never to transmit one.
 
 ## VCU parameters, by name
 
@@ -449,6 +471,7 @@ The UI makes an accidental write hard in four ways: you cannot write until you h
 ## Notes
 
 - The CAN bus is **read-only unless you switch writing on**. Everything that runs by itself — passive broadcast decode, the OBD-II poller, the trouble-code reads, the KWP `0x22` parameter reads — cannot change anything in an ECU, and is built so it cannot express one: `src/vcu/param-codec.ts`'s request union has three members and nowhere to put a value, and `src/can/obd-dtc.ts` can emit only modes `03`, `07` and `0A`. That is unchanged and is meant to stay that way. The writes live behind `SERVICE_WRITE_ENABLED`, which is **off by default** — see [Changing something on the bike](#changing-something-on-the-bike). `0x11` ECUReset, `0x2F` InputOutputControl (the factory tool's actuator-test channel), `0x3B` and `0x3D` are implemented **nowhere**, and should stay that way.
+- `src/diagnostics/freeze-frame.ts` is built the same way for its own service: a closed one-member request union that can encode `0x17` and nothing else. So the freeze-frame **erase** that sits beside it in the factory tool — `31 FE` with a fixed 8-byte operand and its own SecurityAccess, which wipes the bike's record of _why_ it faulted — is unreachable rather than merely unused, and it stays outside `SERVICE_WRITE_ENABLED` rather than being one more thing that switch turns on.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.
 - The one thing that _does_ write to the bike is the Bluetooth handshake: enrolling with the Connectivity Hub claims its single authorised-device slot, and after several unanswered attempts the client also tries the hub's own address. If the bike is already paired to something else, that pairing can be replaced, and the way back is clearing the stored device from the bike's own dashboard. `BLE_ENABLED=0` avoids the whole question.
