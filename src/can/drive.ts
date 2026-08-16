@@ -109,7 +109,7 @@ export function decodeRedundantSpeedFrame(data: Buffer): DecodedValue[] {
 // round constant under any reading — not ×100, not the motor's 42.0 rpm/km/h, not the ABS
 // front-wheel scale (105.2 counts per ABS km/h). Per-sample ratios spread 108.8-116.8 across the
 // interquartile range. Publishing that as km/h would put a made-up divisor on the dashboard next
-// to a speed that IS calibrated. If a future ride pins it, the counts already logged convert.
+// to a speed that IS calibrated. (That ride has since happened — see the correction below.)
 //
 // ⚠️ 2026-08-16: that ~109 came from the garage lap fitted against `speed_can_kmh`, and BOTH
 // halves of that are now known to be bad — 0x104 reads 3.5 % fast against GPS, and the garage lap
