@@ -19,10 +19,22 @@
 // and where it contradicts something measured on this bike (0x102's blinkers) ours
 // wins. Confidence markers below and in obd-garage/CAN_MAP.md say which is which.
 
+import { ABS_CAN_ID, decodeAbsFrame } from "./abs.ts";
 import { decodeAttitudeFrame } from "./attitude.ts";
+import { CONSUMPTION_CAN_ID, decodeConsumptionFrame } from "./consumption.ts";
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
+import {
+  DRIVE_TORQUE_CAN_ID,
+  REDUNDANT_SPEED_CAN_ID,
+  THROTTLE_SENSOR_CAN_ID,
+  decodeDriveTorqueFrame,
+  decodeRedundantSpeedFrame,
+  decodeThrottleSensorFrame,
+} from "./drive.ts";
 import { type DecodedValue, bit, bitFieldLe, i16le, u16le } from "./frame.ts";
 import { decodeGpsCanFrame, GPS_CAN_ID } from "./gps.ts";
+import { PSU_CAN_ID, decodePsuFrame } from "./psu.ts";
+import { VCU_FLAGS_CAN_ID, decodeVcuFlagsFrame } from "./vcu-flags.ts";
 
 export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
   switch (id) {
@@ -48,6 +60,33 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       if (data.length < 2) return [];
       return [{ key: "inst_consumption_wh", value: u16le(data[0], data[1]) / 10 }];
     }
+
+    // Seven frames added 2026-08-16, from Energica's own signal database (0x0A0, 0x02C, 0x100,
+    // 0x10B, 0x501) and from the bus alone (0x125, 0x127). Every one of them was replayed against the
+    // 2026-08-02 garage lap before being wired up, and each decoder carries its own evidence:
+    // what the capture proves, which scalings are the manufacturer's word rather than a
+    // measurement, and what is deliberately left undecoded. None of them is a one-liner's worth
+    // of argument, which is why they are modules and this is only the routing.
+    case ABS_CAN_ID:
+      return decodeAbsFrame(data);
+
+    case DRIVE_TORQUE_CAN_ID:
+      return decodeDriveTorqueFrame(data);
+
+    case THROTTLE_SENSOR_CAN_ID:
+      return decodeThrottleSensorFrame(data);
+
+    case REDUNDANT_SPEED_CAN_ID:
+      return decodeRedundantSpeedFrame(data);
+
+    case CONSUMPTION_CAN_ID:
+      return decodeConsumptionFrame(data);
+
+    case PSU_CAN_ID:
+      return decodePsuFrame(data);
+
+    case VCU_FLAGS_CAN_ID:
+      return decodeVcuFlagsFrame(data);
 
     // 0x305 — charger DC (charging only, 5 Hz). 🟡
     case 0x305: {
@@ -466,6 +505,17 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
 // setpoints, but neither appeared in 40 s of live capture (parked, unplugged), so
 // there is nothing yet to decode. See obd-garage/CAN_MAP.md.
 //
+// ⚠️ This list is the single easiest thing in the project to get silently wrong, because a
+// missing entry has no symptom: the decoder is fine, the tests pass, and the signal simply
+// never appears. It has already happened once — 0x400 was being dropped here while a decoder
+// waited for it. `scripts/check-can-decoders.ts` now closes that hole from the other side: it
+// probes decodeFrame across the whole 11-bit ID space and fails the build if any ID that
+// answers is missing from STREAM_IDS. Add a decoder without adding it here and `npm test`
+// says so.
+//
+// The seven IDs behind named constants were added 2026-08-16; the constants come from the same
+// modules as their decoders so the two cannot drift apart by a typo.
+//
 // 0x400 joined on 2026-08-16 and is the one entry here that costs something. It is
 // the highest-frame-rate ID on this bus and it carries almost no information: its
 // payload changed six times in 1 099 357 frames. Worse, the rate is padding — every
@@ -486,5 +536,25 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
 // nobody is pressing stops being refreshed: the dashboard greys its tile out as stale
 // and ageMs() reports it as missing, on a bike where "this signal stopped arriving" is
 // a real diagnosis we do not want to fake.
-const VEHICLE_STREAM_IDS = [0x020, 0x022, 0x025, 0x102, 0x104, 0x109, 0x10a, 0x305, 0x306, 0x400, GPS_CAN_ID, 0x480];
+const VEHICLE_STREAM_IDS = [
+  0x020,
+  0x022,
+  0x025,
+  DRIVE_TORQUE_CAN_ID,
+  ABS_CAN_ID,
+  VCU_FLAGS_CAN_ID,
+  0x102,
+  0x104,
+  0x109,
+  0x10a,
+  CONSUMPTION_CAN_ID,
+  REDUNDANT_SPEED_CAN_ID,
+  THROTTLE_SENSOR_CAN_ID,
+  0x305,
+  0x306,
+  0x400,
+  GPS_CAN_ID,
+  0x480,
+  PSU_CAN_ID,
+];
 export const STREAM_IDS = [...VEHICLE_STREAM_IDS, ...BMS_STREAM_IDS];
