@@ -62,8 +62,18 @@ const BY_KEY = {
   "freeze_frame_dtc": [0, 65_535],
 };
 
-/** Signals that are 1/0 flags, where anything else is a bad read. */
-const BOOLEAN_GROUPS = new Set(["controls", "diag"]);
+/**
+ * Signals that are 1/0 flags, where anything else is a bad read.
+ *
+ * `buttons` joined on 2026-08-16 with the handlebar buttons. Today their decoder can
+ * only emit 0 or 1 (it returns `bit()`), so the gate rejects nothing — it is here for
+ * the same reason `controls` is, which is that `high_beam` once read 193. A decoder
+ * that later returns the masked byte instead of the bit (`handlebar & 0x20` is 32, not
+ * 1) would otherwise paint a pressed button as an ordinary number, and a button tile
+ * that lights on 32 but not on 1 is exactly the kind of quiet wrong answer this file
+ * exists to stop.
+ */
+const BOOLEAN_GROUPS = new Set(["controls", "diag", "buttons"]);
 
 /**
  * …except these, which share the `diag` group with the 154 generated `dtc_*`

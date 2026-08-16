@@ -375,6 +375,14 @@ export const SIGNALS: SignalDef[] = [
   { key: "ignition_button", unit: "", group: "controls", source: "stream" }, // b1 bit6, red button, right bar
   { key: "throttle_on", unit: "", group: "controls", source: "stream" }, // b1 bit7
   { key: "charging", unit: "", group: "charge", source: "stream" }, // b2 bit0
+  // 0x102 b3 bit0 — the DC fast-charge contactor monitor, added 2026-08-16. Grouped
+  // with `charging` and `charger_enabled` because that is what it is about and where
+  // anyone would look for it, not with the buttons it shares a frame with.
+  //
+  // Unit "" like its neighbours. It must NOT get a unit: "A" or "V" would opt it into
+  // bounds.js's BY_UNIT fallback and there is no sensible range for a flag, while
+  // anything numeric-looking invites a Grafana panel to plot it against real amps.
+  { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
   // b2 bit1. Only ever seen as 1 with charging 0, which is also what !charging looks
   // like — check it across a plug-in before trusting the name (see decode.ts).
   { key: "charge_port_unlocked", unit: "", group: "charge", source: "stream" },
@@ -407,6 +415,35 @@ export const SIGNALS: SignalDef[] = [
   // frame rate. Count a real ride's rows before tightening further.
   { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
   { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
+
+  // --- Handlebar buttons (0x102 b0, 0x400 b2), added 2026-08-16 --------------
+  // Their own group, so the ALL view lists them together and the owner can press
+  // things and watch them move. `buttons` is registered in public/lib/bounds.js's
+  // BOOLEAN_GROUPS, which gates them to 0/1 — see the note there.
+  //
+  // ⚠️ NO DEADBAND, ever, on any of these, and that is load-bearing rather than a
+  // default. signals.ts logs when `Math.abs(value - lastLogged) > deadband`, so a
+  // deadband of 1 on a 0/1 signal makes `|1 − 0| > 1` false and the signal is never
+  // logged again after its first sample — silently, with no error, forever. The
+  // chatter a deadband would exist to tame does not exist here anyway: the busiest of
+  // these bits moved 141 times in twelve hours of capture.
+  //
+  // The shortest press measured is 30 ms and the median is ~140 ms, against a 10 ms
+  // frame period, so every real press is sampled by at least three frames and both its
+  // edges are logged. What log-on-change cannot do is make a 30 ms press VISIBLE — see
+  // public/lib/press.js, which latches it for the display without touching the log.
+  { key: "btn_mode_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit0
+  { key: "btn_mode_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit1
+  { key: "btn_mode_enter", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit2
+  { key: "btn_indicator_cancel", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit5
+  { key: "btn_set_back", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit0
+  { key: "btn_cruise_enable", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit1
+  { key: "btn_cruise_set", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit2
+  { key: "btn_heated_grip", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit3
+  // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
+  // other 0x102 state bits above rather than in `buttons`; `controls` is already a
+  // BOOLEAN_GROUP so it gets the same 0/1 gate.
+  { key: "cruise_active", unit: "", group: "controls", source: "stream" },
 
   // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only

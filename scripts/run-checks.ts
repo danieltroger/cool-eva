@@ -92,6 +92,11 @@ const CHECKS: SelfCheck[] = [
       "VCU parameter table, request encoding and the read-only guard, framing against frames captured 2026-08-08, the live bank-1 reads, interpretation, the snapshot diff, and the KWP transport against a simulated micro",
   },
   {
+    script: "scripts/check-button-decode.ts",
+    covers:
+      "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
+  },
+  {
     script: "scripts/decode-dtc-response.ts",
     covers:
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",

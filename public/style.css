@@ -466,6 +466,28 @@ body {
   color: var(--bad);
 }
 
+/* Second line on a button tile: the press count and how long ago. --sub is the
+   dimmest colour that still clears 6:1 on a tile; see the palette note at the top. */
+.raw-sub {
+  font-size: 0.6rem;
+  color: var(--sub);
+}
+
+/* A handlebar button, held down or released within the last 600 ms.
+ *
+ * The border does the work rather than a background swap: this is watched from arm's
+ * length while the other hand is on the bars, and an outline is the change that reads
+ * fastest in peripheral vision. Deliberately no transition — the press is already only
+ * held for 600 ms (public/lib/press.js) and fading either edge of that would eat the
+ * margin that makes a 30 ms tap visible at all. */
+.raw.pressed {
+  box-shadow: inset 0 0 0 2px var(--good);
+}
+
+.raw.pressed .raw-value {
+  color: var(--good);
+}
+
 /* ---------- stored trouble codes (faults view) ---------- */
 
 /* Thirty-nine of these have to fit on a phone, so one line each: the code on the

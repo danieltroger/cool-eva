@@ -1,11 +1,23 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { faultState, groupOf, knownKeys, isStale, signalState } from "../lib/store.js";
+import { chartTick, faultState, groupOf, knownKeys, isStale, signalState } from "../lib/store.js";
 import { STALE_MS } from "../lib/tiles.js";
 import { MUTED } from "../lib/colors.js";
+import { pressTracker, secondsSincePress } from "../lib/press.js";
 
 const { div, input, span } = van.tags;
+
+/**
+ * The one group that does not render as a plain number.
+ *
+ * The handlebar buttons are momentary — a 30 ms press is one frame of a 60 Hz display
+ * — so a raw 1/0 readout cannot be watched. press.js explains the latch; this constant
+ * is only the switch that picks the tile. Everything else about the group, including
+ * that it exists and where it sorts, falls out of the registry's `group` field exactly
+ * as every other group here does.
+ */
+const BUTTON_GROUP = "buttons";
 
 // Every signal the bike is producing, grouped and searchable.
 //
@@ -58,7 +70,7 @@ export function AllView() {
           .map(([group, groupKeys]) =>
             div(
               div({ class: "section" }, `${group} · ${groupKeys.length}`),
-              div({ class: "raw-grid" }, ...groupKeys.map(RawTile))
+              div({ class: "raw-grid" }, ...groupKeys.map(group === BUTTON_GROUP ? ButtonTile : RawTile))
             )
           )
       );
@@ -93,6 +105,66 @@ function RawTile(key) {
       return rejected && state.val ? div({ class: "raw-fault" }, `rejected ${rejected.value}`) : span();
     }
   );
+}
+
+/**
+ * One handlebar button. Same card as RawTile, but built to be watched rather than read.
+ *
+ * Three readouts, in decreasing order of how much you should trust them:
+ *
+ *   • the press COUNT, which cannot be missed by looking away, by a backgrounded tab
+ *     or by a reconnect;
+ *   • how long ago the last press was, so a count that moved while you were looking at
+ *     the bars is still attributable to the button you just pressed;
+ *   • the lit state, which is the fastest to read and the easiest to miss.
+ *
+ * Never trust the light alone: a bit that is never seen high but whose count climbs is
+ * a working button whose flash the browser dropped, and a bit stuck high with a count
+ * of 1 is a wiring fault, not a press.
+ * @param {string} key
+ */
+function ButtonTile(key) {
+  const state = signalState(key);
+  const tracker = pressTracker(key);
+  return div(
+    { class: () => `raw${tracker.lit.val ? " pressed" : ""}${state.val && isStale(key, STALE_MS) ? " stale" : ""}` },
+    div({ class: "raw-key" }, key),
+    div({ class: "raw-value" }, () => {
+      if (!state.val) {
+        // Distinct from "0": the frame has never arrived, so nothing is known about
+        // this button at all. On 0x400's four bits that is also what a missing RX
+        // filter would look like, which is worth being able to tell apart.
+        return "–";
+      }
+      return tracker.lit.val ? "PRESSED" : "idle";
+    }),
+    div({ class: "raw-sub" }, () => {
+      // chartTick paces the "ago" counter: nothing arrives to mark the passing of a
+      // second, so without this the age would freeze at whatever it was when the last
+      // press repainted the tile.
+      chartTick.val;
+      const count = tracker.count.val;
+      if (count === 0) {
+        return "no presses yet";
+      }
+      const ago = secondsSincePress(key);
+      const label = count === 1 ? "1 press" : `${count} presses`;
+      return ago === null ? label : `${label} · ${formatAgo(ago)} ago`;
+    })
+  );
+}
+
+/**
+ * @param {number} seconds
+ */
+function formatAgo(seconds) {
+  if (seconds < 60) {
+    return `${Math.round(seconds)} s`;
+  }
+  if (seconds < 3600) {
+    return `${Math.round(seconds / 60)} min`;
+  }
+  return `${Math.round(seconds / 3600)} h`;
 }
 
 /**
