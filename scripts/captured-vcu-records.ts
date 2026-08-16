@@ -91,6 +91,44 @@ export const KNOWN_VARIANT_DIFFERENCES: { index: number; name: string; thisBike:
   { index: 264, name: "CHARGER_TYPE", thisBike: 1, otherBike: 0 },
 ];
 
+/**
+ * Real SecurityAccess seed/key pairs, off THIS bike's A8, on 2026-08-08.
+ *
+ * ⚠️ The most valuable four rows in this file. They come from a passive candump taken
+ * while ENERGICA'S OWN diagnostic software was connected (obd-garage/DIAG_ADDRESSES.md
+ * §9.3) — nothing was transmitted to obtain them — and they are the only live ground
+ * truth anywhere in the write path. Everything else about writing is decompiled,
+ * inferred, or reasoned about.
+ *
+ * They matter beyond confirming the arithmetic. A wrong key costs one of about three
+ * attempts, and the lockout clears only on a VCU power cycle — so an untested key
+ * function is not merely unverified, it is a way to lock the micro from a phone in a
+ * garage. Both on the wire, big-endian.
+ */
+export const CAPTURED_SECURITY_PAIRS: [seed: string, key: string][] = [
+  ["A57D5F18", "1C5F69E2"],
+  ["874C790E", "0D2D70CB"],
+  ["98F4A11B", "26990CE5"],
+  ["EF2BA23F", "A0B80BFD"],
+];
+
+/**
+ * Two RTC-sync frames that really went out on CAN 0x120, on 2026-08-16.
+ *
+ * From another Energica owner's tool, whose own log recorded the bytes and the local
+ * time; the ISO instants here are those times converted to UTC (that machine runs at
+ * UTC+9:30). 2026-08-16 was a Sunday, which is what makes the weekday nibble check
+ * meaningful — .NET's `DayOfWeek` puts Sunday at 0, and so does JavaScript's
+ * `getUTCDay()`.
+ *
+ * They are the end-to-end evidence for the bit packing in src/vcu/service-actions.ts,
+ * which is otherwise only a reading of a decompiled method.
+ */
+export const CAPTURED_RTC_FRAMES: [hex: string, iso: string][] = [
+  ["94 FF 04 02 20 10 1A 00", "2026-08-16T04:16:00Z"],
+  ["94 FF 66 E8 20 10 1A 00", "2026-08-16T06:03:29Z"],
+];
+
 /** "01 90" or "0190" → bytes. Throws on anything that is not whole hex bytes. */
 export function parseHexBytes(text: string): Uint8Array {
   const compact = text.replace(/\s+/g, "");

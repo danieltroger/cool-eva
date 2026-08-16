@@ -11,7 +11,9 @@ import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
 import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
 import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
+import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
+import { createVcuWriteRunner } from "./vcu/write-runner.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -62,6 +64,17 @@ const CAN_IFACE = "can0";
 //     src/vcu/service-gate.ts, which will not let a read start unless the bike is
 //     stationary and out of drive, and stops one that is running when it stops
 //     being either.
+//   SERVICE_WRITE_ENABLED=1 → the dashboard may CHANGE things on the bike: write one
+//     of the five allowlisted calibration parameters, set the service point, sync the
+//     bike's clock, or clear the stored trouble codes.
+//     ⚠️ This is the only switch here that defaults to OFF, and the asymmetry is
+//     deliberate. Every other subsystem's flag turns something off; this one turns
+//     something on, so a Pi that has never been told about it cannot change a
+//     motorcycle's calibration EEPROM. It is also SEPARATE from SERVICE_MODE_ENABLED:
+//     reads and writes are not the same risk and must not share an off button.
+//     Everything else still applies on top — the same safety gate, an allowlist of
+//     five parameters with per-parameter ranges, a compare-and-swap against a fresh
+//     read, a read-back after every write, and an audit journal in VCU_PARAM_DIR.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -72,6 +85,8 @@ const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
 const VCU_PARAM_DIR = process.env.VCU_PARAM_DIR ?? join(ROOT, "vcu-params");
 const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
+// Opt IN, not opt out — see the note above. `=== "1"` rather than `!== "0"`.
+const SERVICE_WRITE_ENABLED = process.env.SERVICE_WRITE_ENABLED === "1";
 
 // --- Signal registry ---
 defineSignals(SIGNALS);
@@ -129,6 +144,33 @@ console.log(
     : "service-mode: disabled (SERVICE_MODE_ENABLED=0) — the snapshot is still served and exported, but nothing here can ask the bike"
 );
 
+// The write half, with its own switch and its own runner. Built here for the same
+// reason the read runner is: the frame router below has to be able to hand it
+// replies, and it must exist before the bus does.
+const vcuWriteRunner = createVcuWriteRunner({
+  channel: () => channel ?? null,
+  busIsActive: OBD_ENABLED,
+  enabled: SERVICE_WRITE_ENABLED,
+  directory: VCU_PARAM_DIR,
+  // The SAME gate the read path uses, passed in rather than re-implemented. Two
+  // opinions about whether a motorcycle is safe to touch is one opinion too many.
+  gate: () => vcuReadRunner.gate(),
+});
+if (SERVICE_WRITE_ENABLED) {
+  // Loud, and at WARN. A Pi in this state can change a motorcycle's calibration
+  // EEPROM from a web page, and that should be visible in `journalctl` without
+  // anyone going looking for it.
+  console.warn(
+    "service-write: ⚠️  ENABLED (SERVICE_WRITE_ENABLED=1) — the dashboard may write allowlisted VCU parameters, " +
+      "set the service point, sync the bike's clock and clear stored DTCs. Every attempt is journalled to " +
+      `${join(VCU_PARAM_DIR, "service-writes.jsonl")}. Unset the variable to forbid it.`
+  );
+} else {
+  console.log(
+    "service-write: disabled (default) — nothing here can change anything on the bike. SERVICE_WRITE_ENABLED=1 to allow it."
+  );
+}
+
 if (CAN_ENABLED) {
   try {
     await bringUpCan(CAN_IFACE, OBD_ENABLED); // ACTIVE only when we intend to TX OBD reads
@@ -154,6 +196,13 @@ if (CAN_ENABLED) {
         // there is an ISO-TP length nibble — so this takes nothing away from the
         // poller. It is also a no-op unless a sweep is actually running.
         if (vcuReadRunner.handleCanFrame(msg.id, data)) {
+          return;
+        }
+        // Same for a write in flight, and it needs the OBD range too: the KWP legs
+        // answer on 0x7E0 and Mode 04 answers somewhere in 0x7E0–0x7EF. Only one of
+        // the two runners can be busy at a time (src/vcu/bus-lease.ts), so this is
+        // one extra null check per frame in the range and nothing at all otherwise.
+        if (vcuWriteRunner.handleCanFrame(msg.id, data)) {
           return;
         }
         handleResponse(msg.id, data);
@@ -292,10 +341,18 @@ const server = createServer(async (req, res) => {
     return;
   }
   // One identifier off one ECU, on demand — the replacement for the deleted script's
-  // `--index N`, and the only way to reach bank 2 (live data) or the charge manager
-  // at all. Same header, same gate and same single-flight as /vcu-read.
+  // `--index N`, and the only way to reach bank 2 (live data) at all. Same header,
+  // same gate and same single-flight as /vcu-read.
   if (url.pathname === "/vcu-probe") {
     await handleVcuProbeEndpoint(req, res, url, { runner: vcuReadRunner, enabled: SERVICE_MODE_ENABLED });
+    return;
+  }
+  // ⚠️ The one endpoint here that CHANGES anything on the bike. Off unless
+  // SERVICE_WRITE_ENABLED=1, behind the same safety gate as the reads, behind an
+  // allowlist of five parameters with per-parameter ranges, and journalled. Its own
+  // header value, so a caller built for the read endpoints cannot reach it.
+  if (url.pathname === "/vcu-write") {
+    await handleVcuWriteEndpoint(req, res, url, { runner: vcuWriteRunner });
     return;
   }
   // The same snapshot /vcu-params serves, in another owner's energica_tool.py
@@ -333,6 +390,11 @@ async function shutdown(): Promise<void> {
   //
   // Awaited, like closeEncryptedLog below and for the same reason: process.exit()
   // is a few lines away and the sweep still has its archive to write.
+  // Aborted rather than awaited: a write is a few hundred milliseconds of exchanges
+  // and holds no file handle and no partial state of its own — unlike a sweep, which
+  // has an archive to write. Its audit record is appended by the action itself, and
+  // an action stopped mid-flight has already recorded whatever it got to.
+  vcuWriteRunner.stop();
   await vcuReadRunner.stop();
   // Awaited, not fire-and-forget: sealing the last segment is async, and
   // process.exit() below would otherwise kill it and lose the final buffer.

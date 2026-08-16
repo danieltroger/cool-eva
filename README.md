@@ -252,8 +252,9 @@ Not in the unit file — `scripts/setup-service.ts` rewrites that every time it 
 | `CUSTOM_BMS_CONFIG` | unset | Set to `1` **only** if the pack's BMS has been reflashed with the custom config — see [below](#custom_bms_config--set-this-only-if-you-flashed-the-custom-config). Leave unset on a stock bike. |
 | `RIDE_LOG_PUBKEY` | `./ride-log-key.public.pem` | Where the sealing key lives. |
 | `RIDE_LOG_DIR` | `./ride-logs` | Where sealed `.celog` segments are written. |
-| `VCU_PARAM_DIR` | `./vcu-params` | Where service mode leaves parameter snapshots for `/vcu-params` and `/vcu-backup.csv` to serve. |
+| `VCU_PARAM_DIR` | `./vcu-params` | Where service mode leaves parameter snapshots for `/vcu-params` and `/vcu-backup.csv` to serve, and where the write audit journal `service-writes.jsonl` is appended. |
 | `SERVICE_MODE_ENABLED` | on | `0` forbids the dashboard from starting a VCU parameter read. That read is the only thing here that puts requests on the bike's bus on purpose; the snapshot is still served and exported either way. The safety gate applies regardless — see [Service mode](#service-mode). |
+| `SERVICE_WRITE_ENABLED` | **off** | `1` lets the dashboard **change** things on the bike: five allowlisted calibration parameters, the service point, the bike's clock, and the stored trouble codes. ⚠️ The only switch here that is opt-**in** — everything else defaults on and takes a `0` to disable — so a Pi nobody has told about it cannot write to a motorcycle's EEPROM. Separate from `SERVICE_MODE_ENABLED` on purpose. See [Changing something on the bike](#changing-something-on-the-bike). |
 
 ### Grafana
 
@@ -381,7 +382,9 @@ Reading them is a thing you **do**, from the phone: **Menu → Service mode → 
 
 ### Probing one identifier
 
-The sweep covers the 277 parameters `src/vcu/param-table.ts` describes: bank 1 on the two VCU micros. **Menu → Service mode → Probe one identifier** reaches anything else — pick the ECU, the bank and the index, and it reads that one. Two things live out there that nothing here could reach before: **bank 2 is live data** rather than stored settings, and the **charge manager** is a separate ECU on CAN `0x7C3`/`0x7E3` (every sweep this project ever ran went out on `0x7C0`, which is why `CM_ERROR` and friends looked absent — they were never asked). Same header, same gate and same single-flight as a sweep.
+The sweep covers the 277 parameters `src/vcu/param-table.ts` describes: bank 1 on the two VCU micros. **Menu → Service mode → Probe one identifier** reaches anything else — pick the micro, the bank and the index, and it reads that one. What lives out there and nothing here could reach before: **bank 2 is live data** rather than stored settings. Same header, same gate and same single-flight as a sweep.
+
+> ⚠️ This briefly offered a **charge manager** target, on CAN `0x7C3`/`0x7E3`. That pair is wrong and has been removed: **`0x7E3` is the dashboard's request id**, so the option could have questioned the dashboard while the page said otherwise, and `RequestFrameIDs.CHM = 0x7C3` turns out to be a dead enum the manufacturer's own code references nowhere. Node `0xA4` is the charge manager's real 11-bit identity, but the ECU actually answers on **29-bit ISO-TP** — request `0x18DA09F1`, response `0x18DAF109` — which needs `ext: true`, its own RX filter and its own addressing math. That is a feature rather than a constant, so the target is gone rather than re-pointed; the full note is above `VcuTarget` in `src/vcu/param-codec.ts`. Whoever adds it should know it is **off-bus when parked** (it answers only during a live charging session), that identification reads need no SecurityAccess, and that its deeper access uses a CRC-16/CCITT algorithm that is **not** the VCU's bit-swap.
 
 **It is on demand, never automatic.** These are configuration: they do not move while riding, so logging them as time series would spend SD-card writes re-recording constants, and 277 more keys in the WebSocket snapshot would cost every dashboard update. Nothing starts a sweep at boot, on a timer or per page load. What is worth knowing is that one _changed_ — so every run diffs against the previous snapshot and says so loudly in the journal. `GET /vcu-params` and `/params.html` serve that snapshot from disk and **never touch the bus**.
 
@@ -389,12 +392,54 @@ A sweep survives being interrupted: each row is appended to `vcu-params/sweep.pa
 
 ```bash
 node --experimental-strip-types scripts/check-vcu-params.ts   # on a laptop, no bike:
-                                                              # codec, name table, backup CSV and the safety gate
+                                                              # codec, name table, backup CSV, the safety gate,
+                                                              # and the whole write path
 ```
+
+### Changing something on the bike
+
+> ⚠️ **Nothing in this section has ever been transmitted by this repo** (as of 2026-08-16 — the bike is away for about a week). The write _service_, its framing and its authentication rule are proven: `obd-garage/DIAG_ADDRESSES.md` §9 is a passive capture of **Energica's own diagnostic software** writing to this bike's A8, and `obd-garage/VCU_PARAM_CHANGES.md` records five parameters written to this bike with a scratch tool on 2026-08-09, surviving a power cycle. What has not been exercised is _this code_. Treat every claim below as reasoning until a real bike answers.
+
+Writing is **off unless you ask for it**: `SERVICE_WRITE_ENABLED=1`. It is the only switch here that defaults to off, and it is separate from `SERVICE_MODE_ENABLED` on purpose — reads and writes are not the same risk and must not share an off button.
+
+What may be written is a **closed allowlist of five parameters**, in `src/vcu/write-targets.ts`, each with its own range:
+
+| parameter | reads | may be set to | why it is on the list |
+| --- | --- | --- | --- |
+| `MAX_DC_CHG_CURRENT` (258) | 75 A | 0…80 | Energica's own 60/75/80 A options write **this byte and nothing else**, so 80 is a value the factory shipped. |
+| `FCHG_CURRENT_GAIN` (259) | 225 | 0…512 | ⚠️ Meaning genuinely unknown — see below. |
+| `TORQUE_LIMIT` (48) | 230.0 Nm | 0…276.0 Nm | 0.1 Nm per count. The ceiling is +20 %, this repo's policy, not a measured limit. |
+| `REGEN_TORQUE_LIMIT` (49) | 60.0 Nm | 0…90.0 Nm | Likely clipping against `REGEN_CURRENT_LIMIT` (120 A) anyway. |
+| `VSM_CONFIG_1` (16) | `0x1113` | **one bit only** | Heated handlebars, mask `0x0004`. |
+
+Anything not on that list is rejected **in the pure codec**, not in the UI — `planWrite("CELL_OVERVOLTAGE", …)` returns a refusal that names what _is_ writable, and `src/vcu/write-codec.ts` re-derives the plan from the allowlist immediately before building the frame, so a plan assembled by hand or arriving over HTTP cannot become bytes. `VSM_CONFIG_1` is offered as a **bit toggle and never as a word**: the same word carries the PSU type (`0x0760`) and the Bluetooth variant (`0x3000`), and a fat-fingered word write would reconfigure both. The new word is computed from the one the bike currently holds, and the pure layer asserts that only the one mask moved.
+
+Every write is a **compare-and-swap with a read-back**:
+
+```
+10 81   open a session          22 CID   read what it holds NOW  →  refuse if it is not what you were shown
+27 01 / 27 02   unlock          2E CID   write                   ←  must follow the unlock within ~2 s
+                                22 CID   READ IT BACK            →  a mismatch is reported, loudly
+```
+
+The `2E` positive reply never carries the written value, so "the micro accepted it" is not the same claim as "the cell holds it" — and another owner's tool has a message for exactly that gap. Nothing here reports success without a read-back. Every attempt, **including the refused ones**, is appended to `vcu-params/service-writes.jsonl` with the before and after values.
+
+⚠️ **SecurityAccess is the scarce resource.** About three bad attempts lock the micro until the bike is power-cycled, and asking an _already-unlocked_ micro for a seed also counts as a bad attempt — so a four-second cooldown sits between authenticated operations. The seed→key algorithm is checked against **four real seed/key pairs captured off this bike's own bus**, which is the only live ground truth in the whole write path.
+
+**The four service actions**, in the same section:
+
+- **Read the last-service stamp** — A8 bank 1, ids 1000-1003, a 32-bit count of seconds since 2000-01-01 UTC plus a 32-bit odometer. Read-only. ⚠️ Untried: these four sit outside `params.ecf`'s 1…277, so no sweep has ever reached them, and a refusal may simply mean this bike has no service stamp. They are deliberately **not** logged as signals — reading them costs a KWP session, and they move about once a year.
+- **"Service was performed now"** — `31 FC` on A8, after SecurityAccess. ⚠️ **Irreversible**, and it takes no parameters: the firmware stamps its _own_ clock and odometer, so read the stamp and fix the bike's clock first. The routine id is **not user-enterable anywhere** — the codec takes a _name_ from a one-member union, so `31 FB` (which wipes battery statistics) has no way to be expressed. The positive response `71 FC` is inferred rather than logged, so an unexpected reply is reported as _outcome unknown_, never as success.
+- **Sync the bike's clock** — one raw broadcast on CAN `0x120`: `94 FF` plus five bit-packed bytes of **UTC**. Not a diagnostic service at all, and there is no session, no authentication and no reply. The packing is checked against two frames that really went out on 2026-08-16. ⚠️ **This Pi's clock has to earn it**: the sync is refused unless satellite time has arrived recently and agrees, and unless the clock falls in a plausible absolute window — a GPS date-decode bug once stamped 49 772 rows of this bike's log as the year 2060. The confirmation asks _"Is it &lt;date and time&gt;?"_ and the Pi re-checks that the confirmed minute has not passed. There is **no way to read the bike's clock back**, so this is the one action nothing can verify.
+- **Clear stored trouble codes** — OBD Mode 04. ⚠️ **Irreversible**, and the first thing in this project that changes ECU state outside the parameter table. This bike's stored list has been accumulating since before anyone started looking; the freeze frame goes with it.
+
+The UI makes an accidental write hard in four ways: you cannot write until you have **read the current value** (it becomes the compare-and-swap precondition), the confirmation **spells out old → new**, it takes **two taps** and _any_ change to the form disarms it, and the irreversible actions sit in their own block with their own arming.
+
+⚠️ **`FCHG_CURRENT_GAIN` deserves its own warning.** Its direction of effect is unknown, and this is a real 50/50 rather than a gap someone forgot to close. If it is a _measurement calibration_ — which the name argues for — then raising 225 → 255 makes the bike believe it is drawing ~13 % more than it is, and it would back off **sooner**, not later. It might instead be a gain in the charge PID loop, in which case it changes loop dynamics and can oscillate. The arithmetic that produced 255 in the first place (`75 × 225/255 = 66.18 A`) has since been **retracted**: the wire request was measured at 75 while 66.2 A flowed, and 73.2 A was delivered on another day with no parameter change. Change one thing per charge session.
 
 ## Notes
 
-- The CAN bus is **read-only**: passive broadcast decode, standard OBD-II _read_ requests, and the KWP `0x22` parameter reads above. No writes of any kind. Nothing here can clear a trouble code: OBD-II **mode 04 is not implemented and must not be** — it would erase the history above, on a bike that has been accumulating it since before anyone was reading. `0x2E`, `0x3B`, `0x27`, `0x31`, `0x11` and `0x2F` are likewise absent, and `src/vcu/param-codec.ts` is built so they cannot be expressed rather than merely left unwritten.
+- The CAN bus is **read-only unless you switch writing on**. Everything that runs by itself — passive broadcast decode, the OBD-II poller, the trouble-code reads, the KWP `0x22` parameter reads — cannot change anything in an ECU, and is built so it cannot express one: `src/vcu/param-codec.ts`'s request union has three members and nowhere to put a value, and `src/can/obd-dtc.ts` can emit only modes `03`, `07` and `0A`. That is unchanged and is meant to stay that way. The writes live behind `SERVICE_WRITE_ENABLED`, which is **off by default** — see [Changing something on the bike](#changing-something-on-the-bike). `0x11` ECUReset, `0x2F` InputOutputControl (the factory tool's actuator-test channel), `0x3B` and `0x3D` are implemented **nowhere**, and should stay that way.
 - Coolant history predating the CAN integration is preserved (migrated into the current schema; the original table is kept as a backup).
 - Any `temperatures.db` left on the Pi from before the encrypted log is **plaintext history** — copy it off and delete it from the bike, or the SD card still gives up every route you rode before the switch.
 - The one thing that _does_ write to the bike is the Bluetooth handshake: enrolling with the Connectivity Hub claims its single authorised-device slot, and after several unanswered attempts the client also tries the hub's own address. If the bike is already paired to something else, that pairing can be replaced, and the way back is clearing the stored device from the bike's own dashboard. `BLE_ENABLED=0` avoids the whole question.

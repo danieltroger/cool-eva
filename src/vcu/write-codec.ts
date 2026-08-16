@@ -1,0 +1,455 @@
+import { describeNegativeResponseCode } from "../diagnostics/obd-dtc.ts";
+import type { ParameterWritePlan } from "./write-targets.ts";
+
+// Pure codec for the three services that CHANGE something in a VCU micro:
+// SecurityAccess, WriteDataByCommonIdentifier and StartRoutineByLocalIdentifier.
+// Requests in, bytes out; bytes in, outcomes out. No socket, no clock, no state —
+// so every branch is exercisable from a laptop, which is the only way any of this
+// could be reviewed at all with the bike a week away. ./write-session.ts is the
+// only part that touches a bus.
+//
+// ── ⚠️ Why this is a NEW FILE and not a widened ./param-codec.ts ─────────────
+// param-codec.ts opens with "READ-ONLY BY CONSTRUCTION, not by convention" and
+// earns it: a closed three-member union, an allowlist of emittable service bytes,
+// and nowhere to put a value. PR #50's author was right that "writes don't widen
+// the read-only guarantee, they delete it" — so that guarantee is not touched.
+// That file still cannot express a write, its union still has three members, and
+// its READ_ONLY_SERVICES set is unchanged. Reads keep the property they had.
+//
+// The writes live here instead, behind a guarantee of the same SHAPE rather than a
+// relaxed version of that one:
+//
+//   1. **The request union is closed**, exactly as the read codec's is. Four
+//      members, no raw-bytes alternative, no caller-supplied service byte.
+//   2. **A caller cannot name an identifier.** `write-parameter` takes a
+//      `ParameterWritePlan`, and the ONLY way to obtain one is
+//      ./write-targets.ts's `planWrite`, which refuses anything not on the
+//      allowlist. There is no constructor for a plan here and no field a caller
+//      could fill in by hand that this file would honour — `encodeWrite` re-checks
+//      the plan against the allowlist on the way out (see `assertPlanIsAllowed`).
+//   3. **A caller cannot name a routine id.** `start-routine` takes a NAME from a
+//      three-member union, not a number. `0xFB`, one digit from the service point
+//      and the routine that wipes battery statistics, is unreachable because
+//      nothing in this repo gives it a name. That is deliberate and is the single
+//      most important line in this file.
+//   4. **The emitted service byte is checked**, the same belt-and-braces
+//      param-codec.ts keeps: `WRITE_SERVICES` is the whole set, and 0x11 ECUReset,
+//      0x2F InputOutputControl, 0x3B, 0x3D and 0x34/0x36/0x37 are absent and must
+//      stay absent. `0x2F` in particular is the factory tool's actuator-test
+//      channel (DIAG_ADDRESSES.md §9.6) — it drives the pump, the fan, the horn and
+//      the lights directly, and nothing in this project has any business doing that.
+//
+// ── The framing, proven on the wire ──────────────────────────────────────────
+// Same extended-addressed KWP as the read codec: `[target] [PCI] [service] …` on
+// 0x7C0, `[0xF1] [PCI] [service+0x40] …` back on 0x7E0. What follows is quoted from
+// obd-garage/DIAG_ADDRESSES.md §9.2/§9.3, which is passive analysis of a candump
+// taken while ENERGICA'S OWN diagnostic software was connected on 2026-08-08 —
+// i.e. the factory tool's real bytes, not a reconstruction:
+//
+//   seed request   7C0: A8 02 27 01               → 7E0: F1 06 67 01 <4-byte seed>
+//   key send       7C0: A8 06 27 02 <4-byte key>  → 7E0: F1 03 67 02 34
+//   bad key                                       → 7E0: F1 03 7F 27 35   (invalidKey)
+//   write (WORD)   7C0: A8 05 2E 13 EE 93 80      → 7E0: F1 03 6E 13 EE   (no value echoed)
+//   write refused                                 → 7E0: F1 03 7F 2E 33   (securityAccessDenied)
+//
+// A BYTE write is the same with `len = 04` and one value byte. The routine is from
+// obd-garage/SERVICE_RESET.md §3, decompiled from Energica's `Common.dll` rather
+// than captured: `7C0: A8 02 31 FC` → `7E0: F1 02 71 FC`.
+//
+// ── ⚠️ What is proven and what is not, as of 2026-08-16 ──────────────────────
+//  • ✅ The seed→key algorithm. Four real A8 seed/key pairs off this bike's bus
+//    (DIAG_ADDRESSES.md §9.3) all satisfy it, and scripts/check-vcu-params.ts §13
+//    asserts all four. This is the one part of this file with live ground truth.
+//  • ✅ The `2E` write framing and its auth rule, from the same capture, and
+//    additionally exercised against THIS bike by obd-garage/vcu_param.py on
+//    2026-08-09 (VCU_PARAM_CHANGES.md: "Write procedure — fully proven").
+//  • 🟡 The `31 FC` request bytes are derived from Energica's own frame builder;
+//    the POSITIVE RESPONSE bytes `71 FC` are INFERRED, not logged
+//    (SERVICE_RESET.md §3). So `decodeRoutineReply` accepts the echo it expects and
+//    reports anything else as `unrecognised` rather than assuming success.
+//  • ❌ Nothing in this file has ever been transmitted by this repo. Not one frame.
+
+/** Everything this codebase is permitted to ask a VCU micro to DO. Closed on purpose — see the header. */
+export type VcuWriteRequest =
+  /** `27 01` SecurityAccess, requestSeed. Level 1 is the only level anything here knows. */
+  | { kind: "security-seed" }
+  /** `27 02` SecurityAccess, sendKey. The key is derived from the seed, never supplied by a caller. */
+  | { kind: "security-key"; key: number }
+  /**
+   * `2E [hi] [lo] [value…]` WriteDataByCommonIdentifier.
+   *
+   * ⚠️ Takes a PLAN, not an identifier and a value. A plan can only come out of
+   * ./write-targets.ts, which is where the allowlist and the ranges live — so
+   * "which parameter" and "what value" are decided by a pure, checked function
+   * before this file ever sees them, and re-checked here on the way out.
+   */
+  | { kind: "write-parameter"; plan: ParameterWritePlan }
+  /**
+   * `31 [id]` StartRoutineByLocalIdentifier, no parameters.
+   *
+   * ⚠️⚠️ The routine is named, never numbered. `0xFB` — one digit from the service
+   * point, and the routine that WIPES BATTERY STATISTICS — has no name here and so
+   * cannot be expressed. Do not add one.
+   */
+  | { kind: "start-routine"; routine: ServiceRoutineName };
+
+/**
+ * The routines this repo will start, by name.
+ *
+ * One member today. SERVICE_RESET.md §3 lists two siblings on consecutive ids —
+ * `0xFB` Reset Battery Statistics (A8) and `0xFA` Learn Key (A9) — and NEITHER is
+ * here, which is the entire mechanism protecting against a fat-fingered `31 FB`:
+ * there is no number to mistype, because there is no number.
+ */
+export type ServiceRoutineName = "set-service-point";
+
+const SERVICE_SECURITY_ACCESS = 0x27;
+const SERVICE_WRITE_BY_COMMON_IDENTIFIER = 0x2e;
+const SERVICE_START_ROUTINE_BY_LOCAL_IDENTIFIER = 0x31;
+
+const SECURITY_ACCESS_REQUEST_SEED = 0x01;
+const SECURITY_ACCESS_SEND_KEY = 0x02;
+
+/**
+ * Routine local identifiers, by name. The ONLY table in this repo that maps a name
+ * to a routine byte, and it has one row.
+ *
+ * `0xFC` is Set Service Point on A8: it takes no parameters and the firmware stamps
+ * the CURRENT RTC time and odometer into the last-service block itself
+ * (SERVICE_RESET.md §2/§3). That is why it is irreversible and why the clock has to
+ * be right before it runs.
+ */
+const ROUTINE_IDS: Record<ServiceRoutineName, number> = { "set-service-point": 0xfc };
+
+/**
+ * Which micro owns each routine.
+ *
+ * On the wire this is only an address byte, but getting it wrong is not harmless:
+ * SERVICE_RESET.md §7 records that `0xFC` also equals `RoutinesID.VCUCheckSum` in
+ * the FLASHING enum, which is a different ECU and session. "Don't send `31 FC` to
+ * A9 expecting a service reset" is a direct quote, so the micro is pinned here
+ * rather than left to a caller.
+ */
+export const ROUTINE_MICROS: Record<ServiceRoutineName, "A8" | "A9"> = { "set-service-point": "A8" };
+
+/**
+ * Belt and braces behind the closed union, exactly as param-codec.ts keeps for
+ * reads: every service byte this module may emit, checked on the way out.
+ *
+ * ⚠️ Never add to this set: 0x11 ECUReset, 0x2F InputOutputControl (the factory
+ * tool's actuator-test channel — it drives the pump, fan, horn and lights live),
+ * 0x3B WriteDataByLocalIdentifier, 0x3D WriteMemoryByAddress, 0x34 RequestDownload,
+ * 0x14 ClearDiagnosticInformation. Each is a different kind of irreversible.
+ */
+const WRITE_SERVICES: ReadonlySet<number> = new Set([
+  SERVICE_SECURITY_ACCESS,
+  SERVICE_WRITE_BY_COMMON_IDENTIFIER,
+  SERVICE_START_ROUTINE_BY_LOCAL_IDENTIFIER,
+]);
+
+/**
+ * The constant in the VCU seed→key algorithm, `0xC1A0BABE`.
+ *
+ * DIAG_ADDRESSES.md §8 records the same algorithm as `− 0x3E5F4542`; the two sum to
+ * 2^32, so subtracting one is adding the other mod 2^32 and there is no conflict to
+ * resolve. `BABE` is an Energica easter egg, not a coincidence.
+ */
+const SECURITY_KEY_OFFSET = 0xc1a0babe;
+
+const NEGATIVE_RESPONSE_SERVICE = 0x7f;
+const POSITIVE_RESPONSE_OFFSET = 0x40;
+
+/** Largest single-frame payload under extended addressing: 8 bytes − 1 address − 1 PCI. */
+const MAX_SINGLE_FRAME_PAYLOAD = 6;
+
+/**
+ * Turns a seed into its key.
+ *
+ * Swap each adjacent bit pair of the 32-bit seed, then add `0xC1A0BABE` mod 2^32.
+ * Both seed and key travel big-endian.
+ *
+ * ✅ This is the one thing in this file with live ground truth: four real A8
+ * seed/key pairs captured off this bike's own bus on 2026-08-08 all satisfy it
+ * (DIAG_ADDRESSES.md §9.3), and scripts/check-vcu-params.ts §13 asserts every one.
+ *
+ * `>>> 0` rather than `>> 0` throughout, and the addition done in double precision
+ * before the modulo, because JavaScript's bitwise operators work on SIGNED 32-bit
+ * integers: a seed with bit 30 set makes `(seed & 0x55555555) << 1` come out
+ * negative, and `+` would then be subtracting. That is a wrong key, which costs one
+ * of the ~3 attempts before the micro locks out until a power cycle (§8) — the most
+ * expensive silent bug this file could contain.
+ *
+ * ⚠️ THIS IS THE VCU FAMILY'S ALGORITHM AND ONLY THE VCU FAMILY'S. It covers A8 and
+ * A9, which is everything this repo addresses. It does NOT cover the rest of the
+ * bike, and the differences are not subtle: the dashboard uses a four-round
+ * multiply/xor/rotate then `^0xFFFFFFFF`, and the charge manager uses a CRC-16/CCITT
+ * level-9 scheme. Pointing this function at either would produce a wrong key and
+ * spend an attempt on an ECU whose lockout nobody here has ever cleared.
+ */
+export function securityKeyForSeed(seed: number): number {
+  const value = seed >>> 0;
+  const swapped = (((value & 0xaaaaaaaa) >>> 1) | ((value & 0x55555555) << 1)) >>> 0;
+  return (swapped + SECURITY_KEY_OFFSET) % 2 ** 32;
+}
+
+/**
+ * Builds the 8-byte CAN frame for one write-class request. Zero-padded, like every
+ * other frame on this bus.
+ *
+ * Throws rather than returning an error value, exactly as param-codec.ts's builder
+ * does: by the time anything reaches here the allowlist has already turned a
+ * person's input into a plan, so a bad argument is a bug in this repo. The two
+ * assertions at the top are the ones that must never be removed.
+ */
+export function buildWriteFrame(target: "A8" | "A9", request: VcuWriteRequest): Uint8Array {
+  const payload = encodeWritePayload(request);
+  if (!WRITE_SERVICES.has(payload[0])) {
+    // Unreachable through the union above, which is exactly why it is here.
+    throw new Error(`vcu-write: refusing to transmit service 0x${payload[0].toString(16)} — not a write-class service`);
+  }
+  if (payload.length > MAX_SINGLE_FRAME_PAYLOAD) {
+    // A WORD write is 5 bytes and a key send is 5, so nothing on the allowlist can
+    // reach this. It stays because the next parameter someone adds might be wider,
+    // and a silently truncated write to a calibration EEPROM is the worst outcome
+    // this file has: it would look like a success and leave a different number in
+    // the cell. Nothing here assembles a multi-frame request, on purpose.
+    throw new Error(`vcu-write: payload of ${payload.length} bytes does not fit one frame — multi-frame is not built`);
+  }
+  const frame = new Uint8Array(8);
+  frame[0] = target === "A8" ? 0xa8 : 0xa9;
+  frame[1] = payload.length;
+  frame.set(payload, 2);
+  return frame;
+}
+
+function encodeWritePayload(request: VcuWriteRequest): Uint8Array {
+  switch (request.kind) {
+    case "security-seed":
+      return Uint8Array.from([SERVICE_SECURITY_ACCESS, SECURITY_ACCESS_REQUEST_SEED]);
+    case "security-key": {
+      const key = request.key >>> 0;
+      return Uint8Array.from([
+        SERVICE_SECURITY_ACCESS,
+        SECURITY_ACCESS_SEND_KEY,
+        (key >>> 24) & 0xff,
+        (key >>> 16) & 0xff,
+        (key >>> 8) & 0xff,
+        key & 0xff,
+      ]);
+    }
+    case "write-parameter": {
+      const plan = request.plan;
+      // Re-checked HERE, against the allowlist, rather than trusted because the type
+      // says `ParameterWritePlan`. TypeScript's guarantee ends at the process
+      // boundary and this is the last code before the bus: a plan assembled by hand,
+      // deserialised from JSON, or built by a future caller that skipped
+      // ./write-targets.ts is refused at the point where it would otherwise become
+      // eight bytes on a motorcycle's calibration EEPROM.
+      assertPlanIsAllowed(plan);
+      return Uint8Array.from([
+        SERVICE_WRITE_BY_COMMON_IDENTIFIER,
+        plan.identifier >> 8,
+        plan.identifier & 0xff,
+        ...plan.record,
+      ]);
+    }
+    case "start-routine": {
+      const id = ROUTINE_IDS[request.routine];
+      if (id === undefined) {
+        // ⚠️ The most important throw in this file. Without it a routine name the
+        // table does not carry produces `Uint8Array.from([0x31, undefined])`, which
+        // JavaScript quietly turns into `31 00` — a request to start routine ZERO on
+        // a VCU, silently, instead of an error. The union makes an unnamed routine
+        // unexpressible in TypeScript; this makes it unreachable at runtime too,
+        // which is the half that survives a cast and a JSON boundary.
+        throw new Error(`vcu-write: no routine is named ${JSON.stringify(request.routine)} — refusing to invent an id`);
+      }
+      return Uint8Array.from([SERVICE_START_ROUTINE_BY_LOCAL_IDENTIFIER, id]);
+    }
+    default:
+      // Unreachable while the union stays closed, and TypeScript proves it at compile
+      // time. It exists for the version of this file where someone widens the union
+      // and forgets a branch — falling through would return `undefined` and crash
+      // three frames away instead of saying what actually went wrong.
+      throw new Error(`vcu-write: unknown request kind ${JSON.stringify(request)}`);
+  }
+}
+
+/** How a SecurityAccess exchange came out. */
+export type SecurityAccessReply =
+  /** `67 01 <4-byte seed>` — the micro's challenge. */
+  | { kind: "seed"; seed: number }
+  /**
+   * `67 02 …` — the key was accepted. The capture shows a trailing `0x34` byte after
+   * the sub-function; it is echoed back here rather than asserted, because one
+   * capture is not enough to call a byte mandatory.
+   */
+  | { kind: "unlocked"; trailing: number | null }
+  /** The micro said no, by name. `0x35` invalidKey is the one that counts toward the lockout. */
+  | { kind: "refused"; negativeResponseCode: number; description: string }
+  | { kind: "unrecognised"; reason: string };
+
+/** Decodes one reply to `27 01` or `27 02`. Pure. */
+export function decodeSecurityAccessReply(payload: Uint8Array): SecurityAccessReply {
+  if (payload.length === 0) {
+    return { kind: "unrecognised", reason: "empty payload" };
+  }
+  if (payload[0] === NEGATIVE_RESPONSE_SERVICE) {
+    if (payload.length < 3) {
+      return { kind: "unrecognised", reason: "negative response without a service and a code" };
+    }
+    return {
+      kind: "refused",
+      negativeResponseCode: payload[2],
+      description: describeNegativeResponseCode(payload[2]),
+    };
+  }
+  if (payload[0] !== SERVICE_SECURITY_ACCESS + POSITIVE_RESPONSE_OFFSET) {
+    return { kind: "unrecognised", reason: `reply names service 0x${payload[0].toString(16)}, not 0x67` };
+  }
+  if (payload.length < 2) {
+    return { kind: "unrecognised", reason: "positive reply without a sub-function" };
+  }
+  if (payload[1] === SECURITY_ACCESS_REQUEST_SEED) {
+    if (payload.length < 6) {
+      return { kind: "unrecognised", reason: `seed reply carries ${payload.length - 2} byte(s), not 4` };
+    }
+    // Big-endian, per the four captured pairs. `>>> 0` because a seed with the top
+    // bit set is negative under `<<` — the same trap securityKeyForSeed guards.
+    return { kind: "seed", seed: ((payload[2] << 24) | (payload[3] << 16) | (payload[4] << 8) | payload[5]) >>> 0 };
+  }
+  if (payload[1] === SECURITY_ACCESS_SEND_KEY) {
+    return { kind: "unlocked", trailing: payload.length > 2 ? payload[2] : null };
+  }
+  return { kind: "unrecognised", reason: `reply names sub-function 0x${payload[1].toString(16)}, not 01 or 02` };
+}
+
+/** How a `2E` write came out, as far as the reply alone can say. */
+export type ParameterWriteReply =
+  /**
+   * `6E <hi> <lo>` — accepted, with the identifier echoed.
+   *
+   * ⚠️ "Accepted" is the whole of what this means. The positive reply NEVER carries
+   * the written value (DIAG_ADDRESSES.md §9.2), so it is not evidence that the cell
+   * now holds what was sent. That is what the read-back in ./write-session.ts is
+   * for, and why there is no path here that reports success without one.
+   */
+  | { kind: "accepted"; identifier: number }
+  /** A well-formed acceptance of a DIFFERENT identifier — kept apart, for the reason the read codec keeps it apart. */
+  | { kind: "identifier-mismatch"; expected: number; received: number }
+  /** The micro said no, by name. `0x33` securityAccessDenied means the unlock went stale. */
+  | { kind: "refused"; negativeResponseCode: number; description: string }
+  | { kind: "unrecognised"; reason: string };
+
+/** Decodes one reply to `2E`, against the identifier that was written. Pure. */
+export function decodeParameterWriteReply(payload: Uint8Array, expectedIdentifier: number): ParameterWriteReply {
+  if (payload.length === 0) {
+    return { kind: "unrecognised", reason: "empty payload" };
+  }
+  if (payload[0] === NEGATIVE_RESPONSE_SERVICE) {
+    if (payload.length < 3) {
+      return { kind: "unrecognised", reason: "negative response without a service and a code" };
+    }
+    return {
+      kind: "refused",
+      negativeResponseCode: payload[2],
+      description: describeNegativeResponseCode(payload[2]),
+    };
+  }
+  if (payload[0] !== SERVICE_WRITE_BY_COMMON_IDENTIFIER + POSITIVE_RESPONSE_OFFSET) {
+    return { kind: "unrecognised", reason: `reply names service 0x${payload[0].toString(16)}, not 0x6E` };
+  }
+  if (payload.length < 3) {
+    return { kind: "unrecognised", reason: "positive reply without a full identifier echo" };
+  }
+  const received = (payload[1] << 8) | payload[2];
+  if (received !== expectedIdentifier) {
+    return { kind: "identifier-mismatch", expected: expectedIdentifier, received };
+  }
+  return { kind: "accepted", identifier: received };
+}
+
+/** How a `31` routine came out. */
+export type RoutineReply =
+  /** `71 <id>` — started, with the routine id echoed. */
+  | { kind: "started"; routine: number }
+  /** A `71` echoing a routine we did not start. Loud rather than counted as success. */
+  | { kind: "routine-mismatch"; expected: number; received: number }
+  | { kind: "refused"; negativeResponseCode: number; description: string }
+  | { kind: "unrecognised"; reason: string };
+
+/**
+ * Decodes one reply to `31`, against the routine that was started. Pure.
+ *
+ * ⚠️ The expected shape is INFERRED. SERVICE_RESET.md §3 says so in as many words —
+ * EMsuite only checks its own `Completed_ACK`, and the positive-response bytes were
+ * never logged. So an unexpected shape is reported as `unrecognised` and the caller
+ * must treat that as "we do not know whether it ran", never as success. The service
+ * point is irreversible; guessing in the optimistic direction is the one thing that
+ * cannot be undone afterwards.
+ */
+export function decodeRoutineReply(payload: Uint8Array, routine: ServiceRoutineName): RoutineReply {
+  const expected = ROUTINE_IDS[routine];
+  if (payload.length === 0) {
+    return { kind: "unrecognised", reason: "empty payload" };
+  }
+  if (payload[0] === NEGATIVE_RESPONSE_SERVICE) {
+    if (payload.length < 3) {
+      return { kind: "unrecognised", reason: "negative response without a service and a code" };
+    }
+    return {
+      kind: "refused",
+      negativeResponseCode: payload[2],
+      description: describeNegativeResponseCode(payload[2]),
+    };
+  }
+  if (payload[0] !== SERVICE_START_ROUTINE_BY_LOCAL_IDENTIFIER + POSITIVE_RESPONSE_OFFSET) {
+    return { kind: "unrecognised", reason: `reply names service 0x${payload[0].toString(16)}, not 0x71` };
+  }
+  if (payload.length < 2) {
+    return { kind: "unrecognised", reason: "positive reply without the routine id echoed back" };
+  }
+  if (payload[1] !== expected) {
+    return { kind: "routine-mismatch", expected, received: payload[1] };
+  }
+  return { kind: "started", routine: payload[1] };
+}
+
+/** The routine byte a name maps to. Exported for the checks and for the audit record, never to choose one. */
+export function routineIdFor(routine: ServiceRoutineName): number {
+  return ROUTINE_IDS[routine];
+}
+
+/**
+ * The last gate before a plan becomes bytes.
+ *
+ * Imported lazily-shaped (a function call rather than a module-level constant) only
+ * so this file and ./write-targets.ts can refer to each other's types without a
+ * cycle at value level. What it does is the point: it re-derives the plan from the
+ * allowlist and refuses one that does not match, so the ONLY writes this codec can
+ * emit are the ones write-targets.ts would have produced itself.
+ */
+function assertPlanIsAllowed(plan: ParameterWritePlan): void {
+  if (!isAllowedPlan(plan)) {
+    throw new Error(
+      `vcu-write: refusing to encode a write to identifier 0x${plan.identifier.toString(16)} — ` +
+        "it is not on the allowlist in src/vcu/write-targets.ts, or its bytes do not match what that module would produce"
+    );
+  }
+}
+
+/**
+ * Set once at module load by ./write-targets.ts.
+ *
+ * A function reference rather than a direct import because the two modules would
+ * otherwise import each other (this one needs the plan TYPE, that one needs the
+ * frame builder) — and a type-only import cannot carry a runtime check. Left as a
+ * throwing stub rather than a permissive default: a build where write-targets.ts
+ * was never loaded must refuse every write, not allow every write.
+ */
+let isAllowedPlan: (plan: ParameterWritePlan) => boolean = () => false;
+
+/** Called once, by ./write-targets.ts at module load. Not part of the public surface. */
+export function registerWritePlanVerifier(verifier: (plan: ParameterWritePlan) => boolean): void {
+  isAllowedPlan = verifier;
+}

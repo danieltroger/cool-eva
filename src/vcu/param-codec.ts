@@ -21,7 +21,7 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // the VALUE, and those are the two that make a write. Keep that line where it is:
 // widening "which" is recoverable, widening "what to do to it" is not.
 //
-// Never implement, here or anywhere: 0x2E WriteDataByCommonIdentifier, 0x3B
+// Never implement IN THIS FILE: 0x2E WriteDataByCommonIdentifier, 0x3B
 // WriteDataByLocalIdentifier, 0x27 SecurityAccess, 0x31 StartRoutineByLocalId,
 // 0x11 ECUReset, 0x2F InputOutputControl, or OBD Mode 04. This is the bike's
 // calibration EEPROM: one wrong word in it is a throttle map, a cell limit or a
@@ -30,13 +30,27 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // even an argument for 0x27 (and per DIAG_ADDRESSES.md §3 the bank-0 refusal is
 // NRC 0x12 subFunctionNotSupported, not 0x33, so 0x27 would not open it anyway).
 //
+// ⚠️ That paragraph used to say "here or anywhere", and since 2026-08-16 that is no
+// longer true of the repository — so it no longer says it. Three of those services
+// (0x27, 0x2E, 0x31) and OBD Mode 04 now exist in ./write-codec.ts, behind their own
+// closed union, their own allowlist of five parameters, their own enable switch
+// (SERVICE_WRITE_ENABLED, off by default) and a read-back after every write.
+//
+// This file is unchanged by that and must stay unchanged: its union still has three
+// members, READ_ONLY_SERVICES still holds three bytes, and there is still nowhere in
+// it to put a value. The two guarantees are deliberately separate rather than merged
+// — a reader who wants to know whether a READ can change something should be able to
+// answer it from this file alone, without reasoning about a flag somewhere else.
+// 0x11 ECUReset, 0x2F InputOutputControl, 0x3B and 0x3D are implemented NOWHERE, and
+// ./write-codec.ts's own header says why each must stay that way.
+//
 // ── The framing, from obd-garage/CAN_MAP.md and DIAG_ADDRESSES.md §3 ─────────
 // Request  0x7C0: [target] [PCI] [service] …      target = 0xA9 / 0xA8  (VCU micros)
 // Response 0x7E0: [0xF1]   [PCI] [service+0x40] … 0xF1 is the tester's address
 //
-// The charge manager is the same framing on a different pair: request 0x7C3,
-// response 0x7E3, target 0xA4. See VcuTarget below — it is not a variant of the
-// protocol, only a different address to send it to.
+// ⚠️⚠️ There used to be a third target here — the charge manager, as 0xA4 on request
+// 0x7C3 / response 0x7E3. **It has been removed, and that pair must not come back.**
+// See the note above VcuTarget below for the addresses that are actually right.
 //
 // That is ISO-TP with EXTENDED addressing — byte 0 is the address of whoever the
 // frame is for, and everything else shifts one along. Byte 1 is an ordinary ISO-TP
@@ -116,36 +130,68 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([
 export const TESTER_ADDRESS = 0xf1;
 
 /**
- * Everything on this bus that answers a bank read.
+ * Everything on this bus that anything here may address.
  *
- * `A8` and `A9` are the two VCU micros the parameter table describes, and until
- * 2026-08-16 they were the only things anything here had ever addressed.
- *
- * ⚠️ `A4` is the CHARGE MANAGER, and it is on a different pair of CAN ids. Every
- * sweep this project ever ran went out on 0x7C0, so the charge manager was not
- * silent — it was never asked. That is why `CM_ERROR`, `CM_ERROR_SOURCE` and the
- * `CM_ERROR_CODE_*` pair looked absent: they are its, not the VCU's.
- *
+ * `A8` and `A9`, the two VCU micros the parameter table describes. Nothing else.
  * A7 is deliberately absent: it answers no read on any bank.
+ *
+ * ── ⚠️⚠️ The charge manager was here, and it was WRONG. Removed 2026-08-16. ──
+ * A third target `A4` was added earlier the same day, on request 0x7C3 / response
+ * 0x7E3, described as the charge manager. Decompiling the manufacturer's Common.dll
+ * showed two things:
+ *
+ *  • **`0x7E3` is DashboardV2's REQUEST id.** So a probe on that pair, believing it
+ *    was asking the charge manager, could have been talking to the DASHBOARD. That is
+ *    not the harmless "silence from an id nothing listens on" the old comment here
+ *    claimed as the safe direction — it is a wrong ECU answering a question meant for
+ *    another one, which is the exact failure the rest of this file is built to avoid.
+ *  • `RequestFrameIDs.CHM = 0x7C3` exists in the manufacturer's code as a **dead enum
+ *    referenced nowhere**. There is no charge-manager case in any session, read,
+ *    write or SecurityAccess switch, and the tool's own charge-manager install action
+ *    is a stub returning `Skipped`. The 11-bit path was designed and never built.
+ *
+ * Node `0xA4` really is the charge manager's 11-bit identity — that part was right.
+ * The ID PAIRING was not, and the pairing is what goes on the wire.
+ *
+ * ── Where it actually lives, for whoever adds it properly ────────────────────
+ * **29-bit ISO-TP on the VDB bus**: request `0x18DA09F1`, response `0x18DAF109`,
+ * device byte `0x09`, tester `0xF1`. Verified three ways in the decompile — the
+ * hard-coded ids 416942577/417001737, the `SendExt` addressing math
+ * (`reqID | (target << 8) | source`), and consistency with the BMS/PSU 29-bit family.
+ * It is on the VDB manager, so it is reachable from the existing OBD tap with no
+ * second bus.
+ *
+ * That is a real feature and not a constant: 29-bit ids need `ext: true` on transmit,
+ * their own RX filter, and their own addressing math. It does not belong bolted onto
+ * this 11-bit table, which is why the target is REMOVED rather than re-pointed.
+ *
+ * Three things to carry into that work:
+ *  • ⚠️ **The charge manager is off-bus when parked.** It answers only during a live
+ *    charging session, so `no-session` from an unplugged bike is expected, not a fault.
+ *  • Identification reads (`0x22` on F191/F181/F180/F18C) need no SecurityAccess.
+ *  • ⚠️ Deeper access uses a **CRC-16/CCITT level-9 algorithm that is NOT the VCU's
+ *    bit-swap**. Do not reuse ./write-codec.ts's `securityKeyForSeed` for it.
+ *  • ❓ The code proves it answers at `0x18DA09F1` in bootloader/programming mode.
+ *    Whether the RUNNING APPLICATION answers there without a reset is unproven — the
+ *    BMS and PSU precedent (same node for app and boot) makes it likely, and a live
+ *    probe is what would settle it.
  */
-export type VcuTarget = VcuMicro | "A4";
+export type VcuTarget = VcuMicro;
 
 /** Byte 0 of a request: the ECU being addressed, under extended addressing. */
-const TARGET_ADDRESS: Record<VcuTarget, number> = { A8: 0xa8, A9: 0xa9, A4: 0xa4 };
+const TARGET_ADDRESS: Record<VcuTarget, number> = { A8: 0xa8, A9: 0xa9 };
 
 /**
  * Which 11-bit CAN ids each target speaks on.
  *
- * ⚠️ The A4 pair is UNVERIFIED — recorded 2026-08-16 from the charge-manager notes,
- * never yet exercised against the bike. If it is wrong the symptom is silence
- * (`no-session`), which is the safe direction: a request to an id nothing listens on
- * is eight bytes on a bus that ignores them, not a wrong answer. The A8/A9 pair has
- * been live since 2026-08-08.
+ * Both micros share one pair and differ only by the address byte. Live since
+ * 2026-08-08. Nothing else may be added here without a decompile or a capture behind
+ * it — see the removal note above for what happens when a pair is written down from
+ * a plausible guess.
  */
 const TARGET_CAN_IDS: Record<VcuTarget, { request: number; response: number }> = {
   A8: { request: 0x7c0, response: 0x7e0 },
   A9: { request: 0x7c0, response: 0x7e0 },
-  A4: { request: 0x7c3, response: 0x7e3 },
 };
 
 /** Where a request to this target goes, and where its reply comes back. */

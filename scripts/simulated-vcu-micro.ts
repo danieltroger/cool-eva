@@ -142,7 +142,7 @@ function respond(micro: SimulatedMicro, payload: Uint8Array, sessionOpenedAt: Ma
 
 /** Byte 0 of a request addressed to this stand-in. The real mapping lives in param-codec.ts. */
 function addressOf(micro: SimulatedMicro): number {
-  return { A8: 0xa8, A9: 0xa9, A4: 0xa4 }[micro.target];
+  return { A8: 0xa8, A9: 0xa9 }[micro.target];
 }
 
 function deliver(listeners: ((message: CanMessage) => void)[], responseCanId: number, payload: Uint8Array): void {

@@ -8,21 +8,26 @@ import { CALIBRATION_BANK, parameterAtIndex } from "./param-table.ts";
 // ── Why this exists ──────────────────────────────────────────────────────────
 // The sweep reads the 277 parameters src/vcu/param-table.ts describes, on the two
 // VCU micros, in bank 1. That is the right default and it is also the whole of what
-// this project could reach until 2026-08-16. Everything outside it was unreachable
-// once scripts/read-vcu-params.ts and its `--index N` went away, and two kinds of
-// thing live out there:
+// this project could reach until 2026-08-16. What lives outside it, and is what this
+// exists for:
 //
 //  • **Other banks.** The identifier is `(bank << 12) | index`. Bank 1 is the EEPROM
 //    calibration. **Bank 2 is live data** — the running values, not the stored
 //    settings — and nothing here has ever read one.
-//  • **Other ECUs.** The charge manager is target `0xA4` on request 0x7C3 / response
-//    0x7E3. Every sweep this project ever ran went out on 0x7C0, so the charge
-//    manager was never silent — it was never ASKED. `CM_ERROR`, `CM_ERROR_SOURCE`
-//    and the `CM_ERROR_CODE_MSB`/`LSB` pair are its, which is why they looked absent
-//    from a VCU that does not have them.
 //
-// So a probe is not a debugging convenience: it is the only way to reach a whole
-// ECU and a whole bank of live data.
+// ── ⚠️ The charge-manager target was removed, 2026-08-16 ────────────────────
+// This file shipped earlier the same day offering a third target, `A4`, on request
+// 0x7C3 / response 0x7E3, described as the charge manager. It was wrong, and wrong in
+// the one direction that matters: **`0x7E3` is DashboardV2's request id**, so a probe
+// on that pair could have been questioning the DASHBOARD while the page said "charge
+// manager". `CM_ERROR` and friends really are the charge manager's, but they are not
+// at that address.
+//
+// The real one is 29-bit ISO-TP — request `0x18DA09F1`, response `0x18DAF109` — which
+// needs `ext: true` on transmit, its own RX filter and its own addressing math. That
+// is a feature, not a constant, so the target is gone rather than re-pointed. The full
+// note, including what it needs and why its SecurityAccess is a different algorithm,
+// is above `VcuTarget` in ./param-codec.ts.
 //
 // ── ⚠️ What this widens, precisely ───────────────────────────────────────────
 // Before this, no HTTP input named a service, an identifier or a value. Now an
@@ -108,8 +113,13 @@ const MAX_INDEX = 0x0fff;
 /** Largest bank a 4-bit identifier half can hold. */
 const MAX_BANK = 0xf;
 
-/** The targets a probe may address, in the order the page offers them. */
-export const PROBE_TARGETS: VcuTarget[] = ["A9", "A8", "A4"];
+/**
+ * The targets a probe may address, in the order the page offers them.
+ *
+ * The two VCU micros, and nothing else. See the header for why the charge manager is
+ * not here — briefly: the id pair it was given belongs to the dashboard.
+ */
+export const PROBE_TARGETS: VcuTarget[] = ["A9", "A8"];
 
 export function startProbe(options: VcuProbeOptions): RunningProbe {
   const client = createVcuKwpClient(options.channel);
@@ -136,8 +146,11 @@ export function describeProbe(outcome: VcuProbeOutcome): VcuProbeReading {
   // consulted only there. Looking up a bank-2 index in it would attach a calibration
   // parameter's name and sign to a live-data reading that has neither — a wrong
   // answer that looks more informative than the right one.
-  const parameter =
-    outcome.bank === CALIBRATION_BANK && outcome.target !== "A4" ? parameterAtIndex(outcome.index) : null;
+  //
+  // The target no longer needs excluding here: every target a probe can name is now a
+  // VCU micro (PROBE_TARGETS), so bank 1 is always this table's bank. If another ECU
+  // is ever added, this condition has to grow a target check back.
+  const parameter = outcome.bank === CALIBRATION_BANK ? parameterAtIndex(outcome.index) : null;
   const base = {
     target: outcome.target,
     bank: outcome.bank,
