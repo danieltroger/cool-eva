@@ -50,6 +50,14 @@ const ROW_INDENT = " ".repeat("  VALUES ".length);
 // so this rewrites whichever of them carries the table.
 const QUERY_FIELDS = ["rawQueryText", "queryText"] as const;
 
+// Matched under any alias, because VALUES_HEADER pins the CTE's name and columns
+// but not what a SELECT chooses to call it: `LEFT JOIN code AS t` reads `t.mil`.
+// The second is deliberately just the predicate rather than "a CASE arm beginning
+// with it" — today's arm is `WHEN c.key IS NULL OR c.mil IS NULL`, and pinning the
+// shape of the expression would fail on the very query it is meant to approve.
+const READS_MIL = /\b\w+\.mil\b/;
+const TESTS_MIL_FOR_NULL = /\b[\w.]*\bmil\s+IS\s+NULL\b/i;
+
 /**
  * Prose elsewhere that states how many codes the table holds. None of it can be
  * derived — every one sits inside a comment explaining why something nearby is
@@ -78,11 +86,13 @@ const checkOnly = process.argv.includes("--check");
 const failures: string[] = [];
 
 const originalJson = await readFile(dashboardUrl, "utf8");
+assertOneRowPerCode(DTC_TABLE);
 const valuesList = renderValuesList(DTC_TABLE);
 const originalQueries = codeTableQueries(originalJson);
 // Checked whether or not anything is stale: the arm can be deleted from the SQL
 // long after the rows that need it were generated, and that would be silent.
 assertMilNullIsHandled(originalQueries, DTC_TABLE);
+failures.push(...divergedQueryFields(originalJson));
 const staleQueries = originalQueries.filter(sql => replaceValuesList(sql, valuesList) !== sql);
 
 if (staleQueries.length === 0) {
@@ -112,9 +122,14 @@ if (failures.length > 0) {
   for (const failure of failures) {
     console.error(`  ✗ ${failure}`);
   }
-  process.exit(1);
+  // Not process.exit(): Node's stdio is asynchronous whenever it is a pipe, which
+  // it always is under Actions, and exit() does not drain what is still queued.
+  // The point of describeRowDifferences() is that a red check names the rows that
+  // moved, so a truncated flush would lose precisely the part worth printing.
+  process.exitCode = 1;
+} else {
+  console.log("✓ every prose mention of how many codes there are agrees with the table");
 }
-console.log("✓ every prose mention of how many codes there are agrees with the table");
 
 /** One `('key', 'obd', 'name', 'description', mil)` row per code, in table order. */
 function renderValuesList(entries: DtcTableEntry[]): string {
@@ -149,7 +164,14 @@ function sqlMil(illuminatesMil: boolean | null): string {
 function codeTableQueries(dashboardJson: string): string[] {
   const dashboard = JSON.parse(dashboardJson) as { panels?: DashboardPanel[] };
   const found = new Set<string>();
-  collectCodeTableQueries(dashboard.panels ?? [], found);
+  for (const target of collectTargets(dashboard.panels ?? [])) {
+    for (const field of QUERY_FIELDS) {
+      const sql = target[field];
+      if (typeof sql === "string" && sql.includes(VALUES_HEADER)) {
+        found.add(sql);
+      }
+    }
+  }
   if (found.size === 0) {
     throw new Error(
       `${DASHBOARD_PATH}: no panel carries the code-table CTE any more. If the dashboard was rebuilt, point ` +
@@ -159,20 +181,17 @@ function codeTableQueries(dashboardJson: string): string[] {
   return [...found];
 }
 
-function collectCodeTableQueries(panels: DashboardPanel[], found: Set<string>): void {
+/** Every target in the dashboard; rows can nest panels inside themselves. */
+function collectTargets(panels: DashboardPanel[], found: Record<string, unknown>[] = []): Record<string, unknown>[] {
   for (const panel of panels) {
     for (const target of panel.targets ?? []) {
-      for (const field of QUERY_FIELDS) {
-        const sql = target[field];
-        if (typeof sql === "string" && sql.includes(VALUES_HEADER)) {
-          found.add(sql);
-        }
-      }
+      found.push(target);
     }
     if (panel.panels) {
-      collectCodeTableQueries(panel.panels, found);
+      collectTargets(panel.panels, found);
     }
   }
+  return found;
 }
 
 /** `sql` with its `VALUES` list swapped for `valuesList`, everything else as it was. */
@@ -243,13 +262,85 @@ function assertMilNullIsHandled(queries: string[], entries: DtcTableEntry[]): vo
     return;
   }
   for (const sql of queries) {
-    if (sql.includes("c.mil") && !sql.includes("c.mil IS NULL")) {
+    // Comments are stripped first, and the column is matched under any alias. A
+    // guard that a reworded comment can satisfy, or that a `LEFT JOIN code AS t`
+    // can walk straight past, would be load-bearing and not tamper-evident — the
+    // same shape of problem this whole script exists to end.
+    const statement = stripSqlComments(sql);
+    if (READS_MIL.test(statement) && !TESTS_MIL_FOR_NULL.test(statement)) {
       throw new Error(
-        `${DASHBOARD_PATH}: a panel reads c.mil with no "WHEN c.mil IS NULL" arm, so the codes whose lamp ` +
-          `behaviour no source states would be rendered as "no". Give that CASE an unknown arm first.`
+        `${DASHBOARD_PATH}: a panel reads the mil column with no "WHEN … mil IS NULL" arm, so the codes whose ` +
+          `lamp behaviour no source states would be rendered as "no". Give that CASE an unknown arm first.`
       );
     }
   }
+}
+
+/**
+ * SQL with its `-- …` comments removed, so that what a comment happens to say can
+ * neither satisfy nor defeat a test. Quote state is tracked because a `--` inside a
+ * string literal is data, not a comment; SQLite's only escape is a doubled quote,
+ * which closes and immediately reopens the literal and so needs no special case.
+ */
+function stripSqlComments(sql: string): string {
+  let output = "";
+  let insideLiteral = false;
+  for (let index = 0; index < sql.length; index++) {
+    const character = sql[index];
+    if (character === "'") {
+      insideLiteral = !insideLiteral;
+    } else if (!insideLiteral && character === "-" && sql[index + 1] === "-") {
+      while (index < sql.length && sql[index] !== "\n") {
+        index++;
+      }
+      output += "\n";
+      continue;
+    }
+    output += character;
+  }
+  return output;
+}
+
+/**
+ * (component, symptom) is the table's primary key, but nothing enforces it: the
+ * lookup map in dtc-table.ts and the object in http/dtc-table.ts both absorb a
+ * duplicate last-wins. Here it would survive as two `VALUES` rows with the same
+ * key, and panel 21 joins before it aggregates — so "Times set" for a duplicated
+ * code doubles, and panel 11 draws the series twice. Both look like data.
+ */
+function assertOneRowPerCode(entries: DtcTableEntry[]): void {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const key = dtcSignalKey(entry.component, entry.symptom);
+    if (seen.has(key)) {
+      throw new Error(`DTC_TABLE has two entries for ${key}; (component, symptom) is its primary key`);
+    }
+    seen.add(key);
+  }
+}
+
+/**
+ * `rawQueryText` is what runs and `queryText` is written out only so the file does
+ * not lie about it, which holds only while they are equal. Nothing else checks
+ * that, and a `queryText` that drifted OUTSIDE the code table — a changed COALESCE,
+ * a dropped HAVING — would pass every other test here. They are equal in all four
+ * targets today, so it is cheap to pin while it is still true.
+ */
+function divergedQueryFields(dashboardJson: string): string[] {
+  const dashboard = JSON.parse(dashboardJson) as { panels?: DashboardPanel[] };
+  const [runsField, mirrorField] = QUERY_FIELDS;
+  const diverged: string[] = [];
+  for (const target of collectTargets(dashboard.panels ?? [])) {
+    const runs = target[runsField];
+    const mirror = target[mirrorField];
+    if (typeof runs === "string" && typeof mirror === "string" && runs !== mirror) {
+      diverged.push(
+        `${DASHBOARD_PATH}: target ${String(target.refId ?? "?")} has a ${mirrorField} that differs from its ` +
+          `${runsField}, so the file no longer says what actually runs`
+      );
+    }
+  }
+  return diverged;
 }
 
 /**
@@ -342,7 +433,18 @@ function describeRowDifferences(staleQueries: string[], valuesList: string): str
 async function staleCountMentions(expected: number): Promise<string[]> {
   const stale: string[] = [];
   for (const { path, pattern } of COUNT_MENTIONS) {
-    const text = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
+    // A rename is the likeliest way one of these goes stale, so it gets the same
+    // "fix the entry" nudge as a reworded sentence rather than an ENOENT stack
+    // trace from an unhandled rejection.
+    const text = await readFile(new URL(`../${path}`, import.meta.url), "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        stale.push(`${path}: cannot be read (${error.code ?? error.message}) — renamed? Update COUNT_MENTIONS.`);
+        return null;
+      }
+    );
+    if (text === null) {
+      continue;
+    }
     const found = pattern.exec(text);
     if (!found) {
       stale.push(`${path}: nothing matched ${pattern} — reword the pattern in scripts/generate-grafana-dtc.ts`);
