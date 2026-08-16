@@ -34,6 +34,7 @@ import {
   OBD_FUNCTIONAL_REQUEST_ID,
   type ServiceStamp,
 } from "./service-actions.ts";
+import type { TableTypeReport } from "./snapshot.ts";
 import type { ParameterWritePlan } from "./write-targets.ts";
 
 // The transport half of writing: put the frames on the bus in the right order, at
@@ -227,13 +228,18 @@ interface SessionContext {
  */
 export function writeParameter(
   channel: RawChannel,
-  plan: ParameterWritePlan
+  plan: ParameterWritePlan,
+  tableType: TableTypeReport | null
 ): { session: RunningWriteSession; finished: Promise<ServiceWriteOutcome> } {
   const context = newContext(channel);
-  return { session: sessionHandle(context), finished: runParameterWrite(context, plan) };
+  return { session: sessionHandle(context), finished: runParameterWrite(context, plan, tableType) };
 }
 
-async function runParameterWrite(context: SessionContext, plan: ParameterWritePlan): Promise<ServiceWriteOutcome> {
+async function runParameterWrite(
+  context: SessionContext,
+  plan: ParameterWritePlan,
+  tableType: TableTypeReport | null
+): Promise<ServiceWriteOutcome> {
   const micro = plan.micro;
   const cooldown = cooldownFor(micro);
   if (cooldown > 0) {
@@ -289,7 +295,7 @@ async function runParameterWrite(context: SessionContext, plan: ParameterWritePl
   // Nothing between the unlock and this line. No logging, no extra await, no read —
   // the window is about two seconds and the factory software's own successful writes
   // followed within 2 ms and 167 ms.
-  const written = await exchange(context, micro, { kind: "write-parameter", plan });
+  const written = await exchange(context, micro, { kind: "write-parameter", plan, tableType });
   if (written.kind !== "reply") {
     return { status: "failed", plan, stage: "write", reason: describeExchangeFailure(written) };
   }

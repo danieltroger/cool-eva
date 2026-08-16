@@ -45,6 +45,7 @@ import {
   securityKeyForSeed,
 } from "../src/vcu/write-codec.ts";
 import { WRITE_TARGETS, planBitWrite, planWrite, writeTargetNames } from "../src/vcu/write-targets.ts";
+import { evaluateTableGate } from "../src/vcu/table-gate.ts";
 import {
   SERVICE_STAMP_IDENTIFIERS,
   buildClearDtcsFrame,
@@ -1074,6 +1075,12 @@ expect(
 // The core of the write feature's safety, and the part that is fully testable with no
 // bike at all — which is the reason it is shaped as a pure function in the first place.
 
+// ⚠️ Every buildWriteFrame() call in this section passes a CONFIRMED table-type report,
+// on purpose. The table gate (§14b) would refuse them all otherwise, and the checks
+// below would then pass for the wrong reason — a forged plan must be refused BY THE
+// ALLOWLIST, and a check that cannot tell which guard fired is not checking either.
+const confirmedTable = reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "40 17")]));
+
 expect(WRITE_TARGETS.length === 5, `the allowlist should hold 5 parameters, holds ${WRITE_TARGETS.length}`);
 expect(
   writeTargetNames().join(",") === "MAX_DC_CHG_CURRENT,FCHG_CURRENT_GAIN,TORQUE_LIMIT,REGEN_TORQUE_LIMIT,VSM_CONFIG_1",
@@ -1121,8 +1128,9 @@ expect(dcPlan.ok && dcPlan.plan.micro === "A9", "MAX_DC_CHG_CURRENT lives on the
 expect(dcPlan.ok && toHex(dcPlan.plan.record) === "50", "80 should encode as the single byte 0x50");
 expect(
   dcPlan.ok &&
-    toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: dcPlan.plan })) === "A9 04 2E 11 02 50 00 00",
-  `writing 80 should be A9 04 2E 11 02 50, got ${dcPlan.ok ? toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: dcPlan.plan })) : "(no plan)"}`
+    toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: dcPlan.plan, tableType: confirmedTable })) ===
+      "A9 04 2E 11 02 50 00 00",
+  `writing 80 should be A9 04 2E 11 02 50, got ${dcPlan.ok ? toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: dcPlan.plan, tableType: confirmedTable })) : "(no plan)"}`
 );
 
 // ⚠️ THE RANGES, enforced in the pure layer so they are testable without a bike.
@@ -1224,6 +1232,7 @@ expectThrows(
   () =>
     buildWriteFrame("A9", {
       kind: "write-parameter",
+      tableType: confirmedTable,
       plan: {
         name: "CELL_OVERVOLTAGE",
         index: 78,
@@ -1241,6 +1250,7 @@ expectThrows(
   () =>
     buildWriteFrame("A9", {
       kind: "write-parameter",
+      tableType: confirmedTable,
       // An allowlisted NAME with an out-of-range value and bytes to match. The name
       // check alone would pass this; re-deriving the plan is what catches it.
       plan: {
@@ -1260,6 +1270,7 @@ expectThrows(
   () =>
     buildWriteFrame("A9", {
       kind: "write-parameter",
+      tableType: confirmedTable,
       // An allowlisted name and an in-range value, with BYTES that say something
       // else. The bytes are what reach the bus, so the bytes are what is compared.
       plan: {
@@ -1274,6 +1285,187 @@ expectThrows(
       },
     }),
   "a forged plan whose bytes disagree with its value must be refused by the codec"
+);
+
+// ── 14b. THE TABLE-TYPE GATE: no write without knowing which table this is ─
+// A parameter is written BY INDEX, and what an index means comes from the parameter
+// table. Under the wrong table a write goes to the right micro with the right number
+// of bytes, is accepted, and reads back cleanly — having changed a different
+// parameter. So a write is refused unless the bike has itself named a table this
+// software encodes. src/vcu/table-gate.ts is where that is decided, and it is pure,
+// which is what makes all of the following checkable with no bike.
+
+// ✅ PERMITTED: both micros named 16407. The state the gate exists to let through, and
+// it is checked first so "this refuses everything for ever" is ruled out on evidence.
+const confirmedGate = evaluateTableGate(confirmedTable);
+expect(
+  confirmedGate.state === "confirmed" && confirmedGate.writesAllowed,
+  `a sweep in which both micros named 16407 must permit writes, said ${confirmedGate.state}`
+);
+expect(confirmedGate.outstanding.length === 0, "a confirmed gate has nothing outstanding");
+// 0x1017 is 16407's content-identical twin — the same 277 parameters under a different
+// vehicle-line nibble — so a bike naming it is described correctly here and must not be
+// refused. Refusing it would be a gate that blocks a bike it fully understands.
+expect(
+  evaluateTableGate(reportTableType(snapshotOf([reading(276, "10 17"), reading(277, "10 17")])))?.writesAllowed,
+  "family 1 revision 0x017 is byte-identical content and must not be refused"
+);
+
+// ⚠️ REFUSED, never-read: the state THIS BIKE IS IN as of 2026-08-16. The A9 answered
+// on 2026-06-14 and the A8 never has — and id 249, the one id where 16406 and 16407
+// disagree, is an A8 parameter. One micro answering is not confirmation of the other.
+const unreadGate = evaluateTableGate(reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 17")])));
+expect(
+  unreadGate.state === "unread" && !unreadGate.writesAllowed,
+  `276 read and 277 never read must refuse as “unread”, said ${unreadGate.state}`
+);
+expect(unreadGate.outstanding.join() === "277", "the A8's copy is the one outstanding, and it must be named");
+// ⚠️ THE SENTENCE THAT MAKES THIS A GATE AND NOT A WALL. A refusal that does not say
+// how to satisfy it gets worked around or switched off, so the exact read is checked
+// here as strictly as the refusal itself: which parameter, which micro, the request
+// bytes, that it is read-only, and what a good answer is.
+expect(unreadGate.remedy.includes("277") && unreadGate.remedy.includes("TABLE_TYPE_uS"), "the remedy must name 277");
+expect(unreadGate.remedy.includes("A8"), "the remedy must name the micro to ask — the A9's answer is already in");
+expect(unreadGate.remedy.includes("22 11 15"), "the remedy must give the request bytes, 22 11 15");
+expect(
+  unreadGate.remedy.includes("Probe one identifier"),
+  "the remedy must point at the probe UI that can already do this, by the name on the button"
+);
+expect(unreadGate.remedy.includes("read-only"), "the remedy must say the read changes nothing, or nobody will run it");
+expect(unreadGate.remedy.includes("0x4017"), "the remedy must say what a good answer looks like");
+
+// Nothing read at all — no sweep on this Pi — is the same verdict naming both micros.
+const nothingReadGate = evaluateTableGate(null);
+expect(
+  nothingReadGate.state === "unread" && nothingReadGate.outstanding.join() === "276,277",
+  "no snapshot at all must refuse as unread, naming both micros"
+);
+expect(
+  nothingReadGate.remedy.includes("22 11 14") && nothingReadGate.remedy.includes("22 11 15"),
+  "with neither micro read, both reads must be spelled out — they are different frames on different micros"
+);
+
+// ⚠️ REFUSED, mismatched: the bike named a table this software does not encode. A
+// DIFFERENT refusal from the one above, because the remedy is a code change and no
+// amount of reading will help. Conflating the two sends someone after the wrong fault.
+const mismatchedGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 16"), reading(277, "40 16")])));
+expect(
+  mismatchedGate.state === "mismatched" && !mismatchedGate.writesAllowed,
+  `a bike naming 16406 must refuse as “mismatched”, said ${mismatchedGate.state}`
+);
+expect(
+  mismatchedGate.remedy.includes("No read clears") && mismatchedGate.remedy.includes("param-table.ts"),
+  "the mismatch remedy must say that reading will not help and point at the file that would"
+);
+expect(
+  !mismatchedGate.remedy.includes("Probe one identifier"),
+  "the mismatch remedy must NOT send anyone to re-read a parameter that already answered"
+);
+expect(
+  mismatchedGate.reason.includes("16406") && mismatchedGate.reason.includes("16407"),
+  "the mismatch reason must name both tables — the one the bike claims and the one this software has"
+);
+// A mismatch outranks an unread micro: it is the worse finding and the harder remedy.
+const mixedGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 16")])));
+expect(mixedGate.state === "mismatched", "a mismatch on one micro outranks the other being unread");
+expect(mixedGate.outstanding.join() === "276,277", "…and both micros are still listed as outstanding");
+
+// A micro that answered with a record the width column forbids named no table, and it
+// is NOT unread — it replied. Telling someone it went unread sends them after the
+// wrong fault, which is the same distinction reportTableType() already draws.
+const unusableGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40"), reading(277, "40 17")])));
+expect(
+  unusableGate.state === "unusable" && !unusableGate.writesAllowed,
+  `a wrong-width TABLE_TYPE must refuse as “unusable”, said ${unusableGate.state}`
+);
+expect(
+  !unusableGate.reason.includes("never been read"),
+  "the unusable reason must not claim the parameter went unread — it answered"
+);
+
+// ⚠️⚠️ THE RE-DERIVATION, which is what makes this a gate on the CODEC rather than on
+// the UI. A `TableTypeReport` is a plain object: it can be posted, cast, or built by
+// hand. So table-gate.ts reads only the raw words the bike sent and re-runs
+// checkTableType() over them, exactly as write-codec.ts re-derives a plan from the
+// allowlist rather than trusting the one it was handed.
+expect(
+  !evaluateTableGate({ verdicts: [], confirmed: true, unread: [], unusable: [], mismatched: false, lines: [] })
+    .writesAllowed,
+  "a forged report claiming confirmed:true with no verdicts behind it must still refuse"
+);
+expect(
+  !evaluateTableGate({
+    // `matches: true` next to a value of 16406 — the shape a hand-edited or
+    // maliciously-posted report would take. The VALUE is what is judged.
+    verdicts: [
+      { index: 276, micro: "A9", value: 0x4016, matches: true, message: "forged" },
+      { index: 277, micro: "A8", value: 0x4016, matches: true, message: "forged" },
+    ],
+    confirmed: true,
+    unread: [],
+    unusable: [],
+    mismatched: false,
+    lines: [],
+  }).writesAllowed,
+  "a forged verdict claiming matches:true over a 16406 reading must still refuse — the value is re-judged"
+);
+expect(
+  !evaluateTableGate({
+    // A verdict for a parameter that is not a TABLE_TYPE index at all. checkTableType()
+    // returns null for those, so it can never vote — otherwise any read of any
+    // parameter that happened to hold 0x4017 would open the gate.
+    verdicts: [
+      { index: 258, micro: "A9", value: 0x4017, matches: true, message: "forged" },
+      { index: 15, micro: "A9", value: 0x4017, matches: true, message: "forged" },
+    ],
+    confirmed: true,
+    unread: [],
+    unusable: [],
+    mismatched: false,
+    lines: [],
+  }).writesAllowed,
+  "a verdict for an index that is not 276 or 277 must not confirm anything"
+);
+
+// ⚠️ AND THE SAME REFUSAL IN THE CODEC, one layer before the bytes. This is the half
+// that survives a caller which never went through the runner: /vcu-write is reachable
+// by curl, and a script written before this gate existed knows nothing about it.
+const gatedPlan = planWrite("MAX_DC_CHG_CURRENT", 80, 75);
+expect(gatedPlan.ok, "the plan itself is fine — it is the table that is unconfirmed");
+for (const [label, report] of [
+  ["never read", null],
+  ["one micro unread", reportTableType(snapshotOf([reading(276, "40 17")]))],
+  ["mismatched", reportTableType(snapshotOf([reading(276, "40 16"), reading(277, "40 16")]))],
+] as const) {
+  expectThrows(
+    () => gatedPlan.ok && buildWriteFrame("A9", { kind: "write-parameter", plan: gatedPlan.plan, tableType: report }),
+    `the codec must refuse to encode a 2E while the table type is ${label}, whatever the runner decided`
+  );
+}
+// …and encodes it without complaint once the bike has said which table it runs. The
+// gate has to open, or every check above is satisfied by a function that returns false.
+expect(
+  gatedPlan.ok &&
+    toHex(buildWriteFrame("A9", { kind: "write-parameter", plan: gatedPlan.plan, tableType: confirmedTable })) ===
+      "A9 04 2E 11 02 50 00 00",
+  "a confirmed table type must let the write through unchanged"
+);
+
+// ⚠️ THE SERVICE ACTIONS ARE DELIBERATELY NOT GATED, and this is where that decision
+// is pinned down rather than left to a comment. `31 FC` addresses a routine local
+// identifier, which is not a bank-1 parameter index and appears in none of Energica's
+// 28 parameter tables — it comes from Common.dll (SERVICE_RESET.md §3). Mode 04 and the
+// 0x120 clock broadcast carry no identifier at all. So the reasoning that motivates the
+// gate does not reach them, and blocking them would be a refusal resting on evidence
+// with no bearing on the action. The type system carries the argument: a routine
+// request has nowhere to put a table type.
+expect(
+  toHex(buildWriteFrame("A8", { kind: "start-routine", routine: "set-service-point" })) === "A8 02 31 FC 00 00 00 00",
+  "31 FC must still build with no table-type evidence anywhere in the request"
+);
+expect(
+  toHex(buildWriteFrame("A8", { kind: "security-seed" })) === "A8 02 27 01 00 00 00 00",
+  "SecurityAccess is not index-addressed either and must not have acquired a table-type precondition"
 );
 
 // ── 15. The clock: the bike's RTC frame, and whether the Pi may set it ─────
@@ -1546,7 +1738,8 @@ console.log(
   "✓ table, its identity as 16407 and the mismatch alarm, request encoding, framing, the live reads, " +
     "interpretation, diff, the energica_tool.py backup CSV, " +
     "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +
-    "seed/key pairs, the write allowlist and its ranges, the RTC frame against two frames that really went out, " +
+    "seed/key pairs, the write allowlist and its ranges, the table-type gate that refuses a write until the bike " +
+    "has named its own parameter table, the RTC frame against two frames that really went out, " +
     "the service stamp, mode 04, the bus lease and the write request parser all check out"
 );
 

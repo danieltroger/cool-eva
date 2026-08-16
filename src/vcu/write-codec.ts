@@ -1,4 +1,6 @@
 import { describeNegativeResponseCode } from "../diagnostics/obd-dtc.ts";
+import { evaluateTableGate } from "./table-gate.ts";
+import type { TableTypeReport } from "./snapshot.ts";
 import type { ParameterWritePlan } from "./write-targets.ts";
 
 // Pure codec for the three services that CHANGE something in a VCU micro:
@@ -32,6 +34,14 @@ import type { ParameterWritePlan } from "./write-targets.ts";
 //      and the routine that wipes battery statistics, is unreachable because
 //      nothing in this repo gives it a name. That is deliberate and is the single
 //      most important line in this file.
+//   2b. **A caller cannot write without the bike having named its parameter table.**
+//      `write-parameter` additionally carries the table-type report the write is
+//      being made on the strength of, and `encodeWrite` re-judges it here through
+//      ./table-gate.ts — from the raw `TABLE_TYPE` words the bike sent, not from any
+//      `confirmed` boolean in the report. An index only MEANS a parameter relative to
+//      a table (see `assertTableTypeConfirmed`), so this is the same class of check as
+//      the allowlist and it is enforced in the same place, for the same reason: the
+//      UI is not the only thing that can reach this function.
 //   4. **The emitted service byte is checked**, the same belt-and-braces
 //      param-codec.ts keeps: `WRITE_SERVICES` is the whole set, and 0x11 ECUReset,
 //      0x2F InputOutputControl, 0x3B, 0x3D and 0x34/0x36/0x37 are absent and must
@@ -82,8 +92,14 @@ export type VcuWriteRequest =
    * ./write-targets.ts, which is where the allowlist and the ranges live — so
    * "which parameter" and "what value" are decided by a pure, checked function
    * before this file ever sees them, and re-checked here on the way out.
+   *
+   * ⚠️ And it takes the EVIDENCE that the bike runs the table those names come from,
+   * rather than a caller's assurance that it does. `tableType` is the report a sweep
+   * produced (./snapshot.ts's `reportTableType`), or null when no sweep on this Pi has
+   * produced one; either way the verdict is re-derived here. See
+   * `assertTableTypeConfirmed`.
    */
-  | { kind: "write-parameter"; plan: ParameterWritePlan }
+  | { kind: "write-parameter"; plan: ParameterWritePlan; tableType: TableTypeReport | null }
   /**
    * `31 [id]` StartRoutineByLocalIdentifier, no parameters.
    *
@@ -246,6 +262,12 @@ function encodeWritePayload(request: VcuWriteRequest): Uint8Array {
       // ./write-targets.ts is refused at the point where it would otherwise become
       // eight bytes on a motorcycle's calibration EEPROM.
       assertPlanIsAllowed(plan);
+      // And the table the plan's NAME is a claim about, on the same terms. The
+      // allowlist check above proves the bytes are the ones write-targets.ts would
+      // have produced for this name; it cannot prove the name belongs to this index on
+      // this bike, because that is what the parameter table says and the table is an
+      // assumption until the bike confirms it.
+      assertTableTypeConfirmed(request.tableType);
       return Uint8Array.from([
         SERVICE_WRITE_BY_COMMON_IDENTIFIER,
         plan.identifier >> 8,
@@ -434,6 +456,43 @@ function assertPlanIsAllowed(plan: ParameterWritePlan): void {
     throw new Error(
       `vcu-write: refusing to encode a write to identifier 0x${plan.identifier.toString(16)} — ` +
         "it is not on the allowlist in src/vcu/write-targets.ts, or its bytes do not match what that module would produce"
+    );
+  }
+}
+
+/**
+ * The other last gate: has this bike said which parameter table it runs?
+ *
+ * ⚠️ Why an identifier is not enough on its own. `2E 11 02 50` is a well-formed write
+ * of 80 to CommonIdentifier 0x1102 whatever table the VCU is running — the micro takes
+ * it, echoes `6E 11 02`, and a read-back of the same identifier returns 80. What
+ * changes with the table is which PARAMETER 0x1102 is. Routing and record width are
+ * invariant across all 28 of Energica's tables, so there is no malformed frame, no
+ * NRC and no read-back anywhere in that sequence to notice it: the write succeeds and
+ * is wrong. 151 of 278 ids carry a different name in at least one other table, and
+ * ./param-table.ts's own 2026-08-16 correction (id 249, `LM_TYPE` in 16406,
+ * `R_BRAKE_POPUP` in 16407) is one that was found rather than imagined.
+ *
+ * So the gate is enforced HERE, in the pure layer, and not only where the UI can see
+ * it — for exactly the reason `assertPlanIsAllowed` sits next to it. `curl` can reach
+ * /vcu-write, so can a script written before this existed, and a `TableTypeReport` is
+ * a plain object that could be posted, cast or reconstructed. ./table-gate.ts
+ * therefore re-derives the verdict from the raw words the bike sent rather than
+ * reading the report's own `confirmed` flag, which is what makes forging one useless:
+ * to get past this you would have to claim the bike answered `0x4017`, and if it did
+ * then the write was correct.
+ *
+ * Throws, like every other refusal in this file, because by the time anything reaches
+ * here the runner has already declined the request with a sentence a person can act
+ * on (./write-runner.ts). Reaching this line means that check was bypassed, which is a
+ * bug, and a bug on this path must be loud rather than a frame.
+ */
+function assertTableTypeConfirmed(report: TableTypeReport | null): void {
+  const verdict = evaluateTableGate(report);
+  if (!verdict.writesAllowed) {
+    throw new Error(
+      `vcu-write: refusing to encode a parameter write — the VCU's parameter table is ${verdict.state}. ` +
+        `${verdict.reason} ${verdict.remedy}`
     );
   }
 }

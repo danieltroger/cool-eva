@@ -4,6 +4,8 @@ import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
+import type { TableTypeReport } from "./snapshot.ts";
+import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
 import { appendAuditRecord, recentAuditRecords, type AuditAction, type AuditRecord } from "./write-audit.ts";
 import {
   clearStoredDtcs,
@@ -26,7 +28,7 @@ import { planBitWrite, planWrite, WRITE_TARGETS, type WriteTarget } from "./writ
 // is a separate file and a separate switch, because the two are not the same risk and
 // must not share an off button.
 //
-// ── The four locks on this door, in the order they are checked ──────────────
+// ── The five locks on this door, in the order they are checked ──────────────
 //  1. **SERVICE_WRITE_ENABLED.** Its own switch, separate from SERVICE_MODE_ENABLED.
 //     A Pi with reads on and writes off is the normal configuration; a Pi that has
 //     never been told otherwise is that Pi, because this one defaults to OFF while
@@ -40,9 +42,15 @@ import { planBitWrite, planWrite, WRITE_TARGETS, type WriteTarget } from "./writ
 //     tethered bike cannot be ridden away without someone unplugging it first. Every
 //     other check still applies — zero speed, zero motor rpm, `moving`, `go`,
 //     `go_request` and `throttle_on` all clear.
-//  4. **The allowlist and the ranges** (./write-targets.ts), in the pure layer.
+//  4. **The table-type gate** (./table-gate.ts), and it is the newest of the five.
+//     A parameter is addressed BY INDEX, so every name on the allowlist is a claim
+//     about which of Energica's 28 parameter tables this bike runs — and a write under
+//     the wrong table is accepted, reads back cleanly, and has changed something else.
+//     ⚠️ It gates the two PARAMETER actions and nothing else; see
+//     `tableGateAppliesTo` for why the service actions are deliberately left alone.
+//  5. **The allowlist and the ranges** (./write-targets.ts), in the pure layer.
 //
-// And behind all four, per action: a read of the current value, a compare-and-swap
+// And behind all five, per action: a read of the current value, a compare-and-swap
 // against what the caller thought it was, and a read-back afterwards.
 //
 // ── ⚠️ What is NOT here, and must not be added ──────────────────────────────
@@ -97,6 +105,16 @@ export interface VcuWriteStatus {
   /** False when SERVICE_WRITE_ENABLED is not 1. The page then labels the buttons as off. */
   enabled: boolean;
   gate: ServiceGateVerdict;
+  /**
+   * ⚠️ Whether anything on this Pi has confirmed which parameter table the bike runs,
+   * and — when it has not — which of the two blocked states this is and what opens it.
+   *
+   * On the status payload rather than only in a refusal because the page has to be
+   * able to disable the write button and SAY WHY before anyone presses it, and because
+   * the two blocked states need to look different: `mismatched` is a software problem
+   * no read will fix, `unread` is one frame away. See ./table-gate.ts.
+   */
+  tableGate: TableGateVerdict;
   /** Whether this Pi's clock may be copied into the bike, and why not when it may not. */
   clock: PiClockVerdict;
   /** The allowlist, so the page's list cannot drift from the codec's. */
@@ -130,6 +148,17 @@ export interface VcuWriteRunnerOptions {
   directory: string;
   /** The safety gate, shared with the read runner so there is one opinion and not two. */
   gate: () => ServiceGateVerdict;
+  /**
+   * What the last sweep on this Pi says about the bike's parameter table, or null when
+   * nothing here can say.
+   *
+   * Injected exactly as `gate` is, and for the same reason: the decision stays in a
+   * pure function (./table-gate.ts) that a laptop can exercise, and this module never
+   * learns where a snapshot lives. Async because the answer is a file — sampled per
+   * attempt rather than cached, so a sweep that ran while the sheet was open opens the
+   * gate without a restart.
+   */
+  tableType: () => Promise<TableTypeReport | null>;
 }
 
 /**
@@ -162,6 +191,7 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
   return {
     enabled: context.enabled,
     gate: context.gate(),
+    tableGate: evaluateTableGate(await context.tableType()),
     clock: readPiClock(),
     targets: WRITE_TARGETS.map(summariseTarget),
     recent: await recentAuditRecords(context.directory, RECENT_AUDIT_LINES),
@@ -210,14 +240,64 @@ function summariseTarget(target: WriteTarget): WriteTargetSummary {
 }
 
 /**
+ * ⚠️ Which actions the table-type gate applies to — and, more usefully, why the
+ * others are deliberately exempt.
+ *
+ * The gate exists for ONE failure: a parameter is addressed by index, what an index
+ * means comes from the parameter table, and a write under the wrong table is accepted,
+ * reads back cleanly and has changed something else. That argument is about
+ * index-addressed writes and does not survive being generalised:
+ *
+ *  • `31 FC` **Set Service Point** takes a routine LOCAL identifier, not a bank-1
+ *    parameter index. Routine ids are not in params.ecf at all — they come from
+ *    Energica's `Common.dll` (obd-garage/SERVICE_RESET.md §3) — and none of the 28
+ *    parameter tables says anything about them. `TABLE_TYPE` therefore carries no
+ *    information about what `31 FC` does. (It IS ambiguous: SERVICE_RESET.md §7 records
+ *    `0xFC` also meaning `VCUCheckSum` in the FLASHING enum. But that ambiguity is per
+ *    ECU and session, which ./write-codec.ts pins with ROUTINE_MICROS — reading 277
+ *    would not resolve it by a single bit.)
+ *  • **Mode 04 clear-DTCs** is standard OBD-II with no identifier of any kind. Trouble
+ *    codes are reconciled against src/diagnostics/dtc-table.ts, not against params.ecf.
+ *  • The **0x120 clock broadcast** is a raw frame with a fixed layout and no
+ *    identifier, addressed to nothing.
+ *  • **read-service-stamp** is read-only, and reads ids 1000-1003 — outside the name
+ *    table's 1…277 entirely, from SERVICE_RESET.md §2 rather than from any table.
+ *
+ * So gating them would be superstition: a refusal resting on evidence with no bearing
+ * on the action. It would also cost something real. The remedy for the state this bike
+ * is in TODAY is a read, reads share this page and this gate's vocabulary, and a
+ * precondition that blocks harmless actions for a reason nobody can connect to them is
+ * how a gate stops being believed — which is expensive precisely where it IS load-
+ * bearing. The fail-closed instinct is right about parameter writes and proves too much
+ * about everything else; taken to its end it would gate the reads too, and the reads
+ * are the way out.
+ *
+ * The honest counter-argument, recorded rather than hidden: an unconfirmed table means
+ * this software may not understand this bike as well as it thinks, and Set Service
+ * Point is irreversible. It does not carry, because `31 FC` is `31 FC` on all 28
+ * tables — the uncertainty is real and simply does not touch that frame.
+ */
+function tableGateAppliesTo(request: ServiceWriteRequest): boolean {
+  return request.kind === "parameter" || request.kind === "bit";
+}
+
+/**
  * Everything that has to be true before any frame goes out, in one place.
  *
  * Ordered cheapest-first, and the gate LAST of the three cheap ones, so that a Pi with
  * writes switched off says so rather than complaining about the bike.
+ *
+ * The table-type gate sits AFTER the safety gate, which is a deliberate ordering and
+ * not an accident of where it was added: its remedy is a read, a read needs the same
+ * safety gate open, and telling someone to go and probe parameter 277 while the bike is
+ * rolling would be sending them after the second-most-important thing.
  */
-function checkPreconditions(
-  context: WriteContext
-): { ok: true; channel: RawChannel; lease: BusLease } | { ok: false; reason: string } {
+async function checkPreconditions(
+  context: WriteContext,
+  request: ServiceWriteRequest
+): Promise<
+  { ok: true; channel: RawChannel; lease: BusLease; tableType: TableTypeReport | null } | { ok: false; reason: string }
+> {
   if (!context.enabled) {
     return {
       ok: false,
@@ -240,23 +320,36 @@ function checkPreconditions(
   if (!verdict.safe) {
     return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
   }
+  // Sampled for every action, including the exempt ones, so that the report threaded
+  // into the codec below is the same one this refusal was decided from. An action that
+  // does not need it simply never looks at it.
+  const tableType = await context.tableType();
+  if (tableGateAppliesTo(request)) {
+    const table = evaluateTableGate(tableType);
+    if (!table.writesAllowed) {
+      // The state is named, not just the reason: `mismatched` and `unread` are read by
+      // a person deciding whether to go and fix software or go and press a button, and
+      // the remedy sentence is the one that tells them which.
+      return { ok: false, reason: `the VCU's parameter table is ${table.state} — ${table.reason} ${table.remedy}` };
+    }
+  }
   // Taken LAST, so a refusal for any other reason does not hold the bus while it is
   // reported. Released in the `finally` of every path below.
   const lease = acquireBus("a service write");
   if (!lease.ok) {
     return { ok: false, reason: `${lease.heldBy} is using the bus — one thing at a time` };
   }
-  return { ok: true, channel, lease: lease.lease };
+  return { ok: true, channel, lease: lease.lease, tableType };
 }
 
 async function perform(context: WriteContext, request: ServiceWriteRequest): Promise<ServiceWriteAnswer> {
-  const ready = checkPreconditions(context);
+  const ready = await checkPreconditions(context, request);
   if (!ready.ok) {
     return { ok: false, reason: ready.reason };
   }
   const watchdog = startGateWatchdog(context);
   try {
-    return await performOnBus(context, request, ready.channel);
+    return await performOnBus(context, request, ready.channel, ready.tableType);
   } catch (err) {
     // Never swallowed and never allowed to reject into an HTTP handler: an action
     // that threw looks the same as a silent bike on screen unless it is said out loud,
@@ -273,12 +366,13 @@ async function perform(context: WriteContext, request: ServiceWriteRequest): Pro
 async function performOnBus(
   context: WriteContext,
   request: ServiceWriteRequest,
-  channel: RawChannel
+  channel: RawChannel,
+  tableType: TableTypeReport | null
 ): Promise<ServiceWriteAnswer> {
   switch (request.kind) {
     case "parameter":
     case "bit":
-      return await performParameterWrite(context, request, channel);
+      return await performParameterWrite(context, request, channel, tableType);
     case "read-service-stamp":
       return await performReadStamp(context, channel);
     case "set-service-point":
@@ -293,7 +387,8 @@ async function performOnBus(
 async function performParameterWrite(
   context: WriteContext,
   request: Extract<ServiceWriteRequest, { kind: "parameter" | "bit" }>,
-  channel: RawChannel
+  channel: RawChannel,
+  tableType: TableTypeReport | null
 ): Promise<ServiceWriteAnswer> {
   // The allowlist decides, in the pure layer, before anything is opened or sent. A
   // name that is not on it never becomes a session, let alone a frame.
@@ -309,7 +404,11 @@ async function performParameterWrite(
     `vcu-write: about to write ${plan.description} (${plan.micro} identifier 0x${plan.identifier.toString(16)})`
   );
 
-  const session = writeParameter(channel, plan);
+  // The report goes with the plan rather than being re-fetched inside the session:
+  // ./write-codec.ts re-judges it immediately before the `2E` bytes are built, and it
+  // must judge the same evidence this runner already refused or permitted on. Two
+  // reads of the file could straddle a sweep finishing and disagree.
+  const session = writeParameter(channel, plan, tableType);
   context.running = session.session;
   const outcome = await session.finished;
 

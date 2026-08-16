@@ -1,6 +1,13 @@
 import { mkdir, open, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { describeChange, diffSnapshots, type VcuParameterRow, type VcuParameterSnapshot } from "./snapshot.ts";
+import {
+  describeChange,
+  diffSnapshots,
+  reportTableType,
+  type TableTypeReport,
+  type VcuParameterRow,
+  type VcuParameterSnapshot,
+} from "./snapshot.ts";
 import type { FileHandle } from "fs/promises";
 
 // Where a parameter sweep's results live on disk, and the four rules about them
@@ -114,6 +121,39 @@ export async function openPartialSweepLog(directory: string): Promise<PartialSwe
 /** Throws the resume file away. Only ever called for a sweep that covered everything. */
 export async function clearPartialSweep(directory: string): Promise<void> {
   await rm(join(directory, PARTIAL_FILE), { force: true });
+}
+
+/**
+ * What the last sweep on this Pi says about which of Energica's parameter tables this
+ * bike runs, or null when nothing here can say.
+ *
+ * Lives in this file rather than in src/http/vcu-params.ts, which also reads
+ * `latest.json`, because src/vcu must not import src/http — and because this module is
+ * what WRITES that file, so it is where "the latest snapshot is this one" belongs. The
+ * HTTP module keeps its own reader for the page's sake; both go through
+ * `reportTableType`, so there is still exactly one opinion about what a `TABLE_TYPE`
+ * reading MEANS.
+ *
+ * ⚠️ Null on every failure — missing file, unreadable file, valid JSON that is not a
+ * snapshot — and never an empty report. ./table-gate.ts reads null as "nothing has
+ * confirmed either micro", which blocks, so every one of those failures fails closed.
+ * They are logged rather than swallowed because "no sweep has run" and "the snapshot
+ * is damaged" are different problems and only one of them is fixed by reading the
+ * bike.
+ */
+export async function loadLatestTableType(directory: string): Promise<TableTypeReport | null> {
+  const snapshot = await loadSnapshotFile(join(directory, LATEST_FILE));
+  if (!snapshot) {
+    return null;
+  }
+  try {
+    return reportTableType(snapshot);
+  } catch (err) {
+    // reportTableType walks `snapshot.rows`, so a file that parsed but is not a
+    // snapshot — `{}`, `null`, a truncated write that still parses — throws here.
+    console.warn(`vcu-sweep: ${join(directory, LATEST_FILE)} parsed but is not a parameter snapshot:`, err);
+    return null;
+  }
 }
 
 /**

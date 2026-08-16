@@ -108,7 +108,10 @@ const CHECKS: SelfCheck[] = [
       "request encoding and the read-only guard, framing against frames captured 2026-08-08, " +
       "the live bank-1 reads, interpretation, the snapshot diff, the KWP transport against a simulated micro, and — " +
       "since the service-write PR — the write allowlist and its per-parameter ranges, the refusal of every " +
-      "non-allowlisted identifier, the seed→key algorithm against four seed/key pairs captured off this bike's own " +
+      "non-allowlisted identifier, the table-type gate that refuses a parameter write until the bike has itself " +
+      "named a table this software encodes (refused when never read, refused when mismatched, permitted when " +
+      "confirmed — in the codec as well as the runner, and not applied to the service actions, which address no " +
+      "index), the seed→key algorithm against four seed/key pairs captured off this bike's own " +
       "bus, the 0x120 clock frame against two frames that really went out, the service-stamp decode, Mode 04 and the bus lease",
   },
   {
