@@ -222,6 +222,17 @@ const REPLAY: ReplayCase[] = [
     },
   },
   {
+    id: 0x0a0,
+    frame: "FF FF FF FF 00 00 00 00",
+    why: "the wheel-count sentinel, 10 frames across the two 2026-08-04 road captures. Passed through as 3686.34 km/h ON PURPOSE — bounds.js gates the wheel speeds to [0, 300] so it shows as a fault, where 0x10B's 65000 has to be dropped in the decoder because 65 kWh/100 km would pass bounds. Pinning it here so neither behaviour gets 'made consistent' with the other",
+    expect: {
+      wheel_speed_front_kmh: 3686.34375,
+      wheel_speed_rear_kmh: 3686.34375,
+      abs_warning_lamp: 0,
+      front_brake_pressure_bar: 0,
+    },
+  },
+  {
     id: 0x127,
     frame: "DE 00 6D 01 01 33 00 00",
     why: "the widest split the two throttle channels ever reached, −143 counts — the far end of the tolerance P0120/P0121 police",

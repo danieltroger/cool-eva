@@ -181,6 +181,13 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // can never be set by the quantity itself. If something else lives there the value
     // is impossible rather than plausible: speed jumps by 204.8 or 409.6 km/h, rpm by
     // 16 384. Seeing either is the signal that the field is narrower than assumed.
+    //
+    // ⚠️ The bit layout is right; the NUMBER is the bike's, and the bike's is optimistic.
+    // Against GPS over two 2026-08-04 road captures, `speed_can_kmh` reads +3.5 % and the
+    // odometer accumulates +3.4 % — about +3.4 km/h at an indicated 100. `speed_can_kmh` is
+    // exactly `motor_rpm_can` / 42.0, so it is geared driveline speed and not a wheel
+    // measurement, whatever the dashboard labels it. Full working in src/can/abs.ts; do not
+    // re-derive it against 0x104 itself, which is how the ABS scale went wrong.
     case 0x104: {
       if (data.length < 8) return [];
       return [

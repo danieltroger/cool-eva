@@ -33,6 +33,19 @@ export const ABS_CAN_ID = 0x0a0;
  *
  * Emits nothing for a short frame rather than a partial read — unlike 0x102, no field
  * here has been logged long enough to be worth protecting with its own narrower guard.
+ *
+ * ⚠️ A wheel count of 0xFFFF is a sentinel and it DOES occur on the road — 10 frames across the
+ * two 2026-08-04 captures. It is passed through, arriving as 3686.34 km/h, and that is deliberate
+ * rather than an oversight: public/lib/bounds.js gates both wheel speeds to [0, 300], so it shows
+ * as a fault, which is what the repo wants a dead sensor to look like.
+ *
+ * Note this resolves the same situation the OPPOSITE way to 0x10B, which drops its saturated
+ * 65000 in the decoder — and the difference is the point rather than an inconsistency to tidy
+ * away. 0x10B's sentinel decodes to 65 kWh/100 km, which bounds.js would ACCEPT, so nothing
+ * downstream could ever catch it and the decoder is the only place it can be stopped. 3686 km/h
+ * cannot be mistaken for a reading by anything. Dropping it here would be strictly worse: the
+ * frame would go silent exactly when a wheel sensor has failed, which is the moment the signal
+ * exists for. The replay cases in scripts/check-can-decoders.ts pin both behaviours.
  */
 export function decodeAbsFrame(data: Buffer): DecodedValue[] {
   if (data.length < 6) return [];
@@ -133,7 +146,11 @@ export function decodeAbsFrame(data: Buffer): DecodedValue[] {
 // `0.05625 × C_wheel / C_nom` from the VCU's `SPEED_ODO_FRONTWHEEL_C` = 1852 and
 // `SPEED_ODO_REARWHEEL_C` = 1983 (see src/vcu/param-table.ts). It predicts the ratio BACKWARDS.
 // A smaller front wheel spins faster, so that model needs front/rear scales in the ratio
-// 1852/1983 = 0.9339; measured is 1.0061, wrong by 7.7 %. Given its best possible C_nom (1904 mm,
+// 1852/1983 = 0.9339. Measured is 1.0061 — that one is the ratio of the POOLED through-origin
+// fits over all 274 samples (0.05690 / 0.05656), not of the per-stretch means published above,
+// which give 1.0049; the two differ because a stretch at 97 km/h and one at 48 km/h carry equal
+// weight in the second and not the first. Either reading is above 1 where the model needs 0.934,
+// so it is backwards by 7.6-7.7 % whichever is used. Given its best possible C_nom (1904 mm,
 // fitted) it is three times worse than doing nothing — RMS error against GPS over the 274 steady
 // samples, km/h:
 //

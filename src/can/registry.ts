@@ -347,6 +347,13 @@ export const SIGNALS: SignalDef[] = [
   // otherwise write at 100 Hz, so 0.5 km/h (still twice as fine as the OBD PID's whole
   // km/h) and 50 rpm out of a ~11 000 rpm range keep them useful but affordable. Both
   // tracked their OBD PIDs to ~1-2 % over a garage lap, so the bit layout is confirmed.
+  //
+  // ⚠️ `speed_can_kmh` READS ~3.5 % HIGH and `odometer_can_km` accumulates ~3.4 % long, both
+  // measured against GPS in 2026-08 (src/can/abs.ts). They are the driveline's numbers, not a
+  // wheel's — `speed_can_kmh` is exactly `motor_rpm_can` / 42.0 — so anything that wants true
+  // road speed should prefer `gps_speed_kmh`, then `wheel_speed_rear_kmh`, which is out by
+  // 0.6 %. Both are still logged as-is: they are what the bike believes, and the dashboard
+  // showing what the rider's dash shows is the point.
   { key: "odometer_can_km", unit: "km", group: "drive", source: "stream" },
   { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50 },
