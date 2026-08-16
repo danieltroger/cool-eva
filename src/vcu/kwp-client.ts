@@ -15,6 +15,14 @@ import {
   type VcuTarget,
 } from "./param-codec.ts";
 import { CALIBRATION_BANK, type VcuMicro } from "./param-table.ts";
+import {
+  decodeMultiFrameReply,
+  encodeMultiFrameRequestPayload,
+  expectedResponseService,
+  type VcuMultiFrameReply,
+  type VcuMultiFrameRequest,
+} from "./multiframe-codec.ts";
+import { startMultiFrameTransfer, type RunningMultiFrameTransfer, type TransferStage } from "./multiframe-transfer.ts";
 
 // The transport half of reading VCU calibration parameters: put a frame on the
 // bus, wait for the reply, keep the diagnostic session alive, give up on time.
@@ -22,13 +30,30 @@ import { CALIBRATION_BANK, type VcuMicro } from "./param-table.ts";
 // interpreted there — this file holds only the socket, the clock and the session
 // state, so the protocol itself stays replayable without a bike.
 //
-// ⚠️ READ-ONLY, structurally. It cannot express a write: the only way a byte
-// reaches `channel.send` is through `buildRequestFrame`, whose input is a closed
-// three-alternative union (start session / tester present / read one parameter).
-// There is no raw-bytes entry point to misuse, and no transmit address is ever
-// derived from something the bus said — the target micro is always one the caller
-// named. See the header of ./param-codec.ts for the list of services that must
-// never be added, and why.
+// ⚠️ READ-ONLY, structurally. It cannot express a write. Since 2026-08-16 there
+// are TWO ways a byte reaches `channel.send`, and both are closed unions with a
+// throwing default and an allowlist re-check on the emitted service byte:
+//
+//   • `buildRequestFrame` (./param-codec.ts) — start session / tester present /
+//     read one parameter. Three members, three permitted service bytes.
+//   • `encodeMultiFrameRequestPayload` (./multiframe-codec.ts) — the five reads
+//     whose request or reply does not fit one frame: `0x17`, `0x18`, `0x35`,
+//     `0x36`, `0x37`. Five members, five permitted service bytes.
+//
+// There is no raw-bytes entry point to either. A caller names an operation and a
+// target; it can never name a service byte and there is nowhere to put a value,
+// which is what makes a write unexpressible rather than merely absent. `0x31`,
+// `0x2E`, `0x3B`, `0x14`, `0x11`, `0x27`, `0x2F` and `0x34` are unreachable from
+// this client and each of those two headers says why its own must stay that way.
+//
+// ⚠️ The client now SENDS FLOW-CONTROL FRAMES, which it used not to, and the
+// property that mattered is preserved rather than spent: **no transmit address is
+// ever derived from something the bus said.** A flow-control frame is addressed
+// to the target the CALLER named, exactly like every request. Contrast
+// src/can/obd-dtc.ts, which derives its flow-control id from the reply's id and
+// therefore needs a range guard so a stray First Frame cannot make it transmit on
+// the functional broadcast address; there is nothing to guard here because there
+// is nothing derived. ./multiframe-transfer.ts is where that happens.
 //
 // ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which
 // kills every other raw-CAN socket on the Pi including the running cool-eva
@@ -103,6 +128,56 @@ export interface VcuProbeTarget {
 /** How one probe came out. Same outcomes as a sweep read — only the identity differs. */
 export type VcuProbeOutcome = VcuProbeTarget & VcuReadResult;
 
+/**
+ * How one multi-frame exchange came out.
+ *
+ * Deliberately NOT folded into `VcuReadResult`. That union's `multi-frame` member
+ * means "a First Frame arrived where none can exist, so an assumption is wrong",
+ * which is still exactly right for a bank-1 parameter read and must keep meaning
+ * that. Here a First Frame is the normal case, and the failures are different
+ * ones — a transfer that stalled halfway is not the same claim as a micro that
+ * said nothing.
+ */
+export type VcuMultiFrameOutcome =
+  /**
+   * A whole reply arrived and was split against the service asked for. `reply`
+   * may still be a refusal: the micro answering `7F 17 31` is a successful
+   * exchange carrying a negative answer.
+   */
+  | { status: "reply"; reply: VcuMultiFrameReply; payload: Uint8Array; sawFlowControlFromMicro: boolean }
+  /** A session was open and the exchange got silence. `stage` says where it stopped. */
+  | { status: "no-response"; stage: TransferStage }
+  /**
+   * A reply arrived and was DISCARDED as unusable — a sequence gap, a Consecutive
+   * Frame that under-filled, a declared length over the cap.
+   *
+   * The whole reason this is its own status: the alternative is completing at the
+   * declared length with shifted bytes, which decodes into plausible numbers. A
+   * review already caught exactly that in the freeze-frame decoder.
+   */
+  | { status: "abandoned"; reason: string }
+  /** The micro would not open a session, so nothing was even asked of it. */
+  | { status: "no-session"; reason: string }
+  /** The caller stopped it — a cancel, a shutdown, or a gate closing. */
+  | { status: "cancelled"; reason: string }
+  /** Never reached the bus — our socket, not the bike. */
+  | { status: "not-sent"; reason: string };
+
+/** Per-exchange transport limits. Every one of them bounds a stuck or hostile responder. */
+export interface VcuMultiFrameOptions {
+  /**
+   * Largest reply payload to assemble, and the number the reassembler's frame cap
+   * is derived from. A caller states the largest reply ITS service can justify.
+   */
+  maxPayloadBytes?: number;
+  /** How long to wait for the first frame of the reply. */
+  firstReplyTimeoutMs?: number;
+  /** How long to wait for the rest, once a First Frame has arrived. */
+  transferTimeoutMs?: number;
+  /** How long to wait for the micro's flow control before sending the rest of a long request. */
+  requestFlowControlTimeoutMs?: number;
+}
+
 export interface VcuKwpClient {
   /**
    * Feed every received CAN frame here. Returns true when the frame was consumed,
@@ -123,6 +198,27 @@ export interface VcuKwpClient {
    * bank instead of those being the sweep's fixed A8/A9 and bank 1.
    */
   probe: (target: VcuTarget, bank: number, index: number) => Promise<VcuProbeOutcome>;
+  /**
+   * Runs one multi-frame read against a target the CALLER names.
+   *
+   * `request` is ./multiframe-codec.ts' closed union — five reads, no service byte
+   * and no value a caller can choose — so this widens WHICH questions may be
+   * asked and not what may be done. Resolves whatever happens.
+   */
+  multiFrameRead: (
+    target: VcuTarget,
+    request: VcuMultiFrameRequest,
+    options?: VcuMultiFrameOptions
+  ) => Promise<VcuMultiFrameOutcome>;
+  /**
+   * Abandons a multi-frame read in flight, keeping the client usable. False when
+   * there is none.
+   *
+   * Separate from `stop()` because a bulk log read must be interruptible without
+   * killing the client that has to send `0x37` afterwards to close the transfer
+   * politely. `stop()` is the shutdown; this is the pause button.
+   */
+  cancelMultiFrameRead: (reason: string) => boolean;
   /** Stops accepting work and clears any timer, so the process can exit. */
   stop: () => void;
 }
@@ -143,6 +239,8 @@ export interface VcuKwpClientOptions {
    * costs the whole sweep under 3 s and stays far inside the ~2.5 s session window.
    */
   paceMs?: number;
+  /** Defaults for every multi-frame exchange. Each call may still override them. */
+  multiFrame?: VcuMultiFrameOptions;
 }
 
 /**
@@ -155,19 +253,62 @@ const SESSION_IDLE_LIMIT_MS = 1500;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 300;
 const DEFAULT_PACE_MS = 10;
 
+/**
+ * Multi-frame defaults.
+ *
+ * ⚠️ None of these is measured for THIS channel — no multi-frame reply has ever
+ * been timed on it, because none has ever been captured. They are carried over
+ * from the OBD channel's numbers in src/can/obd-dtc.ts, which WERE measured on
+ * this bike 2026-08-04: First Frames arrived 23–70 ms after the request, and
+ * completed transfers ran 79–110 ms end to end. Both windows there are ~4× the
+ * observed worst case, and the same ratio is kept here.
+ *
+ * The payload cap is the one number chosen rather than inherited: 256 bytes is
+ * comfortably above the longest reply any of these five services can produce
+ * (a `0x18` list of all 63 components is 191), and far below what would let a
+ * stuck responder matter. A caller with a tighter bound should say so.
+ */
+const DEFAULT_MULTI_FRAME: Required<VcuMultiFrameOptions> = {
+  maxPayloadBytes: 256,
+  firstReplyTimeoutMs: 300,
+  transferTimeoutMs: 400,
+  /**
+   * Deliberately short. This window is only reached by the one multi-frame
+   * REQUEST (`0x35`), it ends in sending the rest anyway rather than in a
+   * failure (see `onRequestFlowControlTimeout`), and every millisecond spent
+   * waiting is a millisecond the micro's ~2.5 s session is ticking down.
+   */
+  requestFlowControlTimeoutMs: 150,
+};
+
+/**
+ * The one exchange in flight, of whichever kind.
+ *
+ * ONE slot, not one per kind. Two nullable fields and an `if` per entry point is
+ * exactly the shape ./bus-lease.ts' header describes going wrong — it worked
+ * while there was one kind of exchange and stopped working when there were two.
+ * The invariant that matters is the same for both: these micros answer on ONE
+ * CAN id with no request/response tag, so a second exchange in flight would be
+ * answered by whichever frame landed first.
+ */
+type PendingExchange =
+  /** One frame out, one frame back — a session, a ping, a parameter read. */
+  | {
+      kind: "single-frame";
+      resolve: (frame: VcuAddressedFrame) => void;
+      abandon: (result: { kind: "timeout" } | { kind: "not-sent"; reason: string }) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  /** A transfer that spans frames in one or both directions. ./multiframe-transfer.ts owns its timers. */
+  | { kind: "multi-frame"; transfer: RunningMultiFrameTransfer };
+
 interface ClientContext {
   channel: RawChannel;
   responseTimeoutMs: number;
   paceMs: number;
-  /**
-   * The one request in flight. `resolve` is what a matching reply calls; `abandon`
-   * is for the ways a request ends without one, and takes the reason with it.
-   */
-  pending: {
-    resolve: (frame: VcuAddressedFrame) => void;
-    abandon: (result: { kind: "timeout" } | { kind: "not-sent"; reason: string }) => void;
-    timer: ReturnType<typeof setTimeout>;
-  } | null;
+  multiFrame: Required<VcuMultiFrameOptions>;
+  /** The one exchange in flight, or null. */
+  pending: PendingExchange | null;
   /** Monotonic mark of the last reply from each target; null while no session is believed open. */
   lastExchangeAt: Partial<Record<VcuTarget, number | null>>;
   /**
@@ -192,6 +333,7 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
     channel,
     responseTimeoutMs: options.responseTimeoutMs ?? DEFAULT_RESPONSE_TIMEOUT_MS,
     paceMs: options.paceMs ?? DEFAULT_PACE_MS,
+    multiFrame: { ...DEFAULT_MULTI_FRAME, ...options.multiFrame },
     pending: null,
     lastExchangeAt: { A8: null, A9: null },
     pendingResponseCanId: null,
@@ -203,6 +345,9 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
     ping: target => ping(context, target),
     readParameter: (micro, index) => readParameter(context, micro, index),
     probe: (target, bank, index) => probe(context, target, bank, index),
+    multiFrameRead: (target, request, multiFrameOptions) =>
+      multiFrameExchange(context, target, request, multiFrameOptions),
+    cancelMultiFrameRead: reason => cancelMultiFrameRead(context, reason),
     stop: () => stop(context),
   };
 }
@@ -214,6 +359,12 @@ function handleFrame(context: ClientContext, id: number, data: Buffer): boolean 
   // src/index.ts between sweeps.
   if (context.pendingResponseCanId === null || id !== context.pendingResponseCanId) {
     return false;
+  }
+  if (context.pending?.kind === "multi-frame") {
+    // Handed straight through, undecoded. The transfer answers a First Frame with
+    // flow control from inside this call, so nothing may be inserted before it —
+    // see the timing note in ./multiframe-transfer.ts' header.
+    return context.pending.transfer.handleFrame(data);
   }
   const frame = parseResponseFrame(data);
   if (frame.kind === "ignored") {
@@ -232,6 +383,86 @@ function handleFrame(context: ClientContext, id: number, data: Buffer): boolean 
   clearTimeout(waiting.timer);
   waiting.resolve(frame);
   return true;
+}
+
+/**
+ * Runs one multi-frame exchange inside the session machinery.
+ *
+ * Everything a single-frame read gets, this gets too, and by going through the
+ * same places rather than by reimplementing them: the session is opened if it has
+ * gone idle, the one-in-flight rule is the same slot, `stop()` reaches it, and the
+ * outbound pace is the same. What it does NOT share is the retry — see below.
+ */
+async function multiFrameExchange(
+  context: ClientContext,
+  micro: VcuTarget,
+  request: VcuMultiFrameRequest,
+  overrides: VcuMultiFrameOptions = {}
+): Promise<VcuMultiFrameOutcome> {
+  if (context.stopped) {
+    return { status: "not-sent", reason: "client stopped" };
+  }
+  if (context.pending) {
+    const reason = "a request was already in flight";
+    console.warn(`vcu: ${reason} — refusing to interleave a multi-frame read`);
+    return { status: "not-sent", reason };
+  }
+  if (!(await ensureSession(context, micro))) {
+    return { status: "no-session", reason: `${micro} did not answer 10 81` };
+  }
+
+  const expectedService = expectedResponseService(request);
+  const settings = { ...context.multiFrame, ...overrides };
+  const transfer = startMultiFrameTransfer({
+    target: micro,
+    requestPayload: encodeMultiFrameRequestPayload(request),
+    send: frame =>
+      context.channel.send({ id: canIdsFor(micro).request, ext: false, rtr: false, data: Buffer.from(frame) }),
+    maxPayloadBytes: settings.maxPayloadBytes,
+    firstReplyTimeoutMs: settings.firstReplyTimeoutMs,
+    transferTimeoutMs: settings.transferTimeoutMs,
+    requestFlowControlTimeoutMs: settings.requestFlowControlTimeoutMs,
+  });
+  context.pending = { kind: "multi-frame", transfer };
+  context.pendingResponseCanId = canIdsFor(micro).response;
+
+  const result = await transfer.finished;
+  if (context.pending?.kind === "multi-frame" && context.pending.transfer === transfer) {
+    context.pending = null;
+  }
+  context.pendingResponseCanId = null;
+  if (result.kind === "payload") {
+    context.lastExchangeAt[micro] = monotonicNow();
+  }
+  // Paced on the way OUT, like every other exchange here, so every path through
+  // this client is polite to a bus shared with the ABS and the BMS by default
+  // rather than by the caller remembering to be.
+  await sleep(context.paceMs);
+
+  switch (result.kind) {
+    case "payload":
+      return {
+        status: "reply",
+        reply: decodeMultiFrameReply(result.payload, expectedService),
+        payload: result.payload,
+        sawFlowControlFromMicro: result.sawFlowControlFromMicro,
+      };
+    case "timeout":
+      // NOT retried, deliberately, where a single-frame read is. A stale session
+      // is the likeliest cause of silence and is why `performRead` retries once —
+      // but that retry is only safe because a parameter read is idempotent and
+      // costs one frame. `0x36` is neither: it advances the micro's upload
+      // position, so asking again after a timeout could skip a block or replay
+      // one, and the caller would have no way to tell which. ./freeze-frame-log.ts
+      // ends the transfer instead, which is the recoverable move.
+      return { status: "no-response", stage: result.stage };
+    case "abandoned":
+      return { status: "abandoned", reason: result.reason };
+    case "cancelled":
+      return { status: "cancelled", reason: result.reason };
+    case "not-sent":
+      return { status: "not-sent", reason: result.reason };
+  }
 }
 
 async function readParameter(context: ClientContext, micro: VcuMicro, index: number): Promise<VcuReadOutcome> {
@@ -388,7 +619,12 @@ function exchange(context: ClientContext, micro: VcuTarget, request: VcuRequest)
       context.pending = null;
       settle({ kind: "timeout" });
     }, context.responseTimeoutMs);
-    context.pending = { resolve: frame => settle({ kind: "reply", frame }), timer, abandon: settle };
+    context.pending = {
+      kind: "single-frame",
+      resolve: frame => settle({ kind: "reply", frame }),
+      timer,
+      abandon: settle,
+    };
     context.pendingResponseCanId = canIds.response;
 
     try {
@@ -407,16 +643,41 @@ function exchange(context: ClientContext, micro: VcuTarget, request: VcuRequest)
 function stop(context: ClientContext): void {
   context.stopped = true;
   context.pendingResponseCanId = null;
-  if (context.pending) {
-    const waiting = context.pending;
-    context.pending = null;
-    clearTimeout(waiting.timer);
-    // "We stopped", not "the bike went quiet" — the caller writes its outcomes down,
-    // and recording our own shutdown as the VCU failing to answer would be believed
-    // by the next run that resumes from that file.
-    waiting.abandon({ kind: "not-sent", reason: "client stopped" });
+  const waiting = context.pending;
+  if (!waiting) {
+    return;
   }
+  context.pending = null;
+  if (waiting.kind === "multi-frame") {
+    // The transfer clears its own timers, including the pacer that would otherwise
+    // keep putting Consecutive Frames of a half-sent request on the bus after
+    // stop() had promised nothing more would go out.
+    waiting.transfer.cancel("client stopped");
+    return;
+  }
+  clearTimeout(waiting.timer);
+  // "We stopped", not "the bike went quiet" — the caller writes its outcomes down,
+  // and recording our own shutdown as the VCU failing to answer would be believed
+  // by the next run that resumes from that file.
+  waiting.abandon({ kind: "not-sent", reason: "client stopped" });
 }
+
+/**
+ * Abandons a multi-frame read without stopping the client.
+ *
+ * The result comes back through the ordinary `multiFrameRead` promise as
+ * `cancelled`, so a caller that was awaiting it is told what happened rather than
+ * left holding a promise that never settles.
+ */
+function cancelMultiFrameRead(context: ClientContext, reason: string): boolean {
+  if (context.pending?.kind !== "multi-frame") {
+    return false;
+  }
+  context.pending.transfer.cancel(reason);
+  return true;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /** The id every request goes out on, re-exported so a caller can filter its socket. */
 export { KWP_REQUEST_CAN_ID, KWP_RESPONSE_CAN_ID };
