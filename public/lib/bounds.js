@@ -66,7 +66,7 @@ const BY_KEY = {
 const BOOLEAN_GROUPS = new Set(["controls", "diag"]);
 
 /**
- * …except these, which share the `diag` group with the 148 generated `dtc_*`
+ * …except these, which share the `diag` group with the 154 generated `dtc_*`
  * flags but are counts, not flags. `dtc_count` is 0…127 (PID 01) and
  * `warmups_since_clear` 0…255 (PID 30), so the group-wide 1/0 rule would reject
  * every value above 1 as a sensor fault — gating out exactly the stored-code

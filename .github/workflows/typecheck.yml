@@ -17,3 +17,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # The Grafana trouble-codes dashboard embeds the DTC table as SQL, because
+      # Grafana can only read the ride log. Nothing about a stale copy is visible on
+      # screen — a wrong code name renders as confidently as a right one — so the
+      # only way it gets noticed is here. See scripts/generate-grafana-dtc.ts.
+      - name: Grafana code table matches src/diagnostics/dtc-table.ts
+        run: npm run check:grafana-dtc
