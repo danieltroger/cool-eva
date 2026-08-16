@@ -68,10 +68,35 @@ const NONE_PRESSED_400 = {
 
 const CASES: FrameCase[] = [
   {
-    what: "0x102 riding, nothing pressed, not charging — 2026-08-04 03:56:31.470",
+    what: "0x102 riding on low beam, nothing pressed, not charging — 2026-08-04 03:56:31.470",
     id: 0x102,
     hex: "80 10 02 44 8E FF D8 FF",
-    expect: { ...NONE_PRESSED_102, fast_dc_contactor: 0, cruise_active: 0, high_beam: 0 },
+    // b0 = 0x80 (low beam switch), b2 = 0x02 (low beam lamp): the pair that shipped as
+    // `charge_port_unlocked` reading 1 on a bike that was not plugged into anything.
+    expect: {
+      ...NONE_PRESSED_102,
+      fast_dc_contactor: 0,
+      cruise_active: 0,
+      high_beam: 0,
+      high_beam_lamp: 0,
+      low_beam_lamp: 1,
+    },
+  },
+  {
+    what: "0x102 flash-to-pass, both beams lit at 18:20:42.154 — 2026-08-02 ride-1",
+    id: 0x102,
+    // b0 = 0xC0 (both beam switches), b2 = 0x83 (both beam lamps + moving). The single
+    // frame that shows the whole argument: the bits that were called `charging` and
+    // `charge_port_unlocked` both go high the instant the high beam is flashed, on a
+    // bike doing 100 km/h nowhere near a charger.
+    hex: "C0 3E 83 44 F4 FF 17 00",
+    expect: { high_beam: 1, high_beam_lamp: 1, low_beam_lamp: 1, moving: 1, fast_dc_contactor: 0 },
+  },
+  {
+    what: "0x102 parked with the lights off — 2026-08-04 19:58:18.703",
+    id: 0x102,
+    hex: "00 10 00 44 B0 FF D2 FF",
+    expect: { high_beam: 0, high_beam_lamp: 0, low_beam_lamp: 0, moving: 0 },
   },
   {
     what: "0x102 MODE ◀ held, stationary at a DC charger — 2026-08-04 20:09:06.054",
@@ -166,6 +191,32 @@ for (const testCase of CASES) {
   }
 }
 
+// The two 0x102 b2 bits that shipped as `charging` and `charge_port_unlocked` are the
+// beam lamps (decode.ts has the 1 103 000-frame measurement). Nothing may bring those
+// names back: `charging` in particular reads 0 through every real charge and 1 when the
+// high beam is flashed, so a caller trusting it gets the opposite of what it asked for,
+// and src/vcu/service-gate.ts has a standing warning about exactly that.
+const beamFrame = decodeFrame(0x102, parseFrame("C0 3E 83 44 F4 FF 17 00"));
+for (const retired of ["charging", "charge_port_unlocked"]) {
+  if (beamFrame.some(value => value.key === retired)) {
+    failures.push(`0x102 still emits "${retired}" — it is a beam lamp, see the comment in src/can/decode.ts`);
+  }
+}
+// The high-beam switch and its lamp are two different bytes and agreed in every frame
+// ever captured, so a decode that lets them disagree here has moved a bit.
+for (const [hex, description] of [
+  ["C0 3E 83 44 F4 FF 17 00", "high beam flashed"],
+  ["80 10 02 44 8E FF D8 FF", "low beam only"],
+  ["00 10 00 44 B0 FF D2 FF", "lights off"],
+] as const) {
+  const values = new Map(decodeFrame(0x102, parseFrame(hex)).map(value => [value.key, value.value]));
+  if (values.get("high_beam") !== values.get("high_beam_lamp")) {
+    failures.push(
+      `${description}: high_beam=${values.get("high_beam")} but high_beam_lamp=${values.get("high_beam_lamp")}`
+    );
+  }
+}
+
 // A frame missing from STREAM_IDS never reaches decodeFrame at all — decode.ts says so
 // in its own comment — so the decoder above can be perfect and the buttons still dead.
 if (!STREAM_IDS.includes(0x400)) {
@@ -228,6 +279,7 @@ if (failures.length > 0) {
 }
 console.log(
   `✓ ${CASES.length} captured frames decode as recorded; 0x400 is filtered in, short frames stay honest, ` +
+    `the beam lamps did not revert to charging/charge_port_unlocked, ` +
     `and all ${BUTTON_KEYS.length} buttons are registered, deadband-free and gated to 0…1`
 );
 

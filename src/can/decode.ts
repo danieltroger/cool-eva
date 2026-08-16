@@ -192,29 +192,43 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // b2 the lamp output — but only ours was measured here, so ours stands and the
     // .xdbc is not allowed to overwrite it. Do not "fix" this from the third-party file.
     //
-    // What settles it is that b2 now accounts for exactly, with no bit claimed twice:
-    // 0/1 charge (.xdbc), 2/3 blinkers (measured here), 4 horn (measured), 5/6 brake
-    // (measured), 7 moving (.xdbc). Two independent reverse-engineering efforts
-    // interlocking across one byte with no gaps and no collisions is good evidence the
-    // .xdbc's b2 assignments really do belong to this frame — and it refutes its own
-    // claim that bits 2/3 are unknown, since there is nowhere else for them to go.
+    // 🚨 b2 bits 0 and 1 were `charging` and `charge_port_unlocked` until 2026-08-16.
+    // THEY ARE THE BEAM LAMPS. Both names came off the .xdbc — a rider's file, not a
+    // manufacturer database — and both were wrong. Do not restore them. The measurement,
+    // over all 1 103 000 frames of 0x102 in the 14 candump captures:
     //
-    // Everything in b1 plus the three b2 state bits comes from the .xdbc and matched a
-    // parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): key_on 1, energized / go /
-    // go_request / ignition_button / throttle_on 0, stand_up 0 (it is on the sidestand),
-    // charging 0, moving 0, charge_port_unlocked 1. The garage lap that afternoon then
-    // caught energized, go_request, go, stand_up, ignition_button, throttle_on and
-    // moving all toggling with the rider's actions, so those are confirmed against real
-    // transitions rather than one parked sample. ✅ key_on stayed 1 throughout both, so
-    // it rests on the parked sample alone — a key-off capture is what would confirm it.
+    //   b2 bit 0 vs b0 bit 6 (high beam):  1 103 000 / 1 103 000 agree, 0 disagreements
+    //   b2 bit 1 vs b0 bit 7 (low beam):   1 103 000 / 1 103 000 agree, 0 disagreements
     //
-    // ⚠️ charge_port_unlocked is the exception and keeps the 🟡: the only capture of it
-    // is `charging` 0 / this bit 1, and the .xdbc says it reads 1 whenever the bike is
-    // NOT charging — which is also exactly what bit 0 inverted looks like. Nothing seen
-    // so far separates "port lock sensor" from "complement of `charging`", so do not
-    // treat it as an actuator state (e.g. whether the port is safe to open) until it
-    // has been watched across a plug-in. If it drops to 0 the instant `charging` goes
-    // to 1, it is the complement and the key should be renamed.
+    // Not an artefact of both being nearly constant, because the cross-pairs fall apart:
+    // b2 bit 0 against b0 bit 7 agrees only 49.35 % of the time. And `charging` reads 0
+    // through every real charge in the corpus — four AC sessions including 48 minutes at
+    // 14 A, plus the DC session — while the bit it does track is the flash-to-pass.
+    //
+    // Energica's own VCU digital list, recovered from EMSuite.exe, names both families
+    // and separates them exactly the way this frame does:
+    //
+    //   V_HIGH_BEAM_SW, V_LOW_BEAM_SW, V_L_TURN_SW, V_R_TURN_SW …   ← the switches
+    //   V_HIGH_BEAM,    V_LOW_BEAM,    V_LEFT_TURN, V_RIGHT_TURN …  ← the outputs
+    //
+    // So byte 0 is the switch byte and byte 2 the output byte, which is the same split
+    // this file already worked out for the indicators from the wire alone — b0 bits 3/4
+    // are 0.2 s presses while b2 bits 2/3 flash at 1.4 Hz. 🟡 For the beams that split is
+    // not directly observable here: a beam switch and its lamp only differ when the bulb
+    // is out, which is exactly why it is worth logging both.
+    //
+    // b2 now accounts for exactly, with no bit claimed twice: 0/1 beam lamps (measured
+    // here, 2026-08-16), 2/3 blinkers (measured), 4 horn (measured), 5/6 brake
+    // (measured), 7 moving (.xdbc).
+    //
+    // Everything in b1 comes from the .xdbc and matched a parked bike on 2026-08-02
+    // (`80 10 02 44 99 FF D8 FF`): key_on 1, energized / go / go_request /
+    // ignition_button / throttle_on 0, stand_up 0 (it is on the sidestand), moving 0,
+    // low beam on. The garage lap that afternoon then caught energized, go_request, go,
+    // stand_up, ignition_button, throttle_on and moving all toggling with the rider's
+    // actions, so those are confirmed against real transitions rather than one parked
+    // sample. ✅ key_on stayed 1 throughout both, so it rests on the parked sample alone
+    // — a key-off capture is what would confirm it.
     //
     // b0's low bits and b3 are decoded below, both added 2026-08-16 — see the
     // comments on `handlebarButtons` and `contactorAndCruise` further down this case.
@@ -236,8 +250,11 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "stand_up", value: bit(vehicleState, 5) },
         { key: "ignition_button", value: bit(vehicleState, 6) },
         { key: "throttle_on", value: bit(vehicleState, 7) },
-        { key: "charging", value: bit(lampsAndState, 0) },
-        { key: "charge_port_unlocked", value: bit(lampsAndState, 1) },
+        // The beam OUTPUTS, as against `high_beam` above, which is b0's switch. Kept as
+        // separate keys rather than folded into one: identical in every frame recorded
+        // so far, and the day they differ is the day a bulb has failed.
+        { key: "high_beam_lamp", value: bit(lampsAndState, 0) },
+        { key: "low_beam_lamp", value: bit(lampsAndState, 1) },
         { key: "moving", value: bit(lampsAndState, 7) },
       ];
       values.push(...handlebarButtons(handlebar));
@@ -347,12 +364,11 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 //
 // Of the other two: bit 6 is `high_beam`, read in the case above (set in 137 of the
 // 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture
-// counts). Bit 7 is NOT decoded anywhere and has no registry key. The byte map at the
-// top of the 0x102 case calls it the low beam and the captures neither confirm nor
-// deny that: it is set in 50.64 % of frames, so it is plainly a level rather than a
-// press, but "on whenever the bike is awake" is equally what a permanently-lit EU
-// headlight and a bare awake flag look like, and nothing recorded separates them. It
-// stays undecoded rather than named on a table's word.
+// counts). Bit 7 is the LOW BEAM SWITCH, set in 50.64 % of frames — settled on
+// 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000
+// frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. It gets no
+// key of its own: `low_beam_lamp` already carries the same information and a third
+// beam key earns nothing. Named here so the next person does not re-derive it.
 //
 // Evidence is 1 103 000 frames of 0x102 across the same 14 captures as 0x400. What
 // makes these more than "the bit moves" is that the six low bits split cleanly into
