@@ -407,8 +407,18 @@ Every freeze frame is multi-frame — the header alone is 5 bytes and an extende
 A reply that **under-fills** is abandoned, never completed at its declared length. That is the specific failure this is built around: a short Consecutive Frame mid-transfer leaves the sequence numbers running 1, 2, 3…, so nothing looks wrong, and taking what arrived shifts every later field into numbers that still have units on them. `scripts/check-kwp-multiframe.ts` asserts it, along with the gapped, oversized, foreign and flooding replies.
 
 ```bash
-node --experimental-strip-types scripts/check-kwp-multiframe.ts
+node --experimental-strip-types scripts/check-kwp-multiframe.ts   # no bike
 ```
+
+Reading it off the actual bike is `scripts/read-freeze-frame.ts`, and that script is **the only way to run this** — a First Frame has to be answered within milliseconds, which is not something you can type into `cansend` in time. Stop the service first and bring `can0` up ACTIVE yourself; the script's header has the exact commands and the reason it does not do it for you.
+
+```bash
+node --experimental-strip-types scripts/read-freeze-frame.ts --list           # 0x18: which components have a code
+node --experimental-strip-types scripts/read-freeze-frame.ts --component 44   # 0x17: one freeze frame
+node --experimental-strip-types scripts/read-freeze-frame.ts --log            # the whole stored log, minutes
+```
+
+Every reply is printed as **raw hex first**, before any decode. That is the point of the run: the reply layouts are unverified, so the bytes are the result and the decode is a hypothesis printed beside them.
 
 > ⚠️ **The request side is proven; the reply side is not.** The check asserts that this repo's segmenter reproduces `A8 10 0C 35 12 FF FF FF` — a frame captured off this bike — byte for byte, and that the `0x18` request matches the one recovered from the manufacturer's code. But **no multi-frame reply and no flow-control frame has ever been captured on this channel**, in either direction. The one reply replayed with real bytes behind it is A8's bank-2 identifier `0x2001`, reconstructed from two independent live records that had to agree and did. Everything else is constructed from the documented framing.
 >

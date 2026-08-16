@@ -39,6 +39,12 @@ import { fileURLToPath } from "url";
 //   replay-capture.ts     needs a candump capture — gitignored, and one bike's ride
 //                         history — and serves a dashboard to look at rather than
 //                         asserting anything, so there is no verdict to collect
+//   read-freeze-frame.ts  TALKS TO THE BIKE. It is the live test for the multi-frame
+//                         KWP transport and the only thing in the repo that opens a
+//                         socket outside the service, so it must never be in this
+//                         list — CHECK_TIMEOUT_MS exists precisely to catch a check
+//                         that started waiting on a bus that is not there. Its own
+//                         replayable half is scripts/check-kwp-multiframe.ts
 //
 // captured-dtc-transfer.ts, captured-vcu-records.ts, freeze-frame-fixtures.ts and
 // simulated-vcu-micro.ts are fixtures and a test double: data and a stand-in bus,
