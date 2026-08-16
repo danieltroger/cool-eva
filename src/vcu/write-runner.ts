@@ -486,8 +486,11 @@ async function performClockSync(context: WriteContext, channel: RawChannel): Pro
       action: "rtc-sync",
       status: "sent",
       message:
-        `Broadcast ${when.toISOString()} on 0x120 (${outcome.hex}). ` +
-        "There is no reply to this frame and no documented way to read the bike's clock back, so nothing here can confirm it took.",
+        `Broadcast ${when.toISOString()} UTC on 0x120 (${outcome.hex}). ` +
+        "⚠️ CHECK THE DASHBOARD NOW to see whether the bike took it. " +
+        "There is no reply to this frame and no documented way to read the bike's clock back, so the dash is the only " +
+        "confirmation that exists. Note the bike was sent UTC, so a dash showing local time will differ by your offset. " +
+        "Confirm it before using Set Service Point, which stamps whatever the bike's clock says.",
       succeeded: true,
     },
   };
