@@ -469,9 +469,10 @@ function assertPlanIsAllowed(plan: ParameterWritePlan): void {
  * changes with the table is which PARAMETER 0x1102 is. Routing and record width are
  * invariant across all 28 of Energica's tables, so there is no malformed frame, no
  * NRC and no read-back anywhere in that sequence to notice it: the write succeeds and
- * is wrong. 151 of 278 ids carry a different name in at least one other table, and
- * ./param-table.ts's own 2026-08-16 correction (id 249, `LM_TYPE` in 16406,
- * `R_BRAKE_POPUP` in 16407) is one that was found rather than imagined.
+ * is wrong. 151 of 278 ids carry a different name in at least one other table — id 249
+ * (`LM_TYPE` in 16406, `R_BRAKE_POPUP` in 16407) is a one-name example that was found
+ * rather than imagined, and ids 70–94 are the case that matters: a 25-point regen fade
+ * curve on 20 of the 28 tables and the battery cell block on the other 8.
  *
  * So the gate is enforced HERE, in the pure layer, and not only where the UI can see
  * it — for exactly the reason `assertPlanIsAllowed` sits next to it. `curl` can reach
@@ -479,8 +480,8 @@ function assertPlanIsAllowed(plan: ParameterWritePlan): void {
  * a plain object that could be posted, cast or reconstructed. ./table-gate.ts
  * therefore re-derives the verdict from the raw words the bike sent rather than
  * reading the report's own `confirmed` flag, which is what makes forging one useless:
- * to get past this you would have to claim the bike answered `0x4017`, and if it did
- * then the write was correct.
+ * to get past this you would have to claim the bike answered with a table this software
+ * carries, and if it did then the write was checked against that table.
  *
  * Throws, like every other refusal in this file, because by the time anything reaches
  * here the runner has already declined the request with a sentence a person can act

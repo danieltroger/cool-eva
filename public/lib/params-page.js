@@ -90,7 +90,10 @@ function showTableType(report) {
   // identically to "both agree" with only an emoji between them — that is the state
   // this bike is in today, and rendering it as normal is the whole failure this line
   // was added to stop.
-  const alarming = report.mismatched || report.unusable.length > 0;
+  // `split` counts as alarming: two micros naming different tables means some of the
+  // names on this page are one table's and some are the other's, which is worse than
+  // either being wrong on its own.
+  const alarming = report.mismatched || report.split || report.unusable.length > 0;
   tableTypeLine.className = alarming ? "mismatch" : report.confirmed ? "" : "unconfirmed";
   if (alarming) {
     // Also into the console, because this is the one finding on this page worth

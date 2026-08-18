@@ -10,19 +10,32 @@ import {
   type VcuRequest,
 } from "../src/vcu/param-codec.ts";
 import {
-  EMBEDDED_TABLE_TYPE,
-  EXPECTED_TABLE_TYPE,
-  PARAMETER_TABLE,
-  TABLE_16407_CORRECTIONS,
+  BASE_TABLE_TYPE,
+  DEFAULT_TABLE_TYPE,
+  KNOWN_TABLE_TYPES,
+  PARAMETER_FILE_TEXT,
   TABLE_TYPE_INDICES,
+  activeParameterTable,
   ambiguousParameterNames,
   checkTableType,
+  contentTwinsOf,
   decodeTableType,
+  describeCatalogue,
   parameterAtIndex,
+  parameterTable,
+  parameterTableFor,
   parametersNamed,
+  parseParameterFile,
   recordLengthFor,
+  selectParameterTable,
 } from "../src/vcu/param-table.ts";
-import { diffSnapshots, reportTableType, toParameterRow, type VcuParameterSnapshot } from "../src/vcu/snapshot.ts";
+import {
+  diffSnapshots,
+  reportTableType,
+  retableSnapshot,
+  toParameterRow,
+  type VcuParameterSnapshot,
+} from "../src/vcu/snapshot.ts";
 import { createVcuKwpClient, type VcuReadOutcome } from "../src/vcu/kwp-client.ts";
 import { exportableRowCount, snapshotToBackupCsv } from "../src/vcu/backup-csv.ts";
 import { SIGNALS } from "../src/can/registry.ts";
@@ -45,8 +58,15 @@ import {
   routineIdFor,
   securityKeyForSeed,
 } from "../src/vcu/write-codec.ts";
-import { WRITE_TARGETS, planBitWrite, planWrite, writeTargetNames } from "../src/vcu/write-targets.ts";
-import { evaluateTableGate } from "../src/vcu/table-gate.ts";
+import {
+  WRITE_TARGETS,
+  allowlistProblemsIn,
+  planBitWrite,
+  planWrite,
+  writeTargetNames,
+} from "../src/vcu/write-targets.ts";
+import { evaluateTableGate, registerAllowlistTableCheck } from "../src/vcu/table-gate.ts";
+import { fingerprintTable } from "../src/vcu/table-catalog.ts";
 import {
   SERVICE_STAMP_IDENTIFIERS,
   buildClearDtcsFrame,
@@ -69,11 +89,17 @@ import {
   parseHexBytes,
 } from "./captured-vcu-records.ts";
 
-// Checks the VCU parameter codec, name table and snapshot diff on a laptop, with no
-// bike — the same trick scripts/decode-dtc-response.ts plays for trouble codes, and
-// for the same reason. There is no test framework in this repo and this is not the
+// Checks the VCU parameter codec, the 28 name tables and the snapshot diff on a laptop,
+// with no bike — the same trick scripts/decode-dtc-response.ts plays for trouble codes,
+// and for the same reason. There is no test framework in this repo and this is not the
 // place to introduce one, so the pure modules are kept trivially callable and their
 // fixtures kept real.
+//
+// ⚠️ §1e is the one that keeps this repo honest about OTHER PEOPLE'S BIKES. It rebuilds
+// all 28 of Energica's parameter tables from src/vcu/table-catalog.data.ts and compares
+// each against a fingerprint scripts/extract-vcu-tables.ts took from Energica's own
+// bundle — which is what stands in for the exe itself, since a 137 MB proprietary
+// installer is not in this repo and is not on a CI runner.
 //
 // Since 2026-08-16 `npm test` runs this, via scripts/run-checks.ts. It is still meant
 // to be run directly as well — that is the only way to pass --dump.
@@ -91,15 +117,15 @@ const dumpPath = readDumpPath(process.argv.slice(2));
 const failures: string[] = [];
 
 // ── 1. The name table itself ────────────────────────────────────────────────
-expect(PARAMETER_TABLE.length === 277, `table should hold 277 parameters, holds ${PARAMETER_TABLE.length}`);
-const indices = PARAMETER_TABLE.map(parameter => parameter.index);
+expect(parameterTable().length === 277, `table should hold 277 parameters, holds ${parameterTable().length}`);
+const indices = parameterTable().map(parameter => parameter.index);
 expect(
   new Set(indices).size === 277 && Math.min(...indices) === 1 && Math.max(...indices) === 277,
   "indices should be exactly 1…277 with no gaps or repeats"
 );
-const onA8 = PARAMETER_TABLE.filter(parameter => parameter.micro === "A8");
+const onA8 = parameterTable().filter(parameter => parameter.micro === "A8");
 expect(onA8.length === 44, `44 parameters should live on the A8, found ${onA8.length}`);
-expect(PARAMETER_TABLE.length - onA8.length === 233, "the remaining 233 should live on the A9");
+expect(parameterTable().length - onA8.length === 233, "the remaining 233 should live on the A9");
 
 // The correction this table exists to encode: DIAG_ADDRESSES.md §4 summarises the
 // A8 as "223–256 and 266–277", but 274 and 276 are the CONTROL micro's half of a
@@ -120,62 +146,174 @@ expect(parametersNamed("VSM_DUMMY_WORD10").length === 2, "VSM_DUMMY_WORD10 shoul
 expect(parametersNamed("max_dc_chg_current")[0]?.index === 258, "name lookup should be case-insensitive");
 expect(parametersNamed("NO_SUCH_PARAMETER").length === 0, "an unknown name should resolve to nothing, not to a guess");
 
-// ── 1b. WHICH table this is: 16407, not the 16406 the file text is ──────────
-// The embedded params.ecf is table 16406, off another bike; this one reports 16407 at
-// parameter 276. The two differ at exactly one id and only in its name, and
-// src/vcu/param-table.ts corrects that id rather than swapping the whole file (which
-// would lose the [SECTION] headings and the other bike's values — Energica's own
-// bundles carry neither). See obd-garage/PARAM_TABLES.md.
-expect(EXPECTED_TABLE_TYPE === 16407, `this bike's table should be 16407, the module says ${EXPECTED_TABLE_TYPE}`);
-expect(EMBEDDED_TABLE_TYPE === 16406, `the embedded file should be 16406, the module says ${EMBEDDED_TABLE_TYPE}`);
-const decodedTableType = decodeTableType(EXPECTED_TABLE_TYPE);
+// ── 1b. WHICH table this bike is on, out of the 28 this software carries ────
+// A parameter is addressed by index, and what an index means comes from the table the
+// VCU runs. src/vcu/table-catalog.ts carries all 28 Energica's 2024 service tool can
+// select; src/vcu/param-table.ts picks one and says so. See obd-garage/PARAM_TABLES.md.
+expect(
+  DEFAULT_TABLE_TYPE === 16407,
+  `the default table (this repo's own Ribelle, measured 2026-06-14) should be 16407, the module says ${DEFAULT_TABLE_TYPE}`
+);
+expect(BASE_TABLE_TYPE === 16406, `params.ecf's own table should be 16406, the module says ${BASE_TABLE_TYPE}`);
+expect(
+  activeParameterTable().tableType === DEFAULT_TABLE_TYPE,
+  "with nothing selected, the active table is the default rather than whichever entry happened to load first"
+);
+const decodedTableType = decodeTableType(DEFAULT_TABLE_TYPE);
 expect(
   decodedTableType.family === 4 && decodedTableType.revision === 0x017,
   `TABLE_TYPE = (family << 12) | revision, so 0x4017 is family 4 revision 0x017 — got ${decodedTableType.family}/${decodedTableType.revision}`
 );
 
-// The correction itself. One entry, applied, and nothing else moved. That the module
-// LOADED at all is half the check: applyTable16407Corrections() throws unless the
-// embedded text still calls 249 what 16406 calls it, so a re-copied params.ecf from
-// some other table cannot be silently renamed.
+// The one id where 16406 and 16407 differ, which is the whole difference between the
+// embedded params.ecf text and the table this bike runs. It used to be a hardcoded
+// one-line correction; it is now just what the catalogue says, and that it agrees is
+// the check that the generalisation did not lose the finding it came from.
+const correctedId = parameterAtIndex(249);
 expect(
-  TABLE_16407_CORRECTIONS.length === 1,
-  `16406 and 16407 differ at one id; the module corrects ${TABLE_16407_CORRECTIONS.length}`
+  correctedId?.name === "R_BRAKE_POPUP",
+  `249 is R_BRAKE_POPUP in table 16407, the table says ${correctedId?.name}`
 );
-const corrected = parameterAtIndex(249);
-expect(corrected?.name === "R_BRAKE_POPUP", `249 is R_BRAKE_POPUP in table 16407, the table says ${corrected?.name}`);
 expect(
-  corrected?.micro === "A8" && corrected?.type === "WORD" && corrected?.signed === true,
+  parameterTableFor(16406)?.byIndex.get(249)?.name === "LM_TYPE",
+  "…and LM_TYPE in 16406, which is what params.ecf's own text says"
+);
+expect(
+  correctedId?.micro === "A8" && correctedId?.type === "WORD" && correctedId?.signed === true,
   "249 is a signed WORD on the A8 in BOTH tables — which is exactly why a write under the wrong name would have succeeded"
 );
 expect(
   parametersNamed("LM_TYPE").length === 0,
-  "LM_TYPE is 16406's name for 249 and must not resolve here, or a write aimed at it would land on R_BRAKE_POPUP"
+  "LM_TYPE is 16406's name for 249 and must not resolve under 16407, or a write aimed at it would land on R_BRAKE_POPUP"
 );
 expect(parametersNamed("R_BRAKE_POPUP")[0]?.index === 249, "R_BRAKE_POPUP should resolve to 249");
 
-// The runtime check, which is the part with a future. A bike that names a table this
-// module does not encode must be shouted about, not averaged into the page.
-const tableTypeMatch = checkTableType(276, 0x4017);
-expect(tableTypeMatch?.matches === true && tableTypeMatch.micro === "A9", "276 = 0x4017 should be recognised as ours");
+// ⚠️ THE ONE THAT MATTERS MOST: a `RegenFade` table and a cell-block table must never
+// be confused. On 20 of the 28, ids 70–94 are a 25-point regen curve; on the other 8
+// they are the battery cell configuration. Another owner's tool writes the former into
+// the latter today because it carries one table and does not ask. Both directions are
+// asserted, because "our table has CELL_COUNT" and "their table does not" are different
+// claims and only the pair of them rules the confusion out.
+const regenFadeTable = parameterTableFor(4102);
+const cellBlockTable = parameterTableFor(16407);
 expect(
-  checkTableType(276, 0x1017)?.matches === true,
-  "family 1 revision 0x017 is byte-identical content, so 4119 must not be reported as a mismatch"
+  regenFadeTable !== null && cellBlockTable !== null,
+  "4102 and 16407 must both be carried for this to mean anything"
 );
-expect(checkTableType(276, 0x4016)?.matches === false, "276 = 16406 is the OTHER bike's table and is a mismatch");
-expect(checkTableType(277, 0x4017)?.matches === true, "277 is the A8's copy and is judged the same way");
-expect(checkTableType(258, 0x4017) === null, "an index that is not a TABLE_TYPE parameter has no verdict");
+expect(
+  regenFadeTable?.byIndex.get(70)?.name === "RegenFade_0" && regenFadeTable?.byIndex.get(94)?.name === "RegenFade_24",
+  "table 4102 must name ids 70 and 94 RegenFade_0 and RegenFade_24"
+);
+expect(
+  [...Array(25).keys()].every(offset => regenFadeTable?.byIndex.get(70 + offset)?.name === `RegenFade_${offset}`),
+  "…and the whole contiguous run 70…94, not just its ends"
+);
+expect(
+  cellBlockTable?.byIndex.get(70)?.name === "CELL_COUNT" && cellBlockTable?.byIndex.get(94)?.name === "CELLV_KA",
+  "table 16407 must name the same ids CELL_COUNT and CELLV_KA"
+);
+expect(
+  [...Array(25).keys()].every(offset => !cellBlockTable?.byIndex.get(70 + offset)?.name.startsWith("RegenFade")),
+  "no id in 70…94 may be called RegenFade_* under 16407 — that is the write this repo must never make"
+);
+expect(
+  regenFadeTable?.byName.has("CELL_COUNT") === false,
+  "…and under 4102 there is no CELL_COUNT anywhere, so a lookup by that name cannot land on a fade point"
+);
+// ⚠️ The subtler half, and the reason a name lookup is not a safe shortcut either: the
+// cell voltage limits DO exist on a RegenFade table — at completely different ids, under
+// a slightly different spelling. 16407 has CELL_UNDERVOLTAGE at 76; 4102 has
+// CELL_UNDER_VOLTAGE at 9. Neither name resolves in the other table, which is the only
+// reason a lookup fails loudly rather than quietly returning the wrong id.
+expect(
+  regenFadeTable?.byName.get("CELL_UNDER_VOLTAGE")?.[0]?.index === 9 &&
+    cellBlockTable?.byName.get("CELL_UNDERVOLTAGE")?.[0]?.index === 76,
+  "the cell undervoltage limit is id 9 “CELL_UNDER_VOLTAGE” under 4102 and id 76 “CELL_UNDERVOLTAGE” under 16407"
+);
+expect(
+  regenFadeTable?.byName.has("CELL_UNDERVOLTAGE") === false &&
+    cellBlockTable?.byName.has("CELL_UNDER_VOLTAGE") === false,
+  "…and neither spelling resolves in the other table, so crossing between them fails rather than answering wrongly"
+);
+// The two blocks are the same WIDTH and on the same MICRO, id for id. That is what
+// makes the confusion silent: a write lands correctly framed on the right micro and
+// changes the wrong parameter. Asserted so the danger stays documented in a way that
+// fails if it ever stops being true.
+expect(
+  [...Array(25).keys()].every(offset => {
+    const fade = regenFadeTable?.byIndex.get(70 + offset);
+    const cell = cellBlockTable?.byIndex.get(70 + offset);
+    return fade !== undefined && cell !== undefined && fade.type === cell.type && fade.micro === cell.micro;
+  }),
+  "ids 70…94 have the same width and micro in both tables, which is why nothing on the wire could notice the swap"
+);
 
-// 249 lives on the A8, so a 16406 verdict for 276 (the A9's copy) must not tell the
-// reader that this micro's 249 is LM_TYPE — that is the A8's parameter, and the two
-// micros are judged separately precisely because they can disagree.
+// ── 1c. Selecting a table, and what happens when we do not have it ──────────
+// The point of the whole catalogue: another owner's bike names its own table and gets
+// its own names, rather than this bike's.
+const selectedRegenFade = selectParameterTable(4102);
 expect(
-  checkTableType(277, 0x4016)?.message.includes("it is this micro's") === true,
-  "a 16406 verdict on the A8 should say 249 is this micro's"
+  selectedRegenFade.ok && activeParameterTable().tableType === 4102,
+  "selecting a carried table must switch to it"
+);
+expect(parameterAtIndex(70)?.name === "RegenFade_0", "…and the lookups must follow it, not stay on the old table");
+expect(
+  parametersNamed("CELL_COUNT").length === 0,
+  "…including in the other direction: CELL_COUNT must stop resolving on a bike that has no cell block at that id"
+);
+// ⚠️ params.ecf's [SECTION] headings and its bike's values are 16406's, so they travel
+// only as far as the NAME does. A renamed id keeps neither.
+expect(
+  parameterAtIndex(70)?.section === null && parameterAtIndex(70)?.otherBikeValue === null,
+  "a renamed id must not inherit params.ecf's section or the other bike's value — they describe CELL_COUNT, not RegenFade_0"
 );
 expect(
-  checkTableType(276, 0x4016)?.message.includes("read 277 before concluding") === true,
-  "a 16406 verdict on the A9 must point at 277 rather than claim 249 for the A9"
+  parameterAtIndex(48)?.section === "DRIVE_BY_WIRE 1/2" && parameterAtIndex(48)?.otherBikeValue === 2300,
+  "…while an id both tables agree on keeps both, so generality does not cost every bike its sections"
+);
+const unknownSelection = selectParameterTable(0x4020);
+expect(
+  !unknownSelection.ok && activeParameterTable().tableType === 4102,
+  "selecting a table this software does not carry must REFUSE and leave the previous one in place, not fall back to a default"
+);
+expect(
+  unknownSelection.message.includes("extract-vcu-tables") && unknownSelection.message.includes("may be WRONG"),
+  "…and must say both that the names on screen may be wrong and how to add the table"
+);
+selectParameterTable(DEFAULT_TABLE_TYPE);
+expect(activeParameterTable().tableType === 16407, "the rest of these checks run against 16407, so put it back");
+
+// The runtime check, which is the part with a future. A bike that names a table this
+// software does not CARRY must be shouted about, not averaged into the page — and a
+// bike that names one it does must simply work.
+const tableTypeMatch = checkTableType(276, 0x4017);
+expect(
+  tableTypeMatch?.recognised === true && tableTypeMatch.micro === "A9",
+  "276 = 0x4017 should be recognised — it is in the catalogue"
+);
+expect(
+  checkTableType(276, 0x1017)?.recognised === true,
+  "family 1 revision 0x017 is byte-identical content, so 4119 must be recognised too"
+);
+expect(
+  checkTableType(276, 0x4016)?.recognised === true,
+  "16406 is another Energica's table and IS carried — recognising it is the whole point of this pass"
+);
+expect(
+  checkTableType(276, 0x1006)?.recognised === true,
+  "…as is 4102, a RegenFade table, which is the case an owner is most likely to actually be on"
+);
+expect(checkTableType(276, 0x4020)?.recognised === false, "a TABLE_TYPE not in the catalogue must NOT be recognised");
+expect(checkTableType(277, 0x4017)?.recognised === true, "277 is the A8's copy and is judged the same way");
+expect(checkTableType(258, 0x4017) === null, "an index that is not a TABLE_TYPE parameter has no verdict");
+expect(
+  checkTableType(276, 0x4020)?.message.includes("extract-vcu-tables") === true &&
+    checkTableType(276, 0x4020)?.message.includes("70–94") === true,
+  "an unrecognised table must say how to add it and why it matters, not just that it is unrecognised"
+);
+expect(
+  contentTwinsOf(16407).join() === "4119" && contentTwinsOf(4119).join() === "16407",
+  "16407 and 4119 are byte-identical and each must name the other — derived from the fingerprints, not hardcoded"
 );
 
 // …and through a whole snapshot, which is how the sweep and /vcu-params reach it.
@@ -184,6 +322,7 @@ expect(
   matchingSweep.confirmed && !matchingSweep.mismatched && matchingSweep.unread.length === 0,
   "a sweep in which both micros named 16407 should be confirmed"
 );
+expect(matchingSweep.tableType === 16407, "…and should report which table that was, for the names to be taken from");
 
 // ⚠️ The state this bike is actually in, and the one the report must not call green:
 // the A9 answered and the A8 never has — and the A8 is the micro that owns 249.
@@ -193,22 +332,43 @@ expect(
   "one micro answering is not confirmation of the other — 277 unread must leave the report unconfirmed"
 );
 expect(
+  onlyA9Sweep.tableType === 16407,
+  "…but one micro naming a carried table IS enough to name parameters from it: naming is looser than writing"
+);
+expect(
   onlyA9Sweep.lines.length === 2 && onlyA9Sweep.lines.some(line => line.includes("TABLE_TYPE_uS")),
   "the unread A8 copy should get its own line rather than being omitted"
 );
 
-const wrongTableSweep = reportTableType(snapshotOf([reading(258, "4B"), reading(276, "40 16"), reading(277, "40 17")]));
-expect(
-  wrongTableSweep.mismatched && !wrongTableSweep.confirmed,
-  "a sweep whose 276 says 16406 must report a mismatch — every NAME it printed would be that table's"
+const unknownTableSweep = reportTableType(
+  snapshotOf([reading(258, "4B"), reading(276, "40 20"), reading(277, "40 20")])
 );
 expect(
-  wrongTableSweep.lines[0].startsWith("🚨"),
+  unknownTableSweep.mismatched && !unknownTableSweep.confirmed && unknownTableSweep.tableType === null,
+  "a sweep naming a table nobody has extracted must report a mismatch and name no table for the rows to use"
+);
+expect(
+  unknownTableSweep.lines[0].startsWith("🚨"),
   "the mismatch leads, so a journal or a banner shows the worst finding first"
 );
+
+// ⚠️ TWO MICROS, TWO ANSWERS. They hold separate EEPROMs, so they can genuinely
+// disagree — and averaging that away would name half the ids out of the wrong table.
+const splitSweep = reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "10 06")]));
 expect(
-  wrongTableSweep.lines.some(line => line.includes("LM_TYPE")),
-  "the 16406 mismatch should name the one parameter that actually changes, rather than only saying “mismatch”"
+  splitSweep.split && !splitSweep.confirmed && splitSweep.tableType === null,
+  "a bike whose A9 says 16407 and whose A8 says 4102 is SPLIT — not confirmed, and no single table to name from"
+);
+expect(
+  splitSweep.lines[0].includes("DIFFERENT parameter tables") && splitSweep.lines[0].startsWith("🚨"),
+  "the split must lead and must say plainly that the two micros disagree"
+);
+// …but a difference only in the vehicle-line nibble is NOT a split: 4119 and 16407 are
+// the same 277 rows. Refusing over a nibble nothing reads would block a working bike.
+const twinSweep = reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "10 17")]));
+expect(
+  !twinSweep.split && twinSweep.confirmed && twinSweep.tableType === 16407,
+  "16407 on one micro and its byte-identical twin 4119 on the other is agreement, not a split"
 );
 
 const unaskedSweep = reportTableType(snapshotOf([reading(258, "4B")]));
@@ -216,6 +376,7 @@ expect(
   !unaskedSweep.confirmed && !unaskedSweep.mismatched && unaskedSweep.lines.length === 2,
   "a sweep that read neither TABLE_TYPE is unconfirmed rather than confirmed, and says so once per micro"
 );
+expect(unaskedSweep.tableType === null, "…and names no table, so nothing re-names its rows away from the default");
 
 // A row that answered with a width the table did not predict has no honest typed
 // value, so it names no table — but it is NOT unread, and must not be described as
@@ -234,6 +395,195 @@ expect(
 expect(
   wrongWidthSweep.lines[0].includes("[40]") && wrongWidthSweep.lines[0].includes("2-byte WORD"),
   "it should quote what came back and what the table expected, so the fault is identifiable"
+);
+
+// ── 1d. Re-naming a stored snapshot from the table it itself reports ────────
+// ⚠️ Rows are named as they arrive, from whatever table was active then — and on a
+// first sweep of an unfamiliar bike that is a default, because TABLE_TYPE_uC is only
+// read partway through the A9 pass. Without this step the first snapshot off a
+// RegenFade bike is stored, served, exported and diffed with ids 70…94 labelled
+// CELL_COUNT.
+const sweptUnderDefault = snapshotOf([reading(70, "00 51"), reading(276, "10 06"), reading(277, "10 06")]);
+expect(
+  sweptUnderDefault.rows[0].name === "CELL_COUNT" && sweptUnderDefault.rows[0].value === 81,
+  "the fixture is built under the active table, which is 16407 — so it starts out wrong for this bike"
+);
+const retabled = retableSnapshot(sweptUnderDefault, reportTableType(sweptUnderDefault).tableType);
+expect(
+  retabled.rows[0].name === "RegenFade_0",
+  "a snapshot whose own TABLE_TYPE says 4102 must come back named from 4102, not from whatever was active"
+);
+expect(
+  retabled.rows[0].section === null && retabled.rows[0].otherBikeValue === null,
+  "…and must lose params.ecf's section and comparison value for the renamed id, which described CELL_COUNT"
+);
+expect(
+  retableSnapshot(sweptUnderDefault, null).rows[0].name === "CELL_COUNT",
+  "a snapshot that named no table is returned untouched — there is nothing better to re-derive from"
+);
+// Signedness varies at 30 ids between Energica's tables, so re-naming has to re-TYPE
+// as well. Carrying the old number forward would keep a value the new S/U column
+// contradicts.
+const signednessSwing = snapshotOf([reading(91, "FE 92"), reading(276, "10 06"), reading(277, "10 06")]);
+expect(
+  signednessSwing.rows[0].value === -366 && parameterAtIndex(91)?.signed === true,
+  "id 91 is CELLV_LCA, a signed WORD, under 16407"
+);
+expect(
+  retableSnapshot(signednessSwing, 4102).rows[0].value === 65170,
+  "…and RegenFade_21 under 4102, which is unsigned — so the same two bytes must re-read as 65170"
+);
+
+// ── 1e. THE CATALOGUE: all 28 of Energica's tables, and that they agree ─────
+// ⚠️ This is the check that replaces the one the old single-table module had. That one
+// threw at module load if the embedded params.ecf stopped saying what a hardcoded
+// one-id correction expected. Its generalisation is a fingerprint per table, taken by
+// scripts/extract-vcu-tables.ts from Energica's own bundle before any delta arithmetic,
+// and recomputed here from the reconstruction. A table set that quietly disagrees with
+// itself is worse than one hardcoded table, because it is confidently wrong 28 ways.
+//
+// Every table is BUILT here, which is deliberately not what the service does: it builds
+// only the one it needs, so a Pi that sees one bike pays for one table. Building all 28
+// belongs in the check, where it is a proof rather than a startup cost.
+expect(
+  KNOWN_TABLE_TYPES.length === 28,
+  `the 2024 EMsuite build selects 28 tables, the catalogue has ${KNOWN_TABLE_TYPES.length}`
+);
+expect(
+  new Set(KNOWN_TABLE_TYPES).size === KNOWN_TABLE_TYPES.length,
+  "a TABLE_TYPE must appear once — it is the key the bike's own answer is looked up by"
+);
+const builtTables = KNOWN_TABLE_TYPES.map(tableType => parameterTableFor(tableType));
+expect(
+  builtTables.every(table => table !== null),
+  "every table in the catalogue must rebuild — parameterTableFor() throws on a fingerprint mismatch, so reaching here is the check"
+);
+expect(
+  builtTables.every(table => table !== null && fingerprintTable(table.parameters) === table.fingerprint),
+  "…and the fingerprint recomputed from the rebuilt rows must equal the one taken from Energica's bundle"
+);
+// The digest has to be able to notice a single wrong character, or the check above is
+// theatre. Two row sets differing in one letter of one name must not collide.
+expect(
+  fingerprintTable([{ index: 1, name: "A", type: "BYTE", signed: false, micro: "A9" }]) !==
+    fingerprintTable([{ index: 1, name: "B", type: "BYTE", signed: false, micro: "A9" }]),
+  "the fingerprint must change when a name changes by one character"
+);
+expect(
+  fingerprintTable([{ index: 1, name: "A", type: "BYTE", signed: false, micro: "A9" }]) !==
+    fingerprintTable([{ index: 1, name: "A", type: "BYTE", signed: true, micro: "A9" }]),
+  "…and when the S/U column flips, which is the difference between −350 and 65186"
+);
+// 16406 IS params.ecf. Its entry has an empty delta, so its fingerprint passing is a
+// load-time proof that the embedded text really is 16406 — a claim that used to live
+// only in a comment.
+expect(
+  parameterTableFor(BASE_TABLE_TYPE) !== null &&
+    fingerprintTable(parseParameterFile(PARAMETER_FILE_TEXT())) === parameterTableFor(BASE_TABLE_TYPE)?.fingerprint,
+  "params.ecf's own text must fingerprint as table 16406, or the base every delta is expressed against has moved"
+);
+
+// ⚠️ The invariants the delta format DEPENDS on, re-measured over all 28 rather than
+// quoted from obd-garage/PARAM_TABLES.md. If `id → micro` or `id → datatype` ever
+// varied, a wrong table would produce a malformed frame and be obvious — the fact that
+// they do not is exactly why a wrong table is silent, and why the gate exists.
+const catalogueRows = builtTables.flatMap(table => table?.parameters ?? []);
+const routingByIndex = new Map<number, string>();
+const namesByIndex = new Map<number, Set<string>>();
+for (const parameter of catalogueRows) {
+  const routing = `${parameter.micro}/${parameter.type}`;
+  const seen = routingByIndex.get(parameter.index);
+  expect(
+    seen === undefined || seen === routing,
+    `id ${parameter.index} routes/sizes as ${routing} in one table and ${seen} in another — the delta format cannot express that`
+  );
+  routingByIndex.set(parameter.index, routing);
+  namesByIndex.set(parameter.index, (namesByIndex.get(parameter.index) ?? new Set()).add(parameter.name));
+}
+expect(
+  [...namesByIndex.values()].filter(names => names.size > 1).length === 151,
+  `151 of the ids carry a different name in at least one table, found ${[...namesByIndex.values()].filter(names => names.size > 1).length}`
+);
+// The two indices this whole mechanism reads are themselves table-independent, which is
+// what stops the question being circular: you do not need to know the table to ask which
+// table it is.
+expect(
+  builtTables.every(
+    table =>
+      table?.byIndex.get(276)?.name === "TABLE_TYPE_uC" &&
+      table.byIndex.get(276)?.micro === "A9" &&
+      table.byIndex.get(277)?.name === "TABLE_TYPE_uS" &&
+      table.byIndex.get(277)?.micro === "A8"
+  ),
+  "276/277 must be TABLE_TYPE_uC on the A9 and TABLE_TYPE_uS on the A8 in ALL 28, or asking which table this is needs the answer first"
+);
+
+// The RegenFade split, counted. 20 tables carry the fade curve at 70…94 and 8 carry the
+// battery cell block; nothing carries a mixture. The count is asserted rather than
+// described so that a contributed table landing on the wrong side of it is a red build.
+const fadeTables = builtTables.filter(table => table?.byIndex.get(70)?.name === "RegenFade_0");
+const cellTables = builtTables.filter(table => table?.byIndex.get(70)?.name === "CELL_COUNT");
+expect(
+  fadeTables.length === 20 && cellTables.length === 8,
+  `20 tables should have RegenFade at ids 70–94 and 8 the cell block, found ${fadeTables.length}/${cellTables.length}`
+);
+expect(
+  fadeTables.length + cellTables.length === KNOWN_TABLE_TYPES.length,
+  "…and every table is on one side or the other, so nothing is quietly a third thing"
+);
+
+// ⚠️ THE ALLOWLIST, against every table this software carries. Today all five ids are
+// identical in name, width, signedness and micro across all 28, so there is nothing to
+// refuse — this is measured rather than assumed, because it is the property that makes
+// the write path safe on a bike this repo has never seen, and the next contributed table
+// is exactly the thing that could break it.
+for (const table of builtTables) {
+  const problems = table === null ? ["table failed to build"] : allowlistProblemsIn(table);
+  expect(
+    problems.length === 0,
+    `the write allowlist should mean the same thing in table ${table?.tableType}: ${problems.join("; ")}`
+  );
+}
+// …and it must be capable of saying no. A table where one allowlisted index is renamed
+// has to produce a problem, or the loop above is satisfied by a function that returns [].
+const fabricated = parameterTableFor(16407);
+expect(
+  fabricated !== null &&
+    allowlistProblemsIn({
+      ...fabricated,
+      byIndex: new Map(fabricated.byIndex).set(258, { ...fabricated.byIndex.get(258)!, name: "SOMETHING_ELSE" }),
+    }).length === 1,
+  "a table that renames index 258 must produce exactly one allowlist problem, naming it"
+);
+
+// Content twins, derived from the fingerprints rather than listed. Symmetry is the
+// property worth asserting: a one-way twin would let 4119 pass where 16407 refused.
+for (const tableType of KNOWN_TABLE_TYPES) {
+  for (const twin of contentTwinsOf(tableType)) {
+    expect(
+      contentTwinsOf(twin).includes(tableType),
+      `${tableType} names ${twin} as a twin, but not the other way round`
+    );
+  }
+}
+
+// ⚠️ SIZE, because this runs on a Pi Zero. The catalogue is deltas rather than 28 whole
+// tables precisely to keep this number small; the bound is here so it cannot creep back
+// up unnoticed, and it is generous enough that a handful of contributed tables fit
+// without anyone having to think about it.
+const catalogueBytes = (await readFile(new URL("../src/vcu/table-catalog.data.ts", import.meta.url), "utf-8")).length;
+expect(
+  catalogueBytes < 120_000,
+  `the catalogue is ${(catalogueBytes / 1024).toFixed(1)} KB of source for ${KNOWN_TABLE_TYPES.length} tables; ` +
+    "over 120 KB something has stopped being a delta"
+);
+expect(
+  describeCatalogue().length === KNOWN_TABLE_TYPES.length,
+  "the catalogue summary must have a line per table — it is what an owner reads to see whether theirs is there"
+);
+console.log(
+  `catalogue: ${KNOWN_TABLE_TYPES.length} tables, ${(catalogueBytes / 1024).toFixed(1)} KB of source, ` +
+    `${catalogueRows.length} rows rebuilt and fingerprint-checked\n`
 );
 
 // ── 2. Requests, and the read-only guard ────────────────────────────────────
@@ -1333,7 +1683,11 @@ expect(
   "the remedy must point at the probe UI that can already do this, by the name on the button"
 );
 expect(unreadGate.remedy.includes("read-only"), "the remedy must say the read changes nothing, or nobody will run it");
-expect(unreadGate.remedy.includes("0x4017"), "the remedy must say what a good answer looks like");
+expect(
+  unreadGate.remedy.includes("Any of the tables this software carries is a good answer") &&
+    KNOWN_TABLE_TYPES.every(known => unreadGate.remedy.includes(String(known))),
+  "the remedy must say what a good answer looks like — and since 28 tables are carried, that is all 28 rather than one"
+);
 
 // ⚠️⚠️ AND THE REMEDY HAS TO ACTUALLY WORK — a different claim from the remedy being
 // well worded, and the one that was wrong first time round. This gate is fed from the
@@ -1352,7 +1706,7 @@ expect(
   "…and must say plainly that the probe alone cannot open the gate, or it sends someone round a loop"
 );
 expect(
-  TABLE_TYPE_INDICES.every(index => PARAMETER_TABLE.some(parameter => parameter.index === index)),
+  TABLE_TYPE_INDICES.every(index => parameterTable().some(parameter => parameter.index === index)),
   "a full sweep must cover both TABLE_TYPE indices, or no sweep could ever clear this gate"
 );
 // The other half of that chain: a snapshot in which both micros answered — which is
@@ -1366,7 +1720,7 @@ expect(
 // so it is the very last thing a sweep asks about, and a cut-short run is exactly the
 // run that misses it. The remedy says so; this is the fact behind that sentence.
 expect(
-  parameterAtIndex(277)?.micro === "A8" && Math.max(...PARAMETER_TABLE.map(p => p.index)) === 277,
+  parameterAtIndex(277)?.micro === "A8" && Math.max(...parameterTable().map(row => row.index)) === 277,
   "277 must still be an A8 parameter and the highest index, or the remedy's sweep-order caveat is wrong"
 );
 expect(
@@ -1393,30 +1747,111 @@ expect(
   "with neither micro read, both reads must be spelled out — they are different frames on different micros"
 );
 
-// ⚠️ REFUSED, mismatched: the bike named a table this software does not encode. A
-// DIFFERENT refusal from the one above, because the remedy is a code change and no
-// amount of reading will help. Conflating the two sends someone after the wrong fault.
-const mismatchedGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 16"), reading(277, "40 16")])));
+// ✅ PERMITTED: SOMEBODY ELSE'S BIKE. This is the change this whole pass exists for —
+// a bike on 4102, a RegenFade table, is not this repo's motorcycle and must still be
+// writable, because we have its table. Under the old gate it refused.
+const otherOwnersGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "10 06"), reading(277, "10 06")])));
 expect(
-  mismatchedGate.state === "mismatched" && !mismatchedGate.writesAllowed,
-  `a bike naming 16406 must refuse as “mismatched”, said ${mismatchedGate.state}`
+  otherOwnersGate.state === "confirmed" && otherOwnersGate.writesAllowed && otherOwnersGate.tableType === 4102,
+  `a bike naming 4102 must be permitted — it is a table this software carries — said ${otherOwnersGate.state}`
 );
 expect(
-  mismatchedGate.remedy.includes("No read clears") && mismatchedGate.remedy.includes("param-table.ts"),
-  "the mismatch remedy must say that reading will not help and point at the file that would"
+  otherOwnersGate.reason.includes("4102") && !otherOwnersGate.reason.includes("16407"),
+  "…and the reason must name THEIR table, not the one this repo was written for"
+);
+// The same, for the other bike whose file this repo embeds. 16406 used to be the
+// canonical "wrong table" and is now simply another supported one.
+expect(
+  evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 16"), reading(277, "40 16")]))).writesAllowed,
+  "16406, the table params.ecf came from, must now pass rather than being the archetypal refusal"
+);
+
+// ⚠️ REFUSED, mismatched: the bike named a table NOBODY HAS EXTRACTED. A DIFFERENT
+// refusal from the unread one above, because no amount of reading will help — but a
+// fixable one, and the remedy has to say so or an owner concludes the tool is not for
+// them. 0x4020 is a plausible future revision of this bike's own family.
+const mismatchedGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 20"), reading(277, "40 20")])));
+expect(
+  mismatchedGate.state === "mismatched" && !mismatchedGate.writesAllowed && mismatchedGate.noReadWillHelp,
+  `a bike naming an uncarried table must refuse as “mismatched”, said ${mismatchedGate.state}`
+);
+expect(
+  mismatchedGate.remedy.includes("No read clears") && mismatchedGate.remedy.includes("extract-vcu-tables.ts"),
+  "the mismatch remedy must say that reading will not help and name the script that fixes it"
+);
+expect(
+  mismatchedGate.remedy.includes("EMSuite.exe") && mismatchedGate.remedy.includes("README"),
+  "…and must say what the owner needs (their own service-tool install) and where the walkthrough is"
 );
 expect(
   !mismatchedGate.remedy.includes("Probe one identifier"),
   "the mismatch remedy must NOT send anyone to re-read a parameter that already answered"
 );
 expect(
-  mismatchedGate.reason.includes("16406") && mismatchedGate.reason.includes("16407"),
-  "the mismatch reason must name both tables — the one the bike claims and the one this software has"
+  mismatchedGate.reason.includes("16416") && mismatchedGate.reason.includes("70–94"),
+  "the mismatch reason must name the table the bike claims and say why a wrong name is dangerous"
+);
+expect(
+  KNOWN_TABLE_TYPES.every(known => mismatchedGate.remedy.includes(String(known))),
+  "…and must list every table that IS carried, so an owner can see whether theirs is nearly one of them"
 );
 // A mismatch outranks an unread micro: it is the worse finding and the harder remedy.
-const mixedGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 16")])));
+const mixedGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 20")])));
 expect(mixedGate.state === "mismatched", "a mismatch on one micro outranks the other being unread");
 expect(mixedGate.outstanding.join() === "276,277", "…and both micros are still listed as outstanding");
+
+// ⚠️ REFUSED, split: two micros, two different tables, both carried. Not something to
+// average — half the ids would be named out of a table that does not describe them.
+const splitGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "10 06")])));
+expect(
+  splitGate.state === "split" && !splitGate.writesAllowed && splitGate.noReadWillHelp && splitGate.tableType === null,
+  `two micros naming different carried tables must refuse as “split”, said ${splitGate.state}`
+);
+expect(
+  splitGate.reason.includes("16407") && splitGate.reason.includes("4102"),
+  "the split reason must name BOTH tables — which micro said what is the entire finding"
+);
+expect(
+  splitGate.remedy.includes("picking one micro's answer is exactly the wrong move"),
+  "…and the remedy must say not to resolve it by preferring one, which is the tempting wrong fix"
+);
+expect(
+  splitGate.outstanding.length === 0 && !splitGate.remedy.includes("Probe one identifier"),
+  "…and nothing is outstanding: both micros answered, so nobody should be sent to read either of them again"
+);
+
+// ⚠️ REFUSED, unwritable: the table is carried and correctly identified, and one of the
+// allowlist's own parameters is not called that on it. Nothing in the 28 does this
+// today (§16 asserts as much), so it is exercised through the registration hook — the
+// same way ./write-codec.ts's plan verifier is a registered function rather than an
+// import.
+registerAllowlistTableCheck(() => ["index 258 is “MAX_DC_CHG_CURRENT” here and “SOMETHING_ELSE” in table 4102"]);
+const unwritableGate = evaluateTableGate(reportTableType(snapshotOf([reading(276, "10 06"), reading(277, "10 06")])));
+expect(
+  unwritableGate.state === "unwritable" && !unwritableGate.writesAllowed && unwritableGate.noReadWillHelp,
+  `a carried table whose names the allowlist disagrees with must refuse as “unwritable”, said ${unwritableGate.state}`
+);
+expect(
+  unwritableGate.reason.includes("SOMETHING_ELSE") && unwritableGate.remedy.includes("write-targets.ts"),
+  "…naming the disagreement and the file that owns it, since the bike is not at fault"
+);
+expect(
+  unwritableGate.outstanding.length === 0 && unwritableGate.tableType === 4102,
+  "…and nothing is outstanding — both micros answered, and the table they named is reported"
+);
+// ⚠️ And the fail-closed default, which is the property that matters more than any of
+// the above: a build where write-targets.ts never loaded must block every write rather
+// than wave every write through. Restored to the real check immediately afterwards.
+registerAllowlistTableCheck(() => ["stub"]);
+expect(
+  !evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "40 17")]))).writesAllowed,
+  "with no allowlist check registered the gate must refuse, not permit"
+);
+registerAllowlistTableCheck(allowlistProblemsIn);
+expect(
+  evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "40 17")]))).writesAllowed,
+  "…and permit again once the real check is back, or every assertion above is satisfied by a function returning false"
+);
 
 // A micro that answered with a record the width column forbids named no table, and it
 // is NOT unread — it replied. Telling someone it went unread sends them after the
@@ -1437,25 +1872,35 @@ expect(
 // checkTableType() over them, exactly as write-codec.ts re-derives a plan from the
 // allowlist rather than trusting the one it was handed.
 expect(
-  !evaluateTableGate({ verdicts: [], confirmed: true, unread: [], unusable: [], mismatched: false, lines: [] })
-    .writesAllowed,
-  "a forged report claiming confirmed:true with no verdicts behind it must still refuse"
-);
-expect(
   !evaluateTableGate({
-    // `matches: true` next to a value of 16406 — the shape a hand-edited or
-    // maliciously-posted report would take. The VALUE is what is judged.
-    verdicts: [
-      { index: 276, micro: "A9", value: 0x4016, matches: true, message: "forged" },
-      { index: 277, micro: "A8", value: 0x4016, matches: true, message: "forged" },
-    ],
+    verdicts: [],
     confirmed: true,
+    tableType: 16407,
+    split: false,
     unread: [],
     unusable: [],
     mismatched: false,
     lines: [],
   }).writesAllowed,
-  "a forged verdict claiming matches:true over a 16406 reading must still refuse — the value is re-judged"
+  "a forged report claiming confirmed:true with no verdicts behind it must still refuse"
+);
+expect(
+  !evaluateTableGate({
+    // `recognised: true` next to a value of 16416 — the shape a hand-edited or
+    // maliciously-posted report would take. The VALUE is what is judged.
+    verdicts: [
+      { index: 276, micro: "A9", value: 0x4020, recognised: true, message: "forged" },
+      { index: 277, micro: "A8", value: 0x4020, recognised: true, message: "forged" },
+    ],
+    confirmed: true,
+    tableType: 16407,
+    split: false,
+    unread: [],
+    unusable: [],
+    mismatched: false,
+    lines: [],
+  }).writesAllowed,
+  "a forged verdict claiming recognised:true over an uncarried table must still refuse — the value is re-judged"
 );
 expect(
   !evaluateTableGate({
@@ -1463,10 +1908,12 @@ expect(
     // returns null for those, so it can never vote — otherwise any read of any
     // parameter that happened to hold 0x4017 would open the gate.
     verdicts: [
-      { index: 258, micro: "A9", value: 0x4017, matches: true, message: "forged" },
-      { index: 15, micro: "A9", value: 0x4017, matches: true, message: "forged" },
+      { index: 258, micro: "A9", value: 0x4017, recognised: true, message: "forged" },
+      { index: 15, micro: "A9", value: 0x4017, recognised: true, message: "forged" },
     ],
     confirmed: true,
+    tableType: 16407,
+    split: false,
     unread: [],
     unusable: [],
     mismatched: false,
@@ -1483,7 +1930,8 @@ expect(gatedPlan.ok, "the plan itself is fine — it is the table that is unconf
 for (const [label, report] of [
   ["never read", null],
   ["one micro unread", reportTableType(snapshotOf([reading(276, "40 17")]))],
-  ["mismatched", reportTableType(snapshotOf([reading(276, "40 16"), reading(277, "40 16")]))],
+  ["mismatched", reportTableType(snapshotOf([reading(276, "40 20"), reading(277, "40 20")]))],
+  ["split between two carried tables", reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "10 06")]))],
 ] as const) {
   expectThrows(
     () => gatedPlan.ok && buildWriteFrame("A9", { kind: "write-parameter", plan: gatedPlan.plan, tableType: report }),
@@ -1783,11 +2231,13 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ table, its identity as 16407 and the mismatch alarm, request encoding, framing, the live reads, " +
+  "✓ the name table, all 28 of Energica's parameter tables against their own fingerprints, table selection " +
+    "and the RegenFade/cell-block distinction, request encoding, framing, the live reads, " +
     "interpretation, diff, the energica_tool.py backup CSV, " +
     "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +
-    "seed/key pairs, the write allowlist and its ranges, the table-type gate that refuses a write until the bike " +
-    "has named its own parameter table, the RTC frame against two frames that really went out, " +
+    "seed/key pairs, the write allowlist and its ranges against every carried table, the table-type gate that " +
+    "refuses a write until the bike has named a table we have, the RTC frame against two frames that really " +
+    "went out, " +
     "the service stamp, mode 04, the bus lease and the write request parser all check out"
 );
 
@@ -1908,7 +2358,7 @@ async function replayStoredDump(path: string): Promise<void> {
     records.set(Number.parseInt(identifier, 16), bytes);
   }
 
-  const expected = PARAMETER_TABLE.filter(parameter => parameter.micro === "A9");
+  const expected = parameterTable().filter(parameter => parameter.micro === "A9");
   const missing = expected.filter(parameter => !records.has(parameter.index));
   const extra = [...records.keys()].filter(index => parameterAtIndex(index)?.micro !== "A9");
   expect(missing.length === 0, `every A9 parameter should be in the dump; ${missing.length} were not`);

@@ -15,7 +15,7 @@ The Korlan alone gets you most of this. Everything under [What it logs](#what-it
 
 Two caveats worth knowing before you spend money:
 
-- It is developed against a **2021 Eva Ribelle**. The pack shape is hardcoded in places — 81 cells in 11 modules, a 400 A discharge and 120 A regen ceiling, a 130 kW power bar — and nothing detects a mismatch. On another bike in the same pack family the readings are right and those scale limits may not be; on a differently-packed model (Experia) treat the whole thing as untested. Reports welcome.
+- It is developed against a **2021 Eva Ribelle**. The pack shape is hardcoded in places — 81 cells in 11 modules, a 400 A discharge and 120 A regen ceiling, a 130 kW power bar — and nothing detects a mismatch. On another bike in the same pack family the readings are right and those scale limits may not be; on a differently-packed model (Experia) treat the whole thing as untested. Reports welcome. The **VCU parameter names are not** in that category any more: all 28 of Energica's parameter tables are shipped and the bike's own `TABLE_TYPE` picks one, so [that half works on your bike](#vcu-parameters-by-name) whichever it is — and if your table is newer than the 28, [adding it is one command](#adding-your-bikes-vcu-parameter-table).
 - The bike's **CAN bus is not a toy**. This app only ever reads, but it does transmit standard OBD-II _read_ requests to do so (see [Notes](#notes)). If you would rather it never spoke at all, `OBD_ENABLED=0` makes it passive-only.
 
 ## Setup
@@ -428,9 +428,51 @@ Every reply is printed as **raw hex first**, before any decode. That is the poin
 
 The VCU's calibration EEPROM — throttle maps, cell limits, current thresholds, the charge-current ceilings — is readable off the bus **by name, with no authentication**. The two micros serve it as KWP bank 1, and the mapping is simply `CommonIdentifier = 0x1000 | index`, where the index is the row number in Energica's own `params.ecf` parameter file. Parameter _n_ is `22 [0x10|hi] [lo]`.
 
-`src/vcu/param-table.ts` carries a copy of that file — 277 names, widths and micro assignments — so nothing depends on a path in one person's iCloud folder. **Its values are another bike's**: the file came from a different variant, and 21 of the 233 parameters the A9 serves read differently here (`MAX_DC_CHG_CURRENT` is 75 A on this bike against the file's 60). It is a name table, and the column showing its values is labelled as another bike's everywhere it appears.
+`src/vcu/param-file.ts` carries a copy of that file — 277 names, widths and micro assignments — so nothing depends on a path in one person's iCloud folder. **Its values are another bike's**: the file came from a different variant, and 21 of the 233 parameters the A9 serves read differently here (`MAX_DC_CHG_CURRENT` is 75 A on this bike against the file's 60). It is a name table, and the column showing its values is labelled as another bike's everywhere it appears.
 
-**Which names are right depends on which of Energica's 28 parameter tables the bike runs, and the bike says.** Parameter 276 `TABLE_TYPE_uC` on the A9 reads `0x4017` — table **16407**, family 4 revision `0x017`, from `TABLE_TYPE = (family << 12) | revision`. `params.ecf` is one revision older, **16406**, and the two differ at exactly one id: 249 is `R_BRAKE_POPUP` here and `LM_TYPE` there. The embedded text is kept (it is the only source of the `[SECTION]` groupings and the comparison values — Energica's own bundles carry neither) with that one id corrected on top. This matters more than one name: routing and record widths are identical across all 28 tables, so a bike on the wrong table reads and writes perfectly and merely means something else by every name. So every sweep now reads its own table type back and says whether it matches, in the journal and at the top of `/params.html`; a bike that names a table this software does not encode gets shouted about rather than silently mislabelled.
+**Which names are right depends on which of Energica's parameter tables your bike runs — and the bike will tell you.** `TABLE_TYPE = (family << 12) | revision`, and the VCU reports its own at parameter 276 `TABLE_TYPE_uC` (A9) and 277 `TABLE_TYPE_uS` (A8). This Ribelle reads `0x4017` = table **16407**; `params.ecf` is one revision older, **16406**.
+
+**All 28 tables Energica's 2024 service tool can select are shipped**, in `src/vcu/table-catalog.data.ts`, and the one matching what your bike reports is what the names come from. That is the difference between this working on one motorcycle and working on yours. How much it matters depends on which table you are on:
+
+| your table                           | ids this software would have got wrong under one hardcoded 16407     |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| 4118 / 16406                         | 1 (id 249, `LM_TYPE` vs `R_BRAKE_POPUP`)                             |
+| 20503                                | 2 (`POSLIGHTS_*` vs `FPOSLIGHTS_*`)                                  |
+| 20502                                | 3                                                                    |
+| 24598                                | 6 (`NT_SPD_*`/`NT_TRQ_*` vs `DBW_DUMMY_WORD13..17`)                  |
+| **any of the 20 `RegenFade` tables** | **25** — ids 70–94 are `RegenFade_0..24`, not the battery cell block |
+
+That last row is the one that matters. On 20 of the 28 tables, ids 70–94 are a 25-point regen fade curve; on the other 8 the same ids are `CELL_COUNT`, `CELL_OVERVOLTAGE`, `CELL_TARGET_AC`, `CELLV_KA` and the rest of the battery cell configuration. **Another Energica tool in circulation writes a regen curve into the cell block today**, because it carries one table and never asks. Routing (`id → micro`) and record width (`id → datatype`) are identical across all 28, so nothing on the wire can notice: the write is correctly framed, lands on the right micro, is accepted, and reads back exactly as sent.
+
+So every sweep reads its own table type back, says so in the journal and at the top of `/params.html`, and **re-names the whole snapshot from the table the bike named** before storing it. A bike naming a table this software does not carry gets shouted about rather than silently mislabelled — and the message says how to add it, because that is a thing you can do yourself.
+
+### Adding your bike's VCU parameter table
+
+If your VCU reports a `TABLE_TYPE` that is not in the 28 (Energica has shipped more since; another owner reports a build with about five more, one of them for a Corsa), the tool refuses to write anything and tells you this. Fixing it takes one command and no reverse engineering:
+
+```bash
+# 1. find EMSuite.exe in your own Energica service-tool install. On Windows it is
+#    typically C:\Program Files (x86)\Energica\EMSuite\EMSuite.exe — copy it
+#    anywhere; the script only reads it.
+# 2. regenerate the catalogue from it (works on macOS/Linux/Windows — no .NET tooling,
+#    no EMsuite install needed on the machine you run it on, just the file)
+node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/EMSuite.exe
+
+# 3. tidy and check
+npx prettier --write src/vcu/table-catalog.data.ts
+npm test
+
+# 4. `git diff src/vcu/table-catalog.data.ts` shows exactly which tables are new and
+#    which ids they rename. Send it as a PR — every Energica owner after you gets it.
+```
+
+**It merges, it does not overwrite.** Energica builds do not all carry the same tables — the 2021 build has 18 where the 2024 one has 28, and the ten it lacks include every table with the battery cell block — so running it against an older install adds what yours has and keeps what the repo already had. A `TABLE_TYPE` present in both with _different_ content stops the script rather than picking a side: every table shared between the two builds seen so far is byte-identical, export stamp included, so a conflict is a finding worth an issue.
+
+The tables are ZIP archives stored as .NET resources inside the exe, and the **resource name is the answer**: `_16407` is the table a VCU reporting 16407 runs. That name is the only thing in the binary binding a table to the number your bike reports, which is why the script walks the resource directory rather than scanning the file for ZIPs — a scan finds more archives (each is stored twice, and four have no `TABLE_TYPE` name at all, so EMsuite itself can never select them) and throws the binding away.
+
+Each table is stored as a **delta against `params.ecf`** — the ids whose name or signedness differ — because `id → micro` and `id → datatype` never vary. All 28 come to ~46 KB of source that way, against ~1.1 MB as standalone tables, which matters on a Pi Zero. Each carries a fingerprint taken from Energica's own bundle, and rebuilding a table checks against it, so a delta that has drifted from the `params.ecf` text underneath it is a loud failure rather than a subtly wrong name table.
+
+Two things Energica's bundles do **not** contain: any values (`vehicleValue` is null in all 28) and the `[SECTION]` groupings. Both come from `params.ecf`, which is a 16406 bike's — so they travel only as far as the name does. An id another table renames loses both, because "the other bike's `CELL_COUNT` is 80" is not a fact about `RegenFade_0`.
 
 ### Service mode
 
@@ -442,7 +484,7 @@ Reading them is a thing you **do**, from the phone: **Menu → Service mode → 
 
 ### Probing one identifier
 
-The sweep covers the 277 parameters `src/vcu/param-table.ts` describes: bank 1 on the two VCU micros. **Menu → Service mode → Probe one identifier** reaches anything else — pick the micro, the bank and the index, and it reads that one. What lives out there and nothing here could reach before: **bank 2 is live data** rather than stored settings. Same header, same gate and same single-flight as a sweep.
+The sweep covers the 277 parameters the bike's own table describes: bank 1 on the two VCU micros. **Menu → Service mode → Probe one identifier** reaches anything else — pick the micro, the bank and the index, and it reads that one. What lives out there and nothing here could reach before: **bank 2 is live data** rather than stored settings. Same header, same gate and same single-flight as a sweep.
 
 > ⚠️ This briefly offered a **charge manager** target, on CAN `0x7C3`/`0x7E3`. That pair is wrong and has been removed: **`0x7E3` is the dashboard's request id**, so the option could have questioned the dashboard while the page said otherwise, and `RequestFrameIDs.CHM = 0x7C3` turns out to be a dead enum the manufacturer's own code references nowhere. Node `0xA4` is the charge manager's real 11-bit identity, but the ECU actually answers on **29-bit ISO-TP** — request `0x18DA09F1`, response `0x18DAF109` — which needs `ext: true`, its own RX filter and its own addressing math. That is a feature rather than a constant, so the target is gone rather than re-pointed; the full note is above `VcuTarget` in `src/vcu/param-codec.ts`. Whoever adds it should know it is **off-bus when parked** (it answers only during a live charging session), that identification reads need no SecurityAccess, and that its deeper access uses a CRC-16/CCITT algorithm that is **not** the VCU's bit-swap.
 
@@ -452,8 +494,8 @@ A sweep survives being interrupted: each row is appended to `vcu-params/sweep.pa
 
 ```bash
 node --experimental-strip-types scripts/check-vcu-params.ts   # on a laptop, no bike:
-                                                              # codec, name table, backup CSV, the safety gate,
-                                                              # and the whole write path
+                                                              # codec, all 28 name tables, backup CSV,
+                                                              # the safety gate, and the whole write path
 ```
 
 ### Changing something on the bike
@@ -474,16 +516,18 @@ What may be written is a **closed allowlist of five parameters**, in `src/vcu/wr
 
 ⚠️ **And the bike has to have said which parameter table it runs, or nothing on that list may be written at all.** A parameter is written **by index**, and what an index _means_ comes from the table — but routing (`id → micro`) and record width (`id → datatype`) are identical across all 28 of Energica's tables, so a write under the wrong table goes to the right micro with the right number of bytes, is accepted, reads back cleanly, and has changed a **different parameter**. There is no NRC, no reply shape and no read-back anywhere in that sequence that can report it. 151 of 278 ids carry a different name in at least one other table, and id 249 (`LM_TYPE` in 16406, `R_BRAKE_POPUP` in 16407) is one that was found rather than imagined.
 
-So `src/vcu/table-gate.ts` refuses a parameter write unless **both** micros have named a table this software encodes, and the two ways that can fail are reported differently, because the remedies do not overlap:
+So `src/vcu/table-gate.ts` refuses a parameter write unless **both** micros have named the **same** table and it is one this software carries. The question it asks is "do we have your table?", not "are you this particular motorcycle" — all 28 pass. The ways it can fail are reported differently, because the remedies do not overlap:
 
 | state | what it means | what fixes it |
 | --- | --- | --- |
-| `confirmed` | 276 and 277 both read `0x4017` (or its content-identical twin `0x1017`) | — writes are allowed |
-| `mismatched` | a micro named a table this software does not carry | **no read helps.** Teach `src/vcu/param-table.ts` that table |
+| `confirmed` | 276 and 277 both named a carried table, and the allowlist means the same thing on it | — writes are allowed |
+| `mismatched` | a micro named a table this software does not carry | **no read helps** — but you can fix it: [add your table](#adding-your-bikes-vcu-parameter-table) |
+| `split` | the two micros named **different** tables. Separate EEPROMs, possibly flashed at different times | **no read helps.** Nothing here holds one table per micro; picking one would name half the ids wrongly. Please open an issue with both numbers |
+| `unwritable` | the table is carried, and one of the five allowlisted parameters is not called that on it | `src/vcu/write-targets.ts` needs an entry correct for that table. (No shipped table does this — all 28 agree on ids 16, 48, 49, 258 and 259) |
 | `unusable` | a micro answered with a record the width column forbids, so it named nothing | the framing of that whole sweep is in question |
-| `unread` | one or both micros have never been asked | **a sweep.** The refusal names the read: parameter 277 `TABLE_TYPE_uS` on the A8, `22 11 15`, read-only, no SecurityAccess, expect `0x4017` |
+| `unread` | one or both micros have never been asked | **a sweep.** The refusal names the read: parameter 277 `TABLE_TYPE_uS` on the A8, `22 11 15`, read-only, no SecurityAccess |
 
-> ⚠️ **This bike is in the `unread` state today (2026-08-16), so the gate is shut.** The A9's copy (276) was read on 2026-06-14 and says 16407; the A8's copy (277) has never been read by anyone — and id 249, the one id where the two candidate tables disagree, is an A8 parameter. The two micros hold separate EEPROMs, so one answering is not confirmation of the other.
+> ⚠️ **This bike is in the `unread` state today (2026-08-18), so the gate is shut.** The A9's copy (276) was read on 2026-06-14 and says 16407; the A8's copy (277) has never been read by anyone — and id 249, the one id where the two candidate tables disagree, is an A8 parameter. The two micros hold separate EEPROMs, so one answering is not confirmation of the other.
 >
 > ⚠️ **Seeing the answer and recording it are different acts.** The gate reads the last **sweep's** snapshot (`vcu-params/latest.json`, written in exactly one place: the end of a sweep). "Probe one identifier" performs precisely this read and returns it in an HTTP response that nothing persists — so it is the one-frame way to find out what the bike says, and it cannot open the gate on its own. Run the parameter read and let it finish. The A8 is swept second and 277 is the highest index in the table, so it is the very last thing a sweep asks about — a run the safety gate cuts short is exactly the run that misses it.
 
@@ -510,7 +554,7 @@ The `2E` positive reply never carries the written value, so "the micro accepted 
 - **Sync the bike's clock** — one raw broadcast on CAN `0x120`: `94 FF` plus five bit-packed bytes of **UTC**. Not a diagnostic service at all, and there is no session, no authentication and no reply. The packing is checked against two frames that really went out on 2026-08-16. ⚠️ **This Pi's clock has to earn it**: the sync is refused unless satellite time has arrived recently and agrees, and unless the clock falls in a plausible absolute window — a GPS date-decode bug once stamped 49 772 rows of this bike's log as the year 2060. The confirmation asks _"Is it &lt;date and time&gt;?"_ and the Pi re-checks that the confirmed minute has not passed. There is **no way to read the bike's clock back**, so this is the one action nothing can verify.
 - **Clear stored trouble codes** — OBD Mode 04. ⚠️ **Irreversible**, and the first thing in this project that changes ECU state outside the parameter table. This bike's stored list has been accumulating since before anyone started looking; the freeze frame goes with it.
 
-The UI makes an accidental write hard in four ways: you cannot write until you have **read the current value** (it becomes the compare-and-swap precondition), the confirmation **spells out old → new**, it takes **two taps** and _any_ change to the form disarms it, and the irreversible actions sit in their own block with their own arming. On top of those, an unconfirmed parameter table disables the write button outright and says which of the two blocked states it is — amber and "blocked until a sweep has recorded the A8's `TABLE_TYPE` (277)" for `unread`, red and "this bike's parameter table is not the one this software has" for `mismatched`. Both are shown whether or not the vehicle-state gate is also closed, so a trip out to the bike learns about both at once. The read button and the service actions stay live throughout, on purpose.
+The UI makes an accidental write hard in four ways: you cannot write until you have **read the current value** (it becomes the compare-and-swap precondition), the confirmation **spells out old → new**, it takes **two taps** and _any_ change to the form disarms it, and the irreversible actions sit in their own block with their own arming. On top of those, an unconfirmed parameter table disables the write button outright and says which _kind_ of blocked it is — amber and "blocked until a sweep has recorded the A8's `TABLE_TYPE` (277)" when a read would clear it, red and "this bike's parameter table is not one this software can write against" when nothing on the bus will help. The page branches on the server's `noReadWillHelp`, not on the state name, so a state added later cannot quietly start rendering as "nobody has asked yet" with an instruction that leads nowhere. Both are shown whether or not the vehicle-state gate is also closed, so a trip out to the bike learns about both at once. The read button and the service actions stay live throughout, on purpose.
 
 ⚠️ **`FCHG_CURRENT_GAIN` deserves its own warning.** Its direction of effect is unknown, and this is a real 50/50 rather than a gap someone forgot to close. If it is a _measurement calibration_ — which the name argues for — then raising 225 → 255 makes the bike believe it is drawing ~13 % more than it is, and it would back off **sooner**, not later. It might instead be a gain in the charge PID loop, in which case it changes loop dynamics and can oscillate. The arithmetic that produced 255 in the first place (`75 × 225/255 = 66.18 A`) has since been **retracted**: the wire request was measured at 75 while 66.2 A flowed, and 73.2 A was delivered on another day with no parameter change. Change one thing per charge session.
 

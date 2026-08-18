@@ -117,20 +117,29 @@ function Availability() {
  * Whether the bike has said which parameter table it runs — and what to do when it
  * has not.
  *
- * ⚠️ The two blocked states are rendered DIFFERENTLY on purpose, in colour and in
- * words, because they are not the same problem:
+ * ⚠️ The blocked states are rendered DIFFERENTLY on purpose, in colour and in words,
+ * because they are not the same problem:
  *
- *   mismatched (red)   the bike named a table this software does not carry. No read
- *                      helps; every parameter name on this page may belong to a
- *                      different parameter, and the fix is in the Pi's source.
- *   unread (amber)     nobody has asked the bike yet. One read clears it, and the
- *                      server's `remedy` names exactly which read — parameter, micro,
- *                      request bytes and expected answer.
+ *   no read will help (red)   the bike named a table this software does not carry, the
+ *                             two micros named different tables, or the table is carried
+ *                             and an allowlisted parameter is not called that on it.
+ *                             Every parameter name on this page may belong to a different
+ *                             parameter, and the fix is a table or a change in the Pi's
+ *                             source — the server's `remedy` says which.
+ *   a read will (amber)       nobody has asked the bike yet, or a reply was malformed.
+ *                             One read clears it, and the `remedy` names exactly which —
+ *                             parameter, micro and request bytes.
+ *
+ * ⚠️ The branch is on `noReadWillHelp` rather than on `state`, deliberately. It used to
+ * test `state === "mismatched"`, which quietly made every state added later render as
+ * amber "nobody has asked yet" with an instruction that leads nowhere — and two such
+ * states have since been added (`split`, `unwritable`). The server decides which kind of
+ * blocked this is; this file only decides what colour that is.
  *
  * A single "writes are blocked" would send someone hunting for a software bug when the
  * answer was one frame, or the other way round. The sentences come from the Pi
  * (src/vcu/table-gate.ts) rather than being written again here: deciding what a
- * `TABLE_TYPE` reading means needs the parameter table, and a second copy of that
+ * `TABLE_TYPE` reading means needs all 28 parameter tables, and a second copy of that
  * reasoning in a file the checks cannot reach is the exact drift this gate exists to
  * catch — the same argument /vcu-params makes for computing its banner server-side.
  */
@@ -141,18 +150,18 @@ function TableTypeNote() {
     // green "table confirmed" badge would be one more thing to read past every time.
     return div();
   }
-  const mismatched = table.state === "mismatched";
+  const stuck = table.noReadWillHelp;
   return div(
     div(
-      { style: `color:${mismatched ? BAD : WARN}` },
-      mismatched
-        ? "🚨  Parameter writes are blocked: this bike is running a parameter table this software does not have."
+      { style: `color:${stuck ? BAD : WARN}` },
+      stuck
+        ? "🚨  Parameter writes are blocked: this bike's parameter table is not one this software can write against."
         : "⚠️  Parameter writes are blocked: nothing has confirmed which parameter table this bike runs."
     ),
     div({ style: `color:${MUTED}`, class: "action-note" }, table.reason),
     // The remedy is the reason this is a gate and not a wall, so it gets the emphasis
     // rather than the muted grey the reason sits in.
-    div({ style: `color:${mismatched ? BAD : WARN}`, class: "action-note" }, table.remedy),
+    div({ style: `color:${stuck ? BAD : WARN}`, class: "action-note" }, table.remedy),
     div(
       { style: `color:${MUTED}`, class: "action-note" },
       "Reading is unaffected — a read under the wrong table shows a wrong name and changes nothing, and the way out of this is a read. The service actions below are unaffected too: none of them addresses a parameter by index."
@@ -315,8 +324,8 @@ function WriteButton() {
           // here, and a button that asks for a reading it will then refuse to act on is
           // worse than one that says what is actually wrong. The full sentence and the
           // remedy are in TableTypeNote() above; this is the short form on the control.
-          return table.state === "mismatched"
-            ? "🚨  Blocked — this bike's parameter table is not the one this software has"
+          return table.noReadWillHelp
+            ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
             : // Deliberately "sweep", not "read": the probe shows the answer and stores
               // nothing, so a caption saying "read 277" sends people round a loop that
               // never ends. The full sentence is in TableTypeNote() above.

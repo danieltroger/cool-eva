@@ -1,14 +1,17 @@
 import { interpretRecord } from "./param-codec.ts";
 import {
-  EXPECTED_TABLE_TYPE,
   TABLE_TYPE_INDICES,
+  activeParameterTable,
   checkTableType,
+  contentTwinsOf,
   describeTableType,
   parameterAtIndex,
+  parameterTableFor,
   recordLengthFor,
   type ParameterStorageType,
   type TableTypeVerdict,
   type VcuMicro,
+  type VcuParameter,
 } from "./param-table.ts";
 import type { VcuReadOutcome } from "./kwp-client.ts";
 
@@ -125,7 +128,7 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
   };
 }
 
-/** What a snapshot says about which of Energica's 28 parameter tables this bike runs. */
+/** What a snapshot says about which of Energica's parameter tables this bike runs. */
 export interface TableTypeReport {
   /**
    * One per `TABLE_TYPE` index that yielded a usable typed value. NOT one per index
@@ -133,13 +136,38 @@ export interface TableTypeReport {
    */
   verdicts: TableTypeVerdict[];
   /**
-   * ⚠️ True only when BOTH micros answered usably and both named the expected table.
+   * ⚠️ True only when BOTH micros answered usably, both named a table this software
+   * carries, and the two name the same table.
    *
-   * One micro answering is not confirmation of the other, and treating it as such
-   * would render today's actual state — A9 read, A8 never read, and 249 living on the
-   * A8 — as a clean green line. `unread` and `unusable` say which are missing and why.
+   * One micro answering is not confirmation of the other: they hold separate EEPROMs,
+   * are asked separately, and can genuinely disagree. `unread`, `unusable` and `split`
+   * say which are missing and why.
    */
   confirmed: boolean;
+  /**
+   * The table this snapshot's readings agree on, or null when they do not name exactly
+   * one that this software carries.
+   *
+   * ⚠️ This is what NAMES are taken from, and it is deliberately looser than
+   * `confirmed`: one micro naming a carried table is enough to name parameters far
+   * better than a default would, while still being nowhere near enough to permit a
+   * write. ./table-gate.ts applies the strict rule to writes.
+   *
+   * Two `TABLE_TYPE`s whose 277 rows are byte-identical (4119 and 16407, for instance)
+   * count as agreeing — they are the same table under two vehicle-line tags, and
+   * calling that a disagreement would block a bike for a difference in a nibble nothing
+   * reads.
+   */
+  tableType: number | null;
+  /**
+   * ⚠️ True when the two micros named tables with DIFFERENT contents.
+   *
+   * A finding, not something to average or to resolve by preferring one. The micros hold
+   * separate EEPROMs and can have been flashed at different times; if they disagree, some
+   * ids are one table's and some are the other's, and no single set of names is right for
+   * the whole bike.
+   */
+  split: boolean;
   /** Indices in TABLE_TYPE_INDICES that this snapshot has no reading for at all. */
   unread: number[];
   /**
@@ -152,8 +180,13 @@ export interface TableTypeReport {
    */
   unusable: number[];
   /**
-   * ⚠️ True when a micro named a table this software does not encode. Its parameter
+   * ⚠️ True when a micro named a table this software does not CARRY. Its parameter
    * NAMES are then not to be trusted, and nothing should be written by name.
+   *
+   * Note what this no longer means: it is not "the bike is not the one this repo was
+   * written for". All 28 tables Energica ships in the 2024 build are carried, so a bike
+   * reaching this state is one whose table nobody has extracted yet — and
+   * scripts/extract-vcu-tables.ts is how it stops being true.
    */
   mismatched: boolean;
   /** Ready to log or render, worst first. Never empty — "not read" is itself a finding. */
@@ -174,10 +207,11 @@ export interface TableTypeReport {
  * caller decides whether that becomes a log line, a banner, or both.
  *
  * ⚠️ The two micros are asked SEPARATELY and can disagree. 276 `TABLE_TYPE_uC` is the
- * A9's, 277 `TABLE_TYPE_uS` is the A8's, they sit in separate EEPROMs, and as of
- * 2026-08-16 only the A9's has ever been read on this bike. Id 249 — the one id where
- * 16406 and 16407 disagree — is an A8 parameter, so the A8's answer is the one still
- * outstanding. A per-micro verdict is what makes "they disagree" expressible at all.
+ * A9's, 277 `TABLE_TYPE_uS` is the A8's, and they sit in separate EEPROMs. On the bike
+ * this repo runs on, only the A9's has ever been read (2026-06-14); id 249 — the one id
+ * where 16406 and 16407 disagree — is an A8 parameter, so the A8's answer is the one
+ * still outstanding. A per-micro verdict is what makes "they disagree" expressible at
+ * all, and `split` is what stops a disagreement being averaged away.
  */
 export function reportTableType(snapshot: VcuParameterSnapshot): TableTypeReport {
   const readRows = new Map(snapshot.rows.filter(row => row.status === "read").map(row => [row.index, row]));
@@ -200,25 +234,79 @@ export function reportTableType(snapshot: VcuParameterSnapshot): TableTypeReport
       unread.push(index);
     }
   }
-  const mismatched = verdicts.some(verdict => !verdict.matches);
-  // Worst first: a micro that named the wrong table, then one whose reply was
-  // malformed, then one nobody asked, then the ones that agree. The malformed reply
-  // outranks the unasked micro deliberately — "the record framing is off" is a bigger
-  // problem than "this parameter has not been read", and it questions the whole sweep.
+  const mismatched = verdicts.some(verdict => !verdict.recognised);
+  const agreed = agreedTableType(verdicts);
+  const split = agreed === null && verdicts.filter(verdict => verdict.recognised).length > 1;
+  // Worst first: micros that named different tables, then one that named a table we do
+  // not carry, then one whose reply was malformed, then one nobody asked, then the ones
+  // that agree. The malformed reply outranks the unasked micro deliberately — "the
+  // record framing is off" is a bigger problem than "this parameter has not been read",
+  // and it questions the whole sweep.
   const lines = [
-    ...verdicts.filter(verdict => !verdict.matches).map(verdict => `🚨  ${verdict.message}`),
+    ...(split ? [`🚨  ${describeSplit(verdicts)}`] : []),
+    ...verdicts.filter(verdict => !verdict.recognised).map(verdict => `🚨  ${verdict.message}`),
     ...unusable.map(([index, row]) => `🚨  ${describeUnusableTableType(index, row)}`),
     ...unread.map(index => `⚠️  ${describeUnreadTableType(index)}`),
-    ...verdicts.filter(verdict => verdict.matches).map(verdict => `✅  ${verdict.message}`),
+    ...verdicts.filter(verdict => verdict.recognised).map(verdict => `✅  ${verdict.message}`),
   ];
   return {
     verdicts,
-    confirmed: unread.length === 0 && unusable.length === 0 && !mismatched,
+    confirmed: unread.length === 0 && unusable.length === 0 && !mismatched && !split,
+    tableType: agreed,
+    split,
     unread,
     unusable: unusable.map(([index]) => index),
     mismatched,
     lines,
   };
+}
+
+/**
+ * The one table every recognised reading in a report points at, or null.
+ *
+ * ⚠️ "The same table" means the same CONTENT, not the same number. 4119 and 16407 are
+ * byte-identical 277-row tables under two vehicle-line tags; a bike whose A9 says one and
+ * whose A8 says the other is not split in any way that could give a parameter the wrong
+ * name, and blocking it would be a refusal over a nibble nothing reads.
+ *
+ * The A9's copy (276) wins when both are present and content-identical, so the number
+ * reported is the control micro's own word rather than whichever happened to sort first.
+ */
+function agreedTableType(verdicts: TableTypeVerdict[]): number | null {
+  const recognised = verdicts.filter(verdict => verdict.recognised);
+  if (recognised.length === 0) {
+    return null;
+  }
+  const [first, ...rest] = recognised;
+  const identical = rest.every(
+    verdict => verdict.value === first.value || contentTwinsOf(first.value).includes(verdict.value)
+  );
+  if (!identical) {
+    return null;
+  }
+  return recognised.find(verdict => verdict.index === 276)?.value ?? first.value;
+}
+
+/**
+ * ⚠️ The line for two micros that named genuinely different tables.
+ *
+ * Spelled out rather than reduced to "mismatch" because the remedy depends on HOW they
+ * differ, and because the honest answer may be that the bike really is like that: the two
+ * micros hold separate EEPROMs and can have been flashed at different times. What must not
+ * happen is picking one — half the ids would then be named out of the wrong table with
+ * nothing to show for it.
+ */
+function describeSplit(verdicts: TableTypeVerdict[]): string {
+  const named = verdicts
+    .filter(verdict => verdict.recognised)
+    .map(verdict => `the ${verdict.micro} says ${describeTableType(verdict.value)}`)
+    .join(" and ");
+  return (
+    `*** The two micros name DIFFERENT parameter tables: ${named}. *** They hold separate EEPROMs and are asked ` +
+    "separately, so this can be true of the bike rather than a fault — but no single set of names is then right " +
+    "for the whole VCU, and this software does not carry a per-micro table. Reading is unaffected; writing is " +
+    "refused until they agree or until src/vcu/param-table.ts learns to hold one table per micro."
+  );
 }
 
 /**
@@ -245,20 +333,82 @@ function describeUnusableTableType(index: number, row: VcuParameterRow): string 
 /**
  * One line for a micro that did not name its table.
  *
- * Not silence, and not folded into "some micro said 16407 so we are fine". As of
- * 2026-08-16 this is the line 277 produces on every sweep, and it is the honest state:
- * the A8 owns id 249, id 249 is the only id where 16406 and 16407 disagree, and the A8
- * has never been asked. A green report that omitted it would be the feature failing in
- * exactly the case it was built for.
+ * Not silence, and not folded into "the other micro said 16407 so we are fine". On the
+ * bike this repo runs on this is the line 277 produces on every sweep, and it is the
+ * honest state: the A8 owns id 249, id 249 is the only id where 16406 and 16407 disagree,
+ * and the A8 has never been asked. A green report that omitted it would be the feature
+ * failing in exactly the case it was built for.
  */
 function describeUnreadTableType(index: number): string {
   const parameter = parameterAtIndex(index);
   const identity = parameter ? `${parameter.name} (${index}, ${parameter.micro})` : `parameter ${index}`;
   const owner = parameter ? `the ${parameter.micro}'s` : "this micro's";
   return (
-    `${identity} was not read, so nothing confirms ${owner} names are the ` +
-    `${describeTableType(EXPECTED_TABLE_TYPE)} table's. Reading it costs one frame in a 10 81 session.`
+    `${identity} was not read, so nothing confirms ${owner} names are ` +
+    `${describeTableType(activeParameterTable().tableType)}'s, which is what is being shown. Reading it costs one ` +
+    "frame in a 10 81 session."
   );
+}
+
+/**
+ * Re-derives every row's NAME, section, width, signedness and typed value from the table
+ * the snapshot itself named.
+ *
+ * ⚠️ This is what makes a sweep of somebody else's bike come out right. A row is named
+ * when it arrives, from whatever table was active at that moment — and on a first sweep of
+ * an unfamiliar bike that is a default, because `TABLE_TYPE_uC` is read partway through the
+ * A9 pass and `TABLE_TYPE_uS` at the very end of the A8's. Without this, the first
+ * snapshot off a `RegenFade` bike would be stored, served, exported and diffed with ids
+ * 70–94 labelled `CELL_COUNT`, `CELL_OVERVOLTAGE`, `CELLV_KA` — the exact confusion the
+ * catalogue exists to prevent, written to disk.
+ *
+ * Pure. `null` — which is what `reportTableType(snapshot).tableType` gives when the
+ * readings named no table, or named two different ones — returns the snapshot unchanged:
+ * there is nothing better to re-derive from, and re-deriving from a default would replace
+ * one guess with the same guess.
+ *
+ * ⚠️ The typed `value` is recomputed from `rawHex`, not carried across. Signedness varies
+ * at 30 ids between Energica's tables, so the same two bytes are −350 under one and 65186
+ * under another. Carrying the number forward would keep a value that the new name's own
+ * S/U column contradicts.
+ */
+export function retableSnapshot(snapshot: VcuParameterSnapshot, tableType: number | null): VcuParameterSnapshot {
+  const table = tableType === null ? null : parameterTableFor(tableType);
+  if (!table) {
+    return snapshot;
+  }
+  return { ...snapshot, rows: snapshot.rows.map(row => retableRow(row, table.byIndex.get(row.index) ?? null)) };
+}
+
+function retableRow(row: VcuParameterRow, parameter: VcuParameter | null): VcuParameterRow {
+  const renamed = {
+    ...row,
+    name: parameter?.name ?? null,
+    section: parameter?.section ?? null,
+    type: parameter?.type ?? null,
+    signed: parameter?.signed ?? null,
+    otherBikeValue: parameter?.otherBikeValue ?? null,
+  };
+  if (row.rawHex === null) {
+    return renamed;
+  }
+  const record = bytesFromHex(row.rawHex);
+  const interpreted = interpretRecord(record, parameter);
+  return {
+    ...renamed,
+    unsigned: interpreted.unsigned,
+    value: interpreted.value,
+    widthMismatch: interpreted.widthMismatch,
+    note: interpreted.widthMismatch
+      ? `record is ${record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
+      : null,
+  };
+}
+
+/** `"00 4B"` back to bytes. The snapshot stores the record as hex, and re-typing it means re-reading it. */
+function bytesFromHex(rawHex: string): Uint8Array {
+  const bytes = rawHex.split(/\s+/).filter(part => part.length > 0);
+  return Uint8Array.from(bytes, byte => Number.parseInt(byte, 16));
 }
 
 /** What changed between two snapshots. */
