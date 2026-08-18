@@ -53,9 +53,14 @@ const execFileAsync = promisify(execFile);
 
 interface ForbiddenName {
   /**
-   * The literal to look for, matched case-insensitively so `EMsuite`, `EMSuite`,
-   * `EMSUITE` and `emsuite` are one entry. Assembled from two fragments so it never
-   * appears in this file — see the header.
+   * The literal to look for. Matched case-insensitively, so every capitalisation of a
+   * name is one entry rather than four — the product's own name is written at least
+   * four ways across the manufacturer's material, and all of them are this one line.
+   * Assembled from two fragments so it never appears in this file — see the header.
+   *
+   * ⚠️ And do not spell the variants out in a comment to be helpful. This exact JSDoc
+   * used to list them, which put the name in a tracked file and turned the check red on
+   * itself — caught by this check, in CI, which is the demonstration that it works.
    */
   needle: string;
   /** What the repo writes instead. Printed on failure, so the fix takes seconds. */
