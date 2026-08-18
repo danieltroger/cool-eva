@@ -250,7 +250,7 @@ function summariseTarget(target: WriteTarget): WriteTargetSummary {
  *
  *  • `31 FC` **Set Service Point** takes a routine LOCAL identifier, not a bank-1
  *    parameter index. Routine ids are not in params.ecf at all — they come from
- *    Energica's `Common.dll` (obd-garage/SERVICE_RESET.md §3) — and none of the 28
+ *    the service tool's shared library (obd-garage/SERVICE_RESET.md §3) — and none of the 28
  *    parameter tables says anything about them. `TABLE_TYPE` therefore carries no
  *    information about what `31 FC` does. (It IS ambiguous: SERVICE_RESET.md §7 records
  *    `0xFC` also meaning `VCUCheckSum` in the FLASHING enum. But that ambiguity is per

@@ -38,8 +38,8 @@ import { describeNegativeResponseCode } from "./obd-dtc.ts";
 //     (obd-garage/DIAG_ADDRESSES.md §9.1): service `0x17` was sent 29 times, to
 //     micro A8 and to no other, and every one of the 29 got a POSITIVE `57`
 //     reply. So the service exists on THIS bike, on that micro, and it answers.
-//   • In Energica's own code, 2026-08-16: `Common.dll`'s
-//     `KWP2000::ReadDiagnosticTroubleCodeInformation` emits service byte `0x17`
+//   • In Energica's own code, 2026-08-16: the service tool's shared library has
+//     `KWP2000::ReadDiagnosticTroubleCodeInformation` emitting service byte `0x17`
 //     with a two-byte identifier `[(code & 0xFF00) >> 8, code & 0xFF]`, and its
 //     caller `ReadDTCDetails` does TesterPresent → `10 81` → SetFullDLC → send,
 //     against `MotorbikeECU.VCUSafety`. No SecurityAccess anywhere in that path.
@@ -50,8 +50,8 @@ import { describeNegativeResponseCode } from "./obd-dtc.ts";
 // ⚠️ THE RESPONSE LAYOUT IS NOT PROVEN. The census counted service bytes and
 // discarded the payloads, so no `0x17` reply has ever been recorded.
 //
-// 🟡 What IS known: EMsuite's `DTCode.GetInfoDetails` reads the status from index
-// 3 of its buffer and starts the fields at index 4, walking the DTC's infokeys in
+// 🟡 What IS known: the service tool's `DTCode.GetInfoDetails` reads the status from
+// index 3 of its buffer and starts the fields at index 4, walking the DTC's infokeys in
 // order by datatype width (recovered from IL; the second owner's tool documents
 // the same two constants). Both agree the status sits immediately before the
 // fields. What neither settles is whether that buffer still has the `57` service
@@ -62,7 +62,7 @@ import { describeNegativeResponseCode } from "./obd-dtc.ts";
 //
 // The 5-byte reading is preferred because it makes `0x17` the same shape as its
 // sibling `0x18` ReadDTCByStatus, which was seen on A8 in the same capture and
-// answers `58 <count>` followed by 3-byte `<hi> <lo> <status>` records — EMsuite
+// answers `58 <count>` followed by 3-byte `<hi> <lo> <status>` records — the tool
 // "unconditionally skips payload[0]" before walking those. A `0x17` reply that is
 // that header with exactly one record, then the fields, puts status at index 3
 // and fields at index 4 of a service-byte-less buffer, which is precisely what
@@ -77,8 +77,8 @@ import { describeNegativeResponseCode } from "./obd-dtc.ts";
 // away.
 //
 // ── The OTHER freeze-frame route, deliberately not implemented ──────────────
-// EMsuite has a second one: `KWP2000Moto.ReadFreezeFrame` dumps the whole stored
-// freeze-frame LOG as a stream, via `0x35` RequestUpload with identifier byte
+// The service tool has a second one: `KWP2000Moto.ReadFreezeFrame` dumps the whole
+// stored freeze-frame LOG as a stream, via `0x35` RequestUpload with identifier byte
 // `0x12` (`RoutinesID.ReadFreezeFrame`) and operand `FF`×10, then N × `0x36`
 // TransferData, then `0x37`. That is what the 1198-frame transfer in
 // obd-garage/DIAG_ADDRESSES.md §9.6 actually was: `A8 10 0C 35 12 FF FF FF` is
@@ -93,12 +93,12 @@ import { describeNegativeResponseCode } from "./obd-dtc.ts";
 //
 // ── ⚠️ READ-ONLY, AND STRUCTURALLY SO ──────────────────────────────────────
 // `FreezeFrameRequest` is a closed union with ONE member, and the encoder throws
-// on anything else. `0x17` is a read; the things next to it in EMsuite are not,
+// on anything else. `0x17` is a read; the things next to it in the tool are not,
 // and none of them may ever be expressible here:
 //
 //   • `31 FE` StartRoutine (`RoutinesID.VCUErase`) with the 8-byte operand
 //     `01 00 00 00 01 FF FF FF`, then `33 FE` RequestRoutineResults polled until
-//     it reports 0 — EMsuite's freeze-frame ERASE, and it takes SecurityAccess
+//     it reports 0 — the tool's freeze-frame ERASE, and it takes SecurityAccess
 //     first (`27 01` on A8) where the read takes none. It exists, it is written
 //     down here so nobody has to rediscover it, and it is deliberately not
 //     implemented. It is a flash erase of the bike's own record of why it
@@ -126,7 +126,7 @@ const NEGATIVE_RESPONSE_SERVICE = 0x7f;
  * VCU safety micro, and only A8.
  *
  * Not a parameter, because it is not a choice: all 29 captured `0x17` requests
- * went to A8, EMsuite's own code targets `MotorbikeECU.VCUSafety`, and the
+ * went to A8, the service tool's own code targets `MotorbikeECU.VCUSafety`, and the
  * freeze-frame flash bookkeeping fields (`FlashExt*`, infokeys 102…105) sit with
  * the safety micro. Making the target callable would invite asking A9, which
  * would at best answer nothing and at worst answer something else. The CAN ids
@@ -164,7 +164,7 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([SERVICE_READ_DTC_INFORM
 /**
  * The 8-byte CAN frame that asks for one component's freeze frame.
  *
- * Zero-padded to a full 8-byte DLC because that is what EMsuite sends
+ * Zero-padded to a full 8-byte DLC because that is what the service tool sends
  * (OTHER_TOOL_AUDIT.md §4.3, "full 8-byte DLC") — the length byte governs, but a
  * short frame is a difference from the only known-good sender and this is not the
  * place to introduce one.
@@ -220,7 +220,7 @@ function encodeRequestPayload(request: FreezeFrameRequest): Uint8Array {
  * What the status byte says, beyond the symptom.
  *
  * 🟡 INFERRED, 2026-08-16, and one notch weaker than the layout above: this comes
- * from the second owner's reading of EMsuite's `DTCodeKey` UF* properties
+ * from the second owner's reading of the service tool's `DTCodeKey` UF* properties
  * (obd-garage/OTHER_TOOL_AUDIT.md), not from any capture. It is NOT the generic
  * ISO 14229 DTCStatusMask, which assigns those bits differently — so decoding one
  * of these with a standard scan-tool status decoder gives confident nonsense.
@@ -302,7 +302,7 @@ export interface FreezeFrame {
   /** The fields, in payload order. Empty when the fault's shortlist is empty. */
   values: FreezeFrameValue[];
   /**
-   * False when EMsuite lists no shortlist for the returned pair, in which case
+   * False when the service tool lists no shortlist for the returned pair, in which case
    * `values` is empty because nothing could be decoded — NOT because the frame
    * was empty. The two must not look the same on screen.
    */
@@ -438,7 +438,7 @@ export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponen
     return { kind: "component-mismatch", requested: requestedComponent, received: component, rawHex };
   }
   // The symptom is part of the code's identity, not a status flag: component 8
-  // symptom 3 is U0113 and symptom 4 is U0114. EMsuite's own DTCode.FindDTCFrom
+  // symptom 3 is U0113 and symptom 4 is U0114. The service tool's own DTCode.FindDTCFrom
   // matches on `(status & 240) >> 4`.
   const symptom = (status & 0xf0) >> 4;
 

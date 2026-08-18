@@ -81,8 +81,8 @@ export const LIST_STORED_DTCS_FRAME = "A8 04 18 02 FF FF 00 00";
 /**
  * §D — a constructed `0x18` reply: two components with codes, then padding.
  *
- * Layout per EMsuite's decoder — `58 <count>` then 3-byte `<hi> <lo> <status>`
- * records. The `(0, 0)` third record is the padding EMsuite filters out and this
+ * Layout per the service tool's decoder — `58 <count>` then 3-byte `<hi> <lo> <status>`
+ * records. The `(0, 0)` third record is the padding that tool filters out and this
  * repo counts instead, so that "the micro padded" stays distinguishable from
  * "component 0 has a fault".
  */
@@ -92,7 +92,7 @@ export const STORED_DTC_LIST_FRAMES = ["F1 10 0B 58 03 00 2C 05", "F1 21 00 04 2
 export const STORED_DTC_LIST_EXPECTED = { declaredCount: 3, codes: [0x2c, 0x04, 0x00], paddingRecords: 1 };
 
 /**
- * §D — a constructed bulk-upload block, in the shape EMsuite's
+ * §D — a constructed bulk-upload block, in the shape the service tool's
  * `KWP2000Moto.ReadFreezeFrame` implies: a 4-byte big-endian timestamp (seconds
  * since 2000-01-01), then `<compHi> <compLo> <status>`, then a field block.
  *

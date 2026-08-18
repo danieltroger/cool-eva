@@ -4,11 +4,11 @@ import { lookupInfokey, infokeyWidth, type InfokeyField } from "./infokey-table.
 // one ordered shortlist of ./infokey-table.ts ids per fault. Data only.
 //
 // 155 faults, 944 references, every one resolving into 1…120 with none dangling.
-// Extracted 2026-08-16 from the `DTCodes` JSON embedded in EMSuite.exe (2024
-// build, via the second owner's `dtc_codes.py`); the 2021 build carried the same
-// table with 153 faults and 931 references, and the newer one only ADDS (4,5)
-// U0115 and (35,2) B1021 — no removals and no changes to a shared list. So the
-// two builds are one source carried forward, not two agreeing sources.
+// Extracted 2026-08-16 from the `DTCodes` JSON embedded in the service-tool
+// executable (2024 build, via the second owner's `dtc_codes.py`); the 2021 build
+// carried the same table with 153 faults and 931 references, and the newer one
+// only ADDS (4,5) U0115 and (35,2) B1021 — no removals and no changes to a shared
+// list. So the two builds are one source carried forward, not two agreeing sources.
 //
 // ── ⚠️ THE ORDER IS THE WIRE LAYOUT, NOT A DISPLAY PREFERENCE ───────────────
 // A freeze-frame payload is these fields concatenated in exactly this order, each
@@ -30,14 +30,14 @@ import { lookupInfokey, infokeyWidth, type InfokeyField } from "./infokey-table.
 // answer.
 //
 // ── ⚠️ `serviceToolObdCode` IS A CROSS-CHECK, NOT AN AUTHORITY ──────────────
-// It is what EMsuite calls each (component, symptom) pair, carried so a change in
-// either source shows up as a diff rather than as nothing. Where it disagrees
-// with ./dtc-table.ts, THE DTC TABLE WINS: that table is reconciled against the
-// type-approval PDF and against this bike's own mode-03 reply, and this one is a
-// single vendor build. There are exactly two disagreements today, both the water
-// pump — EMsuite swaps (44,0) and (44,2) relative to the PDF — and
-// scripts/check-freeze-frame.ts asserts that the set is still exactly those two,
-// so a third one cannot appear quietly.
+// It is what the manufacturer's service tool calls each (component, symptom) pair,
+// carried so a change in either source shows up as a diff rather than as nothing.
+// Where it disagrees with ./dtc-table.ts, THE DTC TABLE WINS: that table is
+// reconciled against the type-approval PDF and against this bike's own mode-03
+// reply, and this one is a single vendor build. There are exactly two disagreements
+// today, both the water pump — the tool swaps (44,0) and (44,2) relative to the
+// PDF — and scripts/check-freeze-frame.ts asserts that the set is still exactly
+// those two, so a third one cannot appear quietly.
 //
 // One fault, (60,0) `P1052` BATTERY STATISTICS INFO3, has an EMPTY shortlist. That
 // is Energica's data, not a gap in the extraction, and it decodes to a freeze
@@ -49,7 +49,7 @@ export interface FaultInfokeys {
   component: number;
   /** Which fault of that component, 0…15. */
   symptom: number;
-  /** What EMsuite calls this pair. A cross-check only — see the header. */
+  /** What the service tool calls this pair. A cross-check only — see the header. */
   serviceToolObdCode: string;
   /**
    * The infokey ids, IN PAYLOAD ORDER. May be empty — see the note on (60,0).
@@ -58,13 +58,13 @@ export interface FaultInfokeys {
   infokeys: readonly number[];
 }
 
-/** The shortlist for a (component, symptom) pair, or null when EMsuite lists none. */
+/** The shortlist for a (component, symptom) pair, or null when the service tool lists none. */
 export function infokeysFor(component: number, symptom: number): FaultInfokeys | null {
   return BY_COMPONENT_SYMPTOM.get(key(component, symptom)) ?? null;
 }
 
 /**
- * Every shortlist EMsuite files under an OBD code.
+ * Every shortlist the service tool files under an OBD code.
  *
  * A LIST, because the OBD column is not unique: `U0182` is both (39,3) and
  * (40,3), two different components with the same generic code. Returning one of
@@ -207,7 +207,7 @@ export const FAULT_INFOKEYS: readonly FaultInfokeys[] = [
   shortlist(42, 0, "P0121", [1, 2, 64, 65, 66, 67, 68, 69, 60]),
   shortlist(43, 0, "B1015", [1, 53, 59, 3, 31]),
   shortlist(43, 1, "B1016", [1, 53, 59, 3, 31]),
-  // ⚠️ (44,0) and (44,2): EMsuite says P0A05 / P0A07 where ./dtc-table.ts says
+  // ⚠️ (44,0) and (44,2): the service tool says P0A05 / P0A07 where ./dtc-table.ts says
   // P0A07 / P0A05. The DTC table wins — see this file's header. The SHORTLIST is
   // the same for all three symptoms anyway, so the disagreement changes nothing
   // about what a pump freeze frame contains: pump current, pump module status and

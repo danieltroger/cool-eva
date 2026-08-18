@@ -129,14 +129,14 @@ export const WRITE_TARGETS: WriteTarget[] = [
     // BYTE S per params.ecf, and Energica's own option data gives `mask=0x7F` — bit 7
     // is reserved, so the value field is 0…127 whatever the sign column says. 80 is
     // 0x50, bit 7 clear, so the sign question does not arise at any value on this
-    // list. The unit is literal amperes: EMsuite writes the integer 75 with no
-    // scaling anywhere (obd-garage/EMSUITE_2024.md), and 75 appears verbatim as
+    // list. The unit is literal amperes: the service tool writes the integer 75 with no
+    // scaling anywhere (the 2024 service-tool analysis in obd-garage/), and 75 appears verbatim as
     // `0x4B` in three independent broadcast fields — 0x620 b0, 0x625 b2 and 0x121 b4.
     //
     // The ceiling is 80 because Energica shipped exactly that: OP0002/OP0003/OP0004
     // are "Fast Charge 60 / 75 / 80 Amps", all three writing THIS parameter and
     // nothing else. That is the evidence the owner remembered, and it holds up in two
-    // separate EMsuite builds. It is worth noting how unusual that is in the option
+    // separate service-tool builds. It is worth noting how unusual that is in the option
     // data — `OP0100 Charge Limit 4300` moves four parameters together — so "only
     // this byte" is a positive finding rather than an absence of evidence.
     //
@@ -152,7 +152,7 @@ export const WRITE_TARGETS: WriteTarget[] = [
       "⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.",
       "⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling. This raises the ceiling on an exposure that is already there.",
       "Free check afterwards, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should change from 0x4B to 0x50. If it does not, the write did not take.",
-      "A dealer visit reverts it. EMsuite reinstalls parameter values from Energica's server, keyed by VIN.",
+      "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
     ],
   },
   {
@@ -163,7 +163,7 @@ export const WRITE_TARGETS: WriteTarget[] = [
     // than 75 — which is itself an argument that it does not set the ceiling.
     //
     // ⚠️ There is NO documented range for this parameter. It is not an Energica
-    // option, it does not appear in EMsuite 2021 or 2024 by name, this bike's firmware
+    // option, it does not appear in the 2021 or 2024 service-tool builds by name, this bike's firmware
     // bundle ships no engineering range file, and 225 is the only value anyone has
     // ever seen. So 0…512 is this repo's policy and nothing more: wide enough to hold
     // both "unity" candidates and a doubling either side, narrow enough that a typo
@@ -227,8 +227,8 @@ export const WRITE_TARGETS: WriteTarget[] = [
     // WORD U. This bike reads 0x1113, and every set bit is accounted for:
     //   0x0001 Fast Charge · 0x0002 VCU IO Extension · 0x0010 VCU IO Ext. PRW+
     //   0x0100 PSU type TDK-600W (field mask 0x0760) · 0x1000 Bluetooth STD (field mask 0x3000)
-    // Bit map from Energica's own option data (obd-garage/EMSUITE_2024.md), decode
-    // against the live value in obd-garage/HEATED_GRIPS.md §4.2.
+    // Bit map from Energica's own option data (the 2024 service-tool analysis in
+    // obd-garage/), decode against the live value in obd-garage/HEATED_GRIPS.md §4.2.
     //
     // ONE bit is offered. Not the word.
     control: {

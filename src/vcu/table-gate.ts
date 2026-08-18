@@ -53,8 +53,8 @@ import type { TableTypeReport } from "./snapshot.ts";
 // overlap at all:
 //
 //   mismatched → the bike named a table this software does not carry. No read helps.
-//                The fix is scripts/extract-vcu-tables.ts against your own EMsuite
-//                install, and the remedy below says so in as many words.
+//                The fix is scripts/extract-vcu-tables.ts against your own
+//                service-tool install, and the remedy below says so in as many words.
 //   split      → the two micros named DIFFERENT tables. Also no read; the bike really
 //                may be like that, and no single set of names is right for it.
 //   unwritable → the table is carried, and one of the allowlist's own parameters is not
@@ -293,8 +293,9 @@ function describeMismatchRemedy(indices: number[]): string {
     `⚠️ No read clears ${who} — the bike answered, and the answer is the problem. Writing by index means ` +
     "trusting this software's name for that index, and on the table it named the name may belong to a different " +
     "parameter entirely. ✅ This is fixable by you and does not need a code change: run " +
-    "`node --experimental-strip-types scripts/extract-vcu-tables.ts <your EMSuite.exe>` against your own Energica " +
-    "service-tool install, commit the diff to src/vcu/table-catalog.data.ts and this gate opens. README.md, " +
+    "`node --experimental-strip-types scripts/extract-vcu-tables.ts <the exe>` against your own Energica " +
+    "service-tool install — its main executable, the dealer application itself — commit the diff to " +
+    "src/vcu/table-catalog.data.ts and this gate opens. README.md, " +
     `"Adding your bike's VCU parameter table", is the walkthrough. Carried today: ${KNOWN_TABLE_TYPES.join(", ")}.`
   );
 }

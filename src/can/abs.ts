@@ -3,7 +3,7 @@
 // carries, and the reason this frame was worth chasing.
 //
 // Layout is Energica's own, out of the `FramesDB.ParseABS_INFO` handler in the service
-// tool (obd-garage/EMSUITE_2024.md §`0x0A0` `ABS_INFO`):
+// tool (the 2024 service-tool analysis in obd-garage/, §`0x0A0` `ABS_INFO`):
 //
 //   b0-1 LE  A_F_SPD_SENS   front wheel speed
 //   b2-3 LE  A_R_SPD_SENS   rear wheel speed
@@ -57,7 +57,7 @@ export function decodeAbsFrame(data: Buffer): DecodedValue[] {
   ];
 }
 
-// Energica's `em_telemetry_scaling.csv` gives `A_F_SPD_SENS` / `A_R_SPD_SENS` the equation
+// Energica's own telemetry-scaling table gives `A_F_SPD_SENS` / `A_R_SPD_SENS` the equation
 // `f(x)=x*0.05625` and the unit km/h — one of only four non-identity equations in the whole
 // dictionary. 0.05625 = 3.6/64, i.e. a count is 1/64 m/s, which is a sane way for an ABS
 // ECU to encode a wheel.

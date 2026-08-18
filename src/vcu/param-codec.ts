@@ -137,8 +137,8 @@ export const TESTER_ADDRESS = 0xf1;
  *
  * ── ⚠️⚠️ The charge manager was here, and it was WRONG. Removed 2026-08-16. ──
  * A third target `A4` was added earlier the same day, on request 0x7C3 / response
- * 0x7E3, described as the charge manager. Decompiling the manufacturer's Common.dll
- * showed two things:
+ * 0x7E3, described as the charge manager. Decompiling the service tool's shared
+ * library showed two things:
  *
  *  • **`0x7E3` is DashboardV2's REQUEST id.** So a probe on that pair, believing it
  *    was asking the charge manager, could have been talking to the DASHBOARD. That is

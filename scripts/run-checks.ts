@@ -39,11 +39,11 @@ import { fileURLToPath } from "url";
 //   replay-capture.ts     needs a candump capture — gitignored, and one bike's ride
 //                         history — and serves a dashboard to look at rather than
 //                         asserting anything, so there is no verdict to collect
-//   extract-vcu-tables.ts needs a copy of Energica's EMSuite.exe — ~137 MB of somebody
-//                         else's proprietary installer, which is neither in this repo
-//                         nor on an Actions runner. It is a GENERATOR anyway: it
-//                         rewrites src/vcu/table-catalog.data.ts. What CI checks is the
-//                         output, and it checks it hard — check-vcu-params.ts §1e
+//   extract-vcu-tables.ts needs a copy of the manufacturer's service-tool executable —
+//                         ~137 MB of somebody else's proprietary install, neither in
+//                         this repo nor on an Actions runner. It is a GENERATOR anyway:
+//                         it rewrites src/vcu/table-catalog.data.ts. What CI checks is
+//                         the output, and it checks it hard — check-vcu-params.ts §1e
 //                         rebuilds all 28 tables and compares each against the
 //                         fingerprint the extractor took from Energica's own bundle, so
 //                         a delta that has drifted from the params.ecf text underneath
@@ -142,6 +142,14 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-kwp-multiframe.ts",
     covers:
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
+  },
+  {
+    script: "scripts/check-vendor-names.ts",
+    covers:
+      "that no tracked file names the manufacturer's service-tool product, its executable, its libraries or the " +
+      "tables extracted from it — in its contents or in its own path. The gitignored obd-garage/ notes use those " +
+      "names legitimately and are where they keep being copied from, so this is the check that stops a fact " +
+      "arriving with a product name still attached to it",
   },
   {
     script: "scripts/decode-dtc-response.ts",

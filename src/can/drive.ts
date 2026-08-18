@@ -9,8 +9,8 @@
 //
 // All three re-derived from this bike's own 2026-08-02 garage lap on 2026-08-16
 // (`~/Documents/cool-eva-archive/ride-2026-08-02.log`). Layouts for 0x02C come from
-// Energica's `FramesDB` (obd-garage/EMSUITE_2024.md); 0x125 and 0x127 are not in it at all
-// and are settled by the capture alone.
+// Energica's `FramesDB` (the 2024 service-tool analysis in obd-garage/); 0x125 and 0x127
+// are not in it at all and are settled by the capture alone.
 
 import { type DecodedValue, i16le, u16le } from "./frame.ts";
 
@@ -56,10 +56,11 @@ export function decodeRedundantSpeedFrame(data: Buffer): DecodedValue[] {
 // below −2.0 Nm.
 //
 // ✅ The 0.1 Nm scale has THREE independent sources, which is unusual here and worth stating:
-//  1. Energica states it outright. `em_telemetry_scaling.csv` carries
+//  1. Energica states it outright. Their own telemetry-scaling table carries
 //     `94 D_TRQ_CMD int16_t f(x)=x*0.1 Nm` and `95 D_TRQ_FEED int16_t f(x)=x*0.1 Nm` — an
 //     explicit unit column, not an inference. (`FramesDB` itself carries no scalings at all;
-//     the two files have to be read together. See obd-garage/EMSUITE_2024.md §6.0.)
+//     the two files have to be read together. See the 2024 service-tool analysis in
+//     obd-garage/, §6.0.)
 //  2. The factory Optionals write `MAP1_TORQUE` = 2000 and 2150 for this platform's published
 //     200 Nm and 215 Nm peaks — 0.1 Nm per count from a completely separate document.
 //  3. The capture rules out the neighbouring scales on physics alone. Peak feedback was 482

@@ -368,8 +368,8 @@ async function runReadServiceStamp(
   for (const [field, entry] of Object.entries(SERVICE_STAMP_IDENTIFIERS)) {
     const outcome = await readIdentifier(context, SERVICE_STAMP_MICRO, entry.identifier);
     if (outcome.kind !== "record") {
-      // Named rather than collapsed: SERVICE_RESET.md §2 records EMsuite treating a
-      // refusal here as "this motorcycle does not have the feature", which is a
+      // Named rather than collapsed: SERVICE_RESET.md §2 records the service tool
+      // treating a refusal here as "this motorcycle does not have the feature", which is a
       // different thing from the bus having gone quiet.
       return {
         ok: false,

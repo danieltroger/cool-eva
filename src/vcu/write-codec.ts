@@ -63,8 +63,8 @@ import type { ParameterWritePlan } from "./write-targets.ts";
 //   write refused                                 → 7E0: F1 03 7F 2E 33   (securityAccessDenied)
 //
 // A BYTE write is the same with `len = 04` and one value byte. The routine is from
-// obd-garage/SERVICE_RESET.md §3, decompiled from Energica's `Common.dll` rather
-// than captured: `7C0: A8 02 31 FC` → `7E0: F1 02 71 FC`.
+// obd-garage/SERVICE_RESET.md §3, decompiled from the service tool's shared library
+// rather than captured: `7C0: A8 02 31 FC` → `7E0: F1 02 71 FC`.
 //
 // ── ⚠️ What is proven and what is not, as of 2026-08-16 ──────────────────────
 //  • ✅ The seed→key algorithm. Four real A8 seed/key pairs off this bike's bus
@@ -404,7 +404,7 @@ export type RoutineReply =
  * Decodes one reply to `31`, against the routine that was started. Pure.
  *
  * ⚠️ The expected shape is INFERRED. SERVICE_RESET.md §3 says so in as many words —
- * EMsuite only checks its own `Completed_ACK`, and the positive-response bytes were
+ * the service tool only checks its own `Completed_ACK`, and the positive-response bytes were
  * never logged. So an unexpected shape is reported as `unrecognised` and the caller
  * must treat that as "we do not know whether it ran", never as success. The service
  * point is irreversible; guessing in the optimistic direction is the one thing that

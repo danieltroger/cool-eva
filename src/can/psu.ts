@@ -3,7 +3,7 @@
 // This was CAN_MAP.md's "best remaining stimulus target" — *"four narrow channels with two
 // constant separators"*. There are no separators: it is four little-endian 16-bit channels
 // whose high bytes barely move, and Energica's `FramesDB.ParsePSU_MONITOR` names all four
-// (obd-garage/EMSUITE_2024.md §`0x501` `PSU_MONITOR`):
+// (the 2024 service-tool analysis in obd-garage/, §`0x501` `PSU_MONITOR`):
 //
 //   b0-1 LE u16  P_12V     the 12 V rail
 //   b2-3 LE u16  P_12VLP   a second, lower rail

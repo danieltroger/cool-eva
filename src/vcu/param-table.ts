@@ -198,7 +198,7 @@ export function checkTableType(index: number, value: number): TableTypeVerdict |
       "different parameter — routing and record widths are the same across all of Energica's tables, so a wrong " +
       "name still reads and still writes cleanly. On 20 of the 28 tables shipped in 2024, ids 70–94 are a regen " +
       "curve rather than the battery cell block, so this is not a small difference. Do not write anything by " +
-      "name until the table is added: run scripts/extract-vcu-tables.ts against your own EMsuite install (see " +
+      "name until the table is added: run scripts/extract-vcu-tables.ts against your own service-tool install (see " +
       `README.md) and send the diff. Carried today: ${KNOWN_TABLE_TYPES.join(", ")}.`,
   };
 }

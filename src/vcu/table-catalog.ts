@@ -14,7 +14,7 @@ import { PARAMETER_TABLE_DELTAS } from "./table-catalog.data.ts";
 //
 // ── ⚠️ Why a repo that runs on one motorcycle carries 28 name tables ─────────
 // A VCU calibration parameter is addressed BY INDEX. What index 258 IS depends on which
-// table the VCU runs, and Energica has shipped many: the 2024 EMsuite build selects 28,
+// table the VCU runs, and Energica has shipped many: the 2024 service-tool build selects 28,
 // and `id → name` differs at 151 of 278 ids somewhere among them. Routing (`id → micro`)
 // and record width (`id → datatype`) are IDENTICAL in all 28 — measured, PARAM_TABLES.md
 // §2 — which is precisely what makes the wrong table dangerous instead of obvious: a
@@ -64,8 +64,8 @@ import { PARAMETER_TABLE_DELTAS } from "./table-catalog.data.ts";
 //
 // ⚠️ A fingerprint proves the delta rebuilds the bundle it was taken from. It cannot
 // prove the bundle was labelled correctly in the first place; that comes from the
-// resource NAME inside EMSuite.exe, which is the one thing binding a table to a
-// TABLE_TYPE. scripts/extract-vcu-tables.ts explains why a byte-scan loses it.
+// resource NAME inside the service-tool executable, which is the one thing binding a
+// table to a TABLE_TYPE. scripts/extract-vcu-tables.ts explains why a byte-scan loses it.
 //
 // ── ⚠️ What is NOT in Energica's bundles ─────────────────────────────────────
 // No values (`vehicleValue` is null in all 28) and no `[SECTION]` grouping. Both come
@@ -74,7 +74,10 @@ import { PARAMETER_TABLE_DELTAS } from "./table-catalog.data.ts";
 
 /** One table as ./table-catalog.data.ts stores it. Written by scripts/extract-vcu-tables.ts, not by hand. */
 export interface ParameterTableDelta {
-  /** The number the VCU reports at parameters 276/277, and the `_<TABLE_TYPE>` resource name in EMSuite.exe. */
+  /**
+   * The number the VCU reports at parameters 276/277, and the `_<TABLE_TYPE>` resource
+   * name inside the service-tool executable.
+   */
   tableType: number;
   /** Energica's `yyyyMMddHHmm` export stamp for the bundle. Provenance, and how two builds' copies are compared. */
   exportStamp: string;
@@ -102,7 +105,7 @@ export interface VcuParameterTable {
  */
 export const BASE_TABLE_TYPE = 16406;
 
-/** Every `TABLE_TYPE` this software can describe a bike with, ascending. 28 in the 2024 EMsuite build. */
+/** Every `TABLE_TYPE` this software can describe a bike with, ascending. 28 in the 2024 service-tool build. */
 export const KNOWN_TABLE_TYPES: readonly number[] = PARAMETER_TABLE_DELTAS.map(delta => delta.tableType).sort(
   (left, right) => left - right
 );
@@ -274,7 +277,7 @@ export function buildParameterTable(delta: ParameterTableDelta): VcuParameterTab
       `table-catalog: rebuilding table ${delta.tableType} from params.ecf plus its delta gives fingerprint ` +
         `${rebuilt}, but src/vcu/table-catalog.data.ts records ${delta.fingerprint} for it. The delta and the ` +
         "params.ecf text in src/vcu/param-file.ts no longer agree, so every NAME this table would give is a " +
-        "guess. Regenerate with `node --experimental-strip-types scripts/extract-vcu-tables.ts <EMSuite.exe>`."
+        "guess. Regenerate with `node --experimental-strip-types scripts/extract-vcu-tables.ts <service-tool.exe>`."
     );
   }
   return {

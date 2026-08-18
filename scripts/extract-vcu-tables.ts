@@ -7,20 +7,21 @@ import { PARAMETER_FILE_TEXT, parseParameterFile, type VcuParameter } from "../s
 import { buildParameterTable, fingerprintTable, type ParameterTableDelta } from "../src/vcu/table-catalog.ts";
 import { PARAMETER_TABLE_DELTAS } from "../src/vcu/table-catalog.data.ts";
 
-// Pulls Energica's VCU parameter tables out of EMSuite.exe and writes them into
-// src/vcu/table-catalog.data.ts, which is the file the service actually reads.
+// Pulls Energica's VCU parameter tables out of the manufacturer's service-tool
+// executable and writes them into src/vcu/table-catalog.data.ts, which is the file the
+// service actually reads.
 //
-//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/EMSuite.exe
+//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
 //
 // ── ⚠️ This is the script that makes this repo usable on somebody else's bike ─
 // A VCU addresses its calibration parameters BY INDEX, and what an index means comes
-// from the table the VCU is running. Energica ships many; the 2024 EMsuite build has
+// from the table the VCU is running. Energica ships many; the 2024 service-tool build has
 // 28 and another owner has reported a build with roughly five more, including one for
 // a Corsa. If this repo does not carry your bike's table it will refuse to write
 // anything (src/vcu/table-gate.ts) — correctly, because it would otherwise be writing
 // a number into whichever parameter our table happens to give your name to.
 //
-// So: run this against your own EMsuite install, commit the diff, and the refusal
+// So: run this against your own service-tool install, commit the diff, and the refusal
 // turns into a working tool for one more bike. README.md §"Adding your bike's VCU
 // parameter table" is the walkthrough.
 //
@@ -40,18 +41,18 @@ import { PARAMETER_TABLE_DELTAS } from "../src/vcu/table-catalog.data.ts";
 // hatch and says so.
 //
 // ── ⚠️ THE RESOURCE NAME IS THE ANSWER. Do not byte-scan. ────────────────────
-// EMSuite.exe is a .NET assembly and each table is a ZIP archive stored as a
+// The executable is a .NET assembly and each table is a ZIP archive stored as a
 // `ManifestResource` byte array. The resource is NAMED `_<TABLE_TYPE>` — `_16407` is
 // the table a VCU reporting 16407 runs — and that name is the ONLY thing in the binary
 // that binds a table to the number the bike reports. It is corroborated inside the same
-// exe by 28 compiler-generated accessors (`strings EMSuite.exe | grep '^get__[0-9]*$'`)
+// exe by 28 compiler-generated accessors (`strings <the exe> | grep '^get__[0-9]*$'`)
 // and by Energica's own changelog text ("Parameters bundle 61451 fixed").
 //
 // An earlier attempt scanned the file for ZIP archives instead. That finds MORE
 // archives — 58, because every resource is stored twice, covering 28 distinct export
 // stamps of which only 24 are reachable by a `TABLE_TYPE` name — and it throws the
 // binding away, which is how it managed to identify the wrong table for the bike this
-// repo runs on. Four of those stamps have no numeric resource name at all and EMSuite
+// repo runs on. Four of those stamps have no numeric resource name at all and the tool
 // itself can therefore never select them. Hence: walk the resource directory, take the
 // name, and ignore anything not called `_<digits>`.
 //
@@ -109,15 +110,23 @@ interface ExtractedTable {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_PATH = join(HERE, "..", "src", "vcu", "table-catalog.data.ts");
 
+// The argument is a path on the contributor's own disk, so it is DESCRIBED rather than
+// named: this is a public repo and the manufacturer's product name stays out of it
+// (scripts/check-vendor-names.ts enforces that). Nothing here matches on the file's
+// name, so the description costs the tool nothing — what it actually needs is a .NET
+// assembly carrying `_<TABLE_TYPE>` resources, and the failure path below says exactly
+// that when it gets something else.
 const exePath = process.argv[2];
 if (!exePath) {
   console.error(
-    "usage: node --experimental-strip-types scripts/extract-vcu-tables.ts <EMSuite.exe> [--stdout] [--replace]"
+    "usage: node --experimental-strip-types scripts/extract-vcu-tables.ts <service-tool.exe> [--stdout] [--replace]"
   );
   console.error("");
-  console.error("EMSuite.exe is Energica's service tool. A 2024-era install has it under");
-  console.error("  C:\\Program Files (x86)\\Energica\\EMSuite\\EMSuite.exe");
-  console.error("and the file is large (~137 MB in the 2024 build) because the tables are only a small part of it.");
+  console.error("Point it at the main executable of Energica's Windows service tool — the dealer diagnostic");
+  console.error("application itself, not its installer. A 2024-era install puts it under");
+  console.error("  C:\\Program Files (x86)\\Energica\\<the tool's own directory>\\");
+  console.error("where it is by far the largest file (~137 MB in the 2024 build), because the parameter tables");
+  console.error("are only a small part of it.");
   process.exit(1);
 }
 
@@ -132,9 +141,9 @@ if (tables.length === 0) {
   // be read as "my install has none", which is not a thing that happens.
   console.error(
     `extract-vcu-tables: found NO \`_<TABLE_TYPE>\` resources in ${exePath}, so nothing was written.\n` +
-      "  • It has to be EMSuite.exe ITSELF, not the installer. `energica-setup.msi` holds the exe inside a\n" +
-      "    compressed CAB and nothing here can see through that — install it (or unpack the MSI) first.\n" +
-      "  • If it IS EMSuite.exe, this build stores its parameter bundles differently from the 2021 and 2024\n" +
+      "  • It has to be the service tool's own executable, not the installer. `energica-setup.msi` holds that\n" +
+      "    exe inside a compressed CAB and nothing here can see through it — install it (or unpack the MSI) first.\n" +
+      "  • If it IS that executable, this build stores its parameter bundles differently from the 2021 and 2024\n" +
       "    ones this was written against. Please open an issue with the build version — that is a finding, and\n" +
       "    the reader at the top of this file is where it would be fixed."
   );
@@ -539,7 +548,7 @@ function moduleHeader(): string {
 
 // GENERATED FILE — do not edit by hand. Regenerate with:
 //
-//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/EMSuite.exe
+//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
 //     npx prettier --write src/vcu/table-catalog.data.ts
 //
 // Energica's VCU parameter tables, one entry per \`TABLE_TYPE\` the manufacturer's

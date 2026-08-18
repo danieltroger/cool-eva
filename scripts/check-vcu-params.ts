@@ -546,7 +546,7 @@ expect(damaged.rows[0].value !== -366, "…and must not keep 16407's signed read
 // belongs in the check, where it is a proof rather than a startup cost.
 expect(
   KNOWN_TABLE_TYPES.length === 28,
-  `the 2024 EMsuite build selects 28 tables, the catalogue has ${KNOWN_TABLE_TYPES.length}`
+  `the 2024 service-tool build selects 28 tables, the catalogue has ${KNOWN_TABLE_TYPES.length}`
 );
 expect(
   new Set(KNOWN_TABLE_TYPES).size === KNOWN_TABLE_TYPES.length,
@@ -1879,7 +1879,7 @@ expect(
   "the mismatch remedy must say that reading will not help and name the script that fixes it"
 );
 expect(
-  mismatchedGate.remedy.includes("EMSuite.exe") && mismatchedGate.remedy.includes("README"),
+  mismatchedGate.remedy.includes("service-tool install") && mismatchedGate.remedy.includes("README"),
   "…and must say what the owner needs (their own service-tool install) and where the walkthrough is"
 );
 expect(
@@ -2052,9 +2052,10 @@ expect(
 // ⚠️ THE SERVICE ACTIONS ARE DELIBERATELY NOT GATED, and this is where that decision
 // is pinned down rather than left to a comment. `31 FC` addresses a routine local
 // identifier, which is not a bank-1 parameter index and appears in none of Energica's
-// 28 parameter tables — it comes from Common.dll (SERVICE_RESET.md §3). Mode 04 and the
-// 0x120 clock broadcast carry no identifier at all. So the reasoning that motivates the
-// gate does not reach them, and blocking them would be a refusal resting on evidence
+// 28 parameter tables — it comes from the service tool's shared library
+// (SERVICE_RESET.md §3). Mode 04 and the 0x120 clock broadcast carry no identifier at
+// all. So the reasoning that motivates the gate does not reach them, and blocking them
+// would be a refusal resting on evidence
 // with no bearing on the action. The type system carries the argument: a routine
 // request has nowhere to put a table type.
 expect(
@@ -2150,7 +2151,7 @@ expect(
 );
 
 // ── 16. The service stamp, mode 04, the bus lease and the request parser ───
-// A8's last-service block, decoded the way EMsuite's own GetMotorbikeService() does.
+// A8's last-service block, decoded the way the service tool's own GetMotorbikeService() does.
 // ⚠️ Untried on this bike: these four identifiers sit outside params.ecf's 1…277 and
 // no sweep has ever reached them.
 const stampNow = Date.UTC(2026, 7, 16, 12, 0, 0);

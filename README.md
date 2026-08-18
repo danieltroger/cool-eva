@@ -451,12 +451,14 @@ So every sweep reads its own table type back, says so in the journal and at the 
 If your VCU reports a `TABLE_TYPE` that is not in the 28 (Energica has shipped more since; another owner reports a build with about five more, one of them for a Corsa), the tool refuses to write anything and tells you this. Fixing it takes one command and no reverse engineering:
 
 ```bash
-# 1. find EMSuite.exe in your own Energica service-tool install. On Windows it is
-#    typically C:\Program Files (x86)\Energica\EMSuite\EMSuite.exe — copy it
-#    anywhere; the script only reads it.
+# 1. find the main executable of your own Energica service-tool install — the dealer
+#    diagnostic application itself, not its installer. On Windows it lands under
+#    C:\Program Files (x86)\Energica\, in the tool's own subdirectory, where it is by
+#    far the largest file (~137 MB in the 2024 build). Copy it anywhere; the script
+#    only reads it.
 # 2. regenerate the catalogue from it (works on macOS/Linux/Windows — no .NET tooling,
-#    no EMsuite install needed on the machine you run it on, just the file)
-node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/EMSuite.exe
+#    and nothing has to be installed on the machine you run it on, just the file)
+node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
 
 # 3. tidy and check
 npx prettier --write src/vcu/table-catalog.data.ts
@@ -468,7 +470,7 @@ npm test
 
 **It merges, it does not overwrite.** Energica builds do not all carry the same tables — the 2021 build has 18 where the 2024 one has 28, and the ten it lacks include every table with the battery cell block — so running it against an older install adds what yours has and keeps what the repo already had. A `TABLE_TYPE` present in both with _different_ content stops the script rather than picking a side: every table shared between the two builds seen so far is byte-identical, export stamp included, so a conflict is a finding worth an issue.
 
-The tables are ZIP archives stored as .NET resources inside the exe, and the **resource name is the answer**: `_16407` is the table a VCU reporting 16407 runs. That name is the only thing in the binary binding a table to the number your bike reports, which is why the script walks the resource directory rather than scanning the file for ZIPs — a scan finds more archives (each is stored twice, and four have no `TABLE_TYPE` name at all, so EMsuite itself can never select them) and throws the binding away.
+The tables are ZIP archives stored as .NET resources inside the exe, and the **resource name is the answer**: `_16407` is the table a VCU reporting 16407 runs. That name is the only thing in the binary binding a table to the number your bike reports, which is why the script walks the resource directory rather than scanning the file for ZIPs — a scan finds more archives (each is stored twice, and four have no `TABLE_TYPE` name at all, so the service tool itself can never select them) and throws the binding away.
 
 Each table is stored as a **delta against `params.ecf`** — the ids whose name or signedness differ — because `id → micro` and `id → datatype` never vary. All 28 come to ~46 KB of source that way, against ~1.1 MB as standalone tables, which matters on a Pi Zero. Each carries a fingerprint taken from Energica's own bundle, and rebuilding a table checks against it, so a delta that has drifted from the `params.ecf` text underneath it is a loud failure rather than a subtly wrong name table.
 
@@ -531,7 +533,7 @@ So `src/vcu/table-gate.ts` refuses a parameter write unless **both** micros have
 >
 > ⚠️ **Seeing the answer and recording it are different acts.** The gate reads the last **sweep's** snapshot (`vcu-params/latest.json`, written in exactly one place: the end of a sweep). "Probe one identifier" performs precisely this read and returns it in an HTTP response that nothing persists — so it is the one-frame way to find out what the bike says, and it cannot open the gate on its own. Run the parameter read and let it finish. The A8 is swept second and 277 is the highest index in the table, so it is the very last thing a sweep asks about — a run the safety gate cuts short is exactly the run that misses it.
 
-The gate applies to the **two parameter actions and nothing else**. The service actions below are deliberately exempt: `31 FC` takes a routine local identifier that appears in none of the 28 parameter tables (it comes from Energica's `Common.dll`), Mode 04 and the `0x120` clock broadcast carry no identifier at all, and the service stamp reads ids 1000-1003, outside `params.ecf` entirely. Gating them would be a refusal resting on evidence with no bearing on the action — and reads stay ungated for the reason that matters most: the way out of `unread` **is** a read.
+The gate applies to the **two parameter actions and nothing else**. The service actions below are deliberately exempt: `31 FC` takes a routine local identifier that appears in none of the 28 parameter tables (it comes from the service tool's shared library), Mode 04 and the `0x120` clock broadcast carry no identifier at all, and the service stamp reads ids 1000-1003, outside `params.ecf` entirely. Gating them would be a refusal resting on evidence with no bearing on the action — and reads stay ungated for the reason that matters most: the way out of `unread` **is** a read.
 
 Anything not on that list is rejected **in the pure codec**, not in the UI — `planWrite("CELL_OVERVOLTAGE", …)` returns a refusal that names what _is_ writable, and `src/vcu/write-codec.ts` re-derives the plan from the allowlist immediately before building the frame, so a plan assembled by hand or arriving over HTTP cannot become bytes. The table gate is enforced in the same place and on the same terms: `buildWriteFrame` re-judges the table-type report from the **raw words the bike sent**, never from the report's own `confirmed` flag, so forging one is useless — you would have to claim the bike answered `0x4017`, and if it did then the write was correct. `VSM_CONFIG_1` is offered as a **bit toggle and never as a word**: the same word carries the PSU type (`0x0760`) and the Bluetooth variant (`0x3000`), and a fat-fingered word write would reconfigure both. The new word is computed from the one the bike currently holds, and the pure layer asserts that only the one mask moved.
 

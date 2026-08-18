@@ -16,7 +16,7 @@ import type { VcuTarget } from "./param-codec.ts";
 // ── ⚠️ WHAT THIS GIVES THAT `0x17` DOES NOT ────────────────────────────────
 // Timestamps and history. `0x17` answers "what was the bike doing when component
 // N last latched" — one record per component, no date on it. This is the whole
-// stored LOG: every freeze frame the micro has kept, each (per EMsuite's
+// stored LOG: every freeze frame the micro has kept, each (per the service tool's
 // `KWP2000Moto.ReadFreezeFrame`) a 4-byte big-endian timestamp in seconds since
 // 2000-01-01, then `<compHi> <compLo> <status>`, then the same info-key field
 // block ../diagnostics/freeze-frame.ts decodes.

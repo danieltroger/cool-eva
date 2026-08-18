@@ -9,14 +9,14 @@
 // function is a decision that can be reviewed at all.
 //
 // ── ⚠️ What is proven and what is not ────────────────────────────────────────
-//  • ✅ The stamp's ADDRESSES and ENCODING are decompiled from Energica's own
-//    EMSuite.exe (`ControlMotorbikeOverview_AvailableActions.GetMotorbikeService()`,
+//  • ✅ The stamp's ADDRESSES and ENCODING are decompiled from Energica's own service
+//    tool (`ControlMotorbikeOverview_AvailableActions.GetMotorbikeService()`,
 //    obd-garage/SERVICE_RESET.md §2) — four bank-1 WORDs on A8, ids 1000-1003, the
 //    date being a 32-bit count of seconds since 2000-01-01 UTC.
 //  • ❌ Not one of those four identifiers has ever been read off this bike. The sweep
 //    covers indices 1…277 and these are 1000…1003, which is outside it entirely. So
 //    "A8 answers these" is an expectation, not an observation, and the failure mode
-//    if it is wrong is a negative response — which SERVICE_RESET.md §2 says EMsuite
+//    if it is wrong is a negative response — which SERVICE_RESET.md §2 says the tool
 //    itself treats as "this bike does not have the feature".
 //  • ❌ Mode 04 has never been sent by anything in this repo.
 
@@ -229,15 +229,15 @@ export function checkPiClock(evidence: PiClockEvidence): PiClockVerdict {
 // ── Setting the bike's own clock ────────────────────────────────────────────
 //
 // ✅ THE MECHANISM EXISTS, and it is not a diagnostic service at all. Energica's
-// "Sync RTC" is `KWP2000Moto.UpdateRTC()` in Common.dll, and all it does is put ONE
-// raw broadcast on CAN `0x120`: a `94 FF` header followed by five bit-packed bytes of
-// **UTC**, zero-padded to eight. No session, no SecurityAccess, no reply — the method
-// takes a host-side bus mutex, sends, sleeps 100 ms and returns true unconditionally.
-// EMsuite fires it automatically on every connect, after both diagnostic sessions
-// have been stopped, so the VCU accepts it with nothing open.
+// "Sync RTC" is `KWP2000Moto.UpdateRTC()` in the service tool's shared library, and all
+// it does is put ONE raw broadcast on CAN `0x120`: a `94 FF` header followed by five
+// bit-packed bytes of **UTC**, zero-padded to eight. No session, no SecurityAccess, no
+// reply — the method takes a host-side bus mutex, sends, sleeps 100 ms and returns true
+// unconditionally. The tool fires it automatically on every connect, after both
+// diagnostic sessions have been stopped, so the VCU accepts it with nothing open.
 //
 // There is NO diagnostic route to the clock. Searched exhaustively: `SendFrame(288,…)`
-// occurs exactly once in the whole of Common.dll, the `RoutinesID` enum has no clock
+// occurs exactly once in the whole of that library, the `RoutinesID` enum has no clock
 // routine, and no parameter named for a clock exists in params.ecf, in any of the 28
 // firmware bundles' parameter tables, or in the VCU telemetry dictionary.
 //

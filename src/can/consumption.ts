@@ -1,7 +1,7 @@
 // The VCU's own consumption figures, CAN 0x10B `VCU_VEHICLE_CONSUMPTION` at 10 Hz.
 //
 // Layout is Energica's, from `FramesDB.ParseVCU_VEHICLE_CONSUMPTION`
-// (obd-garage/EMSUITE_2024.md §`0x10B`):
+// (the 2024 service-tool analysis in obd-garage/, §`0x10B`):
 //
 //   b0-1 LE u16  V_INST_KM_KWH        instantaneous, km/kWh
 //   b2-3 LE u16  V_INST_KWH_100KM     instantaneous, kWh/100 km

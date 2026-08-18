@@ -1,0 +1,220 @@
+import { execFile } from "child_process";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { promisify } from "util";
+
+// Fails the build if the manufacturer's service-tool product name — or any of the file
+// and library names that only exist inside it — appears anywhere in a TRACKED file.
+//
+//     node --experimental-strip-types scripts/check-vendor-names.ts
+//
+// ## Why this check exists
+//
+// This is a public repo and the owner does not want a third-party product name in it.
+// It was scrubbed by hand on 2026-08-16 and was back within a dozen PRs, 92 lines
+// across 27 files. Not through carelessness: the reverse-engineering notes under
+// `obd-garage/` are gitignored, they are where nearly every fact in src/vcu/ and
+// src/diagnostics/ came from, and they use the real names throughout — correctly, since
+// they are local-only. So anybody (human or agent) who reads them to write a comment
+// copies the name across without ever deciding to. A review catches it sometimes. A
+// grep catches it every time, which is the difference between a policy and a rule.
+//
+// The names are NOT the valuable part of those comments. What is valuable is the
+// provenance — proven vs inferred, which build, which section, how many rows agreed —
+// and none of that needs a product name to survive. Replace the name, keep the claim.
+//
+// ## ⚠️ Why the needles are spelled `"em" + "suite"`
+//
+// This file is itself a tracked file, so it is scanned by its own check. A needle
+// written as a single literal would sit in this source AS that literal, the check would
+// find itself on its first run, and the build would be permanently red with no fix short
+// of deleting the check. Splitting each needle across two string literals means the
+// forbidden text never exists in the file at all — it comes into being at runtime, after
+// the `+`. That is deliberately better than an exemption: there is no path this check
+// skips and no file whose contents it declines to read, so nothing can be hidden from it
+// by being moved into the one file it does not look at. Do not "tidy" the concatenations.
+//
+// ## Tracked files only, and that is load-bearing
+//
+// `git grep` with no tree-ish searches the working tree, restricted to files git tracks.
+// `obd-garage/` is gitignored, so it is invisible here by construction rather than by an
+// ignore list this check maintains — which is what we want, because those notes must
+// keep the real names. `manuals`, `Energica_Manuals`, `vcu-params`, ride logs and
+// `node_modules` are out for the same reason.
+//
+// ## What it cannot do
+//
+// It sees text, not intent, and it only knows the names written down below. A new
+// artefact name out of the same tool needs a new entry here. If git is missing or this
+// is not a checkout, the check FAILS rather than passing: a check that could not look is
+// not a check that found nothing.
+
+const execFileAsync = promisify(execFile);
+
+interface ForbiddenName {
+  /**
+   * The literal to look for, matched case-insensitively so `EMsuite`, `EMSuite`,
+   * `EMSUITE` and `emsuite` are one entry. Assembled from two fragments so it never
+   * appears in this file — see the header.
+   */
+  needle: string;
+  /** What the repo writes instead. Printed on failure, so the fix takes seconds. */
+  instead: string;
+}
+
+/**
+ * Everything that must not appear. One entry covers every case variant and every longer
+ * name built on it: the product name also catches its `.exe`, any path under a directory
+ * named for it, and the `*_2024` / `*_FILES` notes in `obd-garage/` when a comment cites
+ * them by filename.
+ */
+const FORBIDDEN_NAMES: readonly ForbiddenName[] = [
+  {
+    needle: "em" + "suite",
+    instead:
+      'the product itself is "the manufacturer\'s service tool" (or just "the service tool" once that is ' +
+      'established, and "the tool" inside the same paragraph); its binary is "the service-tool executable"; a ' +
+      'build of it is "the 2024 service-tool build". To cite the gitignored notes, write "the 2024 service-tool ' +
+      'analysis in obd-garage/" or "the service-tool file analysis in obd-garage/" and keep the § number.',
+  },
+  {
+    needle: "common" + ".dll",
+    instead: "the shared library the tool's KWP code lives in — write \"the service tool's shared library\".",
+  },
+  {
+    needle: "common" + ".canbusdb",
+    instead: "the tool's frame/signal database — write \"the manufacturer's CAN signal database\".",
+  },
+  {
+    needle: "common" + ".network",
+    instead: "the tool's transport library — write \"the service tool's network library\".",
+  },
+  {
+    needle: "em" + "_fault_codes",
+    instead: 'a table extracted from the tool — write "the manufacturer\'s fault-code table".',
+  },
+  {
+    needle: "em" + "_telemetry_scaling",
+    instead: 'a table extracted from the tool — write "the manufacturer\'s telemetry-scaling table".',
+  },
+  {
+    needle: "em" + "_parameter_dictionary",
+    instead: 'a table extracted from the tool — write "the manufacturer\'s parameter dictionary".',
+  },
+  {
+    needle: "em" + "cvoc",
+    instead: "the tool's bundle resource — write \"the manufacturer's parameter bundles\".",
+  },
+];
+
+/** Enough for any plausible failure; a clean run produces nothing at all on stdout. */
+const MAX_GIT_OUTPUT_BYTES = 32 * 1024 * 1024;
+
+const projectDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const needles = FORBIDDEN_NAMES.map(forbidden => forbidden.needle);
+
+const trackedPaths = await listTrackedPaths(projectDir);
+const failures: string[] = [];
+
+// 1. The paths themselves. A file or directory NAMED for the product would carry it in
+//    every import statement, and no amount of content grepping would see it.
+for (const path of trackedPaths) {
+  const lowered = path.toLowerCase();
+  for (const forbidden of FORBIDDEN_NAMES) {
+    if (lowered.includes(forbidden.needle)) {
+      failures.push(`${path} — the PATH itself carries "${forbidden.needle}". ${forbidden.instead}`);
+    }
+  }
+}
+
+// 2. The contents. One `git grep` for every needle at once: it is the same tool the
+//    acceptance criterion is stated in, it is restricted to tracked files, and `--text`
+//    means the CAD binaries and the lockfile are searched too rather than skipped.
+for (const hit of await grepTracked(projectDir, needles)) {
+  // Every name on the line, not just the first: one comment can easily carry the product
+  // and one of its files, and both have to be rewritten before the line goes green.
+  const guidance = FORBIDDEN_NAMES.filter(forbidden => hit.toLowerCase().includes(forbidden.needle)).map(
+    forbidden => `\n      → ${forbidden.instead}`
+  );
+  failures.push(`${hit}${guidance.join("")}`);
+}
+
+if (failures.length > 0) {
+  console.error(`\nFAILED — ${failures.length} appearance(s) of a name that must not be in this public repo:`);
+  for (const failure of failures) {
+    console.error(`  ✗ ${failure}`);
+  }
+  console.error(
+    "\n  These almost always arrive from obd-garage/, which is gitignored and DOES use the real\n" +
+      "  names, deliberately. Take the fact out of those notes and leave the product name behind:\n" +
+      "  keep the claim, the date, the § reference and the proven/inferred marker, and swap the\n" +
+      "  name for the neutral description above. Do not add an exemption to this check.\n" +
+      "  scripts/check-vendor-names.ts is where the list lives."
+  );
+  process.exit(1);
+}
+
+console.log(
+  `✓ ${trackedPaths.length} tracked files carry none of the ${FORBIDDEN_NAMES.length} forbidden vendor names` +
+    " — in their contents or in their paths"
+);
+console.log("  (obd-garage/ is gitignored and keeps the real names, by design; git grep cannot reach it)");
+
+/** Every file git tracks, from the repo root whatever directory this was invoked from. */
+async function listTrackedPaths(root: string): Promise<string[]> {
+  const { stdout } = await execFileAsync("git", ["ls-files", "-z", "--", ":/"], {
+    cwd: root,
+    maxBuffer: MAX_GIT_OUTPUT_BYTES,
+  });
+  return stdout.split("\0").filter(path => path.length > 0);
+}
+
+/**
+ * Every `path:line:text` in a tracked file matching any needle, case-insensitively.
+ *
+ * Exit status 1 means "no matches", which is the passing case and not an error. Anything
+ * else — git missing, not a checkout, a broken index — is rethrown: this check reporting
+ * success because it could not run would be worse than not having it.
+ */
+async function grepTracked(root: string, patterns: string[]): Promise<string[]> {
+  const args = ["grep", "--no-color", "--line-number", "--ignore-case", "--fixed-strings", "--text"];
+  for (const pattern of patterns) {
+    args.push("-e", pattern);
+  }
+  args.push("--", ":/");
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd: root, maxBuffer: MAX_GIT_OUTPUT_BYTES });
+    return stdout
+      .split("\n")
+      .filter(line => line.length > 0)
+      .map(sanitise);
+  } catch (error) {
+    if (exitStatusOf(error) === 1) {
+      return [];
+    }
+    throw new Error(
+      `check-vendor-names: \`git grep\` failed in ${root}. This check needs a git checkout to know which ` +
+        `files are tracked, and it refuses to pass without one. Cause: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * `--text` can put raw bytes on stdout when a hit lands in one of the CAD binaries.
+ * Control characters are dropped and the line is capped so a red log stays readable.
+ */
+function sanitise(line: string): string {
+  const printable = line.replace(/[\u0000-\u001f\u007f]/g, "\u00b7");
+  return printable.length > 200 ? `${printable.slice(0, 200)}…` : printable;
+}
+
+/** The child's exit status, or null when the failure was not an exit status at all. */
+function exitStatusOf(error: unknown): number | null {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "number") {
+      return code;
+    }
+  }
+  return null;
+}

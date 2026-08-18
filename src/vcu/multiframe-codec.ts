@@ -30,8 +30,8 @@ import type { VcuTarget } from "./param-codec.ts";
 //     RequestUpload is a read because upload means ECU → tester; `0x34` would
 //     make this same segmenter into a flasher. It must never appear.
 //   • `0x31 FE` (`RoutinesID.VCUErase`, operand `01 00 00 00 01 FF FF FF`, then
-//     `33 FE` polled) is EMsuite's freeze-frame ERASE, and it is the thing that
-//     destroys exactly what `0x35`/`0x36`/`0x37` exist to read. It also needs
+//     `33 FE` polled) is the service tool's freeze-frame ERASE, and it is the thing
+//     that destroys exactly what `0x35`/`0x36`/`0x37` exist to read. It also needs
 //     SecurityAccess, where every read here needs none.
 //
 // ../diagnostics/freeze-frame.ts' header lists the same rule for `0x17`'s module,
@@ -178,10 +178,10 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([
 /**
  * `RoutinesID.ReadFreezeFrame`, the identifier byte of the bulk read-out.
  *
- * ⚠️ EMSUITE_2024.md §7.2 calls this a `0x31` routine id. It is not: it is the
- * identifier of a `0x35` RequestUpload, which is why the captured frame is
- * `35 12 …` and not `31 12 …`. Sending `31 12` would be a StartRoutine — a
- * write-class service this repo does not implement anywhere.
+ * ⚠️ The 2024 service-tool analysis in obd-garage/, §7.2, calls this a `0x31` routine
+ * id. It is not: it is the identifier of a `0x35` RequestUpload, which is why the
+ * captured frame is `35 12 …` and not `31 12 …`. Sending `31 12` would be a
+ * StartRoutine — a write-class service this repo does not implement anywhere.
  */
 const ROUTINE_READ_FREEZE_FRAME = 0x12;
 
@@ -218,7 +218,7 @@ const LIST_STORED_DTCS_OPERAND = [0x02, 0xff, 0xff];
  * ISO 14229's TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, …
  * and wrapping. The evidence for a bare `36` on this bike is indirect: the
  * 2026-08-08 census recorded 1198 `0x36` requests as one service with no note of
- * a varying operand, and EMsuite's `KWP2000Moto.ReadFreezeFrame` loops sending
+ * a varying operand, and the service tool's `KWP2000Moto.ReadFreezeFrame` loops sending
  * the service with no counter argument. Neither is a captured payload.
  *
  * If it turns out to need one, the symptom is unambiguous rather than subtle —
@@ -568,11 +568,11 @@ export function isUploadFinished(body: Uint8Array): boolean {
 /**
  * One `58` ReadDTCByStatus reply, split into its records.
  *
- * ⚠️ The LAYOUT is decompiled from EMsuite's decoder, not captured: `58 <count>`
- * then three-byte `<codeHi> <codeLo> <status>` records, which is the shape
- * ../diagnostics/freeze-frame.ts' header argues for from the same source, and
- * which the second owner's tool documents identically (EMsuite "unconditionally
- * skips payload[0]", then walks 3-byte records). `declaredCount` and
+ * ⚠️ The LAYOUT is decompiled from the service tool's decoder, not captured:
+ * `58 <count>` then three-byte `<codeHi> <codeLo> <status>` records, which is the
+ * shape ../diagnostics/freeze-frame.ts' header argues for from the same source, and
+ * which the second owner's tool documents identically (the service tool
+ * "unconditionally skips payload[0]", then walks 3-byte records). `declaredCount` and
  * `trailingHex` are both reported so the first live reply settles it instead of
  * being smoothed over — the same tell `headerBytesThatFit` gives for `0x17`.
  */
@@ -582,14 +582,14 @@ export interface VcuStoredDtcList {
   /**
    * Every record parsed, in wire order, INCLUDING `(0, 0)` padding.
    *
-   * EMsuite filters those out. This does not: a padding record and a real record
+   * The service tool filters those out. This does not: a padding record and a real record
    * for component 0 are the same three bytes, and dropping them here would make
    * "the micro padded its reply" indistinguishable from "the micro had nothing to
    * say about component 0". `paddingRecords` counts them so a caller can filter
    * with the count still visible.
    */
   records: { code: number; status: number }[];
-  /** How many of `records` are `(0, 0)`. EMsuite treats these as padding. */
+  /** How many of `records` are `(0, 0)`. The service tool treats these as padding. */
   paddingRecords: number;
   /** Bytes after the last whole record. Empty if the layout is right. */
   trailingHex: string;

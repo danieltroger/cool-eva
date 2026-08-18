@@ -2,7 +2,7 @@ import type { ParameterTableDelta } from "./table-catalog.ts";
 
 // GENERATED FILE — do not edit by hand. Regenerate with:
 //
-//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/EMSuite.exe
+//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
 //     npx prettier --write src/vcu/table-catalog.data.ts
 //
 // Energica's VCU parameter tables, one entry per `TABLE_TYPE` the manufacturer's

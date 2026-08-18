@@ -2,8 +2,8 @@
 //
 // Energica's `FramesDB.ParseVCU_VEHICLE_FLAGS` names all 64 bits of it — byte 0 bit 0
 // through byte 7 bit 7, one named flag each, no multi-byte fields at all
-// (obd-garage/EMSUITE_2024.md §`0x100` `VCU_VEHICLE_FLAGS`). That makes it the VCU's
-// counterpart to the BMS's own error/warning words on 0x201, and it is handled the same
+// (the 2024 service-tool analysis in obd-garage/, §`0x100` `VCU_VEHICLE_FLAGS`). That
+// makes it the VCU's counterpart to the BMS's own error/warning words on 0x201, and it is handled the same
 // way this repo already handles those: log the raw words so no flag can ever be lost,
 // then break out only the ones worth an alert.
 //

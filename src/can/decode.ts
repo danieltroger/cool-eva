@@ -251,8 +251,8 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // through every real charge in the corpus — four AC sessions including 48 minutes at
     // 14 A, plus the DC session — while the bit it does track is the flash-to-pass.
     //
-    // Energica's own VCU digital list, recovered from EMSuite.exe, names both families
-    // and separates them exactly the way this frame does:
+    // Energica's own VCU digital list, recovered from the service-tool executable, names
+    // both families and separates them exactly the way this frame does:
     //
     //   V_HIGH_BEAM_SW, V_LOW_BEAM_SW, V_L_TURN_SW, V_R_TURN_SW …   ← the switches
     //   V_HIGH_BEAM,    V_LOW_BEAM,    V_LEFT_TURN, V_RIGHT_TURN …  ← the outputs
@@ -351,12 +351,12 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // and this one button byte. ✅
     //
     // ⚠️ The bit NAMES are Energica's, not ours: they come from a free-frame IO table
-    // inside EMSuite.exe (obd-garage/HEATED_GRIPS.md §3.0), and that table describes
-    // every model EMsuite serves rather than this one. A name off a table is not a
-    // measurement — the `charging` key on 0x102 b2 bit 0 came off a third-party table
-    // the same way and is really the high beam (src/vcu/service-gate.ts spells that
-    // out; re-confirmed here, it moves on the same timestamps as high_beam in every
-    // capture where either moves, and does not move at all in the four captures
+    // inside the service-tool executable (obd-garage/HEATED_GRIPS.md §3.0), and that
+    // table describes every model the tool serves rather than this one. A name off a
+    // table is not a measurement — the `charging` key on 0x102 b2 bit 0 came off a
+    // third-party table the same way and is really the high beam (src/vcu/service-gate.ts
+    // spells that out; re-confirmed here, it moves on the same timestamps as high_beam in
+    // every capture where either moves, and does not move at all in the four captures
     // containing a real charge). So each bit below carries what the captures show
     // about it, separately, and the ones the captures cannot speak to say so.
     case 0x400: {
