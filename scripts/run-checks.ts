@@ -39,6 +39,15 @@ import { fileURLToPath } from "url";
 //   replay-capture.ts     needs a candump capture — gitignored, and one bike's ride
 //                         history — and serves a dashboard to look at rather than
 //                         asserting anything, so there is no verdict to collect
+//   extract-vcu-tables.ts needs a copy of Energica's EMSuite.exe — ~137 MB of somebody
+//                         else's proprietary installer, which is neither in this repo
+//                         nor on an Actions runner. It is a GENERATOR anyway: it
+//                         rewrites src/vcu/table-catalog.data.ts. What CI checks is the
+//                         output, and it checks it hard — check-vcu-params.ts §1e
+//                         rebuilds all 28 tables and compares each against the
+//                         fingerprint the extractor took from Energica's own bundle, so
+//                         a delta that has drifted from the params.ecf text underneath
+//                         it fails the build without the exe being anywhere near it.
 //   read-freeze-frame.ts  TALKS TO THE BIKE. It is the live test for the multi-frame
 //                         KWP transport and the only thing in the repo that opens a
 //                         socket outside the service, so it must never be in this

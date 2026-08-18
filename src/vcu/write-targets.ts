@@ -1,5 +1,13 @@
-import { parameterAtIndex, recordLengthFor, type VcuMicro, type VcuParameter } from "./param-table.ts";
+import {
+  activeParameterTable,
+  parameterAtIndex,
+  recordLengthFor,
+  type VcuMicro,
+  type VcuParameter,
+  type VcuParameterTable,
+} from "./param-table.ts";
 import { identifierForIndex } from "./param-codec.ts";
+import { registerAllowlistTableCheck } from "./table-gate.ts";
 import { registerWritePlanVerifier } from "./write-codec.ts";
 
 // THE ALLOWLIST. The only VCU calibration parameters this repo will ever write, the
@@ -34,19 +42,30 @@ import { registerWritePlanVerifier } from "./write-codec.ts";
 //
 // ── ⚠️ The list is a list of NAMES, and a name is a claim about a table ──────
 // Every entry below pairs a name with an index, and which parameter that index IS
-// depends on which of Energica's 28 parameter tables the bike runs. This one runs
-// 16407 (./param-table.ts explains how that was established, 2026-08-16). All five
-// ids here — 16, 48, 49, 258, 259 — are identical in 16406 and 16407, so none of them
-// was ever affected; the one id that differs is 249, which is deliberately not on
-// this list and never was.
+// depends on which of Energica's parameter tables the bike runs. There are two checks
+// for that, and they answer different questions:
 //
-// That is luck rather than design, and parameterFor() below is the part that is not:
-// it re-checks every entry's name against the table at module load, so a bike on a
-// table that renames one of these five refuses to start the service instead of
-// writing 80 into whatever now sits at 258. What it cannot see is a rename in the
-// OTHER direction — a table where some other id is called `MAX_DC_CHG_CURRENT` — which
-// is why ./snapshot.ts's reportTableType() exists and why a sweep says out loud which
-// table the bike named.
+//   parameterFor(), at module load — does the allowlist agree with the table this Pi is
+//     naming parameters from? A code-versus-code check between two files in this repo,
+//     so it THROWS: a service whose own allowlist disagrees with its own name table must
+//     refuse to start rather than write 80 into whatever now sits at index 258.
+//
+//   allowlistProblemsIn(), per write, through ./table-gate.ts — does the allowlist agree
+//     with the table THE BIKE named? That one cannot throw, because the answer belongs to
+//     a motorcycle rather than to a build; it comes back as a refusal with a sentence.
+//     ⚠️ It compares width, signedness and micro as well as the name, because those are
+//     what turn a value into bytes — signedness varies at 30 ids between Energica's
+//     tables, so a table that agreed on every name and disagreed on one S/U column would
+//     still encode −1 as 0xFFFF where the bike expected 0x0001.
+//
+// ✅ As of 2026-08-18 all five ids here — 16, 48, 49, 258, 259 — are identical in name,
+// width, signedness and micro across ALL 28 tables Energica ships in the 2024 build
+// (measured; scripts/check-vcu-params.ts §1e re-measures it on every run). So the second
+// check has nothing to refuse today. It is here for the tables this repo does not have
+// yet: another owner has reported a build carrying roughly five more, one of them for a
+// Corsa. What neither check can see is a rename in the OTHER direction — a table where
+// some other id is called `MAX_DC_CHG_CURRENT` — which is why ./snapshot.ts's
+// reportTableType() exists and why a sweep says out loud which table the bike named.
 //
 // ── ⚠️ NONE OF THIS HAS BEEN TRANSMITTED (2026-08-16) ────────────────────────
 // The write SERVICE, framing and auth rule are proven — obd-garage/DIAG_ADDRESSES.md
@@ -457,10 +476,65 @@ function parameterFor(target: WriteTarget): VcuParameter {
 
 // Checked once, at load, for every entry — so a bad allowlist is a service that
 // refuses to start rather than one that fails at the moment someone presses the
-// button on a parked motorcycle. Same reasoning as param-table.ts's strict parser.
+// button on a parked motorcycle. Same reasoning as param-file.ts's strict parser.
+//
+// ⚠️ This checks against the table this Pi currently NAMES parameters from, which is a
+// default until a bike says otherwise. It is therefore a check on this repo's own
+// consistency and not on any motorcycle — allowlistProblemsIn() below is the one that
+// asks about the bike, and it is the one the gate consults before every write.
 for (const target of WRITE_TARGETS) {
   parameterFor(target);
 }
+
+/**
+ * ⚠️ Everything wrong with writing this allowlist on a bike running `bikeTable`. Empty
+ * means nothing is.
+ *
+ * Registered with ./table-gate.ts at module load and consulted before every parameter
+ * write, alongside the question of whether the bike's table is carried at all. A carried
+ * table is not on its own enough: a table can be one we have, correctly identified, and
+ * still call index 258 something other than `MAX_DC_CHG_CURRENT`.
+ *
+ * ⚠️ It compares the bike's table against the ACTIVE one rather than against the
+ * allowlist alone, because the active table is what buildPlan() will encode with. Name,
+ * storage type, signedness and micro all have to line up: the name is what the owner
+ * asked for, and the other three are what the bytes on the wire will be.
+ */
+export function allowlistProblemsIn(bikeTable: VcuParameterTable): string[] {
+  const problems: string[] = [];
+  for (const target of WRITE_TARGETS) {
+    const onBike = bikeTable.byIndex.get(target.index);
+    if (!onBike) {
+      problems.push(`index ${target.index} (“${target.name}”) is not in table ${bikeTable.tableType} at all`);
+      continue;
+    }
+    if (onBike.name.toUpperCase() !== target.name.toUpperCase()) {
+      problems.push(
+        `index ${target.index} is “${target.name}” here and “${onBike.name}” in table ${bikeTable.tableType}`
+      );
+      continue;
+    }
+    // Cannot be null while the module-load check above holds, and checked anyway: this
+    // function runs long after load, against whatever table is active by then.
+    const encoding = parameterAtIndex(target.index);
+    if (
+      !encoding ||
+      encoding.type !== onBike.type ||
+      encoding.signed !== onBike.signed ||
+      encoding.micro !== onBike.micro
+    ) {
+      problems.push(
+        `${target.name} (index ${target.index}) would be encoded as ` +
+          `${encoding ? `${encoding.type} ${encoding.signed ? "S" : "U"} on ${encoding.micro}` : "nothing at all"}` +
+          ` from table ${activeParameterTable().tableType}, but table ${bikeTable.tableType} stores it as ` +
+          `${onBike.type} ${onBike.signed ? "S" : "U"} on ${onBike.micro}`
+      );
+    }
+  }
+  return problems;
+}
+
+registerAllowlistTableCheck(allowlistProblemsIn);
 
 /**
  * Re-derives a plan from the allowlist and says whether it matches.

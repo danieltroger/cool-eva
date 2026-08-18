@@ -1,6 +1,13 @@
 import type { RawChannel } from "socketcan";
 import { createVcuKwpClient } from "./kwp-client.ts";
-import { PARAMETER_TABLE, type VcuMicro, type VcuParameter } from "./param-table.ts";
+import {
+  activeParameterTable,
+  contentTwinsOf,
+  describeTableType,
+  parameterTable,
+  type VcuMicro,
+  type VcuParameter,
+} from "./param-table.ts";
 import {
   describeRow,
   reportTableType,
@@ -111,7 +118,7 @@ export function startParameterSweep(options: ParameterSweepOptions): RunningPara
     handleFrame: (id, data) => client.handleFrame(id, data),
     abort: reason => abort(state, reason),
     rows: () => [...state.rows.values()],
-    expected: PARAMETER_TABLE.length,
+    expected: parameterTable().length,
     finished,
   };
 }
@@ -237,17 +244,42 @@ async function runSweep(options: ParameterSweepOptions, state: SweepState): Prom
 function reportTableTypeToConsole(snapshot: VcuParameterSnapshot): void {
   const report = reportTableType(snapshot);
   // Three levels, because there are three outcomes and journalctl grades on them:
-  //   error — a micro named a table this software does not encode, or answered with a
-  //           record the table's width forbids. Either invalidates the NAME of every
-  //           row just printed; this is the software describing a different bike.
-  //   warn  — read, no disagreement, but a micro never answered. Expected today (the
-  //           A8's 277 has never been read) and still notable every time, because the
-  //           A8 is the micro that owns the one disputed id.
+  //   error — a micro named a table this software does not carry, the two micros named
+  //           DIFFERENT tables, or a micro answered with a record the table's width
+  //           forbids. Each one invalidates the NAME of some or all of the rows just
+  //           printed; this is the software describing a different bike.
+  //   warn  — read, no disagreement, but a micro never answered. Expected on the bike
+  //           this repo runs on (the A8's 277 has never been read) and still notable
+  //           every time, because the A8 is the micro that owns the one disputed id.
   //   log   — both micros answered and agreed. Routine, and worth recording as such.
   const write =
-    report.mismatched || report.unusable.length > 0 ? console.error : report.confirmed ? console.log : console.warn;
+    report.mismatched || report.split || report.unusable.length > 0
+      ? console.error
+      : report.confirmed
+        ? console.log
+        : console.warn;
   for (const line of report.lines) {
     write(`vcu-sweep: ${line}`);
+  }
+  // ⚠️ Only the STORED snapshot gets re-named from the table the bike just reported
+  // (../vcu/snapshot-store.ts). The 277 lines that scrolled past above were named as
+  // they arrived, from whatever table was active then — and on a first sweep of an
+  // unfamiliar bike that is a default, because 276 is only read partway through the A9
+  // pass. On a `RegenFade` bike those lines say `70 CELL_COUNT 81`, and journalctl is
+  // the artefact you have when the bike is out of wifi range, so the discrepancy is
+  // said out loud rather than left for someone to discover by comparing the two.
+  // ⚠️ contentTwinsOf(), not `!==`. 4119 and 16407 are byte-identical 277-row tables under
+  // two vehicle-line tags, so a bike reporting one while the Pi names from the other has
+  // every name above this line right, and shouting about it would be a false alarm that
+  // teaches people to skim past a real one.
+  const named = report.tableType;
+  const active = activeParameterTable().tableType;
+  if (named !== null && named !== active && !contentTwinsOf(named).includes(active)) {
+    console.warn(
+      `vcu-sweep: ⚠️  the NAMES printed above are ${describeTableType(active)}'s, but this bike runs ` +
+        `${describeTableType(named)} — the snapshot on disk and /params.html are re-named from the bike's own ` +
+        "table, this scrollback is not. Read it again there if a name matters."
+    );
   }
 }
 
@@ -316,7 +348,7 @@ function mayContinue(options: ParameterSweepOptions, state: SweepState): boolean
  * for a re-open on every single parameter.
  */
 function sweepTargets(): VcuParameter[] {
-  return [...PARAMETER_TABLE].sort(
+  return [...parameterTable()].sort(
     (left, right) => MICROS.indexOf(left.micro) - MICROS.indexOf(right.micro) || left.index - right.index
   );
 }

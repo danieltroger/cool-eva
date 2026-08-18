@@ -4,7 +4,7 @@ import { acquireBus, type BusLease } from "./bus-lease.ts";
 import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type RunningProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
-import { PARAMETER_TABLE, type VcuMicro } from "./param-table.ts";
+import { parameterTable, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
 
 // Service mode's engine: decide whether the bike may be serviced, run one parameter
@@ -475,7 +475,7 @@ function readState(context: RunnerContext): VcuReadState {
       startedAt: context.startedAt,
       // What a full sweep will ask about — the whole table, so this cannot drift
       // from what the sweep actually does.
-      expected: PARAMETER_TABLE.length,
+      expected: parameterTable().length,
       tally: tallyOf(context.sweep.rows()),
     };
   }

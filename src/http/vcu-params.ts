@@ -3,6 +3,7 @@ import { join } from "path";
 import type { ServerResponse } from "http";
 import {
   reportTableType,
+  retableSnapshot,
   type TableTypeReport,
   type VcuParameterRow,
   type VcuParameterSnapshot,
@@ -37,12 +38,17 @@ export type VcuParamsResponse =
    * The last snapshot, whole. `complete: false` inside it means the sweep was cut short.
    *
    * `tableType` is derived here rather than in the browser, and that is deliberate:
-   * deciding whether a `TABLE_TYPE` reading matches means knowing which of Energica's
-   * 28 parameter tables src/vcu/param-table.ts encodes, and the page has no way to
-   * import a TypeScript module at runtime. Re-implementing the comparison in
+   * deciding whether a `TABLE_TYPE` reading is one this software carries means holding
+   * all 28 of Energica's parameter tables (src/vcu/table-catalog.ts), and the page has
+   * no way to import a TypeScript module at runtime. Re-implementing the comparison in
    * public/lib/params-page.js would put a second copy of "which table are we" in a
    * file that cannot be checked against the first — which is the same drift this
    * banner exists to catch.
+   *
+   * ⚠️ `snapshot` is served with its rows re-named from that same reading — see
+   * loadLatestSnapshot(). A stored snapshot's names are a DERIVED view, and deriving
+   * them here from the bike's own answer is what keeps a file written under one table
+   * from being read under another.
    */
   | { state: "snapshot"; snapshot: VcuParameterSnapshot; tableType: TableTypeReport }
   /** There is a file and it could not be read or parsed. Never silently rendered as "never read". */
@@ -103,7 +109,16 @@ export async function loadLatestSnapshot(directory: string): Promise<VcuParamsRe
   // the same fault, and the reason string is what someone standing in a garage has to
   // work from.
   try {
-    return { state: "snapshot", snapshot, tableType: reportTableType(snapshot) };
+    const tableType = reportTableType(snapshot);
+    // ⚠️ Re-named from the table the snapshot ITSELF reports, not served as stored.
+    // src/vcu/snapshot-store.ts already does this before writing, so for anything this
+    // version wrote it is a no-op — it is here for the file on an existing Pi, written
+    // before the catalogue existed and therefore carrying whichever table that build
+    // hardcoded. Serving those names on a bike that turns out to be on a `RegenFade`
+    // table would put `CELL_COUNT` on the page next to a regen fade point, which is the
+    // one outcome this whole feature exists to prevent. Cheap and pure, so it is done on
+    // every load rather than gated on a version field the old file does not have.
+    return { state: "snapshot", snapshot: retableSnapshot(snapshot, tableType), tableType };
   } catch (err) {
     console.warn(`vcu-params: ${path} parsed but is not a parameter snapshot:`, err);
     return {

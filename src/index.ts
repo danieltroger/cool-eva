@@ -16,6 +16,13 @@ import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
 import { loadLatestTableType } from "./vcu/snapshot-store.ts";
+import {
+  KNOWN_TABLE_TYPES,
+  activeParameterTable,
+  describeCatalogue,
+  describeTableType,
+  selectParameterTable,
+} from "./vcu/param-table.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -78,11 +85,13 @@ const CAN_IFACE = "can0";
 //     five parameters with per-parameter ranges, a compare-and-swap against a fresh
 //     read, a read-back after every write, and an audit journal in VCU_PARAM_DIR.
 //     ⚠️ Plus one precondition this switch cannot satisfy: a PARAMETER write is
-//     refused until a sweep has read the VCU's own TABLE_TYPE and it names a table
-//     src/vcu/param-table.ts encodes (src/vcu/table-gate.ts). As of 2026-08-16 the
-//     A8's copy, parameter 277, has never been read on this bike, so that gate is
-//     shut and setting this variable alone will not open it. The service actions are
-//     not affected — none of them addresses a parameter by index.
+//     refused until a sweep has read BOTH the VCU's own TABLE_TYPE copies and they
+//     name one table src/vcu/table-catalog.ts carries (src/vcu/table-gate.ts). All 28
+//     Energica ships in its 2024 tool are carried, so this is not "is it that one
+//     bike" — but on the bike this repo runs on the A8's copy, parameter 277, has
+//     never been read, so that gate is shut and setting this variable alone will not
+//     open it. The service actions are not affected — none of them addresses a
+//     parameter by index.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -134,6 +143,64 @@ try {
 let channel: RawChannel | undefined;
 let stopObd: (() => void) | undefined;
 
+// --- Which of Energica's parameter tables is this bike running? ---
+// Asked once at startup from the last sweep's snapshot, so a Pi that has already met
+// this motorcycle names its parameters correctly from the first page load rather than
+// from the next sweep. src/vcu/snapshot-store.ts re-asks at the end of every sweep.
+//
+// ⚠️ Nothing here permits anything. A bike whose table this software does not carry, or
+// whose two micros have never both answered, still reads fine and still cannot be
+// written to — src/vcu/table-gate.ts decides that separately and from the raw words the
+// bike sent, not from what was selected here.
+const startupTableReport = await loadLatestTableType(VCU_PARAM_DIR);
+if (startupTableReport === null) {
+  console.log(
+    `vcu-table: no parameter snapshot in ${VCU_PARAM_DIR}, so parameters are named from ` +
+      `${describeTableType(activeParameterTable().tableType)} until a sweep says otherwise. ` +
+      `${KNOWN_TABLE_TYPES.length} tables carried.`
+  );
+} else {
+  // ⚠️ EVERY finding, not only the ones with a catalogue attached. `unusable` — a micro
+  // that answered with a record the width column forbids — used to fall through to "no
+  // snapshot names a parameter table", which is untrue and drops the one line saying the
+  // record framing of that whole sweep is in question. The page has always treated it as
+  // alarming and the gate gives it its own state; the boot journal was the only surface
+  // still quiet about it.
+  if (!startupTableReport.confirmed) {
+    for (const line of startupTableReport.lines) {
+      console.warn(`vcu-table: ${line}`);
+    }
+  }
+  // ⚠️ Branching on the report's own findings rather than on whether selection failed.
+  // `tableType` is null in both these cases — it only ever holds a table the catalogue
+  // resolved — so `selectParameterTable` could never have reported the problem, and a
+  // branch keyed on that would have been unreachable while the newcomer bike it exists
+  // for fell through to "no snapshot names a parameter table". Which is untrue and
+  // useless: the bike named one, twice.
+  //
+  // The whole catalogue, once, and ONLY here. This is the moment an owner needs it:
+  // every name on their page is another table's, and the useful question is which of
+  // ours is nearest theirs (a neighbouring revision usually differs at a handful of ids;
+  // the other side of the RegenFade split differs at 25). 28 lines at every boot would
+  // be noise; 28 lines when the tool has just said it cannot describe your motorcycle is
+  // the answer.
+  if (startupTableReport.mismatched || startupTableReport.split) {
+    console.warn("vcu-table: the tables this build carries, for comparison —");
+    for (const line of describeCatalogue()) {
+      console.warn(`  ${line}`);
+    }
+  }
+  if (startupTableReport.tableType === null) {
+    console.log(
+      `vcu-table: nothing in ${VCU_PARAM_DIR} names one parameter table this software carries, so parameters are ` +
+        `named from ${describeTableType(activeParameterTable().tableType)} until a sweep says otherwise. ` +
+        `${KNOWN_TABLE_TYPES.length} tables carried.`
+    );
+  } else {
+    selectParameterTable(startupTableReport.tableType);
+  }
+}
+
 // --- Service mode: on-demand VCU parameter reads, started from the dashboard ---
 // Built before the bus so the frame router below can hand it replies. It holds no
 // bus resources, opens no socket of its own and starts nothing: it exists so that
@@ -163,11 +230,11 @@ const vcuWriteRunner = createVcuWriteRunner({
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
   // opinions about whether a motorcycle is safe to touch is one opinion too many.
   gate: () => vcuReadRunner.gate(),
-  // ⚠️ What the last sweep says about which of Energica's 28 parameter tables this
-  // bike runs. A parameter is written BY INDEX and an index only means a parameter
-  // relative to a table, so a write with this unconfirmed is refused — see
-  // src/vcu/table-gate.ts. Read per attempt rather than at startup, so the sweep that
-  // confirms it opens the gate without restarting the service.
+  // ⚠️ What the last sweep says about which of Energica's parameter tables this bike
+  // runs. A parameter is written BY INDEX and an index only means a parameter relative
+  // to a table, so a write is refused unless both micros named a table this software
+  // carries — see src/vcu/table-gate.ts. Read per attempt rather than at startup, so
+  // the sweep that confirms it opens the gate without restarting the service.
   tableType: () => loadLatestTableType(VCU_PARAM_DIR),
 });
 if (SERVICE_WRITE_ENABLED) {

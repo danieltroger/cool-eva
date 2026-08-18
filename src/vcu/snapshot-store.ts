@@ -4,10 +4,12 @@ import {
   describeChange,
   diffSnapshots,
   reportTableType,
+  retableSnapshot,
   type TableTypeReport,
   type VcuParameterRow,
   type VcuParameterSnapshot,
 } from "./snapshot.ts";
+import { selectParameterTable } from "./param-table.ts";
 import type { FileHandle } from "fs/promises";
 
 // Where a parameter sweep's results live on disk, and the four rules about them
@@ -24,6 +26,14 @@ import type { FileHandle } from "fs/promises";
 //  3. **A partial snapshot is kept and labelled, never discarded.** Half the
 //     parameters off a real bike is half a set of facts. `complete: false` is what
 //     stops anything downstream reading it as all of them.
+//  4b. **A finished sweep names its own parameters.** A row is named when it arrives,
+//     from whatever table was active then — and on a first sweep of an unfamiliar bike
+//     that is a default, because `TABLE_TYPE_uC` is only read partway through the A9
+//     pass. So before anything is written, the whole snapshot is re-named from the table
+//     the snapshot ITSELF reports (`retableSnapshot`). Otherwise the first sweep of
+//     another owner's bike is stored, served, exported and diffed under this bike's
+//     names — which on the 20 tables where ids 70–94 are `RegenFade_0…24` means writing
+//     `CELL_COUNT` and `CELL_OVERVOLTAGE` to disk for a bike that has neither.
 //  4. **A worse run never clobbers `latest.json`.** That file is the diff baseline
 //     and what GET /vcu-params and /vcu-backup.csv serve. A run where the bike was
 //     asleep, or one the safety gate cut short after three parameters, is a fact
@@ -163,8 +173,19 @@ export async function loadLatestTableType(directory: string): Promise<TableTypeR
  * that "the bike was asleep, 277 no-session" stays legible as its own result rather
  * than leaving no trace at all. `latest.json` follows rule 4.
  */
-export async function writeSnapshot(directory: string, snapshot: VcuParameterSnapshot): Promise<void> {
+export async function writeSnapshot(directory: string, swept: VcuParameterSnapshot): Promise<void> {
   await mkdir(directory, { recursive: true });
+  // Rule 4b, and it happens before EVERYTHING else in this function: the archive, the
+  // latest file, the diff and the log lines all describe the same rows, so they all have
+  // to describe them under the same names.
+  const report = reportTableType(swept);
+  const snapshot = retableSnapshot(swept, report);
+  if (report.tableType !== null) {
+    // ⚠️ Side effect on purpose, and the only place a sweep sets it. The next read, the
+    // next page load and the next probe all name parameters out of this; selecting it
+    // here means the answer arrives with the sweep rather than a service restart later.
+    selectParameterTable(report.tableType);
+  }
   const baseline = await loadSnapshotFile(join(directory, LATEST_FILE));
   const archivePath = join(directory, `${new Date(snapshot.readAt).toISOString().replace(/:/g, "-")}.json`);
   const serialised = `${JSON.stringify(snapshot, null, 2)}\n`;

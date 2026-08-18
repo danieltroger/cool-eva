@@ -67,16 +67,21 @@ function show(payload) {
 }
 
 /**
- * Whether the names in the table below describe the bike that answered.
+ * Which of Energica's parameter tables the names in the table below came from.
  *
- * The whole point of this line: every name on this page is a claim that the bike runs
- * Energica's parameter table 16407, and the bike will say so itself if asked. It was
- * asked on 2026-06-14, the answer sat unread in a dump for two months, and the table
- * embedded here was one revision out the whole time — right about 276 of 277 names and
- * silently wrong about the 277th. A wrong table is invisible in every other way:
- * routing and record widths are identical across all 28 of Energica's tables, so a
- * bike on the wrong one reads and writes perfectly and merely means something else by
- * every name.
+ * The whole point of this line: every name on this page comes from the table THE BIKE
+ * ITSELF named at 276/277 — the Pi re-names the stored snapshot from it before serving
+ * it — or from a default when the bike has named none. This line is the thing that says
+ * which, and there is no other way to tell: a wrong table is invisible in every other
+ * way, because routing and record widths are identical across all 28 of Energica's
+ * tables, so a bike on the wrong one reads and writes perfectly and merely means
+ * something else by every name.
+ *
+ * That is not hypothetical. This bike was asked on 2026-06-14, the answer sat unread in
+ * a dump for two months, and the table embedded here was one revision out the whole time
+ * — right about 276 of 277 names and silently wrong about the 277th. And on 20 of the 28
+ * tables ids 70–94 are a regen fade curve where the other 8 have the battery cell block,
+ * so on somebody else's bike the same silence would be worth 25 names rather than one.
  *
  * The verdict is computed on the Pi (src/vcu/snapshot.ts, `reportTableType`) so there
  * is exactly one copy of "which table are we" — see the note on the wire shape in
@@ -90,7 +95,10 @@ function showTableType(report) {
   // identically to "both agree" with only an emoji between them — that is the state
   // this bike is in today, and rendering it as normal is the whole failure this line
   // was added to stop.
-  const alarming = report.mismatched || report.unusable.length > 0;
+  // `split` counts as alarming: two micros naming different tables means some of the
+  // names on this page are one table's and some are the other's, which is worse than
+  // either being wrong on its own.
+  const alarming = report.mismatched || report.split || report.unusable.length > 0;
   tableTypeLine.className = alarming ? "mismatch" : report.confirmed ? "" : "unconfirmed";
   if (alarming) {
     // Also into the console, because this is the one finding on this page worth
