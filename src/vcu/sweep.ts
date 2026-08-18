@@ -1,6 +1,12 @@
 import type { RawChannel } from "socketcan";
 import { createVcuKwpClient } from "./kwp-client.ts";
-import { parameterTable, type VcuMicro, type VcuParameter } from "./param-table.ts";
+import {
+  activeParameterTable,
+  describeTableType,
+  parameterTable,
+  type VcuMicro,
+  type VcuParameter,
+} from "./param-table.ts";
 import {
   describeRow,
   reportTableType,
@@ -253,6 +259,20 @@ function reportTableTypeToConsole(snapshot: VcuParameterSnapshot): void {
         : console.warn;
   for (const line of report.lines) {
     write(`vcu-sweep: ${line}`);
+  }
+  // ⚠️ Only the STORED snapshot gets re-named from the table the bike just reported
+  // (../vcu/snapshot-store.ts). The 277 lines that scrolled past above were named as
+  // they arrived, from whatever table was active then — and on a first sweep of an
+  // unfamiliar bike that is a default, because 276 is only read partway through the A9
+  // pass. On a `RegenFade` bike those lines say `70 CELL_COUNT 81`, and journalctl is
+  // the artefact you have when the bike is out of wifi range, so the discrepancy is
+  // said out loud rather than left for someone to discover by comparing the two.
+  if (report.tableType !== null && report.tableType !== activeParameterTable().tableType) {
+    console.warn(
+      `vcu-sweep: ⚠️  the NAMES printed above are ${describeTableType(activeParameterTable().tableType)}'s, but ` +
+        `this bike runs ${describeTableType(report.tableType)} — the snapshot on disk and /params.html are ` +
+        "re-named from the bike's own table, this scrollback is not. Read it again there if a name matters."
+    );
   }
 }
 

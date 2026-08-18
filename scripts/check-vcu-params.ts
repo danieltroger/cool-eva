@@ -408,7 +408,7 @@ expect(
   sweptUnderDefault.rows[0].name === "CELL_COUNT" && sweptUnderDefault.rows[0].value === 81,
   "the fixture is built under the active table, which is 16407 — so it starts out wrong for this bike"
 );
-const retabled = retableSnapshot(sweptUnderDefault, reportTableType(sweptUnderDefault).tableType);
+const retabled = retableSnapshot(sweptUnderDefault, reportTableType(sweptUnderDefault));
 expect(
   retabled.rows[0].name === "RegenFade_0",
   "a snapshot whose own TABLE_TYPE says 4102 must come back named from 4102, not from whatever was active"
@@ -417,9 +417,58 @@ expect(
   retabled.rows[0].section === null && retabled.rows[0].otherBikeValue === null,
   "…and must lose params.ecf's section and comparison value for the renamed id, which described CELL_COUNT"
 );
+const namedNothing = snapshotOf([reading(70, "00 51")]);
 expect(
-  retableSnapshot(sweptUnderDefault, null).rows[0].name === "CELL_COUNT",
+  retableSnapshot(namedNothing, reportTableType(namedNothing)).rows[0].name === "CELL_COUNT",
   "a snapshot that named no table is returned untouched — there is nothing better to re-derive from"
+);
+
+// ⚠️ PER MICRO, because the micros answer separately. A micro that named a table we do
+// not carry has told us it is running something else, and borrowing the other micro's
+// table for its 44 parameters would be a confident wrong label on exactly the half that
+// disagreed. Id 249 lives on the A8, which is the half in question.
+const halfUnknown = snapshotOf([
+  reading(70, "00 51"),
+  reading(249, "00 01"),
+  reading(276, "40 17"),
+  reading(277, "40 20"),
+]);
+const halfRetabled = retableSnapshot(halfUnknown, reportTableType(halfUnknown));
+expect(
+  halfRetabled.rows[0].name === "CELL_COUNT" && halfRetabled.rows[0].value === 81,
+  "the A9 named 16407, which we carry, so its rows are named from it"
+);
+expect(
+  halfRetabled.rows[1].name === null && halfRetabled.rows[1].section === null && halfRetabled.rows[1].value === null,
+  "…and the A8's rows lose their name entirely, because the A8 named a table nobody has extracted"
+);
+expect(
+  halfRetabled.rows[1].rawHex === "00 01" && halfRetabled.rows[1].note?.includes("does not carry") === true,
+  "…keeping the raw bytes, which are the bike's, and saying why there is no name"
+);
+expect(
+  reportTableType(halfUnknown).tableType === null,
+  "…and the report names no table at all, so nothing selects the A9's table process-wide off the back of it"
+);
+// A split names each micro from its OWN table, which is the only honest reading of a bike
+// that says it is like that. Writes stay refused; reading is not the same risk.
+const splitSnapshot = snapshotOf([
+  reading(70, "00 51"),
+  reading(249, "00 01"),
+  reading(276, "40 17"),
+  reading(277, "10 06"),
+]);
+const splitRetabled = retableSnapshot(splitSnapshot, reportTableType(splitSnapshot));
+expect(
+  splitRetabled.rows[0].name === "CELL_COUNT" && splitRetabled.rows[1].name === "LM_TYPE",
+  "under a split, the A9's ids come from 16407 and the A8's from 4102 — 249 is LM_TYPE there"
+);
+// An unread micro is NOT a contradicted one. This is the state this repo's own bike is
+// in: the A9 answered 16407 and the A8 has never been asked, and its rows are still named.
+const a8Unread = snapshotOf([reading(249, "00 01"), reading(276, "40 17")]);
+expect(
+  retableSnapshot(a8Unread, reportTableType(a8Unread)).rows[0].name === "R_BRAKE_POPUP",
+  "a micro that has never answered gets the benefit of the doubt — unread is not contradicted"
 );
 // Signedness varies at 30 ids between Energica's tables, so re-naming has to re-TYPE
 // as well. Carrying the old number forward would keep a value the new S/U column
@@ -430,8 +479,18 @@ expect(
   "id 91 is CELLV_LCA, a signed WORD, under 16407"
 );
 expect(
-  retableSnapshot(signednessSwing, 4102).rows[0].value === 65170,
+  retableSnapshot(signednessSwing, reportTableType(signednessSwing)).rows[0].value === 65170,
   "…and RegenFade_21 under 4102, which is unsigned — so the same two bytes must re-read as 65170"
+);
+// A stored record that is not hex is a damaged file, not a reading. It must not be
+// coerced to 0x00 and handed back as a confident value.
+const damaged = retableSnapshot(
+  { ...signednessSwing, rows: [{ ...signednessSwing.rows[0], rawHex: "ZZ 92" }, ...signednessSwing.rows.slice(1)] },
+  reportTableType(signednessSwing)
+);
+expect(
+  damaged.rows[0].name === "RegenFade_21" && damaged.rows[0].value === -366 && damaged.rows[0].rawHex === "ZZ 92",
+  "a row whose stored hex is not hex keeps what was stored rather than being re-typed from zeros"
 );
 
 // ── 1e. THE CATALOGUE: all 28 of Energica's tables, and that they agree ─────
@@ -1839,10 +1898,13 @@ expect(
   unwritableGate.outstanding.length === 0 && unwritableGate.tableType === 4102,
   "…and nothing is outstanding — both micros answered, and the table they named is reported"
 );
-// ⚠️ And the fail-closed default, which is the property that matters more than any of
-// the above: a build where write-targets.ts never loaded must block every write rather
-// than wave every write through. Restored to the real check immediately afterwards.
-registerAllowlistTableCheck(() => ["stub"]);
+// ⚠️ The mechanism the fail-closed default rests on. The default itself is unreachable
+// from here — importing ./write-targets.ts (which this file does, for WRITE_TARGETS)
+// registers over it at module load — so what is asserted is the property it relies on:
+// a check that reports a problem BLOCKS, on a snapshot that is otherwise perfect. A
+// build where write-targets.ts never loaded gets the default's sentence through this
+// same path. Restored to the real check immediately afterwards.
+registerAllowlistTableCheck(() => ["src/vcu/write-targets.ts has not registered its allowlist with this gate"]);
 expect(
   !evaluateTableGate(reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "40 17")]))).writesAllowed,
   "with no allowlist check registered the gate must refuse, not permit"

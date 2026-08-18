@@ -132,7 +132,7 @@ export function parameterTableFor(tableType: number): VcuParameterTable | null {
   if (!delta) {
     return null;
   }
-  const table = buildTable(delta);
+  const table = buildParameterTable(delta);
   builtTables.set(tableType, table);
   return table;
 }
@@ -253,8 +253,13 @@ function baseTable(): VcuParameter[] {
 /**
  * Rebuilds one table from `params.ecf` plus its delta, and refuses to hand back
  * something that does not match the fingerprint Energica's own bundle produced.
+ *
+ * Exported for scripts/extract-vcu-tables.ts, which round-trips every delta through this
+ * before writing the file — so a contributor whose extraction does not rebuild finds out
+ * from the script rather than from `npm test` one command later. Nothing in the service
+ * calls it directly; parameterTableFor() is the memoised way in.
  */
-function buildTable(delta: ParameterTableDelta): VcuParameterTable {
+export function buildParameterTable(delta: ParameterTableDelta): VcuParameterTable {
   const byIndex = new Map(baseTable().map(parameter => [parameter.index, { ...parameter }]));
   for (const [lineNumber, line] of deltaLines(delta.delta).entries()) {
     applyDeltaLine(delta, line, lineNumber + 1, byIndex);

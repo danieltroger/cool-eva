@@ -118,7 +118,7 @@ export async function loadLatestSnapshot(directory: string): Promise<VcuParamsRe
     // table would put `CELL_COUNT` on the page next to a regen fade point, which is the
     // one outcome this whole feature exists to prevent. Cheap and pure, so it is done on
     // every load rather than gated on a version field the old file does not have.
-    return { state: "snapshot", snapshot: retableSnapshot(snapshot, tableType.tableType), tableType };
+    return { state: "snapshot", snapshot: retableSnapshot(snapshot, tableType), tableType };
   } catch (err) {
     console.warn(`vcu-params: ${path} parsed but is not a parameter snapshot:`, err);
     return {

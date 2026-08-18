@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { inflateRaw } from "zlib";
 import { promisify } from "util";
 import { PARAMETER_FILE_TEXT, parseParameterFile, type VcuParameter } from "../src/vcu/param-file.ts";
-import { fingerprintTable, type ParameterTableDelta } from "../src/vcu/table-catalog.ts";
+import { buildParameterTable, fingerprintTable, type ParameterTableDelta } from "../src/vcu/table-catalog.ts";
 import { PARAMETER_TABLE_DELTAS } from "../src/vcu/table-catalog.data.ts";
 
 // Pulls Energica's VCU parameter tables out of EMSuite.exe and writes them into
@@ -144,6 +144,16 @@ if (tables.length === 0) {
 const base = parseParameterFile(PARAMETER_FILE_TEXT());
 const extracted = tables.map(table => toDelta(table, base));
 const deltas = mergeIntoCatalogue(extracted, replaceEverything);
+
+// ⚠️ Round-tripped BEFORE anything is written: every delta is rebuilt through the same
+// code the service uses and checked against its own fingerprint. The catalogue's own
+// self-check (src/vcu/table-catalog.ts) and scripts/check-vcu-params.ts §1e would both
+// catch a bad delta anyway — but they catch it one command later, and a contributor who
+// has never run this repo's tests would have committed the file by then. Throwing here
+// means the script that produced the fault is the thing that reports it.
+for (const delta of deltas) {
+  buildParameterTable(delta);
+}
 
 const source = renderModule(deltas);
 if (process.argv.includes("--stdout")) {
@@ -559,6 +569,14 @@ function readUnsignedLeb128(assembly: Buffer, position: number): [value: number,
   let shift = 0;
   let cursor = position;
   for (;;) {
+    if (cursor >= assembly.length) {
+      // ⚠️ Loud rather than `undefined & 0x80 === 0` quietly terminating the loop with a
+      // plausible number. This runs on candidate blobs found by scanning for four magic
+      // bytes anywhere in a 137 MB file, so running off the end is a normal way for a
+      // FALSE match to end — and it has to land in `skipped` as one, not produce a
+      // resource map that looks real.
+      throw new Error(`LEB128 at 0x${position.toString(16)} runs off the end of the file`);
+    }
     const byte = assembly[cursor];
     cursor += 1;
     value |= (byte & 0x7f) << shift;

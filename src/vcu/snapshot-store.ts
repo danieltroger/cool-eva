@@ -179,7 +179,7 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   // latest file, the diff and the log lines all describe the same rows, so they all have
   // to describe them under the same names.
   const report = reportTableType(swept);
-  const snapshot = retableSnapshot(swept, report.tableType);
+  const snapshot = retableSnapshot(swept, report);
   if (report.tableType !== null) {
     // ⚠️ Side effect on purpose, and the only place a sweep sets it. The next read, the
     // next page load and the next probe all name parameters out of this; selecting it
