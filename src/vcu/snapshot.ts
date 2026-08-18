@@ -410,16 +410,26 @@ export function retableSnapshot(snapshot: VcuParameterSnapshot, report: TableTyp
     byMicro.set(verdict.micro, verdict.recognised ? parameterTableFor(verdict.value) : null);
   }
   const agreed = report.tableType === null ? null : parameterTableFor(report.tableType);
-  if (byMicro.size === 0 && agreed === null) {
+  // agreedTableType() is null for an empty verdict list, so `agreed` cannot be set here.
+  if (byMicro.size === 0) {
     return snapshot;
   }
   return {
     ...snapshot,
     rows: snapshot.rows.map(row => {
       const table = byMicro.has(row.micro) ? (byMicro.get(row.micro) ?? null) : agreed;
-      const contradicted = byMicro.get(row.micro) === null;
+      const contradicted = byMicro.get(row.micro) === null && !TABLE_TYPE_INDICES.includes(row.index);
       if (table === null && !contradicted) {
-        // Nothing better to say about this micro than what is already stored.
+        // ⚠️ 276/277 land here for a contradicted micro, and that is the point: they are
+        // `TABLE_TYPE_uC`/`_uS`, WORD U, on the same micro in ALL 28 tables
+        // (scripts/check-vcu-params.ts §1e asserts it), which is the invariance the whole
+        // selection mechanism rests on — you can ask a bike which table it runs without
+        // knowing the answer first, and that is exactly as true of a 29th table nobody
+        // has extracted. Stripping them would erase the reading that IS the
+        // contradiction: a stored snapshot whose 277 has no `value` comes back from disk
+        // as "answered with a malformed record", so `mismatched` would flip to false one
+        // restart later and the other micro's table would quietly become the whole VCU's.
+        // Measured before it was fixed, not imagined.
         return row;
       }
       return retableRow(row, table?.byIndex.get(row.index) ?? null, contradicted ? row.micro : null);
@@ -444,9 +454,26 @@ function retableRow(
     signed: parameter?.signed ?? null,
     otherBikeValue: parameter?.otherBikeValue ?? null,
   };
-  const record = row.rawHex === null ? null : bytesFromHex(row.rawHex);
+  if (row.rawHex === null) {
+    // A row that never carried bytes: the NRC, the timeout or the refusal in `note` is
+    // the only thing it has, and it is not this function's to overwrite. Both facts fit.
+    return { ...renamed, note: note(row.note, unnameable) };
+  }
+  const record = bytesFromHex(row.rawHex);
   if (record === null) {
-    return { ...renamed, note: unnameable ?? row.note };
+    // ⚠️ The stored hex is not hex, so nothing here may re-type it — and it must not keep
+    // the OLD table's number under the NEW table's name either, which is the same
+    // "value the name's own S/U column contradicts" this function exists to avoid.
+    // The name is still re-derived, because that comes from the bike's own table and is
+    // right; the reading is withheld, the way interpretRecord() withholds one whose
+    // width contradicts the table.
+    return {
+      ...renamed,
+      unsigned: null,
+      value: null,
+      widthMismatch: false,
+      note: note(row.note, unnameable, `stored record “${row.rawHex}” is not hex, so it could not be re-typed`),
+    };
   }
   const interpreted = interpretRecord(record, parameter);
   return {
@@ -454,10 +481,26 @@ function retableRow(
     unsigned: interpreted.unsigned,
     value: interpreted.value,
     widthMismatch: interpreted.widthMismatch,
-    note: interpreted.widthMismatch
-      ? `record is ${record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
-      : unnameable,
+    note: note(
+      interpreted.widthMismatch
+        ? `record is ${record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
+        : null,
+      unnameable
+    ),
   };
+}
+
+/**
+ * Joins whatever a row has to say about itself, or null when it has nothing.
+ *
+ * ⚠️ Concatenates rather than picking. `note` is the only place a failed row's NRC lives
+ * — `describeRow` and the page both print it and nothing else — so an earlier version of
+ * this that wrote the "no name available" sentence OVER it lost the reason a parameter
+ * had not been read, on exactly the rows a person would be investigating.
+ */
+function note(...parts: (string | null)[]): string | null {
+  const said = parts.filter(part => part !== null && part.length > 0);
+  return said.length === 0 ? null : said.join(" — ");
 }
 
 /**
@@ -476,7 +519,7 @@ function retableRow(
 function bytesFromHex(rawHex: string): Uint8Array | null {
   const parts = rawHex.split(/\s+/).filter(part => part.length > 0);
   if (!parts.every(part => /^[0-9a-fA-F]{1,2}$/.test(part))) {
-    console.warn(`vcu-snapshot: “${rawHex}” is not a hex record, so that row is left exactly as it was stored`);
+    console.warn(`vcu-snapshot: “${rawHex}” is not a hex record, so that row is served with no typed value`);
     return null;
   }
   return Uint8Array.from(parts, byte => Number.parseInt(byte, 16));

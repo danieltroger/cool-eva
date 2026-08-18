@@ -2,6 +2,7 @@ import type { RawChannel } from "socketcan";
 import { createVcuKwpClient } from "./kwp-client.ts";
 import {
   activeParameterTable,
+  contentTwinsOf,
   describeTableType,
   parameterTable,
   type VcuMicro,
@@ -267,11 +268,17 @@ function reportTableTypeToConsole(snapshot: VcuParameterSnapshot): void {
   // pass. On a `RegenFade` bike those lines say `70 CELL_COUNT 81`, and journalctl is
   // the artefact you have when the bike is out of wifi range, so the discrepancy is
   // said out loud rather than left for someone to discover by comparing the two.
-  if (report.tableType !== null && report.tableType !== activeParameterTable().tableType) {
+  // ⚠️ contentTwinsOf(), not `!==`. 4119 and 16407 are byte-identical 277-row tables under
+  // two vehicle-line tags, so a bike reporting one while the Pi names from the other has
+  // every name above this line right, and shouting about it would be a false alarm that
+  // teaches people to skim past a real one.
+  const named = report.tableType;
+  const active = activeParameterTable().tableType;
+  if (named !== null && named !== active && !contentTwinsOf(named).includes(active)) {
     console.warn(
-      `vcu-sweep: ⚠️  the NAMES printed above are ${describeTableType(activeParameterTable().tableType)}'s, but ` +
-        `this bike runs ${describeTableType(report.tableType)} — the snapshot on disk and /params.html are ` +
-        "re-named from the bike's own table, this scrollback is not. Read it again there if a name matters."
+      `vcu-sweep: ⚠️  the NAMES printed above are ${describeTableType(active)}'s, but this bike runs ` +
+        `${describeTableType(named)} — the snapshot on disk and /params.html are re-named from the bike's own ` +
+        "table, this scrollback is not. Read it again there if a name matters."
     );
   }
 }

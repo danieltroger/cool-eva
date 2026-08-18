@@ -446,9 +446,41 @@ expect(
   halfRetabled.rows[1].rawHex === "00 01" && halfRetabled.rows[1].note?.includes("does not carry") === true,
   "…keeping the raw bytes, which are the bike's, and saying why there is no name"
 );
+// ⚠️ And a FAILED row of that micro keeps the reason it failed. `note` is the only place
+// an NRC lives — `describeRow` and the page print it and nothing else — so writing the
+// "no name available" sentence over it would lose why a parameter was not read, on
+// exactly the rows somebody would be investigating.
+const refusedOnUnknown = snapshotOf([refusedRead(249), reading(276, "40 17"), reading(277, "40 20")]);
+const refusedRetabled = retableSnapshot(refusedOnUnknown, reportTableType(refusedOnUnknown));
+expect(
+  refusedRetabled.rows[0].note?.includes("NRC") === true &&
+    refusedRetabled.rows[0].note?.includes("does not carry") === true,
+  `a refused row on a contradicted micro must keep its NRC as well as gaining the no-name note, said “${refusedRetabled.rows[0].note}”`
+);
 expect(
   reportTableType(halfUnknown).tableType === null,
   "…and the report names no table at all, so nothing selects the A9's table process-wide off the back of it"
+);
+// ⚠️⚠️ AND IT MUST SURVIVE BEING STORED AND READ BACK, which is what latest.json does on
+// every restart. 276/277 are therefore NOT stripped for a contradicted micro: they are
+// TABLE_TYPE_uC/_uS with the same width in all 28 tables, and stripping them left row 277
+// with no typed `value`, so the next reportTableType() filed it under `unusable` — at
+// which point `mismatched` flipped to false, `tableType` became the OTHER micro's table,
+// startup selected it process-wide, and the gate told the owner a re-read would help.
+// Measured before it was fixed, not imagined.
+const reloaded = reportTableType(halfRetabled);
+expect(
+  reloaded.mismatched && reloaded.tableType === null && reloaded.unusable.length === 0,
+  `re-tabling then re-reading a mismatched snapshot must still be mismatched with no table, was ` +
+    `mismatched=${reloaded.mismatched} tableType=${reloaded.tableType} unusable=[${reloaded.unusable}]`
+);
+expect(
+  retableSnapshot(halfRetabled, reloaded).rows[1].name === null,
+  "…and the A8's contradicted rows must stay unnamed through the round trip, not get 16407's names back"
+);
+expect(
+  !evaluateTableGate(reloaded).writesAllowed && evaluateTableGate(reloaded).state === "mismatched",
+  "…and the gate must still say mismatched rather than unusable, which has a remedy that would not work"
 );
 // A split names each micro from its OWN table, which is the only honest reading of a bike
 // that says it is like that. Writes stay refused; reading is not the same risk.
@@ -489,9 +521,17 @@ const damaged = retableSnapshot(
   reportTableType(signednessSwing)
 );
 expect(
-  damaged.rows[0].name === "RegenFade_21" && damaged.rows[0].value === -366 && damaged.rows[0].rawHex === "ZZ 92",
-  "a row whose stored hex is not hex keeps what was stored rather than being re-typed from zeros"
+  damaged.rows[0].value === null && damaged.rows[0].unsigned === null && damaged.rows[0].rawHex === "ZZ 92",
+  "a row whose stored hex is not hex must have its value WITHHELD rather than re-typed from zeros — and keep the raw"
 );
+expect(
+  damaged.rows[0].name === "RegenFade_21" && damaged.rows[0].note?.includes("is not hex") === true,
+  "…while still taking its name from the bike's own table, and saying why there is no number"
+);
+// ⚠️ It must not carry the OLD table's reading under the NEW table's name: −366 is what
+// `FE 92` means as a signed WORD, and RegenFade_21 is unsigned. That is the exact
+// "value the name's own S/U column contradicts" this path exists to avoid.
+expect(damaged.rows[0].value !== -366, "…and must not keep 16407's signed reading beside 4102's unsigned name");
 
 // ── 1e. THE CATALOGUE: all 28 of Energica's tables, and that they agree ─────
 // ⚠️ This is the check that replaces the one the old single-table module had. That one
@@ -2521,6 +2561,19 @@ function reading(index: number, rawHex: string): VcuReadOutcome {
     identifier: identifierForIndex(index),
     status: "read",
     record: parseHexBytes(rawHex),
+  };
+}
+
+/** A parameter the micro answered with a negative response. The NRC lives in `note` and nowhere else. */
+function refusedRead(index: number): VcuReadOutcome {
+  const parameter = parameterAtIndex(index);
+  return {
+    micro: parameter?.micro ?? "A9",
+    index,
+    identifier: identifierForIndex(index),
+    status: "refused",
+    negativeResponseCode: 0x22,
+    description: "NRC 0x22 conditionsNotCorrect",
   };
 }
 

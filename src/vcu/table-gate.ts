@@ -114,7 +114,14 @@ export interface TableGateVerdict {
    * `writesAllowed` is the only field that says whether a write may proceed.
    */
   outstanding: number[];
-  /** The table the bike named, when every reading agreed on one this software carries. Null otherwise. */
+  /**
+   * The table the bike named, when EVERY usable reading agreed on one this software
+   * carries. Null otherwise — including when one micro named a carried table and the
+   * other named something we do not have, which is a bike we cannot name in one piece.
+   *
+   * The same value ../vcu/snapshot.ts's `TableTypeReport.tableType` holds for the same
+   * snapshot, on purpose.
+   */
   tableType: number | null;
 }
 
@@ -148,7 +155,17 @@ export function evaluateTableGate(report: TableTypeReport | null): TableGateVerd
   }
   const outstanding = TABLE_TYPE_INDICES.filter(index => !named.has(index));
   const values = [...named.values()];
-  const agreed = values.length > 0 && values.every(value => sameTable(value, values[0])) ? values[0] : null;
+  // ⚠️ A micro that answered with a table we do not carry VETOES the answer rather than
+  // being ignored while the other micro speaks for the whole VCU — the same rule
+  // ../vcu/snapshot.ts's agreedTableType() applies, deliberately, so that the two
+  // functions reading the same evidence cannot reach different conclusions about which
+  // table this bike is on. It changes nothing about what is permitted (a wrongly
+  // answered index is already in `outstanding`, which shuts the `confirmed` branch); it
+  // stops `tableType` reporting one micro's table on a bike where the other disagreed.
+  const agreed =
+    answeredWrongly.size === 0 && values.length > 0 && values.every(value => sameTable(value, values[0]))
+      ? values[0]
+      : null;
 
   if (outstanding.length === 0 && agreed !== null) {
     const table = parameterTableFor(agreed);

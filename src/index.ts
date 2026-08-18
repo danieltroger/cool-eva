@@ -153,35 +153,52 @@ let stopObd: (() => void) | undefined;
 // written to — src/vcu/table-gate.ts decides that separately and from the raw words the
 // bike sent, not from what was selected here.
 const startupTableReport = await loadLatestTableType(VCU_PARAM_DIR);
-if (startupTableReport?.mismatched || startupTableReport?.split) {
-  // ⚠️ Branching on the report's own findings rather than on whether selection failed.
-  // `tableType` is null in both these cases — it only ever holds a table the catalogue
-  // resolved — so `selectParameterTable` could never have reported the problem, and
-  // this branch would have been unreachable while the newcomer bike it exists for fell
-  // through to "no snapshot names a parameter table". Which is untrue and useless: the
-  // bike named one, twice.
-  //
-  // The whole catalogue, once, and ONLY here. This is the moment an owner needs it:
-  // every name on their page is another table's, and the useful question is which of
-  // ours is nearest theirs (a neighbouring revision usually differs at a handful of
-  // ids; the other side of the RegenFade split differs at 25). 28 lines at every boot
-  // would be noise; 28 lines when the tool has just said it cannot describe your
-  // motorcycle is the answer.
-  for (const line of startupTableReport.lines) {
-    console.warn(`vcu-table: ${line}`);
-  }
-  console.warn("vcu-table: the tables this build carries, for comparison —");
-  for (const line of describeCatalogue()) {
-    console.warn(`  ${line}`);
-  }
-} else if (startupTableReport?.tableType == null) {
+if (startupTableReport === null) {
   console.log(
-    `vcu-table: no snapshot in ${VCU_PARAM_DIR} names a parameter table, so parameters are named from ` +
+    `vcu-table: no parameter snapshot in ${VCU_PARAM_DIR}, so parameters are named from ` +
       `${describeTableType(activeParameterTable().tableType)} until a sweep says otherwise. ` +
       `${KNOWN_TABLE_TYPES.length} tables carried.`
   );
 } else {
-  selectParameterTable(startupTableReport.tableType);
+  // ⚠️ EVERY finding, not only the ones with a catalogue attached. `unusable` — a micro
+  // that answered with a record the width column forbids — used to fall through to "no
+  // snapshot names a parameter table", which is untrue and drops the one line saying the
+  // record framing of that whole sweep is in question. The page has always treated it as
+  // alarming and the gate gives it its own state; the boot journal was the only surface
+  // still quiet about it.
+  if (!startupTableReport.confirmed) {
+    for (const line of startupTableReport.lines) {
+      console.warn(`vcu-table: ${line}`);
+    }
+  }
+  // ⚠️ Branching on the report's own findings rather than on whether selection failed.
+  // `tableType` is null in both these cases — it only ever holds a table the catalogue
+  // resolved — so `selectParameterTable` could never have reported the problem, and a
+  // branch keyed on that would have been unreachable while the newcomer bike it exists
+  // for fell through to "no snapshot names a parameter table". Which is untrue and
+  // useless: the bike named one, twice.
+  //
+  // The whole catalogue, once, and ONLY here. This is the moment an owner needs it:
+  // every name on their page is another table's, and the useful question is which of
+  // ours is nearest theirs (a neighbouring revision usually differs at a handful of ids;
+  // the other side of the RegenFade split differs at 25). 28 lines at every boot would
+  // be noise; 28 lines when the tool has just said it cannot describe your motorcycle is
+  // the answer.
+  if (startupTableReport.mismatched || startupTableReport.split) {
+    console.warn("vcu-table: the tables this build carries, for comparison —");
+    for (const line of describeCatalogue()) {
+      console.warn(`  ${line}`);
+    }
+  }
+  if (startupTableReport.tableType === null) {
+    console.log(
+      `vcu-table: nothing in ${VCU_PARAM_DIR} names one parameter table this software carries, so parameters are ` +
+        `named from ${describeTableType(activeParameterTable().tableType)} until a sweep says otherwise. ` +
+        `${KNOWN_TABLE_TYPES.length} tables carried.`
+    );
+  } else {
+    selectParameterTable(startupTableReport.tableType);
+  }
 }
 
 // --- Service mode: on-demand VCU parameter reads, started from the dashboard ---
