@@ -3,9 +3,9 @@
 // Energica's `FramesDB.ParseVCU_VEHICLE_FLAGS` names all 64 bits of it — byte 0 bit 0
 // through byte 7 bit 7, one named flag each, no multi-byte fields at all
 // (the 2024 service-tool analysis in obd-garage/, §`0x100` `VCU_VEHICLE_FLAGS`). That
-// makes it the VCU's counterpart to the BMS's own error/warning words on 0x201, and it is handled the same
-// way this repo already handles those: log the raw words so no flag can ever be lost,
-// then break out only the ones worth an alert.
+// makes it the VCU's counterpart to the BMS's own error/warning words on 0x201, and it
+// is handled the same way this repo already handles those: log the raw words so no flag
+// can ever be lost, then break out only the ones worth an alert.
 //
 // The reason it is worth having at all is `ERR_ChargeCM_Out`, byte 7 bit 1. The charge
 // manager has never been read on this bike — its own `CM_ERROR` / `CM_ERROR_SOURCE` /

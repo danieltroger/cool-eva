@@ -48,6 +48,15 @@ import { promisify } from "util";
 // artefact name out of the same tool needs a new entry here. If git is missing or this
 // is not a checkout, the check FAILS rather than passing: a check that could not look is
 // not a check that found nothing.
+//
+// ⚠️ AND IT GUARDS THE WORKING TREE, NOT HISTORY. Every earlier commit still contains
+// the names in full and stays readable through `git log -p`, the merged PR diffs and
+// GitHub search — including the diff of the change that removed them. Making them
+// unfindable rather than merely unshipped is a different and much larger job (a history
+// rewrite, a force-push, and asking GitHub to collect the unreachable blobs its
+// /commit/<sha> URLs otherwise keep serving), and it is not what this check is for.
+// What this check guarantees is the narrower, useful thing: nothing this repo currently
+// ships attributes anything to a named third-party product.
 
 const execFileAsync = promisify(execFile);
 
@@ -119,6 +128,17 @@ const projectDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const needles = FORBIDDEN_NAMES.map(forbidden => forbidden.needle);
 
 const trackedPaths = await listTrackedPaths(projectDir);
+if (trackedPaths.length === 0) {
+  // "No matches" and "nothing was searched" are the same exit status out of `git grep`,
+  // so an empty index or a sparse checkout would otherwise print a ✓ that means nothing.
+  // Same rule as the rethrow in grepTracked(): a check that could not look is not a
+  // check that found nothing.
+  throw new Error(
+    "check-vendor-names: `git ls-files` listed no tracked files, so `git grep` had nothing to search and its " +
+      '"no matches" exit status carries no information. Refusing to report success.'
+  );
+}
+
 const failures: string[] = [];
 
 // 1. The paths themselves. A file or directory NAMED for the product would carry it in
@@ -136,12 +156,17 @@ for (const path of trackedPaths) {
 //    acceptance criterion is stated in, it is restricted to tracked files, and `--text`
 //    means the CAD binaries and the lockfile are searched too rather than skipped.
 for (const hit of await grepTracked(projectDir, needles)) {
+  // Matched against the RAW line, printed as the sanitised one. Doing both off the
+  // display string would lose the guidance on exactly the lines that most need it: a
+  // `--text` hit inside a CAD binary, or any line whose name sits past the 200-column
+  // cap, comes back with no name in it and so with nothing to tell the reader.
+  //
   // Every name on the line, not just the first: one comment can easily carry the product
   // and one of its files, and both have to be rewritten before the line goes green.
-  const guidance = FORBIDDEN_NAMES.filter(forbidden => hit.toLowerCase().includes(forbidden.needle)).map(
+  const guidance = FORBIDDEN_NAMES.filter(forbidden => hit.raw.toLowerCase().includes(forbidden.needle)).map(
     forbidden => `\n      → ${forbidden.instead}`
   );
-  failures.push(`${hit}${guidance.join("")}`);
+  failures.push(`${hit.display}${guidance.join("")}`);
 }
 
 if (failures.length > 0) {
@@ -156,14 +181,19 @@ if (failures.length > 0) {
       "  name for the neutral description above. Do not add an exemption to this check.\n" +
       "  scripts/check-vendor-names.ts is where the list lives."
   );
-  process.exit(1);
+  // Not process.exit(), which the other checks do use: Node's stdio is asynchronous
+  // whenever it is a pipe, which it always is under `npm test` and under Actions, and
+  // exit() abandons whatever is still queued. Elsewhere that would cost a one-line
+  // assertion message. Here the queued output IS the whole value of the red build —
+  // which file, which line, what to write instead. Same reasoning as run-checks.ts.
+  process.exitCode = 1;
+} else {
+  console.log(
+    `✓ ${trackedPaths.length} tracked files carry none of the ${FORBIDDEN_NAMES.length} forbidden vendor names` +
+      " — in their contents or in their paths"
+  );
+  console.log("  (obd-garage/ is gitignored and keeps the real names, by design; git grep cannot reach it)");
 }
-
-console.log(
-  `✓ ${trackedPaths.length} tracked files carry none of the ${FORBIDDEN_NAMES.length} forbidden vendor names` +
-    " — in their contents or in their paths"
-);
-console.log("  (obd-garage/ is gitignored and keeps the real names, by design; git grep cannot reach it)");
 
 /** Every file git tracks, from the repo root whatever directory this was invoked from. */
 async function listTrackedPaths(root: string): Promise<string[]> {
@@ -174,6 +204,14 @@ async function listTrackedPaths(root: string): Promise<string[]> {
   return stdout.split("\0").filter(path => path.length > 0);
 }
 
+/** One `git grep` output line, kept both as it came and as it is safe to print. */
+interface GrepHit {
+  /** `path:line:text`, verbatim. What the needles are matched against. */
+  raw: string;
+  /** The same line, printable — see sanitise(). */
+  display: string;
+}
+
 /**
  * Every `path:line:text` in a tracked file matching any needle, case-insensitively.
  *
@@ -181,7 +219,7 @@ async function listTrackedPaths(root: string): Promise<string[]> {
  * else — git missing, not a checkout, a broken index — is rethrown: this check reporting
  * success because it could not run would be worse than not having it.
  */
-async function grepTracked(root: string, patterns: string[]): Promise<string[]> {
+async function grepTracked(root: string, patterns: string[]): Promise<GrepHit[]> {
   const args = ["grep", "--no-color", "--line-number", "--ignore-case", "--fixed-strings", "--text"];
   for (const pattern of patterns) {
     args.push("-e", pattern);
@@ -192,7 +230,7 @@ async function grepTracked(root: string, patterns: string[]): Promise<string[]> 
     return stdout
       .split("\n")
       .filter(line => line.length > 0)
-      .map(sanitise);
+      .map(line => ({ raw: line, display: sanitise(line) }));
   } catch (error) {
     if (exitStatusOf(error) === 1) {
       return [];

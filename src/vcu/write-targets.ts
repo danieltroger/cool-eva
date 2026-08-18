@@ -130,14 +130,15 @@ export const WRITE_TARGETS: WriteTarget[] = [
     // is reserved, so the value field is 0…127 whatever the sign column says. 80 is
     // 0x50, bit 7 clear, so the sign question does not arise at any value on this
     // list. The unit is literal amperes: the service tool writes the integer 75 with no
-    // scaling anywhere (the 2024 service-tool analysis in obd-garage/), and 75 appears verbatim as
-    // `0x4B` in three independent broadcast fields — 0x620 b0, 0x625 b2 and 0x121 b4.
+    // scaling anywhere (the 2024 service-tool analysis in obd-garage/), and 75 appears
+    // verbatim as `0x4B` in three independent broadcast fields — 0x620 b0, 0x625 b2 and
+    // 0x121 b4.
     //
     // The ceiling is 80 because Energica shipped exactly that: OP0002/OP0003/OP0004
     // are "Fast Charge 60 / 75 / 80 Amps", all three writing THIS parameter and
     // nothing else. That is the evidence the owner remembered, and it holds up in two
-    // separate service-tool builds. It is worth noting how unusual that is in the option
-    // data — `OP0100 Charge Limit 4300` moves four parameters together — so "only
+    // separate service-tool builds. It is worth noting how unusual that is in the
+    // option data — `OP0100 Charge Limit 4300` moves four parameters together — so "only
     // this byte" is a positive finding rather than an absence of evidence.
     //
     // The floor is 0: turning DC charging DOWN is the safe direction, and is the
@@ -163,9 +164,9 @@ export const WRITE_TARGETS: WriteTarget[] = [
     // than 75 — which is itself an argument that it does not set the ceiling.
     //
     // ⚠️ There is NO documented range for this parameter. It is not an Energica
-    // option, it does not appear in the 2021 or 2024 service-tool builds by name, this bike's firmware
-    // bundle ships no engineering range file, and 225 is the only value anyone has
-    // ever seen. So 0…512 is this repo's policy and nothing more: wide enough to hold
+    // option, it does not appear in the 2021 or 2024 service-tool builds by name, this
+    // bike's firmware bundle ships no engineering range file, and 225 is the only value
+    // anyone has ever seen. So 0…512 is this repo's policy and nothing more: wide enough to hold
     // both "unity" candidates and a doubling either side, narrow enough that a typo
     // cannot write 30000. A tight range around a number whose semantics nobody has
     // established would be false precision.

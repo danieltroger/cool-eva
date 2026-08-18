@@ -6,9 +6,8 @@
 // it calls `DTCInfoKeys`: 120 records of {id, name, unit, equation, datatype}.
 // Every fault in ./fault-infokeys.ts names a subset of these ids, IN ORDER, and
 // that ordered subset IS the layout of that fault's freeze-frame payload. So this
-// table is
-// two things at once: the names and units that make a freeze frame readable,
-// and — through `datatype` — the byte widths that make it decodable at all.
+// table is two things at once: the names and units that make a freeze frame
+// readable, and — through `datatype` — the byte widths that make it decodable at all.
 //
 // TWO INDEPENDENT COPIES WERE COMPARED, 2026-08-16, and they agree on all 120
 // rows for `name`, `equation` and `datatype`:

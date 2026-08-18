@@ -2055,9 +2055,8 @@ expect(
 // 28 parameter tables — it comes from the service tool's shared library
 // (SERVICE_RESET.md §3). Mode 04 and the 0x120 clock broadcast carry no identifier at
 // all. So the reasoning that motivates the gate does not reach them, and blocking them
-// would be a refusal resting on evidence
-// with no bearing on the action. The type system carries the argument: a routine
-// request has nowhere to put a table type.
+// would be a refusal resting on evidence with no bearing on the action. The type system
+// carries the argument: a routine request has nowhere to put a table type.
 expect(
   toHex(buildWriteFrame("A8", { kind: "start-routine", routine: "set-service-point" })) === "A8 02 31 FC 00 00 00 00",
   "31 FC must still build with no table-type evidence anywhere in the request"
