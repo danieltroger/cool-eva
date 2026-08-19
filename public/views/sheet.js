@@ -76,7 +76,8 @@ export function Sheet() {
       // most of the wall clock even in captures where the frame is there. It
       // reads live for 24.8 % of a 19.5 h capture (173 224 frames, and a 13.6 h
       // hole in the middle of it), 28.3 % of a 6.7 h one, and 0.04 % of a 69 h
-      // one whose 917 frames all land in the first ninety seconds. Two more
+      // one whose 917 frames arrive in two bursts — 174 in 17 s at the start,
+      // then nothing for 1 h 44 min, then 743 in 74 s — and nothing after. Two more
       // multi-hour captures have no 0x480 at all. Those spans include parked and
       // charging time, so this is % of wall clock rather than of riding — the two
       // cannot be told apart from a candump.
@@ -209,8 +210,7 @@ function DownloadButton() {
     // (src/http/status.ts); and the log is unreadable without the laptop's
     // private key, but /dl authenticates nobody, so the ciphertext is pullable by
     // anyone on that wifi (src/http/download.ts, and README "What this does and
-    // doesn't hide" — that section draws the line, the deploy instructions above
-    // it do not).
+    // doesn't hide").
   );
 }
 
