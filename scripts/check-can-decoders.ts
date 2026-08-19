@@ -1,5 +1,6 @@
 import { STREAM_IDS, decodeFrame } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
+import { CHARGE_MANAGER_CAN_IDS } from "../src/can/charge-manager.ts";
 // The dashboard's own plausibility gate, imported rather than reimplemented — see the
 // boolean-deadband check below for why asking it beats keeping a copy of its rules.
 import { boundsFor } from "../public/lib/bounds.js";
@@ -46,11 +47,19 @@ import type { DecodedValue } from "../src/can/frame.ts";
 // it got in: the fix for a real decoder bug disabled the check that guards the same decoder.
 //
 // So the emitted set is now the UNION of what the probes produce and what the replay cases at
-// the bottom produce, and the check runs after both. A byte-gated decoder is covered by
-// convention rather than by anyone remembering, because a decoder gated tightly enough to dodge
-// the probes is a decoder that needed replay cases to be believable in the first place. A fifth
-// probe payload shaped like a real 0x625 would also have worked, and leaves the next gated
-// decoder to rediscover the hole.
+// the bottom produce, and the check runs after both. That a gated id HAS replay cases is itself
+// asserted in section 4, so it is a check rather than a convention: a decoder gated tightly
+// enough to dodge the probes and carrying no replay case now fails the build instead of going
+// quietly unprotected. A fifth probe payload shaped like a real 0x625 would have patched today's
+// symptom and left the next differently-gated frame to rediscover the hole.
+//
+// ⚠️ The residual hole, stated rather than left implicit. This covers an id with no coverage at
+// all; it does NOT cover a NEW KEY added to an already-gated decoder whose existing replay cases
+// do not happen to produce it. That key is still invisible here. Closing it properly means
+// asserting a full expected key set per gated id — deriving the expectation from SIGNALS via a
+// per-id annotation — which is more machinery than this file has earned so far. Until then, a
+// key added to 0x610, 0x615, 0x620, 0x625 or 0x121 needs a replay case that emits it, and that
+// is a rule a person has to follow.
 //
 // No signal bounds.js gates to 0/1 may carry a deadband of 1 or more. `Math.abs(1 - 0) > 1` is
 // false, so such a signal logs its first sample after boot and then never logs again — a trap
@@ -149,6 +158,18 @@ const REQUIRED_IN_FILTER: [number, string][] = [
 for (const [id, what] of REQUIRED_IN_FILTER) {
   if (!streamIds.has(id)) {
     failures.push(`0x${id.toString(16).toUpperCase()} (${what}) is missing from STREAM_IDS`);
+  }
+}
+
+// The list above is hand-maintained, which is the wrong property for ids the probe can no longer
+// see. This half of it does not have to be: `CHARGE_MANAGER_CAN_IDS` is exported, so a sixth
+// charge-manager frame cannot arrive with a byte-gated decoder and no filter check.
+const namedInFilter = new Set(REQUIRED_IN_FILTER.map(([id]) => id));
+for (const id of CHARGE_MANAGER_CAN_IDS) {
+  if (!namedInFilter.has(id)) {
+    failures.push(
+      `0x${id.toString(16).toUpperCase()} is a charge-manager id but is not named in REQUIRED_IN_FILTER — the probe cannot see a byte-gated decoder, so nothing else would notice it leaving the filter`
+    );
   }
 }
 
@@ -626,6 +647,20 @@ const REPLAY: ReplayCase[] = [
     absent: ["charge_manager_pack_v"],
   },
   {
+    id: 0x620,
+    frame: "00 00 00 00 00 00 00 00",
+    why: "⚠️ SYNTHETIC — the shape this frame's gate exists for, and the hardest dead sender in the group to spot. Ungated it decodes to fast_dc_limit_a = 0 and ac_supply_limit_a = 0, and BOTH are legitimate values that bounds.js must accept: every DC frame reads b1 = 0, every AC frame reads b0 = 0, and 31 529 real frames read both as 0 between sessions. So it reads as 'plugged in, both ceilings at zero' rather than as a sender that has stopped talking. b3 is what separates it — 0xFF or 9…82 across all 968 618 frames, never 0",
+    expect: {},
+    absent: ["fast_dc_limit_a", "ac_supply_limit_a"],
+  },
+  {
+    id: 0x620,
+    frame: "FF FF FF FF FF FF FF FF",
+    why: "⚠️ SYNTHETIC — the other dead-sender shape, caught by b4-7 = 00 (100.000 % of 968 618 frames) rather than by b3, which is 0xFF here and legitimately so on every AC frame. Ungated it would decode to a 255 A DC ceiling and a 255 A AC supply, and the bounds added in this PR would reject both — this case is what makes the decoder refuse them a layer earlier",
+    expect: {},
+    absent: ["fast_dc_limit_a", "ac_supply_limit_a"],
+  },
+  {
     id: 0x615,
     frame: "FF FF FF FF FF FF FF FF",
     why: "⚠️ SYNTHETIC — the all-ones dead-sender shape, and the worst-exposed frame in this group, because two of its three keys are measurements rather than flags. Ungated it decodes to charge_manager_pack_v = 255 + 242.5 = 497.5 V and fast_dc_a = 255 A; bounds.js passed BOTH until the entries added alongside this case (its V band is [-50, 900] and the A fallback [-1000, 1000]), and only charge_manager_soc = 255 was ever caught, by the % band. 255 A on the only DC charge current on this bus is a number that reaches a chart's autoscale and then a conclusion. b1 = 0x01 with b4-7 = 00 in 100.000 % of 941 765 real frames is what turns it back into no reading",
@@ -676,9 +711,15 @@ const REPLAY: ReplayCase[] = [
 for (const testCase of REPLAY) {
   const data = Buffer.from(testCase.frame.split(" ").map(byte => Number.parseInt(byte, 16)));
   const decoded = new Map(decodeFrame(testCase.id, data).map(value => [value.key, value.value]));
-  // These are the only keys a byte-gated decoder ever produces here, so section 4 needs them.
-  for (const key of decoded.keys()) {
+  // These are the only keys a byte-gated decoder ever produces here, so section 4 needs them —
+  // and this is now also the only path that exercises those decoders at all, since they answer
+  // none of the probe payloads. Section 1's non-finite check therefore no longer covers them, so
+  // it is repeated here rather than left to a payload that never reaches them.
+  for (const [key, value] of decoded) {
     emitted.add(key);
+    if (!Number.isFinite(value)) {
+      failures.push(`0x${testCase.id.toString(16).toUpperCase()} ${testCase.frame} produced a non-finite ${key}`);
+    }
   }
   const label = `0x${testCase.id.toString(16).toUpperCase().padStart(3, "0")} ${testCase.frame}`;
   for (const [key, expected] of Object.entries(testCase.expect)) {
@@ -735,8 +776,25 @@ const undeclared = [...emitted].filter(key => !defined.has(key)).sort();
 if (undeclared.length > 0) {
   failures.push(`decoders emit keys with no registry entry (they would log as group "misc"): ${undeclared.join(", ")}`);
 }
+// The convention the header describes, made into a check rather than left as a habit. An id that
+// answers no probe payload contributes nothing to `emitted` by itself, so its keys reach this
+// section only through the replay cases — and if it has none it is silently unprotected, exactly
+// as 0x625 was between #77 and this change. Asserting it means the next byte-gated decoder cannot
+// repeat that quietly.
+const replayedIds = new Set(REPLAY.map(testCase => testCase.id));
+for (const [id, what] of REQUIRED_IN_FILTER) {
+  if (!answeringIds.has(id) && !replayedIds.has(id)) {
+    failures.push(
+      `0x${id.toString(16).toUpperCase()} (${what}) answers none of the probe payloads and has no replay case either, so none of its keys are checked for a registry entry`
+    );
+  }
+}
+
+// The claim is conditional on purpose. Printing "all declared" unconditionally would state the
+// reassuring thing two lines above the FAILED: block that contradicts it — which is the same
+// shape of one-directional silence described at the top of this file.
 console.log(
-  `${emitted.size} distinct keys emitted, all declared in the registry — ${probedKeyCount} of them reachable from the probe payloads and ${emitted.size - probedKeyCount} only through the replay cases`
+  `${emitted.size} distinct keys emitted, ${undeclared.length === 0 ? "all declared in the registry" : `${undeclared.length} NOT declared in the registry`} — ${probedKeyCount} of them reachable from the probe payloads and ${emitted.size - probedKeyCount} only through the replay cases`
 );
 
 if (failures.length > 0) {

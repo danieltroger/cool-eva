@@ -100,17 +100,26 @@ const BY_KEY = {
   //
   // Each bound below is derived from something, not guessed:
   //
-  // • 80 A is `MAX_DC_CHG_CURRENT`'s own documented range (VCU parameter 258 is 0…80, and
-  //   Energica's 60/75/80 A options write that byte and nothing else — see README). This bike
-  //   is set to 75. `fast_dc_limit_max_a` IS that parameter read back off 0x625, so 80 is a
-  //   hard ceiling rather than an opinion; deliberately not 75, because the whole reason that
-  //   key is logged is to notice the day someone changes the parameter.
-  // • `fast_dc_limit_a` is 0x620 b0 and has never exceeded the configured max, so it inherits
-  //   the same 80.
-  // • `fast_dc_a` is the current actually delivered. It is bounded by the limit, but the two
-  //   frames run at 10 Hz and 20 Hz, so across a step edge the delivery reads up to 12 A above
-  //   the limit for a frame or two (50 such frames in the corpus, all within 1 s of a step).
-  //   100 leaves room for that and still rejects the 255 an all-ones payload decodes to.
+  // • 127 is `MAX_DC_CHG_CURRENT`'s FIELD range. Parameter 258 is a BYTE S that Energica's own
+  //   option data masks with 0x7F (`src/vcu/write-targets.ts`), so the value field is 0…127
+  //   whatever the sign column says, and `fast_dc_limit_max_a` is that parameter read back off
+  //   0x625. This bike holds 75.
+  //
+  //   ⚠️ NOT 80. 80 is this project's WRITE POLICY — the highest value Energica ever shipped a
+  //   variant at, which is why `scripts/check-vcu-params.ts` refuses to write 81 and annotates
+  //   127 as "the datatype's own ceiling is NOT the policy's". A plausibility gate is about what
+  //   the field can legitimately carry, not about what we are willing to write into it. Bounding
+  //   at 80 would render a dealer write, or a differently-optioned bike, as a dead SENSOR rather
+  //   than as the new value — defeating the one reason this key is logged, which is to notice
+  //   the day the parameter changes. It would also have this key disagree with
+  //   `dc_charge_limit_selected_a` above about what counts as a fault for the same underlying
+  //   parameter, which is the mistake `charge_manager_pack_v` below is named to avoid.
+  // • `fast_dc_limit_a` is 0x620 b0, bounded by that configured max, so it inherits the 127.
+  // • `fast_dc_a` is the current actually delivered, bounded in turn by the live limit — but the
+  //   two frames run at 10 Hz and 20 Hz, so across a step edge the delivery reads up to 12 A
+  //   above the limit for a frame or two (50 such frames in the corpus, all within 1 s of a
+  //   step). 150 covers 127 plus that skew and still rejects the 255 an all-ones payload
+  //   decodes to, which is what these entries were added for.
   // • `ac_supply_limit_a` is SUPPLY-side — a cable or EVSE rating, not the bike's. It has only
   //   ever read 8, 10 and 13 A here and the bike's own AC charger stops at ~14.3 A, but a bound
   //   drawn round either of those would reject a legitimate reading at a bigger outlet. The
@@ -122,9 +131,9 @@ const BY_KEY = {
   // the decoder at all. Both layers are wanted: the invariant catches a dead sender, and these
   // catch a decode that is wrong in a way the invariant cannot see — a byte read at the wrong
   // offset still passes b1 = 0x01.
-  "fast_dc_a": [0, 100],
-  "fast_dc_limit_a": [0, 80],
-  "fast_dc_limit_max_a": [0, 80],
+  "fast_dc_a": [0, 150],
+  "fast_dc_limit_a": [0, 127],
+  "fast_dc_limit_max_a": [0, 127],
   "ac_supply_limit_a": [0, 80],
   // The charge manager's pack voltage, 0x615 b0 + 242.5. Its decoded range is 242.5…497.5 V and
   // the "V" fallback is [-50, 900], so an all-ones payload draws 497.5 V as a measurement. It is

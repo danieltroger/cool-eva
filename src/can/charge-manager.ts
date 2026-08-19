@@ -289,30 +289,62 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     // here rather than at r = +0.72. Read b3 as KILOWATTS — an available POWER — and b0 as that
     // power converted to amps at the present pack voltage and clamped to the 75 A ceiling.
     //
-    // The falsifiable half of that is the 37 754 samples where b3-as-kW would ask for LESS than
-    // 75 A, because there the conversion has to land on a specific number. It does:
-    // `b0 − b3 × 1000 / pack_v` is within ±2 A in 98.4 % of them, and the residual is not
-    // scattered — it is −2 in 62 %, so b0 sits a consistent couple of amps under what b3 implies
-    // (a margin, or a rounding; which is not established). That would explain the ladder AND the
-    // lag on a derate, and makes a station-advertised figure the natural reading of both bytes.
+    // Over the 37 754 samples where b3-as-kW would ask for LESS than 75 A, the conversion has to
+    // land on a specific number, and it does: `b0 − b3 × 1000 / pack_v` is within ±2 A in 98.4 %
+    // of them, against roughly 7 % for agreeing that closely by chance over b0's observed range.
     //
-    // ⚠️ The other 80 973 samples, where b3-as-kW asks for MORE than the ceiling, look consistent
-    // and prove nothing. b0 is 75 in 51 % of them and lower in the rest, and "lower" is exactly
-    // what a pack-side taper produces too, so that half cannot distinguish the hypothesis from
-    // anything else. Two sessions (2026-08-08 17:44 and 18:02) are entirely in this half, sitting
-    // at b3 = 30 with b0 pinned at 75 while 73 A flowed: consistent, and no evidence.
+    // ⚠️ Read that as a conditional fit, NOT as a test of the model over the data, because the
+    // subset is selected on the model's own predictor. b0 never exceeds 75, so wherever b3-as-kW
+    // implies more than 75 A the model degenerates to "b0 = 75" and cannot be wrong; excluding
+    // that region excludes precisely where a refutation could come from. The other 80 973 samples
+    // are duly consistent and prove nothing — b0 is 75 in 51 % of them and lower in the rest, and
+    // "lower" is what a pack-side taper produces too. Both b3 = 30 sessions (2026-08-08 17:44 and
+    // 18:02) are entirely in that region: 30 kW is ~102 A at their pack voltage, so they never
+    // enter the testable subset at all.
+    //
+    // 🟡 The ±2 A tolerance is also not a loose allowance — it is about one count of b3. If b3 is
+    // integer kilowatts then one count is 1000 / pack_v ≈ 3.3 A, so the implied current cannot be
+    // resolved better than roughly ±1.7 A no matter what. That also answers what the residual is:
+    // it is NOT a fixed offset and NOT a proportional margin, because it moves with the power
+    // band — median +2.35 A at 5-9 kW, −0.95 at 10-14, −0.40 at 15-19, −1.85 at 20-24. Scatter of
+    // that size about zero is exactly b3's own quantisation, and nothing more needs explaining.
     //
     // The session split lines up with it. Seven of the eleven DC sessions keep b3 under 55 and
     // four park it at 79-81 (96 % of their frames), and in the eight sessions where the window
     // before the first amp is captured, the value b3 holds there predicts which half every time:
     // 50 in all four low ones, 64 in all four high ones.
     //
-    // That is a hypothesis with a mechanism and one strong test behind it, NOT a decode, and
-    // nothing is emitted for b3. What settles it is a session at a station whose advertised
-    // power is known independently — one photograph of a charger's rating plate — which makes
-    // it the cheapest open question on issue #21.
+    // 🟢 Corroboration from a completely different direction, which is why this is worth keeping
+    // at all: `src/vcu/write-targets.ts` records, from the VCU-parameter side and on eight DC
+    // sessions, that "the ceiling is the STATION, not the bike — station identity explains 84 %
+    // of the variance, the highest ever delivered is 73.2 A, and no station has offered even the
+    // 75 A already permitted". A station-advertised figure arriving in this frame is exactly what
+    // that observation predicts, and the two were derived independently.
+    //
+    // So: a hypothesis with a mechanism, one supporting fit and one independent corroboration —
+    // NOT a decode, and nothing is emitted for b3. The corpus cannot settle it, for the selection
+    // reason above. What settles it is a session at a station whose advertised power is known
+    // independently, i.e. one photograph of a charger's rating plate, which makes it the cheapest
+    // open question on issue #21.
     case CHARGE_LIMITS_CAN_ID: {
       if (data.length < 8) return [];
+      // This frame's invariants, and it is the one whose dead-sender decode is hardest to spot.
+      // An all-zero payload decodes to fast_dc_limit_a = 0 and ac_supply_limit_a = 0, and both
+      // are LEGITIMATE — every DC frame reads b1 = 0 and every AC frame reads b0 = 0, and 31 529
+      // real frames read both as 0 between sessions. So bounds.js cannot help, and the frame
+      // reads as "plugged in, both ceilings at zero" rather than as a missing sender.
+      //
+      // b4-7 = 00 catches all-ones and the alternating pattern. b3 is what separates the all-zero
+      // shape: it is 0xFF or 9…82 across all 968 618 frames and is never 0 — the lowest value it
+      // has ever taken is 9.
+      //
+      // ⚠️ b3 is the weakest of the four gates in this file, and knowingly so: it is the one byte
+      // in this group whose MEANING is open (see the retraction above). If the kilowatts reading
+      // is right and a station ever advertises zero, this frame goes silent at exactly the moment
+      // it gets interesting. That is judged the better risk, because the alternative is a decoder
+      // that reports "no ceiling on either path" for a sender that has stopped talking — but if
+      // the limits ever vanish from a live session, look here first.
+      if (data[3] === 0 || data[4] !== 0 || data[5] !== 0 || data[6] !== 0 || data[7] !== 0) return [];
       return [
         // ✅ b0 = the DC current limit in force right now, in amps — the one of the three DC
         // limits on this bus that moves during a session.
