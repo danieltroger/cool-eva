@@ -28,9 +28,11 @@
 //   0x1D  a query; the answer is in b2      45..147       0          0
 //   0x02 / 0x14 / 0x1E / 0x2C              other traffic, none of it amps
 //
-// The gate below is therefore load-bearing, not defensive tidiness: 0x1D alone accounts
-// for 206 of the 596 frames and reaches b2 = 147, which would read as a wild charge
-// current if the opcode were not checked. 0x120 is deliberately NOT decoded — it is the
+// The gate below is therefore load-bearing, not defensive tidiness: of the 298 captured
+// 0x121 frames only 18 are ours, and 0x1D alone accounts for 204 of them and reaches
+// b2 = 147, which would read as a wild charge current if the opcode were not checked.
+// Worse, opcode 0x2C has been seen carrying b2 = 0x4B = 75 — the exact number a wrong
+// decode would most easily be believed. 0x120 is deliberately NOT decoded — it is the
 // truncated half of the pair (b3/b4 are 0 there, so it carries no ceiling), and it is
 // also the id this project TRANSMITS the RTC sync on (vcu/service-actions.ts).
 //
@@ -99,7 +101,7 @@ const DC_CURRENT_LIMIT_OPCODE = 0x18;
  * Decodes one 0x121 frame, emitting only for the DC current-limit opcode. Pure.
  *
  * Returns nothing for the other eight opcodes on this id, which is the normal case:
- * they outnumber this one 33 to 1.
+ * they outnumber this one roughly 16 to 1.
  */
 export function decodeChargeSetpointFrame(data: Buffer): DecodedValue[] {
   // b4 is the ceiling, so a frame too short to hold it cannot be decoded — and a
@@ -113,8 +115,10 @@ export function decodeChargeSetpointFrame(data: Buffer): DecodedValue[] {
   if (data[0] !== DC_CURRENT_LIMIT_OPCODE || data[1] !== 0xff) {
     return [];
   }
-  // b3 = 1 means "a limit is in force". The charge-stop opcode sends b3 = 0, and every
-  // opcode that is not a limit change reads 0 here too.
+  // b3 = 1 means "a limit is in force", and ONLY the two limit-change opcodes ever set
+  // it: the charge stop sends b3 = 0, as do 0x02/0x1D/0x1E/0x2C. The other two are not 0
+  // but are not 1 either — 0x1B answers a query in this byte (40..145) and 0x14 reads 138
+  // — so this is a genuine second discriminator rather than a restatement of the opcode.
   if (data[3] !== 1) {
     return [];
   }
