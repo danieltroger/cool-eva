@@ -408,7 +408,7 @@ function replayLongPress(samples: Sample[]): number[] {
   for (const sample of samples) {
     // Any deadline falling at or before this sample is a timer that would have run
     // first. Bounded by the detector latching itself after it fires, so this cannot spin.
-    for (let deadline = detector.deadlineMs(); deadline !== null && deadline <= sample.at;) {
+    for (let deadline = detector.deadlineMs(); deadline !== null && deadline <= sample.at; ) {
       if (detector.observe(held, deadline)) {
         firedAt.push(deadline);
       }
