@@ -15,7 +15,7 @@ import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
-import { loadLatestTableType } from "./vcu/snapshot-store.ts";
+import { loadLatestSweep, loadLatestTableType } from "./vcu/snapshot-store.ts";
 import {
   KNOWN_TABLE_TYPES,
   activeParameterTable,
@@ -230,12 +230,19 @@ const vcuWriteRunner = createVcuWriteRunner({
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
   // opinions about whether a motorcycle is safe to touch is one opinion too many.
   gate: () => vcuReadRunner.gate(),
-  // ⚠️ What the last sweep says about which of Energica's parameter tables this bike
-  // runs. A parameter is written BY INDEX and an index only means a parameter relative
-  // to a table, so a write is refused unless both micros named a table this software
-  // carries — see src/vcu/table-gate.ts. Read per attempt rather than at startup, so
-  // the sweep that confirms it opens the gate without restarting the service.
-  tableType: () => loadLatestTableType(VCU_PARAM_DIR),
+  // ⚠️ The last sweep's snapshot, which the write half asks two things of.
+  //
+  // Which of Energica's parameter tables this bike runs: a parameter is written BY INDEX
+  // and an index only means a parameter relative to a table, so a write is refused unless
+  // both micros named a table this software carries — see src/vcu/table-gate.ts.
+  //
+  // And what the bike holds for each writable parameter, so a sweep that has just read
+  // all 277 of them does not leave the write form saying "not read yet" and asking for
+  // one of them again.
+  //
+  // Read per attempt rather than at startup, so a sweep that runs while the sheet is
+  // open opens the gate and fills in the values without restarting the service.
+  latestSweep: () => loadLatestSweep(VCU_PARAM_DIR),
 });
 if (SERVICE_WRITE_ENABLED) {
   // Loud, and at WARN. A Pi in this state can change a motorcycle's calibration

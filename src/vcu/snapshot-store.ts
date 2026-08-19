@@ -134,6 +134,22 @@ export async function clearPartialSweep(directory: string): Promise<void> {
 }
 
 /**
+ * The last sweep on this Pi: its rows, and what they say about which of Energica's
+ * parameter tables this bike runs.
+ *
+ * The two travel together because they come out of one file and one parse. A caller
+ * that wanted both used to read `latest.json` twice — once for the gate and once for
+ * the values — which on a Pi Zero's SD card is two reads and two parses of a 277-row
+ * file per page load, and worse, two reads that a sweep finishing between them can put
+ * out of step with each other.
+ */
+export interface LatestSweep {
+  /** Re-named from the table the snapshot itself reports — see `loadLatestSweep`. */
+  snapshot: VcuParameterSnapshot;
+  report: TableTypeReport;
+}
+
+/**
  * What the last sweep on this Pi says about which of Energica's parameter tables this
  * bike runs, or null when nothing here can say.
  *
@@ -143,21 +159,36 @@ export async function clearPartialSweep(directory: string): Promise<void> {
  * HTTP module keeps its own reader for the page's sake; both go through
  * `reportTableType`, so there is still exactly one opinion about what a `TABLE_TYPE`
  * reading MEANS.
- *
- * ⚠️ Null on every failure — missing file, unreadable file, valid JSON that is not a
- * snapshot — and never an empty report. ./table-gate.ts reads null as "nothing has
- * confirmed either micro", which blocks, so every one of those failures fails closed.
- * They are logged rather than swallowed because "no sweep has run" and "the snapshot
- * is damaged" are different problems and only one of them is fixed by reading the
- * bike.
  */
 export async function loadLatestTableType(directory: string): Promise<TableTypeReport | null> {
-  const snapshot = await loadSnapshotFile(join(directory, LATEST_FILE));
-  if (!snapshot) {
+  return (await loadLatestSweep(directory))?.report ?? null;
+}
+
+/**
+ * The last sweep's snapshot and its table-type report, or null when there is no usable
+ * one.
+ *
+ * ⚠️ Null on every failure — missing file, unreadable file, valid JSON that is not a
+ * snapshot — and never an empty report. ./table-gate.ts reads a null report as "nothing
+ * has confirmed either micro", which blocks, so every one of those failures fails
+ * closed. They are logged rather than swallowed because "no sweep has run" and "the
+ * snapshot is damaged" are different problems and only one of them is fixed by reading
+ * the bike.
+ *
+ * ⚠️ The rows are re-named from the table the snapshot itself reports, exactly as
+ * src/http/vcu-params.ts serves them. A stored snapshot's names are a DERIVED view: a
+ * file written before the catalogue existed carries whichever table that build
+ * hardcoded, and anything matching a row to a parameter BY NAME has to be looking at
+ * the bike's own names rather than that build's.
+ */
+export async function loadLatestSweep(directory: string): Promise<LatestSweep | null> {
+  const stored = await loadSnapshotFile(join(directory, LATEST_FILE));
+  if (!stored) {
     return null;
   }
   try {
-    return reportTableType(snapshot);
+    const report = reportTableType(stored);
+    return { snapshot: retableSnapshot(stored, report), report };
   } catch (err) {
     // reportTableType walks `snapshot.rows`, so a file that parsed but is not a
     // snapshot — `{}`, `null`, a truncated write that still parses — throws here.

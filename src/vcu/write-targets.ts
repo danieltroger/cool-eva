@@ -113,6 +113,19 @@ export interface WriteTarget {
   purpose: string;
   /** ⚠️ Everything a reasonable person would want to know before pressing the button. */
   warnings: string[];
+  /**
+   * How to check the bike afterwards, beyond the read-back the write already does.
+   *
+   * ⚠️ Kept OUT of `warnings` on purpose, and it is not a filing tidy-up: these two
+   * things are read at different moments. `warnings` is the argument against pressing
+   * the button and is worth having in front of you first; this is the first thing you
+   * want once you have pressed it, and standing in a garage that is a different screen.
+   * public/views/vcu-write.js shows it after the write for exactly that reason.
+   *
+   * Null where nothing outside the read-back can confirm it — which is itself worth
+   * saying rather than inventing a check.
+   */
+  verify: string | null;
 }
 
 /**
@@ -152,9 +165,10 @@ export const WRITE_TARGETS: WriteTarget[] = [
     warnings: [
       "⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.",
       "⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling. This raises the ceiling on an exposure that is already there.",
-      "Free check afterwards, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should change from 0x4B to 0x50. If it does not, the write did not take.",
       "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
     ],
+    verify:
+      "Free check, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should now read the value you wrote (0x50 for 80 A, 0x4B for 75). If it does not, the write did not take.",
   },
   {
     name: "FCHG_CURRENT_GAIN",
@@ -180,6 +194,8 @@ export const WRITE_TARGETS: WriteTarget[] = [
       "⚠️ The arithmetic that produced 255 has been RETRACTED. “75 × 225/255 = 66.18 A” matched an observed ceiling to three figures, which is where 255 came from — but the wire request was later measured at 75 while 66.2 A flowed, and 73.2 A was delivered on another day with no parameter change. Both facts are incompatible with a fixed 88 % gate on the request. It is now treated as numerology.",
       "Change ONE parameter per charge session. With the station explaining 84 % of the variance, two changes at once cannot be told apart afterwards. Get MAX_DC_CHG_CURRENT = 80 into the bag first.",
     ],
+    verify:
+      "No broadcast field carries this one, so the read-back above is the only confirmation the cell took it. What it DOES is a question for the next DC session — logged, at a station you have used before, with nothing else changed.",
   },
   {
     name: "TORQUE_LIMIT",
@@ -200,6 +216,8 @@ export const WRITE_TARGETS: WriteTarget[] = [
       "Torque may already be clipping against ACTIVE_CURRENT_LIMIT (400 A), which is NOT on this allowlist. If nothing changes, that is the likely reason.",
       "The 276.0 Nm ceiling is this repo's policy (+20 % on today's value), not a measured hardware limit.",
     ],
+    verify:
+      "Nothing broadcasts this, so the read-back above is the only confirmation the cell took it — a parameter sweep re-reads it later if you want it in the record. Whether it changed anything is felt at full throttle, and ACTIVE_CURRENT_LIMIT may cap it first.",
   },
   {
     name: "REGEN_TORQUE_LIMIT",
@@ -221,6 +239,8 @@ export const WRITE_TARGETS: WriteTarget[] = [
       "Engine braking that suddenly got stronger is a handling change, felt first when you close the throttle mid-corner.",
       "It may not change anything: REGEN_CURRENT_LIMIT (142) = 120 A is unchanged and is the suspected real cap.",
     ],
+    verify:
+      "Nothing broadcasts this either — the read-back above is the confirmation that the cell took it. Whether it does anything shows up as regen current on the next ride: if that still tops out around 120 A, REGEN_CURRENT_LIMIT was the cap all along.",
   },
   {
     name: "VSM_CONFIG_1",
@@ -240,7 +260,7 @@ export const WRITE_TARGETS: WriteTarget[] = [
           mask: 0x0004,
           label: "Heated handlebars",
           caveat:
-            "Energica's option OP0024 sets exactly this bit and nothing else — but activation is normally granted per-VIN on Energica's server, and the option carries a firmware floor (FW.Min.V *.042). The bit may therefore write and read back correctly and the feature still not appear, because the grip logic lives in the DASHBOARD's firmware, not the VCU's. Config words are also only read at boot: key-cycle before judging it.",
+            "Energica's option OP0024 sets exactly this bit and nothing else — but activation is normally granted per-VIN on Energica's server, and the option carries a firmware floor (FW.Min.V *.042). The bit may therefore write and read back correctly and the feature still not appear, because the grip logic lives in the DASHBOARD's firmware, not the VCU's.",
         },
       ],
     },
@@ -252,6 +272,8 @@ export const WRITE_TARGETS: WriteTarget[] = [
       "⚠️ A successful write does NOT mean the feature turned on. See the bit's own note.",
       "This changes a flag, not wiring. There is no heated-grip circuit on this bike unless one was fitted.",
     ],
+    verify:
+      "⚠️ Config words are only read at BOOT: key-cycle the bike before judging it. The read-back above proves the word in the VCU's EEPROM changed; it says nothing about whether the dashboard offers the grips, which is a separate firmware's decision.",
   },
 ];
 

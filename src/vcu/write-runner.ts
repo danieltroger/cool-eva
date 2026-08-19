@@ -4,7 +4,8 @@ import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
-import type { TableTypeReport } from "./snapshot.ts";
+import type { LatestSweep } from "./snapshot-store.ts";
+import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
 import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
 import { appendAuditRecord, recentAuditRecords, type AuditAction, type AuditRecord } from "./write-audit.ts";
 import {
@@ -132,9 +133,48 @@ export interface WriteTargetSummary {
   micro: string;
   purpose: string;
   warnings: string[];
+  /**
+   * How to tell afterwards whether the write actually took — free, off the broadcast,
+   * with no charger and no second diagnostic session. Null where nothing outside the
+   * read-back can confirm it.
+   *
+   * Separate from `warnings` because it belongs at a different MOMENT: the warnings are
+   * the argument against pressing the button, and this is the first thing you want once
+   * you have. The page shows it after the write for that reason.
+   */
+  verify: string | null;
+  /**
+   * ⚠️ What the last recorded sweep found for THIS parameter, or null when no sweep on
+   * this Pi holds a usable typed reading of it.
+   *
+   * This is what stops the page saying "not read yet" to somebody who has just swept all
+   * 277 parameters — the sweep read this value, wrote it to `latest.json`, and the write
+   * form used to have no way to see it. It is not a substitute for the compare-and-swap:
+   * whatever the page sends as `expected` is re-read off the bus before anything is
+   * written (./write-session.ts), so a value that has moved since the sweep produces a
+   * `stale-precondition` refusal naming both numbers rather than a wrong write.
+   *
+   * `readAt` is the sweep's own wall clock, so the page can say how old it is — which is
+   * the whole difference between this and a fresh read.
+   */
+  onBike: SweptValue | null;
   control:
     | { kind: "number"; min: number; max: number; minLabel: string; maxLabel: string }
     | { kind: "bits"; bits: { key: string; mask: number; label: string; caveat: string }[] };
+}
+
+/** One parameter as the last sweep recorded it. */
+export interface SweptValue {
+  /** Typed per the table's S/U column. Never the unsigned reading — see `sweptValueOf`. */
+  value: number;
+  /** The bytes the bike sent, so the page can show them and not only the number. */
+  rawHex: string | null;
+  /** `target.unit(value)` — `75 A`, `230.0 Nm`, `0x1113`. The units live in one place. */
+  label: string;
+  /** Wall clock of the sweep that read it. */
+  readAt: number;
+  /** False when that sweep was cut short. The value is still true; the run was not finished. */
+  complete: boolean;
 }
 
 export interface VcuWriteRunnerOptions {
@@ -149,16 +189,16 @@ export interface VcuWriteRunnerOptions {
   /** The safety gate, shared with the read runner so there is one opinion and not two. */
   gate: () => ServiceGateVerdict;
   /**
-   * What the last sweep on this Pi says about the bike's parameter table, or null when
-   * nothing here can say.
+   * The last sweep on this Pi — its rows, and what they say about the bike's parameter
+   * table — or null when there is none.
    *
    * Injected exactly as `gate` is, and for the same reason: the decision stays in a
    * pure function (./table-gate.ts) that a laptop can exercise, and this module never
    * learns where a snapshot lives. Async because the answer is a file — sampled per
    * attempt rather than cached, so a sweep that ran while the sheet was open opens the
-   * gate without a restart.
+   * gate, and fills in the values, without a restart.
    */
-  tableType: () => Promise<TableTypeReport | null>;
+  latestSweep: () => Promise<LatestSweep | null>;
 }
 
 /**
@@ -188,12 +228,16 @@ export function createVcuWriteRunner(options: VcuWriteRunnerOptions): VcuWriteRu
 }
 
 async function status(context: WriteContext): Promise<VcuWriteStatus> {
+  // ONE read of the last sweep for both things it is asked: whether the bike has named
+  // its parameter table, and what it holds for each writable parameter. Two reads could
+  // straddle a sweep finishing and describe two different files on the same screen.
+  const sweep = await context.latestSweep();
   return {
     enabled: context.enabled,
     gate: context.gate(),
-    tableGate: evaluateTableGate(await context.tableType()),
+    tableGate: evaluateTableGate(sweep?.report ?? null),
     clock: readPiClock(),
-    targets: WRITE_TARGETS.map(summariseTarget),
+    targets: WRITE_TARGETS.map(target => summariseTarget(target, sweep?.snapshot ?? null)),
     recent: await recentAuditRecords(context.directory, RECENT_AUDIT_LINES),
     busHeldBy: busHeldBy(),
   };
@@ -216,7 +260,7 @@ function readPiClock(): PiClockVerdict {
   });
 }
 
-function summariseTarget(target: WriteTarget): WriteTargetSummary {
+function summariseTarget(target: WriteTarget, sweep: VcuParameterSnapshot | null): WriteTargetSummary {
   return {
     name: target.name,
     index: target.index,
@@ -226,6 +270,8 @@ function summariseTarget(target: WriteTarget): WriteTargetSummary {
     micro: parameterAtIndex(target.index)?.micro ?? "?",
     purpose: target.purpose,
     warnings: target.warnings,
+    verify: target.verify,
+    onBike: sweptValueOf(target, sweep),
     control:
       target.control.kind === "number"
         ? {
@@ -236,6 +282,44 @@ function summariseTarget(target: WriteTarget): WriteTargetSummary {
             maxLabel: target.unit(target.control.max),
           }
         : { kind: "bits", bits: target.control.bits },
+  };
+}
+
+/**
+ * What the last sweep found for one allowlisted parameter, or null.
+ *
+ * ⚠️ Four conditions, and every one of them is a way this could otherwise put a number
+ * on screen that is not this parameter's:
+ *
+ *  1. **Matched BY INDEX**, never by name. The index is what gets addressed on the wire
+ *     and what the allowlist is keyed on; a name is a claim about a table.
+ *  2. **And the name has to agree anyway.** The snapshot's rows are named from the table
+ *     the BIKE reported (`retableSnapshot`), so a disagreement here means that index is
+ *     a different parameter on this bike than the allowlist believes — the same finding
+ *     ./table-gate.ts refuses `unwritable` for. It shows nothing rather than the value
+ *     of whatever that index turned out to be. A stripped name (an unrecognised table)
+ *     lands here too, which is the same answer for the same reason.
+ *  3. **`status === "read"` and a typed `value`**, never `unsigned` — the same rule
+ *     `readCurrent` in public/views/vcu-write.js follows, and for the same reason: this
+ *     number becomes the compare-and-swap precondition, and comparing a signed parameter
+ *     against an unsigned reading of itself is how a write goes to the wrong number.
+ *  4. **Not a width mismatch.** A record whose length contradicts the table means the
+ *     framing is in question, not merely the value.
+ */
+function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | null): SweptValue | null {
+  if (!sweep) {
+    return null;
+  }
+  const row = sweep.rows.find(candidate => candidate.index === target.index);
+  if (!row || row.name !== target.name || row.status !== "read" || row.widthMismatch || row.value === null) {
+    return null;
+  }
+  return {
+    value: row.value,
+    rawHex: row.rawHex,
+    label: target.unit(row.value),
+    readAt: sweep.readAt,
+    complete: sweep.complete,
   };
 }
 
@@ -328,7 +412,7 @@ async function checkPreconditions(
   // confirmation has a deadline attached.
   let tableType: TableTypeReport | null = null;
   if (tableGateAppliesTo(request)) {
-    tableType = await context.tableType();
+    tableType = (await context.latestSweep())?.report ?? null;
     const table = evaluateTableGate(tableType);
     if (!table.writesAllowed) {
       // The state is named, not just the reason: `mismatched` and `unread` are read by
