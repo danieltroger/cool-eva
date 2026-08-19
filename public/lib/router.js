@@ -143,8 +143,16 @@ export function advanceTab() {
  *
  * Call this before the first render: it sets the tab, so a deep link draws its own
  * screen once rather than drawing the riding screen and then replacing it.
+ *
+ * Answers whether the URL actually named a tab, as opposed to being the bare entry
+ * URL or naming something this app does not have. That is the difference between "the
+ * rider asked for this screen" and "nobody said", which app.js needs in order to know
+ * whether the bike may overrule the screen it opened on.
+ *
+ * @returns {boolean}
  */
 export function startRouting() {
+  const named = tabFromHash(location.hash) !== null;
   showTabFromUrl();
   // Two listeners, because these are two different events and browsers disagree about
   // which of them a fragment change deserves. `popstate` is the history cursor moving:
@@ -158,24 +166,56 @@ export function startRouting() {
   // tab that is already up is a no-op regardless, so the overlap costs nothing.
   addEventListener("popstate", showTabFromUrl);
   addEventListener("hashchange", showTabFromUrl);
+  return named;
 }
 
 /**
  * Point the screen at whatever the URL says now, and make the URL say something this
- * app actually has.
- *
- * No pushState anywhere in here. Arriving is not navigating away from somewhere, and
- * on a popstate the browser has already moved the cursor — pushing would strand it and
- * turn one Back press into two. replaceState only rewrites the entry already in hand,
- * which is what stops `/` from being a link nobody can share and stops a URL naming a
- * tab this app does not have from going on claiming to be a screen it is not.
+ * app actually has. The two lines that touch the browser; the rule they follow is
+ * canonicalHash() below, where it can be checked.
  */
 function showTabFromUrl() {
-  const landing = tabFromHash(location.hash) ?? DEFAULT_TAB;
-  if (location.hash !== hashForTab(landing)) {
-    history.replaceState(null, "", hashForTab(landing));
+  const { tab: landing, rewriteTo } = canonicalHash(location.hash);
+  if (rewriteTo !== null) {
+    try {
+      history.replaceState(null, "", rewriteTo);
+    } catch (error) {
+      // The same throttle showTab() guards against, sharing the same bucket — and
+      // unguarded it would cost more here than there. startRouting() runs before the
+      // first van.add(), so a throw would abort module evaluation and leave a blank
+      // dashboard rather than a wrong tab; and on a popstate it would skip the tab
+      // write below, leaving the screen and the URL disagreeing, which is the one
+      // thing this module is built not to allow.
+      console.warn("router: could not rewrite the URL to", rewriteTo, error);
+    }
   }
   tab.val = landing;
+}
+
+/**
+ * What to do about a fragment: the tab it lands on, and what the URL should be
+ * rewritten to — null when it already says the right thing.
+ *
+ * Pure, so the rule can be checked without a browser; the same split as
+ * headroomMvWith() in lib/derive.js, and for the same reason.
+ *
+ * Rewriting is what stops `/` from being a link nobody can share and stops a fragment
+ * naming a tab this app does not have from going on claiming to be a screen it is not.
+ * Rewriting only when it would change something matters as much: showTabFromUrl() runs
+ * on every popstate, and Back through ten tabs must not spend ten replaceState calls
+ * out of Safari's bucket restating what the URL already said.
+ *
+ * Note there is no pushState here or anywhere it is called from. Arriving is not
+ * navigating away from somewhere, and on a popstate the browser has already moved the
+ * cursor — pushing would strand it and turn one Back press into two.
+ *
+ * @param {string} hash
+ * @returns {{ tab: TabName, rewriteTo: string | null }}
+ */
+export function canonicalHash(hash) {
+  const landing = tabFromHash(hash) ?? DEFAULT_TAB;
+  const wanted = hashForTab(landing);
+  return { tab: landing, rewriteTo: hash === wanted ? null : wanted };
 }
 
 /**

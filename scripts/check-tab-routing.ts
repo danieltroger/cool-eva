@@ -1,15 +1,16 @@
-import { DEFAULT_TAB, TABS, hashForTab, nextTabAfter, tabFromHash } from "../public/lib/router.js";
+import { DEFAULT_TAB, TABS, canonicalHash, hashForTab, nextTabAfter, tabFromHash } from "../public/lib/router.js";
 
 // The dashboard's tab URLs, checked without a browser.
 //
 //   node --experimental-strip-types scripts/check-tab-routing.ts
 //
 // public/lib/router.js puts the bottom tab bar in the URL, and splits itself so the
-// parts worth checking need no DOM: hashForTab / tabFromHash / nextTabAfter are pure,
-// and only showTab() and startRouting() touch `history` and `location`. That is the
-// whole reason this file can exist alongside the other checks — no jsdom, no headless
-// browser, no dependency. (VanJS itself imports fine under Node; the router's state
-// lives in a van.state and nothing here reads it.)
+// parts worth checking need no DOM: hashForTab, tabFromHash, nextTabAfter and
+// canonicalHash are pure, and the handful of lines that touch `history` and `location`
+// do nothing but act on what canonicalHash decided. That is the whole reason this file
+// can exist alongside the other checks — no jsdom, no headless browser, no dependency.
+// (VanJS itself imports fine under Node; the router's state lives in a van.state and
+// nothing here reads it.)
 //
 // ## What this is guarding
 //
@@ -24,6 +25,12 @@ import { DEFAULT_TAB, TABS, hashForTab, nextTabAfter, tabFromHash } from "../pub
 // first render, so anything it threw on would be a blank screen rather than a wrong
 // one — a bookmark with a stray `%` in it must land on the riding screen, not on
 // nothing at all. Half the cases below are malformed on purpose.
+//
+// **And it must stop lying about it.** canonicalHash decides both halves of the
+// rewrite: correct a URL that says nothing this app has, and leave one alone that
+// already says the right thing. The second half is not cosmetic — showTabFromUrl runs
+// on every Back press, and a rule that rewrote unconditionally would spend Safari's
+// history-call budget restating what the address bar already said.
 //
 // **The ring must close.** Three flashes of the high beam advance one tab, and that
 // gesture is the only input this dashboard has that works with both hands on the bars.
@@ -108,9 +115,55 @@ for (const [hash, description] of NAMES_NOTHING) {
 check("#Charge opens charge — case is forgiven", tabFromHash("#Charge") === "charge");
 check("#CHARGE opens charge", tabFromHash("#CHARGE") === "charge");
 
-// --- 3. The high-beam ring ---------------------------------------------------
+// --- 3. What the URL gets rewritten to ---------------------------------------
+//
+// canonicalHash() is the rule showTabFromUrl() follows on arrival and on every Back
+// press. Two halves, and both matter: a URL that says nothing useful must be corrected
+// rather than left lying, and a URL that already says the right thing must be left
+// alone — Back through ten tabs must not spend ten replaceState calls out of Safari's
+// throttle bucket restating what the address bar already said.
 
-console.log("\n3. the ring the high-beam gesture rides on");
+console.log("\n3. rewriting the URL");
+
+for (const tab of TABS) {
+  const { tab: landing, rewriteTo } = canonicalHash(hashForTab(tab.name));
+  check(`${hashForTab(tab.name)} is already canonical — no rewrite`, landing === tab.name && rewriteTo === null);
+}
+
+const REWRITES: [hash: string, expected: string, why: string][] = [
+  ["", "#ride", "the bare entry URL becomes a link worth sharing"],
+  ["#", "#ride", "an empty fragment"],
+  ["#nope", "#ride", "a tab that has never existed stops claiming to be a screen"],
+  ["#Charge", "#charge", "case is forgiven, then normalised away"],
+  ["#%zz", "#ride", "a malformed escape"],
+];
+
+for (const [hash, expected, why] of REWRITES) {
+  const { tab: landing, rewriteTo } = canonicalHash(hash);
+  check(
+    `${JSON.stringify(hash)} → ${expected} on ${landing} — ${why}`,
+    rewriteTo === expected && hashForTab(landing) === expected
+  );
+}
+
+// The property behind both halves: whatever comes out is canonical, and running the
+// rule again changes nothing. showTabFromUrl() is called from two events that can both
+// fire for one hash change, so a rule that was not idempotent would rewrite twice.
+const EVERY_HASH_TRIED = new Set([
+  ...TABS.map(tab => hashForTab(tab.name)),
+  ...REWRITES.map(([hash]) => hash),
+  ...NAMES_NOTHING.map(([hash]) => hash),
+]);
+
+for (const hash of EVERY_HASH_TRIED) {
+  const once = canonicalHash(hash);
+  const twice = canonicalHash(once.rewriteTo ?? hash);
+  check(`${JSON.stringify(hash)} settles in one rewrite`, twice.rewriteTo === null && twice.tab === once.tab);
+}
+
+// --- 4. The high-beam ring ---------------------------------------------------
+
+console.log("\n4. the ring the high-beam gesture rides on");
 
 let walked: (typeof TABS)[number]["name"] = TABS[0].name;
 const visited: string[] = [walked];

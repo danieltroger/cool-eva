@@ -45,6 +45,11 @@ const VIEWS = {
   faults: FaultsView,
 };
 
+// Routing before anything else: startRouting() sets the tab from the URL, so the first
+// render draws the screen a link named rather than drawing Ride and swapping it a frame
+// later. It answers whether the URL named a tab at all, which the rules below need.
+const arrivedByDeepLink = startRouting();
+
 /** SOC at or below which the hypermiling screen takes over, as requested. */
 const HYPERMILE_SOC = 5;
 
@@ -118,12 +123,46 @@ function TabBar() {
 let wasCharging = false;
 let wasCritical = false;
 
+/**
+ * A URL that named a tab gets the first word; the bike gets every word after it.
+ *
+ * The rules above are edge-triggered — "the moment charging starts" — but a page load
+ * has no previous moment, and seeding from `false` makes the first reading that says
+ * "charging" look like charging having just *started*. On the bare entry URL that is
+ * worth keeping: it is why opening the dashboard at a charger lands on Charge.
+ *
+ * It is not worth keeping when a link, a bookmark or an iOS reload asked for a screen
+ * by name. The bike would move you off it a second later and — now that the tab is in
+ * the URL — rewrite the address with it, so reloading the link would no longer reach
+ * the screen the link names. A shared link that quietly overwrites its own address is
+ * worse than one the bike is allowed to overrule.
+ *
+ * So a URL that named a tab buys exactly one pass: the first readings are taken as the
+ * state the bike was already in rather than as a change into it. Every edge after that
+ * is a real change and moves the view as it always did.
+ */
+let honourUrlTab = arrivedByDeepLink;
+
 function autoFocus() {
   // The charging screen's own rule, so the tab you are thrown onto agrees with what
   // it then shows you. It also means a DC fast charge finally triggers this at all:
   // the BMS reports Idle for the whole of one, so the BMS-bits-only test this
   // replaces was blind to exactly the charge worth watching.
   const charging = chargeMode(peek, isStaleSampled) !== "none";
+  const soc = peek("soc");
+  const headroom = headroomMvSampled();
+  const critical = (soc != null && soc <= HYPERMILE_SOC) || (headroom != null && headroom <= HYPERMILE_HEADROOM_MV);
+
+  if (honourUrlTab) {
+    wasCharging = charging;
+    wasCritical = critical;
+    // Held until the bike has said something. Before the first BMS message every
+    // reading above is "no", which is the absence of a state rather than a state to
+    // seed from — seed on that and the pass is spent before it was ever needed.
+    honourUrlTab = soc == null;
+    return;
+  }
+
   if (charging && !wasCharging) {
     showTab("charge");
   }
@@ -136,9 +175,6 @@ function autoFocus() {
   }
   wasCharging = charging;
 
-  const soc = peek("soc");
-  const headroom = headroomMvSampled();
-  const critical = (soc != null && soc <= HYPERMILE_SOC) || (headroom != null && headroom <= HYPERMILE_HEADROOM_MV);
   if (critical && !wasCritical && !charging) {
     showTab("hypermile");
   }
@@ -209,10 +245,6 @@ van.derive(() => {
   signalState("high_beam").val;
   detectHighBeamGesture();
 });
-
-// Before the first render, so a URL naming a tab draws that tab once rather than
-// drawing the riding screen and swapping it out a frame later.
-startRouting();
 
 van.add(document.body, App());
 connect();
