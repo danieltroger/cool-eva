@@ -3,6 +3,9 @@
 import van from "../vendor/van-1.6.1.js";
 import { groupOf, knownKeys, signalState } from "./store.js";
 import { monotonicNow } from "./clock.js";
+import { FLASHER_GAP_MS, FLASHER_KEYS } from "./flasher.js";
+
+export { isFlasher } from "./flasher.js";
 
 // Making a momentary button visible on a phone screen.
 //
@@ -55,58 +58,28 @@ import { monotonicNow } from "./clock.js";
 //
 // The tile therefore does not classify signals; it READS THE CLOCK. Anything currently
 // down for longer than HOLD_MS is described by how long it has been down, and everything
-// else by its press count. Nothing to keep in sync, the menu button somebody leant on
-// gets the honest description too, and the day the brake bit sticks on it says so
-// instead of quietly adding a press.
+// else by its press count. Nothing to keep in sync, and the day the brake bit sticks on
+// it says so instead of quietly adding a press.
+//
+// The case that settles it landed the same day, in ./handlebar-gestures.js: holding
+// `btn_indicator_cancel` for LONG_PRESS_MS = 1200 ms now saves a waypoint. So a key
+// whose name, prefix and 762 recorded presses all say "momentary" is deliberately held
+// past a second as a designed input — and the tile says "held 1 s" while it happens,
+// which is the useful thing to see while you are waiting for the toast. Any list of
+// held-state keys written yesterday would have been wrong about it today.
 //
 // ## …except that a flasher is not a finger
 //
-// One thing the clock alone cannot fix. `blinker_left` / `blinker_right` are the LAMP
-// outputs (0x102 b2), and a running indicator toggles them. Measured off the decoded ride
-// log this time rather than the raw captures — `rides.db`, Apr–Aug 2026, where these two
-// keys have their own rows — the blink is 333 ms on and 349 ms off, i.e. **1.46 Hz**.
-// Every one of those is a real rising edge, so naive counting is catastrophically wrong
-// rather than slightly wrong:
+// One thing the clock alone cannot fix, and it is the reason ./flasher.js exists. The
+// two blinker keys are LAMP outputs, so a running indicator toggles them at 1.46 Hz —
+// 1881 rising edges for 323 signalled turns — and no hold ever reaches HOLD_MS, so a
+// turn would read "89 presses" and never "on". That file carries the measurement, the
+// gap histogram behind FLASHER_GAP_MS, and the reason the set is closed to two keys.
 //
-//   blinker_left    1881 rising edges  →   323 actual uses   (5.8× over)
-//   blinker_right   2693 rising edges  →   436 actual uses   (6.2× over)
-//
-// and no hold ever reaches HOLD_MS, so a signalled turn would read "89 presses" and
-// never "on".
-//
-// The fix is FLASHER_KEYS below: for those two, a falling edge is not believed until the
-// bit has stayed at 0 for FLASHER_GAP_MS. That is a statement about the hardware — the
-// flasher relay opening is not the rider letting go — and it is deliberately NOT applied
-// to the rest of the group, because `high_beam` is exactly the signal it would break:
-// public/app.js reads three flash-to-pass presses inside 2 s as a tab-change gesture, so
-// the tile has to keep showing those as three presses and not one.
-
-/**
- * Signals in the group whose 0 phase belongs to a relay rather than to the rider.
- *
- * Only the two blinker lamps, and only because they are lamp outputs — the thing being
- * shown is "the indicator is running", which is one event however many times the bulb
- * goes out during it. Do not add a `btn_` key here: see the gesture note above.
- */
-const FLASHER_KEYS = new Set(["blinker_left", "blinker_right"]);
-
-/**
- * How long a flasher signal has to stay at 0 before the tile believes the rider
- * cancelled rather than the relay opening.
- *
- * 700 ms sits in an empty valley, and the distribution really is two humps with almost
- * nothing between them. Of the 1875 gaps between `blinker_left` flashes in `rides.db`:
- *
- *   ≤ 400 ms   1556   the relay's own off phase
- *   0.4-1.5 s     8   ← the valley the threshold has to land in
- *   1.5-3 s       9
- *   > 3 s       302   the rider genuinely finished and signalled again later
- *
- * So anywhere from 0.4 s to 1.5 s classifies all but eight of them identically; 700 ms is
- * the middle of that. The eight are the cost, and they are ambiguous by nature — a
- * cancel-and-immediately-re-signal is not distinguishable from a dropped blink.
- */
-const FLASHER_GAP_MS = 700;
+// What this file does with it: for a key in FLASHER_KEYS, a falling edge is not believed
+// until the bit has stayed at 0 for FLASHER_GAP_MS. Everything downstream — the count,
+// `downSince`, the latch — then treats one indicator use as one event without knowing
+// anything about flashers.
 
 /** The registry group whose signals get this treatment. Set in src/can/registry.ts. */
 export const BUTTON_GROUP = "buttons";
@@ -133,20 +106,10 @@ const LATCH_MS = 600;
 const HOLD_MS = 1000;
 
 /**
- * Whether this signal is driven by the turn-signal flasher, which changes both the
- * wording on the tile and whether a 0 is believed straight away.
- * @param {string} key
- * @returns {boolean}
- */
-export function isFlasher(key) {
-  return FLASHER_KEYS.has(key);
-}
-
-/**
  * @typedef {object} PressTracker
  * @property {import("../vendor/van-1.6.1.js").State<boolean>} lit Down, or released within the last LATCH_MS — plus FLASHER_GAP_MS again for a flasher key, whose release is itself deferred.
  * @property {import("../vendor/van-1.6.1.js").State<number>} count Rising edges seen since this page loaded.
- * @property {import("../vendor/van-1.6.1.js").State<number | null>} lastAt monotonicNow() of the last rising edge.
+ * @property {import("../vendor/van-1.6.1.js").State<number | null>} lastAt monotonicNow() of the last FALLING edge — see secondsSincePress for why it is that end.
  * @property {import("../vendor/van-1.6.1.js").State<number | null>} downSince monotonicNow() of the rising edge of the press still in progress, else null.
  */
 
@@ -194,6 +157,15 @@ export function pressTracker(key) {
 
 /**
  * How long ago this button was last pressed, in seconds, or null if not this session.
+ *
+ * Measured from the RELEASE, not the press, and that end is deliberate. For the 140 ms
+ * taps this file was written for the two are the same number; for a 47 s brake hold they
+ * are not, and stamping the rising edge would have the tile read "1 press · 49 s ago"
+ * two seconds after the lever came back. "Ago" has to mean "since this last stopped
+ * being true", or it disagrees with the hold line rendered directly above it.
+ *
+ * Returns null until the first release, so a control that is still down for the very
+ * first time has no "ago" — which is correct, and the tile is showing the hold anyway.
  *
  * Sampled rather than reactive — nothing pushes a message when a second passes, so a
  * caller wanting this to count up has to be paced by something else (chartTick, as the
@@ -253,11 +225,9 @@ function observe(key, current) {
       // to would make the derive depend on itself, and VanJS would then re-run it until
       // its 100-iteration ceiling stopped it. See store.js's peek() for the same point.
       tracker.count.val = tracker.count.rawVal + 1;
-      // Monotonic: "pressed 4 s ago" and "held for 4 s" are both durations, and the Pi
+      // Monotonic: "released 4 s ago" and "held for 4 s" are both durations, and the Pi
       // steps its own wall clock on the first GPS fix. clock.js has the full argument.
-      const now = monotonicNow();
-      tracker.lastAt.val = now;
-      tracker.downSince.val = now;
+      tracker.downSince.val = monotonicNow();
     }
     const pending = releaseTimers.get(key);
     if (pending !== undefined) {
@@ -272,25 +242,31 @@ function observe(key, current) {
   if (previous !== 1) {
     return;
   }
+  // `at` is captured HERE, not inside the timer. For a flasher the edge really happened
+  // now; the 700 ms is how long it takes to be sure of it, and charging that delay to
+  // the rider would make every finished indicator read 0.7 s staler than it is.
+  const at = monotonicNow();
   if (FLASHER_KEYS.has(key)) {
     fallTimers.set(
       key,
       setTimeout(() => {
         fallTimers.delete(key);
-        release(key, tracker);
+        release(key, tracker, at);
       }, FLASHER_GAP_MS)
     );
     return;
   }
-  release(key, tracker);
+  release(key, tracker, at);
 }
 
 /**
  * The falling edge, once it is believed.
  * @param {string} key
  * @param {PressTracker} tracker
+ * @param {number} at monotonicNow() of the edge itself, which for a flasher is earlier than now.
  */
-function release(key, tracker) {
+function release(key, tracker, at) {
+  tracker.lastAt.val = at;
   // Cleared here, on the real falling edge, NOT when the LATCH_MS timer below expires.
   // `lit` is a display effect and deliberately outlives the press; this is the fact, and
   // the tile decides which of the two to believe.

@@ -304,8 +304,10 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         // pressure. The wider corpus has the rear bit firing on its own, and the owner
         // confirmed the other half on the bike on 2026-08-19: pressing the rear pedal
         // alone leaves 0x0A0 b5 at 0 bar while the front lever drives it to 5. So the
-        // ABS pressure channel really is the FRONT circuit only, and there is no rear
-        // equivalent anywhere on this bus — the rear brake is switch-only.
+        // ABS pressure channel really is the FRONT circuit. 🟡 No rear equivalent is
+        // KNOWN — neither this frame nor Energica's signal database names one — but that
+        // is an absence in two documents, not a measurement, so `rear_brake` is the only
+        // rear-brake signal there is to have rather than provably the only one there is.
         { key: "front_brake", value: bit(lampsAndState, 5) },
         { key: "rear_brake", value: bit(lampsAndState, 6) },
         { key: "blinker_left", value: lampsAndState & 0x04 ? 1 : 0 },

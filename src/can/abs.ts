@@ -198,9 +198,14 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //     rear bit fires 18 times on its own (median 0.46 s), so the corpus does contain
 //     rear-only braking; and the owner rode the other half deliberately, reporting that
 //     **pressing the rear pedal alone leaves b5 at 0 bar while the front lever drives it to
-//     5**. So b5 is the FRONT circuit, by measurement and not by its name, and the rear
-//     brake has no pressure channel anywhere on this bus — it is switch-only. Caveat 1
-//     stands: the SCALE is still Energica's word.
+//     5**. So b5 is the FRONT circuit by measurement rather than by its name. ✅
+//
+//     🟡 The weaker half of the old sentence survives: that the rear brake has no pressure
+//     channel AT ALL. That is a universal negative and it is not measured — the evidence is
+//     that this frame has no `A_R_PRESSURE` field and that Energica's own signal database
+//     names none, which is an absence in two documents rather than an observation. Treat
+//     it as "none is known", not "none exists". Caveat 1 stands too: the SCALE is still
+//     Energica's word.
 //
 // A_WARN_LAMP: ✅ set in 3564 of 3601 standstill frames (99.0 %) and in 0 of 192 frames above
 // 6 km/h, which is the ABS self-test — it needs road speed to clear, and cannot clear on a

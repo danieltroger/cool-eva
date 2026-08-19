@@ -1,6 +1,7 @@
 import { decodeFrame, STREAM_IDS } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor } from "../public/lib/bounds.js";
+import { FLASHER_KEYS } from "../public/lib/flasher.js";
 
 // Replays the handlebar-button and fast-charge-contactor frames through the real
 // decoder, on a laptop, with no bike — the same trick scripts/decode-dtc-response.ts
@@ -329,6 +330,41 @@ for (let byte2 = 0; byte2 < 256; byte2++) {
   }
 }
 
+// public/lib/flasher.js names two registry keys as bare strings, and getting the tile to
+// treat one signalled turn as one event is the ONLY thing those strings do. So a rename
+// that misses that file does not break — it silently stops coalescing, and the blinker
+// count inflates ~6× while everything here still passes. Hence this: the set has to name
+// real signals, in the group whose tiles consult it, and it must not quietly go empty.
+if (FLASHER_KEYS.size === 0) {
+  failures.push("public/lib/flasher.js's FLASHER_KEYS is empty, so nothing coalesces the 1.46 Hz blinkers");
+}
+for (const key of FLASHER_KEYS) {
+  const signal = SIGNALS.find(candidate => candidate.key === key);
+  if (!signal) {
+    failures.push(
+      `public/lib/flasher.js names "${key}", which is not a signal in src/can/registry.ts — ` +
+        `the coalescing it exists to do is switched off and nothing else would say so`
+    );
+    continue;
+  }
+  if (signal.group !== "buttons") {
+    failures.push(
+      `public/lib/flasher.js names "${key}", but it is in group "${signal.group}" — ` +
+        `only the buttons section's tiles consult FLASHER_KEYS, so the rule would never run`
+    );
+  }
+}
+// …and the inverse, which is the mistake that would produce a wrong answer rather than
+// no answer: nothing carrying the `btn_` prefix may be coalesced. Two of this dashboard's
+// own inputs are gestures on those keys (gestures.js: a double click inside 700 ms, the
+// same window this rule would swallow it with), and app.js counts three high-beam flashes
+// inside 2 s. See the warning on FLASHER_GAP_MS.
+for (const key of FLASHER_KEYS) {
+  if (key.startsWith("btn_")) {
+    failures.push(`public/lib/flasher.js must not coalesce "${key}" — a button's 0 means the rider let go`);
+  }
+}
+
 // A frame missing from STREAM_IDS never reaches decodeFrame at all — decode.ts says so
 // in its own comment — so the decoder above can be perfect and the buttons still dead.
 if (!STREAM_IDS.includes(0x400)) {
@@ -412,8 +448,9 @@ if (failures.length > 0) {
 console.log(
   `✓ ${CASES.length} captured frames decode as recorded; 0x400 is filtered in, short frames stay honest, ` +
     `the beam lamps did not revert to charging/charge_port_unlocked, brake still equals front|rear over all ` +
-    `256 values of byte 2, and all ${BUTTONS_GROUP_KEYS.length} signals in the buttons section are registered, ` +
-    `deadband-free and gated to 0…1`
+    `256 values of byte 2, flasher.js's ${FLASHER_KEYS.size} coalesced keys are real and are not buttons, ` +
+    `and all ${BUTTONS_GROUP_KEYS.length} signals in the buttons section are registered, deadband-free and ` +
+    `gated to 0…1`
 );
 
 function parseFrame(hex: string): Buffer {

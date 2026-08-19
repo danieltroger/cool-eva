@@ -114,8 +114,7 @@ function RawTile(key) {
  *   • the lit state, which is the fastest to read and the easiest to miss.
  *
  * Never trust the light alone: a bit that is never seen high but whose count climbs is
- * a working button whose flash the browser dropped, and a bit stuck high with a count
- * of 1 is a wiring fault, not a press.
+ * a working button whose flash the browser dropped.
  *
  * …with one substitution, for the members of this group that are not momentary. The
  * brake, and the high beam on a dark road, stay down for seconds or minutes, and "3
@@ -123,8 +122,16 @@ function RawTile(key) {
  * that is being pulled RIGHT NOW. So once the bit has been down longer than the
  * threshold in press.js, the second line reports the hold instead of the count — see
  * the note there for why that is a clock reading rather than a hand-written list of
- * which keys are held states, and for why the two blinkers are nonetheless a named
- * exception to it.
+ * which keys are held states, and ../lib/flasher.js for why the two blinkers are
+ * nonetheless a named exception to it.
+ *
+ * ⚠️ That substitution retired a diagnostic this comment used to carry, and the old
+ * wording is worth knowing about because it is now a trap. It said "a bit stuck high
+ * with a count of 1 is a wiring fault, not a press" — which was true when every signal
+ * here was momentary, and is exactly what a squeezed brake lever looks like today. The
+ * hold line is what tells them apart: a lever reads "held 4 s" and climbs while you
+ * watch, and a stuck bit reads "held 20 min" on a bike nobody is sitting on. So the
+ * lit tile is no longer evidence of anything by itself; the duration under it is.
  * @param {string} key
  */
 function ButtonTile(key) {
