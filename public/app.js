@@ -1,8 +1,9 @@
 // @ts-check
 
 import van from "./vendor/van-1.6.1.js";
-import { chartTick, connect, connection, peek, signalState } from "./lib/store.js";
-import { headroomMvSampled, isChargingSampled } from "./lib/derive.js";
+import { chartTick, connect, connection, isStaleSampled, peek, signalState } from "./lib/store.js";
+import { headroomMvSampled } from "./lib/derive.js";
+import { chargeMode } from "./lib/charge-mode.js";
 import { updateDwell } from "./lib/dwell.js";
 import { updateTrip } from "./lib/trip.js";
 import { RideView } from "./views/ride.js";
@@ -118,7 +119,11 @@ let wasCharging = false;
 let wasCritical = false;
 
 function autoFocus() {
-  const charging = isChargingSampled();
+  // The charging screen's own rule, so the tab you are thrown onto agrees with what
+  // it then shows you. It also means a DC fast charge finally triggers this at all:
+  // the BMS reports Idle for the whole of one, so the BMS-bits-only test this
+  // replaces was blind to exactly the charge worth watching.
+  const charging = chargeMode(peek, isStaleSampled) !== "none";
   if (charging && !wasCharging) {
     view.val = "charge";
   }
@@ -178,9 +183,10 @@ function detectHighBeamGesture() {
 // on a phone that is trying to sleep.
 //
 // For that to be true, everything reached from here has to *sample* signals rather
-// than subscribe to them — hence peek() throughout updateDwell, updateTrip and
-// autoFocus. Reading through valueOf() instead would quietly add every signal they
-// touch to this binding's dependencies, and the tick would stop being what paces
+// than subscribe to them — hence peek() and isStaleSampled() throughout updateDwell,
+// updateTrip and autoFocus. Reading through valueOf() or isStale() instead would
+// quietly add every signal they touch to this binding's dependencies — serverTime
+// included, which moves on every message — and the tick would stop being what paces
 // it. Nothing would break (the two counters use wall-clock deltas and autoFocus is
 // edge-triggered, so both are correct at any rate) but the comment above would be
 // false, which is worse.

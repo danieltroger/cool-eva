@@ -110,6 +110,15 @@ const CHECKS: SelfCheck[] = [
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
+    script: "scripts/check-charge-mode.ts",
+    covers:
+      "the dashboard's one charge rule, driven by real frames through the real decoders: that a parked bike and a " +
+      "ridden one are not a charge however the AC charger's frames are behaving, that an AC session reads AC, that " +
+      "a DC session reads DC even though the BMS reports Idle for the whole of one, and that the same Idle at the " +
+      "tail of an AC session is not mistaken for a fast charge — plus that every signal the rule consults is still " +
+      "a registered stream signal, since a renamed one would leave it answering 'not charging' for ever in silence",
+  },
+  {
     script: "scripts/check-vcu-params.ts",
     covers:
       "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +

@@ -134,16 +134,39 @@ export function peekServerTime() {
 }
 
 /**
- * True when a signal has not been refreshed within `maxAgeMs`.
+ * True when a signal has not been refreshed within `maxAgeMs`. A signal that has
+ * never arrived counts as stale, which is what makes freshness usable as evidence
+ * about the bike — see chargeMode() in charge-mode.js.
  * @param {string} key
  * @param {number} maxAgeMs
  */
 export function isStale(key, maxAgeMs) {
-  const reading = signalState(key).val;
+  return isStaleWith(signalState(key).val, serverTime.val, maxAgeMs);
+}
+
+/**
+ * The same, sampled rather than subscribed. See peek() and peekServerTime(): the
+ * tick-paced work in app.js must not subscribe to serverTime, which apply() writes
+ * on every message including 20 Hz pack_a patches.
+ * @param {string} key
+ * @param {number} maxAgeMs
+ */
+export function isStaleSampled(key, maxAgeMs) {
+  return isStaleWith(signalState(key).rawVal, peekServerTime(), maxAgeMs);
+}
+
+/**
+ * Parameterised on how it read, so the subscribing and sampling variants above
+ * cannot drift apart — the same reason headroomMvWith() in derive.js exists.
+ * @param {{ ts: number } | null} reading
+ * @param {number} now server clock, so both sides of the comparison are the Pi's
+ * @param {number} maxAgeMs
+ */
+function isStaleWith(reading, now, maxAgeMs) {
   if (!reading) {
     return true;
   }
-  return serverTime.val - reading.ts > maxAgeMs;
+  return now - reading.ts > maxAgeMs;
 }
 
 /** Opens the WebSocket and keeps it open. Safe to call once at startup. */

@@ -398,28 +398,6 @@ export function limitFraction(key, ceiling) {
   return Math.max(0, Math.min(1, allowed / ceiling));
 }
 
-/** True when the BMS reports any state that means "charging" — see the bitfield note. */
-export function isCharging() {
-  return isChargingWith(valueOf);
-}
-
-/** The same, sampled rather than subscribed. See headroomMvSampled(). */
-export function isChargingSampled() {
-  return isChargingWith(peek);
-}
-
-/**
- * `charge_state` is a bitfield, not an enum: 1 = discharge, 2 = charge, 4
- * balancing, 8 trickle, 16 idle, 32 charge-complete, 64 maintenance. Testing it
- * against a single value flags Idle as charging, which is what the old dashboard's
- * `!== 1` did — so this reads the decoded bits instead. Charge-complete is
- * deliberately excluded: current is no longer going in.
- * @param {(key: string) => number | null} read
- */
-function isChargingWith(read) {
-  return read("bms_state_charge") === 1 || read("bms_state_trickle") === 1 || read("bms_state_maintenance") === 1;
-}
-
 // --- Charging thermals -------------------------------------------------------
 //
 // Two numbers that only mean something next to each other: the heat the pack is
@@ -465,20 +443,4 @@ export function coolantHeatRemovedWatts() {
     return null;
   }
   return delta * COOLANT_WATTS_PER_KELVIN;
-}
-
-/**
- * True while the onboard AC charger is talking.
- *
- * 0x300, 0x305, 0x306 and 0x10a's AC setpoint are silent on DC fast charging —
- * verified across a full 40-minute DC session on 2026-08-09, where every one of
- * mains_v, mains_a, dc_v, dc_a, charger_max_dc_v, charger_max_dc_a, charger_enabled
- * and charge_limit_a logged exactly zero readings. So their freshness, not the
- * state bitfield, is what separates AC from DC — and anything sourced from them
- * has to be hidden on DC rather than left showing the last AC value.
- * @param {(key: string, maxAgeMs: number) => boolean} stale
- * @param {number} withinMs
- */
-export function isOnboardChargerLive(stale, withinMs) {
-  return ["mains_v", "mains_a", "dc_v", "dc_a"].some(key => !stale(key, withinMs));
 }
