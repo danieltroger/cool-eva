@@ -178,19 +178,19 @@ function DownloadButton() {
       if (!current || !current.log.enabled) {
         return div();
       }
-      // Two things this line used to get wrong, both reported as "it always says 10".
+      // Both halves of this line are narrower than they look, and both were wider
+      // once — it read "N sealed segments · encrypted, safe over any network", which
+      // is where "it always says 10" came from.
       //
-      // It said "sealed segments" over a count of FILES. A segment is sealed every
-      // 30 s and appended to that day's `rides-<date>.celog`, so one file holds a
-      // day of them — the number shown was right, the noun was off by orders of
-      // magnitude, and it could not move until midnight however far the bike rode.
+      // FILES, not segments: one `.celog` is a whole day of them, so this number
+      // cannot move before midnight however far the bike rides. src/http/status.ts
+      // has the mechanism.
       //
-      // And "safe over any network" claimed more than the crypto gives. The Pi holds
-      // only the recipient's public key, so the log genuinely cannot be read back
-      // without the laptop's private key — that part is real, and is why serving it
-      // over untrusted wifi is fine. But the same public key is all anyone needs to
-      // WRITE a segment that decrypts cleanly, /dl is unauthenticated, and nothing
-      // here signs anything. Confidentiality is the property we have; say that one.
+      // And unreadable, not safe. The log genuinely cannot be read back without the
+      // laptop's private key, which is why serving it over untrusted wifi is fine.
+      // But the public key the Pi holds is not a secret, so it is also all anyone
+      // needs to WRITE a segment that decrypts cleanly, and /dl authenticates
+      // nobody. Confidentiality is what we have; claiming safety claimed more.
       const fileCount = current.log.files;
       return div(
         { class: "action-note" },
