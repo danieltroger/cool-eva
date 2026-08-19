@@ -86,6 +86,19 @@ export interface ServiceWriteResult {
   succeeded: boolean;
   /** The stamp, for the two service-point actions. */
   stamp?: { before: ServiceStamp | null; after: ServiceStamp | null };
+  /**
+   * ⚠️ What the parameter reads on the bike NOW, off the bus, at the end of this action
+   * — the read-back after a write, or the surprise value a stale precondition found.
+   * Null when the action ended without reading anything (a refusal at the session or
+   * security step, a timeout), and absent entirely for the actions that address no
+   * parameter.
+   *
+   * It is here so the page can show what the bike holds after a write instead of the
+   * value it held before, which the last sweep's snapshot still says. It is NOT a
+   * shortcut past anything: the next write is compared server-side against a fresh read
+   * exactly as this one was.
+   */
+  onBike?: { name: string; value: number; rawHex: string | null } | null;
 }
 
 export type ServiceWriteAnswer = { ok: true; result: ServiceWriteResult } | { ok: false; reason: string };
@@ -524,8 +537,31 @@ async function performParameterWrite(
       status: outcome.status,
       message: describeWriteOutcome(outcome),
       succeeded: outcome.status === "written",
+      onBike: readingAfter(outcome),
     },
   };
+}
+
+/**
+ * What the parameter reads on the bike at the end of a write attempt, or null.
+ *
+ * Only the outcomes that actually READ it: the read-back a write does, and the
+ * compare-and-swap's surprise value. `refused` and `failed` are not readings — the
+ * micro said no, or the exchange died, and neither says what the cell holds.
+ */
+function readingAfter(outcome: ServiceWriteOutcome): { name: string; value: number; rawHex: string | null } | null {
+  switch (outcome.status) {
+    case "written":
+    case "read-back-mismatch":
+      return { name: outcome.plan.name, value: outcome.readBack, rawHex: outcome.rawHex };
+    case "stale-precondition":
+      // No rawHex on this one: ./write-session.ts compares the typed value and the bytes
+      // are not carried out of the read. The number is the point here anyway.
+      return { name: outcome.plan.name, value: outcome.actual, rawHex: null };
+    case "refused":
+    case "failed":
+      return null;
+  }
 }
 
 function describeWriteOutcome(outcome: ServiceWriteOutcome): string {

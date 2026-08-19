@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { monotonicNow, since } from "../lib/clock.js";
-import { duration } from "../lib/format.js";
+import { ageInWords, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
 import { VcuProbe } from "./vcu-probe.js";
 import { VcuWrite, refreshVcuWrite } from "./vcu-write.js";
@@ -275,37 +275,10 @@ function ExportButton() {
       // send to other owners as their bike's calibration.
       return div(
         { class: "action-note" },
-        `From a snapshot read ${describeAge(summary.readAt)}${summary.complete ? "" : " · from an INCOMPLETE sweep"} · byte-compatible with energica_tool.py's “Save backup…”`
+        `From a snapshot read ${ageInWords(summary.readAt)}${summary.complete ? "" : " · from an INCOMPLETE sweep"} · byte-compatible with energica_tool.py's “Save backup…”`
       );
     }
   );
-}
-
-/**
- * How old the snapshot behind the export is.
- *
- * Computed on the PHONE against a Pi timestamp, which ../lib/clock.js otherwise
- * forbids — for the same reason ../lib/params-page.js does it: the Pi has no RTC
- * and steps its own clock from GPS, so of the two clocks in this pairing the
- * phone's is the one worth trusting. The number is a rough age on a label, not a
- * duration anything depends on, and a Pi that has not had a fix yet will show an
- * absurd one — which is itself the right thing to see.
- *
- * @param {number | null} readAt
- */
-function describeAge(readAt) {
-  if (readAt === null) {
-    return "at an unknown time";
-  }
-  const minutes = Math.round((Date.now() - readAt) / 60000);
-  if (minutes < 1) {
-    return "just now";
-  }
-  if (minutes < 90) {
-    return `${minutes} min ago`;
-  }
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
 }
 
 /**

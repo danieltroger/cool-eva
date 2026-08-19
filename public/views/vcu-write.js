@@ -1,7 +1,8 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { BAD, GOOD, MUTED, WARN } from "../lib/colors.js";
+import { BAD, GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
+import { ageInWords } from "../lib/format.js";
 
 const { button, div, input, option, select, span } = van.tags;
 
@@ -18,20 +19,44 @@ const { button, div, input, option, select, span } = van.tags;
 // ── How an accidental write is made hard ────────────────────────────────────
 // Four things, in the order they are met:
 //
-//  1. **You have to read the current value first.** The write button stays disabled,
-//     saying so, until "Read it off the bike now" has fetched what the bike actually
-//     holds. That value is sent back as `expected=`, and the Pi re-reads and refuses
-//     if it has moved — so a page left open since yesterday cannot write over a value
-//     it is not showing.
+//  1. **A write is always against a value that was READ off this bike.** The number on
+//     screen is sent back as `expected=`, the Pi re-reads the parameter and refuses if
+//     it has moved, so a page left open since yesterday cannot write over a value it is
+//     not showing. The button stays disabled while nothing has read it at all.
+//
+//     ⚠️ That reading may come from the last parameter SWEEP rather than from this
+//     page's own read button, and this is the one lock whose shape changed (2026-08-19).
+//     It used to insist on a per-parameter read here, which meant a completed 277/277
+//     sweep — which had just read every one of these — left the form saying "not read
+//     yet" and demanding one of them again. The property that matters was never the
+//     tap: it is the compare-and-swap, and that is enforced on the Pi against a read
+//     taken DURING the write (src/vcu/write-session.ts), not against anything this page
+//     believes. So an older reading is not a weaker precondition — it is a likelier
+//     refusal, which is the safe direction. What the page owes in exchange is honesty
+//     about where its number came from and how old it is, which is the caption under it.
 //  2. **The confirmation shows old → new**, spelled out in the button caption, and
 //     the button changes what it says between the two taps.
 //  3. **Two taps, never one.** The first arms and the second sends, and arming is
 //     dropped by ANY change to the form — retyping the value, picking a different
-//     parameter, or a refreshed reading. That last one matters: it means a value that
-//     moved under you disarms the button rather than being written.
+//     parameter, a refreshed reading, or a refreshed status. That last one matters: it
+//     means a value that moved under you disarms the button rather than being written.
 //  4. **The irreversible actions live in their own block**, below the parameters,
 //     each with its own two taps and its own warning. They are not in a list you can
 //     scroll a thumb through.
+//
+// ── Where each sentence about a parameter belongs ───────────────────────────
+// The allowlist carries three kinds of prose about each entry and they are read at
+// three different moments, so they are shown at three different ones:
+//
+//   purpose   what this parameter IS. Always visible: it is how you know you are on
+//             the right one.
+//   warnings  why you might not want to. Behind one tap, because there are up to four
+//             of them per parameter and stacking four amber paragraphs above the input
+//             is how a phone in a garage becomes unusable — and how warnings stop being
+//             read at all. The toggle says how many there are and stays amber while
+//             they are collapsed; nothing is dropped.
+//   verify    how to check the bike afterwards. Shown AFTER the write, next to the
+//             outcome, because that is when it is actionable.
 //
 // ── ⚠️ And one lock that is not about care at all ───────────────────────────
 // The table-type gate (src/vcu/table-gate.ts) disables the write button outright until
@@ -49,16 +74,37 @@ const { button, div, input, option, select, span } = van.tags;
 /** @typedef {import("../../src/vcu/write-runner.ts").WriteTargetSummary} WriteTargetSummary */
 /** @typedef {import("../../src/vcu/write-audit.ts").AuditRecord} AuditRecord */
 
+/**
+ * @typedef {{ value: number, rawHex: string | null, label: string | null,
+ *   source: "bus" | "sweep", readAt: number | null, complete: boolean }} OnBike
+ */
+
 const state = van.state(/** @type {VcuWriteResponse | null} */ (null));
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
-/** What the bike currently holds, as READ — null until "Read it now" has answered. */
-const current = van.state(/** @type {number | null} */ (null));
-/** The raw hex of that reading, so the page can show the bytes and not only the number. */
-const currentHex = van.state("");
+/**
+ * The freshest value this PAGE has had off the bus — a probe read, or the read-back at
+ * the end of a write — and which parameter it belongs to.
+ *
+ * ⚠️ The name rides along rather than the reading being cleared when the parameter
+ * changes, which is what the previous shape did. A reading and a `selected` that can
+ * drift apart is the bug this prevents: `onBike()` below only ever hands out a reading
+ * whose name matches the parameter the form is on, so there is no ordering in which a
+ * number belonging to one parameter can be shown — or sent as `expected=` — against
+ * another.
+ */
+const reading = van.state(/** @type {{ name: string, value: number, rawHex: string | null } | null} */ (null));
 const wanted = van.state("");
 /** Which control is armed, by a key like `write` or `action:clear-dtcs`. Empty means none. */
 const armed = van.state("");
+/** Whether the selected parameter's warnings are unfolded. Collapsed by default; see the header. */
+const warningsOpen = van.state(false);
+/**
+ * The last write attempt made from this page, so the outcome and the verification hint
+ * can be shown against the parameter they belong to rather than to whatever is selected
+ * when the answer lands.
+ */
+const lastWrite = van.state(/** @type {{ name: string, status: string, succeeded: boolean } | null} */ (null));
 const busy = van.state(false);
 const message = van.state("");
 
@@ -173,64 +219,183 @@ function ParameterForm() {
   return div(
     div({ class: "probe-row" }, Field("Parameter", ParameterSelect)),
     TargetNote(),
-    div({ class: "probe-row" }, Field("On the bike", CurrentReading), Field("Change to", WantedControl)),
+    ChangeRow(),
+    ValueNote(),
     ReadButton(),
     WriteButton(),
-    () => (message.val ? div({ class: "action-note" }, message.val) : div())
+    Outcome()
   );
 }
 
+/**
+ * The allowlist as a picker.
+ *
+ * ⚠️ The whole `<select>` is rebuilt by the binding, and the options are its DIRECT
+ * children. That is not a style preference — it is the fix for two real faults, both
+ * caused by the options previously being wrapped in a `<div>` because a VanJS binding
+ * function may only return ONE node (see van-1.6.1.d.ts's `ValidChildDomValue`):
+ *
+ *   • A `<div>` is not in `<select>`'s content model. Whether the options inside one
+ *     are collected at all is up to the engine — Chrome ≥135 does, older engines and
+ *     the phone this dashboard is actually used on showed an EMPTY dropdown with the
+ *     five parameters unreachable.
+ *   • Even where it renders, `select.value = …` set before that div is appended does
+ *     not stick, so any status refresh that rebuilt the list — every write does one —
+ *     silently snapped the picker back to the first parameter while the rest of the
+ *     form stayed on the one that was chosen. A write UI whose dropdown names a
+ *     different parameter from the one being written to is exactly the kind of quiet
+ *     mismatch everything else here is built to avoid.
+ *
+ * Which option is current is therefore set on the OPTION (`selected`), never on the
+ * select afterwards: it survives being rebuilt and does not depend on props and
+ * children being applied in a particular order.
+ */
 function ParameterSelect() {
-  return select(
-    {
-      class: "probe-input",
-      value: selected,
-      onchange: (/** @type {Event} */ event) => {
-        selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
-        // A different parameter means the reading on screen belongs to another one.
-        // Cleared rather than kept, so the write button cannot appear next to a
-        // number that is not this parameter's.
-        forgetReading();
+  return div(() => {
+    const targets = state.val?.status.targets ?? [];
+    return select(
+      {
+        class: "probe-input",
+        onchange: (/** @type {Event} */ event) => {
+          selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
+          // A different parameter means a different value, a different range and a
+          // different set of warnings. Everything the form holds about the old one goes.
+          forgetSelection();
+        },
       },
-    },
-    () => {
-      const targets = state.val?.status.targets ?? [];
-      return div(...targets.map(target => option({ value: target.name }, `${target.name} (${target.micro})`)));
-    }
-  );
+      ...targets.map(target =>
+        option({ value: target.name, selected: target.name === selected.val }, `${target.name} (${target.micro})`)
+      )
+    );
+  });
 }
 
-/** What the selected parameter is for, and everything worth knowing before touching it. */
+/**
+ * What the selected parameter is, and one tap to what is wrong with changing it.
+ *
+ * The warnings are collapsed rather than dropped, and the toggle is amber and counts
+ * them so a collapsed block still says there is something to read. See the header for
+ * why they are not all stacked above the input any more.
+ */
 function TargetNote() {
   return div({ class: "action-note" }, () => {
     const target = selectedTarget();
     if (!target) {
       return div();
     }
+    const notes = warningsOf(target);
     return div(
       div({ style: `color:${MUTED}` }, target.purpose),
-      // Every warning, always, not behind a "details" toggle. They are the reason
-      // this list is five entries long instead of 277.
-      ...target.warnings.map(warning => div({ style: `color:${WARN}`, class: "action-note" }, warning)),
-      target.control.kind === "bits"
-        ? div(
-            ...target.control.bits.map(bit => div({ style: `color:${WARN}`, class: "action-note" }, `⚠️ ${bit.caveat}`))
-          )
-        : div()
+      notes.length === 0
+        ? div()
+        : button(
+            {
+              class: "code-toggle",
+              style: `color:${WARN}`,
+              onclick: () => {
+                warningsOpen.val = !warningsOpen.val;
+              },
+            },
+            () =>
+              warningsOpen.val
+                ? "⚠️  hide what is wrong with changing it"
+                : `⚠️  ${notes.length} thing${notes.length === 1 ? "" : "s"} to know before changing it  ▾`
+          ),
+      () =>
+        warningsOpen.val
+          ? div(...notes.map(note => div({ style: `color:${WARN}`, class: "action-note" }, note)))
+          : div()
     );
   });
 }
 
+/**
+ * Everything the allowlist says against changing this parameter, in one list.
+ *
+ * The per-bit caveats are folded in rather than kept in a block of their own: they are
+ * warnings about the same act, and two separately-headed lists of amber paragraphs was
+ * half the problem.
+ * @param {WriteTargetSummary} target
+ */
+function warningsOf(target) {
+  return target.control.kind === "bits"
+    ? [...target.warnings, ...target.control.bits.map(bit => `⚠️ ${bit.label}: ${bit.caveat}`)]
+    : target.warnings;
+}
+
+/**
+ * Old → new, on one line, because that is the sentence the two taps agree to.
+ *
+ * The arrow is a character between two fields rather than a caption anywhere, so the
+ * relationship survives being read at arm's length in a garage.
+ */
+function ChangeRow() {
+  return div(
+    { class: "probe-row", style: "align-items:flex-end" },
+    Field("On the bike", CurrentReading),
+    div({ style: `color:${MUTED}; padding-bottom:0.6rem` }, "→"),
+    Field("Change to", WantedControl)
+  );
+}
+
 function CurrentReading() {
   return div({ class: "probe-input", style: "display:flex; align-items:center" }, () => {
-    if (current.val === null) {
+    const known = onBike();
+    if (!known) {
       return span({ style: `color:${MUTED}` }, "not read yet");
     }
     const target = selectedTarget();
     if (target?.control.kind === "bits") {
-      return span(`0x${current.val.toString(16).toUpperCase().padStart(4, "0")}`);
+      // The WORD is what gets written and what the compare-and-swap is against, so it
+      // is what is shown — but what is being changed is one bit of it, and "is that bit
+      // on right now" is the question in front of somebody about to toggle it.
+      return span(describeBits(target, known.value));
     }
-    return span(String(current.val));
+    return span(String(known.value));
+  });
+}
+
+/**
+ * `0x1113 · Heated handlebars OFF`. The word, then what its writable bits say.
+ * @param {WriteTargetSummary} target @param {number} value
+ */
+function describeBits(target, value) {
+  if (target.control.kind !== "bits") {
+    return String(value);
+  }
+  const bits = target.control.bits.map(bit => `${bit.label} ${(value & bit.mask) === 0 ? "OFF" : "ON"}`);
+  return [`0x${value.toString(16).toUpperCase().padStart(4, "0")}`, ...bits].join(" · ");
+}
+
+/**
+ * Where the number to the left came from, and what may be typed to the right.
+ *
+ * ⚠️ The provenance is not decoration. A value the last sweep read an hour ago and a
+ * value read off the bus ten seconds ago are both legitimate preconditions — the Pi
+ * re-reads either way — but they are not equally likely to still be true, and the one
+ * thing the page must never do is present them as the same thing.
+ */
+function ValueNote() {
+  return div({ class: "action-note", style: `color:${MUTED}` }, () => {
+    const target = selectedTarget();
+    if (!target) {
+      return div();
+    }
+    const known = onBike();
+    const range =
+      target.control.kind === "number"
+        ? `Whole number, ${target.control.min}…${target.control.max} (${target.control.minLabel}…${target.control.maxLabel}).`
+        : "";
+    if (!known) {
+      return div(`Nothing here has read this parameter yet. ${range}`);
+    }
+    const bytes = known.rawHex ? ` (${known.rawHex})` : "";
+    const where =
+      known.source === "bus"
+        ? `${known.value}${bytes} — read off the bike by this page.`
+        : `${known.label ?? known.value}${bytes} — from the parameter sweep ${ageInWords(known.readAt)}` +
+          `${known.complete ? "" : ", which did not finish"}. The Pi re-reads it before writing.`;
+    return div(`${where} ${range}`);
   });
 }
 
@@ -248,19 +413,22 @@ function WantedControl() {
     const target = selectedTarget();
     if (target?.control.kind === "bits") {
       const bits = target.control.bits;
+      // `selected` on the option rather than `value` on the select, for the reason
+      // ParameterSelect() sets out at length: this binding re-runs whenever the status
+      // does, and a `value` applied before the options exist is silently dropped —
+      // which would put the picker back on "choose…" while `wanted` still held a bit.
       return select(
         {
           class: "probe-input",
-          value: wanted,
           onchange: (/** @type {Event} */ event) => {
             wanted.val = /** @type {HTMLSelectElement} */ (event.target).value;
             armed.val = "";
           },
         },
-        option({ value: "" }, "choose…"),
+        option({ value: "", selected: wanted.val === "" }, "choose…"),
         ...bits.flatMap(bit => [
-          option({ value: `${bit.key}:1` }, `${bit.label} — ON`),
-          option({ value: `${bit.key}:0` }, `${bit.label} — OFF`),
+          option({ value: `${bit.key}:1`, selected: wanted.val === `${bit.key}:1` }, `${bit.label} — ON`),
+          option({ value: `${bit.key}:0`, selected: wanted.val === `${bit.key}:0` }, `${bit.label} — OFF`),
         ])
       );
     }
@@ -294,7 +462,16 @@ function ReadButton() {
       disabled: () => busy.val || !canReach() || !selectedTarget(),
       onclick: () => void readCurrent(),
     },
-    () => (busy.val ? "⏳  Reading…" : "🔎  Read it off the bike now")
+    () => {
+      if (busy.val) {
+        return "⏳  Reading…";
+      }
+      // Two captions, because the button is answering two different questions. With
+      // nothing read it is the way to get a value at all; with a sweep's value already
+      // on screen it is how you find out whether that value is still true, which is a
+      // thing you may want and no longer something you are made to do.
+      return onBike() === null ? "🔎  Read it off the bike now" : "🔎  Read it off the bike again";
+    }
   );
 }
 
@@ -303,11 +480,12 @@ function WriteButton() {
     button(
       {
         class: "action",
-        // Unavailable until there is a fresh reading, and until the bike has named its
-        // parameter table. The server enforces both — the compare-and-swap and the
-        // table gate — and the page simply does not offer a button whose request would
-        // be refused.
-        disabled: () => busy.val || !canWrite() || current.val === null || wanted.val.trim().length === 0,
+        // Unavailable until a value has been read off this bike, until something has
+        // been chosen to write, and until the bike has named its parameter table. The
+        // server enforces all three — the compare-and-swap, the allowlist and the table
+        // gate — and the page simply does not offer a button whose request would be
+        // refused.
+        disabled: () => busy.val || !canWrite() || onBike() === null || wanted.val.trim().length === 0,
         onclick: () => {
           if (armed.val !== "write") {
             armed.val = "write";
@@ -318,6 +496,9 @@ function WriteButton() {
         },
       },
       () => {
+        if (busy.val) {
+          return "⏳  Writing…";
+        }
         const table = state.val?.status.tableGate;
         if (table && !table.writesAllowed) {
           // Ahead of the "read it first" caption: reading the value would not help
@@ -331,17 +512,25 @@ function WriteButton() {
               // never ends. The full sentence is in TableTypeNote() above.
               "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
         }
-        if (current.val === null) {
-          return "✏️  Read it first — a write needs to know what is there now";
+        if (onBike() === null) {
+          return "✏️  Read it off the bike first — a write is compared against what is there now";
+        }
+        // Each disabled state says which of the two things is missing rather than
+        // sharing one caption: "nothing has read it" and "you have not said what to
+        // write" are fixed by different taps in different places.
+        if (wanted.val.trim().length === 0) {
+          return selectedTarget()?.control.kind === "bits"
+            ? "✏️  Pick what to set the bit to"
+            : "✏️  Type the value to write";
         }
         const change = describeChange();
         return armed.val === "write" ? `⚠️  Tap again to write  ${change}` : `✏️  Write  ${change}`;
       }
     ),
     div({ class: "action-note", style: `color:${MUTED}` }, () =>
-      current.val === null
-        ? "Every write is a compare-and-swap: the Pi re-reads the parameter and refuses if it has moved since you read it."
-        : `Currently ${currentHex.val || "?"} on the bike. The Pi will re-read it, write, and read it back — and say so loudly if the read-back disagrees.`
+      onBike() === null
+        ? "Every write is a compare-and-swap: the Pi re-reads the parameter and refuses if it has moved since it was read."
+        : "The Pi will re-read this parameter, write, and read it back — and say so loudly if the read-back disagrees, or if the bike does not hold what is shown on the left."
     )
   );
 }
@@ -349,7 +538,8 @@ function WriteButton() {
 /** `75 → 80`, or `Heated handlebars → ON`. What the two taps are agreeing to. */
 function describeChange() {
   const target = selectedTarget();
-  if (!target || current.val === null) {
+  const known = onBike();
+  if (!target || !known) {
     return "";
   }
   if (target.control.kind === "bits") {
@@ -357,7 +547,34 @@ function describeChange() {
     const bit = target.control.bits.find(candidate => candidate.key === key);
     return bit ? `${bit.label} → ${on === "1" ? "ON" : "OFF"}` : "";
   }
-  return `${target.name}: ${current.val} → ${wanted.val}`;
+  return `${known.value} → ${wanted.val}`;
+}
+
+/**
+ * What the last write did, and — only once it has been done — how to check the bike
+ * for yourself.
+ *
+ * ⚠️ The verification hint is deliberately not shown before the write. It is an
+ * instruction for afterwards ("0x625 b2 should now read…"), it was one of four amber
+ * paragraphs competing with the ones that argue against pressing the button at all, and
+ * standing in a garage the moment it becomes useful is the moment the write has landed.
+ */
+function Outcome() {
+  return div({ class: "action-note" }, () => {
+    const done = lastWrite.val;
+    const target = selectedTarget();
+    const verify =
+      // Both the clean write and the read-back mismatch get it: the mismatch is exactly
+      // the case where an independent check is worth most. A refusal or a stale
+      // precondition changed nothing, so there is nothing to go and look at.
+      done && target && done.name === target.name && (done.succeeded || done.status === "read-back-mismatch")
+        ? target.verify
+        : null;
+    return div(
+      message.val ? div(message.val) : div(),
+      verify ? div({ style: `color:${WATCH}`, class: "action-note" }, `🔍  ${verify}`) : div()
+    );
+  });
 }
 
 /**
@@ -548,12 +765,65 @@ function canWrite() {
   return canReach() && state.val?.status.tableGate.writesAllowed === true;
 }
 
-/** Drops the reading AND the arming. The two must never be out of step. */
-function forgetReading() {
-  current.val = null;
-  currentHex.val = "";
+/**
+ * What the bike holds for the selected parameter, and where that number came from.
+ *
+ * ⚠️ TWO sources, ranked, and the ranking is the point:
+ *
+ *   bus    a value this page read itself — the probe button, or the read-back at the end
+ *          of a write. Always wins: it is the newest thing anybody here knows, and after
+ *          a write it is the only one that is right, because the sweep's snapshot still
+ *          says what the parameter used to be.
+ *   sweep  what the last recorded parameter sweep found (server-side, per allowlist
+ *          entry). This is what stops the form saying "not read yet" to somebody who
+ *          has just read all 277 parameters.
+ *
+ * Null when neither has it, which is a real state — a Pi that has never swept — and the
+ * write button stays disabled saying so.
+ *
+ * The reading is only handed back when it belongs to the selected parameter, so no
+ * ordering of events can show one parameter's value against another's name.
+ * @returns {OnBike | null}
+ */
+function onBike() {
+  const target = selectedTarget();
+  if (!target) {
+    return null;
+  }
+  const fresh = reading.val;
+  if (fresh && fresh.name === target.name) {
+    return { value: fresh.value, rawHex: fresh.rawHex, label: null, source: "bus", readAt: null, complete: true };
+  }
+  const swept = target.onBike;
+  if (!swept) {
+    return null;
+  }
+  return {
+    value: swept.value,
+    rawHex: swept.rawHex,
+    label: swept.label,
+    source: "sweep",
+    readAt: swept.readAt,
+    complete: swept.complete,
+  };
+}
+
+/**
+ * Everything the form holds about the parameter that was selected. Called when the
+ * selection changes, and on every sheet open.
+ *
+ * The arming goes with it, always: a value typed for one parameter must not stay armed
+ * against another.
+ */
+function forgetSelection() {
+  reading.val = null;
   wanted.val = "";
   armed.val = "";
+  lastWrite.val = null;
+  message.val = "";
+  // Collapsed again for the newly selected parameter. Its warnings are not the ones
+  // that were just read, and an unfolded block would look like they are.
+  warningsOpen.val = false;
 }
 
 /**
@@ -603,17 +873,21 @@ async function readCurrent() {
     // an untyped `json()` here would let a renamed field through silently, and the
     // field in question is the one a write is compared against.
     const payload = /** @type {VcuProbeResponse} */ (await response.json());
-    const reading = payload.reading;
-    if (!reading || reading.status !== "read" || reading.value === null) {
+    const answer = payload.reading;
+    if (!answer || answer.status !== "read" || answer.value === null) {
       // No fallback to `unsigned`, deliberately. A write is compared against the
       // TYPED value, and using a differently-typed number as the precondition is how
       // a signed parameter gets written from an unsigned reading of itself.
-      current.val = null;
-      message.val = `Could not read ${target.name}: ${reading?.note ?? payload.message ?? "no answer"}`;
+      //
+      // ⚠️ And the failed read does NOT clear a value the sweep already had. It failed;
+      // that says nothing about what the parameter holds, and dropping a good older
+      // reading on the strength of a timeout would be inventing information. The
+      // message below says the read failed, and the caption under the value goes on
+      // saying where it came from.
+      message.val = `Could not read ${target.name}: ${answer?.note ?? payload.message ?? "no answer"}`;
       return;
     }
-    current.val = reading.value;
-    currentHex.val = reading.rawHex ?? "";
+    reading.val = { name: target.name, value: answer.value, rawHex: answer.rawHex ?? null };
     // A fresh reading disarms whatever was armed: the number the first tap agreed to
     // may not be the number on screen any more.
     armed.val = "";
@@ -627,10 +901,14 @@ async function readCurrent() {
 
 async function performWrite() {
   const target = selectedTarget();
-  if (!target || current.val === null) {
+  const known = onBike();
+  if (!target || !known) {
     return;
   }
-  const query = new URLSearchParams({ name: target.name, expected: String(current.val) });
+  // `expected` is the number that was ON SCREEN, whichever source it came from. The Pi
+  // re-reads the parameter and refuses if the bike disagrees with it, so this is a
+  // claim being checked rather than a claim being trusted.
+  const query = new URLSearchParams({ name: target.name, expected: String(known.value) });
   if (target.control.kind === "bits") {
     const [bit, on] = wanted.val.split(":");
     query.set("action", "bit");
@@ -640,11 +918,21 @@ async function performWrite() {
     query.set("action", "parameter");
     query.set("value", wanted.val.trim());
   }
+  const name = target.name;
   await send(query);
-  // The value on screen is now stale whatever happened — written, refused or
-  // unknown. Dropping it forces another read before another write, which is the
-  // property the compare-and-swap depends on.
-  forgetReading();
+  const result = state.val?.result ?? null;
+  lastWrite.val = result ? { name, status: result.status, succeeded: result.succeeded } : null;
+  // What the bike holds NOW, from the read-back the write itself did — so the value on
+  // screen is the one that is true afterwards rather than the one the sweep recorded
+  // before. Cleared when the attempt produced no reading at all (a refusal at the
+  // session or security step, a request that never came back): the page then falls back
+  // to the sweep's older value, correctly labelled as old, and the Pi re-reads before
+  // any second attempt exactly as it did before this one.
+  reading.val = result?.onBike
+    ? { name: result.onBike.name, value: result.onBike.value, rawHex: result.onBike.rawHex }
+    : null;
+  wanted.val = "";
+  armed.val = "";
 }
 
 /**
@@ -693,7 +981,7 @@ function Field(label, control) {
 /** Called by ./service-mode.js whenever the sheet opens. Refreshes and disarms everything. */
 export async function refreshVcuWrite() {
   armed.val = "";
-  forgetReading();
+  forgetSelection();
   await fetchStatus();
 }
 

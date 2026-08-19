@@ -64,6 +64,33 @@ export function duration(totalSeconds) {
 }
 
 /**
+ * How long ago a Pi timestamp was — "just now", "17 min ago", "3 days ago".
+ *
+ * ⚠️ Computed on the PHONE against the Pi's wall clock, which ../lib/clock.js otherwise
+ * forbids. It is deliberate here and the reason is the Pi: it has no RTC and steps its
+ * own clock from GPS, so of the two clocks in this pairing the phone's is the one worth
+ * trusting. The result is a rough age on a label, never a duration anything depends on,
+ * and a Pi that has not had a fix yet will show an absurd one — which is itself the
+ * right thing to see.
+ *
+ * @param {number | null} epochMs
+ */
+export function ageInWords(epochMs) {
+  if (epochMs === null) {
+    return "at an unknown time";
+  }
+  const minutes = Math.round((Date.now() - epochMs) / 60000);
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 90) {
+    return `${minutes} min ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
+/**
  * Degrees to a compass point. A heading of 237° means nothing at speed; "SW" does.
  * @param {number | null} degrees
  */
