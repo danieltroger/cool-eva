@@ -30,6 +30,13 @@
   --dim: #334155; /* borders only — never text */
   --bad: #f87171;
   --good: #4ade80;
+  /* The same amber as WARN in public/lib/colors.js, and it has to stay the same:
+     the menu sheet marks a reversible write amber in CSS and colours the sentences
+     that argue against it amber from JS, and two ambers that nearly match would
+     read as two different meanings. 7.9:1 on --bg, 6.5:1 on --tile.
+     --bad measures 6.5:1 on --bg but only 5.3:1 on --tile, so red text in the sheet
+     sits on the sheet's own background and never on a tile. */
+  --warn: #fb923c;
 
   /* The tab bar is fixed; every scrolling surface has to clear it plus the home
      indicator, or the last tile sits permanently under your thumb. */
@@ -350,6 +357,60 @@ body {
   transform: translateY(0);
 }
 
+/* The sheet has two levels of heading, and it needs both: it is one scroll
+ * containing five top-level sections, one of which (service mode) has four
+ * subsections of its own. With a single style for all nine, "Service actions"
+ * announced itself exactly as loudly as "This session" and nothing said which
+ * was inside which.
+ *
+ * Level 1 is a real heading — near-white, larger, and preceded by a rule that
+ * does most of the separating. Level 2 keeps the old small grey caps, which are
+ * a good subsection marker and were only ever a bad section marker.
+ */
+.sheet-heading {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--fg);
+  border-top: 1px solid var(--tile-edge);
+  margin-top: 1.1rem;
+  padding: 1rem 0.2rem 0.1rem;
+}
+
+/* No rule above the sheet's OWN first heading: it would sit a few pixels under the
+   sheet's top edge and read as a second border.
+   ⚠️ `.sheet-body >` is load-bearing, not tidiness. A bare `.sheet-heading:first-child`
+   also matches "Change something on the bike", which is the first child of the div
+   VcuWrite() returns — so the one heading in the sheet whose rule carries the most
+   meaning was the one silently losing it. */
+.sheet-body > .sheet-heading:first-child {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0.2rem;
+}
+
+/* One line under a level-1 heading saying what the whole section can do to the
+   bike — the risk tiers below, stated once for a group instead of per control.
+   Only the sections that hold controls get one; the two that are pure readouts
+   have nothing to warn about. The read/write boundary this makes visible existed
+   until now solely as a comment in public/views/service-mode.js, where no rider
+   could see it. */
+.sheet-heading-note {
+  font-size: 0.74rem;
+  color: var(--sub);
+  padding: 0.15rem 0.2rem 0;
+}
+
+/* The boundary itself. Everything below this heading can change the motorcycle,
+   so the heading is amber and so is the rule above it. */
+.sheet-heading.writes {
+  color: var(--warn);
+  border-top-color: rgba(251, 146, 60, 0.4);
+}
+
+.sheet-heading.writes + .sheet-heading-note {
+  color: var(--warn);
+}
+
 .sheet-title {
   font-size: 0.68rem;
   text-transform: uppercase;
@@ -383,18 +444,66 @@ body {
   margin-top: 0.15rem;
 }
 
+/* ---------- the sheet's three risk tiers ---------- */
+
+/* Every control in this sheet used to be the same grey rectangle, which meant
+ * "read the last-service date", "say a service was performed NOW" and "clear the
+ * stored trouble codes" were indistinguishable until you had read all three —
+ * and one of them cannot be undone.
+ *
+ * The tier is carried by a 4 px gutter down the left edge, and every tier has
+ * one, in the same place and the same width. That is the point: a stripe that
+ * appears and disappears is a second thing to notice before you can compare the
+ * colours, whereas a gutter that is always there is read the way a level meter
+ * is. The geometry is identical across tiers, so nothing shifts.
+ *
+ *   grey (default)     reads. A parameter read, a CSV export, a probe, a
+ *                      download. Cannot change the bike, and the safe tier
+ *                      deliberately needs no modifier — a control acquires risk
+ *                      by being marked, never by being forgotten.
+ *   amber .writes      a parameter write. Changes the bike, and can be written
+ *                      back, which is exactly what makes it a middle tier rather
+ *                      than being lumped in with the red one.
+ *   red .irreversible  the 31 FC service point, clearing stored DTCs, setting
+ *                      the bike's clock. No unset, and in the clock's case not
+ *                      even a read-back.
+ *
+ * Colour is not the only carrier, because deuteranopia flattens amber against
+ * red. The red tier ALSO sits behind a fold (.risk-fold), so it is not on screen
+ * at all until it is asked for, and carries a red no-undo line under the button.
+ * The fold is the part that matters on a handlebar-mounted phone: a thumb
+ * scrolling this sheet cannot land on an irreversible action, because there is
+ * nothing there to land on.
+ */
 .action {
   width: 100%;
-  background: var(--tile);
+  background: transparent;
   border: 1px solid var(--tile-edge);
+  border-left: 4px solid var(--tile-edge);
   border-radius: 0.8rem;
   color: var(--fg);
   font: inherit;
   font-size: 1rem;
+  /* Tall enough for a gloved thumb, and unchanged from before the tiers: the
+     read tier lost its fill, not its target size. */
   padding: 1rem;
   margin-top: 0.5rem;
   text-align: left;
   cursor: pointer;
+}
+
+/* The two tiers that change the bike keep the filled tile the read tier gave up,
+   so weight and colour agree rather than one having to be traded for the other. */
+.action.writes {
+  background: var(--tile);
+  border-color: rgba(251, 146, 60, 0.45);
+  border-left-color: var(--warn);
+}
+
+.action.irreversible {
+  background: var(--tile);
+  border-color: rgba(248, 113, 113, 0.5);
+  border-left-color: var(--bad);
 }
 
 .action:disabled {
@@ -405,6 +514,68 @@ body {
   font-size: 0.72rem;
   color: var(--label);
   padding: 0.35rem 0.3rem 0;
+}
+
+/* The prose under a control is three different things, and they were one
+ * undifferentiated amber block: "it will probably do nothing" sat in the same
+ * colour and size as "IRREVERSIBLE. There is no unset."
+ *
+ *   (unmarked)  what this does. Grey, always visible — it is how you know you
+ *               are on the right control.
+ *   .caution    why you might not want to. Amber. Folded away wherever there is
+ *               more than a sentence of it.
+ *   .no-undo    this cannot be taken back. Red, and never more than one short
+ *               line, because a paragraph of red is read as a paragraph.
+ *
+ * .no-undo leads the three under a button rather than following them: inside an
+ * opened fold, what separates the three irreversible actions from each other is
+ * precisely what each one cannot take back.
+ */
+.action-note.caution {
+  color: var(--warn);
+}
+
+.action-note.no-undo {
+  color: var(--bad);
+}
+
+/* The fold in front of the irreversible actions.
+ *
+ * Deliberately the same idiom as the parameter warnings' toggle — a counted,
+ * caret-ended toggle built on .code-toggle, from the fix that stopped four amber
+ * paragraphs stacking above the write form — rather than a second kind of
+ * disclosure. It is red instead of amber because what is behind it is, and it is
+ * a full-width row because the parameter toggle's ~60 px label is a fine target
+ * for something you go looking for and a poor one for the only thing standing
+ * between a thumb and Mode 04.
+ *
+ * ⚠️ Selected as `.code-toggle.risk-fold`, not `.risk-fold`. .code-toggle is
+ * declared further down this file, so at equal specificity it wins on source order
+ * and the variant silently rendered as the thing it was varying. */
+.code-toggle.risk-fold {
+  width: 100%;
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--bad);
+  padding: 0.9rem 0.2rem;
+  margin-top: 0.4rem;
+}
+
+/* One action and the prose that belongs to it. The gap between two of these is
+   deliberately wider than the gap inside one: with both at the default, the last
+   sentence about one irreversible action sat as close to the NEXT button as to the
+   one it was about. */
+.action-block + .action-block {
+  margin-top: 1.2rem;
+}
+
+/* The opened group, as one region rather than three loose buttons. A faint rule
+   down its left edge is what says the fold is still around them — otherwise an
+   opened fold looks exactly like three buttons that were always there. */
+.danger-zone {
+  border-left: 2px solid rgba(248, 113, 113, 0.3);
+  padding-left: 0.5rem;
+  margin-left: 0.1rem;
 }
 
 .sheet-close {

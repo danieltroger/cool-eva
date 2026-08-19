@@ -40,23 +40,43 @@ const { button, div, input, option, select, span } = van.tags;
 //     dropped by ANY change to the form — retyping the value, picking a different
 //     parameter, a refreshed reading, or a refreshed status. That last one matters: it
 //     means a value that moved under you disarms the button rather than being written.
-//  4. **The irreversible actions live in their own block**, below the parameters,
-//     each with its own two taps and its own warning. They are not in a list you can
-//     scroll a thumb through.
+//  4. **The irreversible actions are behind a fold**, below the parameters, each with
+//     its own two taps and its own warning — and, collapsed, not on screen at all. They
+//     are not in a list you can scroll a thumb through, and since 2026-08-19 they are
+//     not in a list at all until somebody asks for one. Toggling the fold disarms, and
+//     the fold re-collapses whenever the sheet is opened.
 //
-// ── Where each sentence about a parameter belongs ───────────────────────────
+// ── The three risk tiers ────────────────────────────────────────────────────
+// The page contains three kinds of thing and is painted so that it looks like it does,
+// because a rider glancing at this on a handlebar-mounted phone should be able to tell
+// them apart BEFORE reading any text. The colours and the left-edge gutter that carries
+// them are defined once in public/style.css; this file only says which control is which.
+//
+//   read (grey)         the probe read, the parameter read, the service-stamp read.
+//                       Cannot change the bike — and it is the DEFAULT, so a control
+//                       acquires risk by being marked, never by being forgotten.
+//   write (amber)       the parameter write. Changes the bike and can be written back,
+//                       which is what makes it a middle tier rather than a red one.
+//   irreversible (red)  31 FC, Mode 04, the clock. Behind the fold, and each carries in
+//                       red the one thing it cannot take back.
+//
+// ── Where each sentence belongs ─────────────────────────────────────────────
 // The allowlist carries three kinds of prose about each entry and they are read at
-// three different moments, so they are shown at three different ones:
+// three different moments, so they are shown at three different ones — and the service
+// actions below are split the same three ways (see the `ActionNotes` typedef):
 //
-//   purpose   what this parameter IS. Always visible: it is how you know you are on
-//             the right one.
-//   warnings  why you might not want to. Behind one tap, because there are up to four
-//             of them per parameter and stacking four amber paragraphs above the input
-//             is how a phone in a garage becomes unusable — and how warnings stop being
-//             read at all. The toggle says how many there are and stays amber while
-//             they are collapsed; nothing is dropped.
+//   purpose   what this parameter IS. Always visible, in grey: it is how you know you
+//             are on the right one.
+//   warnings  why you might not want to. Amber, behind one tap, because there are up to
+//             four of them per parameter and stacking four amber paragraphs above the
+//             input is how a phone in a garage becomes unusable — and how warnings stop
+//             being read at all. The toggle says how many there are and stays amber
+//             while they are collapsed; nothing is dropped.
 //   verify    how to check the bike afterwards. Shown AFTER the write, next to the
 //             outcome, because that is when it is actionable.
+//
+// The service actions add a fourth kind that no parameter has: what this cannot take
+// back. Red, never more than one short line, and it leads the other three.
 //
 // ── ⚠️ And one lock that is not about care at all ───────────────────────────
 // The table-type gate (src/vcu/table-gate.ts) disables the write button outright until
@@ -100,6 +120,14 @@ const armed = van.state("");
 /** Whether the selected parameter's warnings are unfolded. Collapsed by default; see the header. */
 const warningsOpen = van.state(false);
 /**
+ * Whether the three irreversible service actions are unfolded.
+ *
+ * Collapsed by default and re-collapsed on every sheet open, for the same reason
+ * `armed` is cleared there: the state a sheet opens in is the state a thumb finds when
+ * it is reaching for something else, and that state must not contain `31 FC`.
+ */
+const dangerOpen = van.state(false);
+/**
  * The last write attempt made from this page, so the outcome and the verification hint
  * can be shown against the parameter they belong to rather than to whatever is selected
  * when the answer lands.
@@ -118,9 +146,31 @@ const writing = van.state(false);
 const message = van.state("");
 
 export function VcuWrite() {
-  return div(div({ class: "sheet-title" }, "Change something on the bike"), Availability(), () =>
-    state.val?.status.enabled ? div(ParameterForm(), ServiceActions(), Journal()) : div()
+  return div(
+    // A level-1 heading, and the only amber one: this is the line the sheet's read
+    // half ends at, and the rule above it is the widest single piece of separation
+    // in the whole panel. ./service-mode.js has carried the boundary as a comment
+    // since it was written; this is the same statement, where a rider can see it.
+    //
+    // ⚠️ Both the amber and the line under it drop when SERVICE_WRITE_ENABLED=0,
+    // because there is then nothing below to warn about — the section renders one
+    // sentence saying the switch is off, and "everything below here can change the
+    // motorcycle" directly above it would be false. Amber is the default while
+    // nothing has answered yet: an unknown answer should look like the dangerous
+    // one, not like the safe one.
+    div({ class: () => `sheet-heading${writesAreOff() ? "" : " writes"}` }, "Change something on the bike"),
+    () =>
+      writesAreOff()
+        ? div()
+        : div({ class: "sheet-heading-note" }, "Writes. Everything below here can change the motorcycle."),
+    Availability(),
+    () => (state.val?.status.enabled ? div(ParameterForm(), ServiceActions(), Journal()) : div())
   );
+}
+
+/** Explicitly off, as opposed to not yet answered. See the heading above. */
+function writesAreOff() {
+  return state.val?.status.enabled === false;
 }
 
 /**
@@ -310,10 +360,11 @@ function TargetNote() {
                 ? "⚠️  hide what is wrong with changing it"
                 : `⚠️  ${notes.length} thing${notes.length === 1 ? "" : "s"} to know before changing it  ▾`
           ),
-      () =>
-        warningsOpen.val
-          ? div(...notes.map(note => div({ style: `color:${WARN}`, class: "action-note" }, note)))
-          : div()
+      // `caution`, the same class the service actions' why-you-might-not-want-to lines
+      // use, rather than an inline WARN: these are the same tier of sentence and there
+      // is now one place that decides what that tier looks like. The toggle above keeps
+      // its inline colour — it is a control, and the tiers are about prose.
+      () => (warningsOpen.val ? div(...notes.map(note => div({ class: "action-note caution" }, note))) : div())
     );
   });
 }
@@ -503,7 +554,10 @@ function WriteButton() {
   return div(
     button(
       {
-        class: "action",
+        // The middle tier, and the only control in it. A parameter write changes the
+        // bike and can be written back — which is why it is amber and on screen,
+        // rather than red and behind the fold with the three that cannot.
+        class: "action writes",
         // Unavailable until a value has been read off this bike, until something has
         // been chosen to write, and until the bike has named its parameter table. The
         // server enforces all three — the compare-and-swap, the allowlist and the table
@@ -616,35 +670,84 @@ function Outcome() {
 }
 
 /**
- * The four service actions.
+ * The four service actions — one read, three that cannot be undone.
  *
- * Below the parameter form and visually separate, because two of them cannot be
- * undone and one of them has no read-back at all. Each arms independently — arming
- * one disarms the others, so a thumb travelling down the list cannot double-tap its
- * way through two of them.
+ * ⚠️ They used to be four identical grey rectangles in a row, so "read the
+ * last-service date and odometer" and "clear the stored trouble codes" looked the
+ * same until you had read both. Now only the read one is on screen; the other three
+ * are behind a fold, in the red tier, with the sentence each of them cannot take
+ * back in red under it.
+ *
+ * Each still arms independently — arming one disarms the others, so a thumb
+ * travelling down the list cannot double-tap its way through two of them.
  */
 function ServiceActions() {
   return div(
     div({ class: "sheet-title" }, "Service actions"),
-    ActionButton(
-      "read-service-stamp",
-      () => "📖  Read the last-service date and odometer",
-      "Reads four identifiers on the A8 that no sweep covers. Read-only. ⚠️ Untried: nothing has ever read these off this bike, so a refusal may simply mean it does not carry a service stamp.",
-      false
+    // Outside the fold, deliberately: it changes nothing, and it is the action you
+    // want BEFORE the service point below — which stamps the bike's own clock and
+    // odometer over whatever this one shows you.
+    ActionButton("read-service-stamp", () => "📖  Read the last-service date and odometer", {
+      confirm: "ask the A8 for the service stamp",
+      does: "Reads four identifiers on the A8 that no sweep covers. Read-only.",
+      caution:
+        "⚠️ Untried: nothing has ever read these off this bike, so a refusal may simply mean it does not carry a service stamp.",
+    }),
+    IrreversibleActions()
+  );
+}
+
+/**
+ * The three actions with no undo, behind one fold.
+ *
+ * ⚠️ The fold is the safety part of this section, not the decoration. This dashboard
+ * is used on a handlebar-mounted phone, and the sheet is a long scroll: styling alone
+ * still leaves `31 FC` and Mode 04 as things a thumb can arrive at while trying to
+ * reach something else. Collapsed, there is nothing there to arrive at.
+ *
+ * The same idiom as the parameter warnings' toggle — counted, caret-ended, coloured
+ * for what is behind it — rather than a second kind of disclosure, and the count is in
+ * the label so the fold says what it is hiding without being opened.
+ *
+ * ⚠️ Toggling DISARMS. Otherwise collapsing the fold over a half-confirmed action
+ * would leave a primed button waiting off screen for its second tap; re-opening the
+ * sheet already resets both (see refreshVcuWrite), and this closes the same hole for
+ * the fold itself.
+ */
+function IrreversibleActions() {
+  return div(
+    button(
+      {
+        class: "code-toggle risk-fold",
+        onclick: () => {
+          dangerOpen.val = !dangerOpen.val;
+          armed.val = "";
+        },
+      },
+      () =>
+        dangerOpen.val ? "🚨  hide the 3 actions that cannot be undone  ▴" : "🚨  3 actions that cannot be undone  ▾"
     ),
-    ActionButton(
-      "set-service-point",
-      () => "🔧  Say a service was performed NOW",
-      "⚠️ IRREVERSIBLE. Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer, so read the stamp above first and make sure the bike's clock is right. There is no unset.",
-      true
-    ),
-    ClockAction(),
-    ActionButton(
-      "clear-dtcs",
-      () => "🧹  Clear the stored trouble codes",
-      "⚠️ IRREVERSIBLE. OBD Mode 04. This bike's stored list has been accumulating since before anyone started looking, and the freeze frame goes with it. Codes whose faults are still active come straight back.",
-      true
-    )
+    () =>
+      dangerOpen.val
+        ? div(
+            { class: "danger-zone" },
+            ActionButton("set-service-point", () => "🔧  Say a service was performed NOW", {
+              confirm: "STAMP A SERVICE NOW. There is no unset",
+              noUndo: "IRREVERSIBLE — there is no unset.",
+              does: "Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer.",
+              caution:
+                "⚠️ Read the stamp above first, and make sure the bike's clock is right — the bike's clock is what it stamps.",
+            }),
+            ClockAction(),
+            ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
+              confirm: "WIPE the stored codes and their freeze frame",
+              noUndo: "IRREVERSIBLE — the freeze frame goes with the codes.",
+              does: "OBD Mode 04.",
+              caution:
+                "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
+            })
+          )
+        : div()
   );
 }
 
@@ -659,9 +762,10 @@ function ServiceActions() {
  */
 function ClockAction() {
   return div(
+    { class: "action-block" },
     button(
       {
-        class: "action",
+        class: "action irreversible",
         disabled: () => busy.val || !canReach() || state.val?.status.clock.trustworthy !== true,
         onclick: () => {
           if (armed.val !== "action:sync-clock") {
@@ -694,7 +798,7 @@ function ClockAction() {
           : "🕒  Set the bike's clock from this Pi";
       }
     ),
-    div({ class: "action-note" }, () => {
+    () => {
       const clock = state.val?.status.clock;
       if (!clock) {
         return div();
@@ -703,32 +807,71 @@ function ClockAction() {
         // Every reason, not the first. "No satellite time AND the clock reads 2060"
         // is a different situation from either alone, and the second one is how you
         // find out the GPS decode is broken rather than the sky being blocked.
+        //
+        // Red, but NOT the `no-undo` class: the button is disabled, so there is
+        // nothing here that cannot be undone. This is red because something is
+        // broken, and `no-undo` means one specific thing that this is not.
         return div(
-          div({ style: `color:${BAD}` }, `The Pi reads ${clock.iso}, and it is not fit to copy:`),
-          ...clock.reasons.map(reason => div({ style: `color:${MUTED}` }, `· ${reason}`))
+          div({ class: "action-note", style: `color:${BAD}` }, `The Pi reads ${clock.iso}, and it is not fit to copy:`),
+          ...clock.reasons.map(reason => div({ class: "action-note", style: `color:${MUTED}` }, `· ${reason}`))
         );
       }
-      return div(
-        { style: `color:${MUTED}` },
-        `Checked against satellite time (${clock.offsetFromGpsSeconds.toFixed(1)} s apart). ` +
-          "The bike's clock is what the service point stamps. ⚠️ There is no way to read the bike's clock back, so this is the one action here that nothing can confirm."
-      );
-    })
+      return NoteBlock({
+        // Not the word IRREVERSIBLE, because this one is subtly worse than the other
+        // two: you can set the clock again, but nothing can tell you what it held
+        // before or that this landed at all. That is the fact worth having in red.
+        noUndo: "No read-back: nothing can confirm this landed, or say what the clock said before.",
+        does:
+          `Checked against satellite time (${clock.offsetFromGpsSeconds.toFixed(1)} s apart). ` +
+          "The bike's clock is what the service point stamps.",
+      });
+    }
   );
 }
 
 /**
+ * The three kinds of sentence a control carries, which are read at three different
+ * moments and are therefore ranked rather than run together.
+ *
+ * They were one undifferentiated amber block, and it flattened the distance between
+ * "it will probably do nothing" and "IRREVERSIBLE. There is no unset." — the same
+ * colour, the same size, the same paragraph.
+ *
+ * @typedef {{ noUndo?: string, does: string, caution?: string }} ActionNotes
+ */
+
+/**
+ * The prose plus the tail of the caption the SECOND tap agrees to.
+ *
+ * `confirm` is not prose — it is on the control, not under it — but it is declared
+ * alongside so the two cannot drift apart. Separate from `ActionNotes` because the
+ * clock action writes its own confirmation (it asks a question about the time rather
+ * than about an intention) while still rendering the same three ranked sentences.
+ *
+ * @typedef {ActionNotes & { confirm: string }} ConfirmableAction
+ */
+
+/**
  * @param {"read-service-stamp" | "set-service-point" | "clear-dtcs"} action
  * @param {() => string} caption
- * @param {string} note
- * @param {boolean} irreversible
+ * @param {ConfirmableAction} notes
  */
-function ActionButton(action, caption, note, irreversible) {
+function ActionButton(action, caption, notes) {
   const key = `action:${action}`;
+  // Derived from the prose rather than passed alongside it, so the tier a button is
+  // painted and the sentence it carries cannot disagree: a red button with no line
+  // saying what it cannot take back is now unexpressible.
+  const irreversible = notes.noUndo !== undefined;
   return div(
+    // `action-block` is one control and the prose that belongs to it. It exists so the
+    // gap BETWEEN two actions can be bigger than the gap between an action and its own
+    // notes — otherwise "read the stamp above first" sits as close to the next button
+    // as to the one it is about, which on this list is a sentence attached to the
+    // wrong irreversible action.
+    { class: "action-block" },
     button(
       {
-        class: "action",
+        class: `action${irreversible ? " irreversible" : ""}`,
         disabled: () => busy.val || !canReach(),
         onclick: () => {
           if (armed.val !== key) {
@@ -739,18 +882,53 @@ function ActionButton(action, caption, note, irreversible) {
           void performAction(action, action);
         },
       },
-      () =>
-        armed.val === key
-          ? `⚠️  Tap again — ${irreversible ? "this cannot be undone" : "this asks the bike"}`
-          : caption()
+      // ⚠️ The confirmation NAMES WHAT IS PRIMED, and that is not decoration. It used
+      // to be one shared sentence — "Tap again — this cannot be undone" — on all
+      // three, so an armed button said only that something irreversible was armed,
+      // never which. The parameter write has named its target in this exact spot
+      // since #81 for the same reason (see describeChange): the caption is the one
+      // place a person commits, and a thumb that landed on the wrong control is
+      // exactly the case it exists to catch.
+      () => (armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption())
     ),
-    div({ class: "action-note", style: `color:${irreversible ? WARN : MUTED}` }, note)
+    NoteBlock(notes)
   );
 }
 
-/** The last few journal lines. The record of what has been done to this motorcycle. */
+/**
+ * The prose under one control, in the order it is worth reading.
+ *
+ * The no-undo line LEADS rather than following. Inside an opened fold every button is
+ * irreversible, so what separates them is precisely what each one cannot take back —
+ * "there is no unset", "the freeze frame goes with the codes", "nothing can confirm
+ * this landed" — and that is the line a rider needs first, not third.
+ *
+ * @param {ActionNotes} notes
+ */
+function NoteBlock(notes) {
+  return div(
+    // No glyph in front of the red line, unlike the amber one's ⚠️. At 0.72rem 🚨
+    // renders as an unreadable red smudge, and it would be leading a line that is
+    // already red and already starts with the word IRREVERSIBLE. The fold's label
+    // keeps its 🚨, where it is the only red thing on screen and has work to do.
+    notes.noUndo === undefined ? div() : div({ class: "action-note no-undo" }, notes.noUndo),
+    div({ class: "action-note" }, notes.does),
+    notes.caution === undefined ? div() : div({ class: "action-note caution" }, notes.caution)
+  );
+}
+
+/**
+ * The last few journal lines. The record of what has been done to this motorcycle.
+ *
+ * ⚠️ The lines are a SIBLING of the heading, not children of it. They were children,
+ * which put every one of them inside a `.sheet-title` — so the record of what has been
+ * done to the bike rendered as tiny grey SMALL CAPS WITH WIDE TRACKING, because
+ * `text-transform`, `letter-spacing` and `color` all inherit. The `.action-note` on
+ * them only ever overrode the font size.
+ */
 function Journal() {
-  return div({ class: "sheet-title" }, "Recently written", () =>
+  return div(
+    div({ class: "sheet-title" }, "Recently written"),
     div({ class: "action-note" }, () => {
       const recent = state.val?.status.recent ?? [];
       if (recent.length === 0) {
@@ -1087,9 +1265,13 @@ function Field(label, control) {
   return div({ class: "probe-field" }, div({ class: "probe-label" }, label), control());
 }
 
-/** Called by ./service-mode.js whenever the sheet opens. Refreshes and disarms everything. */
+/** Called by ./service-mode.js whenever the sheet opens. Refreshes, disarms and re-folds everything. */
 export async function refreshVcuWrite() {
   armed.val = "";
+  // Not in forgetSelection(): that also runs when the PARAMETER changes, and the
+  // irreversible actions have nothing to do with which parameter is selected. This is
+  // the sheet-opening reset, and re-folding belongs to it alone.
+  dangerOpen.val = false;
   forgetSelection();
   await fetchStatus();
 }

@@ -52,17 +52,31 @@ export function Sheet() {
         class: "sheet-body",
         onclick: (/** @type {Event} */ event) => event.stopPropagation(),
       },
-      div({ class: "sheet-title" }, "This session"),
+      // `sheet-heading` for the sheet's own sections, `sheet-title` for the
+      // subsections inside one of them. Nine headings all rendered as small grey
+      // caps is what "there is zero visual hierarchy in the menu" was mostly
+      // about: "Service actions" announced itself as loudly as "This session"
+      // and nothing said which was inside which. See style.css.
+      div({ class: "sheet-heading" }, "This session"),
       TripStats(),
-      div({ class: "sheet-title" }, "Actions"),
+      div({ class: "sheet-heading" }, "Actions"),
+      // The waypoint is written on the Pi and the log is read off it, so this whole
+      // section is outside the risk tiers below — worth saying, because "Actions"
+      // and "Service actions" are otherwise two similar words a scroll apart.
+      div({ class: "sheet-heading-note" }, "Neither of these touches the bike."),
       WaypointButton(),
       DownloadButton(),
       // Last of the doing-things sections and first of the reading-things ones,
       // because it is the only control here that causes traffic on the bike's bus
       // — worth a heading of its own rather than a third entry under "Actions".
-      div({ class: "sheet-title" }, "Service mode"),
+      div({ class: "sheet-heading" }, "Service mode"),
+      // Not "nothing here can change it": ServiceMode() renders the write section
+      // at its end, under an amber heading of its own. What this line promises is
+      // true of everything down to that heading, and it also says the heading is
+      // coming — which is the wayfinding a sheet this long needs.
+      div({ class: "sheet-heading-note" }, "Reads the bike. The section that can change it is further down."),
       ServiceMode(),
-      div({ class: "sheet-title" }, "Stored codes"),
+      div({ class: "sheet-heading" }, "Stored codes"),
       TroubleCodes(),
       // No "Link" section. A per-source liveness readout was here in two shapes
       // and neither could be read: a grid of sixteen fractions needed the reader
