@@ -114,6 +114,14 @@ const REQUIRED_IN_FILTER: [number, string][] = [
   // particular byte pattern" this list exists for — without this line, dropping it from the
   // filter would go unnoticed.
   [0x121, "the rider's DC charge-current limit, set on the bike's own screen"],
+  // The charge manager, 2026-08-19. These five matter more than most: they are silent on a
+  // parked bike, so dropping one from the filter cannot be noticed until the next charge —
+  // and then looks exactly like an ECU that did not wake up.
+  [0x605, "charge manager → BMS: charge type and leak-detect inhibit"],
+  [0x610, "charge manager state machine"],
+  [0x615, "charge manager telemetry: voltage, DC current, SOC"],
+  [0x620, "charge manager AC/DC current ceilings"],
+  [0x625, "charge manager configured max DC current and charge-active flags"],
 ];
 for (const [id, what] of REQUIRED_IN_FILTER) {
   if (!streamIds.has(id)) {
@@ -429,6 +437,100 @@ const REPLAY: ReplayCase[] = [
     why: "⚠️ SYNTHETIC — the real 75 A frame with one bit set in the tail. b5-7 are zero in every captured frame of both ids except opcode 0x14, so a 0x18 that starts using them is a 0x18 that means something else; the decoder would rather go silent than report a number from a layout it does not recognise",
     expect: {},
     absent: ["dc_charge_limit_selected_a"],
+  // The charge manager, added 2026-08-19. Every frame below is copied byte for byte out of
+  // ~/Documents/cool-eva-archive, and each pair (one AC, one DC) is taken at the SAME instant
+  // in the same session as its siblings, so the five ids can be read together as one state.
+  // The `why` lines carry the corroborating 0x200 reading from that instant — that is what
+  // makes these regression tests rather than a copy of the decoder's own arithmetic.
+  {
+    id: 0x615,
+    frame: "3A 01 3F 28 00 00 00 00",
+    why: "2026-08-04 20:05:20, mid-plateau of the 2026-08-04 DC session. 0x200 read 300.5 V / 63.2 A / 40 % at that instant: b0 58 + 242.5 = 300.5 V EXACTLY, b2 = 63 A against 63.2, b3 = 40 % against 40",
+    expect: { charge_manager_pack_v: 300.5, dc_charge_a: 63, charge_manager_soc: 40 },
+  },
+  {
+    id: 0x615,
+    frame: "2D 01 49 11 00 00 00 00",
+    why: "2026-08-08 17:49:24 — the highest DC current in the whole corpus, 73 A, at a low 17 % SOC. 0x200 read 288.0 V / 73.0 A / 17 %. This is the case that would break if b2 were ever read as anything but plain amps",
+    expect: { charge_manager_pack_v: 287.5, dc_charge_a: 73, charge_manager_soc: 17 },
+  },
+  {
+    id: 0x615,
+    frame: "5D 01 07 63 00 00 00 00",
+    why: "2026-08-09 18:15:22 — the far end of a DC taper, 99 % SOC and only 7 A left. 0x200 read 335.5 V / 6.7 A / 99 %, so b0 93 + 242.5 = 335.5 V exactly at the top of the pack's range as well as the middle",
+    expect: { charge_manager_pack_v: 335.5, dc_charge_a: 7, charge_manager_soc: 99 },
+  },
+  {
+    id: 0x615,
+    frame: "2C 01 00 1F 00 00 00 00",
+    why: "2026-08-03 22:31:22, five hours into the 6.8 h overnight AC charge at 1 A. b2 = 0 while 1.0 A of AC charge current flows — the property that makes dc_charge_a DC-specific rather than a general charge current",
+    expect: { charge_manager_pack_v: 286.5, dc_charge_a: 0, charge_manager_soc: 31 },
+  },
+  {
+    id: 0x610,
+    frame: "5E 00 00 00 F1 05 01 23",
+    why: "the DC state, at the same instant as the 63 A frame above. b7 = 0x23 and b0 bit 1 set; b0 bit 0 (AC) clear",
+    expect: { charge_manager_status: 0x5e, charge_manager_state: 0x23 },
+  },
+  {
+    id: 0x610,
+    frame: "19 00 00 00 F1 05 01 02",
+    why: "the AC state, from the overnight session. b7 = 0x02 and b0 bit 0 set — b7 never once reads 0x23 on AC or 0x02 on DC across 44 444 frames",
+    expect: { charge_manager_status: 0x19, charge_manager_state: 0x02 },
+  },
+  {
+    id: 0x620,
+    frame: "4B 00 00 16 00 00 00 00",
+    why: "DC, same instant as the 63 A frame: the vehicle advertising its full 75 A while the station delivers 63. b1 (the AC ceiling) is 0, which is what it reads in 100 % of DC frames",
+    expect: { dc_charge_limit_a: 75, ac_charge_limit_a: 0 },
+  },
+  {
+    id: 0x620,
+    frame: "2C 00 00 51 00 00 00 00",
+    why: "DC late in a taper (2026-08-09 18:15:22) — the advertised ceiling has itself fallen to 44 A. It follows the station rather than commanding it, so this byte is not the rider's setting",
+    expect: { dc_charge_limit_a: 44, ac_charge_limit_a: 0 },
+  },
+  {
+    id: 0x620,
+    frame: "00 0D 01 FF 00 00 00 00",
+    why: "AC overnight: b1 = 13 A while 0x10A b7 = 0x07 asks for 1.0 A, so the ceiling is nowhere near the setpoint and cannot be a readback of it. b0 (the DC ceiling) is 0",
+    expect: { dc_charge_limit_a: 0, ac_charge_limit_a: 13 },
+  },
+  {
+    id: 0x620,
+    frame: "00 08 01 FF 00 00 00 00",
+    why: "2026-08-08 18:55:57 — the lowest AC ceiling in the corpus. 0x10A b7 = 0x34 asks for 7.43 A at that instant, just under the 8 here, which is the pair that shows b1 bounding the setpoint",
+    expect: { dc_charge_limit_a: 0, ac_charge_limit_a: 8 },
+  },
+  {
+    id: 0x625,
+    frame: "6B 01 4B FF 12 00 00 00",
+    why: "DC, same instant as the 63 A frame. b2 = 0x4B = 75 is MAX_DC_CHG_CURRENT read back from the VCU; b4 = 0x12 has bit 5 clear (DC flowing) and bit 2 clear (no AC)",
+    expect: { dc_charge_limit_max_a: 75, dc_charging: 1, ac_charging: 0 },
+  },
+  {
+    id: 0x625,
+    frame: "6B 01 4B FF 2C 00 00 00",
+    why: "AC overnight: b4 = 0x2C, bit 2 set and bit 5 set. Same b2 = 75 — it is static across DC, AC and parked alike, which is why it is a configuration constant and not a negotiated value",
+    expect: { dc_charge_limit_max_a: 75, dc_charging: 0, ac_charging: 1 },
+  },
+  {
+    id: 0x625,
+    frame: "6B 01 4B FF 32 00 00 00",
+    why: "2026-08-09 14:43:32 — the ABORTED DC attempt: 0x605 and 0x610 both say a DC session is established but not one amp ever flows, and b4 sits at the idle 0x32. The case that separates 'a session exists' from 'current is flowing'",
+    expect: { dc_charge_limit_max_a: 75, dc_charging: 0, ac_charging: 0 },
+  },
+  {
+    id: 0x605,
+    frame: "11 00 02 02 00 00 00 01",
+    why: "DC, same instant as the 63 A frame: b2 = 2 (DC) and b7 = 1, the BMS's isolation monitor switched off for the duration — 1 on DC and 0 on AC in 100.000 % of 43 994 frames",
+    expect: { charge_type: 2, bms_leak_detect_inhibit: 1 },
+  },
+  {
+    id: 0x605,
+    frame: "0F 00 01 01 00 00 00 00",
+    why: "AC overnight: b2 = 1 (AC) and leak detection left running. b3 duplicates b2 in every frame of the corpus, which is why only b2 is emitted",
+    expect: { charge_type: 1, bms_leak_detect_inhibit: 0 },
   },
   {
     id: 0x125,

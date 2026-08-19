@@ -22,6 +22,15 @@
 import { ABS_CAN_ID, decodeAbsFrame } from "./abs.ts";
 import { decodeAttitudeFrame } from "./attitude.ts";
 import { CHARGE_SETPOINT_CAN_ID, decodeChargeSetpointFrame } from "./charge-setpoint.ts";
+import {
+  CHARGE_BMS_COMMAND_CAN_ID,
+  CHARGE_CONFIG_CAN_ID,
+  CHARGE_LIMITS_CAN_ID,
+  CHARGE_MANAGER_CAN_IDS,
+  CHARGE_STATE_CAN_ID,
+  CHARGE_TELEMETRY_CAN_ID,
+  decodeChargeManagerFrame,
+} from "./charge-manager.ts";
 import { CONSUMPTION_CAN_ID, decodeConsumptionFrame } from "./consumption.ts";
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
 import {
@@ -93,6 +102,19 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 
     case VCU_FLAGS_CAN_ID:
       return decodeVcuFlagsFrame(data);
+
+    // The charge manager, added 2026-08-19. Five ids, one module: they are one ECU's
+    // state and only make sense read together — 0x605 says which path the session is on,
+    // 0x610 says where the handshake got to, 0x615 measures it, 0x620 bounds it and
+    // 0x625 says whether anything is actually flowing. Routing them separately here
+    // would scatter that argument across five places. See charge-manager.ts for the
+    // evidence, and for the four frames in the same group that stay undecoded.
+    case CHARGE_BMS_COMMAND_CAN_ID:
+    case CHARGE_STATE_CAN_ID:
+    case CHARGE_TELEMETRY_CAN_ID:
+    case CHARGE_LIMITS_CAN_ID:
+    case CHARGE_CONFIG_CAN_ID:
+      return decodeChargeManagerFrame(id, data);
 
     // 0x305 — charger DC (charging only, 5 Hz). 🟡
     case 0x305: {
@@ -576,5 +598,8 @@ const VEHICLE_STREAM_IDS = [
   GPS_CAN_ID,
   0x480,
   PSU_CAN_ID,
+  // The charge-manager group. These are silent unless a cable is live, so on a parked
+  // bike they cost one filter slot each and nothing else.
+  ...CHARGE_MANAGER_CAN_IDS,
 ];
 export const STREAM_IDS = [...VEHICLE_STREAM_IDS, ...BMS_STREAM_IDS];

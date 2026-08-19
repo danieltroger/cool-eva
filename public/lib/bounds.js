@@ -75,6 +75,24 @@ const BY_KEY = {
   // writes through mask 127, so the screen cannot offer more however the bike is
   // optioned. Ours is 75.
   "dc_charge_limit_selected_a": [0, 127],
+  // The charge manager's flags and raw state bytes (src/can/charge-manager.ts), added
+  // 2026-08-19. Every one of them needs naming here for the same reason
+  // `fast_dc_contactor` above does: a blank unit in the `charge` group — which cannot
+  // become a BOOLEAN_GROUP, because `mains_v` and `dc_a` live in it — reaches no rule in
+  // this file and renders whatever arrives.
+  //
+  // The two raw state bytes are gated to a byte rather than to the values they have been
+  // seen to take. 0x610 b0 has produced seven values and b7 nine across 29 sessions, and
+  // the point of logging them raw is to catch a state nobody has seen yet; a bound drawn
+  // round today's set would reject exactly that.
+  "dc_charging": [0, 1],
+  "ac_charging": [0, 1],
+  "bms_leak_detect_inhibit": [0, 1],
+  // 1 = AC, 2 = DC. 0 has not been observed while a session is up, but the byte is 0
+  // during the frames either side of one, so the bound starts there.
+  "charge_type": [0, 2],
+  "charge_manager_status": [0, 255],
+  "charge_manager_state": [0, 255],
   // 0x501, the PSU monitor. These three MUST be named here, and the first two are the
   // reason this comment exists: their unit is "mV", and BY_UNIT's mV fallback is
   // [0, 5000] because it was written for cell voltages. A healthy 12 704 mV rail would

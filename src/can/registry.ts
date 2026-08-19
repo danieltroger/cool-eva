@@ -244,6 +244,29 @@ export const SIGNALS: SignalDef[] = [
   // waypoint_seq escapes this by being a monotonic counter; a setting cannot. Setting a
   // deadband here would make it strictly worse, which is why there is none.
   { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
+  // 0x605 / 0x610 / 0x615 / 0x620 / 0x625 — the charge manager (src/can/charge-manager.ts),
+  // added 2026-08-19 from 29 charge sessions. Present only while a cable is live, except
+  // 0x625's three, which broadcast whenever the bike is awake.
+  //
+  // These are the only signals that see a DC fast charge at all: the AC charger's frames
+  // (0x305/0x306, above) never appear during one, so every `charge` signal above this block
+  // reads "nothing happening" at a fast charger while 20 kW goes in.
+  //
+  // No deadbands. Every one of them is either a flag, a 1-unit-quantised integer or a byte
+  // that only moves on a state change, so log-on-change already is the right rate — and they
+  // are only ever produced while plugged in, which bounds the row count by itself.
+  { key: "charge_type", unit: "", group: "charge", source: "stream" }, // 0x605 b2: 1 AC, 2 DC ✅
+  { key: "bms_leak_detect_inhibit", unit: "", group: "bms", source: "stream" }, // 0x605 b7 ✅
+  { key: "charge_manager_status", unit: "", group: "charge", source: "stream" }, // 0x610 b0 ✅
+  { key: "charge_manager_state", unit: "", group: "charge", source: "stream" }, // 0x610 b7 ✅
+  { key: "charge_manager_pack_v", unit: "V", group: "charge", source: "stream" }, // 0x615 b0 🟡
+  { key: "dc_charge_a", unit: "A", group: "charge", source: "stream" }, // 0x615 b2 ✅
+  { key: "charge_manager_soc", unit: "%", group: "charge", source: "stream" }, // 0x615 b3 ✅
+  { key: "dc_charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x620 b0 ✅
+  { key: "ac_charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x620 b1 ✅
+  { key: "dc_charge_limit_max_a", unit: "A", group: "charge", source: "stream" }, // 0x625 b2 ✅
+  { key: "dc_charging", unit: "", group: "charge", source: "stream" }, // 0x625 b4 bit5 clear ✅
+  { key: "ac_charging", unit: "", group: "charge", source: "stream" }, // 0x625 b4 bit2 ✅
 
   // OBD-II polled @1 Hz
   { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
