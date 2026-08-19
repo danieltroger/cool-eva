@@ -1,5 +1,7 @@
 // @ts-check
 
+import { ageInWords } from "./format.js";
+
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParamsResponse} VcuParamsResponse */
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParameterRow} VcuParameterRow */
 /** @typedef {import("../../src/http/vcu-params.ts").VcuParameterSnapshot} VcuParameterSnapshot */
@@ -110,20 +112,20 @@ function showTableType(report) {
 /**
  * How old the reading is, and whether it is all of it.
  *
- * The age is computed HERE, against the phone's clock, rather than on the Pi:
- * the Pi has no RTC and steps its own clock from GPS (src/gps/clock.ts), so a
- * difference of two of its wall-clock readings taken minutes or boots apart is not
- * a duration. The phone's clock is the trustworthy one in this pairing.
+ * The age comes from ./format.js's `ageInWords`, which is where the phone-clock
+ * reasoning lives now — three pages were computing it inline off the same
+ * `readAt`, with thresholds that had already drifted apart: this one said
+ * "73 h ago" where the same snapshot on the service sheet said "3 days ago".
  *
  * @param {VcuParameterSnapshot} snapshot
  */
 function describeSnapshot(snapshot) {
   const read = snapshot.rows.filter(row => row.status === "read").length;
-  const ageMinutes = Math.round((Date.now() - snapshot.readAt) / 60000);
-  const age =
-    ageMinutes < 1 ? "just now" : ageMinutes < 90 ? `${ageMinutes} min ago` : `${Math.round(ageMinutes / 60)} h ago`;
   const partial = snapshot.complete ? "" : " — SWEEP INCOMPLETE, re-run to finish it";
-  return `${read} of ${snapshot.rows.length} parameters read ${age} from ${snapshot.micros.join(" + ")}${partial}`;
+  return (
+    `${read} of ${snapshot.rows.length} parameters read ${ageInWords(snapshot.readAt)} ` +
+    `from ${snapshot.micros.join(" + ")}${partial}`
+  );
 }
 
 function render() {
