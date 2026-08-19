@@ -1,4 +1,5 @@
-import { IRREVERSIBLE } from "../public/views/vcu-write.js";
+import { readFile } from "fs/promises";
+import { IRREVERSIBLE, confirmationFor } from "../public/views/vcu-write.js";
 import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
 
 // What is behind the menu sheet's red fold, checked without a browser.
@@ -39,10 +40,17 @@ import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
 // fold is a destructive control sitting in the open list with the read-only ones — the
 // exact state this PR existed to end — and nothing else in the repo would notice.
 //
-// So §3 does not take a list of dangerous actions on trust. It asks the server which
-// actions it accepts at all (its own refusal names them), then asks it of each one
-// whether a complete request is still refused with no `confirm=`, and compares that set
-// against the fold. Adding an action to either side alone fails this check.
+// So §3 does not take a list of dangerous actions on trust. It reads the actions off the
+// `case` labels of parseWriteRequest's own switch, asks the server of each one whether a
+// complete request is still refused with no `confirm=`, and compares that set against the
+// fold. Adding an action to either side alone fails this check, and fails it in the
+// direction that names what is wrong — see the note above §3 for the version of this that
+// got the polarity backwards.
+//
+// **And the confirmation strings are the page's own.** §4 calls `confirmationFor`, the
+// single site the page builds `confirm=` from, rather than listing what it is expected to
+// produce. A list here would be the same parallel array in the check meant to prevent it,
+// and it would stay green while `31 FC` and Mode 04 were refused on every press.
 
 let failures = 0;
 
@@ -106,22 +114,85 @@ check(`the contents line reads "${namesLine}"`, namesLine === EXPECTED.map(([nam
 // process. Nothing derives the fold's membership from the server, so this is where the
 // two are made to answer the same question.
 //
-// The server's own refusal for an unknown action names every action it accepts, so the
-// list below is read out of src/http/vcu-write.ts rather than copied from it. Each one
-// is then offered a request that is COMPLETE except for `confirm=`: whatever is still
-// refused at that point is refused for the confirmation and nothing else, and that is
-// the definition of "destructive" this page is painting red.
+// ⚠️ The vocabulary is read off the `case` labels of parseWriteRequest's own switch, by
+// parsing the source. The first version of this check read it out of the ENGLISH
+// SENTENCE in that switch's `default:` arm instead, and that was worse than having no
+// check at all, because it inverted:
+//
+//   a new confirm-gated `case` whose author did not also edit that sentence was
+//   invisible here, so the check went GREEN when the action was left in the open list
+//   — the exact state §3 exists to prevent — and RED when it was correctly put behind
+//   the fold, complaining that the fold held something "merely scary".
+//
+// A check that is green when you are wrong and red when you are right does not fail
+// safe; it actively misleads. The `case` labels cannot drift from the dispatch because
+// they ARE the dispatch. The sentence is now checked against them (§3a) rather than
+// trusted, which also catches the stale error message the old version depended on.
+//
+// Reading a sibling module's source is the same move scripts/check-vendor-names.ts
+// makes, and is preferred here over exporting a list from src/http/vcu-write.ts,
+// because an exported list would itself be a second place the actions are written down
+// — the parallel array this whole check exists to abolish.
 
 console.log("\n3. the fold against the Pi's confirmation gates");
 
 const NOW = Date.UTC(2026, 7, 19, 14, 3, 30);
 
+const SERVER_SOURCE = await readFile(new URL("../src/http/vcu-write.ts", import.meta.url), "utf8");
+
 /**
- * A request that is complete apart from `confirm=`. Hand-written, because "complete"
- * means something different for each action and there is nothing to derive it from —
- * but a wrong one here fails loudly below rather than passing quietly, since an action
- * refused for a MISSING NAME would be misread as confirm-gated and would then have to be
- * behind the fold to pass §3b.
+ * Every action parseWriteRequest dispatches on, read off its switch.
+ *
+ * Scoped to the one `switch (action) {` block so a `case` belonging to some later
+ * switch cannot wander in, and asserted non-empty below — a regex that silently matched
+ * nothing would take the polarity with it and put us back where we started.
+ */
+function serverActions(source: string): string[] {
+  const start = source.indexOf("switch (action) {");
+  const end = source.indexOf("\n}", start);
+  if (start === -1 || end === -1) {
+    return [];
+  }
+  return [...source.slice(start, end).matchAll(/^\s*case "([a-z-]+)":/gm)].map(match => match[1]);
+}
+
+const accepted = serverActions(SERVER_SOURCE);
+
+console.log(`\n3a. what parseWriteRequest dispatches on: ${accepted.join(", ")}`);
+
+check("the switch was found and names at least the four actions this page uses", accepted.length >= 4);
+check("no action is dispatched twice", new Set(accepted).size === accepted.length);
+
+// The refusal for an unknown action is a sentence a person reads when something has
+// gone wrong, and it lists the vocabulary. Checked against the switch rather than used
+// as the source of it: an action added to the dispatch and left out of that sentence is
+// a message that lies at exactly the moment it is being read.
+const refusal = parseWriteRequest(new URLSearchParams({ action: "no-such-action" }), NOW);
+const namedInProse = refusal.ok ? [] : (refusal.reason.match(/one of (.+?) — not/)?.[1] ?? "").split(", ");
+
+const unsaid = accepted.filter(action => !namedInProse.includes(action));
+const overSaid = namedInProse.filter(action => !accepted.includes(action));
+check(
+  unsaid.length === 0 && overSaid.length === 0
+    ? `the default arm's sentence names every action the switch dispatches (${namedInProse.join(", ")})`
+    : "the default arm's sentence has drifted from the switch — " +
+        [
+          unsaid.length > 0 ? `it does not name ${unsaid.join(", ")}` : "",
+          overSaid.length > 0 ? `it still names ${overSaid.join(", ")}` : "",
+        ]
+          .filter(Boolean)
+          .join(", and "),
+  unsaid.length === 0 && overSaid.length === 0
+);
+
+/**
+ * A request that is complete apart from `confirm=`, one per action.
+ *
+ * Hand-written, because "complete" means something different for each action and there
+ * is nothing to derive it from. An action the server dispatches and this map has never
+ * heard of is a HARD FAILURE below rather than a silent omission — that is the polarity
+ * that matters: a new action stops the build and names itself, instead of quietly not
+ * being asked about.
  */
 const UNCONFIRMED: Record<string, URLSearchParams> = {
   parameter: new URLSearchParams({ action: "parameter", name: "MAX_DC_CHG_CURRENT", value: "80", expected: "75" }),
@@ -138,49 +209,54 @@ const UNCONFIRMED: Record<string, URLSearchParams> = {
   "clear-dtcs": new URLSearchParams({ action: "clear-dtcs" }),
 };
 
-/** The confirmation each gated action's page really sends. See ActionButton / ClockAction. */
-const CONFIRMATION: Record<string, string> = {
-  "set-service-point": "set-service-point",
-  "clear-dtcs": "clear-dtcs",
-  "sync-clock": utcMinute(NOW),
-};
-
-// The server names its own vocabulary when it refuses something it has never heard of:
-// "action must be one of parameter, bit, read-service-stamp, set-service-point,
-// sync-clock, clear-dtcs — not …". Parsed rather than copied, so an action added to the
-// Pi arrives here on its own.
-const refusal = parseWriteRequest(new URLSearchParams({ action: "no-such-action" }), NOW);
-const named = refusal.ok ? [] : (refusal.reason.match(/one of (.+?) — not/)?.[1] ?? "").split(", ").filter(Boolean);
-
-check("the server's refusal still names the actions it accepts", named.length > 0);
+const unknown = accepted.filter(action => UNCONFIRMED[action] === undefined);
 check(
-  `every action the server names has a fixture here (${named.join(", ")})`,
-  named.every(action => UNCONFIRMED[action] !== undefined)
+  unknown.length === 0
+    ? "every action the Pi dispatches has a fixture here"
+    : `the Pi dispatches ${unknown.join(", ")}, which this check has never been told about — ` +
+        "add a complete-but-unconfirmed request above, then decide whether it belongs behind the fold",
+  unknown.length === 0
 );
 check(
-  "and no fixture here names an action the server has dropped",
-  Object.keys(UNCONFIRMED).every(action => named.includes(action))
+  "and no fixture here names an action the Pi has dropped",
+  Object.keys(UNCONFIRMED).every(action => accepted.includes(action))
 );
 
-const gated = named.filter(action => {
-  const params = UNCONFIRMED[action];
-  return params !== undefined && !parseWriteRequest(params, NOW).ok;
-});
+// Whatever is still refused with a complete request and no `confirm=` is refused FOR the
+// confirmation and nothing else. That is the definition of "destructive" this page paints
+// red, taken from the server rather than from a list here.
+//
+// ⚠️ Only actions with a fixture are compared below. An action with none has not been
+// ASKED, and a bare request for it would be refused for whichever parameter it is missing
+// — indistinguishable from a confirmation gate without reading the refusal's prose, which
+// is the mistake this section already made once. So an unfixtured action is reported by
+// the hard failure above, which names it and says what to do, and is not silently
+// assigned a verdict here that neither direction of the comparison could justify.
+const probed = accepted.filter(action => UNCONFIRMED[action] !== undefined);
+const gated = probed.filter(action => !parseWriteRequest(UNCONFIRMED[action], NOW).ok);
 
-console.log(`\n3b. the server refuses ${gated.length} actions without a confirmation: ${gated.join(", ")}`);
+console.log(`\n3b. the Pi refuses ${gated.length} of those without a confirmation: ${gated.join(", ")}`);
 
-// Widened to string on purpose. The other side of every comparison below is a name
-// PARSED out of the server's refusal at runtime, so keeping the union here would only
-// let tsc pre-agree with the thing this check exists to test at run time.
+// Widened to string on purpose. The other side of every comparison below is a name read
+// out of the server's source at run time, so keeping the union here would only let tsc
+// pre-agree with the thing this check exists to test.
 const behindTheFold: string[] = IRREVERSIBLE.map(entry => entry.action);
 
+const gatedNotHidden = gated.filter(action => !behindTheFold.includes(action));
 check(
-  "every action the Pi confirm-gates is behind the fold",
-  gated.every(action => behindTheFold.includes(action))
+  gatedNotHidden.length === 0
+    ? "every action the Pi confirm-gates is behind the fold"
+    : `the Pi confirm-gates ${gatedNotHidden.join(", ")}, which the fold does not hold — ` +
+        "a destructive control is sitting in the open list with the read-only ones",
+  gatedNotHidden.length === 0
 );
+
+const hiddenNotGated = behindTheFold.filter(action => probed.includes(action) && !gated.includes(action));
 check(
-  "and every action behind the fold is one the Pi confirm-gates — nothing merely scary is hidden there",
-  behindTheFold.every(action => gated.includes(action))
+  hiddenNotGated.length === 0
+    ? "and every action behind the fold is one the Pi confirm-gates — nothing merely scary is hidden there"
+    : `the fold holds ${hiddenNotGated.join(", ")}, which the Pi performs on one request`,
+  hiddenNotGated.length === 0
 );
 
 // The other direction of the same fact, and the one that keeps the read-only action
@@ -191,13 +267,36 @@ check(
   parseWriteRequest(UNCONFIRMED["read-service-stamp"], NOW).ok && !behindTheFold.includes("read-service-stamp")
 );
 
-// And that the confirmations the page sends are the ones the Pi wants. The captions are
-// prose and may be rewritten freely; these strings are protocol and may not.
-for (const action of behindTheFold) {
+// --- 4. The confirmations the page really sends ------------------------------
+//
+// ⚠️ Called, not copied. `confirmationFor` is the single site the page builds `confirm=`
+// from — both `performAction` call sites go through it — so changing what the page sends
+// changes what is tested here in the same edit. A table of expected strings in this file
+// would be exactly the parallel array §1 exists to abolish, and it would stay green
+// while `31 FC` and Mode 04 were refused with a 400 on every press.
+//
+// The clock is fed the Pi's own displayed `clock.iso`, since its confirmation is the
+// minute it showed rather than its own name; utcMinute is the server's formatter for
+// the same instant, so agreement here is the two halves of that handshake meeting.
+
+console.log("\n4. the confirmation the page sends against the one the Pi wants");
+
+for (const action of behindTheFold.filter(candidate => probed.includes(candidate))) {
   const params = new URLSearchParams(UNCONFIRMED[action]);
-  params.set("confirm", CONFIRMATION[action] ?? "");
-  check(`${action} is accepted with the confirmation the page sends`, parseWriteRequest(params, NOW).ok);
+  params.set("confirm", confirmationFor(action, new Date(NOW).toISOString()));
+  const answer = parseWriteRequest(params, NOW);
+  check(
+    answer.ok
+      ? `${action} is accepted with the confirmation the page sends`
+      : `${action} is REFUSED with the confirmation the page sends — ${answer.reason}`,
+    answer.ok
+  );
 }
+
+check(
+  "the clock's confirmation is the minute the Pi formats",
+  confirmationFor("sync-clock", new Date(NOW).toISOString()) === utcMinute(NOW)
+);
 
 console.log("");
 if (failures > 0) {

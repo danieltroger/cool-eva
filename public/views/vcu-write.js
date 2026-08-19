@@ -1134,7 +1134,7 @@ function ActionButton(action, caption, notes) {
             return;
           }
           armed.val = "";
-          void performAction(action, action);
+          void performAction(action, confirmationFor(action));
         },
       },
       // ⚠️ The confirmation NAMES WHAT IS PRIMED, and that is not decoration. It used
@@ -1321,17 +1321,42 @@ function forgetSelection() {
 }
 
 /**
- * The minute the button is currently SHOWING, in the shape src/http/vcu-write.ts
- * checks against: `2026-08-16T14:03Z`.
+ * What the second tap sends as `confirm=` — the Pi's precondition for every action it
+ * will not perform on one request.
  *
- * Sliced out of the Pi's own `clock.iso`, so the value confirmed and the value
- * displayed are the same string from the same clock. If the sheet has gone stale the
- * server refuses and names both minutes — which is the intended behaviour, and the
- * refusal itself refreshes the state so the next attempt shows the right time.
+ * ⚠️ PROTOCOL, not prose. `notes.confirm` is the caption tail and may be rewritten
+ * freely; this is the string src/http/vcu-write.ts compares against, and getting it
+ * wrong does not read wrong — it makes `31 FC` and Mode 04 refuse on every press with
+ * a 400 nobody expected.
+ *
+ * One function rather than the rule living at each `performAction` call site, because
+ * scripts/check-irreversible-actions.ts asserts these against the server's own parser
+ * and a check holding its own copy of the rule would agree with itself while the page
+ * had moved. It is the same parallel-array shape this section removed from the fold's
+ * contents list, and it does not get to come back in the check that guards it.
+ *
+ * @param {string} action
+ * @param {string} displayedIso the Pi's `clock.iso` exactly as the caption showed it
  */
+export function confirmationFor(action, displayedIso = "") {
+  if (action === "sync-clock") {
+    // The minute the button is currently SHOWING, in the shape the server checks:
+    // `2026-08-16T14:03Z`. Sliced out of the Pi's own `clock.iso`, so the value
+    // confirmed and the value displayed are the same string from the same clock. If the
+    // sheet has gone stale the server refuses and names both minutes — the intended
+    // behaviour, and the refusal itself refreshes the state so the next attempt shows
+    // the right time.
+    return `${displayedIso.slice(0, 16)}Z`;
+  }
+  // Everything else confirms by naming itself. The server wants `confirm=clear-dtcs`
+  // for `action=clear-dtcs`: the point is that a request cannot be built by guessing
+  // the action name alone, not that the token is unguessable.
+  return action;
+}
+
+/** The clock's confirmation, from the reading currently on screen. See confirmationFor. */
 function confirmedMinute() {
-  const iso = state.val?.status.clock.iso ?? "";
-  return `${iso.slice(0, 16)}Z`;
+  return confirmationFor("sync-clock", state.val?.status.clock.iso ?? "");
 }
 
 /** Refreshes the Pi's clock reading, then arms — so the time in the caption is its time now. */
