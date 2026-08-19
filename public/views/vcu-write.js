@@ -182,6 +182,13 @@ export function VcuWrite() {
           )
         : div(),
     Availability(),
+    // ⚠️ The one thing that MUST render when there are no controls: why there are
+    // none. `message` is where fetchStatus() puts "could not reach /vcu-write", and
+    // its only other home is Outcome(), which lives inside ParameterForm() — i.e.
+    // inside the branch `hasControls()` has just switched off. So the loudest failure
+    // this section has was being written to a node that does not exist whenever it
+    // happened, and an unreachable Pi rendered as a heading, an ellipsis and silence.
+    () => (!hasControls() && message.val ? div({ class: "action-note" }, message.val) : div()),
     () => (hasControls() ? div(ParameterForm(), ServiceActions(), Journal()) : div())
   );
 }
