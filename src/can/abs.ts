@@ -257,7 +257,9 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 // ⚠️ It is a TWO-BIT field, not a flag. Energica's mask is 0x0C >> 2, so the range is 0…3, and
 // the mask is kept as the vendor wrote it rather than narrowed to the one bit this bike has
 // been seen to use — b4 takes exactly two values in the whole lap, 0x00 and 0x04, so bit 2 is
-// the only bit of the pair ever observed set. Narrowing it to `? 1 : 0` would throw away
+// the only bit of the PAIR ever observed set. (The wider corpus adds a third b4 value, 0x80,
+// but that is `A_EVENT` rather than a lamp state; the two lamp bits are still only ever 0 or 1
+// between them. See the flags section below.) Narrowing it to `? 1 : 0` would throw away
 // whatever a second lamp state means the first time this bike produces one, on a signal whose
 // entire purpose is to be read when something is wrong. Two consequences are handled elsewhere
 // and are worth knowing about here: public/lib/bounds.js names it at [0, 3] so the `diag`
