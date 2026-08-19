@@ -220,6 +220,21 @@ export const SIGNALS: SignalDef[] = [
   { key: "mains_a", unit: "A", group: "charge", source: "stream" },
   { key: "charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x10a b7 ÷7 ✅
 
+  // 0x121 — the DC charge-current limit the RIDER picked on the bike's charging screen.
+  // The companion to charge_limit_a above, which is the AC side of the same dial: on DC
+  // that one reads 0 all session and nothing else on the bus carries the setting.
+  //
+  // "selected" is in the name because three different numbers here are all "a DC charge
+  // current limit" and only this one is a choice: 0x625 b2 is the configured ceiling the
+  // dial runs up to (75, VCU parameter 258), 0x620 b0 is what the vehicle is advertising
+  // to the station moment to moment, and charger_max_dc_a above is the ON-BOARD AC
+  // charger's own register, which reads 0.0 A throughout a DC session.
+  //
+  // ⚠️ An EVENT signal, written only when the dial moves — no deadband, like waypoint_*
+  // — so the tile shows the last setting seen and greys out 8 s later. That is honest
+  // and charge-setpoint.ts explains why it must not be papered over with a timer.
+  { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
+
   // OBD-II polled @1 Hz
   { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
   { key: "motor_rpm", unit: "rpm", group: "obd", source: "poll", deadband: 20 },

@@ -21,6 +21,7 @@
 
 import { ABS_CAN_ID, decodeAbsFrame } from "./abs.ts";
 import { decodeAttitudeFrame } from "./attitude.ts";
+import { CHARGE_SETPOINT_CAN_ID, decodeChargeSetpointFrame } from "./charge-setpoint.ts";
 import { CONSUMPTION_CAN_ID, decodeConsumptionFrame } from "./consumption.ts";
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
 import {
@@ -84,6 +85,11 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 
     case PSU_CAN_ID:
       return decodePsuFrame(data);
+
+    // The rider's own charge-current limit off the dash. An EVENT, not a stream — see
+    // charge-setpoint.ts, which is mostly about what that costs.
+    case CHARGE_SETPOINT_CAN_ID:
+      return decodeChargeSetpointFrame(data);
 
     case VCU_FLAGS_CAN_ID:
       return decodeVcuFlagsFrame(data);
@@ -508,9 +514,14 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
 
 // CAN IDs we decode from the broadcast stream — used to set the kernel RX filters, so
 // an ID missing here never reaches decodeFrame at all, however good its decoder is.
-// 0x120/0x121 are deliberately absent: the .xdbc lists them as charge-current
-// setpoints, but neither appeared in 40 s of live capture (parked, unplugged), so
-// there is nothing yet to decode. See obd-garage/CAN_MAP.md.
+// 0x121 joined on 2026-08-19 and is the one entry here that is NOT periodic: it fires
+// when the rider moves the charge-current dial and never otherwise, so it costs nothing
+// to filter in (26 frames in the entire 16 GB archive) and cannot be found by watching
+// for a while. That is why it sat unfiltered for so long — the note this replaces said
+// "neither appeared in 40 s of live capture (parked, unplugged), so there is nothing yet
+// to decode", which was true and permanently unfixable by looking harder. You have to be
+// changing the current while capturing. 0x120, its truncated request twin, stays out:
+// it carries no ceiling, and it is the id this project transmits the RTC sync on.
 //
 // ⚠️ This list is the single easiest thing in the project to get silently wrong, because a
 // missing entry has no symptom: the decoder is fine, the tests pass, and the signal simply
@@ -547,6 +558,7 @@ const VEHICLE_STREAM_IDS = [
   0x020,
   0x022,
   0x025,
+  CHARGE_SETPOINT_CAN_ID,
   DRIVE_TORQUE_CAN_ID,
   ABS_CAN_ID,
   VCU_FLAGS_CAN_ID,
