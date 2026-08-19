@@ -409,10 +409,14 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       if (data.length < 3) return [];
       const buttons = data[2];
       return [
-        // bit 0, `BUTTON [SET|BACK] (LeftBack)`. ❓ NEVER seen set — not in one frame
-        // of the 1.1 M. Decoded on the vendor table's word alone, so the first press
-        // is also the first evidence that the bit exists. If it stays 0 while the
-        // button visibly works, the name or the bit is wrong.
+        // bit 0, `BUTTON [SET|BACK] (LeftBack)`. ✅ SEEN AT LAST, 2026-08-19: eight
+        // presses at 18:31:51-53, 120-160 ms each, one payload (02 01 01 00 00 00 00 00)
+        // in 132 frames. Until that afternoon it had never been set in one frame of the
+        // 1.1 M, and was decoded on the vendor table's word alone. The bit is now real
+        // and is where the table said. What is STILL the table's word is what it DOES:
+        // the owner pressed "the button below the high beam flash" on the left pod, and
+        // a press parked produces nothing visible, so `SET|BACK` as a FUNCTION remains
+        // unverified — only the bit's existence and its pod position are measured.
         { key: "btn_set_back", value: bit(buttons, 0) },
         // bit 1, cruise ON/OFF (right pod, front). ✅ CONFIRMED by what it causes:
         // pressed exactly twice in the corpus (2026-08-04 18:04:42.270 for 0.877 s at
@@ -481,19 +485,70 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
   return [
     // bits 0 and 1 — the MODE pair. ✅ CONFIRMED as menu buttons (76 of 76 presses at
     // a standstill for bit 0, 137 of 141 for bit 1, both transient at ~0.13 s).
-    // 🟡 WHICH IS WHICH IS NOT CONFIRMED. Both do the same thing to the same menu, so
-    // no recorded ride can separate ◀ from ▶; the left/right split here is Energica's
-    // table's word and nothing else. If they turn out swapped, swap these two keys —
-    // no other claim in this file depends on the order.
+    // ✅ LEFT-vs-RIGHT CONFIRMED 2026-08-19, by instructed press rather than by ride
+    // context — no recorded ride can separate ◀ from ▶, because both do the same thing
+    // to the same menu, so one had to be staged. The owner pressed one named button
+    // eight times in a row, and each block was fenced by a COUNTED number of
+    // indicator-cancel clicks (1 before ENTER, 2 before ◀, 3 before ▶): cancel is the
+    // best-identified bit on the byte, so the capture times and labels its own blocks
+    // and needs neither a synchronised clock nor a narration to read back. Result:
+    // bit 0 fired 8/8 inside the ◀ block and never outside it, bit 1 fired 8/8 inside
+    // the ▶ block and never outside it, neither moved during any fence, and across the
+    // whole capture no two of the low six bits were ever set in the same frame. That
+    // agrees with Energica's table, which is all the mapping had rested on before.
+    // The anchor is the rider's own ◀/▶ identification of the pod, so a pair of
+    // mislabelled CAPS would still read as confirmed here; nothing else in this file
+    // depends on the order.
     { key: "btn_mode_left", value: bit(handlebar, 0) },
-    // ⚠️ bit 1 has two behaviours bit 0 does not, and neither is explained. Two
-    // presses at 88 km/h on 2026-08-04 (18:04:44.975 and 18:04:46.005, 0.81 s each)
-    // straddle the cruise SET SPEED press on 0x400, and it was held HIGH for 191
-    // seconds on 2026-08-04 21:00:31 while the bike was AC charging. A momentary menu
-    // button should do neither. Treat bit 1 as the less trustworthy of the pair.
+    // bit 1 has two behaviours bit 0 does not. Both were filed here as unexplained
+    // until 2026-08-19; both were then measured, and the first turns out to be a second
+    // FUNCTION rather than a fault. The old advice — "treat bit 1 as the less
+    // trustworthy of the pair" — was a reasonable reading of an unexplained hold and is
+    // withdrawn.
+    //
+    // 1. TWO 0.81 s HOLDS AT 88 km/h, 2026-08-04 18:04:44.975 and 18:04:46.005. This is
+    //    ▶ ADJUSTING THE CRUISE SET SPEED, not a menu press. The sequence, measured in
+    //    capture-20260804-035631-c8fe853f.log:
+    //
+    //      18:04:42.270  cruise ON/OFF held 877 ms    (0x400 b2 bit 1)
+    //      18:04:42.796  cruise_active → 1            (0x102 b3 bit 1, 0.53 s later)
+    //      18:04:44.975  ▶ held 810 ms                ← cruise ALREADY armed
+    //      18:04:45.055  cruise SET held 1794 ms      ← overlaps that hold
+    //      18:04:46.005  ▶ held 809 ms
+    //
+    //    Speed decays 87.9 → 83.6 km/h until 18:04:45.4, then climbs back and sits at
+    //    85.5-86.2 km/h for the rest of the window. ▶ is pressed only while cruise is
+    //    armed, in long holds rather than taps, at a speed where the menu it otherwise
+    //    drives is unreachable — the menu is stationary-only, >3 km/h exits it
+    //    (CAN_MAP.md §Connectivity). The owner confirms he was working the cruise
+    //    control. One arming event, so this is the best explanation rather than a
+    //    settled second key function; a second armed ride watching this bit closes it.
+    //
+    // 2. HELD 191.2 s FROM 2026-08-04 21:00:31.712 while the bike was AC charging —
+    //    something resting on the button, not a press. In
+    //    capture-20260804-210015-b406ea70.log, across the whole 191 s NOTHING else on
+    //    the bars moves: mode ◀ and ENTER, both indicator switches, cancel, high beam,
+    //    horn, both brakes, SET|BACK and both cruise buttons record zero transitions
+    //    each, and the bike is stationary. Then 0.1 s after the bit releases, six
+    //    ordinary presses land within 1.7 s (170, 170, 170, 30, 120, 150 ms) — someone
+    //    lifting the object off and carrying straight on. The owner's account is that
+    //    his jacket lay on the bar while the bike charged unattended, which is what
+    //    this looks like; the measurement shows an object, not which object.
+    //
+    // ⚠️ The consequence for anything downstream: a multi-minute HOLD is a state this
+    // bit really reaches, so code that counts presses or assumes momentary must not
+    // treat a long assertion as impossible. The 2026-08-19 fenced session supplies the
+    // ordinary case: 8 presses, 120-160 ms each, nothing held.
+    //
+    // ⚠️ Both files above are single captures. Do NOT concatenate the archive's
+    // overlapping captures before measuring: two candump instances recorded the same
+    // seconds, so a merged file interleaves duplicate frames and turns one hold into
+    // hundreds of 10 ms toggles. That artefact was produced and discarded while
+    // measuring this.
     { key: "btn_mode_right", value: bit(handlebar, 1) },
     // bit 2 — MODE ENTER. ✅ The cleanest of the three: 40 presses, all 0.08-0.29 s,
-    // every one below 3 km/h, no outliers at all.
+    // every one below 3 km/h, no outliers at all. Re-confirmed 2026-08-19 by instructed
+    // press: 8/8 inside its own fenced block, 170-260 ms, nothing else on the byte moving.
     { key: "btn_mode_enter", value: bit(handlebar, 2) },
     // bits 3 and 4 are the turn-indicator SWITCHES, and are still not decoded here —
     // but which side is which is no longer an open question, so it is written down.

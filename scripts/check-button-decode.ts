@@ -14,9 +14,10 @@ import { FLASHER_KEYS } from "../public/lib/flasher.js";
 // Every frame below is REAL — copied byte for byte, with its timestamp, out of the
 // candump captures in ~/Documents/cool-eva-archive (see CAPTURES.md there). None is
 // hand-written, because a hand-written frame only proves the decoder agrees with
-// whoever wrote the fixture. The two 0x400 button payloads in particular are the ONLY
-// two ever recorded on this bike: across 1 099 357 frames of 0x400, byte 2 held a
-// non-zero value in 362 of them and took exactly these two values.
+// whoever wrote the fixture. The 0x400 button payloads in particular are the only ones
+// ever recorded on this bike: across 1 099 357 frames of 0x400, byte 2 held a non-zero
+// value in 362 of them and took exactly two values — until 2026-08-19, when a session of
+// deliberate presses finally produced a third (0x01, `btn_set_back`, 132 frames).
 //
 // Beyond the byte-level decode this guards three things that would each turn the
 // whole feature off without failing anything else:
@@ -249,6 +250,15 @@ const CASES: FrameCase[] = [
     id: 0x400,
     hex: "02 01 04 00 00 00 00 00",
     expect: { ...NONE_PRESSED_400, btn_cruise_set: 1 },
+  },
+  {
+    what: "0x400 SET|BACK held, parked — 2026-08-19 18:31:51.138, the bit's first press ever",
+    id: 0x400,
+    // The frame that ended "never seen set". Worth a fixture of its own precisely
+    // because the decoder's claim about this bit was, until this frame existed,
+    // unfalsifiable: a bit that is always 0 agrees with every possible decoding of it.
+    hex: "02 01 01 00 00 00 00 00",
+    expect: { ...NONE_PRESSED_400, btn_set_back: 1 },
   },
 ];
 
