@@ -184,6 +184,15 @@ const CHECKS: SelfCheck[] = [
       "the GPS clock gate against the four corrupt frames in rides.db and two real cold boots, replayed again ten years on to prove the rule has no expiry date, plus the recoverable cooldown, the week-rollover floor, the two's-complement altitude and the blended-fix guard",
   },
   {
+    script: "scripts/check-irreversible-actions.ts",
+    covers:
+      "what is behind the menu sheet's red fold — that the collapsed row's count and its three names are read off " +
+      "the list of actions rather than written a second time beside it, and, across the two files that cannot see " +
+      "each other, that the fold holds EXACTLY the actions src/http/vcu-write.ts refuses without a confirmation: a " +
+      "fourth confirm-gated action on the Pi that nobody put behind the fold would otherwise be a destructive " +
+      "control sitting in the open list with the read-only ones, and nothing else in the repo would notice",
+  },
+  {
     script: "scripts/check-kwp-multiframe.ts",
     covers:
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",

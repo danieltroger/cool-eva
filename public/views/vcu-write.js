@@ -884,64 +884,78 @@ function IrreversibleActions() {
       //
       // Only while SHUT: open, the three buttons are spelled out directly underneath,
       // and a list naming them a few pixels above is the same information twice.
-      () => (dangerOpen.val ? span() : span({ class: "risk-fold-contents" }, IRREVERSIBLE_NAMES.join("  ·  ")))
+      () =>
+        dangerOpen.val
+          ? span()
+          : span({ class: "risk-fold-contents" }, IRREVERSIBLE.map(entry => entry.name).join("  ·  "))
     ),
-    () => (dangerOpen.val ? div({ class: "danger-zone" }, ...IRREVERSIBLE.map(render => render())) : div())
+    () => (dangerOpen.val ? div({ class: "danger-zone" }, ...IRREVERSIBLE.map(entry => entry.render())) : div())
   );
 }
 
 /**
- * The irreversible actions, as a list rather than three calls in a row.
+ * One entry behind the fold: what it is called, what it asks the Pi for, and how to
+ * build it.
  *
- * ⚠️ So the count is DERIVED. The fold's label and the section's risk profile both say
- * how many of these there are, and a literal 3 in either of them fails in the one
- * direction that matters: add a fourth action here and the page goes on promising
- * three. The parameter-warnings toggle this idiom copies derives its count too.
- *
- * Thunks rather than nodes because the fold rebuilds its contents on every open, and
- * because the clock is not an `ActionButton` — it writes its own confirmation, since
- * its second tap agrees to a fact ("is it 14:03?") rather than to an intention.
+ * @typedef {{ name: string, action: "set-service-point" | "sync-clock" | "clear-dtcs",
+ *   render: () => Element }} IrreversibleAction
  */
-const IRREVERSIBLE = [
-  () =>
-    ActionButton("set-service-point", () => "🔧  Say a service was performed NOW", {
-      confirm: "STAMP A SERVICE NOW. There is no unset",
-      noUndo: "There is no unset.",
-      does: "Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer.",
-      caution:
-        "⚠️ Read the stamp above first, and make sure the bike's clock is right — the bike's clock is what it stamps.",
-    }),
-  ClockAction,
-  () =>
-    ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
-      confirm: "WIPE the stored codes and their freeze frame",
-      noUndo: "The freeze frame goes with the codes.",
-      does: "OBD Mode 04 — clears every code the bike currently holds stored.",
-      caution:
-        "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
-    }),
+
+/**
+ * The irreversible actions — ONE list, not a list and a parallel array beside it.
+ *
+ * ⚠️ Everything the page says about this drawer is read off here: how many there are
+ * (the fold's label and the section's risk line), and what they are called (the fold's
+ * contents line). A literal 3, or a hand-written list of names kept alongside, fails in
+ * the direction that matters — the drawer goes on promising three things while holding
+ * a fourth, or naming the wrong three, and it does it silently.
+ *
+ * ⚠️ The names used to be a parallel array checked against this one FOR LENGTH, and
+ * reported by `console.warn` — on a page whose deployment target is a handlebar-mounted
+ * phone, where nobody has a console open, ever. Reordering the list or swapping an
+ * action left the fold confidently naming things it did not hold, with the guard green.
+ * Both halves are fixed here: the names cannot drift because they are not stored twice,
+ * and what CANNOT be made structural — that these are exactly the actions the Pi
+ * refuses without a confirmation, in this order — is asserted in
+ * scripts/check-irreversible-actions.ts, under `npm test`, where a red build says it.
+ *
+ * `render` is a thunk, not a node, for two reasons: the fold rebuilds its contents on
+ * every open, and — the safety one — nothing behind the fold is CONSTRUCTED while it is
+ * collapsed, so "there is nothing there to arrive at" stays literally true of the DOM.
+ * The clock is not an `ActionButton` because its second tap agrees to a fact ("is it
+ * 14:03?") rather than to an intention, so it writes its own confirmation.
+ *
+ * @type {IrreversibleAction[]}
+ */
+export const IRREVERSIBLE = [
+  {
+    name: "Service stamp",
+    action: "set-service-point",
+    render: () =>
+      ActionButton("set-service-point", () => "🔧  Say a service was performed NOW", {
+        confirm: "STAMP A SERVICE NOW. There is no unset",
+        noUndo: "There is no unset.",
+        does: "Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer.",
+        caution:
+          "⚠️ Read the stamp above first, and make sure the bike's clock is right — the bike's clock is what it stamps.",
+      }),
+  },
+  { name: "Bike clock", action: "sync-clock", render: ClockAction },
+  {
+    name: "Clear codes",
+    action: "clear-dtcs",
+    render: () =>
+      ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
+        confirm: "WIPE the stored codes and their freeze frame",
+        noUndo: "The freeze frame goes with the codes.",
+        does: "OBD Mode 04 — clears every code the bike currently holds stored.",
+        caution:
+          "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
+      }),
+  },
 ];
 
 const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
-
-/**
- * Short names for the fold's second line, in the order the buttons appear.
- *
- * ⚠️ Kept next to `IRREVERSIBLE` and asserted to be the same length below, because a
- * list of contents that has drifted from the contents is worse than no list: it would
- * be a drawer promising three things and holding a fourth, on the one drawer in this
- * sheet where that matters.
- */
-const IRREVERSIBLE_NAMES = ["Service stamp", "Bike clock", "Clear codes"];
-
-if (IRREVERSIBLE_NAMES.length !== IRREVERSIBLE_COUNT) {
-  // Loud rather than silent: this is a claim about what is behind a fold that hides
-  // `31 FC` and Mode 04, and a wrong one should not reach a bike.
-  console.warn(
-    `vcu-write: the fold names ${IRREVERSIBLE_NAMES.length} actions but holds ${IRREVERSIBLE_COUNT} — ` +
-      "IRREVERSIBLE_NAMES and IRREVERSIBLE have drifted apart"
-  );
-}
 
 /**
  * The clock sync, which needs its own button because its confirmation is a question
