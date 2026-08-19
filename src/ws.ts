@@ -49,17 +49,25 @@ export interface DashboardMessage {
  * of wifi range without ever sending a FIN.
  *
  * 256 kB is about ten seconds of riding: measured over this bike's own ride log (6.2 M
- * readings), a patch is 152 bytes and riding produces 19–27 kB/s of them (p90–p99).
- * Ten seconds is deliberately just inside the twelve the DASHBOARD gives a silent link
- * before it declares it dead and reconnects — so anything we would drop is destined for
- * a client that has already stopped believing in this socket. A working client on a
- * marginal hotspot never gets close: this is six times the largest snapshot that could
- * ever go out (38 kB with every declared signal live, 20 kB of what this bike has
- * actually produced), and scripts/check-connection.ts §7 keeps it that way.
+ * readings), a patch is 152 bytes and riding produces 19–27 kB/s of them (p90–p99). It
+ * is also six times the largest snapshot that could ever go out (38 kB with every
+ * declared signal live, 20 kB of what this bike has actually produced), which is the
+ * floor that matters — a cap under one snapshot would cut a recovering client off from
+ * the very message that resynchronises it. scripts/check-connection.ts §7 keeps both
+ * ends of that.
  *
  * Nothing is lost by dropping a patch, which is the property that makes this safe: the
  * heartbeat below re-sends the complete state every 5 s, so a client that falls behind
  * and catches up is fully correct one heartbeat later without any resend protocol.
+ *
+ * ⚠️ What this does NOT bound is a client that is slow rather than absent. A phone whose
+ * downlink is merely slower than the patch rate keeps draining the queue, so its own
+ * 12 s silence watchdog never fires and it never reconnects — and what it drains is old
+ * telemetry that store.js applies as current. This cap holds that lag to roughly ten
+ * seconds instead of the whole ride, which is worth having, but it is not a lag
+ * detector and the dashboard has none of its own. Comparing `message.ts` deltas against
+ * the phone's own monotonic deltas would be one — same clock on each side of both
+ * subtractions, so it stays legal — and is the missing half of this.
  */
 export const MAX_CLIENT_BACKLOG_BYTES = 256 * 1024;
 
@@ -73,11 +81,12 @@ export const MAX_CLIENT_BACKLOG_BYTES = 256 * 1024;
  */
 export const HEARTBEAT_MS = 5000;
 
-/** The part of a connected client this decision looks at, so it can be made without one. */
+/** The part of a connected client these decisions look at, so they can be made without one. */
 export interface BroadcastClient {
   readyState: number;
   bufferedAmount: number;
   send: (data: string) => void;
+  terminate: () => void;
 }
 
 /**
@@ -98,8 +107,49 @@ export function broadcastTo(clients: Iterable<BroadcastClient>, message: Dashboa
   }
 }
 
+/**
+ * Hangs up on any client that was already past the cap at the previous heartbeat.
+ *
+ * Skipping a stuck client stops the queue growing but never lets go of the ~256 kB it
+ * is already holding, nor of its slot in `wss.clients`. The phone that rides out of
+ * wifi range sends no FIN, so nothing else notices until the kernel gives up on the TCP
+ * retransmits — on the order of fifteen minutes with the default `tcp_retries2`, once
+ * per out-of-range event, on a Pi Zero that is also sealing the ride log.
+ *
+ * Two consecutive heartbeats rather than one reading, so a client that is briefly over
+ * the cap and draining normally is not hung up on: it has to still be over it at least
+ * HEARTBEAT_MS later. `alreadyStuck` is a WeakSet so a client that closes on its own
+ * takes its entry with it.
+ *
+ * Terminate rather than close: close() is a handshake, and a peer that is not reading
+ * is not going to answer one.
+ *
+ * @returns the clients hung up on, so the caller can say so out loud.
+ */
+export function dropStuckClients<Client extends BroadcastClient>(
+  clients: Iterable<Client>,
+  alreadyStuck: WeakSet<Client>
+): Client[] {
+  const dropped: Client[] = [];
+  for (const client of clients) {
+    if (client.bufferedAmount <= MAX_CLIENT_BACKLOG_BYTES) {
+      alreadyStuck.delete(client);
+      continue;
+    }
+    if (!alreadyStuck.has(client)) {
+      alreadyStuck.add(client);
+      continue;
+    }
+    alreadyStuck.delete(client);
+    client.terminate();
+    dropped.push(client);
+  }
+  return dropped;
+}
+
 export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
   const wss = new WebSocketServer({ server });
+  const stuck = new WeakSet<WebSocket>();
 
   const broadcast = (message: DashboardMessage): void => {
     if (wss.clients.size === 0) return;
@@ -107,14 +157,22 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
   };
 
   wss.on("connection", (ws: WebSocket) => {
-    ws.send(JSON.stringify({ type: "snapshot", ts: Date.now(), signals: snapshot() }));
+    // Through the same path as everything else. This is the message a client's whole
+    // recovery depends on, so it is not the one to send by a route nothing checks.
+    broadcastTo([ws], { type: "snapshot", ts: Date.now(), signals: snapshot() });
   });
 
   // Push only what changed, the moment it changes.
   onChange(changed => broadcast({ type: "patch", ts: Date.now(), signals: changed }));
 
-  // Liveness heartbeat — NOT the update path.
-  const timer = setInterval(() => broadcast({ type: "snapshot", ts: Date.now(), signals: snapshot() }), heartbeatMs);
+  // Liveness heartbeat — NOT the update path. Also the beat the stuck-client check runs
+  // on, since "still stuck one heartbeat later" is what it means by stuck.
+  const timer = setInterval(() => {
+    for (const client of dropStuckClients(wss.clients, stuck)) {
+      console.log(`ws: hung up on a client holding ${client.bufferedAmount} unsent bytes across two heartbeats`);
+    }
+    broadcast({ type: "snapshot", ts: Date.now(), signals: snapshot() });
+  }, heartbeatMs);
 
   return {
     stop: () => {

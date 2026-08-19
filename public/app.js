@@ -16,6 +16,7 @@ import { monotonicNow } from "./lib/clock.js";
 import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
 import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
+import { viewRules } from "./lib/view-rules.js";
 
 const { button, div, span } = van.tags;
 
@@ -111,31 +112,13 @@ function TabBar() {
 }
 
 /**
- * Switch views when the bike's state changes, but only on the edge — the moment
- * charging starts, or the moment the pack drops into hypermiling territory.
+ * What the rules in lib/view-rules.js remember between calls.
  *
- * Edge-triggered rather than continuous on purpose: a rule that keeps forcing the
- * view fights the rider. Once it has moved you, you can move back and it stays put
- * until the condition next changes.
+ * `honourUrlTab` is the one thing decided here rather than there: a URL that named a
+ * tab gets the first word, and the bike gets every word after it.
  *
- * These go through showTab() like every other view change, which buys two things.
- * The URL cannot fall behind a move the rider did not make — so the screen a reload
- * or a shared link restores is the one that was actually up. And a move the bike made
- * is undoable: plugging in takes you to Charge, and Back takes you back, the same
- * press that would have undone the tap you did not have to make.
- *
- * They push a history entry rather than replacing one, deliberately, and the argument
- * is in the header of lib/router.js — the short version being that replaceState would
- * not decline to add an entry, it would overwrite the one the rider had made.
- */
-let wasCharging = false;
-let wasCritical = false;
-
-/**
- * A URL that named a tab gets the first word; the bike gets every word after it.
- *
- * The rules above are edge-triggered — "the moment charging starts" — but a page load
- * has no previous moment, and seeding from `false` makes the first reading that says
+ * The rules are edge-triggered — "the moment charging starts" — but a page load has no
+ * previous moment, and seeding from `false` makes the first reading that says
  * "charging" look like charging having just *started*. On the bare entry URL that is
  * worth keeping: it is why opening the dashboard at a charger lands on Charge.
  *
@@ -149,8 +132,22 @@ let wasCritical = false;
  * state the bike was already in rather than as a change into it. Every edge after that
  * is a real change and moves the view as it always did.
  */
-let honourUrlTab = arrivedByDeepLink;
+const viewRuleMemory = { honourUrlTab: arrivedByDeepLink, wasCharging: false, wasCritical: false };
 
+/**
+ * Let the bike choose the screen, on the edges where it is entitled to.
+ *
+ * The rules themselves are in lib/view-rules.js so they can be checked without riding
+ * the bike; this is the part that reads the store and spends the moves.
+ *
+ * They go through showTab() like every other view change, which buys two things. The
+ * URL cannot fall behind a move the rider did not make — so the screen a reload or a
+ * shared link restores is the one that was actually up. And a move the bike made is
+ * undoable: plugging in takes you to Charge, and Back takes you back, the same press
+ * that would have undone the tap you did not have to make. They push a history entry
+ * rather than replacing one, deliberately, and the argument is in the header of
+ * lib/router.js.
+ */
 function autoFocus() {
   // The charging screen's own rule, so the tab you are thrown onto agrees with what
   // it then shows you. It also means a DC fast charge finally triggers this at all:
@@ -160,33 +157,22 @@ function autoFocus() {
   const soc = peek("soc");
   const headroom = headroomMvSampled();
   const critical = (soc != null && soc <= HYPERMILE_SOC) || (headroom != null && headroom <= HYPERMILE_HEADROOM_MV);
-
-  if (honourUrlTab) {
-    wasCharging = charging;
-    wasCritical = critical;
-    // Held until the bike has said something. Before the first BMS message every
-    // reading above is "no", which is the absence of a state rather than a state to
-    // seed from — seed on that and the pass is spent before it was ever needed.
-    honourUrlTab = soc == null;
-    return;
+  const bike = {
+    // rawVal, not val: this runs inside the chartTick timer, and subscribing that timer
+    // to the connection state would re-pace it on every connect and disconnect. Why the
+    // rules need it at all is the long comment at the top of lib/view-rules.js — the
+    // short version being that "the bike stopped telling us it is charging" is not the
+    // same event as "the bike stopped charging", and a dropout produces only the first.
+    linkIsLive: connection.rawVal === "live",
+    charging,
+    critical,
+    heardFromBike: soc != null,
+  };
+  // peekTab(), not currentTab(): subscribing this timer to the tab would re-pace it on
+  // every tab change.
+  for (const tab of viewRules(viewRuleMemory, bike, peekTab())) {
+    showTab(tab);
   }
-
-  if (charging && !wasCharging) {
-    showTab("charge");
-  }
-  // Leaving the charger takes you back to the riding screen, but only if you are
-  // still looking at the one it moved you to. peekTab(), not currentTab(): this runs
-  // inside the chartTick timer, and subscribing that timer to the tab would re-pace it
-  // on every tab change.
-  if (!charging && wasCharging && peekTab() === "charge") {
-    showTab("ride");
-  }
-  wasCharging = charging;
-
-  if (critical && !wasCritical && !charging) {
-    showTab("hypermile");
-  }
-  wasCritical = critical;
 }
 
 // Flash the high beam three times to change view without touching the phone.

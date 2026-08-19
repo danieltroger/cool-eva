@@ -166,7 +166,9 @@ const CHECKS: SelfCheck[] = [
       "down and replaced with NO close event ever delivered — but not one second before 12 s, so a parked bike " +
       "cannot churn sockets — that the 2 s backoff still gates every retry and none is queued while hidden, that " +
       "isStale() calls every reading stale while the link is not live so nothing frozen is shown at full " +
-      "brightness, and that the Pi's per-client backlog cap still holds several full snapshots",
+      "brightness — while the view rules hold their edges across the same gap, so a dropout during a DC charge " +
+      "cannot throw the rider off the Charge tab and back — and that the Pi skips a client past the backlog cap " +
+      "and hangs up on one still past it a heartbeat later, with the cap still holding several full snapshots",
   },
   {
     script: "scripts/check-freeze-frame.ts",

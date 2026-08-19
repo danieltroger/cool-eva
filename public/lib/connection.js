@@ -217,6 +217,19 @@ function tick(state) {
     openNow(state);
     return;
   }
+  if (state.socket === null && state.retryAt === null && !state.effects.hidden()) {
+    // Visible, nothing open, and nothing queued to open one. The only way to arrive
+    // here is a visibilitychange that never came — and closing the socket on hide is
+    // what made this page eligible for Safari's back/forward cache, which is exactly
+    // where a visibility transition is least dependable. openNow() throwing lands here
+    // too, since it clears the retry before it can fail.
+    //
+    // The same argument the header makes about `close` applies to `visibilitychange`:
+    // a recovery path with one trigger is a recovery path that can be missed. The poll
+    // is already running, so this costs nothing to have.
+    openNow(state);
+    return;
+  }
   if (state.socket !== null && state.lastTrafficAt !== null && now - state.lastTrafficAt > SILENCE_LIMIT_MS) {
     // OPEN, and carrying nothing. The heartbeat in ws.ts means this cannot be a quiet
     // bus, so the socket is dead however healthy it claims to be — a hotspot dropping
