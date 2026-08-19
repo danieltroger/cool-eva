@@ -259,8 +259,15 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
 // ❌ 0x600 — b0-3 are the constant 01 01 06 11 (99.998 % of 900 309 frames). b4-5 LE is a
 //    free-running 10 ms tick that wraps every 655 s; it is genuinely decoded and genuinely
 //    useless to log, since a wrapping counter with no epoch is noise in a time series.
-//    b6-7 LE sits in 2530-2750 with no correlation to voltage, current, SOC or time in any of
-//    the 29 sessions — an ADC channel of something not on this bus.
+//
+//    b6-7 LE sits in 2367-2816 with no correlation to voltage, current, SOC or time in any of
+//    the 29 sessions. One attractive reading was tested and REFUTED, which is worth recording
+//    because it is exactly the shape of a wrong decode that gets believed: psu_12v_mv ÷ b6-7
+//    has a median of 4.93 across both a DC and a 6.8 h AC session, so "×5 mV/count, the 12 V
+//    rail" looks compelling — 2530 → 12.65 V, 2750 → 13.75 V is the right rest-to-charging
+//    span. But r(b6-7, psu_12v_mv) = −0.023 on DC and −0.003 on AC over 255 843 aligned
+//    samples. The ratio is stable only because BOTH quantities happen to sit in narrow bands;
+//    they are not the same measurement. It stays unknown.
 //
 // ❌ 0x630 — DLC 3, and a poll rather than a measurement. b0 takes only the values
 //    {0xA1, 0xA2, 0xA3, 0xA5, 0xA9}, which are precisely Energica's own `MotorbikeECU` node
@@ -269,10 +276,19 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
 //    for each node is not established; the A1 entry's third byte is 0x1B on AC and 0x07 on DC,
 //    which is a real difference with no interpretation behind it.
 //
-// ❌ 0x631 — MULTIPLEXED, which is why it looked like noise. It is 20 Hz and b4's bit 0
-//    alternates on EVERY frame, so consecutive frames belong to two different slots and any
-//    byte read without demultiplexing is two interleaved signals. b3 mirrors 0x610 b7 in one
-//    slot. CAN_MAP.md's "b4 twitches 50 ↔ 51" is this toggle seen without the mux.
+// ❌ 0x631 — b4's bit 0 alternates on every frame at 20 Hz, which CAN_MAP.md recorded as
+//    "b4 twitches 50 ↔ 51". It is an alternating toggle and NOT a multiplex selector: split
+//    the frames on it and the two halves are byte-identical in every other position, in all
+//    three DC sessions checked (b0 = 04, b1 = 00, b2 = 11, b3 = 23, b5 = 00, b6 = 05,
+//    b7 = 02 in both). On AC the toggle does not happen at all — b4 is 0x00 in 12 280 of
+//    12 280 frames of the 6.8 h overnight session — so it is DC-only. b4 & 0xFE is 0x32 on DC
+//    and 0x00 on AC.
+//
+//    b3 is a mirror of 0x610 b7: equal in 99.860 % of 326 075 frames. Not decoded, precisely
+//    because it is a duplicate — a second key for the same quantity whose 0.14 % of
+//    disagreements would read as a bug rather than as the frame skew it is.
+//    b0 is 3 on AC and 4 on DC, and b2 is 0 on AC and 0x11 on DC; neither is decoded, as
+//    0x610 already carries that distinction with a better-evidenced byte.
 //
 // ❌ 0x635 — b0-2 are the constant DC DD 24 (100.000 % of 44 694 frames). b3-5 read FF FF FF
 //    on AC and resolve to F2 3D 0E about 2.7 s into a DC handshake.
