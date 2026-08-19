@@ -47,11 +47,19 @@ import type { DecodedValue } from "../src/can/frame.ts";
 // it got in: the fix for a real decoder bug disabled the check that guards the same decoder.
 //
 // So the emitted set is now the UNION of what the probes produce and what the replay cases at
-// the bottom produce, and the check runs after both. That a gated id HAS replay cases is itself
-// asserted in section 4, so it is a check rather than a convention: a decoder gated tightly
-// enough to dodge the probes and carrying no replay case now fails the build instead of going
-// quietly unprotected. A fifth probe payload shaped like a real 0x625 would have patched today's
-// symptom and left the next differently-gated frame to rediscover the hole.
+// the bottom produce, and the check runs after both. That a gated id has replay cases is itself
+// asserted in section 4, so for every id NAMED IN `REQUIRED_IN_FILTER` it is a check rather than
+// a convention: gated tightly enough to dodge the probes and carrying no replay case now fails
+// the build. A fifth probe payload shaped like a real 0x625 would have patched today's symptom
+// and left the next differently-gated frame to rediscover the hole.
+//
+// ⚠️ Read that scope literally. An id that is NOT in `REQUIRED_IN_FILTER` is invisible to all
+// three guards at once: it answers no probe so it never enters `answeringIds`, the STREAM_IDS
+// check is one-directional by design so it never fires for a silent id, and the section-4
+// assertion only walks that list. So a gated decoder for, say, 0x400 wired into STREAM_IDS but
+// not into the list below is exactly as unprotected as 0x625 was — the hole has moved up a
+// level, not closed. What actually closes it is the `CHARGE_MANAGER_CAN_IDS` cross-check below
+// generalised: more modules exporting their own id list, and less prose here.
 //
 // ⚠️ The residual hole, stated rather than left implicit. This covers an id with no coverage at
 // all; it does NOT cover a NEW KEY added to an already-gated decoder whose existing replay cases
@@ -236,6 +244,12 @@ interface ReplayCase {
   expect: Record<string, number>;
   /** Keys this frame must NOT produce. */
   absent?: string[];
+  /**
+   * Keys whose expected value bounds.js is SUPPOSED to reject — sentinels replayed on purpose,
+   * like 0x0A0's 0xFFFF wheel counts. Everything else in `expect` is a real reading off the bike,
+   * so a bound that rejects one is a bug in bounds.js; see the check in the replay loop.
+   */
+  outsideBounds?: string[];
 }
 
 const REPLAY: ReplayCase[] = [
@@ -349,6 +363,9 @@ const REPLAY: ReplayCase[] = [
       abs_warning_lamp: 0,
       front_brake_pressure_bar: 0,
     },
+    // The only case in the file where a replayed real reading is MEANT to fail bounds.js, which
+    // is the whole point of it — so the intent is declared rather than left to the `why` line.
+    outsideBounds: ["wheel_speed_front_kmh", "wheel_speed_rear_kmh"],
   },
   {
     id: 0x127,
@@ -730,6 +747,20 @@ for (const testCase of REPLAY) {
     }
     if (Math.abs(actual - expected) > 1e-9) {
       failures.push(`${label}: expected ${key} = ${expected}, got ${actual}`);
+    }
+    // The other direction of the two-layer argument, and the one nothing checked until now.
+    // Every value in `expect` was copied byte for byte out of the archive, so it is a reading the
+    // bike really produced — which makes this the one place that can catch a bound drawn TOO
+    // TIGHT. That is not a hypothetical failure mode: the first version of this PR bounded
+    // `fast_dc_limit_max_a` at 80 because it read a write policy as a field range, and the only
+    // reason no real reading was rejected is that this bike happens to hold 75. `psu_12v_mv`
+    // exists in bounds.js for the same mistake made from the other end.
+    const signal = defined.get(key);
+    const range = signal ? boundsFor(signal.key, signal.unit, signal.group) : null;
+    if (range && !(testCase.outsideBounds ?? []).includes(key) && (expected < range[0] || expected > range[1])) {
+      failures.push(
+        `${label}: ${key} = ${expected} is a real reading off the bike, but bounds.js gates it to [${range[0]}, ${range[1]}] — either the bound is too tight, or this case belongs in outsideBounds`
+      );
     }
   }
   for (const key of testCase.absent ?? []) {

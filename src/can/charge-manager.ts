@@ -325,10 +325,18 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     //
     // 🟡 The ±2 A tolerance is also not a loose allowance — it is about one count of b3. If b3 is
     // integer kilowatts then one count is 1000 / pack_v ≈ 3.3 A, so the implied current cannot be
-    // resolved better than roughly ±1.7 A no matter what. That also answers what the residual is:
-    // it is NOT a fixed offset and NOT a proportional margin, because it moves with the power
-    // band — median +2.35 A at 5-9 kW, −0.95 at 10-14, −0.40 at 15-19, −1.85 at 20-24. Scatter of
-    // that size about zero is exactly b3's own quantisation, and nothing more needs explaining.
+    // resolved better than roughly ±1.7 A no matter what. That also answers what the residual is
+    // NOT: not a fixed offset and not a proportional margin, because it moves with the power band
+    // — median +2.35 A at 5-9 kW, −0.95 at 10-14, −0.40 at 15-19, −1.85 at 20-24 — and scatter of
+    // that size is exactly the ±1.65 A a 1 kW quantisation produces.
+    //
+    // What it is remains open, and the SIGN pattern is the reason to say so rather than stop
+    // here: one rounding rule has one sign. Floor biases the residual positive in every band,
+    // round-to-nearest centres it on zero in every band, and neither flips sign across bands the
+    // way these do. A handful of distinct stations with distinct true powers, spread unevenly
+    // over the bands (n = 239 in the top row against 30 248 in the bottom), fits better — which
+    // is another way of saying the sample is four stations wearing a histogram, and one more
+    // reason the corpus is not what settles this byte.
     //
     // The session split lines up with it. Seven of the eleven DC sessions keep b3 under 55 and
     // four park it at 79-81 (96 % of their frames), and in the eight sessions where the window
@@ -356,15 +364,35 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
       // reads as "plugged in, both ceilings at zero" rather than as a missing sender.
       //
       // b4-7 = 00 catches all-ones and the alternating pattern. b3 is what separates the all-zero
-      // shape: it is 0xFF or 9…82 across all 968 618 frames and is never 0 — the lowest value it
-      // has ever taken is 9.
+      // shape, and the argument for it is stronger than "never observed at 0": THIS BYTE ALREADY
+      // HAS A "NOTHING TO REPORT" ENCODING AND IT IS 0xFF — 100.000 % of 807 907 AC frames plus
+      // the 4 604 DC frames before a handshake completes. A field that spells "no figure" as 0xFF
+      // is unlikely to also spell it as 0, and that argument survives the kilowatts reading above
+      // turning out to be wrong. The observation that b3 is never 0 across 968 618 frames (lowest
+      // 9) is then the confirmation rather than the whole case.
       //
-      // ⚠️ b3 is the weakest of the four gates in this file, and knowingly so: it is the one byte
-      // in this group whose MEANING is open (see the retraction above). If the kilowatts reading
-      // is right and a station ever advertises zero, this frame goes silent at exactly the moment
-      // it gets interesting. That is judged the better risk, because the alternative is a decoder
-      // that reports "no ceiling on either path" for a sender that has stopped talking — but if
-      // the limits ever vanish from a live session, look here first.
+      // The gate is the minimal `=== 0` and NOT the observed {0xFF} ∪ [9, 82], deliberately:
+      // baking 9…82 in would harden a range this same change retracts, off eleven sessions at a
+      // handful of stations. Values 1-8 and 83-254 pass, and should.
+      //
+      // ⚠️ Still the weakest of the four gates in this file, because b3 is the one byte here whose
+      // MEANING is open. If the kilowatts reading is right and a station ever advertises zero,
+      // this frame goes silent at the moment it gets interesting. Judged the better risk than a
+      // decoder reporting "no ceiling on either path" for a sender that has stopped talking — but
+      // if the limits ever vanish from a live session, look here first.
+      //
+      // ⚠️ And be clear what it does NOT buy. It removes the ambiguity for the dead-sender payload
+      // only. A live reader still sees fast_dc_limit_a = 0 with ac_supply_limit_a = 0 on 31 529
+      // real frames, so "both ceilings zero" remains an ordinary state downstream and nothing here
+      // makes it mean "charging is impossible".
+      //
+      // 🟡 One invariant is deliberately NOT used, so that it is visibly a decision. b0 and b1 are
+      // never both non-zero across all 968 618 frames — a 100.000 % invariant on the two bytes
+      // actually decoded, and unlike b3 its meaning is not open, so `data[0] !== 0 && data[1] !== 0`
+      // would catch a byte-shifted frame that slipped past b3 and the zero tail. It is left out
+      // because it gates on the DECODE rather than on filler: a firmware that ever granted both
+      // paths at once would go silent instead of showing the single most interesting frame this
+      // ECU could produce. Gating on bytes we do not read is the safer half of that trade.
       if (data[3] === 0 || data[4] !== 0 || data[5] !== 0 || data[6] !== 0 || data[7] !== 0) return [];
       return [
         // ✅ b0 = the DC current limit in force right now, in amps — the one of the three DC

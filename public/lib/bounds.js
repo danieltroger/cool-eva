@@ -126,11 +126,12 @@ const BY_KEY = {
   //   ceiling comes from the STANDARD rather than from this bike: IEC 61851's control pilot
   //   cannot encode more than 80 A, so above that it is not a supply rating at all.
   //
-  // These are the second line of defence, not the first. `src/can/charge-manager.ts` now drops a
-  // 0x615 frame that fails the frame's own invariants, so the all-ones payload no longer reaches
-  // the decoder at all. Both layers are wanted: the invariant catches a dead sender, and these
-  // catch a decode that is wrong in a way the invariant cannot see — a byte read at the wrong
-  // offset still passes b1 = 0x01.
+  // These are the second line of defence, not the first. `src/can/charge-manager.ts` now checks
+  // frame invariants on 0x610, 0x615, 0x620 and 0x625, so an all-ones payload still REACHES those
+  // decoders and they refuse it — the value never gets as far as this file. Both layers are
+  // wanted, because they fail differently: the invariant catches a sender that has stopped
+  // talking, and these catch a decode that is wrong in a way no invariant can see, since a byte
+  // read at the wrong offset still arrives in a frame with a perfectly good b1 = 0x01.
   "fast_dc_a": [0, 150],
   "fast_dc_limit_a": [0, 127],
   "fast_dc_limit_max_a": [0, 127],
