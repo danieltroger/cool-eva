@@ -152,25 +152,48 @@ export function VcuWrite() {
     // in the whole panel. ./service-mode.js has carried the boundary as a comment
     // since it was written; this is the same statement, where a rider can see it.
     //
-    // ⚠️ Both the amber and the line under it drop when SERVICE_WRITE_ENABLED=0,
-    // because there is then nothing below to warn about — the section renders one
-    // sentence saying the switch is off, and "everything below here can change the
-    // motorcycle" directly above it would be false. Amber is the default while
-    // nothing has answered yet: an unknown answer should look like the dangerous
-    // one, not like the safe one.
-    div({ class: () => `sheet-heading${writesAreOff() ? "" : " writes"}` }, "Change something on the bike"),
+    // ⚠️ The amber and the line under it are governed by `hasControls()` — THE SAME
+    // condition that decides whether the controls render at all, three lines below.
+    // That is the point of it being one function: a warning about what is under a
+    // heading must appear and disappear with the thing it is warning about, and it
+    // cannot be made to disagree by any state this page can be in.
+    //
+    // Two states have nothing under the heading and so get no warning: writing off on
+    // this Pi (SERVICE_WRITE_ENABLED=0), and nothing answered yet — which is not a
+    // moment of "we don't know, assume the worst", it is a section that is EMPTY,
+    // and it lasts as long as an unreachable Pi lasts because nothing re-polls
+    // /vcu-write while the sheet is open. An amber warning standing over an empty
+    // section until the sheet is reopened is a wolf cried permanently.
+    div({ class: () => `sheet-heading${hasControls() ? " writes" : ""}` }, "Change something on the bike"),
+    // ⚠️ "Everything below here can change the motorcycle" was FALSE and had to go:
+    // of the next four controls, the parameter picker reads, the value on the left is
+    // a read-out, "Read it off the bike again" reads, and the service-stamp action is
+    // labelled read-only. A section heading that lies is worse than none.
+    //
+    // What it says instead is the section's risk PROFILE, and it says it here rather
+    // than only at the fold 600 px further down — which is the honest answer to
+    // "a panel must never conceal what it is capable of". The fold hides the buttons
+    // from a wandering thumb; it does not get to hide that they exist.
     () =>
-      writesAreOff()
-        ? div()
-        : div({ class: "sheet-heading-note" }, "Writes. Everything below here can change the motorcycle."),
+      hasControls()
+        ? div(
+            { class: "sheet-heading-note" },
+            `Can change the bike — including ${IRREVERSIBLE_COUNT} things that cannot be undone.`
+          )
+        : div(),
     Availability(),
-    () => (state.val?.status.enabled ? div(ParameterForm(), ServiceActions(), Journal()) : div())
+    () => (hasControls() ? div(ParameterForm(), ServiceActions(), Journal()) : div())
   );
 }
 
-/** Explicitly off, as opposed to not yet answered. See the heading above. */
-function writesAreOff() {
-  return state.val?.status.enabled === false;
+/**
+ * Whether this section is actually rendering controls.
+ *
+ * Deliberately `=== true` rather than truthiness, and deliberately one function used
+ * by the heading, the warning under it and the controls themselves — see the heading.
+ */
+function hasControls() {
+  return state.val?.status.enabled === true;
 }
 
 /**
@@ -399,7 +422,13 @@ function ChangeRow() {
 }
 
 function CurrentReading() {
-  return div({ class: "probe-input", style: "display:flex; align-items:center" }, () => {
+  // ⚠️ `readout`, so it does not look typeable. This is the only field-shaped thing
+  // in the sheet that cannot be edited, and it sat immediately left of "Change to"
+  // in identical chrome — a read/write pair rendered as two of the same thing, which
+  // is the exact confusion the rest of this page is built to remove. The number here
+  // is also what gets sent as `expected=`, so "where did this come from" is a
+  // question worth the box answering by its shape.
+  return div({ class: "probe-input readout", style: "display:flex; align-items:center" }, () => {
     const known = onBike();
     if (!known) {
       return span({ style: `color:${MUTED}` }, "not read yet");
@@ -719,37 +748,61 @@ function IrreversibleActions() {
     button(
       {
         class: "code-toggle risk-fold",
+        // The fold hides `31 FC` and Mode 04, so a screen reader has to be told it is
+        // a disclosure and which way it is currently pointing. The caret cannot say
+        // that; it is a glyph.
+        "aria-expanded": () => String(dangerOpen.val),
         onclick: () => {
           dangerOpen.val = !dangerOpen.val;
           armed.val = "";
         },
       },
+      // ⚠️ The SENTENCE does not change between states — only the caret turns. It
+      // used to grow a "hide the" in front of itself, which changed the width and the
+      // grammar of the one control standing between a thumb and Mode 04, so the eye
+      // had to re-find it after every tap. And no glyph: 🚨 at this size is an
+      // anonymous red blob, and the row is already red, dashed and full width.
       () =>
-        dangerOpen.val ? "🚨  hide the 3 actions that cannot be undone  ▴" : "🚨  3 actions that cannot be undone  ▾"
+        `${IRREVERSIBLE_COUNT} action${IRREVERSIBLE_COUNT === 1 ? "" : "s"} that cannot be undone  ` +
+        `${dangerOpen.val ? "▴" : "▾"}`
     ),
-    () =>
-      dangerOpen.val
-        ? div(
-            { class: "danger-zone" },
-            ActionButton("set-service-point", () => "🔧  Say a service was performed NOW", {
-              confirm: "STAMP A SERVICE NOW. There is no unset",
-              noUndo: "IRREVERSIBLE — there is no unset.",
-              does: "Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer.",
-              caution:
-                "⚠️ Read the stamp above first, and make sure the bike's clock is right — the bike's clock is what it stamps.",
-            }),
-            ClockAction(),
-            ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
-              confirm: "WIPE the stored codes and their freeze frame",
-              noUndo: "IRREVERSIBLE — the freeze frame goes with the codes.",
-              does: "OBD Mode 04.",
-              caution:
-                "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
-            })
-          )
-        : div()
+    () => (dangerOpen.val ? div({ class: "danger-zone" }, ...IRREVERSIBLE.map(render => render())) : div())
   );
 }
+
+/**
+ * The irreversible actions, as a list rather than three calls in a row.
+ *
+ * ⚠️ So the count is DERIVED. The fold's label and the section's risk profile both say
+ * how many of these there are, and a literal 3 in either of them fails in the one
+ * direction that matters: add a fourth action here and the page goes on promising
+ * three. The parameter-warnings toggle this idiom copies derives its count too.
+ *
+ * Thunks rather than nodes because the fold rebuilds its contents on every open, and
+ * because the clock is not an `ActionButton` — it writes its own confirmation, since
+ * its second tap agrees to a fact ("is it 14:03?") rather than to an intention.
+ */
+const IRREVERSIBLE = [
+  () =>
+    ActionButton("set-service-point", () => "🔧  Say a service was performed NOW", {
+      confirm: "STAMP A SERVICE NOW. There is no unset",
+      noUndo: "IRREVERSIBLE — there is no unset.",
+      does: "Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer.",
+      caution:
+        "⚠️ Read the stamp above first, and make sure the bike's clock is right — the bike's clock is what it stamps.",
+    }),
+  ClockAction,
+  () =>
+    ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
+      confirm: "WIPE the stored codes and their freeze frame",
+      noUndo: "IRREVERSIBLE — the freeze frame goes with the codes.",
+      does: "OBD Mode 04 — clears every code the bike currently holds stored.",
+      caution:
+        "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
+    }),
+];
+
+const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
 
 /**
  * The clock sync, which needs its own button because its confirmation is a question
@@ -817,10 +870,13 @@ function ClockAction() {
         );
       }
       return NoteBlock({
-        // Not the word IRREVERSIBLE, because this one is subtly worse than the other
-        // two: you can set the clock again, but nothing can tell you what it held
-        // before or that this landed at all. That is the fact worth having in red.
-        noUndo: "No read-back: nothing can confirm this landed, or say what the clock said before.",
+        // ⚠️ Starts with the same shouted token as the other two, on purpose: the red
+        // line is one slot in three cards, and a slot that holds a token on two of
+        // them and a sentence on the third is not a slot. What comes AFTER the dash is
+        // where this one differs, and it differs in the direction that matters — you
+        // can set the clock again, but nothing can tell you what it held before or
+        // that this landed at all.
+        noUndo: "IRREVERSIBLE, AND UNCHECKABLE — the bike's clock cannot be read back.",
         does:
           `Checked against satellite time (${clock.offsetFromGpsSeconds.toFixed(1)} s apart). ` +
           "The bike's clock is what the service point stamps.",

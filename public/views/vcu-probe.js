@@ -89,7 +89,12 @@ export function VcuProbe(canReach) {
           class: "probe-input",
           type: "text",
           inputmode: "numeric",
-          placeholder: "e.g. 258 or 0x102",
+          // Short enough to survive the field. At "e.g. 258 or 0x102" the third of
+          // three fields on one row clipped it mid-string to "e.g. 258 or 0x" on a
+          // 390 px phone, which is a placeholder demonstrating a hex form it then
+          // cuts the hex off. The two forms are in the header and one example is
+          // enough to show the field takes a number.
+          placeholder: "e.g. 258",
           value: index,
           oninput: (/** @type {Event} */ event) => {
             index.val = /** @type {HTMLInputElement} */ (event.target).value;

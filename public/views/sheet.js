@@ -59,11 +59,12 @@ export function Sheet() {
       // and nothing said which was inside which. See style.css.
       div({ class: "sheet-heading" }, "This session"),
       TripStats(),
+      // No subtitle here, deliberately. Three sections carrying a one-line "what can
+      // this do to the bike" was one sentence too many for a single bit of
+      // information: both controls in this one are in the grey tier, which says the
+      // same thing without a sentence. The two that keep a subtitle are the two
+      // either side of the read/write boundary, where the bit is not obvious.
       div({ class: "sheet-heading" }, "Actions"),
-      // The waypoint is written on the Pi and the log is read off it, so this whole
-      // section is outside the risk tiers below — worth saying, because "Actions"
-      // and "Service actions" are otherwise two similar words a scroll apart.
-      div({ class: "sheet-heading-note" }, "Neither of these touches the bike."),
       WaypointButton(),
       DownloadButton(),
       // Last of the doing-things sections and first of the reading-things ones,

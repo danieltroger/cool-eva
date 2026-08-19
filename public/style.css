@@ -38,6 +38,15 @@
      sits on the sheet's own background and never on a tile. */
   --warn: #fb923c;
 
+  /* The same two hues at the alpha the sheet's borders want, declared ONCE.
+     ⚠️ They are hand-expanded from --warn and --bad because a var() cannot be given
+     an alpha without color-mix(), which this dashboard does not assume — but hand-
+     expanding them at each use site is exactly the drift the note above forbids, and
+     there were four such copies. If you change --warn or --bad, change these; a grep
+     for the hex now finds every place the colour lives. */
+  --warn-edge: rgba(251, 146, 60, 0.45);
+  --bad-edge: rgba(248, 113, 113, 0.55);
+
   /* The tab bar is fixed; every scrolling surface has to clear it plus the home
      indicator, or the last tile sits permanently under your thumb. */
   --tabs-height: 4.2rem;
@@ -366,14 +375,21 @@ body {
  * Level 1 is a real heading — near-white, larger, and preceded by a rule that
  * does most of the separating. Level 2 keeps the old small grey caps, which are
  * a good subsection marker and were only ever a bad section marker.
+ *
+ * ⚠️ 1.15rem is chosen against `.action`'s 1rem, not by eye. A heading has to be
+ * BIGGER than the things it organises, and the first version of this rule was
+ * 0.95rem — measurably smaller than the button labels underneath it and than
+ * `.sheet-close`, which inherits 1rem. A heading out-sized by its own contents is
+ * the same "no hierarchy" complaint in a new place. If you change either number,
+ * change it knowing about the other.
  */
 .sheet-heading {
-  font-size: 0.95rem;
+  font-size: 1.15rem;
   font-weight: 600;
   color: var(--fg);
   border-top: 1px solid var(--tile-edge);
-  margin-top: 1.1rem;
-  padding: 1rem 0.2rem 0.1rem;
+  margin-top: 1.5rem;
+  padding: 1rem 0.2rem 0.15rem;
 }
 
 /* No rule above the sheet's OWN first heading: it would sit a few pixels under the
@@ -404,19 +420,24 @@ body {
    so the heading is amber and so is the rule above it. */
 .sheet-heading.writes {
   color: var(--warn);
-  border-top-color: rgba(251, 146, 60, 0.4);
+  border-top-color: var(--warn-edge);
 }
 
 .sheet-heading.writes + .sheet-heading-note {
   color: var(--warn);
 }
 
+/* Level 2. Heavier and a touch larger than it was, because the sheet also uses
+   small grey caps for FIELD labels (`.probe-label`, `.stat-label`) and at 0.68rem
+   the only thing separating "SERVICE ACTIONS" from "ECU" was a point of tracking.
+   Weight is what tells them apart now; nobody perceives a pixel of cap height. */
 .sheet-title {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--sub);
-  padding: 0.9rem 0.2rem 0.5rem;
+  padding: 1rem 0.2rem 0.5rem;
 }
 
 .stats {
@@ -451,7 +472,7 @@ body {
  * stored trouble codes" were indistinguishable until you had read all three —
  * and one of them cannot be undone.
  *
- * The tier is carried by a 4 px gutter down the left edge, and every tier has
+ * The tier is carried by a 3 px gutter down the left edge, and every tier has
  * one, in the same place and the same width. That is the point: a stripe that
  * appears and disappears is a second thing to notice before you can compare the
  * colours, whereas a gutter that is always there is read the way a level meter
@@ -468,6 +489,19 @@ body {
  *                      the bike's clock. No unset, and in the clock's case not
  *                      even a read-back.
  *
+ * ⚠️ EVERY tier keeps the filled tile. The first version of this made the read
+ * tier transparent so it would recede, which is a fine idea on a monitor and a
+ * bad one here: --tile against --bg is a 1.4:1 edge, so in daylight through a
+ * visor the only buttons still visible would have been the three that cannot be
+ * undone. Recession is not worth buying with legibility on the controls used
+ * most. The gutter is the only thing that varies between tiers.
+ *
+ * ⚠️ The gutter is an inset shadow, not a fat border-left. A 3 px border meeting
+ * a 1 px border under a 0.8rem radius does not reconcile — the corner comes out
+ * visibly lumpy. An inset shadow is clipped by the border-radius and curves
+ * cleanly, and it costs no layout, so the text baseline is identical on all
+ * three tiers.
+ *
  * Colour is not the only carrier, because deuteranopia flattens amber against
  * red. The red tier ALSO sits behind a fold (.risk-fold), so it is not on screen
  * at all until it is asked for, and carries a red no-undo line under the button.
@@ -477,37 +511,37 @@ body {
  */
 .action {
   width: 100%;
-  background: transparent;
+  background: var(--tile);
   border: 1px solid var(--tile-edge);
-  border-left: 4px solid var(--tile-edge);
   border-radius: 0.8rem;
+  box-shadow: inset 3px 0 0 var(--dim);
   color: var(--fg);
   font: inherit;
   font-size: 1rem;
-  /* Tall enough for a gloved thumb, and unchanged from before the tiers: the
-     read tier lost its fill, not its target size. */
+  /* Tall enough for a gloved thumb. */
   padding: 1rem;
   margin-top: 0.5rem;
   text-align: left;
   cursor: pointer;
 }
 
-/* The two tiers that change the bike keep the filled tile the read tier gave up,
-   so weight and colour agree rather than one having to be traded for the other. */
 .action.writes {
-  background: var(--tile);
-  border-color: rgba(251, 146, 60, 0.45);
-  border-left-color: var(--warn);
+  border-color: var(--warn-edge);
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 .action.irreversible {
-  background: var(--tile);
-  border-color: rgba(248, 113, 113, 0.5);
-  border-left-color: var(--bad);
+  border-color: var(--bad-edge);
+  box-shadow: inset 3px 0 0 var(--bad);
 }
 
+/* ⚠️ 0.62, not the 0.5 it was, and the number is measured rather than felt. This is
+   the state most of the sheet sits in whenever the bike is off or not in reach —
+   which is most of the time somebody opens it — and at 0.5 the label composites to
+   about 4.1:1 against its own dimmed fill, under the 6:1 floor this file sets at the
+   top. 0.62 brings it back to ~5.9:1 while still reading unmistakably as "off". */
 .action:disabled {
-  opacity: 0.5;
+  opacity: 0.62;
 }
 
 .action-note {
@@ -541,13 +575,18 @@ body {
 
 /* The fold in front of the irreversible actions.
  *
- * Deliberately the same idiom as the parameter warnings' toggle — a counted,
- * caret-ended toggle built on .code-toggle, from the fix that stopped four amber
- * paragraphs stacking above the write form — rather than a second kind of
- * disclosure. It is red instead of amber because what is behind it is, and it is
- * a full-width row because the parameter toggle's ~60 px label is a fine target
- * for something you go looking for and a poor one for the only thing standing
- * between a thumb and Mode 04.
+ * The same idiom as the parameter warnings' toggle — a counted, caret-ended
+ * toggle built on .code-toggle, from the fix that stopped four amber paragraphs
+ * stacking above the write form — rather than a second kind of disclosure. Red
+ * instead of amber because what is behind it is.
+ *
+ * ⚠️ But it has real chrome, which that toggle does not, and the reason is not
+ * decoration. As a bare line of coloured text it read as a footnote on the
+ * caption above it rather than as the gate on three destructive operations, and
+ * it was a ~20 px line of text for somebody wearing gloves. It is now a
+ * full-width row with a 52 px target and a dashed edge — dashed because there is
+ * something behind it, rather than solid, which would make it look like a fourth
+ * action to press.
  *
  * ⚠️ Selected as `.code-toggle.risk-fold`, not `.risk-fold`. .code-toggle is
  * declared further down this file, so at equal specificity it wins on source order
@@ -555,10 +594,13 @@ body {
 .code-toggle.risk-fold {
   width: 100%;
   text-align: left;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   color: var(--bad);
-  padding: 0.9rem 0.2rem;
-  margin-top: 0.4rem;
+  background: transparent;
+  border: 1px dashed var(--bad-edge);
+  border-radius: 0.8rem;
+  padding: 1rem;
+  margin-top: 1.5rem;
 }
 
 /* One action and the prose that belongs to it. The gap between two of these is
@@ -566,16 +608,23 @@ body {
    sentence about one irreversible action sat as close to the NEXT button as to the
    one it was about. */
 .action-block + .action-block {
-  margin-top: 1.2rem;
+  margin-top: 1.5rem;
 }
 
-/* The opened group, as one region rather than three loose buttons. A faint rule
-   down its left edge is what says the fold is still around them — otherwise an
-   opened fold looks exactly like three buttons that were always there. */
+/* The opened group.
+ *
+ * Spacing only — no rule and no indent. It had both, and both were wrong: the
+ * cards already carry a red gutter, so a second red rail 9 px to the left of it
+ * was the same line drawn twice, and indenting the group moved its LEFT edge
+ * while its right edge stayed on the page gutter, which reads as a layout bug
+ * rather than as grouping. What says these three belong together is that they
+ * are the only red things on the page and they appeared together when the fold
+ * opened. */
 .danger-zone {
-  border-left: 2px solid rgba(248, 113, 113, 0.3);
-  padding-left: 0.5rem;
-  margin-left: 0.1rem;
+  margin-top: 0.5rem;
+  /* The heading after this one is "Recently written", and without the gap the
+     journal reads as a fourth paragraph of the clear-codes card. */
+  margin-bottom: 1rem;
 }
 
 .sheet-close {
@@ -830,6 +879,17 @@ body {
   font: inherit;
   font-size: 0.95rem;
   padding: 0.65rem 0.5rem;
+}
+
+/* The one field-shaped thing in the sheet that cannot be typed into: what the bike
+   currently holds, sitting immediately left of the box you type the new value into.
+   In identical chrome those two read as a pair of inputs, one of which silently
+   ignores you. Keeps the padding so the arrow between them still lines up; loses
+   everything that says "edit me". */
+.probe-input.readout {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0.15rem;
 }
 
 /* ---------- toast ---------- */
