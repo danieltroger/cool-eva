@@ -397,7 +397,15 @@ async function checkOnlyThePrivateKeyOpensIt(
   );
 }
 
-/** Runs an open that must throw, and says so either way. */
+/**
+ * Runs an open that must throw, and says so either way.
+ *
+ * Any throw counts as proof, which is only sound because the must-SUCCEED case above
+ * runs first: an `openSegment()` refactored into throwing unconditionally would fail
+ * there rather than sail through both refusals looking like three passes. The two arms
+ * are what make each other mean anything — do not reorder them, and do not keep one
+ * without the other.
+ */
 async function mustRefuse(what: string, attempt: () => Promise<string>, ifItSucceeds: string): Promise<void> {
   try {
     await attempt();
