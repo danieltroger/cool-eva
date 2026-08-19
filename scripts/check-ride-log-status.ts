@@ -107,9 +107,15 @@ try {
   const own = await freshKeypair();
   const stranger = await freshKeypair();
   const sealedDirectory = join(workDir, "sealed");
-  await sealRealSegments(sealedDirectory, own);
+  const sealed = await sealRealSegments(sealedDirectory, own);
   await checkTheCaptionSaysWhatIsCounted();
-  await checkOnlyThePrivateKeyOpensIt(sealedDirectory, own, stranger);
+  if (sealed) {
+    // §4 opens what §2 wrote, so it has nothing to say when §2 wrote nothing — and
+    // its readdir() would reject ENOENT out of a try/finally with no catch, killing
+    // the run before the failure list below ever prints. Skipping it is what lets §2's
+    // own diagnosis be the thing the reader sees.
+    await checkOnlyThePrivateKeyOpensIt(sealedDirectory, own, stranger);
+  }
 } finally {
   // Leaves the segment timer behind otherwise, and the process would sit at the
   // prompt until it fired — which run-checks.ts reports as "no verdict", correctly.
@@ -199,8 +205,10 @@ async function checkTheCountIsTheDirectory(directory: string): Promise<void> {
  * kept colliding onto one name. Three is under five, so the check stayed green
  * through the exact regression it exists to catch. Bound it by what one run can
  * legitimately produce instead, and that mutation goes red.
+ *
+ * Returns whether anything was actually sealed, because §4 reads what this wrote.
  */
-async function sealRealSegments(directory: string, recipient: ThrowawayKeypair): Promise<void> {
+async function sealRealSegments(directory: string, recipient: ThrowawayKeypair): Promise<boolean> {
   const publicKeyPath = join(workDir, "throwaway.public.pem");
   await writeFile(publicKeyPath, spkiFor(recipient.publicRaw).export({ type: "spki", format: "pem" }));
 
@@ -214,8 +222,10 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
   if (!enabled) {
     // Without this, appendReading() silently no-ops and the failure surfaces as
     // "produced no files at all" — the right verdict attached to the wrong cause.
+    // The writeFile() two lines up means this should be unreachable, which is the
+    // reason it has to be loud rather than the reason it can be left out.
     failures.push(`initEncryptedLog() refused the throwaway public key at ${publicKeyPath}, so nothing was sealed`);
-    return;
+    return false;
   }
 
   for (let index = 0; index < SEGMENTS_TO_SEAL; index += 1) {
@@ -248,6 +258,7 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
   console.log(
     `  ${SEGMENTS_TO_SEAL} seals → ${measured.files} file(s), ${segmentsOnDisk} segments, ${measured.bytes} bytes`
   );
+  return true;
 }
 
 /**
@@ -306,17 +317,22 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
  * Source with `//` and `/* … *\/` comments blanked out, so a text assertion about what
  * a function displays cannot be tripped by prose explaining that function.
  *
- * Newlines are kept so line-based reading of the result still lines up. Crude — it has
- * no idea about `//` inside a string literal — but it only ever runs over one small
- * view function, and erring towards stripping too much makes this check quieter, never
- * falsely red.
+ * Line comments go first, so a `/*` inside one cannot open a block that swallows real
+ * code below it. Block comments are then blanked in place, keeping their newlines, so
+ * nothing on either side of one gets joined into a token that was never there. Crude —
+ * it has no idea about `//` inside a string literal — but it only ever runs over one
+ * small view function.
+ *
+ * Note that stripping too much is not automatically the safe direction: the caller's
+ * `log.files` assertion fires on ABSENCE, so anything that ate real code here would go
+ * red rather than quiet. Widen this and check that assertion still means something.
  */
 function withoutComments(source: string): string {
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, " "))
     .split("\n")
     .filter(line => !line.trim().startsWith("//"))
-    .join("\n");
+    .join("\n")
+    .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, " "));
 }
 
 /**

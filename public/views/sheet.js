@@ -186,11 +186,13 @@ function DownloadButton() {
       // cannot move before midnight however far the bike rides. src/http/status.ts
       // has the mechanism.
       //
-      // And unreadable, not safe. The log genuinely cannot be read back without the
-      // laptop's private key, which is why serving it over untrusted wifi is fine.
-      // But the public key the Pi holds is not a secret, so it is also all anyone
-      // needs to WRITE a segment that decrypts cleanly, and /dl authenticates
-      // nobody. Confidentiality is what we have; claiming safety claimed more.
+      // And unreadable, not safe. Without the laptop's private key the log is noise,
+      // which is a claim about the BYTES; "safe over any network" was a claim about
+      // the TRANSFER, and the transfer is the part with no crypto in it. /dl
+      // authenticates nobody, so anyone on that wifi can pull the whole log and keep
+      // the ciphertext against the day the key leaks, and segments can be dropped or
+      // truncated in flight by someone holding no key at all. src/http/download.ts
+      // draws the same line, and the README lists the rest.
       const fileCount = current.log.files;
       return div(
         { class: "action-note" },
