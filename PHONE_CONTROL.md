@@ -12,33 +12,33 @@ Researched 2026-08-19 against iOS 26.6. Sourced from Apple's own documentation a
 - The Pi can present as a Bluetooth device (HID keyboard, HID mouse, or a plain BLE peripheral), and can switch a relay.
 - **Anything the dashboard page can already do is solved** — the Pi→page channel exists and handlebar gestures ship today. The whole question below is only about things a _web page_ cannot do: opening a native app, taking a photo, starting a recording.
 
-## The one hard ceiling
-
-**Nothing produces a photo, or opens an app, on a locked or sleeping phone.** Apple, [Run shortcuts with Siri](https://support.apple.com/guide/shortcuts/run-shortcuts-with-siri-apd07c25bb38/9.0/ios/26): _"When your device is locked and you run a shortcut that opens an app, Siri asks to unlock your device before continuing."_ Not deferred, not silent.
-
-**No documented way was found for a BLE HID keypress to wake the display** — the biggest untested unknown, and one only a physical phone settles.
-
-Neither binds a rider who keeps the phone awake on the mount. They matter if you ever want this to work from a pocket.
-
----
-
 ## Ranked by repeatability
 
-The rider's real requirement: press a button many times in a ride, something happens each time, promptly.
+The rider's real requirement: press a button many times in a ride, something happens each time, promptly. Ranked by how well documented that repeatability is, which is not the same as how good each one would be if it works.
 
-### 1. AssistiveTouch Hot Corners, driven by a composite BLE HID mouse
-
-No cloud, no re-arm, no trigger, latency in milliseconds. A composite HID device is **both keyboard and mouse**, so this coexists with a volume-up shutter with no connect/disconnect cycling. Apple, [Use AssistiveTouch](https://support.apple.com/guide/iphone/use-assistivetouch-iph96b21954/ios): Hot Corners can _"take a screenshot, open Control Center, activate Siri, scroll, or **use a shortcut**"_.
-
-**Nothing in the trigger inventory beats this.**
-
-### 2. Charger trigger, both edges, via a Pi-switched relay
+### 1. Charger trigger, both edges, via a Pi-switched relay
 
 The structural fact that makes this work: **Bluetooth and Wi-Fi are the only connect-type triggers Apple gives no disconnect edge to. Charger has both.** That asymmetry is exactly why Bluetooth feels un-repeatable.
 
 Bind _Is Connected_ and _Is Disconnected_ to the same shortcut and **every relay toggle produces exactly one run** — no re-arm, no cloud, no cellular, no per-message cost, ~1–2 s. The phone is already mounted and charging.
 
-Unknowns: whether iOS debounces fast cycles, and a mild battery-health cost from repeated charge interruption.
+Unknowns, both stated: whether iOS debounces fast cycles, and a mild battery-health cost from repeated charge interruption.
+
+This is first because both of its edges are documented and its unknowns are bounded, not because it is the nicest. If option 2's latency turns out to be what it looks like, option 2 is better — it is below this one because its repeatability rests on behaviour Apple does not document, and the ranking is by documented repeatability.
+
+### 2. AssistiveTouch Hot Corners, driven by a composite BLE HID mouse
+
+No cloud and no trigger to arm, and potentially the lowest latency of anything here. A composite HID device is **both keyboard and mouse**, so this coexists with a volume-up shutter with no connect/disconnect cycling. Apple, [Use AssistiveTouch on iPhone](https://support.apple.com/guide/iphone/use-assistivetouch-iph96b21954/ios), under the heading **Set up Dwell Control**:
+
+> **Hot Corners:** Perform a selected action—such as take a screenshot, open Control Center, activate Siri, scroll, or use a shortcut—when the cursor dwells in a corner of the screen.
+
+⚠️ Read that heading and that verb before building on this. Three things follow, and an earlier draft of this file got all three wrong:
+
+- **The latency is a dwell interval, not milliseconds.** The action fires when the cursor _dwells_, and the same page carries a separate setting, _"Time needed to initiate a dwell action"_. Whatever that is set to is the floor on response time.
+- **There is re-arm, it is just spatial.** Firing twice needs the cursor to leave the corner and come back. A relative-motion mouse can do that on its own, so it is workable — but "no re-arm" was wrong.
+- **Dwell Control has to be on phone-wide**, which makes the cursor perform an action wherever it comes to rest, on a phone the rider is also using for Maps. That side effect is the real cost of this option and it is not local to the corner.
+
+Also untested: whether this phone will accept the Pi as a BLE HID pointer at all. Option 5 records iOS showing _audio devices only_ in the Bluetooth automation picker and failing to list a presentation remote of exactly the Pi's class — a different picker, but the same family of doubt.
 
 ### 3. Message trigger via an SMS API
 
@@ -60,6 +60,18 @@ Not a trigger but a reframe worth keeping: Shortcuts' **Take Photo** action has 
 
 ---
 
+## The limits, for the pocket case
+
+Below the ranking on purpose: the phone is normally awake and unlocked on the mount, so neither of these binds the actual rider. They decide whether this could ever work from a pocket.
+
+**A shortcut that opens an app will not run on a locked phone.** Apple, [Use Siri to run shortcuts with your voice](https://support.apple.com/guide/shortcuts/run-shortcuts-with-siri-apd07c25bb38/9.0/ios/26): _"When your device is locked and you run a shortcut that opens an app, Siri asks to unlock your device before continuing."_ Not deferred, not silent.
+
+⚠️ **That is the whole of what the source supports, and it is narrower than it looks.** The sentence is about a shortcut that _opens an app_, run _with Siri_. It says nothing about a shortcut that opens no app — and §6 above argues that `Take Photo` with preview off is exactly that. So the cited sentence does not reach the question in this file's title, and an earlier draft that stretched it to _"nothing produces a photo, or opens an app, on a locked or sleeping phone"_ was asserting the photo half without evidence. **Whether `Take Photo` with preview off runs on a locked phone is unknown, and by the reframe it is now the decisive unknown** — it is item 1 in the untested list.
+
+**No documented way was found for a BLE HID keypress to wake the display.** Only a physical phone settles it, and it sits upstream of everything else in the pocket case: a shortcut that runs on a sleeping phone is still no use if nothing wakes the screen for the parts that need one.
+
+---
+
 ## ⚠️ The fetch trap that kills the email path mid-ride
 
 Apple, [support.apple.com/en-us/102578](https://support.apple.com/en-us/102578):
@@ -74,7 +86,7 @@ The escape is a **push-capable mailbox set to Push** (iCloud being the obvious o
 
 Three independent ways:
 
-- **No notification-based trigger exists** among the 21 personal-automation triggers, and there is no API for a third-party app to register one.
+- **No notification-based trigger exists** among the **20** personal-automation triggers Apple documents for iOS 26, and there is no API for a third-party app to register one. Counted off Apple's four trigger pages, all served at version `9.0/ios/26`: [Event](https://support.apple.com/guide/shortcuts/event-triggers-apd932ff833f/9.0/ios/26) (5 — Time of Day, Alarm, Sleep, Apple Watch Workout, Sound Recognition), [Travel](https://support.apple.com/guide/shortcuts/travel-triggers-apd8ebfc4e8e/9.0/ios/26) (4 — Arrive, Leave, Before I Commute, CarPlay), [Communication](https://support.apple.com/guide/shortcuts/communication-triggers-apdd711f9dff/9.0/ios/26) (2 — Email, Message), [Setting](https://support.apple.com/guide/shortcuts/setting-triggers-apde31e9638b/9.0/ios/26) (9 — Wi-Fi, Bluetooth, Focus, Low Power Mode, Battery Level, Charger, NFC, App, Airplane Mode). An earlier draft said 21, with no source.
 - Pushover's only Shortcuts integration is [_sending_ notifications **from** Shortcuts](https://support.pushover.net/i44-sending-pushover-notifications-from-shortcuts-on-ios) — an **action**, one-directional.
 - **Pushcut**, which gets closest, is ruled out by its own docs: _"the Pushcut Automation server can only process requests while in the foreground (ie: the Pushcut app must be visible on the screen)… intended to run on a dedicated, always-on iOS device."_ A phone showing the dashboard or Maps cannot run it. Also 100 requests/day free, sequential, 5-minute expiry.
 
@@ -82,9 +94,17 @@ Three independent ways:
 
 ## When the confirmation tap went away
 
-Dated from Apple's own page via the Wayback Machine, because a lot of stale advice hangs on this. In the **5 Sept 2023** snapshot, _Arrive, Leave, Before I Commute, Email, Message, Wi-Fi and Bluetooth_ were all in the **cannot run automatically** list. By **10 Nov 2023** all except _Before I Commute_ had moved to **can**. So the change is **iOS 17**, and the list has been unchanged from Nov 2023 through today. **iOS 26 added no new personal-automation triggers.**
+⚠️ **An earlier draft dated this to iOS 17 from two Wayback snapshots of Apple's page — 5 Sept 2023 and 10 Nov 2023 — and that dating does not survive being re-checked. It is withdrawn.** What the archive actually holds for [create-a-new-personal-automation](https://support.apple.com/guide/shortcuts/create-a-new-personal-automation-apdfbdbd7123/ios):
 
-_Before I Commute_ remains the only trigger that cannot run automatically.
+- There is **no snapshot near 5 Sept 2023.** Between June 2023 and January 2024 the CDX index returns only [`20230628204304`](https://web.archive.org/web/20230628204304/https://support.apple.com/guide/shortcuts/create-a-new-personal-automation-apdfbdbd7123/ios), [`20231106133411`](https://web.archive.org/web/20231106133411/https://support.apple.com/guide/shortcuts/create-a-new-personal-automation-apdfbdbd7123/ios), `20231125133912`, `20231204062258` and `20231208191936`. Both cited dates resolve to the **same** 6 Nov capture, so no comparison between them is possible.
+- **Neither capture contains a can/cannot-run-automatically list at all**, and neither does the [intro page](https://support.apple.com/guide/shortcuts/intro-to-personal-automation-apd690170742/ios) — its 4 Sept 2023 capture is word-for-word identical to today's live text. The only sentence on the subject, then and now, is: _"After you create a new personal automation, when an event occurs you'll receive a notification asking you to run the automation. You can also edit a personal automation to run without asking."_
+- The one thing that _did_ change between the June and November 2023 captures is a single line about the editor ("An empty automation appears" → "Options appear for creating a blank automation, a suggested automation, or use an existing shortcut").
+
+So: **which iOS version dropped the confirmation tap is unknown from Apple's documentation**, and the file no longer claims it. What stands is the behaviour, from the corrections section above — a Bluetooth-connect automation runs without confirmation on iOS 26, and forum advice saying otherwise is stale. That is the part anyone building this needs; the version number was never load-bearing, only satisfying.
+
+**"iOS 26 added no new personal-automation triggers" is likewise unsourced** and stays marked as such: the 20 triggers above are what Apple documents _now_, and no archived list was found to diff them against.
+
+_Before I Commute_ is the one trigger still widely reported as unable to run automatically — **forum-sourced, and not confirmed in Apple's documentation**, which carries no such list. It does not affect anything ranked above.
 
 ---
 
@@ -92,9 +112,9 @@ _Before I Commute_ remains the only trigger that cannot run automatically.
 
 Recorded so nobody re-derives them.
 
-- **There is no `camera://` URL scheme.** Apple's reference covers `mailto`, `tel`, `facetime`, `sms`, `maps` and iTunes links only. `photos-redirect://` opens Photos, not Camera.
+- **Apple documents no `camera://` URL scheme.** [Apple URL Scheme Reference](https://developer.apple.com/library/archive/featuredarticles/iPhoneURLScheme_Reference/Introduction/Introduction.html) covers `mailto`, `tel`, `facetime`, `sms`, Map, iTunes and YouTube links, and nothing camera-shaped. Stated that way rather than "there is no such scheme", because absence from a list is not nonexistence and this particular list says so itself: _"this document does not describe all URL schemes supported on different Apple platforms."_ It is also an archived document, last updated 2017, so it is weak evidence about iOS 26 specifically. `photos-redirect://` opens Photos, not Camera.
 - **NFC is a dead end here** despite supporting Run Immediately: a _mounted_ phone cannot be tapped against a tag, and background tag reading fires on entry rather than continuously.
-- **Switch Control has no "Open App" or "Run Shortcut" action.** BLE HID keyboards do register as External switches, but Siri is the only useful hook. One untested loophole: Switch Control runs on the Lock Screen, and Apple documents _"Open Camera: Swipe left"_ there without unlocking.
+- **Switch Control has no "Open App" or "Run Shortcut" action.** BLE HID keyboards do register as External switches, but Siri is the only useful hook. ⚠️ An earlier draft added a "Switch Control runs on the Lock Screen" loophole here, citing Apple's _"Open Camera: Swipe left"_. **That was a conflation and is withdrawn.** The quote is real but comes from [Access features from the Lock Screen](https://support.apple.com/guide/iphone/access-features-from-the-lock-screen-iphcd5c65ccf/ios), a page about ordinary gestures which never mentions Switch Control. Going the other way, none of the three Switch Control pages in the iPhone User Guide, nor [the standalone article](https://support.apple.com/en-us/119835), mentions the Lock Screen anywhere in its body. No documentation was found either way, so there is no loophole here to test — only an absence.
 - **Full Keyboard Access** customisation is key _rebinding_ onto a fixed command set.
 - **CarPlay** supports Run Immediately but wireless CarPlay needs an MFi coprocessor. A Pi _can_ present as a Bluetooth car kit (A2DP/HFP), which could drive Driving Focus → a Focus automation. Documented links, untested chain.
 - **HomeKit / Home Assistant automations cannot open apps.**
@@ -109,7 +129,7 @@ An earlier version of this file said _"No native inbound network trigger for Sho
 
 Apple sanctions it — [Run a shortcut from a URL](https://support.apple.com/guide/shortcuts/run-a-shortcut-from-a-url-apd624386f42/ios): _"URL schemes can be used anywhere a URL can be used—your own app, **in a web browser**, or in the command line."_ So `shortcuts://run-shortcut?name=X` from the page the rider already has open.
 
-**Does it need a user gesture?** Read out of WebKit `main`: `ScheduledURLNavigation` — what `location.href = …` becomes — takes its policy from `initiatingDocument.shouldOpenExternalURLsPolicyToPropagate()`, i.e. the document's **inherited** policy, not a live gesture check (`Source/WebCore/loader/FrameLoader.cpp`). A page opened by tapping a link, bookmark or Home Screen icon carries `ShouldAllow` for its whole lifetime, so a later gestureless navigation from a WebSocket handler passes WebCore's gate. That is **stronger than the HTML spec's sticky activation** — it is document-lifetime.
+**Does it need a user gesture?** Read out of WebKit at commit [`6131f14`](https://github.com/WebKit/WebKit/blob/6131f147456111c0c430607b0c94c11fdb53eaf6/Source/WebCore/loader/NavigationScheduler.cpp#L134) (pinned, because `main` moves): `ScheduledURLNavigation` — which `ScheduledLocationChange`, what `location.href = …` becomes, extends at `:248` — takes its policy from `initiatingDocument.shouldOpenExternalURLsPolicyToPropagate()` at `:137`, i.e. the document's **inherited** policy, not a live gesture check. The file is `Source/WebCore/loader/NavigationScheduler.cpp`; an earlier draft of this line said `FrameLoader.cpp`, which contains no such symbol. The other half is [`Source/WebCore/dom/Document.cpp:10351`](https://github.com/WebKit/WebKit/blob/6131f147456111c0c430607b0c94c11fdb53eaf6/Source/WebCore/dom/Document.cpp#L10351), which reads the policy off the `DocumentLoader` and falls back to `ShouldNotAllow` only when there is no loader. So a page opened by tapping a link, bookmark or Home Screen icon carries `ShouldAllow` for its whole lifetime, and a later gestureless navigation from a WebSocket handler passes WebCore's gate. That is **stronger than the HTML spec's sticky activation** — it is document-lifetime.
 
 ⚠️ That is only the WebCore gate. **Safari's UI process is closed source** and iOS is known to show an _"Open in…"_ confirmation under conditions that could not be pinned down.
 
@@ -121,11 +141,13 @@ An **App Notification** automation trigger and repeating/interval automations. T
 
 ## Untested — these decide whether any of it works
 
-1. **Does the Message trigger fire on a plain SMS** (not iMessage)? Decides the best cloud path available today.
-2. Does iOS **debounce rapid Charger connect/disconnect**, and what is the minimum reliable toggle period? Decides the best local path.
-3. Whether a BLE HID keypress **wakes the display**.
-4. Whether this phone's Bluetooth automation picker **lists the Pi** at all.
-5. Message-trigger end-to-end latency on cellular while hotspotting.
-6. Whether the **Email** trigger fires promptly with iCloud Push while hotspotting.
-7. Whether Safari prompts on an app-scheme navigation, and under what conditions.
-8. iOS 27 only: whether a Pushover notification actually fires the notification automation, whether title/body filtering works, and whether quiet delivery, Scheduled Summary or a Focus suppress it.
+1. **Does `Take Photo` with preview off run on a locked phone?** By this file's own reframe this is the decisive unknown for the question in the title, and no source reaches it — see "The limits, for the pocket case".
+2. Does iOS **debounce rapid Charger connect/disconnect**, and what is the minimum reliable toggle period? Decides option 1, the top-ranked path.
+3. **Hot Corners (option 2) — four at once, because none of them is documented.** What _"Time needed to initiate a dwell action"_ bottoms out at, since that interval _is_ the option's latency; whether a relative-motion mouse can leave and re-enter the corner reliably enough to fire on every button press; whether having Dwell Control on phone-wide is tolerable while the rider is also using Maps; and whether this phone will pair with and accept the Pi as a BLE HID **pointer** at all.
+4. **Does the Message trigger fire on a plain SMS** (not iMessage)? Decides the best cloud path available today.
+5. Whether a BLE HID keypress **wakes the display**. Only binds the pocket case — but there it decides everything downstream of it.
+6. Whether this phone's Bluetooth automation picker **lists the Pi** at all (option 5, and distinct from the HID-pointer question in 3).
+7. Message-trigger end-to-end latency on cellular while hotspotting.
+8. Whether the **Email** trigger fires promptly with iCloud Push while hotspotting.
+9. Whether Safari prompts on an app-scheme navigation, and under what conditions.
+10. iOS 27 only: whether a Pushover notification actually fires the notification automation, whether title/body filtering works, and whether quiet delivery, Scheduled Summary or a Focus suppress it.
