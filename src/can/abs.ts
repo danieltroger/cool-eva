@@ -18,8 +18,14 @@
 // `~/Documents/cool-eva-archive/ride-captures3/` — `capture-20260804-035631-c8fe853f.log`
 // (16 188 frames, to 98 km/h) and `capture-20260804-193952-4b4cdd2b.log` (17 435 frames).
 // The six flags were added on 2026-08-19 against those three plus two more from that day,
-// `capture-20260819-172725-178e8719.log` (8373) and `buttons-2026-08-19.log` (2840) — a
-// corpus of 48 923 frames of this ID, which is the number every count below is out of.
+// `capture-20260819-172725-178e8719.log` (8373) and `buttons-2026-08-19.log` (2840).
+//
+// ⚠️ 2026-08-20: the flag counts are now taken over **every** capture in the archive rather than
+// those five — 245 files, **565 376 frames** of this ID, which is the number every count below is
+// out of. That is 12× the old corpus and it changed three of the conclusions, including one that
+// said a flag had never been seen when it had. The five-capture figures are kept where they are
+// still the right ones (the GPS calibration below is a fit against two specific rides, not a
+// census), and the flags section says explicitly where the wider scan overturned it.
 // What the captures prove, and what they do not, are deliberately kept apart below.
 //
 // ⚠️ The garage lap alone was actively MISLEADING about this frame, which is the main lesson
@@ -64,7 +70,8 @@ export const ABS_CAN_ID = 0x0a0;
  * the bit index can still be checked against `ParseABS_INFO` at a glance.
  *
  * ⚠️ A wheel count of 0xFFFF is a sentinel and it DOES occur on the road — 10 frames across the
- * two 2026-08-04 captures. It is passed through, arriving as 3686.34 km/h, and that is deliberate
+ * two 2026-08-04 captures, and **120 across the whole archive**. It is passed through, arriving
+ * as 3686.34 km/h, and that is deliberate
  * rather than an oversight: public/lib/bounds.js gates both wheel speeds to [0, 300], so it shows
  * as a fault, which is what the repo wants a dead sensor to look like.
  *
@@ -89,7 +96,7 @@ export function decodeAbsFrame(data: Buffer): DecodedValue[] {
   ];
   // b6 keeps its own guard so that the four signals logged since 2026-08-16 cannot be
   // silenced by a short frame on account of these three — the same arrangement 0x109's
-  // throttle and 0x660's offset pair already use. Every one of the 48 923 frames on disk
+  // throttle and 0x660's offset pair already use. Every one of the 565 376 frames on disk
   // is DLC 8, so this branch has never yet been the false one; it is here because a
   // truncated frame decoding b6 out of CAN padding would report "pressure invalid, no
   // channel active", which reads as a healthy answer rather than as a missing byte.
@@ -290,71 +297,146 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 // is exercised across its real range and not just its low byte. The replay case in
 // scripts/check-can-decoders.ts covers a 1697/1719-count frame for exactly that reason.
 //
-// b7 is 0x00 in all 48 923 frames and Energica's handler names nothing in it. Nothing to decode.
+// b7 is 0x00 in all 565 376 frames and Energica's handler names nothing in it. Nothing to decode.
 //
 // ---------------------------------------------------------------------------------------
 // ## The six flags, and exactly how much each one is worth
 //
-// Added 2026-08-19, completing the ten signals `ParseABS_INFO` names. Two of them have been
-// watched firing; four never have. That split is the whole content of this section, and it is
+// Added 2026-08-19, completing the ten signals `ParseABS_INFO` names. Three of them have been
+// watched firing; three never have. That split is the whole content of this section, and it is
 // kept explicit because "reads 0" means something completely different in the two cases.
 //
-// Across the whole 48 923-frame corpus, **b4 takes exactly three values — 0x00, 0x04, 0x80 —
-// and b6 exactly two, 0x00 and 0x04.** Every claim below is a reading of that.
+// ⚠️ **Rewritten 2026-08-20 against a corpus 12× larger, and it overturned three claims that
+// stood here.** The five captures above were the five that had been LOOKED at, not the five that
+// exist. Re-scanning every `*.log` and `*.txt` in `~/Documents/cool-eva-archive/` — 245 files,
+// **565 376 frames of 0x0A0** — finds interventions in **15 distinct captures**, not two. What
+// changed:
 //
-// ### ✅ `abs_event` (b4 0x80) and `abs_rear_control_active` (b6 0x04) — observed, and coherent
+//   • `abs_front_control_active` **HAS fired** — 27 frames, three captures. It was recorded here
+//     as never observed, and issue #51 item 14 asked for a deliberate front-brake ABS stop to
+//     produce one. That stop is not needed; the archive already had it.
+//   • **b6 takes four values, not two:** 0x00, 0x02, 0x04, 0x06.
+//   • `abs_event` and `abs_rear_control_active` are **not** the same 25 frames. A_EVENT fires with
+//     the FRONT channel too. The true invariant is stronger and simpler: A_EVENT is set in exactly
+//     the frames where b6 ≠ 0, 162 of 162, both directions.
 //
-// Set in **exactly the same 25 frames**, never one without the other: 14 in
-// `capture-20260804-035631` and 11 in `capture-20260804-193952`, 0 in the other three captures.
-// Two independently-named bits in two different bytes that agree to the frame across two rides
-// are not a coincidence, and that co-occurrence is the strongest evidence these positions are
-// right. Four further readings of those 25 frames, all of which say "rear ABS intervention":
+// The whole-archive census of the two flag bytes, which every claim below is a reading of:
 //
-//   • They are **13 separate bursts of 1-2 frames** (0.1-0.2 s each) — 7 in the first capture
-//     and 6 in the second — not one long event per ride. ⚠️ This CORRECTS the earlier note here
-//     that read the 14 and 11 frames as "~1.4 s and ~1.1 s of it"; they are scattered across 17
-//     and 36 minutes of riding. A real ABS cycle is a fraction of a second, so the short burst
-//     is the more believable shape, and it is what sets the log cost in src/can/registry.ts.
-//   • **No brake was applied in any of the 25.** b5 is 0 in all of them — no front line pressure
-//     at any point in any burst — and cross-checking 0x102 b2 at the same instants, NEITHER
-//     brake switch is on in any of the 25 either. The rear switch is on in 0 of 16 188 and 0 of
-//     17 435 ABS frames across those two rides: the rear pedal was not touched once. So an ABS
-//     intervention on this bike is not the same event as a brake application, which is worth
-//     knowing before anything correlates the two, and it is why confirming
-//     `abs_front_control_active` needs a hard FRONT-brake stop specifically (issue #51).
-//     🟡 The obvious reading — rear-wheel slip under regen, which is what an e-motorcycle's rear
-//     wheel does on a closed throttle — is an inference from a missing brake signal rather than
-//     anything these frames state. It fits the speeds and the rear channel being the one flagged;
-//     it is not established.
-//   • The lamp bits are clear in all 25 (b4 is 0x80, never 0x84), so an intervention is not a
-//     fault and does not light the warning lamp. Anything alerting on these must not treat them
-//     as a fault condition.
-//   • Burst speeds run 11.6 to 73.1 km/h, spread over both rides — ordinary riding, not one
-//     unusual moment.
+//     b4    b6    frames   what it is
+//     0x00  0x00  421 162  quiet
+//     0x04  0x00  144 052  A_WARN_LAMP — the standstill self-test
+//     0x80  0x04      135  A_EVENT + rear channel
+//     0x80  0x02       14  A_EVENT + FRONT channel
+//     0x80  0x06       13  A_EVENT + both channels
 //
-// 🟡 One more reading, deliberately marked weaker than it first looks: the front/rear wheel-speed
-// divergence at these frames is larger than usual — median |front − rear| 0.84 km/h against 0.28
-// elsewhere above 15 km/h in the first capture, 0.56 against 0.17 in the second, and the largest
-// (4.56 km/h, the 18:01:34 burst) exceeds the entire 10 194-frame baseline maximum of 3.66. But
-// ~10 % of ordinary frames also reach the event median, and n = 25. Suggestive of a rear wheel
-// actually slipping, not proof of it.
+// (plus one truncated final line in `capture-20260808-223321`, where the capture was cut
+// mid-write. b4 is never 0x84 and b6 never carries bit0 — see the two subsections below.)
 //
-// ### ⚠️ `abs_front_sensor_fault` (0x10), `abs_rear_sensor_fault` (0x20), `abs_front_control_active`
-// ### (b6 bit1) — never observed set, and that is the expected reading
+// ### ✅ `abs_event` (b4 0x80), `abs_rear_control_active` (b6 0x04), `abs_front_control_active`
+// ### (b6 0x02) — all three observed, and coherent
 //
-// 0 in all 48 923 frames. On a bike with no wheel-sensor fault and no front-wheel lockup in any
-// capture, that is what a correct decode looks like: there was nothing to report. It is NOT
-// evidence the positions are wrong, and it is NOT evidence they are right — it is no evidence
-// either way, which is precisely why they are decoded now rather than after the fact. A flag
-// that only matters when it fires is worth having decoded BEFORE it fires; the alternative is
-// discovering the first real wheel-sensor failure by finding it absent from the log. Same
-// reasoning, and the same corpus-wide zero, as the eleven never-seen flags in src/can/vcu-flags.ts.
+// **162 A_EVENT frames in 61 bursts across 15 captures**, 148 carrying the rear channel, 27 the
+// front, 13 both at once. Bursts are 1-17 frames, median 2, i.e. 0.1-1.6 s. Three independently
+// named bits in two different bytes that never contradict each other across 15 rides are not a
+// coincidence, and that is the strongest evidence these positions are right.
 //
-// The positions are Energica's word alone. Treat any of the three reading 1 as a lead to check
-// against the mode-03 stored list, the dash's own ABS lamp and `abs_warning_lamp` here — not as
-// a confirmed fault. Confirming them needs the bike: a real sensor fault (or a sensor unplugged
-// deliberately) for the two `*SENS_FAIL`, and a front-wheel ABS stop for `abs_front_control_active`.
-// Both are filed on issue #51.
+//   • **The lamp bits are clear in all 162** (b4 is 0x80, never 0x84), so an intervention is not
+//     a fault and does not light the warning lamp. Anything alerting on these must not treat
+//     them as a fault condition.
+//   • Speeds run **6.1 to 80.7 km/h**, median 36.1 — ordinary riding, not one unusual moment.
+//   • **The rear pedal was never used at a single one.** 0 of 162, across all 15 captures. That
+//     generalises what two rides had shown and is now about as solid as a negative gets here.
+//   • ⚠️ **"No brake was applied in any of them" does NOT survive the wider corpus.** It was true
+//     of the 25 frames from 2026-08-04, and reading a cause out of it was the mistake. Across all
+//     162, the FRONT brake switch is on in **35**, with real line pressure — 1 to 21 bar — in the
+//     same 35. Both front-channel captures are ordinary front-braked stops.
+//
+// ### 🟡→ What causes them: NOT what this file used to say
+//
+// This section used to carry a 🟡 reading that the interventions were rear-wheel slip under
+// regen, "which is what an e-motorcycle's rear wheel does on a closed throttle". That was an
+// inference from the missing brake signal in 25 frames. Against 162 frames with throttle,
+// torque and brake aligned to each one, it is **wrong about the majority case**, and the shape of
+// the answer is a genuine split rather than a single cause:
+//
+//   • **The throttle is OPEN at most of them.** `throttle_on` is set in **117 of 162**; above
+//     15 km/h the inverter's own torque feedback (0x02C, the cleaner discriminator — it measures
+//     what the motor is doing rather than what the rider asked for) is **positive in 90 of 142**,
+//     negative in 44, near zero in 8. So a closed throttle is the minority condition, not the
+//     rule.
+//   • **But that majority is a base-rate artefact, and correcting for it flips the emphasis.**
+//     This bike is ridden at positive torque 81 % of the time above 15 km/h. Per unit of riding,
+//     interventions are ~3× MORE likely under regen and ~29× more likely with the front brake on:
+//
+//         band                 baseline frames   events   per 10 000 frames
+//         drive  (T > +1 Nm)           277 512       90                3.24
+//         coast  (|T| ≤ 1 Nm)           25 288        8                3.16
+//         regen  (T < −1 Nm)            41 422       44               10.62
+//         front brake applied            3 366       32               95.07
+//         front brake not applied      340 856      110                3.23
+//
+//   • ❌ **Traction control is REFUTED as the explanation for the throttle-open population**, and
+//     that is worth stating as a negative result rather than an open question. If those events
+//     were the bike intervening on drive slip, the demanded torque would be cut. Measured with one
+//     method applied identically to event and non-event frames — mean `drive_torque_cmd_nm` over
+//     the 0.5 s before against its extreme over −0.05…+0.35 s, requiring the throttle not to
+//     fall — torque is cut in **0 of 93** throttle-open interventions, against a 0.30 % background
+//     rate. If they were traction control it would be ~93 of 93. Two further checks agree:
+//     `drive_torque_cmd_nm − drive_torque_feedback_nm` sits at its ordinary +0.10 Nm through them,
+//     so the inverter is not clipping the demand, and 0x109's `current_max_out_a` does not dip.
+//   • ✅ **The braking/regen population is the one with real lockup signatures.** The three largest
+//     wheel divergences in the whole corpus — rear 15.81, 9.62 and 8.49 km/h BELOW the front — are
+//     all closed-throttle, front-brake-applied frames, and all are sustained across consecutive
+//     frames rather than single samples. The clearest is 2026-08-09 18:55:56 in
+//     `capture-20260809-181842`: 77 km/h, throttle shut, regen −41.7 Nm, front brake to 16 bar,
+//     rear collapses 68.2 → 48.4 km/h and both channels flag. It is the one event in the corpus
+//     that looks like the textbook picture.
+//   • ❓ **So what the throttle-open events are is UNRESOLVED**, and it is left that way rather
+//     than filled in. Refuting traction control does not identify a replacement. Road-surface
+//     transients (a bump unloading a wheel), slip too brief for a 10 Hz broadcast to resolve, and
+//     wheel-speed sampling artefacts all remain live and this corpus cannot separate them.
+//
+// ### 🟡 The wheel-speed divergence does NOT corroborate the throttle, and the disagreement is
+// ### the honest finding
+//
+// The obvious cross-check on all of the above — rear faster than front means drive slip, rear
+// slower means braking slip — **does not agree with the throttle reading, and is not allowed to
+// be quietly dropped for it.** The reason the old note's version of this looked convincing is
+// that it had no matched baseline. Against one (non-event frames in the same torque band and the
+// same 10 km/h speed bin, 344 222 of them), the rear wheel already reads FASTER than the front
+// during ordinary drive, and by more as speed rises: median rear − front is +0.06 km/h in the
+// 10s, +0.23 in the 30s, +0.39 in the 50s, +0.73 in the 80s. Against that, the throttle-open
+// events sit only just above their own baseline (+0.39 against +0.23 in the 30s, +0.56 against
+// +0.28 in the 40s), and 0 of the 12 above 50 km/h fall outside the baseline's 1st-99th
+// percentile at all.
+//
+// Worse for the slip reading: the LARGEST throttle-open divergences point the **wrong way** —
+// −4.56, −3.99, −3.38, −2.59, −2.47 km/h, i.e. the rear SLOWER while the motor is driving it —
+// and 8 of them are one-sample spikes with both neighbouring frames back inside ±0.6 km/h. A rear
+// wheel carrying +19.7 Nm cannot shed 4.56 km/h in 100 ms and take it back in the next 100 ms;
+// whatever those are, they are not a wheel accelerating away under power. In the regen band the
+// picture is the opposite and consistent: the baseline median is ≈ −0.06, and 80 % of the events
+// in the 40s bin fall outside p1-p99.
+//
+// So: throttle/torque and wheel divergence **agree for the braking population and disagree for
+// the throttle-open one**, and no winner is picked here. What would settle it is named on issue
+// #51 rather than guessed at.
+//
+// ### ⚠️ `abs_front_sensor_fault` (0x10), `abs_rear_sensor_fault` (0x20) — never observed set,
+// ### and that is the expected reading
+//
+// 0 in all 565 376 frames. On a bike with no wheel-sensor fault, that is what a correct decode
+// looks like: there was nothing to report. It is NOT evidence the positions are wrong, and it is
+// NOT evidence they are right — it is no evidence either way, which is precisely why they are
+// decoded now rather than after the fact. A flag that only matters when it fires is worth having
+// decoded BEFORE it fires; the alternative is discovering the first real wheel-sensor failure by
+// finding it absent from the log. Same reasoning, and the same corpus-wide zero, as the eleven
+// never-seen flags in src/can/vcu-flags.ts.
+//
+// The positions are Energica's word alone. Treat either reading 1 as a lead to check against the
+// mode-03 stored list, the dash's own ABS lamp and `abs_warning_lamp` here — not as a confirmed
+// fault. Confirming them needs a real sensor fault, or a sensor unplugged deliberately. Filed on
+// issue #51.
 //
 // 🔎 The two `*SENS_FAIL` bits have exact counterparts in this repo's own DTC table, which is
 // what makes them cheap to confirm the day the bike produces one: component 61 is
@@ -366,9 +448,10 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //
 // ### ❓ `abs_front_pressure_validity` (b6 bit0) — decoded as a flag, polarity UNESTABLISHED
 //
-// 0 in all 48 923 frames, including the 106 garage-lap frames and the 75 frames of 2026-08-19
-// where b5 is reporting a non-zero pressure. So the bit is 0 while the pressure demonstrably
-// works, and there are two readings that cannot be told apart from this side:
+// 0 in all 565 376 frames — including **13 635 frames archive-wide where b5 is reporting a
+// non-zero pressure**, which is the load-bearing part and is now two orders of magnitude better
+// evidenced than the 181 frames this note used to rest on. So the bit is 0 while the pressure
+// demonstrably works, and there are two readings that cannot be told apart from this side:
 //
 //   • the name is literal, 1 means valid, and this module simply never asserts it; or
 //   • the polarity is inverted from the name — 1 would mean INVALID — and 0 is the healthy state

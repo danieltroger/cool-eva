@@ -624,11 +624,12 @@ export const SIGNALS: SignalDef[] = [
   // enforced rather than merely intended: scripts/check-can-decoders.ts asks bounds.js which
   // signals are gated to 0/1 and fails the build for any of them carrying one.
   //
-  // Free to log, and this is measured rather than assumed. Four of the six have never been seen
-  // set in 48 923 captured frames of this ID, so they are one row each at boot and nothing
-  // after. The two that do fire, `abs_event` and `abs_rear_control_active`, fire in 25 frames
-  // total across two rides — 13 bursts of 1-2 frames, so ~26 edges each, ~52 rows for the pair
-  // across 53 minutes of riding. Against the 33 700 rows/h this block already costs, that is
+  // Free to log, and this is measured rather than assumed. Three of the six have never been seen
+  // set in 565 376 captured frames of this ID — every 0x0A0 frame in the archive, rescanned
+  // 2026-08-20 — so they are one row each at boot and nothing after. The three that do fire,
+  // `abs_event`, `abs_rear_control_active` and `abs_front_control_active`, fire in 162 frames
+  // total across 15 captures — 61 bursts of 1-17 frames, median 2, so a few hundred edges spread
+  // over many hours of riding. Against the 33 700 rows/h this block already costs, that is
   // nothing, and there is no deadband that could reduce it without hiding the whole signal.
   //
   // No entry is needed in public/lib/bounds.js for any of them: `diag` and `controls` are both
@@ -647,17 +648,26 @@ export const SIGNALS: SignalDef[] = [
   // ⚠️ `abs_rear_control_active` is NOT `rear_brake`, and now that both are on the All tab the
   // names are close enough to be worth separating explicitly. `rear_brake` (0x102 b2 0x40, in
   // the `buttons` group) is the pedal switch — the rider's foot. `abs_rear_control_active`
-  // (0x0A0 b6 bit2) is the ABS module modulating the rear channel. Measured across the two road
-  // captures they do not merely differ, they are DISJOINT: in all 25 intervention frames
-  // **neither brake switch was on**, and the rear switch is on in 0 of 16 188 and 0 of 17 435
-  // ABS frames in those rides — the rear pedal was not touched once. Same for
-  // `abs_front_control_active` against `front_brake`. 🟡 The obvious reading of "the rear ABS
-  // channel intervening with no brake applied" is rear-wheel slip under regen, which is what an
-  // e-motorcycle's rear wheel does on a closed throttle — but that is an inference from the
-  // absence of a brake signal, not something these frames state.
+  // (0x0A0 b6 bit2) is the ABS module modulating the rear channel.
+  //
+  // ⚠️ Corrected 2026-08-20 against every capture in the archive rather than two of them (245
+  // files, 565 376 frames of 0x0A0, 162 interventions in 15 captures). They are NOT disjoint from
+  // the brakes, which is what this note used to say:
+  //   • `rear_brake` still is — the rear pedal is on in **0 of 162** intervention frames, across
+  //     all 15 captures. That half held up and is now much better evidenced.
+  //   • `front_brake` is NOT. It is on in **35 of 162**, with 1-21 bar of line pressure in the
+  //     same 35. The "neither brake switch was on" reading was true of the 25 frames from
+  //     2026-08-04 and does not generalise.
+  // ❌ The 🟡 that stood here — that an intervention with no brake applied is rear-wheel slip
+  // under regen on a closed throttle — is withdrawn as the general explanation. The throttle is
+  // OPEN at 117 of the 162, and traction control is refuted as the alternative (drive torque is
+  // cut in 0 of 93 throttle-open interventions). src/can/abs.ts carries the measurement and the
+  // split; the short version is that both regimes produce these and only the braking one has a
+  // confirmed cause.
   //
   // ⚠️ These two are LOG-FIRST, and the All tab's flash should not be relied on to catch one.
-  // An intervention is 1-2 frames, 100-200 ms, which is at the edge of what a person notices —
+  // A typical intervention is 1-2 frames, 100-200 ms (median 2 frames over 61 bursts; the
+  // longest in the archive is 17 frames / 1.6 s), which is at the edge of what a person notices —
   // the same problem public/lib/press.js was written for, and it chose a 600 ms latch because
   // ~200 ms is roughly the threshold. `controls` gets the plain RawTile, which renders the live
   // value with no latch, so on screen an intervention is a brief flip to 1 and back. The RIDE

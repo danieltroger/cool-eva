@@ -200,7 +200,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x0a0,
     frame: "CD 00 B3 00 00 00 00 00",
-    why: "18:20:40.643 — the lap's fastest frame; 0x104 read 10.5 km/h at the same instant, and the ABS warning lamp is clear because the bike is moving. Also the all-quiet case for the six flags, which is what 48 898 of the 48 923 captured frames of this ID look like",
+    why: "18:20:40.643 — the lap's fastest frame; 0x104 read 10.5 km/h at the same instant, and the ABS warning lamp is clear because the bike is moving. Also the all-quiet case for the six flags, which is what 565 214 of the 565 376 captured frames of this ID look like",
     expect: {
       wheel_speed_front_kmh: 11.53125,
       wheel_speed_rear_kmh: 10.06875,
@@ -230,7 +230,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x0a0,
     frame: "92 02 41 02 80 00 04 00",
-    why: "2026-08-04 18:01:34.478 in capture-20260804-035631-c8fe853f.log — a real ABS intervention, and the only kind of frame that has ever set a flag here. A_EVENT (b4 0x80) and A_R_CTRL_ACTIVE (b6 0x04) together, in the same frame, as they are in all 25 such frames across the two road captures. The rear wheel is 4.56 km/h below the front, the widest split in either capture; b5 is 0, so no front brake was applied; and b4 is 0x80 not 0x84, so an intervention does not light the warning lamp",
+    why: "2026-08-04 18:01:34.478 in capture-20260804-035631-c8fe853f.log — a real REAR-channel ABS intervention with no brake applied. A_EVENT (b4 0x80) and A_R_CTRL_ACTIVE (b6 0x04) together, which is the commonest shape: 135 of the archive's 162 event frames are exactly this pair. The rear wheel is 4.56 km/h below the front; b5 is 0, so no front brake was applied; and b4 is 0x80 not 0x84, so an intervention does not light the warning lamp. ⚠️ Do not read a cause into the missing brake — the throttle was 16.7 % open and the motor delivering +19.7 Nm at this instant, and src/can/abs.ts records why that does not make it traction control either",
     expect: {
       wheel_speed_front_kmh: 37.0125,
       wheel_speed_rear_kmh: 32.45625,
@@ -246,8 +246,40 @@ const REPLAY: ReplayCase[] = [
   },
   {
     id: 0x0a0,
+    frame: "6D 00 64 01 80 02 02 00",
+    why: "2026-08-09 16:53:18.129 in capture-20260809-161310-edcdcf23.log — ✅ the FRONT channel alone, A_F_CTRL_ACTIVE (b6 0x02) with A_R_CTRL_ACTIVE clear. This bit was recorded as never observed until the whole archive was rescanned on 2026-08-20; it fires in 27 frames across three captures, 14 of them front-only like this one. A hard braking event: throttle shut, regen −26 Nm, front brake on at 2 bar, and the front wheel reading 6.13 km/h against the rear's 20.03 — a locked front wheel, caught in one 10 Hz sample and back to 20.48 in the next. This case is why the b6 bit1 position no longer rests on the vendor's word alone",
+    expect: {
+      wheel_speed_front_kmh: 6.13125,
+      wheel_speed_rear_kmh: 20.025,
+      abs_warning_lamp: 0,
+      front_brake_pressure_bar: 2,
+      abs_event: 1,
+      abs_front_control_active: 1,
+      abs_rear_control_active: 0,
+      abs_front_pressure_validity: 0,
+      abs_front_sensor_fault: 0,
+      abs_rear_sensor_fault: 0,
+    },
+  },
+  {
+    id: 0x0a0,
+    frame: "76 04 5D 03 80 08 06 00",
+    why: "2026-08-09 18:55:56.849 in capture-20260809-181842-5f095c14.log — BOTH channels at once (b6 = 0x06), and the largest wheel divergence in the entire archive: rear 48.43 km/h against front 64.24, i.e. the rear 15.81 km/h down. The clearest real ABS event on record for this bike — 77 km/h, throttle shut, regen at −41.7 Nm, front brake to 16 bar, rear locking. It pins that bits 1 and 2 of b6 are read independently rather than as one field, which no frame setting only one of them can do",
+    expect: {
+      wheel_speed_front_kmh: 64.2375,
+      wheel_speed_rear_kmh: 48.43125,
+      abs_warning_lamp: 0,
+      front_brake_pressure_bar: 8,
+      abs_event: 1,
+      abs_front_control_active: 1,
+      abs_rear_control_active: 1,
+      abs_front_pressure_validity: 0,
+    },
+  },
+  {
+    id: 0x0a0,
     frame: "00 00 00 00 BC 05 07 00",
-    why: "⚠️ SYNTHETIC — every flag at once, which the bus has never produced. Four of the six (both *SENS_FAIL, A_F_CTRL_ACTIVE, A_F_PRESSURE_VALIDITY) are 0 in all 48 923 captured frames, so nothing off the bike can pin their positions; this at least pins that they do not collide. b4 = 0xBC is A_WARN_LAMP at its full two-bit range of 3 alongside all three of its flags, so a lamp read that leaked into 0x10/0x20/0x80 — or a flag read that leaked into the lamp — fails here. It also pins that the flags come out as 1 rather than as the vendor's mask (16, 32, 128), which bounds.js would reject as a dead sensor",
+    why: "⚠️ SYNTHETIC — every flag at once, which the bus has never produced. Three of the six (both *SENS_FAIL and A_F_PRESSURE_VALIDITY) are 0 in all 565 376 captured frames, so nothing off the bike can pin their positions; this at least pins that they do not collide. b4 = 0xBC is A_WARN_LAMP at its full two-bit range of 3 alongside all three of its flags, so a lamp read that leaked into 0x10/0x20/0x80 — or a flag read that leaked into the lamp — fails here. It also pins that the flags come out as 1 rather than as the vendor's mask (16, 32, 128), which bounds.js would reject as a dead sensor",
     expect: {
       abs_warning_lamp: 3,
       abs_front_sensor_fault: 1,
@@ -262,7 +294,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x0a0,
     frame: "00 00 00 00 10 00 02 00",
-    why: "⚠️ SYNTHETIC — the asymmetric companion to the all-flags frame above, and it catches a failure that one structurally cannot. With every other case setting either all of these bits or none of them, two decoded keys could be SWAPPED and the whole suite would still pass: A_FSENS_FAIL (b4 bit4) against A_RSENS_FAIL (bit5), and A_F_PRESSURE_VALIDITY (b6 bit0) against A_F_CTRL_ACTIVE (bit1). A wrong position and a transposition are different bugs, and only an asymmetric frame separates the pairs. b4 = 0x10 and b6 = 0x02 set exactly one of each pair; the 18:01:34 frame's b6 = 0x04 already separates bit1 from bit2",
+    why: "⚠️ SYNTHETIC — the asymmetric companion to the all-flags frame above, and it catches a failure that one structurally cannot: with every other synthetic case setting either all of these bits or none, A_FSENS_FAIL (b4 bit4) and A_RSENS_FAIL (bit5) could be SWAPPED and the suite would still pass. b4 = 0x10 sets exactly one of that pair. Its other original job — separating A_F_PRESSURE_VALIDITY (b6 bit0) from A_F_CTRL_ACTIVE (bit1) — is now done by a REAL frame, the 16:53:18 front-channel case above, so this one is kept for the *SENS_FAIL pair alone. It is deliberately not deleted: those two bits still have no measured frame anywhere in the archive",
     expect: {
       abs_front_sensor_fault: 1,
       abs_rear_sensor_fault: 0,
@@ -300,7 +332,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x0a0,
     frame: "FF FF FF FF 00 00 00 00",
-    why: "the wheel-count sentinel, 10 frames across the two 2026-08-04 road captures. Passed through as 3686.34 km/h ON PURPOSE — bounds.js gates the wheel speeds to [0, 300] so it shows as a fault, where 0x10B's 65000 has to be dropped in the decoder because 65 kWh/100 km would pass bounds. Pinning it here so neither behaviour gets 'made consistent' with the other",
+    why: "the wheel-count sentinel, 10 frames across the two 2026-08-04 road captures and 120 across the whole archive. Passed through as 3686.34 km/h ON PURPOSE — bounds.js gates the wheel speeds to [0, 300] so it shows as a fault, where 0x10B's 65000 has to be dropped in the decoder because 65 kWh/100 km would pass bounds. Pinning it here so neither behaviour gets 'made consistent' with the other",
     expect: {
       wheel_speed_front_kmh: 3686.34375,
       wheel_speed_rear_kmh: 3686.34375,
