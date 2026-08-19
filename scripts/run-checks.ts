@@ -121,6 +121,15 @@ const CHECKS: SelfCheck[] = [
       "'not charging' for ever in silence",
   },
   {
+    script: "scripts/check-ride-log-status.ts",
+    covers:
+      "what /status reports about the ride log and what the download button says about it: that the count is read " +
+      "off the directory rather than capped or hardcoded (13 files, sized, past the 10 that was reported as stuck), " +
+      "that five real seals through src/storage/encrypted-log.ts still land in one day file — so a file is not a " +
+      "segment and the caption may not call it one — and that a sealed segment opens with the matching private key " +
+      "and with no other, which is the only security property the caption is allowed to claim",
+  },
+  {
     script: "scripts/check-vcu-params.ts",
     covers:
       "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +
