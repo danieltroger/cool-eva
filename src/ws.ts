@@ -124,13 +124,16 @@ export function broadcastTo(clients: Iterable<BroadcastClient>, message: Dashboa
  * Terminate rather than close: close() is a handshake, and a peer that is not reading
  * is not going to answer one.
  *
- * @returns the clients hung up on, so the caller can say so out loud.
+ * @returns the clients hung up on and what each was holding, so the caller can say so
+ * out loud. The byte count is taken BEFORE the terminate: `bufferedAmount` is the sum
+ * of the socket's write buffer and the sender's, and destroying the socket has already
+ * emptied the first half of that by the time the caller could read it.
  */
 export function dropStuckClients<Client extends BroadcastClient>(
   clients: Iterable<Client>,
   alreadyStuck: WeakSet<Client>
-): Client[] {
-  const dropped: Client[] = [];
+): { client: Client; bufferedAmount: number }[] {
+  const dropped: { client: Client; bufferedAmount: number }[] = [];
   for (const client of clients) {
     if (client.bufferedAmount <= MAX_CLIENT_BACKLOG_BYTES) {
       alreadyStuck.delete(client);
@@ -141,8 +144,9 @@ export function dropStuckClients<Client extends BroadcastClient>(
       continue;
     }
     alreadyStuck.delete(client);
+    const bufferedAmount = client.bufferedAmount;
     client.terminate();
-    dropped.push(client);
+    dropped.push({ client, bufferedAmount });
   }
   return dropped;
 }
@@ -168,8 +172,8 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
   // Liveness heartbeat — NOT the update path. Also the beat the stuck-client check runs
   // on, since "still stuck one heartbeat later" is what it means by stuck.
   const timer = setInterval(() => {
-    for (const client of dropStuckClients(wss.clients, stuck)) {
-      console.log(`ws: hung up on a client holding ${client.bufferedAmount} unsent bytes across two heartbeats`);
+    for (const { bufferedAmount } of dropStuckClients(wss.clients, stuck)) {
+      console.log(`ws: hung up on a client holding ${bufferedAmount} unsent bytes across two heartbeats`);
     }
     broadcast({ type: "snapshot", ts: Date.now(), signals: snapshot() });
   }, heartbeatMs);

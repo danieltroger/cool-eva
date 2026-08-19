@@ -375,6 +375,52 @@ console.log("\n4. a socket that closes properly");
   check("...until it is looked at", phone.sockets.length === 1);
 }
 
+{
+  // A `WebSocket` constructor that refuses the URL outright — mixed content, or a
+  // SecurityError. Left to escape, that would be one uncaught error per POLL_MS for
+  // ever, retrying ten times faster than every other failure path does.
+  let refuse = true;
+  const attempts: number[] = [];
+  const world = { hidden: false, now: 1_000, status: "connecting" as LinkStatus };
+  const link = createConnection({
+    hidden: () => world.hidden,
+    now: () => world.now,
+    report: status => {
+      world.status = status;
+    },
+    open: () => {
+      attempts.push(world.now);
+      if (refuse) {
+        throw new DOMException("SecurityError", "SecurityError");
+      }
+      return { close: () => {} };
+    },
+  });
+
+  let escaped: unknown = null;
+  try {
+    link.start();
+  } catch (error) {
+    escaped = error;
+  }
+  check("a constructor that throws does not take the caller down with it", escaped === null);
+  check("...and the header says offline rather than connecting for ever", world.status === "offline");
+
+  for (let step = 0; step < 6; step += 1) {
+    world.now += POLL_MS;
+    link.tick();
+  }
+  const gaps = attempts.slice(1).map((at, index) => at - attempts[index]);
+  check(
+    `...and it retries every ${RECONNECT_DELAY_MS / 1000} s rather than every poll`,
+    gaps.length > 1 && gaps.every(gap => gap === RECONNECT_DELAY_MS)
+  );
+  refuse = false;
+  world.now += RECONNECT_DELAY_MS;
+  link.tick();
+  check("...and connects when the constructor stops refusing", world.status === "connecting");
+}
+
 // --- 5. Nothing stale may be shown as live ----------------------------------
 //
 // The real isStale() from store.js, against the real connection states. Tiles grey
@@ -491,78 +537,83 @@ console.log("\n6. the real connect(), with the browser faked");
     sockets.push(this);
   });
 
-  const snapshotFor = (ts: number, value: number) =>
-    JSON.stringify({ type: "snapshot", ts, signals: { soc: { value, unit: "%", group: "battery", ts } } });
+  // try/finally, not a call at the end: an exception anywhere in here — store.js
+  // throwing on a stub message, say — would otherwise leak the fakes into every
+  // section after it, which is the exact failure the note above `replaced` names.
+  try {
+    const snapshotFor = (ts: number, value: number) =>
+      JSON.stringify({ type: "snapshot", ts, signals: { soc: { value, unit: "%", group: "battery", ts } } });
 
-  /** Through a call, so TypeScript cannot narrow the header to whatever it last read. */
-  const header = (): LinkStatus => connection.val;
+    /** Through a call, so TypeScript cannot narrow the header to whatever it last read. */
+    const header = (): LinkStatus => connection.val;
 
-  const STALE_MS = 8000;
-  const base = 1_800_000_000_000;
+    const STALE_MS = 8000;
+    const base = 1_800_000_000_000;
 
-  connect();
+    connect();
 
-  check(
-    "connect() opens a socket at the page's own host",
-    sockets.length === 1 && sockets[0].url === "ws://cool-eva.local"
-  );
-  check("...and registers a visibilitychange listener", listeners.has("visibilitychange"));
-  check(
-    "...and a timer at the connection poll interval",
-    timers.some(timer => timer.delay === POLL_MS)
-  );
+    check(
+      "connect() opens a socket at the page's own host",
+      sockets.length === 1 && sockets[0].url === "ws://cool-eva.local"
+    );
+    check("...and registers a visibilitychange listener", listeners.has("visibilitychange"));
+    check(
+      "...and a timer at the connection poll interval",
+      timers.some(timer => timer.delay === POLL_MS)
+    );
 
-  const first = sockets[0];
-  first.onopen?.();
-  first.onmessage?.({ data: snapshotFor(base, 55) });
-  check("a snapshot makes the header live", header() === "live");
-  check("...and its reading arrives", signalState("soc").val?.value === 55);
-  check("...shown as current", isStale("soc", STALE_MS) === false);
+    const first = sockets[0];
+    first.onopen?.();
+    first.onmessage?.({ data: snapshotFor(base, 55) });
+    check("a snapshot makes the header live", header() === "live");
+    check("...and its reading arrives", signalState("soc").val?.value === 55);
+    check("...shown as current", isStale("soc", STALE_MS) === false);
 
-  // The phone goes in a pocket.
-  page.hidden = true;
-  listeners.get("visibilitychange")?.();
-  check("hiding the page closes the real socket", first.closed);
-  check("...and the header stops claiming a link", header() === "offline");
-  check("...so the reading on screen is no longer shown as current", isStale("soc", STALE_MS) === true);
+    // The phone goes in a pocket.
+    page.hidden = true;
+    listeners.get("visibilitychange")?.();
+    check("hiding the page closes the real socket", first.closed);
+    check("...and the header stops claiming a link", header() === "offline");
+    check("...so the reading on screen is no longer shown as current", isStale("soc", STALE_MS) === true);
 
-  // Five minutes later, the backlog. THIS is the fast-forward: without the guard in
-  // connect(), every one of these lands, re-renders, and reads as live telemetry.
-  first.onmessage?.({ data: snapshotFor(base + 60_000, 9) });
-  check("a message queued on the hidden socket changes no value", signalState("soc").val?.value === 55);
-  check("...and does not move the server clock", serverTime.val === base);
-  check("...and cannot relabel the header live", header() === "offline");
+    // Five minutes later, the backlog. THIS is the fast-forward: without the guard in
+    // connect(), every one of these lands, re-renders, and reads as live telemetry.
+    first.onmessage?.({ data: snapshotFor(base + 60_000, 9) });
+    check("a message queued on the hidden socket changes no value", signalState("soc").val?.value === 55);
+    check("...and does not move the server clock", serverTime.val === base);
+    check("...and cannot relabel the header live", header() === "offline");
 
-  // The rider unlocks the phone.
-  page.hidden = false;
-  listeners.get("visibilitychange")?.();
-  check("unlocking opens exactly one new socket", sockets.length === 2);
-  check("...and nothing is called live until it has said something", header() === "connecting");
-  check("...with the old values still not passing as current", isStale("soc", STALE_MS) === true);
+    // The rider unlocks the phone.
+    page.hidden = false;
+    listeners.get("visibilitychange")?.();
+    check("unlocking opens exactly one new socket", sockets.length === 2);
+    check("...and nothing is called live until it has said something", header() === "connecting");
+    check("...with the old values still not passing as current", isStale("soc", STALE_MS) === true);
 
-  const second = sockets[1];
-  second.onopen?.();
-  second.onmessage?.({ data: snapshotFor(base + 300_000, 41) });
-  check("the Pi's snapshot is what ends the gap", header() === "live" && signalState("soc").val?.value === 41);
-  check("...and only then is a value current again", isStale("soc", STALE_MS) === false);
+    const second = sockets[1];
+    second.onopen?.();
+    second.onmessage?.({ data: snapshotFor(base + 300_000, 41) });
+    check("the Pi's snapshot is what ends the gap", header() === "live" && signalState("soc").val?.value === 41);
+    check("...and only then is a value current again", isStale("soc", STALE_MS) === false);
 
-  // And the visibility event going missing entirely. Closing the socket on hide is what
-  // makes this page eligible for the back/forward cache, and a restore from it is where
-  // the visible transition is least dependable — so the poll has to be able to recover
-  // on its own rather than waiting for an event that may never come.
-  page.hidden = true;
-  listeners.get("visibilitychange")?.();
-  check("hidden again, nothing open", sockets.length === 2 && sockets[1].closed);
-  page.hidden = false;
-  check("...and no visibilitychange this time", sockets.length === 2);
+    // And the visibility event going missing entirely. Closing the socket on hide is what
+    // makes this page eligible for the back/forward cache, and a restore from it is where
+    // the visible transition is least dependable — so the poll has to be able to recover
+    // on its own rather than waiting for an event that may never come.
+    page.hidden = true;
+    listeners.get("visibilitychange")?.();
+    check("hidden again, nothing open", sockets.length === 2 && sockets[1].closed);
+    page.hidden = false;
+    check("...and no visibilitychange this time", sockets.length === 2);
 
-  const poll = timers.find(timer => timer.delay === POLL_MS);
-  poll?.run();
-  check("the poll notices a visible page with no socket and opens one", sockets.length === 3);
-  poll?.run();
-  check("...exactly one, not one per tick", sockets.length === 3);
-
-  restoreGlobals();
+    const poll = timers.find(timer => timer.delay === POLL_MS);
+    poll?.run();
+    check("the poll notices a visible page with no socket and opens one", sockets.length === 3);
+    poll?.run();
+    check("...exactly one, not one per tick", sockets.length === 3);
+  } finally {
+    restoreGlobals();
+  }
   check("the faked globals are put back", typeof globalThis.setInterval === "function" && !("document" in globalThis));
 }
 
@@ -613,8 +664,12 @@ console.log("\n7. how far behind a client may fall before the Pi stops writing t
     name,
     readyState,
     bufferedAmount,
-    send: () => sent.push(name),
-    terminate: () => hungUpOn.push(name),
+    send: () => {
+      sent.push(name);
+    },
+    terminate: () => {
+      hungUpOn.push(name);
+    },
   });
 
   const clients = [
@@ -635,8 +690,15 @@ console.log("\n7. how far behind a client may fall before the Pi stops writing t
   // of the slot in wss.clients. So a client still past the cap one heartbeat later gets
   // hung up on — but not one that was briefly over it and is draining.
   const stuck = new WeakSet<(typeof clients)[number]>();
-  const briefly = client("briefly behind", OPEN, MAX_CLIENT_BACKLOG_BYTES + 1);
-  const gone = client("gone for good", OPEN, MAX_CLIENT_BACKLOG_BYTES + 1);
+  const stuckBytes = MAX_CLIENT_BACKLOG_BYTES + 1;
+  const briefly = client("briefly behind", OPEN, stuckBytes);
+  const gone = client("gone for good", OPEN, stuckBytes);
+  // A destroyed socket reports nothing useful, which is the point of the last
+  // assertion below: the byte count has to be taken before the terminate.
+  gone.terminate = () => {
+    hungUpOn.push("gone for good");
+    gone.bufferedAmount = 0;
+  };
 
   check(
     "nothing is hung up on the first time it is seen over the cap",
@@ -646,6 +708,7 @@ console.log("\n7. how far behind a client may fall before the Pi stops writing t
   const dropped = dropStuckClients([briefly, gone], stuck);
   check("a client that drained is left alone", !hungUpOn.includes("briefly behind"));
   check("one still stuck a heartbeat later is hung up on", dropped.length === 1 && hungUpOn.includes("gone for good"));
+  check("...reporting what it was holding, not what survived the destroy", dropped[0]?.bufferedAmount === stuckBytes);
   check("...and not again on the heartbeat straight after", dropStuckClients([gone], stuck).length === 0);
 }
 
@@ -681,6 +744,20 @@ console.log("\n8. the view rules across a dropout");
 
   // The edge that IS real still fires, after all that.
   check("unplugging still takes you back to Ride", viewRules(memory, parked, "charge").join() === "ride");
+}
+
+{
+  // The other half of the same guard. `critical` is value-based rather than
+  // freshness-based, so a dropout does not move it — but the memory it is compared
+  // against must be held all the same, or a link that blinks while the pack is already
+  // under 5 % would come back looking like the pack having just fallen under 5 %.
+  const memory = { honourUrlTab: false, wasCharging: false, wasCritical: true };
+  const nearlyEmpty = { linkIsLive: true, charging: false, critical: true, heardFromBike: true };
+  const dropout = { ...nearlyEmpty, linkIsLive: false, critical: false };
+
+  check("a dropout with the pack already near empty moves nothing", viewRules(memory, dropout, "ride").length === 0);
+  check("...and does not forget that it was", memory.wasCritical);
+  check("...so the link returning is not a fall into hypermiling", viewRules(memory, nearlyEmpty, "ride").length === 0);
 }
 
 {

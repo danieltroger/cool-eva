@@ -167,7 +167,21 @@ function openNow(state) {
     // through here, and every wake has to cost at most one socket.
     return;
   }
-  state.socket = state.effects.open(handlersFor(state));
+  let socket;
+  try {
+    socket = state.effects.open(handlersFor(state));
+  } catch (error) {
+    // The `WebSocket` constructor refusing the URL outright — mixed content, or a
+    // SecurityError on a page not allowed to open it. Loud, because this is a thing
+    // that "cannot happen" and therefore has to shout when it does, and then back onto
+    // the backoff: left to escape, this would be one uncaught error per POLL_MS for
+    // ever, retrying ten times faster than every other failure path.
+    console.error("connection: could not open a socket", error);
+    state.effects.report("offline");
+    scheduleRetry(state);
+    return;
+  }
+  state.socket = socket;
   // The attempt itself starts the silence budget. Without a mark here, a server that
   // accepts the connection and then says nothing would never trip tick()'s watchdog,
   // because there would be nothing to measure from.
@@ -221,8 +235,7 @@ function tick(state) {
     // Visible, nothing open, and nothing queued to open one. The only way to arrive
     // here is a visibilitychange that never came — and closing the socket on hide is
     // what made this page eligible for Safari's back/forward cache, which is exactly
-    // where a visibility transition is least dependable. openNow() throwing lands here
-    // too, since it clears the retry before it can fail.
+    // where a visibility transition is least dependable.
     //
     // The same argument the header makes about `close` applies to `visibilitychange`:
     // a recovery path with one trigger is a recovery path that can be missed. The poll
