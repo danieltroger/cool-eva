@@ -220,6 +220,31 @@ export const SIGNALS: SignalDef[] = [
   { key: "mains_a", unit: "A", group: "charge", source: "stream" },
   { key: "charge_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x10a b7 ÷7 ✅
 
+  // 0x121 — the DC charge-current limit the RIDER picked on the bike's charging screen.
+  // The companion to charge_limit_a above, which is the AC side of the same dial: on DC
+  // that one reads 0 all session and nothing else on the bus carries the setting.
+  //
+  // "selected" is in the name because three different numbers here are all "a DC charge
+  // current limit" and only this one is a choice: 0x625 b2 is the configured ceiling the
+  // dial runs up to (75, VCU parameter 258), 0x620 b0 is what the vehicle is advertising
+  // to the station moment to moment, and charger_max_dc_a above is the ON-BOARD AC
+  // charger's own register, which reads 0.0 A throughout a DC session.
+  //
+  // ⚠️ An EVENT signal: the frame arrives only when the dial moves, so the tile shows the
+  // last setting seen and greys out 8 s later. That is honest, and charge-setpoint.ts
+  // explains why it must not be papered over with a timer.
+  //
+  // ⚠️ And a consequence of log-on-change that bites HERE and nowhere else: record() seals
+  // a row only when the value differs from `lastLogged` by more than the deadband, so
+  // RE-SELECTING THE VALUE YOU ALREADY HAD WRITES NO ROW — and notifyChange, inside the
+  // same branch, does not fire either. Dial 5 A, then dial 5 A again on the next charge in
+  // the same process lifetime, and the second one leaves no trace in the ride log. The
+  // dashboard is fine (the 5 s snapshot heartbeat refreshes ts, so the tile un-greys), but
+  // an absent row means "not touched OR re-picked the same number", not "not touched".
+  // waypoint_seq escapes this by being a monotonic counter; a setting cannot. Setting a
+  // deadband here would make it strictly worse, which is why there is none.
+  { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
+
   // OBD-II polled @1 Hz
   { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
   { key: "motor_rpm", unit: "rpm", group: "obd", source: "poll", deadband: 20 },
@@ -235,11 +260,15 @@ export const SIGNALS: SignalDef[] = [
   { key: "throttle_pct", unit: "%", group: "drive", source: "stream", deadband: 0 },
 
   // 0x102 — handlebar/lights (decoded live on the bike)
-  { key: "high_beam", unit: "", group: "controls", source: "stream" }, // b0 bit6
-  { key: "brake", unit: "", group: "controls", source: "stream" }, // b2 0x20 front | 0x40 rear
-  { key: "blinker_left", unit: "", group: "controls", source: "stream" }, // b2 0x04
-  { key: "blinker_right", unit: "", group: "controls", source: "stream" }, // b2 0x08
+  //
+  // `high_beam` and the two blinkers moved to group "buttons" on 2026-08-19; the block
+  // down there says why, and `brake` deliberately did not go with them.
   { key: "horn", unit: "", group: "controls", source: "stream" }, // b2 0x10
+  // Front OR rear. Kept here, and kept whole, on purpose: it has logged under this key
+  // since June and grafana/dashboards/ride-summary.json selects it by name, so it is the
+  // continuous history. The split pair the dashboard shows is `front_brake`/`rear_brake`
+  // in the buttons group — same two bits, told apart.
+  { key: "brake", unit: "", group: "controls", source: "stream" }, // b2 0x20 | 0x40
 
   // OBD-II diagnostics/counters, polled with the rest — all slow-moving, so
   // log-on-change keeps them to a handful of rows per ride.
@@ -459,6 +488,57 @@ export const SIGNALS: SignalDef[] = [
   { key: "btn_cruise_enable", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit1
   { key: "btn_cruise_set", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit2
   { key: "btn_heated_grip", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit3
+
+  // --- The rest of the rider's controls, added to this group 2026-08-19 --------------
+  // Asked for by the owner: "the buttons section should also get indicator and highbeam
+  // IMO, maybe also brake since that's technically a button?".
+  //
+  // Nothing but the `group` field does this. views/all.js picks the buttons section by
+  // `groupOf(key) === "buttons"` and nothing else, its header count is
+  // `groupKeys.length`, and `controls` and `buttons` are both BOOLEAN_GROUPS in
+  // bounds.js — so the 0/1 gate the moved keys already had is unchanged and the section
+  // reads "buttons · 13" on its own.
+  //
+  // None of these five is momentary, which the tile had to learn: see public/lib/press.js
+  // for the measured hold durations, the 1.46 Hz flasher, and why the answer is a clock
+  // reading rather than a list of held-state keys.
+  //
+  // `high_beam` is 0x102 b0 bit 6, the SWITCH — not `high_beam_lamp`, which is b2 bit 0
+  // and stays in `controls`. Two reasons for the switch over the lamp, given they agreed
+  // in all 1 103 000 frames ever captured and so cannot be told apart by measurement: a
+  // BUTTONS section should show the thing the rider's thumb moves, and this is also the
+  // bit public/app.js's own three-flash tab gesture reads, so the tile shows exactly what
+  // the dashboard is reacting to. The day they disagree is the day the bulb has failed,
+  // and having both keys is what makes that visible.
+  //
+  // The blinkers are the LAMP outputs (b2 bits 2/3), which is deliberate: "is my
+  // indicator on" is a question about the lamp. They are the flashers press.js has to
+  // coalesce. The b0 indicator SWITCHES are real and their sides are now known — bit 3
+  // right, bit 4 left, measured 2026-08-19 — but decoding them would put four tiles on
+  // screen for two indicators; decode.ts carries the evidence for whenever that changes.
+  //
+  // `front_brake` and `rear_brake` are b2 0x20 and 0x40, and they are two keys because
+  // they are two circuits: the rear pedal alone leaves 0x0A0's front brake pressure at
+  // 0 bar (owner, on the bike, 2026-08-19) and 1 899 captured frames carry both bits at
+  // once. Merging them into one "brake" tile would hide which lever is being used, which
+  // is most of what there is to see. ⚠️ These are on the OUTPUT byte, so strictly they
+  // are the brake-light lines rather than lever switches — there is no lever-switch bit
+  // on b0 to prefer, and they track braking closely (front: 491 applications, median
+  // 2.24 s). The bar-valued `front_brake_pressure_bar` from 0x0A0 is the front circuit's
+  // analogue partner and stays in `controls`, where a number belongs: a measurement in a
+  // grid of on/off tiles would read as a fault, not a feature.
+  //
+  // ⚠️ One loose end, deliberately left: db.ts writes the `signal` table with ON
+  // CONFLICT(key) DO NOTHING, so rides.db keeps `grp = 'controls'` for the three moved
+  // keys forever. The live dashboard reads the group off this registry and is right
+  // immediately; grafana/dashboards/explore.json reads `signal.grp` and will keep filing
+  // them under controls. That is cosmetic there, and fixing it means an UPDATE against
+  // the owner's live database, which is not this change's business.
+  { key: "high_beam", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit6
+  { key: "blinker_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x04
+  { key: "blinker_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x08
+  { key: "front_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x20
+  { key: "rear_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x40
   // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
   // other 0x102 state bits above rather than in `buttons`; `controls` is already a
   // BOOLEAN_GROUP so it gets the same 0/1 gate.
@@ -523,10 +603,22 @@ export const SIGNALS: SignalDef[] = [
   //
   // The two `*SENS_FAIL` bits go in `diag` beside the warning lamp they would light. The event
   // and the two channel-active bits go in `controls`, next to front_brake_pressure_bar and the
-  // brake switch, because that is where you look when watching the brakes rather than hunting a
-  // fault — and `diag` is 170 signals deep with the generated dtc_* flags, which would bury
-  // them. `abs_event` sits with `abs_rear_control_active` deliberately: they fire in the same
-  // frame, always, and splitting them across two sections of the All tab would hide that.
+  // combined `brake` switch, because that is where you look when watching the brakes rather
+  // than hunting a fault — and `diag` is 170 signals deep with the generated dtc_* flags, which
+  // would bury them. `abs_event` sits with `abs_rear_control_active` deliberately: they fire in
+  // the same frame, always, and splitting them across two sections of the All tab would hide that.
+  //
+  // ⚠️ `abs_rear_control_active` is NOT `rear_brake`, and now that both are on the All tab the
+  // names are close enough to be worth separating explicitly. `rear_brake` (0x102 b2 0x40, in
+  // the `buttons` group) is the pedal switch — the rider's foot. `abs_rear_control_active`
+  // (0x0A0 b6 bit2) is the ABS module modulating the rear channel. Measured across the two road
+  // captures they do not merely differ, they are DISJOINT: in all 25 intervention frames
+  // **neither brake switch was on**, and the rear switch is on in 0 of 16 188 and 0 of 17 435
+  // ABS frames in those rides — the rear pedal was not touched once. Same for
+  // `abs_front_control_active` against `front_brake`. 🟡 The obvious reading of "the rear ABS
+  // channel intervening with no brake applied" is rear-wheel slip under regen, which is what an
+  // e-motorcycle's rear wheel does on a closed throttle — but that is an inference from the
+  // absence of a brake signal, not something these frames state.
   //
   // ⚠️ These two are LOG-FIRST, and the All tab's flash should not be relied on to catch one.
   // An intervention is 1-2 frames, 100-200 ms, which is at the edge of what a person notices —
@@ -534,11 +626,14 @@ export const SIGNALS: SignalDef[] = [
   // ~200 ms is roughly the threshold. `controls` gets the plain RawTile, which renders the live
   // value with no latch, so on screen an intervention is a brief flip to 1 and back. The RIDE
   // LOG is unaffected: no deadband, so both edges are sealed, and that is where an intervention
-  // is meant to be read from. Deliberately not fixed here rather than overlooked — the latch
-  // lives in the `buttons` group's tile, that tile is being generalised for held vs momentary
-  // states in its own change, and bolting a second momentary path onto views/all.js in parallel
-  // would be the wrong shape. If these should flash properly, the move is to give the tile a
-  // per-key momentary set once that work lands, not to give this frame a private mechanism.
+  // is meant to be read from. Deliberately not fixed here rather than overlooked, and the shape
+  // of the fix is now known: views/all.js picks its latching tile by `groupOf(key) ===
+  // BUTTON_GROUP` and press.js's derive tracks that one group, so the change is to generalise
+  // that switch from a single group to a per-key momentary SET, and add these two to it.
+  // Moving them into `buttons` instead would be wrong — nothing presses an ABS intervention,
+  // and that tile's whole vocabulary is "PRESSED", "3 presses", "held for". A separate
+  // momentary path in views/all.js would be worse still. Neither belongs in a change whose
+  // subject is a frame decode, so it is named here rather than done here.
   { key: "abs_front_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x10 A_FSENS_FAIL
   { key: "abs_rear_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x20 A_RSENS_FAIL
   { key: "abs_event", unit: "", group: "controls", source: "stream" }, // b4 0x80 A_EVENT

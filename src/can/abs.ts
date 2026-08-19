@@ -236,19 +236,36 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //     scale is some other constant every number here is wrong by that factor while still
 //     looking entirely plausible. The KEY says `_bar` because that is the manufacturer's
 //     stated unit; it is not a measured one.
-//  2. ~~"Front" rests on the name too.~~ ✅ CLOSED 2026-08-19 by the measurement this caveat
-//     asked for. The 545 k-frame garage lap never once set 0x102's REAR brake bit, so it could
-//     not separate "front brake pressure" from "brake pressure". The two 2026-08-19 captures
-//     worked each brake on its own, stationary, and b5 was cross-tabulated against 0x102 b2:
-//       • rear pedal alone (`buttons-2026-08-19.log`, b2 0x40 set, b2 0x20 clear): **b5 = 0 in
-//         all 434 frames**, not one count in any of them.
-//       • front lever alone (`capture-20260819-172725-178e8719.log`, b2 0x20 set): b5 spans
-//         0…8 over 110 frames, and 35 of those read 0 — the lever closing its switch before
-//         line pressure builds, the same shape the garage lap showed.
-//     So b5 is front-specific, not a combined brake pressure Energica merely named
-//     `A_F_PRESSURE`. There is no rear brake pressure anywhere on this bus, and per the DTB
-//     note at the top of this file there cannot be: the rear brake is a switch (0x102 b2 0x40)
-//     and an ABS intervention flag (`abs_rear_control_active`), and neither is a pressure.
+//  2. ~~**"Front" rests on the name too.**~~ **CLOSED 2026-08-19.** ✅ It used to say that
+//     0x102's REAR brake bit was never set once in the whole 545 k-frame garage lap, so that
+//     lap could not separate "front brake pressure" from "brake pressure", and that a ride
+//     using the rear brake alone was the measurement that would close it. Three separate
+//     readings now close it, and they were arrived at independently:
+//       • The corpus DOES contain rear-only braking: across all 14 650 573 frames of 0x102 in
+//         the archive the rear bit fires 18 times on its own, median 0.46 s.
+//       • The owner rode the other half deliberately and reported that pressing the rear pedal
+//         alone leaves b5 at 0 bar while the front lever drives it to 5.
+//       • That report reproduces off the captures, cross-tabulating b5 against 0x102 b2 in the
+//         two 2026-08-19 files: rear pedal alone (`buttons-2026-08-19.log`, b2 0x40 set and
+//         0x20 clear) gives **b5 = 0 in all 434 frames**, not one count in any of them; front
+//         lever alone (`capture-20260819-172725-178e8719.log`, b2 0x20 set) gives 0…8 bar over
+//         110 frames, 35 of which read 0 — the lever closing its switch before line pressure
+//         builds, the same shape the garage lap showed. (The peak is 8 rather than the
+//         reported 5; the owner was watching a screen rather than counting frames, and 0 vs
+//         non-zero is the part that carries the argument either way.)
+//     So b5 is the FRONT circuit by measurement rather than by its name. The 434-frame zero is
+//     the load-bearing half: a combined brake pressure that Energica merely named
+//     `A_F_PRESSURE` could not sit at exactly 0 through 434 frames of rear braking.
+//
+//     🟡 The weaker half of the old sentence survives: that the rear brake has no pressure
+//     channel AT ALL. That is a universal negative and it is not measured — the evidence is
+//     that this frame has no `A_R_PRESSURE` field and that Energica's own signal database
+//     names none, which is an absence in two documents rather than an observation. Treat
+//     it as "none is known", not "none exists". What the DTB note at the top of this file
+//     adds is a bound on how much better that can ever get FROM HERE: anything the ABS knows
+//     and the VCU does not re-broadcast is unreachable from our bus, so "none is known" will
+//     not be improved by more searching on VDB, only by the schematic or a DTB tap. Caveat 1
+//     stands too: the SCALE is still Energica's word.
 //
 // A_WARN_LAMP: ✅ set in 3564 of 3601 standstill frames (99.0 %) and in 0 of 192 frames above
 // 6 km/h, which is the ABS self-test — it needs road speed to clear, and cannot clear on a
@@ -298,10 +315,17 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //     that read the 14 and 11 frames as "~1.4 s and ~1.1 s of it"; they are scattered across 17
 //     and 36 minutes of riding. A real ABS cycle is a fraction of a second, so the short burst
 //     is the more believable shape, and it is what sets the log cost in src/can/registry.ts.
-//   • **b5 is 0 in all 25** — no front brake line pressure in any of them, at any point in any
-//     burst. So none of these was a front-brake stop. That is consistent with the rear channel
-//     being the one flagged, and it is why confirming `abs_front_control_active` needs a hard
-//     FRONT-brake stop specifically (issue #51).
+//   • **No brake was applied in any of the 25.** b5 is 0 in all of them — no front line pressure
+//     at any point in any burst — and cross-checking 0x102 b2 at the same instants, NEITHER
+//     brake switch is on in any of the 25 either. The rear switch is on in 0 of 16 188 and 0 of
+//     17 435 ABS frames across those two rides: the rear pedal was not touched once. So an ABS
+//     intervention on this bike is not the same event as a brake application, which is worth
+//     knowing before anything correlates the two, and it is why confirming
+//     `abs_front_control_active` needs a hard FRONT-brake stop specifically (issue #51).
+//     🟡 The obvious reading — rear-wheel slip under regen, which is what an e-motorcycle's rear
+//     wheel does on a closed throttle — is an inference from a missing brake signal rather than
+//     anything these frames state. It fits the speeds and the rear channel being the one flagged;
+//     it is not established.
 //   • The lamp bits are clear in all 25 (b4 is 0x80, never 0x84), so an intervention is not a
 //     fault and does not light the warning lamp. Anything alerting on these must not treat them
 //     as a fault condition.

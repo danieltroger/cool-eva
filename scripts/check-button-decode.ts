@@ -1,6 +1,7 @@
 import { decodeFrame, STREAM_IDS } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor } from "../public/lib/bounds.js";
+import { FLASHER_KEYS } from "../public/lib/flasher.js";
 
 // Replays the handlebar-button and fast-charge-contactor frames through the real
 // decoder, on a laptop, with no bike — the same trick scripts/decode-dtc-response.ts
@@ -51,6 +52,22 @@ const BUTTON_KEYS = [
   "btn_cruise_set",
   "btn_heated_grip",
 ];
+
+/**
+ * The rest of the `buttons` group, added 2026-08-19 on the owner's request that the
+ * dashboard's BUTTONS section also show the indicators, the high beam and the brake.
+ *
+ * They carry no `btn_` prefix and never will — three of the five have logged under these
+ * names since June, and renaming a key to make a section membership legible would cost
+ * the history for nothing. Which is exactly why membership is the registry's `group`
+ * field and not the prefix, and why they get their own list here: everything below that
+ * asserts "is in group buttons", "is registered", "has no deadband" and "is gated to
+ * 0…1" has to cover them too, and none of it can be reached by matching on `btn_`.
+ */
+const HELD_CONTROL_KEYS = ["high_beam", "blinker_left", "blinker_right", "front_brake", "rear_brake"];
+
+/** Every key the dashboard's BUTTONS section shows. */
+const BUTTONS_GROUP_KEYS = [...BUTTON_KEYS, ...HELD_CONTROL_KEYS];
 
 /** Buttons at rest, for the frames where nothing is being pressed. */
 const NONE_PRESSED_102 = {
@@ -127,6 +144,74 @@ const CASES: FrameCase[] = [
     // evidence for the bit's identity (63 of 63 presses landed while an indicator was
     // flashing), so the fixture asserts both halves of it rather than the button alone.
     expect: { ...NONE_PRESSED_102, btn_indicator_cancel: 1, blinker_right: 1, blinker_left: 0 },
+  },
+  {
+    what: "0x102 the frame the RIGHT indicator lamp came on — 2026-08-02 21:05:47.349109",
+    id: 0x102,
+    hex: "88 BE 8A 04 FA FF 28 00",
+    // b0 = 0x88 (indicator switch bit 3 + the low-beam switch), b2 = 0x8A (low-beam lamp
+    // + blinker_right + moving). The frame BEFORE this one, 10 ms earlier, is
+    // `88 BE 82 04 FA FF 34 00` — same switch bit down, no blinker bit yet. Those two
+    // payloads are the entire left/right argument: b0 bit 3 is RIGHT, which is the
+    // opposite of the .xdbc's order. decode.ts carries the 14 650 573-frame count that
+    // says the same thing 437 times over. The switch bits themselves are not decoded, so
+    // what this case pins is that the LAMP the section shows is on the side it says.
+    expect: {
+      ...NONE_PRESSED_102,
+      blinker_right: 1,
+      blinker_left: 0,
+      front_brake: 0,
+      rear_brake: 0,
+      brake: 0,
+      moving: 1,
+      high_beam: 0,
+    },
+  },
+  {
+    what: "0x102 LEFT indicator flashing at speed — 2026-08-02 21:05:40.328556",
+    id: 0x102,
+    hex: "90 BE 86 44 F4 FF BB FF",
+    // b0 = 0x90 (indicator switch bit 4 + low-beam switch), b2 = 0x86 (low-beam lamp +
+    // blinker_left + moving). The mirror of the case above, from the same ride seven
+    // seconds earlier: bit 4 with the LEFT lamp.
+    expect: {
+      ...NONE_PRESSED_102,
+      blinker_left: 1,
+      blinker_right: 0,
+      moving: 1,
+      high_beam: 0,
+    },
+  },
+  {
+    what: "0x102 front brake only, riding — 2026-08-02 21:05:22.557728",
+    id: 0x102,
+    hex: "80 3E A2 44 EF FF C1 FF",
+    // b2 = 0xA2 — moving (0x80) + FRONT brake (0x20) + low-beam lamp (0x02), and no
+    // 0x40. The three brake keys together are the point of this case and the two below:
+    // `brake` is the historical front-OR-rear key Grafana selects by name, and
+    // front_brake/rear_brake are the halves the buttons section shows separately.
+    expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 0, brake: 1, moving: 1 },
+  },
+  {
+    what: "0x102 REAR brake alone, the case abs.ts could not find — 2026-08-03 18:23:21.381629",
+    id: 0x102,
+    hex: "80 10 42 44 C1 FF EF FF",
+    // b2 = 0x42 — REAR brake (0x40) + low-beam lamp, with the front bit clear. abs.ts
+    // records that the rear bit "was never set once in the whole 545 k-frame capture",
+    // which is why 0x0A0's pressure channel could not be shown to be front-only; over
+    // the full archive it fires on its own 18 times, and this is one of them. Fold
+    // front and rear into one key again and this frame becomes indistinguishable from
+    // the one above.
+    expect: { ...NONE_PRESSED_102, rear_brake: 1, front_brake: 0, brake: 1, moving: 0 },
+  },
+  {
+    what: "0x102 both brakes at once — 2026-08-08 12:59:30.564375",
+    id: 0x102,
+    hex: "80 10 62 44 88 FF D8 FF",
+    // b2 = 0x62 — front (0x20) AND rear (0x40) together, which 1 899 captured frames do.
+    // So neither bit implies the other in either direction, and the merged `brake` key
+    // cannot be inverted back into the pair.
+    expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 1, brake: 1 },
   },
   {
     what: "0x102 the instant the fast-charge contactor closed — 2026-08-04 19:58:45.488",
@@ -217,6 +302,69 @@ for (const [hex, description] of [
   }
 }
 
+// `brake` is the front-OR-rear key Grafana still selects by name, and front_brake /
+// rear_brake are the halves the dashboard shows. Three keys off two bits, so the way
+// this goes wrong is one of them drifting: a mask edited to 0x30, a bit() index off by
+// one, someone "simplifying" brake to just the front. Checked over every one of the 256
+// values byte 2 can take rather than on the sampled frames above, because the failure is
+// a single value nobody thought to capture.
+for (let byte2 = 0; byte2 < 256; byte2++) {
+  const values = new Map(decodeFrame(0x102, Buffer.from([0, 0, byte2])).map(value => [value.key, value.value]));
+  const front = values.get("front_brake");
+  const rear = values.get("rear_brake");
+  const either = values.get("brake");
+  const wantFront = byte2 & 0x20 ? 1 : 0;
+  const wantRear = byte2 & 0x40 ? 1 : 0;
+  if (front !== wantFront || rear !== wantRear) {
+    failures.push(
+      `0x102 b2=0x${byte2.toString(16).padStart(2, "0")}: front_brake=${front}/rear_brake=${rear}, ` +
+        `want ${wantFront}/${wantRear} (0x20 is front, 0x40 is rear — see obd-garage/CAN_MAP.md)`
+    );
+    break;
+  }
+  if (either !== (wantFront || wantRear ? 1 : 0)) {
+    failures.push(
+      `0x102 b2=0x${byte2.toString(16).padStart(2, "0")}: brake=${either} but front|rear says ${wantFront || wantRear}`
+    );
+    break;
+  }
+}
+
+// public/lib/flasher.js names two registry keys as bare strings, and getting the tile to
+// treat one signalled turn as one event is the ONLY thing those strings do. So a rename
+// that misses that file does not break — it silently stops coalescing, and the blinker
+// count inflates ~6× while everything here still passes. Hence this: the set has to name
+// real signals, in the group whose tiles consult it, and it must not quietly go empty.
+if (FLASHER_KEYS.size === 0) {
+  failures.push("public/lib/flasher.js's FLASHER_KEYS is empty, so nothing coalesces the 1.46 Hz blinkers");
+}
+for (const key of FLASHER_KEYS) {
+  const signal = SIGNALS.find(candidate => candidate.key === key);
+  if (!signal) {
+    failures.push(
+      `public/lib/flasher.js names "${key}", which is not a signal in src/can/registry.ts — ` +
+        `the coalescing it exists to do is switched off and nothing else would say so`
+    );
+    continue;
+  }
+  if (signal.group !== "buttons") {
+    failures.push(
+      `public/lib/flasher.js names "${key}", but it is in group "${signal.group}" — ` +
+        `only the buttons section's tiles consult FLASHER_KEYS, so the rule would never run`
+    );
+  }
+}
+// …and the inverse, which is the mistake that would produce a wrong answer rather than
+// no answer: nothing carrying the `btn_` prefix may be coalesced. Two of this dashboard's
+// own inputs are gestures on those keys (gestures.js: a double click inside 700 ms, the
+// same window this rule would swallow it with), and app.js counts three high-beam flashes
+// inside 2 s. See the warning on FLASHER_GAP_MS.
+for (const key of FLASHER_KEYS) {
+  if (key.startsWith("btn_")) {
+    failures.push(`public/lib/flasher.js must not coalesce "${key}" — a button's 0 means the rider let go`);
+  }
+}
+
 // A frame missing from STREAM_IDS never reaches decodeFrame at all — decode.ts says so
 // in its own comment — so the decoder above can be perfect and the buttons still dead.
 if (!STREAM_IDS.includes(0x400)) {
@@ -244,7 +392,7 @@ if (decodeFrame(0x400, parseFrame("02 01")).length !== 0) {
 // Every key the decoder emits must be described in the registry, or it is logged into
 // group "misc" where the plausibility gate and the buttons section cannot see it.
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
-for (const key of [...BUTTON_KEYS, "fast_dc_contactor", "cruise_active"]) {
+for (const key of [...BUTTONS_GROUP_KEYS, "fast_dc_contactor", "cruise_active"]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
@@ -256,7 +404,7 @@ for (const key of [...BUTTON_KEYS, "fast_dc_contactor", "cruise_active"]) {
     );
   }
 }
-for (const key of BUTTON_KEYS) {
+for (const key of BUTTONS_GROUP_KEYS) {
   const signal = defined.get(key);
   if (signal && signal.group !== "buttons") {
     failures.push(`${key} is in group "${signal.group}", so it will not appear in the dashboard's buttons section`);
@@ -275,7 +423,7 @@ for (const key of BUTTON_KEYS) {
 // real measurements and needs its own BY_KEY entry. Raised in review, where it turned
 // out to be the one flag added here that had fallen through both routes and was
 // rendering unbounded.
-for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp"]) {
+for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp", "brake"]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
@@ -299,8 +447,10 @@ if (failures.length > 0) {
 }
 console.log(
   `✓ ${CASES.length} captured frames decode as recorded; 0x400 is filtered in, short frames stay honest, ` +
-    `the beam lamps did not revert to charging/charge_port_unlocked, ` +
-    `and all ${BUTTON_KEYS.length} buttons are registered, deadband-free and gated to 0…1`
+    `the beam lamps did not revert to charging/charge_port_unlocked, brake still equals front|rear over all ` +
+    `256 values of byte 2, flasher.js's ${FLASHER_KEYS.size} coalesced keys are real and are not buttons, ` +
+    `and all ${BUTTONS_GROUP_KEYS.length} signals in the buttons section are registered, deadband-free and ` +
+    `gated to 0…1`
 );
 
 function parseFrame(hex: string): Buffer {

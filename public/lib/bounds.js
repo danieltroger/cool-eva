@@ -68,6 +68,13 @@ const BY_KEY = {
   // signal renders whatever arrives, which is the one outcome this file exists to
   // prevent. Same reasoning as the `buttons` group, applied one signal at a time.
   "fast_dc_contactor": [0, 1],
+  // The DC charge-current limit the rider picked on the bike's own screen (0x121).
+  // Named here because BY_UNIT's "A" fallback is [-1000, 1000], which would happily draw
+  // a misread opcode byte as 147 A. 127 is the real hard stop, and it is not a guess: the
+  // dial runs up to VCU parameter 258, a signed BYTE the manufacturer's service tool
+  // writes through mask 127, so the screen cannot offer more however the bike is
+  // optioned. Ours is 75.
+  "dc_charge_limit_selected_a": [0, 127],
   // 0x501, the PSU monitor. These three MUST be named here, and the first two are the
   // reason this comment exists: their unit is "mV", and BY_UNIT's mV fallback is
   // [0, 5000] because it was written for cell voltages. A healthy 12 704 mV rail would

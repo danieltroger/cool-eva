@@ -98,8 +98,8 @@ if (unfiltered.length > 0) {
 
 // Named explicitly as well as probed. The probe can only see an id whose decoder answers one
 // of the payloads above, so a future decoder that needs a particular byte pattern would slip
-// through it; these six were added on 2026-08-16 and each is checked by name so that removing
-// one from the filter fails here even if its decoder goes quiet.
+// through it; the ids below (most added on 2026-08-16, 0x121 on 2026-08-19) are each checked
+// by name so that removing one from the filter fails here even if its decoder goes quiet.
 const REQUIRED_IN_FILTER: [number, string][] = [
   [0x0a0, "ABS wheel speeds / brake pressure"],
   [0x02c, "drive torque command and feedback"],
@@ -108,6 +108,12 @@ const REQUIRED_IN_FILTER: [number, string][] = [
   [0x125, "redundant road speed"],
   [0x127, "dual throttle position sensor"],
   [0x501, "PSU monitor"],
+  // 0x121 cannot be caught by the probe above at all: its decoder answers only for a DLC-8
+  // frame with opcode 0x18, b1 = 0xFF, b3 = 1, a zero tail and 1 ≤ b2 ≤ b4, and none of the
+  // four probe payloads is that shape. It is exactly the "future decoder that needs a
+  // particular byte pattern" this list exists for — without this line, dropping it from the
+  // filter would go unnoticed.
+  [0x121, "the rider's DC charge-current limit, set on the bike's own screen"],
 ];
 for (const [id, what] of REQUIRED_IN_FILTER) {
   if (!streamIds.has(id)) {
@@ -406,6 +412,84 @@ const REPLAY: ReplayCase[] = [
     frame: "00 00 80 00 00 00 00 03",
     why: "⚠️ SYNTHETIC — the only frame here that is not off the bus. ERR_ChargeCM_Out reads 0 in all 105 736 captured frames of 0x100, including a complete DC fast charge, so the set case has never been seen. This pins the bit position against the byte the 2026-08-09 12:38:35 fault window should show: byte 7 stepping 0x01 → 0x03",
     expect: { vcu_err_charge_manager: 1, vcu_12v_power_good: 1, vcu_flags_high: 0x03000000 },
+  },
+  // 0x121 — the rider's charge-current dial. Every frame below is off the bus. The three
+  // positive cases are the ones that carry the argument: the current settled on the
+  // commanded value exactly in each, which is what makes b2 the SETTING rather than one
+  // more advertisement of the 75 A ceiling.
+  {
+    id: 0x121,
+    frame: "18 FF 05 01 4B 00 00 00",
+    why: "2026-08-09 17:56:05.346 — the owner's remembered '5 A to slow it down at high SOC', found in the data. 0x615 b2 went 1 → 5 A in 0.32 s and held exactly 5 for the next 835 samples. The ceiling beside it is unmoved at 75",
+    expect: { dc_charge_limit_selected_a: 5 },
+  },
+  {
+    id: 0x121,
+    frame: "18 FF 3C 01 4B 00 00 00",
+    why: "2026-08-04 20:09:09.038 — 60 A commanded while 66.2 A was flowing, and the current went to 60.8 A. The event five seconds later commanded 75 and got 66.2 A, which is the whole reason the ceiling and the setting had to be told apart",
+    expect: { dc_charge_limit_selected_a: 60 },
+  },
+  {
+    id: 0x121,
+    frame: "18 FF 4B 01 4B 00 00 00",
+    why: "the dial at its maximum, 2026-08-08 13:33:30 and four other times — setting EQUALS ceiling, the case that has to survive the b2 ≤ b4 guard rather than be rejected by it",
+    expect: { dc_charge_limit_selected_a: 75 },
+  },
+  {
+    id: 0x121,
+    frame: "1A FF 09 01 0F 00 00 00",
+    why: "2026-08-08 23:49:59.196 — the AC twin, opcode 0x1A with the 15 A AC ceiling. Deliberately silent: charge_limit_a already carries AC off 0x10A b7, which moved to 63 (÷7 = 9.00 A) 0.09 s after this frame and so confirms both decodes at once",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "1D FF 93 00 00 00 00 00",
+    why: "the commonest opcode on this id — 204 of the 298 captured 0x121 frames, against 18 for the one we want — and the reason the opcode gate is load-bearing rather than tidy. b2 = 0x93 = 147 would read as 147 A if the frame were decoded on id alone",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "1B FF AA 5C 00 00 00 00",
+    why: "2026-08-04 18:04:42 — a query whose answer is in b3, fired WHILE RIDING with nothing plugged in. b2 is the sentinel 0xAA and b3 = 92; b3 = 1 is what keeps it out",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "16 FF 01 00 00 00 00 00",
+    why: "the charge-stop event, byte-identical on AC and DC. b2 = 1 looks exactly like a 1 A limit and is not one — b3 = 0 says no limit is in force",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "14 FF 71 00 91 11 1A 00",
+    why: "2026-08-08 19:03:25 — the reply to this project's own RTC sync write on 0x120. b4 = 0x91 = 145 would be a nonsense ceiling, and b2 = 113 a nonsense setting; a decoder keyed on id alone would emit both",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "2C FF 4B 00 00 00 00 00",
+    why: "the sharpest negative in the set, and it is real — from the 2026-06-14 capture, which predates every other file here and is in a different format. b2 is literally 0x4B = 75, so a decoder that read b2 as amps on id alone would report a 75 A limit that was never set. Only b3 = 0 and the opcode separate it from the genuine article three cases above",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "18 FF 4B 01",
+    why: "⚠️ SYNTHETIC — a 4-byte truncation of the real 75 A frame. Never seen (all 596 captured frames are DLC 8), but b4 is the ceiling and a setting arriving with nothing to size it against is worse than no setting, so a short frame must drop rather than read past the end",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "18 FF 4B 01 4B 00 00 01",
+    why: "⚠️ SYNTHETIC — the real 75 A frame with one bit set in the tail. b5-7 are zero in every captured frame of both ids except opcode 0x14, so a 0x18 that starts using them is a 0x18 that means something else; the decoder would rather go silent than report a number from a layout it does not recognise",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
   },
   {
     id: 0x125,

@@ -121,6 +121,15 @@ const CHECKS: SelfCheck[] = [
       "'not charging' for ever in silence",
   },
   {
+    script: "scripts/check-ride-log-status.ts",
+    covers:
+      "what /status reports about the ride log and what the download button says about it: that the count is read " +
+      "off the directory rather than capped or hardcoded (13 files, sized, past the 10 that was reported as stuck), " +
+      "that five real seals through src/storage/encrypted-log.ts still land in one day file — so a file is not a " +
+      "segment and the caption may not call it one — and that a sealed segment opens with the matching private key " +
+      "and with no other, which is the only security property the caption is allowed to claim",
+  },
+  {
     script: "scripts/check-vcu-params.ts",
     covers:
       "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +
@@ -140,6 +149,11 @@ const CHECKS: SelfCheck[] = [
       "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
   },
   {
+    script: "scripts/check-handlebar-gestures.ts",
+    covers:
+      "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",
@@ -153,6 +167,11 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-kwp-multiframe.ts",
     covers:
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
+  },
+  {
+    script: "scripts/check-tab-routing.ts",
+    covers:
+      "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",
   },
   {
     script: "scripts/check-vendor-names.ts",

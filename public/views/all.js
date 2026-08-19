@@ -8,8 +8,9 @@ import { MUTED } from "../lib/colors.js";
 // — so a raw 1/0 readout cannot be watched, and BUTTON_GROUP is the switch that picks
 // the tile below. Everything else about the group, including that it exists and where
 // it sorts, falls out of the registry's `group` field exactly as every other group
-// here does.
-import { BUTTON_GROUP, pressTracker, secondsSincePress } from "../lib/press.js";
+// here does — including the section's own count, which is why adding the indicators,
+// the high beam and the brake to it needed no change here beyond the wording.
+import { BUTTON_GROUP, isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
 
 const { div, input, span } = van.tags;
 
@@ -102,7 +103,7 @@ function RawTile(key) {
 }
 
 /**
- * One handlebar button. Same card as RawTile, but built to be watched rather than read.
+ * One handlebar control. Same card as RawTile, but built to be watched rather than read.
  *
  * Three readouts, in decreasing order of how much you should trust them:
  *
@@ -113,14 +114,34 @@ function RawTile(key) {
  *   • the lit state, which is the fastest to read and the easiest to miss.
  *
  * Never trust the light alone: a bit that is never seen high but whose count climbs is
- * a working button whose flash the browser dropped, and a bit stuck high with a count
- * of 1 is a wiring fault, not a press.
+ * a working button whose flash the browser dropped.
+ *
+ * …with one substitution, for the members of this group that are not momentary. The
+ * brake, and the high beam on a dark road, stay down for seconds or minutes, and "3
+ * presses · 2 min ago" is a true sentence that answers the wrong question about a lever
+ * that is being pulled RIGHT NOW. So once the bit has been down longer than the
+ * threshold in press.js, the second line reports the hold instead of the count — see
+ * the note there for why that is a clock reading rather than a hand-written list of
+ * which keys are held states, and ../lib/flasher.js for why the two blinkers are
+ * nonetheless a named exception to it.
+ *
+ * ⚠️ That substitution retired a diagnostic this comment used to carry, and the old
+ * wording is worth knowing about because it is now a trap. It said "a bit stuck high
+ * with a count of 1 is a wiring fault, not a press" — which was true when every signal
+ * here was momentary, and is exactly what a squeezed brake lever looks like today. The
+ * hold line is what tells them apart: a lever reads "held 4 s" and climbs while you
+ * watch, and a stuck bit reads "held 20 min" on a bike nobody is sitting on. So the
+ * lit tile is no longer evidence of anything by itself; the duration under it is.
  * @param {string} key
  */
 function ButtonTile(key) {
   const state = signalState(key);
   const fault = faultState(key);
   const tracker = pressTracker(key);
+  // The blinkers are the lamp outputs of a 1.46 Hz flasher, so every word this tile
+  // would otherwise use is wrong about them: nobody "presses" a turn signal for eight
+  // seconds. Same tile, same classes, same layout — only the nouns change.
+  const flasher = isFlasher(key);
   return div(
     { class: () => `raw${tracker.lit.val ? " pressed" : ""}${state.val && isStale(key, STALE_MS) ? " stale" : ""}` },
     div({ class: "raw-key" }, key),
@@ -136,19 +157,33 @@ function ButtonTile(key) {
         const rejected = fault.val;
         return rejected ? `⚠ ${rejected.value}` : "–";
       }
-      return tracker.lit.val ? "PRESSED" : "idle";
+      if (!tracker.lit.val) {
+        return "idle";
+      }
+      return flasher ? "FLASHING" : "PRESSED";
     }),
     div({ class: "raw-sub" }, () => {
-      // chartTick paces the "ago" counter: nothing arrives to mark the passing of a
-      // second, so without this the age would freeze at whatever it was when the last
-      // press repainted the tile.
+      // chartTick paces both counters below: nothing arrives to mark the passing of a
+      // second — these signals log on change and a held brake sends nothing at all —
+      // so without this the age would freeze at whatever it was when the last press
+      // repainted the tile, and a hold would never tick past its first reading.
       chartTick.val;
+      // Read through the state, not just the sampled helper, so that the line also
+      // repaints the instant the bit drops rather than up to 500 ms later.
+      tracker.downSince.val;
+      const held = secondsHeld(key);
+      if (held !== null) {
+        return `${flasher ? "flashing" : "held"} ${formatAgo(held)}`;
+      }
       const count = tracker.count.val;
       if (count === 0) {
-        return "no presses yet";
+        return flasher ? "not used yet" : "no presses yet";
       }
       const ago = secondsSincePress(key);
-      const label = count === 1 ? "1 press" : `${count} presses`;
+      // "12 uses" for an indicator: one use is one signalled turn, however many times
+      // the flasher blinked during it. press.js is what makes that a use and not 89.
+      const noun = flasher ? "use" : "press";
+      const label = count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
       return ago === null ? label : `${label} · ${formatAgo(ago)} ago`;
     })
   );

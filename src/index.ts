@@ -383,7 +383,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/waypoint") {
-    handleWaypointEndpoint(res);
+    handleWaypointEndpoint(res, req.headers.accept);
     return;
   }
   if (url.pathname === "/status") {
