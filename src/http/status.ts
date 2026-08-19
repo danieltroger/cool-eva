@@ -97,13 +97,31 @@ export async function measureLog(directory: string): Promise<{ files: number; by
 function summariseGroups(): Record<string, [number, number]> {
   const groups: Record<string, [number, number]> = {};
   const declared = new Set<string>();
+  // Groups whose every signal is written only on request are left out entirely.
+  // `waypoint` is the case that forced this: it is [0, 3] before you ever save
+  // one and back to [0, 3] ten seconds after you do, so including it made the
+  // dashboard name it as dark permanently on a healthy bike — and a liveness
+  // widget that always names something is one the reader learns to ignore, which
+  // is the exact failure it exists to prevent. Whole-group, not per-signal: a
+  // group that mixes measured and on-demand signals still has something to say
+  // about its measured half.
+  const onDemandOnly = new Set(
+    [...new Set(SIGNALS.map(signal => signal.group))].filter(group =>
+      SIGNALS.filter(signal => signal.group === group).every(signal => signal.onDemand)
+    )
+  );
   for (const signal of SIGNALS) {
+    if (onDemandOnly.has(signal.group)) continue;
     const counts = groups[signal.group] ?? [0, 0];
     counts[1] += 1;
     groups[signal.group] = counts;
     declared.add(signal.key);
   }
   for (const [key, value] of Object.entries(snapshot())) {
+    // Skipped here too, or saving a waypoint would put the group back into the
+    // payload for ten seconds and the summary would flicker between 16 and 17
+    // sources — worse than either steady answer.
+    if (onDemandOnly.has(value.group)) continue;
     const counts = groups[value.group] ?? [0, 0];
     // Membership is tested per KEY, not per group: a group can be declared and
     // still receive an undeclared key, and testing the group would count only the

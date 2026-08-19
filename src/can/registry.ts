@@ -819,9 +819,10 @@ export const SIGNALS: SignalDef[] = [
   // into its own pair of signals rather than inferred from the nearest gps_lat/lon
   // row, whose ~3 m deadband means the last logged fix can be minutes stale at a
   // standstill — exactly when you stop to save a waypoint.
-  { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor" },
-  { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor" },
-  { key: "waypoint_lon", unit: "°", group: "waypoint", source: "sensor" },
+  // onDemand: silence here is the resting state, not a fault — see SignalDef.
+  { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true },
+  { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor", onDemand: true },
+  { key: "waypoint_lon", unit: "°", group: "waypoint", source: "sensor", onDemand: true },
 
   ...perLmuSignals(),
 ];

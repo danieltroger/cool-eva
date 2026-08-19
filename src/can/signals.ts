@@ -20,6 +20,18 @@ export interface SignalDef {
   group: string;
   source: SignalSource;
   deadband?: number;
+  /**
+   * Written only when something asks for it, so silence is its resting state and
+   * says nothing about health. Excluded from the liveness summary in
+   * ../http/status.ts — a source that is dark by design would otherwise be named
+   * as dark forever, and a widget that always names something teaches the reader
+   * to skip the name, which is the failure it exists to prevent.
+   *
+   * Not the same as a signal that is merely slow. If a real one stops arriving
+   * that is a fault worth surfacing; if no waypoint has been saved, nothing is
+   * wrong.
+   */
+  onDemand?: true;
 }
 
 export interface LiveValue {

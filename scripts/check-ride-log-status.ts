@@ -314,7 +314,13 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   // perfectly and is exactly the bug that was reported, so it stays guarded — and
   // only when a count is actually shown, since "sealed every 30 s" is true prose
   // that happens to contain the word.
-  const showsACount = code.includes("log.files");
+  // "A number reaches the rider", not one literal spelling. Keying on the text
+  // `log.files` made the promise above true only for code written that exact way —
+  //     const { files } = current.log;
+  //     return div({ class: "action-note" }, `${files} sealed segments`);
+  // reads the count through a destructure and would have walked straight past.
+  // Interpolation plus any reference to the log payload is the honest test.
+  const showsACount = /\$\{/.test(code) && /\blog\b/.test(code);
   if (showsACount && /segment/i.test(code)) {
     failures.push(
       `DownloadButton() in ${path} says "segment" in text the rider sees, next to a count of files. One .celog ` +
@@ -383,14 +389,32 @@ async function checkADeadBusIsNotReportedAsHealthy(): Promise<void> {
     statusCode: 200,
     writeHead() {},
     setHeader() {},
-    end(chunk?: string) {
-      if (chunk) body = chunk;
+    // `string | Buffer`, because handleStatusEndpoint passes a Buffer. Typing it
+    // as string worked only because JSON.parse coerces, and hid the case below.
+    end(chunk?: string | Buffer) {
+      if (chunk) body = chunk.toString();
     },
   } as unknown as ServerResponse;
   await handleStatusEndpoint(res, join(workDir, "no-log-here"), false);
 
+  // Guarded rather than parsed straight, so an endpoint that stops calling end()
+  // — or starts streaming — fails as one of this file's named failures instead of
+  // dying on "Unexpected end of JSON input" from inside JSON.parse.
+  if (!body) {
+    failures.push("/status returned no body at all, so its group summary could not be checked");
+    return;
+  }
+
   const payload = JSON.parse(body) as StatusPayload;
-  const declared = [...new Set(SIGNALS.map(signal => signal.group))].sort();
+  // On-demand-only groups are deliberately absent — see summariseGroups(). Their
+  // silence is a resting state, so asserting they are present would pin the very
+  // behaviour that made the dashboard name `waypoint` as dark forever.
+  const onDemandOnly = new Set(
+    [...new Set(SIGNALS.map(signal => signal.group))].filter(group =>
+      SIGNALS.filter(signal => signal.group === group).every(signal => signal.onDemand)
+    )
+  );
+  const declared = [...new Set(SIGNALS.map(signal => signal.group))].filter(g => !onDemandOnly.has(g)).sort();
   const reported = Object.keys(payload.groups).sort();
   const missing = declared.filter(group => !reported.includes(group));
 
