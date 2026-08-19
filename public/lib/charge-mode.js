@@ -105,6 +105,20 @@ export function chargeMode(read, stale) {
  * first positive pack amp, which is what a contactor monitor should do. The full
  * argument and the timestamps are in src/can/decode.ts.
  *
+ * ⚠️ "the only unambiguous DC evidence" stopped being true on 2026-08-19, when the charge
+ * manager was decoded (src/can/charge-manager.ts). There are now three more, all measured
+ * across 29 charge sessions rather than the single interval above: `charge_manager_state`
+ * (0x610 b7) reads 0x23 on DC and 0x02 on AC in 100.000 % of 44 444 frames, `charge_type`
+ * (0x605 b2) is 1/2, and `dc_charging` / `ac_charging` (0x625 b4) say whether current is
+ * actually flowing rather than whether a session exists — a distinction this file currently
+ * cannot make. That last pair would also retire the freshness dance below, since they go to
+ * 0 by themselves instead of needing CONTACTOR_LIVE_MS to decide a stale 1 is over.
+ *
+ * This function is deliberately NOT changed in the same commit that decoded its replacement:
+ * the new signals have never been through a real charge on the bike, only through captures,
+ * and swapping the screen's one charge rule onto them before that is exactly the kind of
+ * change that should wait for evidence it cannot get from a laptop.
+ *
  * @param {(key: string) => number | null} read
  * @param {(key: string, maxAgeMs: number) => boolean} stale
  */

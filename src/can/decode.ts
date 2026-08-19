@@ -22,6 +22,7 @@
 import { ABS_CAN_ID, decodeAbsFrame } from "./abs.ts";
 import { decodeAttitudeFrame } from "./attitude.ts";
 import { CHARGE_SETPOINT_CAN_ID, decodeChargeSetpointFrame } from "./charge-setpoint.ts";
+import { CHARGE_MANAGER_CAN_IDS, decodeChargeManagerFrame } from "./charge-manager.ts";
 import { CONSUMPTION_CAN_ID, decodeConsumptionFrame } from "./consumption.ts";
 import { BMS_STREAM_IDS, decodeBmsFrame } from "./decode-bms.ts";
 import {
@@ -38,6 +39,21 @@ import { PSU_CAN_ID, decodePsuFrame } from "./psu.ts";
 import { VCU_FLAGS_CAN_ID, decodeVcuFlagsFrame } from "./vcu-flags.ts";
 
 export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
+  // The charge manager, added 2026-08-19. Five ids, one module: they are one ECU's state
+  // and only make sense read together — 0x605 says which path the session is on, 0x610
+  // says where the handshake got to, 0x615 measures it, 0x620 bounds it and 0x625 says
+  // whether anything is actually flowing. See charge-manager.ts for the evidence, and for
+  // the four frames in the same group that stay undecoded.
+  //
+  // Routed off the exported id list rather than as five `case` labels, which a switch
+  // cannot do with a computed set. That is deliberate: the same list sets the RX filter
+  // below, so a sixth id added to the module reaches the filter AND the decoder together.
+  // Spelling the ids out twice would let them drift, and it would drift silently in the
+  // direction this repo has already been bitten by — check-can-decoders.ts's probe is
+  // one-directional on purpose, so an id in STREAM_IDS with no decoder never goes red.
+  if (CHARGE_MANAGER_CAN_IDS.includes(id)) {
+    return decodeChargeManagerFrame(id, data);
+  }
   switch (id) {
     // 0x10A — charge/energy status.
     //  • b3-4 LE, bit 15 masked off, × 2 = RES.ENERGY Wh (residual/available energy).
@@ -624,5 +640,10 @@ const VEHICLE_STREAM_IDS = [
   GPS_CAN_ID,
   0x480,
   PSU_CAN_ID,
+  // The charge-manager group. Four of the five are silent unless a charge cable is live,
+  // so on a parked bike they cost one filter slot each and nothing else. 0x625 is the
+  // exception and broadcasts whenever the bike is awake — see charge-manager.ts, which is
+  // why it was mis-filed for so long as an unrelated always-on frame.
+  ...CHARGE_MANAGER_CAN_IDS,
 ];
 export const STREAM_IDS = [...VEHICLE_STREAM_IDS, ...BMS_STREAM_IDS];

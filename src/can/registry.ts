@@ -244,6 +244,43 @@ export const SIGNALS: SignalDef[] = [
   // waypoint_seq escapes this by being a monotonic counter; a setting cannot. Setting a
   // deadband here would make it strictly worse, which is why there is none.
   { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
+  // 0x605 / 0x610 / 0x615 / 0x620 / 0x625 — the charge manager (src/can/charge-manager.ts),
+  // added 2026-08-19 from 29 charge sessions. Present only while a cable is live, EXCEPT the
+  // three off 0x625 — that frame broadcasts whenever the bike is awake, parked and unplugged
+  // included, so fast_dc_limit_max_a, dc_charging and ac_charging log one row on every boot
+  // rather than only on a charge.
+  //
+  // These are the only signals that see a DC fast charge at all: the AC charger's frames
+  // (0x305/0x306, above) never appear during one, so every `charge` signal above this block
+  // reads "nothing happening" at a fast charger while 20 kW goes in. Which is exactly why
+  // three of the names below are so close to older ones, and the pairs are worth telling
+  // apart before reading either — the ALL view sorts by group, so each pair renders adjacent:
+  //
+  //   fast_dc_a           the DC fast-charge port   NOT dc_a, the onboard charger's DC output
+  //   ac_supply_limit_a   the supply's ceiling      NOT charge_limit_a, the setpoint it bounds
+  //   fast_dc_limit_max_a the bike's fixed 75 A     NOT charger_max_dc_a, the AC charger's max
+  //
+  // And there are now three DC current limits, which really are three different numbers —
+  // the ALL view renders them together, so read the qualifier and not just the prefix:
+  //
+  //   dc_charge_limit_selected_a  0x121 b2  what the RIDER picked on the bike's own screen
+  //   fast_dc_limit_max_a         0x625 b2  the configured ceiling the dial runs up to, 75
+  //   fast_dc_limit_a             0x620 b0  the limit in force this second, 0…75 in a session
+  //
+  // No deadbands. Every one of them is either a flag, a 1-unit-quantised integer or a byte
+  // that only moves on a state change, so log-on-change already is the right rate.
+  { key: "charge_type", unit: "", group: "charge", source: "stream" }, // 0x605 b2: 1 AC, 2 DC ✅
+  { key: "bms_leak_detect_inhibit", unit: "", group: "bms", source: "stream" }, // 0x605 b7 ✅
+  { key: "charge_manager_status", unit: "", group: "charge", source: "stream" }, // 0x610 b0 ✅
+  { key: "charge_manager_state", unit: "", group: "charge", source: "stream" }, // 0x610 b7 ✅
+  { key: "charge_manager_pack_v", unit: "V", group: "charge", source: "stream" }, // 0x615 b0 🟡
+  { key: "fast_dc_a", unit: "A", group: "charge", source: "stream" }, // 0x615 b2 ✅
+  { key: "charge_manager_soc", unit: "%", group: "charge", source: "stream" }, // 0x615 b3 ✅
+  { key: "fast_dc_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x620 b0 ✅
+  { key: "ac_supply_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x620 b1 ✅
+  { key: "fast_dc_limit_max_a", unit: "A", group: "charge", source: "stream" }, // 0x625 b2 ✅
+  { key: "dc_charging", unit: "", group: "charge", source: "stream" }, // 0x625 b4 bit5 clear ✅
+  { key: "ac_charging", unit: "", group: "charge", source: "stream" }, // 0x625 b4 bit2 ✅
 
   // OBD-II polled @1 Hz
   { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
