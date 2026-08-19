@@ -416,11 +416,15 @@ body {
   padding: 0.15rem 0.2rem 0;
 }
 
-/* The boundary itself. Everything below this heading can change the motorcycle,
-   so the heading is amber and so is the rule above it. */
+/* The boundary itself.
+   ⚠️ The heading STAYS --fg; the amber is on the rule above it and the line under it.
+   Painting the heading amber sounds right and measures backwards: --warn is 7.9:1
+   where --fg is 14.5:1, so the one section heading that announces the bike can be
+   changed came out at half the contrast of "Stored codes", which announces "none set".
+   It is also the same amber as the deck directly under it, so head and deck stopped
+   separating. Rank belongs to the heading; hue belongs to the rule and the deck. */
 .sheet-heading.writes {
-  color: var(--warn);
-  border-top-color: var(--warn-edge);
+  border-top-color: var(--warn);
 }
 
 .sheet-heading.writes + .sheet-heading-note {
@@ -569,8 +573,19 @@ body {
   color: var(--warn);
 }
 
+/* ⚠️ Bigger and heavier, not only redder — and it sits ABOVE its button, so it also
+   needs the space that says it belongs to what follows rather than to what precedes.
+   Red is the dimmest ink in this palette (6.5:1 on --bg, against 14.5:1 for a
+   heading), so carrying severity in hue alone put the most consequential sentence on
+   the page at the BOTTOM of its own contrast ranking — quieter than every throwaway
+   grey line around it. Weight and size are the two channels that survive both that
+   and daylight through a visor. */
 .action-note.no-undo {
   color: var(--bad);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 0.9rem 0.3rem 0.25rem;
 }
 
 /* The fold in front of the irreversible actions.
@@ -595,12 +610,32 @@ body {
   width: 100%;
   text-align: left;
   font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.4;
   color: var(--bad);
+  /* Solid, not dashed. Dashed was reached for to say "there is something behind
+     this", but a dashed edge means placeholder / empty state / drop target in every
+     UI vocabulary there is, and it was the only dashed thing on the page — so the one
+     control gating `31 FC` read as the component nobody had finished. What keeps it
+     from reading as a fourth button to press is that it has no fill and red type
+     where an action has a filled tile and near-white type. */
   background: transparent;
-  border: 1px dashed var(--bad-edge);
+  border: 1px solid var(--bad-edge);
   border-radius: 0.8rem;
-  padding: 1rem;
+  padding: 0.9rem 1rem;
   margin-top: 1.5rem;
+}
+
+/* The second line of the fold's label: what is actually in the drawer. The first line
+   says why it is shut, which is the more important fact and keeps the lead — but
+   "3 actions that cannot be undone" is a caveat used as a name, and somebody standing
+   at the bike who wants the clock should not have to open it to find out the clock is
+   in there. */
+.risk-fold-contents {
+  display: block;
+  margin-top: 0.2rem;
+  font-weight: 400;
+  color: var(--label);
 }
 
 /* One action and the prose that belongs to it. The gap between two of these is
@@ -622,9 +657,15 @@ body {
  * opened. */
 .danger-zone {
   margin-top: 0.5rem;
-  /* The heading after this one is "Recently written", and without the gap the
-     journal reads as a fourth paragraph of the clear-codes card. */
-  margin-bottom: 1rem;
+  /* ⚠️ A closing rule, because an opened group with no bottom edge is not a group —
+     it bled straight into "Recently written", and the gap that ended it was
+     indistinguishable from the gap between its own members, so scrolling past the
+     toggle left three red buttons as orphans. The fold row is the opening edge and
+     this is the closing one; neither touches the left edge, which is what kept the
+     first attempt (a left rail plus an indent) ragged on one side. */
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--bad-edge);
+  margin-bottom: 0.5rem;
 }
 
 .sheet-close {

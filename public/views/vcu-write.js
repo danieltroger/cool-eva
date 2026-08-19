@@ -768,10 +768,14 @@ function IrreversibleActions() {
       // used to grow a "hide the" in front of itself, which changed the width and the
       // grammar of the one control standing between a thumb and Mode 04, so the eye
       // had to re-find it after every tap. And no glyph: 🚨 at this size is an
-      // anonymous red blob, and the row is already red, dashed and full width.
+      // anonymous red blob, and the row is already red and full width.
       () =>
         `${IRREVERSIBLE_COUNT} action${IRREVERSIBLE_COUNT === 1 ? "" : "s"} that cannot be undone  ` +
-        `${dangerOpen.val ? "▴" : "▾"}`
+        `${dangerOpen.val ? "▴" : "▾"}`,
+      // The contents, under the caveat rather than instead of it. Somebody at the bike
+      // who came for the clock should not have to open the drawer to learn the clock
+      // is in it — but why it is shut is still the first thing worth reading.
+      span({ class: "risk-fold-contents" }, IRREVERSIBLE_NAMES.join("  ·  "))
     ),
     () => (dangerOpen.val ? div({ class: "danger-zone" }, ...IRREVERSIBLE.map(render => render())) : div())
   );
@@ -812,6 +816,25 @@ const IRREVERSIBLE = [
 const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
 
 /**
+ * Short names for the fold's second line, in the order the buttons appear.
+ *
+ * ⚠️ Kept next to `IRREVERSIBLE` and asserted to be the same length below, because a
+ * list of contents that has drifted from the contents is worse than no list: it would
+ * be a drawer promising three things and holding a fourth, on the one drawer in this
+ * sheet where that matters.
+ */
+const IRREVERSIBLE_NAMES = ["Service stamp", "Bike clock", "Clear codes"];
+
+if (IRREVERSIBLE_NAMES.length !== IRREVERSIBLE_COUNT) {
+  // Loud rather than silent: this is a claim about what is behind a fold that hides
+  // `31 FC` and Mode 04, and a wrong one should not reach a bike.
+  console.warn(
+    `vcu-write: the fold names ${IRREVERSIBLE_NAMES.length} actions but holds ${IRREVERSIBLE_COUNT} — ` +
+      "IRREVERSIBLE_NAMES and IRREVERSIBLE have drifted apart"
+  );
+}
+
+/**
  * The clock sync, which needs its own button because its confirmation is a question
  * about a fact rather than about an intention.
  *
@@ -820,9 +843,23 @@ const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
  * the two taps are not just two taps: the second one asserts that the time shown in
  * the first is still true.
  */
+/**
+ * ⚠️ Starts with the same shouted token as the other two, on purpose: the red line is
+ * one slot in three cards, and a slot that holds a token on two of them and a sentence
+ * on the third is not a slot. What comes AFTER the dash is where this one differs, and
+ * it differs in the direction that matters — you can set the clock again, but nothing
+ * can tell you what it held before or that this landed at all.
+ */
+const CLOCK_NO_UNDO = "IRREVERSIBLE, AND UNCHECKABLE — the bike's clock cannot be read back.";
+
 function ClockAction() {
   return div(
     { class: "action-block" },
+    // Above the button, for the reason ActionButton sets out: on a phone the thumb
+    // arrives before the eye does. Shown only when the button can actually do
+    // something — a Pi whose clock is not fit to copy has a disabled button and
+    // nothing that cannot be undone, and its own red line is below instead.
+    () => (state.val?.status.clock.trustworthy === true ? div({ class: "action-note no-undo" }, CLOCK_NO_UNDO) : div()),
     button(
       {
         class: "action irreversible",
@@ -876,14 +913,8 @@ function ClockAction() {
           ...clock.reasons.map(reason => div({ class: "action-note", style: `color:${MUTED}` }, `· ${reason}`))
         );
       }
+      // No `noUndo` here — it is rendered above the button, where the thumb passes it.
       return NoteBlock({
-        // ⚠️ Starts with the same shouted token as the other two, on purpose: the red
-        // line is one slot in three cards, and a slot that holds a token on two of
-        // them and a sentence on the third is not a slot. What comes AFTER the dash is
-        // where this one differs, and it differs in the direction that matters — you
-        // can set the clock again, but nothing can tell you what it held before or
-        // that this landed at all.
-        noUndo: "IRREVERSIBLE, AND UNCHECKABLE — the bike's clock cannot be read back.",
         does:
           `Checked against satellite time (${clock.offsetFromGpsSeconds.toFixed(1)} s apart). ` +
           "The bike's clock is what the service point stamps.",
@@ -932,6 +963,13 @@ function ActionButton(action, caption, notes) {
     // as to the one it is about, which on this list is a sentence attached to the
     // wrong irreversible action.
     { class: "action-block" },
+    // ⚠️ ABOVE the button, not under it. On a phone, reading order IS tap order: with
+    // the consequence underneath, the thumb reaches a 55 px target before the eye
+    // reaches the sentence saying the target cannot be undone. The one line that could
+    // stop somebody has to be crossed on the way to the control, not found after it.
+    // Everything that is not a consequence — what it does, what to check first — stays
+    // below, where it is read once you have decided to look properly.
+    NoUndoLine(notes),
     button(
       {
         class: `action${irreversible ? " irreversible" : ""}`,
@@ -959,22 +997,36 @@ function ActionButton(action, caption, notes) {
 }
 
 /**
- * The prose under one control, in the order it is worth reading.
+ * The one line that has to be read before the button underneath it is pressed.
  *
- * The no-undo line LEADS rather than following. Inside an opened fold every button is
- * irreversible, so what separates them is precisely what each one cannot take back —
- * "there is no unset", "the freeze frame goes with the codes", "nothing can confirm
- * this landed" — and that is the line a rider needs first, not third.
+ * ⚠️ Bigger and heavier than the other two kinds of note, not just redder. Red is the
+ * dimmest ink this palette has — #f87171 measures 6.5:1 on the sheet where a heading
+ * measures 14.5:1 — so a page that carries severity in hue alone puts its most
+ * consequential sentence at the BOTTOM of its own contrast ranking, under every
+ * throwaway grey line on the screen. Weight and size are the channels that survive
+ * that, and they are also the two that survive daylight through a visor.
+ *
+ * No glyph: at this size 🚨 renders as an anonymous red smudge, and the line is
+ * already red and already begins with the word IRREVERSIBLE.
+ *
+ * @param {ActionNotes} notes
+ */
+function NoUndoLine(notes) {
+  return notes.noUndo === undefined ? div() : div({ class: "action-note no-undo" }, notes.noUndo);
+}
+
+/**
+ * What it does, and why you might not want to — the two that belong AFTER the control.
+ *
+ * Neither is a consequence. `does` is how you confirm you are on the right button and
+ * `caution` is the argument against pressing it, and both are read at leisure by
+ * somebody who has already decided to look properly. The consequence went above the
+ * button; see NoUndoLine.
  *
  * @param {ActionNotes} notes
  */
 function NoteBlock(notes) {
   return div(
-    // No glyph in front of the red line, unlike the amber one's ⚠️. At 0.72rem 🚨
-    // renders as an unreadable red smudge, and it would be leading a line that is
-    // already red and already starts with the word IRREVERSIBLE. The fold's label
-    // keeps its 🚨, where it is the only red thing on screen and has work to do.
-    notes.noUndo === undefined ? div() : div({ class: "action-note no-undo" }, notes.noUndo),
     div({ class: "action-note" }, notes.does),
     notes.caution === undefined ? div() : div({ class: "action-note caution" }, notes.caution)
   );

@@ -71,11 +71,12 @@ export function Sheet() {
       // because it is the only control here that causes traffic on the bike's bus
       // — worth a heading of its own rather than a third entry under "Actions".
       div({ class: "sheet-heading" }, "Service mode"),
-      // Not "nothing here can change it": ServiceMode() renders the write section
-      // at its end, under an amber heading of its own. What this line promises is
-      // true of everything down to that heading, and it also says the heading is
-      // coming — which is the wayfinding a sheet this long needs.
-      div({ class: "sheet-heading-note" }, "Reads the bike. The section that can change it is further down."),
+      // ⚠️ It used to end "…the section that can change it is further down", which was
+      // prose apologising for the layout — if a sentence has to tell you where the
+      // other section is, the boundary is not doing its job. The boundary now does it:
+      // the write section has a rule in the one colour nothing else on this sheet uses
+      // for a rule, and states its own risk under its own heading.
+      div({ class: "sheet-heading-note" }, "Reads the bike. Nothing in this part changes it."),
       ServiceMode(),
       div({ class: "sheet-heading" }, "Stored codes"),
       TroubleCodes(),
