@@ -23,7 +23,7 @@
 // Ground truth used throughout is `0x615` b2 > 0 for DC (this frame's own current, below)
 // and 0x305 mains current > 0.5 A for AC, both of which are unambiguous.
 
-import { type DecodedValue } from "./frame.ts";
+import { bit, type DecodedValue } from "./frame.ts";
 
 /** 0x605 — vehicle → BMS. Carries the charge type and the leak-detection inhibit. */
 export const CHARGE_BMS_COMMAND_CAN_ID = 0x605;
@@ -132,19 +132,30 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     // 00 in 100.000 % of 47 642 frames, so three bytes carry everything.
     case CHARGE_TELEMETRY_CAN_ID: {
       if (data.length < 8) return [];
-      return [
-        // 🟡 b0 + 242.5 = pack voltage, 1 V/count. See PACK_VOLTAGE_OFFSET above for how the
-        // offset was fixed. 98.87 % of 47 613 frames land within 1.5 V of 0x200's pack_v.
-        //
-        // Logged despite pack_v already existing at 0.1 V from the BMS, because it is a
-        // SECOND witness on a different ECU: the two agreeing is what says the charge manager
-        // and the BMS are looking at the same pack. It must not be preferred over pack_v for
-        // anything numeric — it is coarser and carries an offset that is only good to ±0.5 V.
-        //
-        // Whether it is pack-side or charger-side voltage is still open and probably
-        // unanswerable from this port: a cable drop at 60 A is ~2 V, which is inside the
-        // quantisation. Nothing here should assume either.
-        { key: "charge_manager_pack_v", value: data[0] + PACK_VOLTAGE_OFFSET },
+      const values: DecodedValue[] = [];
+      // b0 = 0 would decode to 242.5 V, which is a believable reading for this pack and sails
+      // straight through bounds.js's "V" band — a phantom that is far harder to spot later
+      // than an obviously silly number. It has never happened: b0 spans 28…94 over all 47 632
+      // frames of the corpus and is never 0, including through the ~3 s DC handshake before
+      // any current flows. So this guard should be dead code, and it is here because the one
+      // way to find out that it is not would otherwise be a plausible voltage in the log.
+      if (data[0] !== 0) {
+        values.push(
+          // 🟡 b0 + 242.5 = pack voltage, 1 V/count. See PACK_VOLTAGE_OFFSET above for how the
+          // offset was fixed. 98.87 % of 47 613 frames land within 1.5 V of 0x200's pack_v.
+          //
+          // Logged despite pack_v already existing at 0.1 V from the BMS, because it is a
+          // SECOND witness on a different ECU: the two agreeing is what says the charge manager
+          // and the BMS are looking at the same pack. It must not be preferred over pack_v for
+          // anything numeric — it is coarser and carries an offset that is only good to ±0.5 V.
+          //
+          // Whether it is pack-side or charger-side voltage is still open and probably
+          // unanswerable from this port: a cable drop at 60 A is ~2 V, which is inside the
+          // quantisation. Nothing here should assume either.
+          { key: "charge_manager_pack_v", value: data[0] + PACK_VOLTAGE_OFFSET }
+        );
+      }
+      values.push(
         // ✅ b2 = DC charge current in amps, 1 A/count. Zero in 100.000 % of the 36 679 AC
         // frames — no leakage at all, which is what makes it a DC-specific measurement rather
         // than a general charge current — and on DC it tracks 0x200's pack current with
@@ -156,7 +167,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // This is the only DC charge current on the bus. 0x305/0x306 do not exist during a DC
         // session at all, and 0x10A b7 reads 0, so every "am I charging" test built on the AC
         // charger's frames silently says no at a fast charger.
-        { key: "dc_charge_a", value: data[2] },
+        { key: "fast_dc_a", value: data[2] },
         // ✅ b3 = state of charge in %. Equal to 0x200's SOC in 99.372 % of the 42 979 frames
         // from 2026-08-02 20:48 onward.
         //
@@ -167,8 +178,9 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // carrying it and nothing matched (0x10A b2 matches in one session and 53 % overall,
         // i.e. by coincidence). Kept under its own key rather than folded into `soc` for
         // exactly this reason: two SOC estimates that can disagree must stay separable.
-        { key: "charge_manager_soc", value: data[3] },
-      ];
+        { key: "charge_manager_soc", value: data[3] }
+      );
+      return values;
     }
 
     // 0x620 — the current ceilings. One byte per charge path, and each is 0 while the other
@@ -192,7 +204,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // is what the vehicle currently advertises, which is not the same thing as what the
         // rider asked for. (Whoever is chasing the rider-set limit: this byte is downstream of
         // that setting, and 0x625 b2 below is the fixed ceiling it cannot exceed.)
-        { key: "dc_charge_limit_a", value: data[0] },
+        { key: "fast_dc_limit_a", value: data[0] },
         // ✅ b1 = the AC current ceiling in amps. NEW — CAN_MAP.md records this byte as
         // "static 00" because the only session it had was a DC one, where it is.
         //
@@ -207,7 +219,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // maximum, which is ~14.3 A. Supply-side (cable or EVSE pilot rating) is the natural
         // reading and 8/10/13 A are all standard ratings, but this bike has only ever been
         // plugged into a handful of outlets, so that is inference, not measurement.
-        { key: "ac_charge_limit_a", value: data[1] },
+        { key: "ac_supply_limit_a", value: data[1] },
       ];
     }
 
@@ -219,6 +231,16 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     // in the corpus lines up with.
     case CHARGE_CONFIG_CAN_ID: {
       if (data.length < 8) return [];
+      // Refuse a frame that does not carry this frame's own invariants. b1 = 0x01 and
+      // b3 = 0xFF hold in 100.000 % of 44 262 frames, and checking them costs nothing —
+      // whereas trusting b4 blindly is actively dangerous, because b4's DC bit is read
+      // INVERTED. An all-zero payload has bit 5 clear and would decode to "DC charging";
+      // an all-ones payload has bit 2 set and would decode to "AC charging". Those are
+      // precisely the two shapes check-can-decoders.ts calls out as what a dead or
+      // disconnected sender produces, and because both keys are legitimately 0/1,
+      // bounds.js cannot reject either — a false charge claim would reach the log and the
+      // dashboard looking like an ordinary flag. This turns both back into "no reading".
+      if (data[1] !== 0x01 || data[3] !== 0xff) return [];
       const flags = data[4];
       return [
         // ✅ b2 = the configured maximum DC charge current, 75 A. Static in 100.000 % of
@@ -227,7 +249,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // constant, and the anchor that every other current-like byte here is calibrated
         // against. Logged because it is the ceiling every other DC limit is measured against;
         // if it ever moves, something changed the VCU parameter.
-        { key: "dc_charge_limit_max_a", value: data[2] },
+        { key: "fast_dc_limit_max_a", value: data[2] },
         // ✅ b4 = charge-active flags. Two bits are established, each against the mode ground
         // truth described at the top of this file:
         //
@@ -241,8 +263,8 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // These are "current is flowing", not "a session exists" — through the 155 s aborted
         // DC attempt of 2026-08-09 14:42 b4 stays 0x32 while 0x605 b2 says DC and 0x610 says
         // the session is established. That is the right split, and it is why both are logged.
-        { key: "dc_charging", value: flags & 0x20 ? 0 : 1 },
-        { key: "ac_charging", value: flags & 0x04 ? 1 : 0 },
+        { key: "dc_charging", value: bit(flags, 5) ? 0 : 1 },
+        { key: "ac_charging", value: bit(flags, 2) },
       ];
     }
 
