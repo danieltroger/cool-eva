@@ -215,11 +215,29 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
     broadcastTo([ws], { type: "snapshot", ts: Date.now(), signals: snapshot() });
   });
 
-  // The same hazard one layer out: a handshake that fails before there is a connection
-  // to attach the listener above to is emitted here instead, and would throw just the
-  // same.
+  // The same hazard one layer out — but NOT for the reason it is tempting to assume.
+  //
+  // With `options.server`, ws 8.20.0 forwards the http server's own `error` straight to
+  // this emitter: `addListeners(this._server, { …, error: this.emit.bind(this, "error"),
+  // … })`, websocket-server.js:116-125. So what arrives here is not a failed handshake —
+  // handshake faults are answered with an HTTP response and never reach an emitter — it
+  // is whatever goes wrong with the listener itself. In practice, the bind failing.
+  //
+  // Which makes this listener's default answer the wrong one, and dangerously so: index.ts
+  // calls setupWs() BEFORE server.listen(), so EADDRINUSE lands here, and merely logging it
+  // leaves the process alive with nothing bound. systemd restarts a failed unit; it does
+  // not restart a running one that happens to serve nothing. The dashboard would be dead
+  // and everything that reports on it — the unit's state, the exit code — would say fine.
+  //
+  // So: not listening means not a service. Rethrown rather than exited, because an
+  // uncaught exception prints the whole error and exits 1 — exactly what this did before
+  // the listener existed — while process.exit() would abandon whatever stdio is still
+  // queued, which on a journald pipe is the message saying why (see scripts/run-checks.ts).
   wss.on("error", (error: Error) => {
-    console.log(`ws: server error: ${error.message}`);
+    if (!server.listening) {
+      throw error;
+    }
+    console.log(`ws: server error after binding, carrying on: ${error.message}`);
   });
 
   // Push only what changed, the moment it changes.

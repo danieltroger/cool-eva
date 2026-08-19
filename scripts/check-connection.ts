@@ -28,9 +28,9 @@ import type { LiveValue } from "../src/can/signals.ts";
 // here against a stand-in socket, a fake clock and a fake `document.hidden`: no jsdom,
 // no headless browser, no dependency, no bike.
 //
-// §9 is the exception and says so at its own head: it binds an ephemeral loopback port,
-// because "a client cannot kill the service" is the one claim here that a stand-in
-// cannot make.
+// §9 and §10 are the exceptions and say so at their own heads: they bind ephemeral
+// loopback ports, because "a client cannot kill the service" and "a service that cannot
+// bind does not pretend to be up" are the two claims here that a stand-in cannot make.
 //
 // ## What this is guarding
 //
@@ -83,6 +83,11 @@ import type { LiveValue } from "../src/can/signals.ts";
 // reports a protocol violation as an `error` event, and an EventEmitter with no `error`
 // listener throws — which on this service is the CAN reader and the ride-log sealing,
 // not just one dropped client.
+//
+// **But a service that cannot bind must still die.** §10 is the other edge of the same
+// listener: an error before the bind is fatal, an error after it is logged and survived.
+// Getting that backwards leaves the process up with nothing listening, which is the one
+// state that looks healthy to systemd and serves nobody.
 
 let failures = 0;
 
@@ -92,6 +97,46 @@ function check(what: string, condition: boolean) {
   } else {
     console.error(`  ✗ ${what}`);
     failures += 1;
+  }
+}
+
+/**
+ * Runs a block that needs to observe uncaught exceptions, and guarantees it lets go
+ * again — of the recorder and of every socket it opened.
+ *
+ * §9 and §10 both have to catch a throw that Node would otherwise turn into a dead
+ * process, which means installing a process-wide net. While that net is up it also
+ * catches failures in the CHECK, and an absorbed failure is worse than a loud one: the
+ * assertions stop half-made and the run hangs on the sockets nobody closed, until
+ * run-checks.ts kills it two minutes later with "no verdict". Two mutations landed
+ * exactly there before this existed.
+ *
+ * So a synchronous throw inside `body` is reported as the failed assertion it is, and
+ * `cleanup` runs either way.
+ *
+ * @param section named in the failure, so a red run says which block gave up
+ * @param body receives the exceptions seen so far and a place to register teardown
+ */
+async function watchingForCrashes(
+  section: string,
+  body: (uncaught: (Error & { code?: string })[], cleanup: (undo: () => void) => void) => Promise<void>
+): Promise<void> {
+  const uncaught: (Error & { code?: string })[] = [];
+  const note = (error: Error) => uncaught.push(error);
+  const teardown: (() => void)[] = [];
+  process.on("uncaughtException", note);
+  try {
+    await body(uncaught, undo => teardown.push(undo));
+  } catch (error) {
+    check(
+      `${section} threw partway through, so its later assertions were never made: ${(error as Error).message}`,
+      false
+    );
+  } finally {
+    process.off("uncaughtException", note);
+    for (const undo of teardown.reverse()) {
+      undo();
+    }
   }
 }
 
@@ -981,22 +1026,15 @@ console.log("\n8. the view rules across a dropout");
 
 console.log("\n9. what a client on the bike's wifi can do to the service");
 
-{
-  // A recorder rather than a guard. Node's default for an uncaught exception is to end
-  // the process, which would make this check report a stack trace instead of a verdict;
-  // with this listener the exception is CAUGHT AND ASSERTED ON below, and its message is
-  // printed, so nothing is hidden — the check simply survives long enough to say what
-  // happened. Removed again at the end of the block.
-  const uncaught: Error[] = [];
-  const noteUncaught = (error: Error) => uncaught.push(error);
-  process.on("uncaughtException", noteUncaught);
-
+await watchingForCrashes("§9", async (uncaught, cleanup) => {
   const settle = () => new Promise<void>(resolve => setTimeout(resolve, 100));
 
   const server = createServer();
+  cleanup(() => server.close());
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   const port = (server.address() as AddressInfo).port;
   const handle = setupWs(server);
+  cleanup(() => handle.stop());
 
   const snapshotFrom = (client: WsClient) =>
     new Promise<string>((resolve, reject) => {
@@ -1005,6 +1043,10 @@ console.log("\n9. what a client on the bike's wifi can do to the service");
     });
 
   const hostile = new WsClient(`ws://127.0.0.1:${port}`);
+  // terminate(), not close(): close() is a handshake the other end has to answer, so
+  // server.close() would only complete when the assertions passed — a teardown that
+  // works on the happy path alone is a check that hangs instead of failing.
+  cleanup(() => hostile.terminate());
   const greeting = await snapshotFrom(hostile);
   check("a client is answered with a snapshot", JSON.parse(greeting).type === "snapshot");
 
@@ -1044,6 +1086,7 @@ console.log("\n9. what a client on the bike's wifi can do to the service");
   // handshake by hand, then FIN + RSV1 + text, masked, one byte of payload. RSV1 is only
   // legal under a negotiated extension and this handshake asks for none.
   const raw = net.connect(port, "127.0.0.1");
+  cleanup(() => raw.destroy());
   const rawErrors: Error[] = [];
   raw.on("error", error => rawErrors.push(error));
   await new Promise<void>(resolve => raw.once("connect", () => resolve()));
@@ -1062,17 +1105,9 @@ console.log("\n9. what a client on the bike's wifi can do to the service");
   // The property all of that is in aid of: somebody else's bad frame must not cost the
   // rider their dashboard.
   const rider = new WsClient(`ws://127.0.0.1:${port}`);
+  cleanup(() => rider.terminate());
   const afterwards = await snapshotFrom(rider);
   check("...and the next client is served exactly as before", JSON.parse(afterwards).type === "snapshot");
-
-  // NOT pinned here, and deliberately not faked into looking pinned: setupWs()'s
-  // `wss.on("error")`. With an external http.Server — which is how this service runs —
-  // `ws` reports connection-level faults on the connection, and the server-level event
-  // is left for faults in a listener `ws` owns itself. There is no handshake this check
-  // can send that reaches it, and the only way to make an assertion go green would be
-  // to expose the WebSocketServer purely so a test could emit on it, which is inventing
-  // an API to pin a spelling. It stays as cheap insurance against a `ws` version that
-  // routes something new that way, and it stays unpinned, said out loud.
 
   check(
     uncaught.length === 0
@@ -1080,19 +1115,75 @@ console.log("\n9. what a client on the bike's wifi can do to the service");
       : `a client killed the service: ${uncaught[0].message}`,
     uncaught.length === 0
   );
+});
 
-  // terminate(), not close(): server.close() waits for every connection to end, and a
-  // polite close is a handshake the other end has to answer. `hostile` in particular may
-  // still be open — if the payload cap is ever removed, nothing closed it — and a
-  // teardown that only completes when the assertions passed is a check that hangs
-  // instead of failing. That is what this did on the first run of the cap mutation.
-  hostile.terminate();
-  rider.terminate();
-  raw.destroy();
-  handle.stop();
-  await new Promise<void>(resolve => server.close(() => resolve()));
-  process.off("uncaughtException", noteUncaught);
-}
+// --- 10. The server-level fault, which is not the one it looks like ---------
+//
+// This section exists because the disclosure that used to stand in its place was wrong,
+// and wrong in the way that matters: it rested on a claim about `ws` that nobody had
+// checked against `ws`. The claim was that the server-level `error` is reserved for a
+// listener `ws` owns itself, so no external-server deployment could reach it. What ws
+// 8.20.0 actually does, in the `options.server` branch this service takes, is
+// `addListeners(this._server, { …, error: this.emit.bind(this, "error"), … })`
+// (websocket-server.js:116-125) — the http server's `error` is forwarded straight here.
+//
+// The way in was never a handshake, which is why looking for a handshake found nothing.
+// It is the bind failing. index.ts calls setupWs() before server.listen(), so EADDRINUSE
+// arrives at that listener, and a listener that merely logs it leaves the process alive
+// with nothing bound: the dashboard dead, and systemd — which restarts a failed unit and
+// not a running one — told everything is fine.
+//
+// Both branches are pinned below, because the two failures are opposite. Logging a bind
+// failure is the regression above. Rethrowing an error that arrived on a listener which
+// is up would be the opposite one, and having no listener at all is that same failure by
+// omission.
+
+console.log("\n10. a server-level fault: fatal before the bind, survivable after it");
+
+await watchingForCrashes("§10", async (uncaught, cleanup) => {
+  const settle = () => new Promise<void>(resolve => setTimeout(resolve, 100));
+
+  // After the bind: logged and survived. Provoked by emitting on the http server, which
+  // is the same door the runtime uses — `ws` forwards it — rather than by reaching into
+  // setupWs() for the WebSocketServer.
+  const bound = createServer();
+  cleanup(() => bound.close());
+  await new Promise<void>(resolve => bound.listen(0, "127.0.0.1", () => resolve()));
+  const boundPort = (bound.address() as AddressInfo).port;
+  const boundHandle = setupWs(bound);
+  cleanup(() => boundHandle.stop());
+
+  bound.emit("error", new Error("provoked by check-connection.ts §10"));
+  await settle();
+  check("a server error arriving after the bind is survived", uncaught.length === 0);
+
+  const client = new WsClient(`ws://127.0.0.1:${boundPort}`);
+  cleanup(() => client.terminate());
+  const greeting = await new Promise<string>((resolve, reject) => {
+    client.once("message", data => resolve(String(data)));
+    client.once("error", reject);
+  });
+  check("...and the dashboard is still served after it", JSON.parse(greeting).type === "snapshot");
+
+  // Before the bind: fatal. A real EADDRINUSE against a port this process is already
+  // holding — which is the restart race, one cool-eva still shutting down while the next
+  // one comes up.
+  const squatter = createServer();
+  cleanup(() => squatter.close());
+  await new Promise<void>(resolve => squatter.listen(0, "127.0.0.1", () => resolve()));
+  const takenPort = (squatter.address() as AddressInfo).port;
+
+  const doomed = createServer();
+  cleanup(() => doomed.close());
+  const doomedHandle = setupWs(doomed);
+  cleanup(() => doomedHandle.stop());
+  doomed.listen(takenPort, "127.0.0.1");
+  await settle();
+
+  check("a bind that fails is fatal rather than logged", uncaught.length === 1);
+  check("...carrying the reason with it", uncaught[0]?.code === "EADDRINUSE");
+  check("...and it is fatal precisely because nothing is bound", doomed.listening === false);
+});
 
 console.log("");
 if (failures > 0) {

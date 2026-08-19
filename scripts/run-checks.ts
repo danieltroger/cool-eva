@@ -169,8 +169,9 @@ const CHECKS: SelfCheck[] = [
       "brightness — while the view rules hold their edges across the same gap, so a dropout during a DC charge " +
       "cannot throw the rider off the Charge tab and back — and that the Pi skips a client past the backlog cap " +
       "and hangs up on one still past it a heartbeat later, with the cap still holding several full snapshots — " +
-      "and, against a real server on a loopback port, that neither an oversized frame nor a malformed one can end " +
-      "the process, which is what a missing `error` listener would turn a rejected frame into",
+      "and, against real servers on loopback ports, that neither an oversized frame nor a malformed one can end " +
+      "the process — which is what a missing `error` listener turns a rejected frame into — while a bind that " +
+      "FAILS still does end it, rather than leaving a live process with nothing listening for systemd to call healthy",
   },
   {
     script: "scripts/check-freeze-frame.ts",
