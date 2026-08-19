@@ -2,6 +2,7 @@ import { SIGNALS } from "../src/can/registry.ts";
 import {
   DOUBLE_CLICK_WINDOW_MS,
   DoubleClickDetector,
+  IMPLAUSIBLE_HOLD_MS,
   LONG_PRESS_MS,
   LongPressDetector,
   NEXT_TAB_BUTTON,
@@ -18,10 +19,21 @@ import {
 // sequence can be replayed here at all, and why the thresholds can be argued about
 // against measured durations rather than against a feel.
 //
+// ## What a "sample" is here
+//
+// One WebSocket message. The detectors are driven by messages arriving, and each
+// carries the SERVER's timestamp — not the phone's — so every `at` below is the Pi's
+// clock. That distinction is the whole point of the design and half of what this file
+// exists to hold in place; see the note at the top of public/lib/gestures.js.
+//
+// It also means a stalled link is representable, and is tested: a stall is simply a
+// gap with no samples in it. The detector cannot see wall-clock time passing on the
+// phone, because it is never given it.
+//
 // ## What this is really guarding
 //
-// Not "does a double click work". That is the easy half. Both of these gestures sit on
-// buttons with primary vehicle functions — `btn_cruise_set` sets the cruise speed,
+// Not "does a double click work". That is the easy half. Both gestures sit on buttons
+// with primary vehicle functions — `btn_cruise_set` sets the cruise speed,
 // `btn_indicator_cancel` cancels the turn signal — and the failure that matters is a
 // gesture firing on an ORDINARY press of one of them. So most of the cases below are
 // real durations measured off this bike's own bus that must NOT be recognised:
@@ -29,6 +41,10 @@ import {
 //   • 140 ms — the median handlebar press across 14 candump captures, and since
 //     indicator-cancel is 63 of the ~70 presses in that corpus, effectively the median
 //     cancel tap.
+//   • 120–260 ms — the MODE buttons and `btn_set_back`, confirmed 2026-08-19 by
+//     instructed presses, 8/8 each, as clean momentary 0→1→0 pulses. An independent
+//     measurement of what an ordinary deliberate handlebar press looks like, and it
+//     agrees with the corpus median.
 //   • 920 ms — the longest ordinary press ever recorded on any handlebar button
 //     (`btn_cruise_enable`, 2026-08-04 19:45:47.924). The long-press threshold has to
 //     clear this, or a rider who leans on a button saves a waypoint by accident.
@@ -43,11 +59,28 @@ import {
 
 const failures: string[] = [];
 
-/** One reading of a button, at a monotonic time in ms. */
+/** One WebSocket message: the button's value, at the SERVER's timestamp in ms. */
 interface Sample {
   at: number;
   /** The button bit, or null for "this signal has never arrived". */
   value: number | null;
+}
+
+/**
+ * Filler messages carrying an unchanged button value while the server clock advances.
+ *
+ * This is what the link actually delivers during a hold: patches carry only what
+ * CHANGED, so the button's own signal sits still while everything else on the bus keeps
+ * moving. 200 ms apart because that is the measured rate — replaying the 90 s parked
+ * capture in obd-garage/captures through the real decoders and the registry's real
+ * deadbands gives 5.3 Hz, median gap 136 ms.
+ */
+function traffic(from: number, to: number, value: number | null, everyMs = 200): Sample[] {
+  const out: Sample[] = [];
+  for (let at = from; at <= to; at += everyMs) {
+    out.push({ at, value });
+  }
+  return out;
 }
 
 // ── 1. Long press: btn_indicator_cancel → save a waypoint ────────────────────────
@@ -55,110 +88,143 @@ interface Sample {
 interface LongPressCase {
   what: string;
   samples: Sample[];
-  /** Monotonic times at which the gesture must fire — usually none. */
+  /** Server timestamps at which the gesture must fire — usually none. */
   firesAt: number[];
+  /** Whether the button was still down at each fire. Only checked when it fires. */
+  stillHeldAtFire?: boolean;
 }
 
 const LONG_PRESS_CASES: LongPressCase[] = [
   {
     what: "the median 140 ms cancel tap — the single most common press on this bike",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 1000, value: 1 },
-      { at: 1140, value: 0 },
-      { at: 5000, value: 0 },
-    ],
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, { at: 1140, value: 0 }, ...traffic(1200, 5000, 0)],
     firesAt: [],
   },
   {
     what: "a 30 ms tap, the shortest press in the corpus",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 130, value: 0 },
-      { at: 5000, value: 0 },
-    ],
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, { at: 1030, value: 0 }, ...traffic(1200, 3000, 0)],
+    firesAt: [],
+  },
+  {
+    what: "260 ms — the longest MODE-button pulse confirmed by instructed press, 2026-08-19",
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, { at: 1260, value: 0 }, ...traffic(1400, 3000, 0)],
     firesAt: [],
   },
   {
     what: "920 ms — the longest ordinary press recorded on any handlebar button",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 1020, value: 0 },
-      { at: 5000, value: 0 },
-    ],
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, ...traffic(1200, 1800, 1), { at: 1920, value: 0 }],
     firesAt: [],
   },
   {
     what: "1199 ms, one millisecond short of the threshold",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 1299, value: 0 },
-      { at: 5000, value: 0 },
-    ],
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, ...traffic(1200, 2000, 1), { at: 2199, value: 0 }],
     firesAt: [],
   },
   {
-    what: "a deliberate hold — fires at the threshold, while the thumb is still down",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 2000, value: 0 },
-    ],
-    // 100 + LONG_PRESS_MS, and strictly before the release at 2000: the rider must be
-    // told it worked without having to let go to find out.
-    firesAt: [100 + LONG_PRESS_MS],
+    what: "a deliberate hold — fires at the threshold, with the thumb still down",
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, ...traffic(1200, 2400, 1), { at: 2500, value: 0 }],
+    firesAt: [1000 + LONG_PRESS_MS],
+    stillHeldAtFire: true,
   },
   {
-    what: "a 3 s hold — one waypoint, not one per second",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 3100, value: 0 },
-      { at: 6000, value: 0 },
-    ],
-    firesAt: [100 + LONG_PRESS_MS],
+    what: "a 3 s hold — one waypoint, not one per message",
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, ...traffic(1200, 4000, 1), { at: 4000, value: 0 }],
+    firesAt: [1000 + LONG_PRESS_MS],
+    stillHeldAtFire: true,
   },
   {
     what: "two separate holds — one waypoint each",
     samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 1500, value: 0 },
-      { at: 3000, value: 1 },
-      { at: 4500, value: 0 },
+      ...traffic(0, 800, 0),
+      { at: 1000, value: 1 },
+      ...traffic(1200, 2400, 1),
+      { at: 2500, value: 0 },
+      ...traffic(2600, 3800, 0),
+      { at: 4000, value: 1 },
+      ...traffic(4200, 5400, 1),
+      { at: 5500, value: 0 },
     ],
-    firesAt: [100 + LONG_PRESS_MS, 3000 + LONG_PRESS_MS],
+    firesAt: [1000 + LONG_PRESS_MS, 4000 + LONG_PRESS_MS],
+    stillHeldAtFire: true,
   },
   {
     what: "the page loading mid-press — a hold we never saw begin is not a gesture",
-    samples: [
-      { at: 0, value: 1 },
-      { at: 4000, value: 1 },
-      { at: 4200, value: 0 },
-    ],
+    samples: [{ at: 1000, value: 1 }, ...traffic(1200, 5000, 1), { at: 5200, value: 0 }],
     firesAt: [],
   },
   {
     what: "a signal that has never arrived, then a real hold once it does",
     samples: [
-      { at: 0, value: null },
-      { at: 500, value: null },
+      ...traffic(0, 800, null),
       { at: 1000, value: 0 },
       { at: 1100, value: 1 },
-      { at: 3000, value: 0 },
+      ...traffic(1300, 2500, 1),
+      { at: 2600, value: 0 },
     ],
     firesAt: [1100 + LONG_PRESS_MS],
+    stillHeldAtFire: true,
+  },
+  {
+    // ⚠️ THE REGRESSION THIS DESIGN EXISTS FOR. Raised in review of #74: a 140 ms tap
+    // whose release patch is held up 1.5 s by a garage hotspot used to be indistinguish-
+    // able from a 1.5 s hold, because the old detector was driven by a local timer and
+    // measured the gap between two messages ARRIVING. It saved a waypoint nobody asked
+    // for, into the sealed log.
+    //
+    // A stall is a gap with no samples: the phone hears nothing, so the server clock it
+    // is given does not advance. When the queued release finally lands it carries the
+    // time it really happened, 140 ms after the press, and the tap reads as a tap.
+    what: "a 140 ms tap whose release is delivered 1.5 s late — a stalled link is not a hold",
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, { at: 1140, value: 0 }, ...traffic(1300, 3000, 0)],
+    firesAt: [],
+  },
+  {
+    // The other side of the same coin: the link goes quiet DURING a genuine hold, so
+    // nothing proves the button is still down until the release arrives — and its
+    // timestamp says the press was 1400 ms. Late feedback for a gesture that was really
+    // made, which is much better than dropping it.
+    what: "a genuine 1400 ms hold across a quiet link — learned from the release, and still saved",
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, { at: 2400, value: 0 }, ...traffic(2600, 4000, 0)],
+    firesAt: [2400],
+    stillHeldAtFire: false,
+  },
+  {
+    what: "the GPS clock stepping an hour forward mid-hold — a clock jump is not a press",
+    samples: [
+      ...traffic(0, 800, 0),
+      { at: 1000, value: 1 },
+      { at: 1000 + 3_600_000, value: 1 },
+      { at: 1200 + 3_600_000, value: 1 },
+      { at: 1400 + 3_600_000, value: 0 },
+    ],
+    firesAt: [],
+  },
+  {
+    what: "the clock stepping backwards mid-hold",
+    samples: [...traffic(0, 800, 0), { at: 1000, value: 1 }, { at: 500, value: 1 }, { at: 700, value: 0 }],
+    firesAt: [],
   },
 ];
 
 for (const testCase of LONG_PRESS_CASES) {
-  const fired = replayLongPress(testCase.samples);
-  if (!sameNumbers(fired, testCase.firesAt)) {
+  const detector = new LongPressDetector();
+  const firedAt: number[] = [];
+  const firedWhileHeld: boolean[] = [];
+  for (const sample of testCase.samples) {
+    if (detector.observe(sample.value, sample.at)) {
+      firedAt.push(sample.at);
+      firedWhileHeld.push(sample.value === 1);
+    }
+  }
+  if (!sameNumbers(firedAt, testCase.firesAt)) {
     failures.push(
-      `long press, ${testCase.what}: fired at [${fired.join(", ")}] ms, expected [${testCase.firesAt.join(", ")}] ms`
+      `long press, ${testCase.what}: fired at [${firedAt.join(", ")}], expected [${testCase.firesAt.join(", ")}]`
+    );
+    continue;
+  }
+  if (testCase.stillHeldAtFire !== undefined && firedWhileHeld.some(held => held !== testCase.stillHeldAtFire)) {
+    failures.push(
+      `long press, ${testCase.what}: expected every fire to be ${testCase.stillHeldAtFire ? "while still held" : "on the release"}, got [${firedWhileHeld.join(", ")}]`
     );
   }
 }
@@ -208,12 +274,7 @@ const DOUBLE_CLICK_CASES: DoubleClickCase[] = [
   },
   {
     what: "the real 1794 ms cruise-set press, setting a cruise speed and nothing else",
-    samples: [
-      { at: 0, value: 0 },
-      { at: 100, value: 1 },
-      { at: 1894, value: 0 },
-      { at: 5000, value: 0 },
-    ],
+    samples: [{ at: 0, value: 0 }, { at: 100, value: 1 }, { at: 1894, value: 0 }, ...traffic(2000, 3000, 0)],
     switches: 0,
   },
   {
@@ -228,7 +289,11 @@ const DOUBLE_CLICK_CASES: DoubleClickCase[] = [
     switches: 0,
   },
   {
-    what: "two deliberate presses ~1 s apart, the gap press.js measures between separate presses",
+    // The mirror of the long-press stall case. Two presses a second apart, delivered
+    // back-to-back after the link unblocks, used to collapse into one double click when
+    // the gap was measured on arrival. Timed by the server's stamps they stay a second
+    // apart however they were delivered.
+    what: "two deliberate presses 1 s apart, delivered back-to-back after a stall",
     samples: [
       { at: 0, value: 0 },
       { at: 100, value: 1 },
@@ -278,11 +343,7 @@ const DOUBLE_CLICK_CASES: DoubleClickCase[] = [
   },
   {
     what: "a signal that has never arrived",
-    samples: [
-      { at: 0, value: null },
-      { at: 500, value: null },
-      { at: 1000, value: null },
-    ],
+    samples: traffic(0, 1000, null),
     switches: 0,
   },
 ];
@@ -311,6 +372,12 @@ const DELIBERATE_PRESS_GAP_MS = 1000;
 /** A gloved, vibrating double tap is roughly twice a bare-handed one's 150–300 ms. */
 const GLOVED_DOUBLE_TAP_MS = 500;
 
+/** src/ws.ts heartbeats a full snapshot this often, so a hold can be learned about this late. */
+const HEARTBEAT_MS = 5_000;
+
+/** The smallest step the GPS clock gate will ever make — DRIFT_THRESHOLD_SECONDS. */
+const SMALLEST_CLOCK_STEP_MS = 60_000;
+
 if (LONG_PRESS_MS <= LONGEST_ORDINARY_PRESS_MS) {
   failures.push(
     `LONG_PRESS_MS is ${LONG_PRESS_MS} ms, which does not clear the longest ordinary handlebar press ` +
@@ -327,6 +394,15 @@ if (DOUBLE_CLICK_WINDOW_MS <= GLOVED_DOUBLE_TAP_MS) {
   failures.push(
     `DOUBLE_CLICK_WINDOW_MS is ${DOUBLE_CLICK_WINDOW_MS} ms, inside the ~${GLOVED_DOUBLE_TAP_MS} ms a gloved ` +
       `double tap takes — the gesture would be unreachable with winter gloves on`
+  );
+}
+// The ceiling has to sit in the gap between "the slowest we can legitimately learn a
+// button is still down" and "the smallest jump the clock can make". If it ever leaves
+// that gap it either drops real holds or stops catching clock steps.
+if (IMPLAUSIBLE_HOLD_MS <= HEARTBEAT_MS || IMPLAUSIBLE_HOLD_MS >= SMALLEST_CLOCK_STEP_MS) {
+  failures.push(
+    `IMPLAUSIBLE_HOLD_MS is ${IMPLAUSIBLE_HOLD_MS} ms, outside the ${HEARTBEAT_MS}–${SMALLEST_CLOCK_STEP_MS} ms ` +
+      `window between the WebSocket heartbeat and the smallest clock step the GPS gate makes`
   );
 }
 
@@ -386,47 +462,11 @@ if (failures.length > 0) {
 }
 console.log(
   `✓ ${LONG_PRESS_CASES.length} hold sequences and ${DOUBLE_CLICK_CASES.length} tap sequences behave as recorded — ` +
-    `the 140 ms median tap, the 30 ms shortest, the 920 ms longest ordinary press and the real 1794 ms ` +
-    `cruise-set press all fire nothing; a ${LONG_PRESS_MS} ms hold saves exactly one waypoint, while held; ` +
-    `and both gestures are bound to registered, deadband-free button bits that are not the cruise-arm switch`
+    `the 140 ms median tap, the 30 ms shortest, the 260 ms longest confirmed MODE pulse, the 920 ms longest ` +
+    `ordinary press and the real 1794 ms cruise-set press all fire nothing; a stalled link is not a hold and ` +
+    `two presses delivered back-to-back are not a double click; a ${LONG_PRESS_MS} ms hold saves exactly one ` +
+    `waypoint; and both gestures are bound to registered, deadband-free button bits that are not the cruise-arm switch`
 );
-
-/**
- * Replays one sequence the way public/lib/handlebar-gestures.js drives it: readings
- * when they arrive, plus a wakeup at the detector's deadline.
- *
- * The wakeup is not a detail to skip. A held button produces exactly two messages, one
- * per edge, so nothing arrives at the moment the threshold is crossed — a replay driven
- * by samples alone would only ever see the gesture fire on release, and would happily
- * pass a detector that could never fire on the phone at all.
- */
-function replayLongPress(samples: Sample[]): number[] {
-  const detector = new LongPressDetector();
-  const firedAt: number[] = [];
-  let held: number | null = null;
-
-  for (const sample of samples) {
-    // Any deadline falling at or before this sample is a timer that would have run
-    // first. A `while` rather than a `for` with an empty increment clause, which
-    // Prettier 3.8 and 3.9 disagree about how to space and which therefore churns
-    // between a local run and CI's pinned version.
-    let deadline = detector.deadlineMs();
-    while (deadline !== null && deadline <= sample.at) {
-      if (detector.observe(held, deadline)) {
-        firedAt.push(deadline);
-      }
-      // Only ever forwards. The detector latches after firing so deadlineMs() goes
-      // null, but a deadline that came back unchanged would spin here for ever.
-      const next = detector.deadlineMs();
-      deadline = next !== null && next !== deadline ? next : null;
-    }
-    if (detector.observe(sample.value, sample.at)) {
-      firedAt.push(sample.at);
-    }
-    held = sample.value;
-  }
-  return firedAt;
-}
 
 function sameNumbers(actual: number[], expected: number[]): boolean {
   return actual.length === expected.length && actual.every((value, index) => value === expected[index]);

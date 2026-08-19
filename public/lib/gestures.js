@@ -7,8 +7,31 @@
 // what lets scripts/check-handlebar-gestures.ts replay press sequences through the very
 // objects the phone runs — including the real durations measured off this bike's own
 // bus, which is the only evidence there is for the thresholds below. The impure half
-// (subscribing to signals, scheduling the one timer a hold needs, calling the actions)
-// is ./handlebar-gestures.js.
+// (subscribing to signals, calling the actions) is ./handlebar-gestures.js.
+//
+// ## ⚠️ The clock these take is the SERVER's, not the phone's
+//
+// `nowMs` below is `serverTime` from ./store.js — the `ts` the Pi stamped on the
+// message — and NOT `monotonicNow()`. That is the opposite of the rule the rest of this
+// codebase follows for durations, so it needs its argument written down.
+//
+// What these measure is how long a button was down ON THE BIKE. The phone's monotonic
+// clock cannot answer that: it measures the gap between two WebSocket messages
+// ARRIVING, and those are the same number only while delivery latency is constant. On
+// a garage hotspot it is not. A 140 ms tap whose release patch is held up 1.5 s by the
+// link looks, on the arrival clock, exactly like a 1.5 s hold — and would save a
+// waypoint nobody asked for. Two deliberate presses a second apart, delivered
+// back-to-back after a stall, look exactly like a double click.
+//
+// The Pi stamps `ts` when it builds the patch, before the message goes anywhere, so
+// server-side differences are immune to whatever the link does afterwards. A stall
+// simply stops the clock advancing, and the queued release arrives carrying the time it
+// really happened.
+//
+// The one thing the server clock can do that a monotonic clock cannot is JUMP:
+// ../../src/gps/clock.ts steps it from satellite time, by at least
+// DRIFT_THRESHOLD_SECONDS (60 s) when it does. IMPLAUSIBLE_HOLD_MS below is what keeps
+// a step from being read as a very long press.
 //
 // ## The safety argument, which decides the shape of this file
 //
@@ -53,7 +76,9 @@ export const WAYPOINT_BUTTON = "btn_indicator_cancel";
  *
  *  • Above a gloved double tap. A bare-handed double click runs 150–300 ms; a thick
  *    glove on a vibrating bar roughly doubles that, so the gesture has to stay
- *    comfortably reachable at ~500 ms.
+ *    comfortably reachable at ~500 ms. The 2026-08-19 MODE-button measurements put a
+ *    single deliberate press at 120–260 ms, so two of them plus the gap between is
+ *    already most of half a second before a glove is anywhere near it.
  *  • Below two presses that were meant to be separate. ./press.js puts the gap
  *    between deliberate presses of the same button at ~1 s, and that is the number
  *    this must not reach — two ordinary cruise-set presses a second apart must read
@@ -77,6 +102,12 @@ export const DOUBLE_CLICK_WINDOW_MS = 700;
  * recorded on any handlebar button is 920 ms (`btn_cruise_enable`, which was not being
  * held for effect — a short press already arms cruise).
  *
+ * Corroborated since, and independently: the MODE buttons and `btn_set_back` were
+ * confirmed on 2026-08-19 by instructed presses, 8/8 each, as clean momentary 0→1→0
+ * pulses of 120–260 ms. A deliberate press of a handlebar button made on purpose, by a
+ * rider being asked to press it, is a quarter of a second at the outside — which is the
+ * same story the corpus median tells, told by a different measurement.
+ *
  * 1200 ms is therefore ~8.5× a normal cancel tap and clears the longest ordinary press
  * of any button by 280 ms, while staying short enough to hold through a corner without
  * thinking about it. Riders do not hold the cancel switch in: it stops the lamp the
@@ -90,10 +121,25 @@ export const DOUBLE_CLICK_WINDOW_MS = 700;
 export const LONG_PRESS_MS = 1200;
 
 /**
+ * An apparent hold longer than this is not a hold, and is abandoned without firing.
+ *
+ * The server clock these run on is the one ../../src/gps/clock.ts steps from satellite
+ * time. A forward step during a press would otherwise land as "held for six hours" and
+ * save a waypoint the rider never asked for, in the seconds after a cold boot — which
+ * is exactly when they are least likely to be watching for it.
+ *
+ * 30 s separates the two cases cleanly and needs no maintenance. Above: the smallest
+ * step the gate will ever make is DRIFT_THRESHOLD_SECONDS, 60 s, and a real one is
+ * hours. Below: the slowest the phone can learn that a button is still down is the
+ * 5 s WebSocket heartbeat, on a bus where nothing else is changing at all.
+ */
+export const IMPLAUSIBLE_HOLD_MS = 30_000;
+
+/**
  * Recognises two quick presses of one button.
  *
- * Fires on the second rising edge, not on a release, so the gesture completes while
- * the thumb is still down and the tab has already changed when it lifts.
+ * Fires on the second rising edge, so the gesture completes while the thumb is still
+ * down and the tab has already changed when it lifts.
  */
 export class DoubleClickDetector {
   #windowMs;
@@ -111,8 +157,8 @@ export class DoubleClickDetector {
    * Folds in one reading of the button.
    *
    * @param {number | null} value the button bit, or null if the signal has never arrived
-   * @param {number} nowMs from monotonicNow() — the window is a duration, and this
-   *   process's wall clock is stepped from GPS (see ./clock.js)
+   * @param {number} nowMs the SERVER's clock for this reading — see the note at the top
+   *   of this file for why it is not monotonicNow()
    * @returns {boolean} true exactly once, on the rising edge that completes a pair
    */
   observe(value, nowMs) {
@@ -128,7 +174,8 @@ export class DoubleClickDetector {
     if (!(previous === 0 && value === 1)) {
       return false;
     }
-    if (this.#lastRiseAt !== null && nowMs - this.#lastRiseAt <= this.#windowMs) {
+    const sinceLastRise = this.#lastRiseAt === null ? null : nowMs - this.#lastRiseAt;
+    if (sinceLastRise !== null && sinceLastRise >= 0 && sinceLastRise <= this.#windowMs) {
       // Cleared rather than replaced, so three quick taps are one switch and a fresh
       // start — not two switches, which would make a fumbled double tap overshoot.
       this.#lastRiseAt = null;
@@ -142,16 +189,22 @@ export class DoubleClickDetector {
 /**
  * Recognises one button held past a threshold.
  *
- * Fires while the button is still down, at the moment the threshold is crossed, rather
- * than on release. With gloves and no glance to spare that matters: the confirmation
- * appears while the thumb is still there, so holding longer is self-correcting and the
- * rider never has to guess whether they held it long enough.
+ * Fires as soon as the evidence arrives that the button WAS down for long enough —
+ * which is usually while it still is, because ./store.js is fed a patch on every
+ * signal change and those run at ~5 Hz even on a parked bike (measured over the 90 s
+ * capture in obd-garage/captures). So the banner normally appears about a tenth of a
+ * second after the threshold, with the thumb still on the button, and holding longer
+ * is self-correcting.
  *
- * ⚠️ Readings alone cannot drive this. The signal only moves on the two edges — and
- * `src/ws.ts` patches on change, so a 1.2 s hold can arrive as one message and then
- * silence — which means nothing would call observe() at the moment the threshold is
- * crossed. #deadlineMs is how the caller learns when to come back; ./handlebar-gestures.js
- * keeps the single timer that does it.
+ * When the bus goes quiet the evidence can instead arrive with the RELEASE, whose
+ * timestamp says how long the press really was. Firing then is late feedback for a
+ * gesture that was genuinely made, which is far better than dropping it — and it is
+ * the same rule, not a special case: fire when the server's own timeline shows the
+ * threshold was passed.
+ *
+ * ⚠️ There is deliberately no timer here. An earlier version fired on a local
+ * setTimeout at the threshold, which measured the gap between two messages ARRIVING and
+ * so counted a stalled link as a hold. See the note at the top of this file.
  */
 export class LongPressDetector {
   #holdMs;
@@ -167,12 +220,14 @@ export class LongPressDetector {
   }
 
   /**
-   * Folds in one reading of the button. Safe to call at any time with the current
-   * value — that is what the deadline timer does.
+   * Folds in one reading of the button. Called on every message, not only on the
+   * edges — an unchanged `1` with a newer timestamp is what proves the button is
+   * still down.
    *
    * @param {number | null} value the button bit, or null if the signal has never arrived
-   * @param {number} nowMs from monotonicNow()
-   * @returns {boolean} true exactly once per press, when the hold passes the threshold
+   * @param {number} nowMs the SERVER's clock as of the newest message
+   * @returns {boolean} true exactly once per press, when the hold is shown to have
+   *   passed the threshold
    */
   observe(value, nowMs) {
     if (value === null) {
@@ -180,6 +235,24 @@ export class LongPressDetector {
     }
     const previous = this.#previousValue;
     this.#previousValue = value;
+
+    if (this.#pressedAt !== null && !this.#fired) {
+      const heldFor = nowMs - this.#pressedAt;
+      if (heldFor < 0 || heldFor > IMPLAUSIBLE_HOLD_MS) {
+        // The clock moved, not the thumb. Abandon this press rather than guess at it;
+        // a fresh 0→1 starts a new one.
+        this.#pressedAt = null;
+      } else if (heldFor >= this.#holdMs) {
+        this.#fired = true;
+        if (value !== 1) {
+          // Learned from the release. Clear the press here, because the reset below
+          // is skipped by the early return.
+          this.#pressedAt = null;
+        }
+        return true;
+      }
+    }
+
     if (value !== 1) {
       this.#pressedAt = null;
       this.#fired = false;
@@ -188,29 +261,9 @@ export class LongPressDetector {
     if (previous === 0) {
       this.#pressedAt = nowMs;
       this.#fired = false;
-      return false;
     }
-    if (this.#pressedAt === null || this.#fired) {
-      // Either a hold that began before we were watching, or one that has already
-      // fired. Latched so a hold saves one waypoint however long it lasts.
-      return false;
-    }
-    if (nowMs - this.#pressedAt < this.#holdMs) {
-      return false;
-    }
-    this.#fired = true;
-    return true;
-  }
-
-  /**
-   * When observe() would next fire if the button stays down, or null when nothing is
-   * pending. The caller schedules a wakeup for this and calls observe() again.
-   * @returns {number | null}
-   */
-  deadlineMs() {
-    if (this.#pressedAt === null || this.#fired) {
-      return null;
-    }
-    return this.#pressedAt + this.#holdMs;
+    // Anything else is a hold still in progress, or one that has already fired and is
+    // latched so a long hold saves one waypoint however long it lasts.
+    return false;
   }
 }

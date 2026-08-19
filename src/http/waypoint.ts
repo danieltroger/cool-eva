@@ -1,6 +1,6 @@
 import type { ServerResponse } from "http";
 import { ageMs, record, snapshot } from "../can/signals.ts";
-import { systemClockIsSatelliteBacked } from "../gps/clock.ts";
+import { systemClockTrust } from "../gps/clock.ts";
 
 // GET /waypoint — stamp "I am here, now" into the ride log.
 //
@@ -95,13 +95,21 @@ export function handleWaypointEndpoint(res: ServerResponse, accept: string | und
   // than no waypoint: it is a waypoint that will be believed.
   //
   // Checked last, because it is the least likely thing still missing by the time we
-  // get here — a fresh fix means GPS frames are arriving, and the gate needs only
-  // 1.4–5 s of them to corroborate a time. What this really catches is the state
-  // ../gps/clock.ts warns can persist forever: frames arriving, position fine, and
-  // the gate refusing every one of them, so the clock silently never syncs at all.
-  if (!systemClockIsSatelliteBacked()) {
-    respond(res, accept, { saved: false, message: "Bike's clock is not GPS-synced — waypoint not saved." });
-    console.warn("waypoint: refused, system clock has not been corroborated against satellite time");
+  // get here — a fresh fix usually means time frames are arriving too, and the gate
+  // needs only 1.4–5 s of them to corroborate a time. What this really catches is the
+  // state ../gps/clock.ts warns can persist forever: frames arriving, position fine,
+  // and the gate refusing every one of them, so the clock silently never syncs at all.
+  //
+  // The two refusals are worded apart because the rider's options are not the same.
+  // "Not yet" is waited out; "disagrees" will not fix itself and wants the journal.
+  const trust = systemClockTrust();
+  if (trust !== "satellite-backed") {
+    const message =
+      trust === "never-synced"
+        ? "Bike's clock has not synced to GPS yet — waypoint not saved."
+        : "Bike's clock disagrees with GPS — waypoint not saved.";
+    respond(res, accept, { saved: false, message });
+    console.warn(`waypoint: refused, system clock is ${trust}`);
     return;
   }
 

@@ -1,8 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { peek, signalState } from "./store.js";
-import { monotonicNow } from "./clock.js";
+import { serverTime, signalState } from "./store.js";
 import { DoubleClickDetector, LongPressDetector, NEXT_TAB_BUTTON, WAYPOINT_BUTTON } from "./gestures.js";
 import { saveWaypoint } from "./waypoint.js";
 import { showToast } from "./toast.js";
@@ -50,9 +49,6 @@ import { showToast } from "./toast.js";
 const doubleClick = new DoubleClickDetector();
 const longPress = new LongPressDetector();
 
-/** @type {ReturnType<typeof setTimeout> | undefined} */
-let holdTimer;
-
 let installed = false;
 
 /**
@@ -76,47 +72,40 @@ export function installHandlebarGestures(actions) {
   }
   installed = true;
 
-  // Bound to the signals rather than to the 2 Hz chartTick, for the reason app.js
-  // gives about the high-beam gesture: at a 500 ms tick the edges of a 140 ms press
-  // are missed more often than not.
+  // Bound to the signal rather than to the 2 Hz chartTick, for the reason app.js gives
+  // about the high-beam gesture: at a 500 ms tick the edges of a 140 ms press are
+  // missed more often than not.
   van.derive(() => {
-    signalState(NEXT_TAB_BUTTON).val;
-    if (doubleClick.observe(peek(NEXT_TAB_BUTTON), monotonicNow())) {
+    const reading = signalState(NEXT_TAB_BUTTON).val;
+    // reading.ts, not serverTime: the press is timed by when the Pi recorded the bit
+    // changing, which is what makes the gap between two taps immune to however long
+    // the link took to deliver them.
+    if (reading && doubleClick.observe(reading.value, reading.ts)) {
       // No banner. The tab changing IS the feedback, and a banner on every switch
       // would be the thing you learn to ignore before the one that matters appears.
       actions.onNextTab();
     }
   });
 
+  // ⚠️ This one subscribes to `serverTime` as well, which paces it at the WebSocket's
+  // full rate — normally the thing ./store.js warns against, and here the entire point.
+  //
+  // A held button sends nothing. Patches carry only what CHANGED, so between the two
+  // edges of a 1.2 s hold the button's own signal is untouched and a derive watching
+  // only that signal would next wake on the 5 s heartbeat. `serverTime` moves on every
+  // message — ~5 Hz even parked, measured over the 90 s capture in obd-garage/captures
+  // — so this is what lets the detector see that time has passed on the BIKE while the
+  // button stayed down.
+  //
+  // The cost is a handful of comparisons per message, which is nothing next to the
+  // per-signal bindings the same messages already drive.
   van.derive(() => {
-    signalState(WAYPOINT_BUTTON).val;
-    pumpLongPress();
+    const serverNow = serverTime.val;
+    const reading = signalState(WAYPOINT_BUTTON).val;
+    if (reading && longPress.observe(reading.value, serverNow)) {
+      void saveWaypointAndReport();
+    }
   });
-}
-
-/**
- * Advances the hold, then arranges to be called again at the moment it would complete.
- *
- * The timer is not an optimisation, it is the only thing that can fire this gesture.
- * A held button produces exactly two messages — one per edge — so between them nothing
- * arrives to notice that 1.2 s has passed. Waiting for the release instead would mean
- * the rider only finds out whether they held it long enough *after* letting go, which
- * is the one thing a no-glance gesture cannot ask of them.
- */
-function pumpLongPress() {
-  // peek(), not valueOf(): the caller's derive has already subscribed to this signal,
-  // and the timer path has no binding to subscribe from.
-  if (longPress.observe(peek(WAYPOINT_BUTTON), monotonicNow())) {
-    void saveWaypointAndReport();
-  }
-  clearTimeout(holdTimer);
-  const deadline = longPress.deadlineMs();
-  if (deadline === null) {
-    return;
-  }
-  // Monotonic throughout: this process's wall clock is stepped from GPS, and a step
-  // mid-hold would either fire the gesture instantly or never. ./clock.js has the case.
-  holdTimer = setTimeout(pumpLongPress, Math.max(0, deadline - monotonicNow()));
 }
 
 /** Saves, then puts the server's own verdict on screen — worked or did not. */
