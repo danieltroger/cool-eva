@@ -135,7 +135,7 @@ export function isFlasher(key) {
 
 /**
  * @typedef {object} PressTracker
- * @property {import("../vendor/van-1.6.1.js").State<boolean>} lit Held down, or released within the last LATCH_MS.
+ * @property {import("../vendor/van-1.6.1.js").State<boolean>} lit Down, or released within the last LATCH_MS — plus FLASHER_GAP_MS again for a flasher key, whose release is itself deferred.
  * @property {import("../vendor/van-1.6.1.js").State<number>} count Rising edges seen since this page loaded.
  * @property {import("../vendor/van-1.6.1.js").State<number | null>} lastAt monotonicNow() of the last rising edge.
  * @property {import("../vendor/van-1.6.1.js").State<number | null>} downSince monotonicNow() of the rising edge of the press still in progress, else null.
