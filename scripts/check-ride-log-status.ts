@@ -83,6 +83,16 @@ const FIXTURE_FILE_COUNT = 13;
 /** How many segments §2 seals. Any number above two proves the point; five is legible. */
 const SEGMENTS_TO_SEAL = 5;
 
+/**
+ * Files those five seals are allowed to land in.
+ *
+ * One, or two if the run straddles UTC midnight — the sealer names files after the
+ * date. Three would need the run to cross midnight twice, so this is a real ceiling
+ * and not a fudge factor, while asserting exactly one would go red once a day and a
+ * check that does that gets deleted.
+ */
+const FILES_ONE_RUN_MAY_MAKE = 2;
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectDir = join(__dirname, "..");
 
@@ -210,10 +220,12 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
   if (segmentsOnDisk !== SEGMENTS_TO_SEAL) {
     failures.push(`sealed ${SEGMENTS_TO_SEAL} segments but the framing on disk holds ${segmentsOnDisk}`);
   }
-  if (measured.files >= SEGMENTS_TO_SEAL) {
+  if (measured.files > FILES_ONE_RUN_MAY_MAKE) {
     failures.push(
-      `${SEGMENTS_TO_SEAL} sealed segments produced ${measured.files} files — one file per segment means the ` +
-        `dashboard's file count would silently start being a segment count, which is the confusion this check exists for`
+      `${SEGMENTS_TO_SEAL} sealed segments produced ${measured.files} files, and one run can only make ` +
+        `${FILES_ONE_RUN_MAY_MAKE}. The sealer has stopped appending a day of segments to one ` +
+        `rides-<YYYY-MM-DD>.celog, so /status's file count is drifting towards being a segment count — and the ` +
+        `download caption, which is worded around day files, goes wrong again in the other direction`
     );
   }
   if (measured.files < 1) {
