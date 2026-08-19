@@ -364,7 +364,12 @@ function describeBits(target, value) {
     return String(value);
   }
   const bits = target.control.bits.map(bit => `${bit.label} ${(value & bit.mask) === 0 ? "OFF" : "ON"}`);
-  return [`0x${value.toString(16).toUpperCase().padStart(4, "0")}`, ...bits].join(" · ");
+  return [hexWord(value), ...bits].join(" · ");
+}
+
+/** `0x1113`. Four digits, because these words are quoted that way everywhere else. @param {number} value */
+function hexWord(value) {
+  return `0x${value.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
 /**
@@ -390,9 +395,12 @@ function ValueNote() {
       return div(`Nothing here has read this parameter yet. ${range}`);
     }
     const bytes = known.rawHex ? ` (${known.rawHex})` : "";
+    // A config word is written and read as hex everywhere else on this page, so a
+    // decimal 4375 here would be a third rendering of the same number to reconcile.
+    const asShown = target.control.kind === "bits" ? hexWord(known.value) : String(known.value);
     const where =
       known.source === "bus"
-        ? `${known.value}${bytes} — read off the bike by this page.`
+        ? `${asShown}${bytes} — read off the bike by this page.`
         : `${known.label ?? known.value}${bytes} — from the parameter sweep ${ageInWords(known.readAt)}` +
           `${known.complete ? "" : ", which did not finish"}. The Pi re-reads it before writing.`;
     return div(`${where} ${range}`);
@@ -996,6 +1004,13 @@ async function fetchStatus() {
   try {
     const response = await fetch("/vcu-write", { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
+    // ⚠️ Disarmed BEFORE the new status lands, always. A refresh can bring a different
+    // value for the selected parameter — a sweep that finished while the sheet was open
+    // rewrites `onBike` under it — and a button armed against 75 must not fire against
+    // 80 because a second tap happened to come after the refresh. The clock sync arms
+    // itself again immediately afterwards, deliberately and from the refreshed reading;
+    // see armClockSync().
+    armed.val = "";
     state.val = payload;
     if (selected.val === "" && payload.status.targets.length > 0) {
       selected.val = payload.status.targets[0].name;
