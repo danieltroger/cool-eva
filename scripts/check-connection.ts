@@ -31,7 +31,15 @@ import type { LiveValue } from "../src/can/signals.ts";
 // stand-in socket that NEVER fires `close` — that is the point of it. A socket can stop
 // carrying data without closing (a hotspot dropping out mid-ride; iOS Safari is
 // documented as reaching the same state with readyState still reading OPEN), and a
-// reconnect path that only runs from `onclose` would sit there for ever.
+// reconnect path that only runs from `onclose` would sit there for ever. §3 also covers
+// the handshake that never completes at all — the bike off, or the phone out of range —
+// which is the case that decides whether the watchdog has a mark to measure from.
+//
+// **Nor on a visibility event.** §4 takes both directions of `visibilitychange` away and
+// requires the fix to engage anyway. The hidden direction is the one that matters: a
+// socket left open behind a page nobody is reading is not silent, so no watchdog can
+// find it — it is busy filling up with the backlog, and the header goes on saying
+// "live". `pagehide` and a branch in tick() are the two nets under it.
 //
 // **And it must not churn.** The bike is often parked and silent, so §3 also pins the
 // other end: nothing may happen at eleven point nine seconds. ws.ts heartbeats a full
@@ -67,6 +75,15 @@ function check(what: string, condition: boolean) {
 
 /** A socket that records what was done to it and, by default, never fires anything. */
 interface FakeSocket {
+  /**
+   * How many times close() was called, not whether it was.
+   *
+   * A boolean cannot tell "this call closed it" from "it was already closed", and every
+   * socket the policy abandons is closed by abandon() before anything else can touch
+   * it — so a `closed` assertion about a LATER call is true before that call is made,
+   * and passes whatever the call does. That shape shipped here once already.
+   */
+  closeCalls: number;
   closed: boolean;
   handlers: SocketHandlers;
   close: () => void;
@@ -91,10 +108,12 @@ function newWorld() {
     },
     open: handlers => {
       const socket: FakeSocket = {
+        closeCalls: 0,
         closed: false,
         handlers,
         close: () => {
           socket.closed = true;
+          socket.closeCalls += 1;
         },
       };
       sockets.push(socket);
@@ -226,8 +245,16 @@ console.log("\n2b. lock, unlock, lock, unlock");
   check("a late close from an abandoned socket opens nothing", phone.sockets.length === 5);
   check("...and does not disturb the live one", phone.open().length === 1 && !current.closed);
 
+  // closeCalls, not `closed`: abandon() closed this socket when it dropped it, so an
+  // assertion on the boolean would have been true before this call and green whatever
+  // the call did. What is being tested is that socketOpened() closes an orphan it is
+  // handed rather than leaving it running.
+  const closesBefore = abandoned.closeCalls;
   abandoned.handlers.opened(abandoned);
-  check("a late handshake on an abandoned socket is closed rather than adopted", abandoned.closed);
+  check(
+    "a late handshake on an abandoned socket is closed again rather than adopted",
+    abandoned.closeCalls === closesBefore + 1
+  );
   check("...and the current socket is still the current socket", !current.closed && phone.open().length === 1);
 
   // Long enough for a retry to have fired several times over, short of the silence
@@ -283,6 +310,29 @@ console.log("\n3. a socket that stops carrying data without closing");
 }
 
 {
+  // The handshake that NEVER completes — the bike is off, or the phone is out of range
+  // and the SYN is going nowhere. No `open`, no `close`, no message: the only mark the
+  // watchdog can measure from is the one openNow() takes at the attempt itself.
+  //
+  // Without that mark the socket is stuck with `lastTrafficAt === null`, which is a
+  // conjunct of the silence branch — so the watchdog switches itself off and the header
+  // sits on "connecting" for ever, on a phone whose rider is waiting for numbers.
+  const phone = newWorld();
+  phone.link.start();
+  const attempt = phone.newest();
+  check("the attempt is up, and unanswered", phone.sockets.length === 1 && !attempt.closed);
+
+  phone.advance(SILENCE_LIMIT_MS - POLL_MS);
+  check("nothing yet, at 11 s", !attempt.closed && phone.sockets.length === 1);
+
+  phone.advance(2 * POLL_MS);
+  check("a handshake that never completes is abandoned like any other silence", attempt.closed);
+  check("...rather than sitting on 'connecting' for ever", phone.world.status === "offline");
+  phone.advance(RECONNECT_DELAY_MS + POLL_MS);
+  check("...and another attempt follows it", phone.sockets.length === 2);
+}
+
+{
   // The coupling that makes the number safe. ws.ts pushes a full snapshot every
   // HEARTBEAT_MS whether or not the bus has anything to say, so silence measures the
   // link; dropping SILENCE_LIMIT_MS below two heartbeats would make it measure jitter
@@ -293,12 +343,17 @@ console.log("\n3. a socket that stops carrying data without closing");
   );
 }
 
-// --- 4. An ordinary disconnect ----------------------------------------------
+// --- 4. An ordinary disconnect, and the events that go missing ---------------
 //
-// `systemctl restart cool-eva`, or riding out of wifi range with a clean FIN behind it.
-// The close event is honoured when it does arrive — it just makes recovery faster
-// rather than possible — and the backoff that was there before this change is still
-// the backoff.
+// First `systemctl restart cool-eva`, or riding out of wifi range with a clean FIN
+// behind it. The close event is honoured when it does arrive — it just makes recovery
+// faster rather than possible — and the backoff that was there before this change is
+// still the backoff.
+//
+// Then the same treatment applied to `visibilitychange` itself, in both directions,
+// because a trigger with no second is a trigger that can be missed. The blocks below
+// take the event away and require the fix to engage regardless: `pagehide` and a branch
+// in tick() for the hidden direction, another branch in tick() for the visible one.
 
 console.log("\n4. a socket that closes properly");
 
@@ -342,6 +397,52 @@ console.log("\n4. a socket that closes properly");
   check("a close while hidden schedules nothing", phone.sockets.length === 1);
   phone.show();
   check("becoming visible is what reconnects", phone.sockets.length === 2);
+}
+
+{
+  // The visibility event that never arrives, going the OTHER way — and this is the
+  // direction that matters. A socket left open behind a hidden page is not silent, it
+  // is filling up with exactly the backlog this whole change exists to prevent, so the
+  // silence watchdog is no help: messages keep arriving and the header goes on saying
+  // "live" over a page nobody is reading.
+  const phone = newWorld();
+  phone.link.start();
+  const socket = phone.newest();
+  socket.handlers.opened(socket);
+  socket.handlers.received(socket);
+
+  phone.world.hidden = true; // ...and no visibilityChanged() call to go with it
+  phone.advance(POLL_MS);
+  check("the poll drops a socket it finds on a hidden page", socket.closed);
+  check("...and stops calling the link live", phone.world.status === "offline");
+
+  // The backlog that was already on its way is refused, which is what makes the
+  // recovery worth anything: catching it a second late must not mean applying a
+  // second's worth of history.
+  check("...and its queued messages are refused", socket.handlers.received(socket) === false);
+
+  phone.advance(10 * SILENCE_LIMIT_MS);
+  check("...and nothing is opened while it stays hidden", phone.sockets.length === 1);
+  phone.show();
+  check("...until it is looked at again", phone.sockets.length === 2);
+}
+
+{
+  // `pagehide` — the same recovery for a platform that suspends the timers too, so the
+  // branch above never gets to run. It fires on the way into the back/forward cache and
+  // on the way out of the document, and in both cases `document.hidden` may still read
+  // false, so it is deliberately unconditional.
+  const phone = newWorld();
+  phone.link.start();
+  const socket = phone.newest();
+  socket.handlers.opened(socket);
+  socket.handlers.received(socket);
+
+  phone.link.pageHidden();
+  check("pagehide drops the socket without consulting document.hidden", socket.closed);
+  check("...and says so", phone.world.status === "offline");
+  check("...and refuses what was already in flight", socket.handlers.received(socket) === false);
+  check("...and opens nothing behind it", phone.sockets.length === 1);
 }
 
 {
@@ -493,6 +594,7 @@ console.log("\n6. the real connect(), with the browser faked");
   const sockets: StubSocket[] = [];
   const timers: { delay: number; run: () => void }[] = [];
   const listeners = new Map<string, () => void>();
+  const windowListeners = new Map<string, () => void>();
   const page = { hidden: false };
 
   // Captured so they can be put back at the end of the section. Left in place, a
@@ -523,6 +625,9 @@ console.log("\n6. the real connect(), with the browser faked");
     addEventListener: (type: string, handler: () => void) => listeners.set(type, handler),
   });
   define("location", { protocol: "http:", host: "cool-eva.local" });
+  define("window", {
+    addEventListener: (type: string, handler: () => void) => windowListeners.set(type, handler),
+  });
   define("setInterval", (run: () => void, delay: number) => {
     timers.push({ delay, run });
     return timers.length;
@@ -557,6 +662,7 @@ console.log("\n6. the real connect(), with the browser faked");
       sockets.length === 1 && sockets[0].url === "ws://cool-eva.local"
     );
     check("...and registers a visibilitychange listener", listeners.has("visibilitychange"));
+    check("...and a pagehide listener beside it", windowListeners.has("pagehide"));
     check(
       "...and a timer at the connection poll interval",
       timers.some(timer => timer.delay === POLL_MS)
@@ -611,6 +717,33 @@ console.log("\n6. the real connect(), with the browser faked");
     check("the poll notices a visible page with no socket and opens one", sockets.length === 3);
     poll?.run();
     check("...exactly one, not one per tick", sockets.length === 3);
+
+    // The hide direction losing its event, which is the half with nothing else under
+    // it: a socket left open behind a hidden page goes on receiving, so the header
+    // would keep reading "live" over a page nobody is looking at and the backlog would
+    // build exactly as it does today.
+    const third = sockets[2];
+    third.onopen?.();
+    third.onmessage?.({ data: snapshotFor(base + 600_000, 60) });
+    check("a fresh socket is live again", header() === "live");
+
+    page.hidden = true; // ...and no visibilitychange to say so
+    poll?.run();
+    check("the poll drops a socket it finds on a hidden page", third.closed);
+    check("...and stops calling it live", header() === "offline");
+    third.onmessage?.({ data: snapshotFor(base + 660_000, 3) });
+    check("...and what was already in flight is refused", signalState("soc").val?.value === 60);
+
+    // And pagehide, which is the recovery for a platform that suspends the poll too.
+    page.hidden = false;
+    poll?.run();
+    const fourth = sockets[sockets.length - 1];
+    fourth.onopen?.();
+    fourth.onmessage?.({ data: snapshotFor(base + 700_000, 61) });
+    check("back up after that drop", header() === "live" && !fourth.closed);
+    windowListeners.get("pagehide")?.();
+    check("pagehide drops the socket as well", fourth.closed);
+    check("...and says so", header() === "offline");
   } finally {
     restoreGlobals();
   }

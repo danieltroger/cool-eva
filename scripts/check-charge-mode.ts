@@ -193,8 +193,18 @@ for (const scenario of CASES) {
     consulted.add(key);
     return values.get(key) ?? null;
   };
-  // Mirrors public/lib/store.js: a signal that has never arrived is stale, and one
-  // that has is judged on the age of its last reading.
+  // The two arms of public/lib/store.js's isStale() that are about the SIGNAL: one
+  // that has never arrived is stale, and one that has is judged on the age of its last
+  // reading.
+  //
+  // It has a third arm, deliberately not modelled here: every signal is stale while the
+  // WebSocket is not live. That one is about the LINK, and these cases are decoded CAN
+  // frames with no link in the picture at all — modelling it would only mean writing
+  // `linkIsLive: true` at the top of every scenario. What the omission costs is that
+  // this file says nothing about how the charge rule behaves during a dropout; that is
+  // covered by scripts/check-connection.ts §8, which is also where the reason it
+  // matters lives (the answer is right for the charge SCREEN and wrong for the
+  // edge-triggered view rules, so those hold their edges instead of asking).
   const stale = (key: string, maxAgeMs: number): boolean => {
     consulted.add(key);
     return !values.has(key) || (ages[key] ?? 0) > maxAgeMs;

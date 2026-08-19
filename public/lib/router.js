@@ -44,8 +44,11 @@ import van from "../vendor/van-1.6.1.js";
 //
 // ## A switch the rider did not ask for pushes too
 //
-// autoFocus() in app.js moves the tab when the bike's state changes — plugging in,
-// the pack going critical. It would be reasonable to think those should replaceState
+// The view rules (lib/view-rules.js, spent by autoFocus() in app.js) move the tab when
+// the bike's state changes — plugging in, the pack going critical. Note that a dropout
+// is deliberately NOT such a change, which is the same distinction in a different
+// place: it would otherwise push two entries the rider never made, every screen lock.
+// It would be reasonable to think those should replaceState
 // rather than pushState, on the grounds that the rider did not choose them. They push,
 // and the reason is what replaceState would actually do.
 //
@@ -119,10 +122,11 @@ export function currentTab() {
 
 /**
  * The same, without subscribing — the peek() of this module, and for the same reason
- * (see public/lib/store.js). app.js's rules run inside the chartTick timer and inside
- * the high-beam binding; reading `.val` from either would add the tab to that
- * binding's dependencies and re-run it on every tab change, which is precisely the
- * silent re-pacing CLAUDE.md warns about.
+ * (see public/lib/store.js). The view rules (lib/view-rules.js, spent by app.js's
+ * autoFocus) run inside the chartTick timer, and the high-beam gesture runs inside its
+ * own binding; reading `.val` from either would add the tab to that binding's
+ * dependencies and re-run it on every tab change, which is precisely the silent
+ * re-pacing CLAUDE.md warns about.
  */
 export function peekTab() {
   return tab.rawVal;

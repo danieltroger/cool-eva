@@ -117,9 +117,21 @@ export function broadcastTo(clients: Iterable<BroadcastClient>, message: Dashboa
  * per out-of-range event, on a Pi Zero that is also sealing the ride log.
  *
  * Two consecutive heartbeats rather than one reading, so a client that is briefly over
- * the cap and draining normally is not hung up on: it has to still be over it at least
- * HEARTBEAT_MS later. `alreadyStuck` is a WeakSet so a client that closes on its own
- * takes its entry with it.
+ * the cap is not hung up on for a spike. Be precise about what that does and does not
+ * say, though: this samples two INSTANTS a heartbeat apart, not the interval between
+ * them. A client over the cap at both is terminated however much it drained in between.
+ *
+ * That is the right call at the rates involved, which is why the coarse test is enough.
+ * A client over the cap is sent nothing more (broadcastTo skips it), so its buffer only
+ * drains; and the overshoot is at most one message, the largest of which is a full
+ * snapshot at ~38 kB. So anything draining faster than ~7.6 kB/s — 38 kB across one
+ * 5 s heartbeat — is back under the cap before the second sample is taken. A client
+ * that cannot manage even that is moving at under half of what riding produces at its
+ * QUIETEST (19 kB/s, p90), so it is not recovering from a spike, it is falling behind
+ * for good.
+ *
+ * `alreadyStuck` is a WeakSet so a client that closes on its own takes its entry with
+ * it.
  *
  * Terminate rather than close: close() is a handshake, and a peer that is not reading
  * is not going to answer one.
@@ -151,8 +163,21 @@ export function dropStuckClients<Client extends BroadcastClient>(
   return dropped;
 }
 
+/**
+ * The largest frame a client may send us.
+ *
+ * The receive-side mirror of MAX_CLIENT_BACKLOG_BYTES, and it can be this small because
+ * **nothing here reads client messages at all** — there is no `on("message")` handler
+ * anywhere in this file or below it, so every byte a client sends is already ignored.
+ * What was not bounded is how many bytes `ws` would buffer up before ignoring them:
+ * the default is 100 MB, on a Pi Zero, reachable by anyone on the same wifi as the
+ * bike. 4 kB is generous room for whatever the first client→server message turns out
+ * to be, and four orders of magnitude off the default.
+ */
+const MAX_CLIENT_FRAME_BYTES = 4 * 1024;
+
 export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, maxPayload: MAX_CLIENT_FRAME_BYTES });
   const stuck = new WeakSet<WebSocket>();
 
   const broadcast = (message: DashboardMessage): void => {

@@ -39,6 +39,18 @@
 // iOS Safari is documented as reaching the same state with `readyState` still reading
 // OPEN), and a reconnect path that only runs from `onclose` would sit there for ever.
 // `closed()` below is still honoured — it just makes recovery faster, never possible.
+//
+// The same rule is applied to `visibilitychange` itself, in both directions, because a
+// trigger with no second is a trigger that can be missed:
+//
+//   hidden   `pagehide` as well, and tick() drops any socket it finds on a hidden page.
+//            This is the direction that matters most: a socket nobody told us about is
+//            not silent, it is filling up, so the silence watchdog is no help and the
+//            header goes on saying "live" over a page that is not reading anything.
+//   visible  tick() opens one when it finds a visible page with no socket and no retry
+//            queued.
+//
+// Both are one branch each and the poll they ride on is running anyway.
 
 /** How long to wait after a socket dies before opening the next one. */
 export const RECONNECT_DELAY_MS = 2000;
@@ -109,6 +121,7 @@ export const POLL_MS = 1000;
  * @typedef {object} Connection
  * @property {() => void} start first connection, at page load
  * @property {() => void} visibilityChanged `document.hidden` flipped either way
+ * @property {() => void} pageHidden the page is going away — `pagehide`
  * @property {() => void} tick call every POLL_MS
  */
 
@@ -126,6 +139,7 @@ export function createConnection(effects) {
   return {
     start: () => openNow(state),
     visibilityChanged: () => visibilityChanged(state),
+    pageHidden: () => abandon(state),
     tick: () => tick(state),
   };
 }
@@ -227,19 +241,36 @@ function scheduleRetry(state) {
  */
 function tick(state) {
   const now = state.effects.now();
+  if (state.effects.hidden()) {
+    // Hidden, with a socket still open: a `visibilitychange` that never announced the
+    // page going away. This is the more important of the two recoveries and the one
+    // with no other net under it — the silence watchdog below cannot help, because a
+    // socket in this state is not silent, it is busily filling up with the backlog
+    // that the page will replay the moment it comes back. Nothing else would notice:
+    // messages keep arriving, so the header goes on reading "live" over values nobody
+    // is looking at.
+    if (state.socket !== null) {
+      abandon(state);
+    }
+    // And whether or not there was one to drop, nothing may be queued to open another
+    // while nobody is looking — the invariant that `retryAt` is only ever set on a
+    // visible page.
+    state.retryAt = null;
+    return;
+  }
   if (state.retryAt !== null && now >= state.retryAt) {
     openNow(state);
     return;
   }
-  if (state.socket === null && state.retryAt === null && !state.effects.hidden()) {
+  if (state.socket === null && state.retryAt === null) {
     // Visible, nothing open, and nothing queued to open one. The only way to arrive
     // here is a visibilitychange that never came — and closing the socket on hide is
     // what made this page eligible for Safari's back/forward cache, which is exactly
     // where a visibility transition is least dependable.
     //
     // The same argument the header makes about `close` applies to `visibilitychange`:
-    // a recovery path with one trigger is a recovery path that can be missed. The poll
-    // is already running, so this costs nothing to have.
+    // a recovery path with one trigger is a recovery path that can be missed. That is
+    // why both directions of it have a second one — this branch and the one above.
     openNow(state);
     return;
   }

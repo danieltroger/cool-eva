@@ -249,6 +249,13 @@ export function connect() {
   // is the last chance to close the socket the Pi would otherwise spend the next few
   // minutes queueing patches into.
   document.addEventListener("visibilitychange", () => link.visibilityChanged());
+  // And its second, for the case where that one does not arrive. `pagehide` fires on
+  // the way into the back/forward cache and on the way out of the document altogether —
+  // both of which stop this page reading its socket — and it fires in cases where
+  // `document.hidden` is still false, which is why it is its own entry point rather
+  // than another call to visibilityChanged(). A hash change does not unload the
+  // document, so the tab bar cannot trigger it.
+  window.addEventListener("pagehide", () => link.pageHidden());
   setInterval(() => link.tick(), POLL_MS);
   link.start();
 
