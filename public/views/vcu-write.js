@@ -36,10 +36,17 @@ const { button, div, input, option, select, span } = van.tags;
 //     about where its number came from and how old it is, which is the caption under it.
 //  2. **The confirmation shows old → new**, spelled out in the button caption, and
 //     the button changes what it says between the two taps.
-//  3. **Two taps, never one.** The first arms and the second sends, and arming is
-//     dropped by ANY change to the form — retyping the value, picking a different
-//     parameter, a refreshed reading, or a refreshed status. That last one matters: it
-//     means a value that moved under you disarms the button rather than being written.
+//  3. **Two taps, never one — and never one gesture.** The first arms and the second
+//     sends, and arming is dropped by ANY change to the form — retyping the value,
+//     picking a different parameter, a refreshed reading, or a refreshed status. That
+//     last one matters: it means a value that moved under you disarms the button rather
+//     than being written.
+//
+//     ⚠️ And the second tap is refused for ARM_DWELL_MS after the first, because until
+//     2026-08-19 "two taps" was satisfied by a double-tap: two synchronous clicks on
+//     "Say a service was performed NOW" really did POST `31 FC`. That was the single
+//     most likely accidental gesture on a phone — tap, see nothing change fast enough,
+//     tap again — arriving at the one action with no unset.
 //  4. **The irreversible actions are behind a fold**, below the parameters, each with
 //     its own two taps and its own warning — and, collapsed, not on screen at all. They
 //     are not in a list you can scroll a thumb through, and since 2026-08-19 they are
@@ -117,6 +124,61 @@ const reading = van.state(/** @type {{ name: string, value: number, rawHex: stri
 const wanted = van.state("");
 /** Which control is armed, by a key like `write` or `action:clear-dtcs`. Empty means none. */
 const armed = van.state("");
+/**
+ * ⚠️ LOAD-BEARING, and not a debounce. How long an armed control refuses its own
+ * second tap — i.e. the minimum separation that makes two taps two taps.
+ *
+ * Measured in a browser at 390x844 on 2026-08-19, before this existed: two synchronous
+ * clicks on "Say a service was performed NOW" produced a real
+ * `POST /vcu-write?action=set-service-point&confirm=set-service-point`, and the same on
+ * `clear-dtcs`. One gesture both primed and fired `31 FC`. `armed` was set
+ * synchronously, so nothing whatsoever separated the two clicks.
+ *
+ * ⚠️ The parameter write and the clock sync passed that same test BY ACCIDENT, and that
+ * is the part worth writing down. armWrite() and armClockSync() `await fetchStatus()`
+ * between arming and firing, which raises `busy` and disables the button, so the second
+ * click landed on a disabled control and was swallowed. A refresh was doing safety work
+ * as a side effect — so making it faster, cached, conditional or optional would remove
+ * the protection from two of the three irreversible controls without touching a line
+ * that looks like a guard. All three now hold this deliberately.
+ *
+ * ⚠️ Why a dwell and not one of the obvious alternatives:
+ *
+ *   a dblclick / event.detail guard   only a mouse raises `detail` past 1. Two taps
+ *                                     from a gloved thumb a few pixels apart are two
+ *                                     ordinary clicks, and that is the actual gesture.
+ *   disabling the button for a beat   `.action:disabled` is visibly dimmed, so the
+ *                                     control would flash "off" in the one moment its
+ *                                     caption is asking to be read — and "it went grey
+ *                                     and nothing happened" is the very stimulus that
+ *                                     produces the extra tap.
+ *   press-and-hold                    a gesture to learn, on controls nobody presses
+ *                                     often enough to learn it.
+ *
+ * 400 ms because it must cost the INTENDED flow nothing. The armed caption is ~45
+ * characters ("⚠️ Tap again — STAMP A SERVICE NOW. There is no unset") and has to be
+ * found, read and acted on; nothing does that in under 400 ms. What 400 ms does cover,
+ * with margin, is every platform's own idea of two taps being one gesture — iOS and
+ * Android recognise a double-tap inside ~300 ms.
+ *
+ * ⚠️ A tap inside the dwell is IGNORED, never treated as a disarm. The button stays
+ * armed and goes on saying "Tap again", so an impatient double-tapper's next tap does
+ * what they meant; silently disarming would put them back at the start without saying
+ * so, which is a worse answer to the same gesture and invites a fourth tap.
+ */
+const ARM_DWELL_MS = 400;
+/**
+ * When the armed control armed itself.
+ *
+ * `performance.now()`, never `Date.now()`, for the reason CLAUDE.md gives for
+ * `monotonicNow()` on the Pi: this page has a button on it that STEPS A CLOCK, and the
+ * Pi steps its own from GPS. A wall clock that jumps backwards mid-gesture hands out a
+ * dwell that never elapses; one that jumps forwards hands out none at all.
+ *
+ * Deliberately not a van.state — nothing renders from it, and making it one would
+ * re-run every caption binding on each arm to no visible effect.
+ */
+let armedAt = 0;
 /** Whether the selected parameter's warnings are unfolded. Collapsed by default; see the header. */
 const warningsOpen = van.state(false);
 /**
@@ -201,6 +263,33 @@ export function VcuWrite() {
  */
 function hasControls() {
   return state.val?.status.enabled === true;
+}
+
+/**
+ * Arms one control, and stamps when.
+ *
+ * ⚠️ The ONLY way `armed` is set to a non-empty key — all four arming sites go through
+ * here, so no control can be armed without also being subject to the dwell. Disarming
+ * stays a plain `armed.val = ""` and needs no stamp: every firing site tests
+ * `armed.val` first, and an empty key matches none of them.
+ *
+ * @param {string} key
+ */
+function arm(key) {
+  armed.val = key;
+  armedAt = performance.now();
+}
+
+/**
+ * Whether the armed control may fire yet — whether the tap now arriving is a second
+ * gesture rather than the tail of the one that armed it.
+ *
+ * ⚠️ Checked at every site that acts on a second tap, and it is the whole of what stops
+ * a double-tap running `31 FC`. See ARM_DWELL_MS for what was measured and why this is
+ * not something to fold back into `disabled:`.
+ */
+function armDwellElapsed() {
+  return performance.now() - armedAt >= ARM_DWELL_MS;
 }
 
 /**
@@ -605,6 +694,12 @@ function WriteButton() {
             void armWrite();
             return;
           }
+          // Same dwell, same reason as the irreversible three. This one is reversible,
+          // which is why it is amber — but a write nobody meant is still a write, and
+          // one rule for every second tap on this page is one rule to keep true.
+          if (!armDwellElapsed()) {
+            return;
+          }
           armed.val = "";
           void performWrite();
         },
@@ -714,8 +809,14 @@ function Outcome() {
  * are behind a fold, in the red tier, with the sentence each of them cannot take
  * back in red under it.
  *
- * Each still arms independently — arming one disarms the others, so a thumb
- * travelling down the list cannot double-tap its way through two of them.
+ * Each still arms independently, and arming one disarms the others — so a thumb
+ * travelling down the list cannot walk its way through two of them.
+ *
+ * ⚠️ That is NOT what stops a double-tap, and this comment used to say it was. Arming
+ * one control says nothing about the same control being hit twice, and until it was
+ * measured (2026-08-19, 390x844) that was exactly what happened: two synchronous clicks
+ * on "Say a service was performed NOW" POSTed `31 FC` for real. What stops it is the
+ * dwell between arming and firing — see ARM_DWELL_MS.
  */
 function ServiceActions() {
   return div(
@@ -884,6 +985,13 @@ function ClockAction() {
             void armClockSync();
             return;
           }
+          // The same dwell as every other second tap. This control happened to survive
+          // a double-tap already, because armClockSync() awaits a refresh that disables
+          // the button in between — but that was the refresh's side effect, not a
+          // guard, and it would go the moment the refresh did. See ARM_DWELL_MS.
+          if (!armDwellElapsed()) {
+            return;
+          }
           armed.val = "";
           // ⚠️ The minute CONFIRMED is derived from the one that was DISPLAYED, never
           // from the phone's own clock. They are two different clocks: sending
@@ -987,7 +1095,15 @@ function ActionButton(action, caption, notes) {
         disabled: () => busy.val || !canReach(),
         onclick: () => {
           if (armed.val !== key) {
-            armed.val = key;
+            arm(key);
+            return;
+          }
+          // ⚠️ This is the line that stops a double-tap running `31 FC`, and it is the
+          // only thing between these two taps — everything else on this control is
+          // synchronous. Before it existed, two clicks 0 ms apart POSTed
+          // `action=set-service-point&confirm=set-service-point` for real. Ignored, not
+          // disarmed: the caption still says "Tap again" and still means it.
+          if (!armDwellElapsed()) {
             return;
           }
           armed.val = "";
@@ -1202,7 +1318,7 @@ async function armClockSync() {
   // Only arms if the refreshed verdict still allows it. A clock that has drifted out
   // of GPS agreement since the sheet opened must not leave a primed button behind.
   if (state.val?.status.clock.trustworthy === true) {
-    armed.val = "action:sync-clock";
+    arm("action:sync-clock");
   }
 }
 
@@ -1276,7 +1392,7 @@ async function armWrite() {
   }
   const after = onBike();
   if (after && before && after.value === before.value && selectedTarget()?.name === name && canWrite()) {
-    armed.val = "write";
+    arm("write");
   }
 }
 
