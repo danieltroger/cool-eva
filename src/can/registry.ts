@@ -230,9 +230,19 @@ export const SIGNALS: SignalDef[] = [
   // to the station moment to moment, and charger_max_dc_a above is the ON-BOARD AC
   // charger's own register, which reads 0.0 A throughout a DC session.
   //
-  // ⚠️ An EVENT signal, written only when the dial moves — no deadband, like waypoint_*
-  // — so the tile shows the last setting seen and greys out 8 s later. That is honest
-  // and charge-setpoint.ts explains why it must not be papered over with a timer.
+  // ⚠️ An EVENT signal: the frame arrives only when the dial moves, so the tile shows the
+  // last setting seen and greys out 8 s later. That is honest, and charge-setpoint.ts
+  // explains why it must not be papered over with a timer.
+  //
+  // ⚠️ And a consequence of log-on-change that bites HERE and nowhere else: record() seals
+  // a row only when the value differs from `lastLogged` by more than the deadband, so
+  // RE-SELECTING THE VALUE YOU ALREADY HAD WRITES NO ROW — and notifyChange, inside the
+  // same branch, does not fire either. Dial 5 A, then dial 5 A again on the next charge in
+  // the same process lifetime, and the second one leaves no trace in the ride log. The
+  // dashboard is fine (the 5 s snapshot heartbeat refreshes ts, so the tile un-greys), but
+  // an absent row means "not touched OR re-picked the same number", not "not touched".
+  // waypoint_seq escapes this by being a monotonic counter; a setting cannot. Setting a
+  // deadband here would make it strictly worse, which is why there is none.
   { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
 
   // OBD-II polled @1 Hz

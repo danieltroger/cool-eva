@@ -98,8 +98,8 @@ if (unfiltered.length > 0) {
 
 // Named explicitly as well as probed. The probe can only see an id whose decoder answers one
 // of the payloads above, so a future decoder that needs a particular byte pattern would slip
-// through it; these six were added on 2026-08-16 and each is checked by name so that removing
-// one from the filter fails here even if its decoder goes quiet.
+// through it; the ids below (most added on 2026-08-16, 0x121 on 2026-08-19) are each checked
+// by name so that removing one from the filter fails here even if its decoder goes quiet.
 const REQUIRED_IN_FILTER: [number, string][] = [
   [0x0a0, "ABS wheel speeds / brake pressure"],
   [0x02c, "drive torque command and feedback"],
@@ -108,10 +108,11 @@ const REQUIRED_IN_FILTER: [number, string][] = [
   [0x125, "redundant road speed"],
   [0x127, "dual throttle position sensor"],
   [0x501, "PSU monitor"],
-  // 0x121 cannot be caught by the probe above at all: its decoder answers only for
-  // opcode 0x18 with b1 = 0xFF and b3 = 1, and none of the four probe payloads is that
-  // shape. It is exactly the "future decoder that needs a particular byte pattern" this
-  // list exists for — without this line, dropping it from the filter would go unnoticed.
+  // 0x121 cannot be caught by the probe above at all: its decoder answers only for a DLC-8
+  // frame with opcode 0x18, b1 = 0xFF, b3 = 1, a zero tail and 1 ≤ b2 ≤ b4, and none of the
+  // four probe payloads is that shape. It is exactly the "future decoder that needs a
+  // particular byte pattern" this list exists for — without this line, dropping it from the
+  // filter would go unnoticed.
   [0x121, "the rider's DC charge-current limit, set on the bike's own screen"],
 ];
 for (const [id, what] of REQUIRED_IN_FILTER) {
@@ -383,7 +384,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x121,
     frame: "1D FF 93 00 00 00 00 00",
-    why: "the commonest opcode on this id — 206 of the 596 captured frames — and the reason the opcode gate is load-bearing rather than tidy. b2 = 0x93 = 147 would read as 147 A if the frame were decoded on id alone",
+    why: "the commonest opcode on this id — 204 of the 298 captured 0x121 frames, against 18 for the one we want — and the reason the opcode gate is load-bearing rather than tidy. b2 = 0x93 = 147 would read as 147 A if the frame were decoded on id alone",
     expect: {},
     absent: ["dc_charge_limit_selected_a"],
   },
@@ -418,7 +419,14 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x121,
     frame: "18 FF 4B 01",
-    why: "⚠️ SYNTHETIC — a 4-byte truncation of the real 75 A frame. Never seen (all 596 captured frames are DLC 8), but b4 is the ceiling and a setting without one is worse than nothing, so it must drop rather than read past the end",
+    why: "⚠️ SYNTHETIC — a 4-byte truncation of the real 75 A frame. Never seen (all 596 captured frames are DLC 8), but b4 is the ceiling and a setting arriving with nothing to size it against is worse than no setting, so a short frame must drop rather than read past the end",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
+    frame: "18 FF 4B 01 4B 00 00 01",
+    why: "⚠️ SYNTHETIC — the real 75 A frame with one bit set in the tail. b5-7 are zero in every captured frame of both ids except opcode 0x14, so a 0x18 that starts using them is a 0x18 that means something else; the decoder would rather go silent than report a number from a layout it does not recognise",
     expect: {},
     absent: ["dc_charge_limit_selected_a"],
   },

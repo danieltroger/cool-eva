@@ -106,14 +106,19 @@ const DC_CURRENT_LIMIT_OPCODE = 0x18;
  * they outnumber this one roughly 16 to 1.
  */
 export function decodeChargeSetpointFrame(data: Buffer): DecodedValue[] {
-  // b4 is the ceiling, so a frame too short to hold it cannot be decoded — and a
-  // half-decoded limit is worse than none, because the setting would arrive with
-  // nothing to size it against.
-  if (data.length < 5) {
+  // ALL SIX structural invariants from the header are gated, not a subset, because this
+  // is a COMMAND frame whose byte layout is chosen by the opcode. A future 0x18 meaning
+  // something else would more plausibly show up as a changed length or a non-zero tail
+  // than as a changed b1, and decoding it anyway would put a fabricated amp figure on a
+  // charging screen. Every captured frame on both ids is DLC 8 with b5-7 zero.
+  //
+  // ⚠️ The price of that strictness is the direction it fails in: a firmware update that
+  // starts using b5-7, or shortens the frame, makes this signal go SILENT rather than
+  // wrong. If it ever stops appearing after an update, look here first.
+  if (data.length !== 8 || data[5] !== 0 || data[6] !== 0 || data[7] !== 0) {
     return [];
   }
-  // b1 is 0xFF in all 596 frames of both ids, opcode regardless — a separator, checked
-  // so a future opcode that happens to reuse 0x18 with a different layout cannot land here.
+  // b1 is 0xFF in all 596 captured frames of both ids, opcode regardless — a separator.
   if (data[0] !== DC_CURRENT_LIMIT_OPCODE || data[1] !== 0xff) {
     return [];
   }
@@ -126,10 +131,11 @@ export function decodeChargeSetpointFrame(data: Buffer): DecodedValue[] {
   }
   const selected = data[2];
   const ceiling = data[4];
-  // b2 ≤ b4 held in every captured event. A frame that breaks it is not this message,
-  // and passing it through would put a setting on the dashboard contradicting the
-  // ceiling drawn next to it — the one reading worse than showing nothing at all.
-  if (selected < 1 || ceiling < 1 || selected > ceiling) {
+  // 1 ≤ b2 ≤ b4 held in every captured event. A frame that breaks it is not this message,
+  // and passing it through would put a setting on the dashboard contradicting the ceiling
+  // drawn next to it — the one reading worse than showing nothing at all. A zero ceiling
+  // needs no clause of its own: b2 is ≥ 1 by here, so b2 > b4 already catches it.
+  if (selected < 1 || selected > ceiling) {
     return [];
   }
   // b4 is deliberately NOT emitted, only used as the guard above. It is the same number
