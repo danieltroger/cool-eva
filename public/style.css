@@ -659,3 +659,64 @@ body {
   font-size: 0.95rem;
   padding: 0.65rem 0.5rem;
 }
+
+/* ---------- toast ---------- */
+
+/* The banner a handlebar gesture answers with. Sized and coloured for the worst case
+ * it has: read in direct sunlight, through a visor, in the second or two of attention
+ * a rider has to spare — so it is a full-bleed bar with a saturated background and
+ * near-black text, which is a road sign rather than a notification.
+ *
+ * Colour carries the outcome as well as the words do, on the same argument the rest of
+ * this file makes: green and red are read before a sentence is parsed, and the rider
+ * only needs the sentence when the answer is "no". Both pairs clear the 6:1 floor set
+ * at the top of this file against the dark text they carry — ~10.5:1 for good, ~6.4:1
+ * for bad. If you restyle either, measure it first.
+ */
+.toast {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the sheet (10) as well as the tabs (5): this reports something that
+     happened on the bars, and it must never be the thing hidden behind a panel the
+     rider forgot was open. */
+  z-index: 20;
+  /* Never intercepts a tap. Half of "does not need to be dismissed" is that it cannot
+     be in the way of whatever you meant to touch while it is up. */
+  pointer-events: none;
+  padding: calc(env(safe-area-inset-top) + 0.9rem) 1rem 0.9rem;
+  color: #0f172a;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(-100%);
+  /* Out slowly enough to notice it going, in fast enough that it is already there by
+     the time the glance arrives. */
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s ease;
+}
+
+.toast.on {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.toast.good {
+  background: var(--good);
+}
+
+.toast.bad {
+  background: var(--bad);
+}
+
+.toast-text {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.2;
+  /* Refusals are a sentence, not a word, and they must not spill off a narrow phone. */
+  overflow-wrap: break-word;
+}

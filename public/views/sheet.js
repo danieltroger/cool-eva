@@ -5,6 +5,7 @@ import { chartTick, knownKeys, valueOf } from "../lib/store.js";
 import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
 import { bytes, compass, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
+import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 
 const { button, div, span } = van.tags;
@@ -117,8 +118,12 @@ function TripStats() {
 }
 
 /**
- * Saves a waypoint from the phone. The same endpoint a Siri Shortcut hits, so
- * there is one code path and one thing to get wrong.
+ * Saves a waypoint from the phone. The same endpoint a Siri Shortcut hits and the same
+ * one a long press of the indicator-cancel switch reaches, through the same client in
+ * lib/waypoint.js — so there is one code path and one thing to get wrong.
+ *
+ * No banner from here, unlike the handlebar gesture: you are looking at this button
+ * when you press it, and the note under it is already in view.
  */
 function WaypointButton() {
   return div(
@@ -130,15 +135,10 @@ function WaypointButton() {
           saving.val = true;
           waypointMessage.val = "saving…";
           try {
-            const response = await fetch("/waypoint");
-            waypointMessage.val = (await response.text()).trim();
-          } catch (error) {
-            // A waypoint is only ever saved when parked, and the usual reason this
-            // fails is that the hotspot dropped — worth saying so rather than
-            // leaving the button looking like it worked.
-            waypointMessage.val = "failed — is the bike still on the hotspot?";
-            console.warn("waypoint: request failed", error);
+            waypointMessage.val = (await saveWaypoint()).message;
           } finally {
+            // saveWaypoint() reports its own failures and never throws, so this is
+            // only here to guarantee the button re-enables.
             saving.val = false;
           }
         },

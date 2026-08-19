@@ -149,6 +149,11 @@ const CHECKS: SelfCheck[] = [
       "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
   },
   {
+    script: "scripts/check-handlebar-gestures.ts",
+    covers:
+      "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",

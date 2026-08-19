@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
-import { GpsClockGate } from "./clock-gate.ts";
+import { GpsClockGate, KNOWN_GOOD_MAX_AGE_MS } from "./clock-gate.ts";
 import type { ClockStepVerdict } from "./clock-gate.ts";
 
 const runCommand = promisify(execFile);
@@ -32,6 +32,50 @@ let lastQuietReason: string | undefined;
 let lastQuietReasonAt = monotonicNow();
 
 /**
+ * monotonicNow() when the system clock was last known to agree with a corroborated
+ * satellite time — either because the gate found it already in agreement, or because
+ * `date` actually moved it there. Undefined until that has happened at least once.
+ *
+ * Only those two events count. A `step: true` verdict on its own does NOT, because the
+ * step can fail: not running as root is the routine case, and then the gate goes on
+ * asking for a step forever while the clock stays exactly as wrong as it was.
+ */
+let clockConfirmedAt: number | undefined;
+
+/**
+ * Whether anything may stamp a record with the system clock and be believed later.
+ *
+ * The Pi has no RTC. On a boot with no network its clock starts wherever the
+ * filesystem left it, and ./clock-gate.ts exists because a corrupt hub frame once
+ * stepped it to 2060 and cost 49 772 rows. Rows are logged regardless — a timestamp
+ * that is merely wrong is still recoverable from `gps_epoch_s`, which is logged raw
+ * beside it — but a caller creating a *record whose whole point is when and where*
+ * needs to know, and src/http/waypoint.ts refuses to save one while this is false.
+ *
+ * Deliberately not derived from the `gps_epoch_s` signal, which would be the obvious
+ * way and is wrong: that signal is recorded RAW, refused frames included (see
+ * syncSystemClockFromGps below), so a single corrupt frame would make a perfectly good
+ * clock look 34 years out and refuse waypoints for as long as it sat in liveState.
+ * The gate's verdict is the corroborated view, and corroboration is the whole defence.
+ *
+ * KNOWN_GOOD_MAX_AGE_MS is the staleness bound, reused rather than reinvented: it is
+ * already defined as how long a satellite time stays authoritative without being
+ * reconfirmed, which is exactly the question being asked here.
+ */
+export function systemClockIsSatelliteBacked(): boolean {
+  if (!SYNC_ENABLED) {
+    // GPS_TIME_SYNC=0 says something else owns the clock — NTP on a bench, or a replay
+    // on a laptop. Claiming to know better than the operator who set that would refuse
+    // every waypoint on a machine whose clock is fine.
+    return true;
+  }
+  if (clockConfirmedAt === undefined) {
+    return false;
+  }
+  return since(clockConfirmedAt) <= KNOWN_GOOD_MAX_AGE_MS;
+}
+
+/**
  * Steps the system clock to GPS UTC when several satellite readings agree that it
  * has drifted. Never throws — a failure here must not take the telemetry link down.
  *
@@ -50,6 +94,12 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
   // about to move, so it can only be sampled, never differenced.
   const verdict = gate.offer(gpsEpochSeconds, Date.now() / 1000, monotonicNow());
   if (!verdict.step) {
+    if (verdict.reason === "in-agreement") {
+      // The one verdict that confirms the clock without touching it: several readings
+      // corroborated each other, and the system clock already matches them to within
+      // DRIFT_THRESHOLD_SECONDS. See systemClockIsSatelliteBacked().
+      clockConfirmedAt = monotonicNow();
+    }
     reportQuietly(verdict);
     return;
   }
@@ -69,6 +119,9 @@ export async function syncSystemClockFromGps(gpsEpochSeconds: number): Promise<v
     // `date -u -s @<epoch>` rather than `timedatectl set-time`, which refuses
     // outright while NTP is enabled.
     await runCommand("date", ["-u", "-s", `@${Math.round(verdict.epochSeconds)}`]);
+    // Marked only after `date` returned. Until it does, the clock is still whatever it
+    // was, and a verdict asking for a step is evidence against it rather than for it.
+    clockConfirmedAt = monotonicNow();
     console.warn(
       `clock: system time was ${verdict.offsetSeconds.toFixed(1)} s off GPS (${verdict.reason}) — stepped to ${target}`
     );

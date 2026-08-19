@@ -14,6 +14,8 @@ import { FaultsView } from "./views/faults.js";
 import { Sheet, hasTroubleCodes, openSheet, refreshStatus } from "./views/sheet.js";
 import { monotonicNow } from "./lib/clock.js";
 import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
+import { Toast } from "./lib/toast.js";
+import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
 
 const { button, div, span } = van.tags;
 
@@ -62,7 +64,9 @@ const HYPERMILE_SOC = 5;
 const HYPERMILE_HEADROOM_MV = 150;
 
 function App() {
-  return div(Header(), () => VIEWS[currentTab()](), TabBar(), Sheet());
+  // Toast last, so it paints over the header it covers. It is fixed and
+  // hit-transparent, so its position in the tree costs nothing else.
+  return div(Header(), () => VIEWS[currentTab()](), TabBar(), Sheet(), Toast());
 }
 
 function Header() {
@@ -251,5 +255,15 @@ van.derive(() => {
 });
 
 van.add(document.body, App());
+// Top level, next to connect(), and NOT from inside App() — the derives this creates
+// get `alwaysConnectedDom` here and live for the page, whereas ones created inside a
+// binding are pinned to that render's DOM node and dropped, silently, on its next
+// re-render. lib/press.js §"ONE derive" has the mechanism.
+//
+// advanceTab() is passed in rather than reached for, so which tab is showing stays the
+// router's business alone: it is the same call the high-beam flash makes, and it is
+// what keeps the URL and the screen in step. A gesture that set the tab itself would
+// be the second answer to a question that must only have one.
+installHandlebarGestures({ onNextTab: advanceTab });
 connect();
 void refreshStatus();
