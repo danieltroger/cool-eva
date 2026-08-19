@@ -466,8 +466,9 @@ body {
   color: var(--bad);
 }
 
-/* Second line on a button tile: the press count and how long ago. --sub is the
-   dimmest colour that still clears 6:1 on a tile; see the palette note at the top. */
+/* Second line on a button tile: the press count and how long ago, or — while a control
+   that is not momentary is still down — how long it has been held. --sub is the dimmest
+   colour that still clears 6:1 on a tile; see the palette note at the top. */
 .raw-sub {
   font-size: 0.6rem;
   color: var(--sub);
