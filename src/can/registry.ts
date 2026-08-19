@@ -431,12 +431,32 @@ export const SIGNALS: SignalDef[] = [
   // hiding a derate. The ceiling is not the same though — 0x109 is 100 Hz against the
   // BMS pair's 10 Hz, so if these ever do chatter under load it is up to 300 rows/s
   // across the three, not 20. Worth knowing before anyone tightens the value.
-  // current_other_a is unidentified and logged so a ride can name it; the ÷10 scale
-  // behind its "A" is pinned by b4-5 agreeing with allowed_regen_a, but what the field
-  // measures is not.
+  // 🚨 `current_other_a` was here and is GONE (2026-08-20). It read 0x109 b6-7 as a u16
+  // current on the .xdbc's word; those bytes are Energica's ride-map-and-events bitfield
+  // and the "current" reached 5069.0 A. See src/can/decode.ts. The two bits that replace
+  // it are below, in `controls` rather than `drive`.
   { key: "current_max_out_a", unit: "A", group: "drive", source: "stream", deadband: 1 },
   { key: "current_max_regen_a", unit: "A", group: "drive", source: "stream", deadband: 1 },
-  { key: "current_other_a", unit: "A", group: "drive", source: "stream", deadband: 1 },
+
+  // 0x109 b6 bits 6-7 — the VCU's own intervention events, `V_eABS_EVENT` and
+  // `V_TC_EVENT`. In `controls` beside the ABS flags, which is where they belong twice
+  // over: they are the same kind of thing (a rider aid saying "I just acted"), and
+  // `controls` is a BOOLEAN_GROUP so bounds.js gates them to [0, 1] with no entry
+  // needed — the same free gating the six 0x0A0 flags get. No deadband, for the reason
+  // every flag here carries none: |1 − 0| > 1 is false, so a deadband of 1 would log
+  // one row at boot and then silently never again.
+  //
+  // Cheap despite 0x109 being 100 Hz, because they are events: `tc_event` is set in 1326
+  // of 438 228 frames (0.3 %) and `eabs_event` in 26, so log-on-change is a few hundred
+  // edges across many hours rather than anything like a 100 Hz signal.
+  //
+  // ⚠️ `tc_event` is NOT `abs_rear_control_active`, and the whole point of having both is
+  // that they disagree. This is the VCU's traction control, firing at 77 % throttle and
+  // +138 Nm median; that is the ABS module's rear channel, firing at ~15 % throttle. Of
+  // the 162 ABS interventions in the archive, `tc_event` is set at 4. They are different
+  // events and a dashboard must not present one as the other — see src/can/abs.ts.
+  { key: "eabs_event", unit: "", group: "controls", source: "stream" }, // 0x109 b6 bit6
+  { key: "tc_event", unit: "", group: "controls", source: "stream" }, // 0x109 b6 bit7
 
   // 0x102 b1-2 — the vehicle state bits. Booleans, so log-on-change is exactly one row
   // per transition and no deadband is wanted.

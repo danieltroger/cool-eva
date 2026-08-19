@@ -264,7 +264,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x0a0,
     frame: "76 04 5D 03 80 08 06 00",
-    why: "2026-08-09 18:55:56.849 in capture-20260809-181842-5f095c14.log — BOTH channels at once (b6 = 0x06), and the largest wheel divergence in the entire archive: rear 48.43 km/h against front 64.24, i.e. the rear 15.81 km/h down. The clearest real ABS event on record for this bike — 77 km/h, throttle shut, regen at −41.7 Nm, front brake to 16 bar, rear locking. It pins that bits 1 and 2 of b6 are read independently rather than as one field, which no frame setting only one of them can do",
+    why: "2026-08-09 18:55:56.849 in capture-20260809-181842-5f095c14.log — BOTH channels at once (b6 = 0x06), and the largest wheel divergence in the entire archive: rear 48.43 km/h against front 64.24, i.e. the rear 15.81 km/h down. The clearest real ABS event on record for this bike — entered at 77 km/h with the throttle shut and regen at −41.7 Nm, rear locking. ⚠️ The pressure figure is the one number here that is NOT the whole story: b5 = 0x08 is 8 bar AT THIS FRAME, mid-release, and the stop peaks at 21 bar a second later — every other value quoted is the instantaneous one. It pins that bits 1 and 2 of b6 are read independently rather than as one field, which no frame setting only one of them can do",
     expect: {
       wheel_speed_front_kmh: 64.2375,
       wheel_speed_rear_kmh: 48.43125,
@@ -338,6 +338,43 @@ const REPLAY: ReplayCase[] = [
       wheel_speed_rear_kmh: 3686.34375,
       abs_warning_lamp: 0,
       front_brake_pressure_bar: 0,
+    },
+  },
+  {
+    id: 0x109,
+    frame: "00 00 64 00 B0 04 02 06",
+    why: "2026-08-04 03:56:31.471 — the bike parked and awake, and the first replay coverage this frame has ever had. Throttle 0, the inverter permitting 10.0 A out and 120.0 A of regen, and b6 = 0x02 with both event bits clear. The b6/b7 pair is the one this repo used to log as `current_other_a` = 153.8 A; under Energica's own layout it is ride map 1, regen map 3, no events — which is what a parked bike should say and 153.8 A is not",
+    expect: {
+      throttle_pct: 0,
+      current_max_out_a: 10,
+      current_max_regen_a: 120,
+      eabs_event: 0,
+      tc_event: 0,
+    },
+    absent: ["current_other_a"],
+  },
+  {
+    id: 0x109,
+    frame: "E8 03 A0 0F 39 04 82 06",
+    why: "2026-08-08 11:40:25.459 in capture-20260807-213359-7c639361.log — ✅ `V_TC_EVENT` (b6 0x80) firing at FULL throttle. 100.0 % throttle with the inverter allowing 400.0 A: this is the frame that says the bit is traction control rather than a byte of some current. Across 438 228 frames sampled alongside the ABS broadcast it is set in 1326, median throttle 77.2 % and median torque +137.6 Nm against 15.6 % and +11.9 Nm when clear. ⚠️ It is NOT the same event as `abs_rear_control_active` — of the archive's 162 ABS interventions this bit is set at 4",
+    expect: {
+      throttle_pct: 100,
+      current_max_out_a: 400,
+      current_max_regen_a: 108.1,
+      eabs_event: 0,
+      tc_event: 1,
+    },
+  },
+  {
+    id: 0x109,
+    frame: "57 01 A0 0F B0 04 42 06",
+    why: "2026-08-04 03:58:34.541 — `V_eABS_EVENT` (b6 0x40) with `V_TC_EVENT` clear, the asymmetric partner to the frame above. Without it the two bits could be swapped and every other case would still pass, since no frame here sets both. Only 26 frames in the sampled set carry this bit, but 10 of them land on an ABS A_EVENT against a 0.004 % background — the association is real even though the sample is far too small to build on",
+    expect: {
+      throttle_pct: 34.3,
+      current_max_out_a: 400,
+      current_max_regen_a: 120,
+      eabs_event: 1,
+      tc_event: 0,
     },
   },
   {

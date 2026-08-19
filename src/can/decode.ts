@@ -232,8 +232,44 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     //  • b2-3 read 100 → 10.0 A while the BMS was allowing 386.7 A of discharge, so
     //    this is the inverter's currently permitted output rather than the pack
     //    ceiling. Only ever seen at rest, so unverified against ground truth. 🟡
-    //  • b6-7 is the .xdbc's unidentified "Current other" — 153.8 A parked under that
-    //    scaling, matching nothing else on the bus. Logged so a ride can identify it. ❓
+    //  • 🚨 b6-7 was `current_other_a`, the .xdbc's unidentified "Current other" —
+    //    153.8 A parked under that scaling. **IT IS NOT A CURRENT.** Removed 2026-08-20.
+    //    Read as a u16 it produces 5069.0 A in 490 165 frames of one capture alone,
+    //    which is an order of magnitude past anything this pack can deliver, and it
+    //    takes a handful of discrete values rather than varying the way a measured
+    //    current does. The name came off the .xdbc, a rider's file — the same source
+    //    that gave 0x102 `charging` when the bit was the high beam.
+    //
+    //    Energica's own `FramesDB.ParseVCU_DRIVEBYWIRE` (the 2024 service-tool analysis
+    //    in obd-garage/, §`0x109` `VCU_DRIVEBYWIRE`) says b6 is a bitfield:
+    //        bit0     V_MAP_CHANGING
+    //        bits1-5  V_ACTIVE_MAP
+    //        bit6     V_eABS_EVENT
+    //        bit7     V_TC_EVENT
+    //    and b7 the same shape for the regen map plus two fault bits.
+    //
+    //    ✅ b6's two event bits are CONFIRMED by behaviour, not just by the name, over
+    //    438 228 frames of 0x109 sampled alongside 0x0A0 across the 15 captures that
+    //    carry ABS interventions. `V_TC_EVENT` is set in 1326 of them and the picture is
+    //    exactly traction control:
+    //      • median throttle 77.2 % and median torque +137.6 Nm when set, against 15.6 %
+    //        and +11.9 Nm when clear;
+    //      • the rate climbs monotonically with throttle — 0.00 % below 20 %, 0.05 %,
+    //        1.24 %, 12.08 %, then 14.89 % above 80 %;
+    //      • and it is NOT merely a throttle threshold: inside the ≥60 % throttle band
+    //        alone, frames with the bit set carry +146.2 Nm median against +109.9 Nm
+    //        without it. At the same rider demand it fires when torque is higher, which
+    //        is what a traction controller does and what a throttle comparator could not.
+    //    b6 takes only 0x02, 0x42 and 0x82 in these captures, i.e. ride map 1 throughout
+    //    with the two event bits toggling — which is the layout above and is not a
+    //    16-bit anything.
+    //
+    //    ⚠️ b7 is deliberately NOT decoded. Its top two bits are set in 490 165 frames of
+    //    `capture-20260807-213359`, which is not what a fault bit does, and those spans
+    //    do not overlap the ABS broadcast so nothing here can say what state they mark.
+    //    The map fields in b6 bits0-5 are left alone too: `V_ACTIVE_MAP` is 1 in every
+    //    frame on record, so there is nothing to validate the position against yet.
+    //    Only the two bits the data actually pins are decoded.
     case 0x109: {
       if (data.length < 2) return [];
       // Throttle keeps its original 2-byte guard: it has been logged since June and a
@@ -243,7 +279,8 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         values.push(
           { key: "current_max_out_a", value: u16le(data[2], data[3]) / 10 },
           { key: "current_max_regen_a", value: u16le(data[4], data[5]) / 10 },
-          { key: "current_other_a", value: u16le(data[6], data[7]) / 10 }
+          { key: "eabs_event", value: bit(data[6], 6) }, // V_eABS_EVENT, mask 0x40
+          { key: "tc_event", value: bit(data[6], 7) } // V_TC_EVENT, mask 0x80
         );
       }
       return values;

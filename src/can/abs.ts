@@ -366,7 +366,10 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //     rule.
 //   • **But that majority is a base-rate artefact, and correcting for it flips the emphasis.**
 //     This bike is ridden at positive torque 81 % of the time above 15 km/h. Per unit of riding,
-//     interventions are ~3× MORE likely under regen and ~29× more likely with the front brake on:
+//     interventions are ~3× MORE likely under regen and ~29× more likely with the front brake on.
+//     ⚠️ **Every row below is restricted to frames with both wheels above 15 km/h**, which is why
+//     the front brake shows 32 here against the 35 quoted above over all 162 — three of the 35 are
+//     below that floor. The four band rows sum to 344 222, the whole >15 km/h baseline:
 //
 //         band                 baseline frames   events   per 10 000 frames
 //         drive  (T > +1 Nm)           277 512       90                3.24
@@ -375,22 +378,55 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //         front brake applied            3 366       32               95.07
 //         front brake not applied      340 856      110                3.23
 //
-//   • ❌ **Traction control is REFUTED as the explanation for the throttle-open population**, and
-//     that is worth stating as a negative result rather than an open question. If those events
-//     were the bike intervening on drive slip, the demanded torque would be cut. Measured with one
-//     method applied identically to event and non-event frames — mean `drive_torque_cmd_nm` over
-//     the 0.5 s before against its extreme over −0.05…+0.35 s, requiring the throttle not to
-//     fall — torque is cut in **0 of 93** throttle-open interventions, against a 0.30 % background
-//     rate. If they were traction control it would be ~93 of 93. Two further checks agree:
+//   • ❌ **Traction control is REFUTED as the explanation for the throttle-open population.** Two
+//     independent measurements say so, and the second is the decisive one.
+//
+//     **(a) The bike never cuts torque at them.** If these were interventions on drive slip, the
+//     demanded torque would be cut. Measured with one method applied identically to event and
+//     non-event frames — mean `drive_torque_cmd_nm` over the 0.5 s before against its extreme
+//     over −0.05…+0.35 s — **0 of 90** drive-band interventions above 15 km/h show a cut the
+//     throttle does not explain. The full accounting, because the filter discards cases and that
+//     matters: of those 90, **83** had enough neighbouring 0x02C frames to test and **7** did not.
+//     Of the 83, **24 did** move >5 Nm toward zero — and every one of the 24 had the rider closing
+//     the throttle at the same moment, monotonically so, from −32.4 Nm with −15.8 % throttle down
+//     to −5.1 Nm with −2.4 %. That is a hand coming off the throttle, not a controller cutting it.
+//     The 7 untestable ones were checked by inspection and none shows a cut either: the minimum
+//     commanded torque in the window is at or above the frame's own value in 6 of them, and the
+//     7th moves 3.4 Nm, below threshold. So the result is 0 of 83 tested and 0 of 7 by hand, not
+//     a subset that quietly dropped its inconvenient cases. Two further checks agree:
 //     `drive_torque_cmd_nm − drive_torque_feedback_nm` sits at its ordinary +0.10 Nm through them,
 //     so the inverter is not clipping the demand, and 0x109's `current_max_out_a` does not dip.
+//
+//     **(b) The bike has a traction-control event flag, it fires often, and it is not set at
+//     these.** 0x109 b6 bit7 is `V_TC_EVENT` in Energica's own `ParseVCU_DRIVEBYWIRE`, and it is
+//     confirmed by behaviour rather than by its name — median throttle 77.2 % and torque
+//     +137.6 Nm when set against 15.6 % and +11.9 Nm when clear, and within the ≥60 % throttle
+//     band alone it still separates +146.2 Nm from +109.9 Nm, so it is not a throttle comparator.
+//     (This is the field the repo used to log as `current_other_a`; see src/can/decode.ts.)
+//     Cross-tabulated against every A_EVENT frame:
+//
+//         V_TC_EVENT   set at    4 of 162 interventions   (baseline rate 0.302 %)
+//         V_eABS_EVENT set at   10 of 162 interventions   (baseline rate 0.004 %)
+//         neither      set at  148 of 162
+//
+//     and in the drive band specifically, **94 of the 100 throttle-open interventions have
+//     neither flag**. Conversely `V_TC_EVENT` fires 1326 times in these captures, of which 4
+//     coincide with an ABS intervention. So traction control on this bike is a real, frequent,
+//     separately-broadcast event that looks nothing like these — it happens at three-quarters
+//     throttle and near peak torque, where the interventions happen at about 15 %. The bike's own
+//     answer to "was that traction control?" is no.
+//
+//     🟡 `V_eABS_EVENT` is the interesting residue: only 26 frames in the whole set, but 10 of
+//     them land on an A_EVENT, which against a 0.004 % baseline is an enrichment of ~1600×. So
+//     the VCU's eABS event and the ABS module's intervention ARE strongly associated — the sample
+//     is just far too small to build on, and it does not cover the throttle-open majority either.
 //   • ✅ **The braking/regen population is the one with real lockup signatures.** The three largest
 //     wheel divergences in the whole corpus — rear 15.81, 9.62 and 8.49 km/h BELOW the front — are
 //     all closed-throttle, front-brake-applied frames, and all are sustained across consecutive
 //     frames rather than single samples. The clearest is 2026-08-09 18:55:56 in
-//     `capture-20260809-181842`: 77 km/h, throttle shut, regen −41.7 Nm, front brake to 16 bar,
-//     rear collapses 68.2 → 48.4 km/h and both channels flag. It is the one event in the corpus
-//     that looks like the textbook picture.
+//     `capture-20260809-181842`: entered at 77 km/h, throttle shut, regen −41.7 Nm, front brake
+//     rising through 12-16 bar and peaking at 21, rear collapses 68.2 → 48.4 km/h and both
+//     channels flag. It is the one event in the corpus that looks like the textbook picture.
 //   • ❓ **So what the throttle-open events are is UNRESOLVED**, and it is left that way rather
 //     than filled in. Refuting traction control does not identify a replacement. Road-surface
 //     transients (a bump unloading a wheel), slip too brief for a 10 Hz broadcast to resolve, and
