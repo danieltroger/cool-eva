@@ -3,7 +3,7 @@ import { SIGNALS } from "../src/can/registry.ts";
 import { CHARGE_MANAGER_CAN_IDS } from "../src/can/charge-manager.ts";
 // The dashboard's own plausibility gate, imported rather than reimplemented — see the
 // boolean-deadband check below for why asking it beats keeping a copy of its rules.
-import { boundsFor } from "../public/lib/bounds.js";
+import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 import { resetAttitudeDecoder } from "../src/can/attitude.ts";
 import { resetGpsCanDecoder } from "../src/can/gps.ts";
 import type { DecodedValue } from "../src/can/frame.ts";
@@ -769,24 +769,38 @@ for (const testCase of REPLAY) {
     // Both directions are asserted. `outsideBounds` may only SUPPRESS the first failure, never
     // stand in for the second — an annotation that merely silences is indistinguishable from one
     // that has gone stale, which is the exact failure mode the header of this file is about.
+    //
+    // The predicate is `isPlausible`, not a comparison written here, for the same reason section 2
+    // asks bounds.js which signals are 0/1 flags instead of restating the rule: "showing as a
+    // fault" is decided in exactly one place, `isPlausible` at public/lib/store.js:236, and a copy
+    // of its body here would go on asserting a rejection that no longer happens the moment either
+    // comparison turns exclusive or a rule is added above the range test. `boundsFor` is still
+    // called, but only to name the band in the message.
     const signal = defined.get(key);
     const range = signal ? boundsFor(signal.key, signal.unit, signal.group) : null;
-    if (range) {
-      const insideBounds = expected >= range[0] && expected <= range[1];
-      if (!insideBounds && !declaredOutside.has(key)) {
+    const accepted = signal ? isPlausible(signal.key, expected, signal.unit, signal.group) : true;
+    if (range && !accepted && !declaredOutside.has(key)) {
+      failures.push(
+        `${label}: ${key} = ${expected} is a value this decoder is pinned to produce, but bounds.js gates it to [${range[0]}, ${range[1]}] — either the bound is too tight, or this case belongs in outsideBounds`
+      );
+    }
+    if (accepted && declaredOutside.has(key)) {
+      // Three different situations, and they send the reader to three different files. `range`
+      // being null does NOT on its own mean bounds.js is unbounded for this key — it also happens
+      // when the key has no registry entry and boundsFor was never asked.
+      if (!signal) {
         failures.push(
-          `${label}: ${key} = ${expected} is a value this decoder is pinned to produce, but bounds.js gates it to [${range[0]}, ${range[1]}] — either the bound is too tight, or this case belongs in outsideBounds`
+          `${label}: ${key} is declared in outsideBounds but has no registry entry, so nothing here can say whether bounds.js would reject it — the missing line is in the registry, not in bounds.js`
         );
-      }
-      if (insideBounds && declaredOutside.has(key)) {
+      } else if (range) {
         failures.push(
           `${label}: ${key} = ${expected} is declared in outsideBounds, but bounds.js now accepts it within [${range[0]}, ${range[1]}] — the sentinel has stopped showing as a fault, or the annotation is stale`
         );
+      } else {
+        failures.push(
+          `${label}: ${key} is declared in outsideBounds, but bounds.js does not bound it at all — nothing can reject it, so "supposed to be rejected" is false`
+        );
       }
-    } else if (declaredOutside.has(key)) {
-      failures.push(
-        `${label}: ${key} is declared in outsideBounds, but bounds.js does not bound it at all — nothing can reject it, so "supposed to be rejected" is false`
-      );
     }
   }
   // A key named in outsideBounds that this case does not expect asserts nothing and hides the
