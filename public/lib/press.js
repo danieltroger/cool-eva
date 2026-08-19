@@ -62,9 +62,11 @@ import { monotonicNow } from "./clock.js";
 // ## …except that a flasher is not a finger
 //
 // One thing the clock alone cannot fix. `blinker_left` / `blinker_right` are the LAMP
-// outputs (0x102 b2), and a running indicator toggles them — measured on the same log,
-// 333 ms on and 349 ms off, i.e. **1.46 Hz**. Every one of those is a real rising edge,
-// so naive counting is catastrophically wrong rather than slightly wrong:
+// outputs (0x102 b2), and a running indicator toggles them. Measured off the decoded ride
+// log this time rather than the raw captures — `rides.db`, Apr–Aug 2026, where these two
+// keys have their own rows — the blink is 333 ms on and 349 ms off, i.e. **1.46 Hz**.
+// Every one of those is a real rising edge, so naive counting is catastrophically wrong
+// rather than slightly wrong:
 //
 //   blinker_left    1881 rising edges  →   323 actual uses   (5.8× over)
 //   blinker_right   2693 rising edges  →   436 actual uses   (6.2× over)
@@ -92,10 +94,17 @@ const FLASHER_KEYS = new Set(["blinker_left", "blinker_right"]);
  * How long a flasher signal has to stay at 0 before the tile believes the rider
  * cancelled rather than the relay opening.
  *
- * 700 ms sits in an empty valley in the measured distribution. Of the 1875 gaps between
- * `blinker_left` flashes in the ride log, 1556 are ≤ 400 ms (the relay's own off phase)
- * and 1573 are ≤ 3 s — so only 17 land anywhere above 400 ms, and just 8 of those below
- * 1.5 s. Anywhere from 0.4 s to 1.5 s gives the same answer; 700 ms is the middle of it.
+ * 700 ms sits in an empty valley, and the distribution really is two humps with almost
+ * nothing between them. Of the 1875 gaps between `blinker_left` flashes in `rides.db`:
+ *
+ *   ≤ 400 ms   1556   the relay's own off phase
+ *   0.4-1.5 s     8   ← the valley the threshold has to land in
+ *   1.5-3 s       9
+ *   > 3 s       302   the rider genuinely finished and signalled again later
+ *
+ * So anywhere from 0.4 s to 1.5 s classifies all but eight of them identically; 700 ms is
+ * the middle of that. The eight are the cost, and they are ambiguous by nature — a
+ * cancel-and-immediately-re-signal is not distinguishable from a dropped blink.
  */
 const FLASHER_GAP_MS = 700;
 
