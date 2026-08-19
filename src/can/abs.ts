@@ -1,9 +1,10 @@
 // The ABS module's broadcast, CAN 0x0A0 `ABS_INFO` at 10 Hz. Wheel speeds, the ABS
-// warning lamp, and front brake pressure — which is a quantity nothing else on this bus
-// carries, and the reason this frame was worth chasing.
+// warning lamp, front brake pressure — which is a quantity nothing else on this bus
+// carries, and the reason this frame was worth chasing — and six flags.
 //
 // Layout is Energica's own, out of the `FramesDB.ParseABS_INFO` handler in the service
-// tool (the 2024 service-tool analysis in obd-garage/, §`0x0A0` `ABS_INFO`):
+// tool (the 2024 service-tool analysis in obd-garage/, §`0x0A0` `ABS_INFO`). All ten
+// signals it names are decoded below:
 //
 //   b0-1 LE  A_F_SPD_SENS   front wheel speed
 //   b2-3 LE  A_R_SPD_SENS   rear wheel speed
@@ -16,6 +17,9 @@
 // on trust, and re-checked on 2026-08-16 against two ROAD captures in
 // `~/Documents/cool-eva-archive/ride-captures3/` — `capture-20260804-035631-c8fe853f.log`
 // (16 188 frames, to 98 km/h) and `capture-20260804-193952-4b4cdd2b.log` (17 435 frames).
+// The six flags were added on 2026-08-19 against those three plus two more from that day,
+// `capture-20260819-172725-178e8719.log` (8373) and `buttons-2026-08-19.log` (2840) — a
+// corpus of 48 923 frames of this ID, which is the number every count below is out of.
 // What the captures prove, and what they do not, are deliberately kept apart below.
 //
 // ⚠️ The garage lap alone was actively MISLEADING about this frame, which is the main lesson
@@ -23,16 +27,41 @@
 // left walking-pace manoeuvring, and every quantitative claim derived from it about the wheel
 // speeds — the scale, and the "9 % channel disagreement" — turned out to be an artefact of
 // that. A frame is not characterised until it has been seen at the speeds it exists for.
+//
+// ## Why this frame is all there will ever be from the ABS
+//
+// 📘 Read off Energica's own wiring schematic (recorded 2026-08-19, from the topology and not
+// from this bus — nothing in the captures could show it): **the ABS module is not on the bus
+// this app taps.** The schematic puts it on the **DTB** bus; our tap is on **VDB**, and 0x0A0
+// reaches us only because the VCU gateways it across. That single fact explains two things
+// that otherwise look like our bugs:
+//
+//   • **The ABS never answered any diagnostic sweep.** A KWP/UDS request addressed from VDB
+//     cannot reach an ECU that only listens on DTB, so the silence was the topology and not a
+//     wrong address or a missed timing window. Energica's own tool carries no ABS live-data
+//     catalogue either, which is the corroborating half: there was never anything to sweep for.
+//   • **These ten signals are the whole interface.** Anything the ABS module knows that the
+//     VCU does not choose to re-broadcast is not merely undiscovered, it is unreachable from
+//     here. So "there is no rear brake pressure on this bus" is structural, not a gap in the
+//     search — see the `A_F_PRESSURE` note further down.
+//
+// Consequence for everything below: a flag that has never been seen set cannot be confirmed by
+// asking the module. It can only be confirmed by making the bike assert it. That is why the
+// unobserved four are filed on issue #51 as on-bike experiments rather than left undecoded.
 
-import { type DecodedValue, u16le } from "./frame.ts";
+import { type DecodedValue, bit, u16le } from "./frame.ts";
 
 export const ABS_CAN_ID = 0x0a0;
 
 /**
  * Decodes one 0x0A0 frame. Pure: bytes in, values out.
  *
- * Emits nothing for a short frame rather than a partial read — unlike 0x102, no field
- * here has been logged long enough to be worth protecting with its own narrower guard.
+ * The six flags read through `bit()` rather than the vendor's masks written literally
+ * (`data[4] & 0x10`), which would yield 16 rather than 1. That is not a hypothetical
+ * slip: it is the exact mistake public/lib/bounds.js gates the boolean groups against
+ * after `high_beam` once logged 193, and a flag arriving as 16 would be rejected as a
+ * dead sensor rather than shown. The vendor mask is named in the comment beside each so
+ * the bit index can still be checked against `ParseABS_INFO` at a glance.
  *
  * ⚠️ A wheel count of 0xFFFF is a sentinel and it DOES occur on the road — 10 frames across the
  * two 2026-08-04 captures. It is passed through, arriving as 3686.34 km/h, and that is deliberate
@@ -49,12 +78,29 @@ export const ABS_CAN_ID = 0x0a0;
  */
 export function decodeAbsFrame(data: Buffer): DecodedValue[] {
   if (data.length < 6) return [];
-  return [
+  const values: DecodedValue[] = [
     { key: "wheel_speed_front_kmh", value: u16le(data[0], data[1]) * WHEEL_SPEED_KMH_PER_COUNT },
     { key: "wheel_speed_rear_kmh", value: u16le(data[2], data[3]) * WHEEL_SPEED_KMH_PER_COUNT },
     { key: "abs_warning_lamp", value: (data[4] & 0x0c) >> 2 },
+    { key: "abs_front_sensor_fault", value: bit(data[4], 4) }, // A_FSENS_FAIL, mask 0x10
+    { key: "abs_rear_sensor_fault", value: bit(data[4], 5) }, // A_RSENS_FAIL, mask 0x20
+    { key: "abs_event", value: bit(data[4], 7) }, // A_EVENT, mask 0x80
     { key: "front_brake_pressure_bar", value: data[5] },
   ];
+  // b6 keeps its own guard so that the four signals logged since 2026-08-16 cannot be
+  // silenced by a short frame on account of these three — the same arrangement 0x109's
+  // throttle and 0x660's offset pair already use. Every one of the 48 923 frames on disk
+  // is DLC 8, so this branch has never yet been the false one; it is here because a
+  // truncated frame decoding b6 out of CAN padding would report "pressure invalid, no
+  // channel active", which reads as a healthy answer rather than as a missing byte.
+  if (data.length >= 7) {
+    values.push(
+      { key: "abs_front_pressure_validity", value: bit(data[6], 0) }, // A_F_PRESSURE_VALIDITY
+      { key: "abs_front_control_active", value: bit(data[6], 1) }, // A_F_CTRL_ACTIVE
+      { key: "abs_rear_control_active", value: bit(data[6], 2) } // A_R_CTRL_ACTIVE
+    );
+  }
+  return values;
 }
 
 // Energica's own telemetry-scaling table gives `A_F_SPD_SENS` / `A_R_SPD_SENS` the equation
@@ -190,11 +236,19 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //     scale is some other constant every number here is wrong by that factor while still
 //     looking entirely plausible. The KEY says `_bar` because that is the manufacturer's
 //     stated unit; it is not a measured one.
-//  2. **"Front" rests on the name too.** 0x102's REAR brake bit was never set once in the
-//     whole 545 k-frame capture, so this lap cannot separate "front brake pressure" from
-//     "brake pressure". Energica calls it `A_F_PRESSURE` and there is no `A_R_PRESSURE` in
-//     the frame at all, which is the argument — a ride that uses the rear brake alone is the
-//     measurement that would close it.
+//  2. ~~"Front" rests on the name too.~~ ✅ CLOSED 2026-08-19 by the measurement this caveat
+//     asked for. The 545 k-frame garage lap never once set 0x102's REAR brake bit, so it could
+//     not separate "front brake pressure" from "brake pressure". The two 2026-08-19 captures
+//     worked each brake on its own, stationary, and b5 was cross-tabulated against 0x102 b2:
+//       • rear pedal alone (`buttons-2026-08-19.log`, b2 0x40 set, b2 0x20 clear): **b5 = 0 in
+//         all 434 frames**, not one count in any of them.
+//       • front lever alone (`capture-20260819-172725-178e8719.log`, b2 0x20 set): b5 spans
+//         0…8 over 110 frames, and 35 of those read 0 — the lever closing its switch before
+//         line pressure builds, the same shape the garage lap showed.
+//     So b5 is front-specific, not a combined brake pressure Energica merely named
+//     `A_F_PRESSURE`. There is no rear brake pressure anywhere on this bus, and per the DTB
+//     note at the top of this file there cannot be: the rear brake is a switch (0x102 b2 0x40)
+//     and an ABS intervention flag (`abs_rear_control_active`), and neither is a pressure.
 //
 // A_WARN_LAMP: ✅ set in 3564 of 3601 standstill frames (99.0 %) and in 0 of 192 frames above
 // 6 km/h, which is the ABS self-test — it needs road speed to clear, and cannot clear on a
@@ -211,30 +265,100 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 // because at 1 the logging rule would pass |2 − 0| while failing |1 − 0| and log transitions
 // inconsistently.
 //
-// ⚠️ NOT decoded, and this is the honest reason: b1, b3, b6 and b7 are constant 0x00 across
-// all 4087 frames of the GARAGE LAP. That takes `A_FSENS_FAIL`, `A_RSENS_FAIL` and `A_EVENT`
-// (all in b4) and the whole of b6 with it. The road captures move two of them, so the note is
-// now three items rather than two:
-//   • b1 and b3, the wheel-speed high bytes, are NOT dead — the garage lap simply never went
-//     fast enough to reach 256 counts (14.4 km/h). They are non-zero in 10 241 and 10 242 of
-//     `capture-20260804-035631`'s frames, peaking at 1748 and 1766 counts, so the LE u16 read
-//     above is exercised across its real range and not just its low byte. The replay case in
-//     scripts/check-can-decoders.ts covers a 1697/1719-count frame for exactly that reason.
-//   • `A_F_PRESSURE_VALIDITY` (b6 bit0) reads 0 in EVERY frame — in the garage lap including
-//     the 106 where a pressure is being reported, and in 33 623 road frames too. So it cannot
-//     be used to gate the pressure — either its polarity is the opposite of its name, or the
-//     module never asserts it. Do not add a validity check from the vendor DB without watching
-//     that bit move first.
-//   • ✅ `A_EVENT` and `A_R_CTRL_ACTIVE` DO fire, and Energica's bit assignment for them is
-//     corroborated by the way they fire: b4 0x80 is set in 14 frames of `capture-20260804-035631`
-//     and 11 of `capture-20260804-193952`, and b6 0x04 in 14 and 11 of the same two — the same
-//     frames, exactly, in both captures. An event flag and a rear-channel-active flag that
-//     co-occur to the frame across two rides are what a real ABS intervention looks like, ~1.4 s
-//     and ~1.1 s of it. `A_F_CTRL_ACTIVE` (b6 bit1) stayed 0 throughout, so the front is still
-//     "0 because nothing happened" vs "somewhere else" — undecided.
-//     Left undecoded here only to keep this change to one subject: it needs registry entries,
-//     bounds entries and a deadband argument of its own. The evidence is named above so that
-//     is a short job, not another investigation.
+// b1 and b3, the wheel-speed high bytes, are NOT dead — the garage lap simply never went fast
+// enough to reach 256 counts (14.4 km/h). They are non-zero in 10 241 and 10 242 of
+// `capture-20260804-035631`'s frames, peaking at 1748 and 1766 counts, so the LE u16 read above
+// is exercised across its real range and not just its low byte. The replay case in
+// scripts/check-can-decoders.ts covers a 1697/1719-count frame for exactly that reason.
+//
+// b7 is 0x00 in all 48 923 frames and Energica's handler names nothing in it. Nothing to decode.
+//
+// ---------------------------------------------------------------------------------------
+// ## The six flags, and exactly how much each one is worth
+//
+// Added 2026-08-19, completing the ten signals `ParseABS_INFO` names. Two of them have been
+// watched firing; four never have. That split is the whole content of this section, and it is
+// kept explicit because "reads 0" means something completely different in the two cases.
+//
+// Across the whole 48 923-frame corpus, **b4 takes exactly three values — 0x00, 0x04, 0x80 —
+// and b6 exactly two, 0x00 and 0x04.** Every claim below is a reading of that.
+//
+// ### ✅ `abs_event` (b4 0x80) and `abs_rear_control_active` (b6 0x04) — observed, and coherent
+//
+// Set in **exactly the same 25 frames**, never one without the other: 14 in
+// `capture-20260804-035631` and 11 in `capture-20260804-193952`, 0 in the other three captures.
+// Two independently-named bits in two different bytes that agree to the frame across two rides
+// are not a coincidence, and that co-occurrence is the strongest evidence these positions are
+// right. Four further readings of those 25 frames, all of which say "rear ABS intervention":
+//
+//   • They are **13 separate bursts of 1-2 frames** (0.1-0.2 s each) — 7 in the first capture
+//     and 6 in the second — not one long event per ride. ⚠️ This CORRECTS the earlier note here
+//     that read the 14 and 11 frames as "~1.4 s and ~1.1 s of it"; they are scattered across 17
+//     and 36 minutes of riding. A real ABS cycle is a fraction of a second, so the short burst
+//     is the more believable shape, and it is what sets the log cost in src/can/registry.ts.
+//   • **b5 is 0 in all 25** — no front brake line pressure in any of them, at any point in any
+//     burst. So none of these was a front-brake stop. That is consistent with the rear channel
+//     being the one flagged, and it is why confirming `abs_front_control_active` needs a hard
+//     FRONT-brake stop specifically (issue #51).
+//   • The lamp bits are clear in all 25 (b4 is 0x80, never 0x84), so an intervention is not a
+//     fault and does not light the warning lamp. Anything alerting on these must not treat them
+//     as a fault condition.
+//   • Burst speeds run 11.6 to 73.1 km/h, spread over both rides — ordinary riding, not one
+//     unusual moment.
+//
+// 🟡 One more reading, deliberately marked weaker than it first looks: the front/rear wheel-speed
+// divergence at these frames is larger than usual — median |front − rear| 0.84 km/h against 0.28
+// elsewhere above 15 km/h in the first capture, 0.56 against 0.17 in the second, and the largest
+// (4.56 km/h, the 18:01:34 burst) exceeds the entire 10 194-frame baseline maximum of 3.66. But
+// ~10 % of ordinary frames also reach the event median, and n = 25. Suggestive of a rear wheel
+// actually slipping, not proof of it.
+//
+// ### ⚠️ `abs_front_sensor_fault` (0x10), `abs_rear_sensor_fault` (0x20), `abs_front_control_active`
+// ### (b6 bit1) — never observed set, and that is the expected reading
+//
+// 0 in all 48 923 frames. On a bike with no wheel-sensor fault and no front-wheel lockup in any
+// capture, that is what a correct decode looks like: there was nothing to report. It is NOT
+// evidence the positions are wrong, and it is NOT evidence they are right — it is no evidence
+// either way, which is precisely why they are decoded now rather than after the fact. A flag
+// that only matters when it fires is worth having decoded BEFORE it fires; the alternative is
+// discovering the first real wheel-sensor failure by finding it absent from the log. Same
+// reasoning, and the same corpus-wide zero, as the eleven never-seen flags in src/can/vcu-flags.ts.
+//
+// The positions are Energica's word alone. Treat any of the three reading 1 as a lead to check
+// against the mode-03 stored list, the dash's own ABS lamp and `abs_warning_lamp` here — not as
+// a confirmed fault. Confirming them needs the bike: a real sensor fault (or a sensor unplugged
+// deliberately) for the two `*SENS_FAIL`, and a front-wheel ABS stop for `abs_front_control_active`.
+// Both are filed on issue #51.
+//
+// 🔎 The two `*SENS_FAIL` bits have exact counterparts in this repo's own DTC table, which is
+// what makes them cheap to confirm the day the bike produces one: component 61 is
+// `P0500` front wheel speed sensor failure (`dtc_0061_0`), `P2158` rear (`dtc_0061_1`), `C0065`
+// both (`dtc_0061_2`) and `P2162` coherency (`dtc_0061_3`), all already logged as 1/0 signals by
+// src/diagnostics/record.ts. So `abs_front_sensor_fault` reading 1 in the same window the bike
+// stores P0500 confirms b4 0x10 outright, from two independent paths, with no extra
+// instrumentation — the ride log already carries both sides of that comparison.
+//
+// ### ❓ `abs_front_pressure_validity` (b6 bit0) — decoded as a flag, polarity UNESTABLISHED
+//
+// 0 in all 48 923 frames, including the 106 garage-lap frames and the 75 frames of 2026-08-19
+// where b5 is reporting a non-zero pressure. So the bit is 0 while the pressure demonstrably
+// works, and there are two readings that cannot be told apart from this side:
+//
+//   • the name is literal, 1 means valid, and this module simply never asserts it; or
+//   • the polarity is inverted from the name — 1 would mean INVALID — and 0 is the healthy state
+//     we have been watching all along.
+//
+// The name argues for the first; the fact that the pressure reading plainly works while the bit
+// sits at 0 argues for the second. Nothing here settles it, so nothing here pretends to. The key
+// is `abs_front_pressure_validity` rather than `..._valid` for that reason: the vendor's noun
+// claims a subject, not a truth value.
+//
+// ⚠️ **`front_brake_pressure_bar` is therefore NOT gated on this bit, and must not be.** Under
+// the second reading, gating would blank a working pressure display in every frame — the signal
+// would simply never appear, and it would look like a decoder bug rather than a policy. Under
+// the first, gating would blank it too, since the bit is never 1. Both readings make gating
+// wrong today; only watching the bit move can make it right. Do not add a validity check from
+// the vendor DB before then.
 //
 // ---------------------------------------------------------------------------------------
 // The dash over-reads, and by how much — recorded here because it is what the wheel-speed

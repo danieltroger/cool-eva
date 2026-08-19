@@ -472,7 +472,9 @@ export const SIGNALS: SignalDef[] = [
   //
   // The whole block costs 3820 rows over that lap — 33 700 rows/h of bike-on time, against
   // 64 100/h for the 224 signals already logged from the same capture. So this is a ~53 %
-  // increase in the ride log's row rate while riding, for 31 signals, and the three biggest
+  // increase in the ride log's row rate while riding, for the 31 signals that batch added —
+  // 0x0A0's six flags joined on 2026-08-19 and are NOT in that figure; they cost ~52 rows a
+  // ride, argued where they are declared below. The three biggest
   // contributors are the torque pair and the 12 V load current: between them they are more
   // than half of it, and 0x100's fourteen flags are 14 rows in total. That is the number to
   // argue with if the SD card starts complaining; the deadbands most worth revisiting first
@@ -500,6 +502,40 @@ export const SIGNALS: SignalDef[] = [
   // 441/h. Nothing to smooth, and a deadband of 1 here would swallow every single-bar step,
   // which on a 0-17 signal is most of it.
   { key: "front_brake_pressure_bar", unit: "bar", group: "controls", source: "stream" },
+  // 0x0A0's six flags, added 2026-08-19 to complete the ten signals Energica's `ParseABS_INFO`
+  // names. All six are true 1/0 bits, so none may carry a deadband — |1 − 0| > 1 is false, and
+  // a flag with a deadband of 1 logs once after boot and then never again, silently. That is
+  // enforced rather than merely intended: scripts/check-can-decoders.ts asks bounds.js which
+  // signals are gated to 0/1 and fails the build for any of them carrying one.
+  //
+  // Free to log, and this is measured rather than assumed. Four of the six have never been seen
+  // set in 48 923 captured frames of this ID, so they are one row each at boot and nothing
+  // after. The two that do fire, `abs_event` and `abs_rear_control_active`, fire in 25 frames
+  // total across two rides — 13 bursts of 1-2 frames, so ~26 edges each, ~52 rows for the pair
+  // across 53 minutes of riding. Against the 33 700 rows/h this block already costs, that is
+  // nothing, and there is no deadband that could reduce it without hiding the whole signal.
+  //
+  // No entry is needed in public/lib/bounds.js for any of them: `diag` and `controls` are both
+  // BOOLEAN_GROUPS and their unit is "", so the group rule already gates them to [0, 1] — which
+  // is exactly right here, and is the opposite of the situation `abs_warning_lamp` above had to
+  // be named for. That gate is also what catches a decoder returning the vendor's mask (16 or
+  // 128) instead of the bit; see the note in src/can/abs.ts on why they read through `bit()`.
+  //
+  // The two `*SENS_FAIL` bits go in `diag` beside the warning lamp they would light. The event
+  // and the two channel-active bits go in `controls`, next to front_brake_pressure_bar and the
+  // brake switch, because that is where you look when watching the brakes rather than hunting a
+  // fault — and `diag` is 170 signals deep with the generated dtc_* flags, which would bury
+  // them. `abs_event` sits with `abs_rear_control_active` deliberately: they fire in the same
+  // frame, always, and splitting them across two sections of the All tab would hide that.
+  { key: "abs_front_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x10 A_FSENS_FAIL
+  { key: "abs_rear_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x20 A_RSENS_FAIL
+  { key: "abs_event", unit: "", group: "controls", source: "stream" }, // b4 0x80 A_EVENT
+  // ⚠️ Polarity unestablished — 0 in every captured frame, including the ones where the pressure
+  // demonstrably works, so "1 = valid" and "1 = invalid" are both live readings of it. It is
+  // logged as the raw bit and front_brake_pressure_bar is NOT gated on it. See src/can/abs.ts.
+  { key: "abs_front_pressure_validity", unit: "", group: "controls", source: "stream" }, // b6 bit0
+  { key: "abs_front_control_active", unit: "", group: "controls", source: "stream" }, // b6 bit1
+  { key: "abs_rear_control_active", unit: "", group: "controls", source: "stream" }, // b6 bit2
 
   // 0x127 — the throttle position sensor's two channels, 12-bit counts, at 4 Hz. Blank unit on
   // purpose: these are ADC counts and converting them to a percentage would need 0x109's own
