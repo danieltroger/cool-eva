@@ -42,6 +42,32 @@ import van from "../vendor/van-1.6.1.js";
 // showTab() drops that rather than stacking an entry that Back cannot tell from a real
 // one.
 //
+// ## A switch the rider did not ask for pushes too
+//
+// autoFocus() in app.js moves the tab when the bike's state changes — plugging in,
+// the pack going critical. It would be reasonable to think those should replaceState
+// rather than pushState, on the grounds that the rider did not choose them. They push,
+// and the reason is what replaceState would actually do.
+//
+// You are reading Faults, having gone ride → faults. The bike starts charging.
+//
+//   push:     ride, faults, charge   →  Back returns you to Faults, then Ride.
+//   replace:  ride, charge           →  Back returns you to Ride. Faults is GONE.
+//
+// replaceState does not decline to add an entry; it OVERWRITES the entry the rider
+// made. So the "the rider did not choose this" instinct, followed honestly, argues
+// for pushing: an action the rider did not choose should be undoable, and must not
+// destroy one they did. Pushing gives both, replacing gives neither.
+//
+// It also keeps Back meaning one thing. Push for a tap and replace for the bike would
+// make Back sometimes step back a screen and sometimes skip one, with the difference
+// turning on something the rider cannot see.
+//
+// This matters more since #72 than it did before it: autoFocus now fires on a DC fast
+// charge, which it never used to, because the BMS reports Idle throughout one. A rapid
+// charger is exactly where the rider is most likely to be part-way through reading
+// something else when the screen is taken away from them.
+//
 // ## What is deliberately not routed
 //
 // The sheet behind the ☰ button is not a tab and does not get a URL. It is a control

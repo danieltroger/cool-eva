@@ -119,6 +119,10 @@ function TabBar() {
  * or a shared link restores is the one that was actually up. And a move the bike made
  * is undoable: plugging in takes you to Charge, and Back takes you back, the same
  * press that would have undone the tap you did not have to make.
+ *
+ * They push a history entry rather than replacing one, deliberately, and the argument
+ * is in the header of lib/router.js — the short version being that replaceState would
+ * not decline to add an entry, it would overwrite the one the rider had made.
  */
 let wasCharging = false;
 let wasCritical = false;
