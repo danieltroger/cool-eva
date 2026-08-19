@@ -288,10 +288,21 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   }
   const code = withoutComments(body);
 
-  if (!code.includes("log.files")) {
-    failures.push(`DownloadButton() in ${path} no longer reads log.files — what is the caption counting?`);
+  // Narrowed 2026-08-19, which is the escape hatch the message below already offered:
+  // the caption was removed outright for screen space, so there is no count to label
+  // and the old "must read log.files" assertion was firing on a deliberate deletion
+  // rather than on a bug. What is still worth guarding is the pairing — a count the
+  // rider sees must be log.files and must not be called segments — so the assertion
+  // now runs only when the button actually shows a count, and going back to showing
+  // one re-arms it automatically.
+  const showsACount = /log\.(files|segments)/.test(code);
+  if (showsACount && !code.includes("log.files")) {
+    failures.push(
+      `DownloadButton() in ${path} shows a count that is not log.files. The status payload exposes exactly ` +
+        `one countable thing about the log and that is the file count; anything else is invented`
+    );
   }
-  if (/segment/i.test(code)) {
+  if (showsACount && /segment/i.test(code)) {
     failures.push(
       `DownloadButton() in ${path} says "segment" in text the rider sees, next to a count of files. One .celog ` +
         `file is a whole day of sealed segments (see src/http/status.ts), so a number labelled that way is wrong ` +

@@ -172,33 +172,15 @@ function DownloadButton() {
         }
         return `⬇  Download ride log (${bytes(current.log.bytes)})`;
       }
-    ),
-    () => {
-      const current = status.val;
-      if (!current || !current.log.enabled) {
-        return div();
-      }
-      // Both halves of this line are narrower than they look, and both were wider
-      // once — it read "N sealed segments · encrypted, safe over any network", which
-      // is where "it always says 10" came from.
-      //
-      // FILES, not segments: one `.celog` is a whole day of them, so this number
-      // cannot move before midnight however far the bike rides. src/http/status.ts
-      // has the mechanism.
-      //
-      // And unreadable, not safe. Without the laptop's private key the log is noise,
-      // which is a claim about the BYTES; "safe over any network" was a claim about
-      // the TRANSFER, and the transfer is the part with no crypto in it. /dl
-      // authenticates nobody, so anyone on that wifi can pull the whole log and keep
-      // the ciphertext against the day the key leaks, and segments can be dropped or
-      // truncated in flight by someone holding no key at all. src/http/download.ts
-      // draws the same line, and the README lists the rest.
-      const fileCount = current.log.files;
-      return div(
-        { class: "action-note" },
-        `${fileCount} daily log file${fileCount === 1 ? "" : "s"} · unreadable without the laptop's private key`
-      );
-    }
+    )
+    // No caption under the button. The file count that used to sit here is still
+    // in the status payload (`log.files`) and still correct — it was dropped for
+    // screen space, not because it was wrong. The two facts it carried are worth
+    // knowing and live in the code that owns them: one `.celog` is a whole day of
+    // segments, so the count moves once a day rather than as you ride
+    // (src/http/status.ts); and the log is unreadable without the laptop's
+    // private key, but /dl authenticates nobody, so the ciphertext is
+    // pullable by anyone on that wifi (src/http/download.ts, and the README).
   );
 }
 
@@ -235,25 +217,34 @@ export function hasTroubleCodes() {
   return knownKeys.val.some(key => /^dtc_\d+_\d+$/.test(key) && (valueOf(key) ?? 0) > 0);
 }
 
-/** Which data sources are actually alive, rather than "some numbers are on screen". */
+/**
+ * Which data sources are actually alive, rather than "some numbers are on screen".
+ *
+ * One line, not a grid of sixteen fractions. The grid was unreadable for a reason
+ * worth stating: a partial count carries no verdict. BATTERY sat at 17/46 on a
+ * perfectly healthy parked bike, because most of those signals only exist while
+ * charging — so a reader had to already know each group's normal denominator
+ * before any of the numbers meant anything, and nobody knows sixteen of those.
+ *
+ * The question this answers is "has a source gone dark", and only `live === 0`
+ * answers it. So the dark ones get named and the rest get counted. The per-group
+ * numbers are still in /status for anyone debugging a specific group.
+ */
 function SourceHealth() {
-  return div({ class: "stats" }, () => {
+  return div({ class: "action-note" }, () => {
     const current = status.val;
     if (!current) {
-      return div({ class: "action-note", style: `color:${MUTED}` }, "…");
+      return "…";
     }
-    return div(
-      { class: "stats" },
-      ...Object.entries(current.groups)
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([group, [live, total]]) =>
-          div(
-            { class: "stat" },
-            div({ class: "stat-label" }, group),
-            div({ class: "stat-value", style: live === 0 ? `color:${MUTED}` : "" }, `${live}/${total}`)
-          )
-        )
-    );
+    const groups = Object.entries(current.groups);
+    const dark = groups
+      .filter(([, [live]]) => live === 0)
+      .map(([group]) => group)
+      .sort();
+    if (dark.length === 0) {
+      return `all ${groups.length} sources live`;
+    }
+    return `${dark.join(", ")} dark · ${groups.length - dark.length} live`;
   });
 }
 
