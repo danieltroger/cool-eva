@@ -379,6 +379,13 @@ function hexWord(value) {
  * value read off the bus ten seconds ago are both legitimate preconditions — the Pi
  * re-reads either way — but they are not equally likely to still be true, and the one
  * thing the page must never do is present them as the same thing.
+ *
+ * ⚠️ The age is computed at RENDER, and nothing polls /vcu-write while the sheet is
+ * open, so a sheet left untouched shows the age it had when something last re-rendered
+ * it. That is why the write button's first tap refreshes before it arms (`armWrite`):
+ * the caption is re-rendered from the Pi's answer at the moment somebody starts to
+ * commit, which is the moment its accuracy is load-bearing. A timer ticking this every
+ * minute for a phone sitting on a workbench would be the wrong trade.
  */
 function ValueNote() {
   return div({ class: "action-note", style: `color:${MUTED}` }, () => {
@@ -496,7 +503,7 @@ function WriteButton() {
         disabled: () => busy.val || !canWrite() || onBike() === null || wanted.val.trim().length === 0,
         onclick: () => {
           if (armed.val !== "write") {
-            armed.val = "write";
+            void armWrite();
             return;
           }
           armed.val = "";
@@ -543,7 +550,16 @@ function WriteButton() {
   );
 }
 
-/** `75 → 80`, or `Heated handlebars → ON`. What the two taps are agreeing to. */
+/**
+ * `MAX_DC_CHG_CURRENT: 75 → 80`, or `VSM_CONFIG_1: Heated handlebars → ON`. What the
+ * two taps are agreeing to.
+ *
+ * ⚠️ The PARAMETER NAME is in here and must stay. This caption is the one place a
+ * person commits, and it is the only thing besides the picker that names what is about
+ * to be written — so a picker showing the wrong parameter is contradicted here rather
+ * than agreed with. `75 → 80` alone reads identically for four of the five entries at
+ * plausible values, which is exactly the reading a bare number cannot survive.
+ */
 function describeChange() {
   const target = selectedTarget();
   const known = onBike();
@@ -553,9 +569,9 @@ function describeChange() {
   if (target.control.kind === "bits") {
     const [key, on] = wanted.val.split(":");
     const bit = target.control.bits.find(candidate => candidate.key === key);
-    return bit ? `${bit.label} → ${on === "1" ? "ON" : "OFF"}` : "";
+    return bit ? `${target.name}: ${bit.label} → ${on === "1" ? "ON" : "OFF"}` : "";
   }
-  return `${known.value} → ${wanted.val}`;
+  return `${target.name}: ${known.value} → ${wanted.val}`;
 }
 
 /**
@@ -907,6 +923,36 @@ async function readCurrent() {
   }
 }
 
+/**
+ * Refreshes, THEN arms — so the number the second tap agrees to is the Pi's answer now.
+ *
+ * ⚠️ Exactly what armClockSync() does one section below, for the same reason and it is
+ * the same failure: a sheet opened in the kitchen and used at the bike twenty minutes
+ * later was showing an age computed when it opened. Nothing polls /vcu-write while the
+ * sheet is open — deliberately — so without this the caption "from the parameter sweep
+ * just now" could still be on screen long after it stopped being true, and the age is
+ * the entire basis on which an old reading is an acceptable precondition.
+ *
+ * ⚠️ And if the value MOVED across that refresh, this does not arm. The caption now
+ * shows a different number from the one that was tapped, and a second tap must agree to
+ * what is on screen rather than to what was. (fetchStatus() disarms on its own for the
+ * same reason; this function is what re-arms deliberately, and only when nothing moved.)
+ */
+async function armWrite() {
+  const before = onBike();
+  const name = selectedTarget()?.name;
+  busy.val = true;
+  try {
+    await fetchStatus();
+  } finally {
+    busy.val = false;
+  }
+  const after = onBike();
+  if (after && before && after.value === before.value && selectedTarget()?.name === name && canWrite()) {
+    armed.val = "write";
+  }
+}
+
 async function performWrite() {
   const target = selectedTarget();
   const known = onBike();
@@ -927,20 +973,42 @@ async function performWrite() {
     query.set("value", wanted.val.trim());
   }
   const name = target.name;
-  await send(query);
-  const result = state.val?.result ?? null;
-  lastWrite.val = result ? { name, status: result.status, succeeded: result.succeeded } : null;
+  const payload = await send(query);
+  armed.val = "";
+
+  // ⚠️ THE ANSWER IS TAKEN FROM THIS REQUEST'S OWN RESPONSE, never from `state.val`.
+  // `send()` leaves the state alone when the request does not come back, so reading the
+  // verdict out of the state would attribute the LAST write's result — including its
+  // "written", its read-back and the verification hint — to an attempt that may have
+  // reached the bike and may have done anything at all.
+  if (!payload) {
+    // The worst case, and it stays the worst case: nothing is claimed about the
+    // parameter, and the reading goes, because the frame may well have gone out. The
+    // message send() set says so at length. The next write has to read first.
+    lastWrite.val = null;
+    reading.val = null;
+    return;
+  }
+  if (!payload.result) {
+    // 400 or 409: refused BEFORE the bus — a malformed query, a busy bus, a closed
+    // gate. Nothing was read and nothing was written, so the reading on screen is
+    // exactly as true as it was a second ago and is kept, along with what was typed:
+    // the answer to "the sweep is using the bus" is to wait and press it again, not to
+    // start over. `message` carries the server's reason.
+    return;
+  }
+  const result = payload.result;
+  lastWrite.val = { name, status: result.status, succeeded: result.succeeded };
   // What the bike holds NOW, from the read-back the write itself did — so the value on
   // screen is the one that is true afterwards rather than the one the sweep recorded
-  // before. Cleared when the attempt produced no reading at all (a refusal at the
-  // session or security step, a request that never came back): the page then falls back
-  // to the sweep's older value, correctly labelled as old, and the Pi re-reads before
-  // any second attempt exactly as it did before this one.
-  reading.val = result?.onBike
+  // before. Cleared when the attempt reached the bus and produced no reading (refused
+  // at the session or security step, or a failure partway): the write may have landed,
+  // so the page falls back to the sweep's older value, correctly labelled as old, and
+  // the Pi re-reads before any second attempt exactly as it did before this one.
+  reading.val = result.onBike
     ? { name: result.onBike.name, value: result.onBike.value, rawHex: result.onBike.rawHex }
     : null;
   wanted.val = "";
-  armed.val = "";
 }
 
 /**
@@ -951,7 +1019,18 @@ async function performAction(action, confirmation) {
   await send(new URLSearchParams({ action, confirm: confirmation }));
 }
 
-/** @param {URLSearchParams} query */
+/**
+ * POSTs one action and hands back what came of it.
+ *
+ * ⚠️ Returns the payload, or **null when the request did not come back at all** — and
+ * the difference is the whole reason it returns anything. A caller that instead read
+ * the verdict out of `state.val` would find the PREVIOUS action's result sitting there,
+ * because the transport-failure branch below deliberately leaves the state alone, and
+ * would report that action's success as this one's.
+ *
+ * @param {URLSearchParams} query
+ * @returns {Promise<VcuWriteResponse | null>}
+ */
 async function send(query) {
   busy.val = true;
   message.val = "";
@@ -968,6 +1047,7 @@ async function send(query) {
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     state.val = payload;
     message.val = payload.result?.message ?? payload.message ?? "";
+    return payload;
   } catch (error) {
     // ⚠️ The worst case on this page, and it is said as such. A write request that
     // did not come back may still have reached the bike — the frame goes out before
@@ -976,6 +1056,7 @@ async function send(query) {
       `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
       "⚠️ This does NOT mean nothing was written: the request may have reached the bike. Read the value back before trying again.";
     console.warn("vcu-write: request failed", error);
+    return null;
   } finally {
     busy.val = false;
   }
