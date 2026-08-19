@@ -425,6 +425,11 @@ body {
    separating. Rank belongs to the heading; hue belongs to the rule and the deck. */
 .sheet-heading.writes {
   border-top-color: var(--warn);
+  /* ⚠️ Larger than its peers, because rank should track consequence. At one size for
+     all six, "Link" — a one-line status readout — announced itself exactly as loudly
+     as the section that permanently alters a motorcycle. The colour stays --fg (see
+     above); size is the channel that raises it without dimming it. */
+  font-size: 1.35rem;
 }
 
 .sheet-heading.writes + .sheet-heading-note {
@@ -522,8 +527,12 @@ body {
   color: var(--fg);
   font: inherit;
   font-size: 1rem;
-  /* Tall enough for a gloved thumb. */
+  /* Tall enough for a gloved thumb. `min-height` as well as padding, because without
+     it the row height is set by whichever GLYPH is in the label — emoji run taller
+     than the text arrows, so "Download ride log" came out 4 px shorter than "Save
+     waypoint here" directly above it. Icon metrics must not decide layout. */
   padding: 1rem;
+  min-height: 3.75rem;
   margin-top: 0.5rem;
   text-align: left;
   cursor: pointer;
@@ -548,10 +557,13 @@ body {
   opacity: 0.62;
 }
 
+/* 0.2rem horizontally, matching .sheet-heading and .sheet-title rather than the 0.3rem
+   this used to carry — two text left-edges 1.3 px apart is a wobble you can see as you
+   scroll, and there is no reason for captions to hang off the heading grid. */
 .action-note {
   font-size: 0.72rem;
   color: var(--label);
-  padding: 0.35rem 0.3rem 0;
+  padding: 0.35rem 0.2rem 0;
 }
 
 /* The prose under a control is three different things, and they were one
@@ -585,7 +597,25 @@ body {
   font-size: 0.82rem;
   font-weight: 600;
   line-height: 1.35;
-  padding: 0.9rem 0.3rem 0.25rem;
+  padding: 0.9rem 0.2rem 0.25rem;
+}
+
+/* The category, as a badge rather than as the first half of the sentence.
+   "IRREVERSIBLE" was appearing five times in a screen and a half — section deck, fold
+   label, and once per card — and at that rate it stops being read, while the only new
+   information on each card is what came after it. Same on all three cards, because the
+   category IS the same on all three; the consequence is what differs and it now gets
+   the weight. */
+.no-undo-badge {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--bad-edge);
+  border-radius: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  vertical-align: 0.08em;
 }
 
 /* The fold in front of the irreversible actions.
@@ -655,17 +685,30 @@ body {
  * rather than as grouping. What says these three belong together is that they
  * are the only red things on the page and they appeared together when the fold
  * opened. */
-.danger-zone {
-  margin-top: 0.5rem;
-  /* ⚠️ A closing rule, because an opened group with no bottom edge is not a group —
-     it bled straight into "Recently written", and the gap that ended it was
-     indistinguishable from the gap between its own members, so scrolling past the
-     toggle left three red buttons as orphans. The fold row is the opening edge and
-     this is the closing one; neither touches the left edge, which is what kept the
-     first attempt (a left rail plus an indent) ragged on one side. */
+/* ⚠️ The closing rule lives on the WRAPPER, not on the opened group, so it is there in
+   both states. On the group it existed only while open — so folded, "Recently written"
+   hung under the red panel with no divider at all, while "Stored codes" and "Link" each
+   got one, and it read as a caption on the danger box rather than as the next section.
+   The fold row is the opening edge and this is the closing one; neither touches the
+   left edge, which is what made the first attempt (a left rail plus an indent) ragged
+   on one side. */
+.risk-group {
   padding-bottom: 1.1rem;
   border-bottom: 1px solid var(--bad-edge);
   margin-bottom: 0.5rem;
+}
+
+/* Spacing only. What says these three belong together is that they are the only red
+   things on the page and they appeared together when the fold opened. */
+.danger-zone {
+  margin-top: 1.5rem;
+}
+
+/* ⚠️ The first card's gap comes from .danger-zone, the others' from
+   `.action-block + .action-block` — so they have to be the same number or the stack
+   leads raggedly (it ran 25 / 41 / 42 px). Both are 1.5rem; change them together. */
+.danger-zone > .action-block:first-child {
+  margin-top: 0;
 }
 
 .sheet-close {

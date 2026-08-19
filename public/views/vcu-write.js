@@ -752,6 +752,11 @@ function ServiceActions() {
  */
 function IrreversibleActions() {
   return div(
+    // ⚠️ The wrapper carries the closing rule, so it is there whether the fold is open
+    // or shut. On the opened group it existed only while open, which left "Recently
+    // written" hanging under the red panel with no divider in the state the sheet
+    // spends most of its life in — while every other section boundary had one.
+    { class: "risk-group" },
     button(
       {
         class: "code-toggle risk-fold",
@@ -775,7 +780,10 @@ function IrreversibleActions() {
       // The contents, under the caveat rather than instead of it. Somebody at the bike
       // who came for the clock should not have to open the drawer to learn the clock
       // is in it — but why it is shut is still the first thing worth reading.
-      span({ class: "risk-fold-contents" }, IRREVERSIBLE_NAMES.join("  ·  "))
+      //
+      // Only while SHUT: open, the three buttons are spelled out directly underneath,
+      // and a list naming them a few pixels above is the same information twice.
+      () => (dangerOpen.val ? span() : span({ class: "risk-fold-contents" }, IRREVERSIBLE_NAMES.join("  ·  ")))
     ),
     () => (dangerOpen.val ? div({ class: "danger-zone" }, ...IRREVERSIBLE.map(render => render())) : div())
   );
@@ -797,7 +805,7 @@ const IRREVERSIBLE = [
   () =>
     ActionButton("set-service-point", () => "🔧  Say a service was performed NOW", {
       confirm: "STAMP A SERVICE NOW. There is no unset",
-      noUndo: "IRREVERSIBLE — there is no unset.",
+      noUndo: "There is no unset.",
       does: "Runs 31 FC on the A8. It takes no parameters — the bike stamps its OWN clock and odometer.",
       caution:
         "⚠️ Read the stamp above first, and make sure the bike's clock is right — the bike's clock is what it stamps.",
@@ -806,7 +814,7 @@ const IRREVERSIBLE = [
   () =>
     ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
       confirm: "WIPE the stored codes and their freeze frame",
-      noUndo: "IRREVERSIBLE — the freeze frame goes with the codes.",
+      noUndo: "The freeze frame goes with the codes.",
       does: "OBD Mode 04 — clears every code the bike currently holds stored.",
       caution:
         "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
@@ -850,7 +858,7 @@ if (IRREVERSIBLE_NAMES.length !== IRREVERSIBLE_COUNT) {
  * it differs in the direction that matters — you can set the clock again, but nothing
  * can tell you what it held before or that this landed at all.
  */
-const CLOCK_NO_UNDO = "IRREVERSIBLE, AND UNCHECKABLE — the bike's clock cannot be read back.";
+const CLOCK_NO_UNDO = "The bike's clock cannot be read back, so nothing can confirm this landed.";
 
 function ClockAction() {
   return div(
@@ -859,7 +867,10 @@ function ClockAction() {
     // arrives before the eye does. Shown only when the button can actually do
     // something — a Pi whose clock is not fit to copy has a disabled button and
     // nothing that cannot be undone, and its own red line is below instead.
-    () => (state.val?.status.clock.trustworthy === true ? div({ class: "action-note no-undo" }, CLOCK_NO_UNDO) : div()),
+    // Through NoUndoLine, not hand-rolled: rendering the div here meant this one card
+    // was the only one whose red line had no IRREVERSIBLE badge, which is exactly the
+    // inconsistent-slot problem the badge exists to remove.
+    () => (state.val?.status.clock.trustworthy === true ? NoUndoLine({ noUndo: CLOCK_NO_UNDO, does: "" }) : div()),
     button(
       {
         class: "action irreversible",
@@ -1012,7 +1023,16 @@ function ActionButton(action, caption, notes) {
  * @param {ActionNotes} notes
  */
 function NoUndoLine(notes) {
-  return notes.noUndo === undefined ? div() : div({ class: "action-note no-undo" }, notes.noUndo);
+  if (notes.noUndo === undefined) {
+    return div();
+  }
+  // ⚠️ The category is a BADGE and the consequence is the sentence, rather than both
+  // being one shouted string. "IRREVERSIBLE" appeared five times in a screen and a
+  // half — section deck, fold label, and once per card — at which point it stops being
+  // read at all, while the only new information on each card is what came after the
+  // dash. The badge is identical on all three because the category is; what differs
+  // gets the weight.
+  return div({ class: "action-note no-undo" }, span({ class: "no-undo-badge" }, "IRREVERSIBLE"), notes.noUndo);
 }
 
 /**
