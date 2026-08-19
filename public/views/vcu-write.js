@@ -106,6 +106,15 @@ const warningsOpen = van.state(false);
  */
 const lastWrite = van.state(/** @type {{ name: string, status: string, succeeded: boolean } | null} */ (null));
 const busy = van.state(false);
+/**
+ * True only while a write's own POST is in flight.
+ *
+ * ⚠️ Separate from `busy`, which is also raised by the probe read and by the refresh
+ * the write button's first tap does. This page must not say "Writing…" while it is
+ * doing something else: a caption claiming a write is in progress when none is would be
+ * a lie about the one thing on this page that cannot be taken back.
+ */
+const writing = van.state(false);
 const message = van.state("");
 
 export function VcuWrite() {
@@ -511,8 +520,13 @@ function WriteButton() {
         },
       },
       () => {
-        if (busy.val) {
+        if (writing.val) {
           return "⏳  Writing…";
+        }
+        if (busy.val) {
+          // The first tap's refresh, or a read running in the section above. Neither is
+          // a write, and neither may be captioned as one.
+          return "⏳  Checking what the bike holds…";
         }
         const table = state.val?.status.tableGate;
         if (table && !table.writesAllowed) {
@@ -973,7 +987,13 @@ async function performWrite() {
     query.set("value", wanted.val.trim());
   }
   const name = target.name;
-  const payload = await send(query);
+  writing.val = true;
+  let payload;
+  try {
+    payload = await send(query);
+  } finally {
+    writing.val = false;
+  }
   armed.val = "";
 
   // ⚠️ THE ANSWER IS TAKEN FROM THIS REQUEST'S OWN RESPONSE, never from `state.val`.
