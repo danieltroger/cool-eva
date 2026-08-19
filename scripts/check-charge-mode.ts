@@ -1,7 +1,7 @@
 import { decodeFrame } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor } from "../public/lib/bounds.js";
-import { CHARGER_LIVE_MS, chargeMode } from "../public/lib/charge-mode.js";
+import { chargeMode } from "../public/lib/charge-mode.js";
 
 // Replays real frames through the real broadcast decoders and asks the dashboard's own
 // charge rule what it makes of them — on a laptop, with no bike.
@@ -82,7 +82,7 @@ interface ChargeCase {
   otherSignals?: Record<string, number>;
   /** Milliseconds since each signal last arrived. Anything unlisted is fresh. */
   ages?: Record<string, number>;
-  expect: "ac" | "dc" | "none";
+  expect: "ac" | "dc" | "charging" | "none";
   /** What this case is defending. */
   because: string;
 }
@@ -141,12 +141,26 @@ const CASES: ChargeCase[] = [
       "0x201 b0 holds the same 0x10 here as it does through a whole DC charge. Anything that reads that byte as 'DC' claims a fast charge at the end of every AC one",
   },
   {
-    what: "unplugged from a DC charger, 0x102 gone quiet with the contactor bit last seen set",
+    what: "DC fast charging, with the heartbeat that refreshes the contactor bit running a little late",
+    frames: [
+      { id: 0x201, hex: BMS_IDLE_201 },
+      { id: 0x102, hex: DC_CONTACTOR_102 },
+    ],
+    ages: { fast_dc_contactor: 7000 },
+    expect: "dc",
+    because:
+      "The bit holds at 1 for the whole session, and signals.ts patches only what MOVES — so on the phone nothing refreshes its timestamp but ws.ts's 5 s snapshot, and its apparent age sawtooths 0 → ~5 s against a serverTime that advances on every pack_a. A window with no room for a late heartbeat drops a running fast charge to 'not charging', tears down the DC tiles and bounces the rider off the charge tab",
+  },
+  {
+    what: "unplugged from a DC charger a minute ago, 0x102 gone quiet with the contactor bit last seen set",
     frames: [
       { id: 0x201, hex: NOT_CHARGING_201 },
       { id: 0x102, hex: DC_CONTACTOR_102 },
     ],
-    ages: { fast_dc_contactor: CHARGER_LIVE_MS + 1 },
+    // A minute, not one millisecond past the window: what this pins is that the gate
+    // exists at all, and pinning it to the constant's exact value would just restate
+    // the constant.
+    ages: { fast_dc_contactor: 60_000 },
     expect: "none",
     because:
       "The store keeps the last reading of every signal for ever, so the contactor bit reads 1 until the next reboot. Freshness is the claim, never the value",
@@ -159,9 +173,9 @@ const CASES: ChargeCase[] = [
     ],
     otherSignals: CHARGER_FRAMES,
     ages: { mains_v: 9000, mains_a: 9000, dc_v: 9000, dc_a: 9000 },
-    expect: "dc",
+    expect: "charging",
     because:
-      "A charge is happening — the BMS says so — but the AC tiles are sourced entirely from frames that have stopped arriving, so the pack-side set is the honest one to draw",
+      "A charge is happening — the BMS says so — but nothing on the bus says what kind, and the contactor bit says it is not DC. Answering 'dc' here would print 'DC charging' on a bike plugged into a wall socket, from the absence of evidence rather than any: the same inference this whole change exists to delete, pointing the other way",
   },
 ];
 
@@ -187,11 +201,24 @@ for (const scenario of CASES) {
   };
 
   const actual = chargeMode(read, stale);
+  if (actual !== scenario.expect) {
+    failures.push(
+      `${scenario.what}: chargeMode() said "${actual}", expected "${scenario.expect}" — ${scenario.because}`
+    );
+  }
+
+  // The invariant behind every "dc" above, asserted separately from the expectations
+  // so that agreeing with the table is not the only thing keeping it true. "DC" is a
+  // claim about hardware and the rider reads it as one, so it may only be made with
+  // the contactor bit set — never, as this screen once did, from the mere absence of
+  // the AC charger. That the bit must also be RECENT is pinned by the two cases above
+  // that vary only its age, rather than restated here as a copy of the constant.
+  if (actual === "dc" && values.get("fast_dc_contactor") !== 1) {
+    failures.push(`${scenario.what}: chargeMode() answered "dc" with no fast_dc_contactor under it`);
+  }
   if (actual === scenario.expect) {
     console.log(`  ✓ ${scenario.what} → ${actual}`);
-    continue;
   }
-  failures.push(`${scenario.what}: chargeMode() said "${actual}", expected "${scenario.expect}" — ${scenario.because}`);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -247,9 +274,9 @@ if (failures.length > 0) {
 }
 console.log(
   `✓ ${CASES.length} situations decode to the charge mode the screen should show — parked and riding are not a ` +
-    `charge, an AC session is AC, a DC session is DC despite the BMS reporting Idle throughout, and the same ` +
-    `Idle at the end of an AC session is not mistaken for one; all ${consulted.size} signals the rule consults ` +
-    `are registered stream signals`
+    `charge, an AC session is AC, a DC session is DC despite the BMS reporting Idle throughout and survives a late ` +
+    `heartbeat, the same Idle at the end of an AC session is not mistaken for one, and no answer names DC without ` +
+    `the contactor bit under it; all ${consulted.size} signals the rule consults are registered stream signals`
 );
 
 /** The dashboard's view of one moment: every signal the replayed frames would produce. */

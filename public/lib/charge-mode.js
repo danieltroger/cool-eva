@@ -24,18 +24,55 @@
 // see dcContactorClosed() below.
 
 /**
- * How recently a signal must have arrived to be evidence about right now.
+ * How recently one of the onboard charger's frames must have arrived to mean it is
+ * live.
  *
  * Freshness rather than value is the whole point: the store keeps the last reading
  * of every signal for ever, so `dc_v` reads 400 V until the next reboot whether or
- * not anything is plugged in, and a contactor that closed at yesterday's charger
- * still reads 1 today. Six seconds is thirty frames of margin on 0x305/0x306 at
- * 5 Hz, and six hundred on 0x102 at 100 Hz.
+ * not anything is plugged in. Six seconds is thirty frames of margin on 0x305/0x306
+ * at 5 Hz, and these four are analog and carry no deadband, so every sample of a
+ * charger that is actually running reaches the phone as its own patch.
  */
 export const CHARGER_LIVE_MS = 6000;
 
 /**
- * What kind of charge is happening, if any.
+ * The same question for the contactor bit, and it needs a longer answer.
+ *
+ * A steady BOOLEAN does not reach the phone the way a moving analog value does.
+ * `fast_dc_contactor` sits at 1 for the whole of a fast charge — 1038 s in the one
+ * captured session — and signals.ts patches a signal only when its value moves, so
+ * nothing refreshes this one's timestamp except ws.ts's 5 s full-snapshot heartbeat,
+ * while `serverTime` advances on every 20 Hz pack_a patch. Its apparent age on the
+ * dashboard therefore sawtooths 0 → ~5 s, and CHARGER_LIVE_MS would leave a single
+ * second of heartbeat jitter between a healthy fast charge and this rule falling all
+ * the way to "none" — the BMS reports Idle throughout a DC session, so there is
+ * nothing behind it to catch the fall. That tears down the DC tiles and their
+ * sparklines and, through autoFocus(), throws the rider off the charge tab and back
+ * again on the next heartbeat.
+ *
+ * 12 s is store.js's own SILENCE_LIMIT_MS: past that the dashboard has already
+ * decided the whole link is down and says so in the header, so nothing is claimed
+ * here that the page is not already disowning. It costs nothing at the other end of
+ * a session either — unplugging moves the bit 1 → 0, which patches immediately, so
+ * this gate is only ever the backstop against a store that never forgets.
+ */
+const CONTACTOR_LIVE_MS = 12_000;
+
+/**
+ * What is charging the pack, if anything.
+ *
+ *   "ac"        charging, with the onboard charger's own frames arriving
+ *   "dc"        charging, with the DC fast-charge contactor closed
+ *   "charging"  charging on the BMS's word, with neither of those confirmed
+ *   "none"      not charging
+ *
+ * Four values rather than three because the source is a separate fact from whether a
+ * charge is happening, and only one of them always has evidence. "Not AC" is not
+ * evidence of DC — inferring it that way is precisely how a parked bike came to read
+ * "DC charging" — and "not DC" is no more evidence of AC, so the fourth value exists
+ * to be honest about the case where the bus says a charge is running but nothing
+ * says what kind. Callers naming a source to the rider may only name it for "ac" and
+ * "dc"; the tile sets are a separate choice, made in views/charge.js.
  *
  * `read` and `stale` are parameters rather than direct store calls so that one rule
  * can serve both the subscribing views and the tick-paced sampling in app.js, and so
@@ -45,7 +82,7 @@ export const CHARGER_LIVE_MS = 6000;
  *
  * @param {(key: string) => number | null} read
  * @param {(key: string, maxAgeMs: number) => boolean} stale
- * @returns {"ac" | "dc" | "none"}
+ * @returns {"ac" | "dc" | "charging" | "none"}
  */
 export function chargeMode(read, stale) {
   if (dcContactorClosed(read, stale)) {
@@ -54,13 +91,7 @@ export function chargeMode(read, stale) {
   if (!bmsIsChargeManaging(read)) {
     return "none";
   }
-  // A charge is happening and it is not DC, so it is the onboard charger's — but
-  // which TILES are worth drawing is a second question, because the AC set is
-  // sourced entirely from the charger's own frames. If those have gone quiet the
-  // pack-side set is the honest one, the same way it is at a fast charger; leaving
-  // the AC tiles up would show the last values of a session that has ended, which
-  // is what made this screen useless away from a wall socket.
-  return isOnboardChargerLive(stale) ? "ac" : "dc";
+  return isOnboardChargerLive(stale) ? "ac" : "charging";
 }
 
 /**
@@ -78,7 +109,7 @@ export function chargeMode(read, stale) {
  * @param {(key: string, maxAgeMs: number) => boolean} stale
  */
 function dcContactorClosed(read, stale) {
-  return read("fast_dc_contactor") === 1 && !stale("fast_dc_contactor", CHARGER_LIVE_MS);
+  return read("fast_dc_contactor") === 1 && !stale("fast_dc_contactor", CONTACTOR_LIVE_MS);
 }
 
 /**

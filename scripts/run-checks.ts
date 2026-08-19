@@ -114,9 +114,11 @@ const CHECKS: SelfCheck[] = [
     covers:
       "the dashboard's one charge rule, driven by real frames through the real decoders: that a parked bike and a " +
       "ridden one are not a charge however the AC charger's frames are behaving, that an AC session reads AC, that " +
-      "a DC session reads DC even though the BMS reports Idle for the whole of one, and that the same Idle at the " +
-      "tail of an AC session is not mistaken for a fast charge — plus that every signal the rule consults is still " +
-      "a registered stream signal, since a renamed one would leave it answering 'not charging' for ever in silence",
+      "a DC session reads DC even though the BMS reports Idle for the whole of one and survives the late heartbeat " +
+      "a steady boolean's freshness depends on, that the same Idle at the tail of an AC session is not mistaken " +
+      "for a fast charge, and that no answer ever names DC without the contactor bit under it — plus that every " +
+      "signal the rule consults is still a registered stream signal, since a renamed one would leave it answering " +
+      "'not charging' for ever in silence",
   },
   {
     script: "scripts/check-vcu-params.ts",
