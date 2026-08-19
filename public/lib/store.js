@@ -3,7 +3,8 @@
 import van from "../vendor/van-1.6.1.js";
 import { isPlausible } from "./bounds.js";
 import { ringFor } from "./ring.js";
-import { monotonicNow, since } from "./clock.js";
+import { monotonicNow } from "./clock.js";
+import { POLL_MS, createConnection } from "./connection.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
 /** @typedef {import("../../src/ws.ts").DashboardMessage} DashboardMessage */
@@ -19,9 +20,17 @@ import { monotonicNow, since } from "./clock.js";
 // has no build step, so this is a JSDoc-only import — the browser never sees it,
 // but `npm run typecheck` does, which is what stops `DashboardMessage` and the
 // dashboard drifting apart the way CLAUDE.md warns about.
+//
+// WHEN there is a socket at all is not decided here: ./connection.js owns that, and
+// connect() below is the wiring it acts through. The two meet again at isStale(),
+// which will not call any reading current while that module says the link is not.
 
-/** Connection states shown in the header. */
-export const connection = van.state(/** @type {"connecting" | "live" | "offline"} */ ("connecting"));
+/**
+ * Connection states shown in the header, and — through isStale() below — the licence
+ * every reading on the page has to be shown as current. ./connection.js is what moves
+ * it; nothing else may.
+ */
+export const connection = van.state(/** @type {import("./connection.js").LinkStatus} */ ("connecting"));
 
 /**
  * A slow pulse that charts and other whole-shape redraws bind to instead of
@@ -141,7 +150,7 @@ export function peekServerTime() {
  * @param {number} maxAgeMs
  */
 export function isStale(key, maxAgeMs) {
-  return isStaleWith(signalState(key).val, serverTime.val, maxAgeMs);
+  return isStaleWith(signalState(key).val, serverTime.val, maxAgeMs, connection.val === "live");
 }
 
 /**
@@ -152,61 +161,104 @@ export function isStale(key, maxAgeMs) {
  * @param {number} maxAgeMs
  */
 export function isStaleSampled(key, maxAgeMs) {
-  return isStaleWith(signalState(key).rawVal, peekServerTime(), maxAgeMs);
+  return isStaleWith(signalState(key).rawVal, peekServerTime(), maxAgeMs, connection.rawVal === "live");
 }
 
 /**
  * Parameterised on how it read, so the subscribing and sampling variants above
  * cannot drift apart — the same reason headroomMvWith() in derive.js exists.
+ *
+ * ## Why the link's own state is part of freshness
+ *
+ * `now` is the server clock from the LAST MESSAGE, and it stops when the messages do.
+ * So on its own the age comparison below freezes the instant the link goes away: a
+ * pack current sampled 200 ms before the phone was pocketed keeps reading 200 ms old
+ * for the whole five minutes it is in there, and the tile it sits in stays at full
+ * brightness. That is the one lie this dashboard must not tell — a rider glancing down
+ * at a number presented as current is entitled to have it be current.
+ *
+ * There is no honest arithmetic available for the gap: the phone's clock and the Pi's
+ * are different clocks and must never be subtracted from one another (lib/clock.js),
+ * and the Pi has no RTC. But there is an honest answer, and it is simpler than
+ * arithmetic — while the link is not live, nothing on the page is being refreshed, so
+ * nothing on it is current. Whatever is on screen is at least as old as the dropout.
+ *
+ * That makes ./connection.js's status the pacing too, which is the other half of the
+ * problem: a binding that reads only the signal and `serverTime` cannot re-run while
+ * both are frozen, so it could not grey itself out however clever the sum was. The
+ * status is a state, it changes the moment the link does, and the bindings are already
+ * subscribed to it through this function.
+ *
  * @param {{ ts: number } | null} reading
  * @param {number} now server clock, so both sides of the comparison are the Pi's
  * @param {number} maxAgeMs
+ * @param {boolean} linkIsLive whether messages are arriving at all
  */
-function isStaleWith(reading, now, maxAgeMs) {
+function isStaleWith(reading, now, maxAgeMs, linkIsLive) {
   if (!reading) {
+    return true;
+  }
+  if (!linkIsLive) {
     return true;
   }
   return now - reading.ts > maxAgeMs;
 }
 
-/** Opens the WebSocket and keeps it open. Safe to call once at startup. */
+/**
+ * Starts the dashboard: the WebSocket, and the two timers the page runs on. Call once,
+ * at startup.
+ *
+ * The browser end of ./connection.js — when a socket should exist is decided there, and
+ * everything here is the wiring that carries out the decision. The timers live in here
+ * rather than at module scope so importing this file has no side effects, which is what
+ * lets scripts/check-connection.ts hold the real isStale() up against the real
+ * connection policy without a browser and without leaving intervals running.
+ */
 export function connect() {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${location.host}`);
+  const link = createConnection({
+    hidden: () => document.hidden,
+    now: monotonicNow,
+    report: status => {
+      connection.val = status;
+    },
+    open: handlers => {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${location.host}`);
+      socket.onopen = () => handlers.opened(socket);
+      socket.onmessage = event => {
+        if (!handlers.received(socket)) {
+          // From a socket we have already given up on. Dropped rather than applied:
+          // these are the messages that queued up while the page was suspended, and
+          // applying them is precisely the fast-forward we are here to stop.
+          return;
+        }
+        try {
+          const message = /** @type {DashboardMessage} */ (JSON.parse(event.data));
+          apply(message);
+        } catch (error) {
+          console.error("ws: could not apply message", error);
+        }
+      };
+      socket.onerror = () => socket.close();
+      socket.onclose = () => handlers.closed(socket);
+      return socket;
+    },
+  });
 
-  socket.onopen = () => {
-    connection.val = "live";
-  };
+  // The hook the whole fix hangs on. iOS runs this before it suspends the page, and it
+  // is the last chance to close the socket the Pi would otherwise spend the next few
+  // minutes queueing patches into.
+  document.addEventListener("visibilitychange", () => link.visibilityChanged());
+  setInterval(() => link.tick(), POLL_MS);
+  link.start();
 
-  socket.onmessage = event => {
-    // Setting this on every message is the fix for the old dashboard's stuck
-    // "reconnecting" label: its watchdog could latch the disconnected state and
-    // only `onopen` ever cleared it, so one throttled interval in a backgrounded
-    // tab left the header lying about a link that was streaming fine.
-    connection.val = "live";
-    lastMessageAt = monotonicNow();
-    try {
-      const message = /** @type {DashboardMessage} */ (JSON.parse(event.data));
-      apply(message);
-    } catch (error) {
-      console.error("ws: could not apply message", error);
-    }
-  };
-
-  socket.onerror = () => socket.close();
-
-  socket.onclose = () => {
-    connection.val = "offline";
-    setTimeout(connect, RECONNECT_DELAY_MS);
-  };
+  setInterval(() => {
+    chartTick.val = chartTick.val + 1;
+  }, CHART_TICK_MS);
 }
 
-const RECONNECT_DELAY_MS = 2000;
-
-/** The server heartbeats every 5 s, so silence well past that means trouble. */
-const SILENCE_LIMIT_MS = 12_000;
-
-let lastMessageAt = 0;
+/** How often charts and other whole-shape redraws are allowed to repaint. */
+const CHART_TICK_MS = 500;
 
 /**
  * @param {DashboardMessage} message
@@ -267,17 +319,8 @@ function apply(message) {
   }
 }
 
-// Liveness watchdog. Unlike the old one this only ever *downgrades* on real
-// silence — recovery is driven by messages arriving, above — so a throttled timer
-// in a background tab cannot leave a false label on screen.
-setInterval(() => {
-  // Monotonic: a wall-clock jump here would either fake a dropout on a healthy link
-  // or hide a real one, and this watchdog exists precisely to be trusted about that.
-  if (lastMessageAt > 0 && since(lastMessageAt) > SILENCE_LIMIT_MS) {
-    connection.val = "offline";
-  }
-}, 3000);
-
-setInterval(() => {
-  chartTick.val = chartTick.val + 1;
-}, 500);
+// The liveness watchdog that used to live here now lives in ./connection.js, because
+// noticing that nothing has arrived for twelve seconds and doing nothing about the
+// socket was only ever half the job: it relabelled the header and left a link nobody
+// believed in open. It now tears that socket down and opens the next one, and the
+// label is a consequence rather than the whole response.

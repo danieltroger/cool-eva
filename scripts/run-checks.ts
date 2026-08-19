@@ -157,6 +157,18 @@ const CHECKS: SelfCheck[] = [
       "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",
   },
   {
+    script: "scripts/check-connection.ts",
+    covers:
+      "when the dashboard has a WebSocket open and what it does when it should not: that hiding the page closes the " +
+      "socket and unhiding opens exactly one new one, that the messages queued while it was hidden are refused " +
+      "rather than replayed as live telemetry, that lock/unlock/lock/unlock never costs more than one socket at a " +
+      "time however the abandoned ones' events arrive afterwards, that a socket which stops carrying data is torn " +
+      "down and replaced with NO close event ever delivered — but not one second before 12 s, so a parked bike " +
+      "cannot churn sockets — that the 2 s backoff still gates every retry and none is queued while hidden, that " +
+      "isStale() calls every reading stale while the link is not live so nothing frozen is shown at full " +
+      "brightness, and that the Pi's per-client backlog cap still holds several full snapshots",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",

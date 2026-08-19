@@ -50,9 +50,12 @@ export const CHARGER_LIVE_MS = 6000;
  * sparklines and, through autoFocus(), throws the rider off the charge tab and back
  * again on the next heartbeat.
  *
- * 12 s is store.js's own SILENCE_LIMIT_MS: past that the dashboard has already
- * decided the whole link is down and says so in the header, so nothing is claimed
- * here that the page is not already disowning. It costs nothing at the other end of
+ * 12 s is lib/connection.js's own SILENCE_LIMIT_MS: past that the dashboard has already
+ * decided the whole link is down — it says so in the header, drops the socket and opens
+ * another — so nothing is claimed here that the page is not already disowning. Note
+ * that `stale` is answered by store.js's isStale(), which reports true for EVERY signal
+ * while the link is not live, so this gate never outlives the link it is measured
+ * against. It costs nothing at the other end of
  * a session either — unplugging moves the bit 1 → 0, which patches immediately, so
  * this gate is only ever the backstop against a store that never forgets.
  */
