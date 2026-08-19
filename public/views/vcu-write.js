@@ -250,7 +250,14 @@ export function VcuWrite() {
     // inside the branch `hasControls()` has just switched off. So the loudest failure
     // this section has was being written to a node that does not exist whenever it
     // happened, and an unreachable Pi rendered as a heading, an ellipsis and silence.
-    () => (!hasControls() && message.val ? div({ class: "action-note" }, message.val) : div()),
+    //
+    // ⚠️ `.failure`, not the bare `.action-note` it first landed in. Rendering it was
+    // only half the fix: at --label / 11.52 px it came out byte-for-byte identical to
+    // "Reads four identifiers on the A8" — this section's own thesis, that prose is
+    // ranked by consequence, not applied to the one sentence saying the section is
+    // dead. Availability() stands its ellipsis down for the same reason: "loading" and
+    // "the fetch failed" are mutually exclusive and only one of them was ever true.
+    () => (!hasControls() && message.val ? div({ class: "action-note failure" }, message.val) : div()),
     () => (hasControls() ? div(ParameterForm(), ServiceActions(), Journal()) : div())
   );
 }
@@ -302,7 +309,13 @@ function Availability() {
   return div({ class: "action-note" }, () => {
     const status = state.val?.status;
     if (!status) {
-      return div({ style: `color:${MUTED}` }, "…");
+      // ⚠️ The ellipsis means "waiting for an answer", and it must stand down the
+      // moment one kind of answer arrives. `status` stays null for ever after a failed
+      // GET — nothing re-polls /vcu-write while the sheet is open — so with the Pi
+      // unreachable this section read as loading and failed at the same time, with the
+      // loading claim the more visible of the two. The failure line VcuWrite() renders
+      // just below is the true one; this one goes quiet and lets it speak.
+      return message.val ? div() : div({ style: `color:${MUTED}` }, "…");
     }
     if (!status.enabled) {
       return div(

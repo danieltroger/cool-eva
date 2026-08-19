@@ -332,6 +332,21 @@ body {
 
 /* ---------- sheet ---------- */
 
+/* ⚠️ `visibility: hidden`, and it is not belt-and-braces on top of the opacity.
+   `opacity: 0; pointer-events: none` hides a sheet from the eye and from a finger, and
+   from NOTHING ELSE: every control inside it stays in the tab order and stays
+   activatable. Verified before this line existed — open the sheet, open the red fold,
+   close the sheet, and `.focus()` still lands on "Say a service was performed NOW",
+   where two activations POST `31 FC`. The fold re-collapses on the next OPEN
+   (refreshVcuWrite), so the window is "closed and not yet reopened", which is most of
+   the time. Near-zero risk on a phone with no keyboard — but the whole argument for the
+   fold is that an irreversible action must not be reachable by accident, and an
+   invisible page is a worse place to reach one from than a visible one.
+
+   Transitioned rather than switched, so the fade survives: `visibility` steps at the
+   START of the transition going visible and at the END going hidden, which is exactly
+   the two moments wanted. Anything overriding .sheet for layout (the screenshot
+   harness) has to override this too. */
 .sheet {
   position: fixed;
   inset: 0;
@@ -339,13 +354,17 @@ body {
   display: flex;
   align-items: flex-end;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity 0.2s;
+  transition:
+    opacity 0.2s,
+    visibility 0.2s;
   z-index: 10;
 }
 
 .sheet.open {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 
@@ -481,11 +500,27 @@ body {
  * stored trouble codes" were indistinguishable until you had read all three —
  * and one of them cannot be undone.
  *
- * The tier is carried by a 3 px gutter down the left edge, and every tier has
- * one, in the same place and the same width. That is the point: a stripe that
- * appears and disappears is a second thing to notice before you can compare the
- * colours, whereas a gutter that is always there is read the way a level meter
- * is. The geometry is identical across tiers, so nothing shifts.
+ * The tier is carried by a 3 px gutter down the left edge of every control.
+ *
+ * ⚠️ Measured against --tile, the three gutters are NOT three comparable colours,
+ * and an earlier version of this comment claimed they were:
+ *
+ *   grey  --dim   1.41:1     amber --warn  6.46:1     red --bad  5.29:1
+ *
+ * At 1.41:1 through a visor in daylight nobody perceives the grey one, so what
+ * is actually read is presence against absence — a mark on the two tiers that
+ * have one, and nothing on the tier that does not. Which is the right signal to
+ * be carrying, and better than the one the claim described: presence/absence
+ * survives deuteranopia, which flattens amber against red, and it survives
+ * sunlight, which flattens everything. Grey is the default tier precisely
+ * because it means "unmarked", and an unmarked control looking unmarked is the
+ * system working. Do not raise --dim to "fix" this: it would put a visible
+ * stripe on eight read buttons that carry no risk, and spend the one channel
+ * that still works in daylight on saying nothing.
+ *
+ * The grey declaration stays anyway, and is not decoration: it fixes the
+ * geometry, so a tier modifier only ever RECOLOURS and can never shift a text
+ * baseline.
  *
  *   grey (default)     reads. A parameter read, a CSV export, a probe, a
  *                      download. Cannot change the bike, and the safe tier
@@ -503,7 +538,8 @@ body {
  * bad one here: --tile against --bg is a 1.4:1 edge, so in daylight through a
  * visor the only buttons still visible would have been the three that cannot be
  * undone. Recession is not worth buying with legibility on the controls used
- * most. The gutter is the only thing that varies between tiers.
+ * most. Colour is the only thing that varies between tiers — the gutter and, at
+ * a lower volume, the hairline border. Every dimension is shared.
  *
  * ⚠️ The gutter is an inset shadow, not a fat border-left. A 3 px border meeting
  * a 1 px border under a 0.8rem radius does not reconcile — the corner comes out
@@ -511,12 +547,12 @@ body {
  * cleanly, and it costs no layout, so the text baseline is identical on all
  * three tiers.
  *
- * Colour is not the only carrier, because deuteranopia flattens amber against
- * red. The red tier ALSO sits behind a fold (.risk-fold), so it is not on screen
- * at all until it is asked for, and carries a red no-undo line under the button.
- * The fold is the part that matters on a handlebar-mounted phone: a thumb
- * scrolling this sheet cannot land on an irreversible action, because there is
- * nothing there to land on.
+ * ⚠️ And the red tier does not rest on any of this. It sits behind a fold
+ * (.risk-fold), so it is not on screen at all until it is asked for, and each
+ * button carries a red IRREVERSIBLE line above it. Four redundant channels —
+ * fold, badge, border, gutter — because a thumb scrolling this sheet on a
+ * handlebar-mounted phone must not be able to land on an irreversible action,
+ * and no single visual channel is trustworthy enough to be the one that stops it.
  */
 .action {
   width: 100%;
@@ -585,6 +621,22 @@ body {
   color: var(--warn);
 }
 
+/* The write section could not be reached at all.
+ *
+ * ⚠️ Ranked like .no-undo and NOT with it. The header of vcu-write.js calls this "the
+ * loudest failure this section has", and at the bare .action-note size (11.52 px,
+ * --label) it rendered byte-for-byte identically to "Reads four identifiers on the A8"
+ * — the one sentence saying the whole section is dead, set as the quietest type in it.
+ * Deliberately not the .no-undo class: that means one specific thing (this action
+ * cannot be taken back), and inheriting its badge spacing here would be borrowing a
+ * meaning that does not apply. This is red because something is broken. */
+.action-note.failure {
+  color: var(--bad);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 /* ⚠️ Bigger and heavier, not only redder — and it sits ABOVE its button, so it also
    needs the space that says it belongs to what follows rather than to what precedes.
    Red is the dimmest ink in this palette (6.5:1 on --bg, against 14.5:1 for a
@@ -629,9 +681,9 @@ body {
  * decoration. As a bare line of coloured text it read as a footnote on the
  * caption above it rather than as the gate on three destructive operations, and
  * it was a ~20 px line of text for somebody wearing gloves. It is now a
- * full-width row with a 52 px target and a dashed edge — dashed because there is
- * something behind it, rather than solid, which would make it look like a fourth
- * action to press.
+ * full-width row with a real target: measured at 390x844, 49.8 px opened and
+ * 72.1 px collapsed — the collapsed state is taller because it carries the
+ * contents line as well, and it is the state the sheet spends its life in.
  *
  * ⚠️ Selected as `.code-toggle.risk-fold`, not `.risk-fold`. .code-toggle is
  * declared further down this file, so at equal specificity it wins on source order
