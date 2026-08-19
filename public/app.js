@@ -13,23 +13,37 @@ import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
 import { Sheet, hasTroubleCodes, openSheet, refreshStatus } from "./views/sheet.js";
 import { monotonicNow } from "./lib/clock.js";
+import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
 
 const { button, div, span } = van.tags;
 
 // Shell: header, the current view, the tab bar, and the rules for when the bike
 // gets to choose the view instead of you.
+//
+// Which tab is showing lives in ./lib/router.js, because it also lives in the URL.
+// Everything here that changes the view goes through showTab() or advanceTab() — the
+// tap on the bar, the high-beam gesture and the bike's own rules alike — so that Back
+// walks through the screens the rider actually saw, whoever chose them.
 
-/** @typedef {"ride" | "hypermile" | "charge" | "all" | "faults"} ViewName */
+/** @typedef {import("./lib/router.js").TabName} ViewName */
 
-const TABS = /** @type {const} */ ([
-  { name: "ride", label: "Ride" },
-  { name: "hypermile", label: "Hypermile" },
-  { name: "charge", label: "Charge" },
-  { name: "all", label: "All" },
-  { name: "faults", label: "Faults" },
-]);
-
-const view = van.state(/** @type {ViewName} */ ("ride"));
+/**
+ * The view each tab shows.
+ *
+ * A Record over ViewName rather than the switch this used to be: ViewName is derived
+ * from the router's TABS, so adding a tab there widens it and a tab with no view here
+ * fails `npm run typecheck`. The switch's `default` case would instead have drawn the
+ * riding screen under the new tab's URL and said nothing.
+ *
+ * @type {Record<ViewName, () => Element>}
+ */
+const VIEWS = {
+  ride: RideView,
+  hypermile: HypermileView,
+  charge: ChargeView,
+  all: AllView,
+  faults: FaultsView,
+};
 
 /** SOC at or below which the hypermiling screen takes over, as requested. */
 const HYPERMILE_SOC = 5;
@@ -43,25 +57,7 @@ const HYPERMILE_SOC = 5;
 const HYPERMILE_HEADROOM_MV = 150;
 
 function App() {
-  return div(
-    Header(),
-    () => {
-      switch (view.val) {
-        case "hypermile":
-          return HypermileView();
-        case "charge":
-          return ChargeView();
-        case "all":
-          return AllView();
-        case "faults":
-          return FaultsView();
-        default:
-          return RideView();
-      }
-    },
-    TabBar(),
-    Sheet()
-  );
+  return div(Header(), () => VIEWS[currentTab()](), TabBar(), Sheet());
 }
 
 function Header() {
@@ -94,10 +90,8 @@ function TabBar() {
     ...TABS.map(tab =>
       button(
         {
-          class: () => `tab${view.val === tab.name ? " on" : ""}`,
-          onclick: () => {
-            view.val = tab.name;
-          },
+          class: () => `tab${currentTab() === tab.name ? " on" : ""}`,
+          onclick: () => showTab(tab.name),
         },
         // The Faults tab carries the warning itself, so a code that appears mid-ride
         // is visible without giving up any space on the screen you are looking at.
@@ -114,6 +108,12 @@ function TabBar() {
  * Edge-triggered rather than continuous on purpose: a rule that keeps forcing the
  * view fights the rider. Once it has moved you, you can move back and it stays put
  * until the condition next changes.
+ *
+ * These go through showTab() like every other view change, which buys two things.
+ * The URL cannot fall behind a move the rider did not make — so the screen a reload
+ * or a shared link restores is the one that was actually up. And a move the bike made
+ * is undoable: plugging in takes you to Charge, and Back takes you back, the same
+ * press that would have undone the tap you did not have to make.
  */
 let wasCharging = false;
 let wasCritical = false;
@@ -125,12 +125,14 @@ function autoFocus() {
   // replaces was blind to exactly the charge worth watching.
   const charging = chargeMode(peek, isStaleSampled) !== "none";
   if (charging && !wasCharging) {
-    view.val = "charge";
+    showTab("charge");
   }
   // Leaving the charger takes you back to the riding screen, but only if you are
-  // still looking at the one it moved you to.
-  if (!charging && wasCharging && view.val === "charge") {
-    view.val = "ride";
+  // still looking at the one it moved you to. peekTab(), not currentTab(): this runs
+  // inside the chartTick timer, and subscribing that timer to the tab would re-pace it
+  // on every tab change.
+  if (!charging && wasCharging && peekTab() === "charge") {
+    showTab("ride");
   }
   wasCharging = charging;
 
@@ -138,7 +140,7 @@ function autoFocus() {
   const headroom = headroomMvSampled();
   const critical = (soc != null && soc <= HYPERMILE_SOC) || (headroom != null && headroom <= HYPERMILE_HEADROOM_MV);
   if (critical && !wasCritical && !charging) {
-    view.val = "hypermile";
+    showTab("hypermile");
   }
   wasCritical = critical;
 }
@@ -170,8 +172,7 @@ function detectHighBeamGesture() {
     flashEdges = [...flashEdges, now].filter(edge => now - edge <= FLASH_WINDOW_MS);
     if (flashEdges.length >= FLASH_COUNT) {
       flashEdges = [];
-      const index = TABS.findIndex(tab => tab.name === view.val);
-      view.val = TABS[(index + 1) % TABS.length].name;
+      advanceTab();
     }
   }
   previousHighBeam = current;
@@ -184,12 +185,12 @@ function detectHighBeamGesture() {
 //
 // For that to be true, everything reached from here has to *sample* signals rather
 // than subscribe to them — hence peek() and isStaleSampled() throughout updateDwell,
-// updateTrip and autoFocus. Reading through valueOf() or isStale() instead would
-// quietly add every signal they touch to this binding's dependencies — serverTime
-// included, which moves on every message — and the tick would stop being what paces
-// it. Nothing would break (the two counters use wall-clock deltas and autoFocus is
-// edge-triggered, so both are correct at any rate) but the comment above would be
-// false, which is worse.
+// updateTrip and autoFocus, and peekTab() where autoFocus asks which tab is up.
+// Reading through valueOf() or isStale() instead would quietly add every signal they
+// touch to this binding's dependencies — serverTime included, which moves on every
+// message — and the tick would stop being what paces it. Nothing would break (the two
+// counters use wall-clock deltas and autoFocus is edge-triggered, so both are correct
+// at any rate) but the comment above would be false, which is worse.
 van.derive(() => {
   chartTick.val;
   // Both counters integrate elapsed time, so they take the monotonic clock — the
@@ -208,6 +209,10 @@ van.derive(() => {
   signalState("high_beam").val;
   detectHighBeamGesture();
 });
+
+// Before the first render, so a URL naming a tab draws that tab once rather than
+// drawing the riding screen and swapping it out a frame later.
+startRouting();
 
 van.add(document.body, App());
 connect();
