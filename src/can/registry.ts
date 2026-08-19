@@ -552,14 +552,13 @@ export const SIGNALS: SignalDef[] = [
   //
   // The whole block costs 3820 rows over that lap — 33 700 rows/h of bike-on time, against
   // 64 100/h for the 224 signals already logged from the same capture. So this is a ~53 %
-  // increase in the ride log's row rate while riding, for the 31 signals that batch added —
-  // 0x0A0's six flags joined on 2026-08-19 and are NOT in that figure; they cost ~52 rows a
-  // ride, argued where they are declared below. The three biggest
-  // contributors are the torque pair and the 12 V load current: between them they are more
-  // than half of it, and 0x100's fourteen flags are 14 rows in total. That is the number to
-  // argue with if the SD card starts complaining; the deadbands most worth revisiting first
-  // are noted per signal below, and every one of them was chosen off a measured curve rather
-  // than a round number.
+  // increase in the ride log's row rate while riding, for the 31 signals that batch added, and
+  // the three biggest contributors are the torque pair and the 12 V load current: between them
+  // they are more than half of it, and 0x100's fourteen flags are 14 rows in total. (0x0A0's six
+  // flags joined on 2026-08-19 and are NOT in that measurement; they cost ~52 rows a ride, argued
+  // where they are declared below.) That is the number to argue with if the SD card starts
+  // complaining; the deadbands most worth revisiting first are noted per signal below, and every
+  // one of them was chosen off a measured curve rather than a round number.
   //
   // 0x0A0 — the ABS module. See src/can/abs.ts for what the capture proves and what it can't.
   //
