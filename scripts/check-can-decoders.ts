@@ -410,6 +410,13 @@ const REPLAY: ReplayCase[] = [
   },
   {
     id: 0x121,
+    frame: "2C FF 4B 00 00 00 00 00",
+    why: "the sharpest negative in the set, and it is real — from the 2026-06-14 capture, which predates every other file here and is in a different format. b2 is literally 0x4B = 75, so a decoder that read b2 as amps on id alone would report a 75 A limit that was never set. Only b3 = 0 and the opcode separate it from the genuine article three cases above",
+    expect: {},
+    absent: ["dc_charge_limit_selected_a"],
+  },
+  {
+    id: 0x121,
     frame: "18 FF 4B 01",
     why: "⚠️ SYNTHETIC — a 4-byte truncation of the real 75 A frame. Never seen (all 596 captured frames are DLC 8), but b4 is the ceiling and a setting without one is worse than nothing, so it must drop rather than read past the end",
     expect: {},
