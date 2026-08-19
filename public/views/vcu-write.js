@@ -4,7 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { BAD, GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { ageInWords } from "../lib/format.js";
 
-const { button, div, input, option, select, span } = van.tags;
+const { button, div, h2, h3, input, option, select, span } = van.tags;
 
 // Service mode's WRITE section: change one allowlisted VCU parameter, or run one of
 // the four service actions.
@@ -226,7 +226,7 @@ export function VcuWrite() {
     // and it lasts as long as an unreachable Pi lasts because nothing re-polls
     // /vcu-write while the sheet is open. An amber warning standing over an empty
     // section until the sheet is reopened is a wolf cried permanently.
-    div({ class: () => `sheet-heading${hasControls() ? " writes" : ""}` }, "Change something on the bike"),
+    h2({ class: () => `sheet-heading${hasControls() ? " writes" : ""}` }, "Change something on the bike"),
     // ⚠️ "Everything below here can change the motorcycle" was FALSE and had to go:
     // of the next four controls, the parameter picker reads, the value on the left is
     // a read-out, "Read it off the bike again" reads, and the service-stamp action is
@@ -864,7 +864,7 @@ function Outcome() {
  */
 function ServiceActions() {
   return div(
-    div({ class: "sheet-title" }, "Service actions"),
+    h3({ class: "sheet-title" }, "Service actions"),
     // Outside the fold, deliberately: it changes nothing, and it is the action you
     // want BEFORE the service point below — which stamps the bike's own clock and
     // odometer over whatever this one shows you.
@@ -1241,7 +1241,7 @@ function NoteBlock(notes) {
  */
 function Journal() {
   return div(
-    div({ class: "sheet-title" }, "Recently written"),
+    h3({ class: "sheet-title" }, "Recently written"),
     div({ class: "action-note" }, () => {
       const recent = state.val?.status.recent ?? [];
       if (recent.length === 0) {

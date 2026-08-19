@@ -7,7 +7,7 @@ import { bytes, compass, duration } from "../lib/format.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 
-const { button, div } = van.tags;
+const { button, div, h2 } = van.tags;
 
 // The sheet behind the header button: trip summary, waypoints, and the two actions
 // that used to require typing a URL on a phone.
@@ -57,20 +57,35 @@ export function Sheet() {
       // caps is what "there is zero visual hierarchy in the menu" was mostly
       // about: "Service actions" announced itself as loudly as "This session"
       // and nothing said which was inside which. See style.css.
-      div({ class: "sheet-heading" }, "This session"),
+      //
+      // ⚠️ h2 and h3, not divs, and that is the whole of what makes the hierarchy
+      // real. Everything else about it — size, weight, colour, the rule above —
+      // is paint, and paint reaches exactly one kind of reader. Until this change
+      // there was not a single heading element anywhere in public/, so VoiceOver's
+      // rotor listed nothing and this sheet was one flat run of text to it: no way
+      // to jump to "Change something on the bike", and no way to hear that
+      // "Service actions" is INSIDE it. A risk hierarchy that only the sighted can
+      // navigate is half a hierarchy.
+      //
+      // The levels are relative, and start at 2 because the sheet is a section of
+      // a page rather than a document of its own. Both classes set font-size,
+      // weight, colour and padding explicitly, and the reset at the top of
+      // style.css zeroes UA margins, so nothing here renders differently — checked
+      // by measuring every heading before and after.
+      h2({ class: "sheet-heading" }, "This session"),
       TripStats(),
       // No subtitle here, deliberately. Three sections carrying a one-line "what can
       // this do to the bike" was one sentence too many for a single bit of
       // information: both controls in this one are in the grey tier, which says the
       // same thing without a sentence. The two that keep a subtitle are the two
       // either side of the read/write boundary, where the bit is not obvious.
-      div({ class: "sheet-heading" }, "Actions"),
+      h2({ class: "sheet-heading" }, "Actions"),
       WaypointButton(),
       DownloadButton(),
       // Last of the doing-things sections and first of the reading-things ones,
       // because it is the only control here that causes traffic on the bike's bus
       // — worth a heading of its own rather than a third entry under "Actions".
-      div({ class: "sheet-heading" }, "Service mode"),
+      h2({ class: "sheet-heading" }, "Service mode"),
       // ⚠️ It used to end "…the section that can change it is further down", which was
       // prose apologising for the layout — if a sentence has to tell you where the
       // other section is, the boundary is not doing its job. The boundary now does it:
@@ -78,7 +93,7 @@ export function Sheet() {
       // for a rule, and states its own risk under its own heading.
       div({ class: "sheet-heading-note" }, "Reads the bike. Nothing in this part changes it."),
       ServiceMode(),
-      div({ class: "sheet-heading" }, "Stored codes"),
+      h2({ class: "sheet-heading" }, "Stored codes"),
       TroubleCodes(),
       // No "Link" section. A per-source liveness readout was here in two shapes
       // and neither could be read: a grid of sixteen fractions needed the reader

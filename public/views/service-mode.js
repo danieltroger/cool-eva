@@ -7,7 +7,7 @@ import { MUTED } from "../lib/colors.js";
 import { VcuProbe } from "./vcu-probe.js";
 import { VcuWrite, refreshVcuWrite } from "./vcu-write.js";
 
-const { a, button, div } = van.tags;
+const { a, button, div, h3 } = van.tags;
 
 // Service mode: read the VCU's calibration parameters off the bike on demand, and
 // hand the result over as the file another owner's energica_tool.py reads.
@@ -84,7 +84,7 @@ export function ServiceMode() {
     // "can we reach the bike" answer this section already has, rather than fetching
     // its own: both are governed by the same gate and the same switch, and two
     // sections deciding separately could only disagree.
-    div({ class: "sheet-title" }, "Probe one identifier"),
+    h3({ class: "sheet-title" }, "Probe one identifier"),
     VcuProbe(() => state.val !== null && state.val.enabled && state.val.gate.safe),
     // ⚠️ Everything above this line reads. Everything below it can CHANGE the
     // motorcycle, and it is behind its own switch (SERVICE_WRITE_ENABLED, off by
