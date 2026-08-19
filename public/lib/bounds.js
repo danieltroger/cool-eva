@@ -93,6 +93,39 @@ const BY_KEY = {
   "charge_type": [0, 2],
   "charge_manager_status": [0, 255],
   "charge_manager_state": [0, 255],
+  // The charge manager's NUMERIC signals, added 2026-08-20. Same miss as
+  // `dc_charge_limit_selected_a` above, arrived at from the other direction: these do reach a
+  // rule, but the rule is BY_UNIT's "A" fallback of [-1000, 1000], and every one of them is a
+  // plain u8. No value a byte can hold is rejectable, so the gate was decorative.
+  //
+  // Each bound below is derived from something, not guessed:
+  //
+  // • 80 A is `MAX_DC_CHG_CURRENT`'s own documented range (VCU parameter 258 is 0…80, and
+  //   Energica's 60/75/80 A options write that byte and nothing else — see README). This bike
+  //   is set to 75. `fast_dc_limit_max_a` IS that parameter read back off 0x625, so 80 is a
+  //   hard ceiling rather than an opinion; deliberately not 75, because the whole reason that
+  //   key is logged is to notice the day someone changes the parameter.
+  // • `fast_dc_limit_a` is 0x620 b0 and has never exceeded the configured max, so it inherits
+  //   the same 80.
+  // • `fast_dc_a` is the current actually delivered. It is bounded by the limit, but the two
+  //   frames run at 10 Hz and 20 Hz, so across a step edge the delivery reads up to 12 A above
+  //   the limit for a frame or two (50 such frames in the corpus, all within 1 s of a step).
+  //   100 leaves room for that and still rejects the 255 an all-ones payload decodes to.
+  // • `ac_supply_limit_a` is SUPPLY-side — a cable or EVSE rating, not the bike's. It has only
+  //   ever read 8, 10 and 13 A here and the bike's own AC charger stops at ~14.3 A, but a bound
+  //   drawn round either of those would reject a legitimate reading at a bigger outlet. 80 A is
+  //   the most a Type 2 control pilot can advertise, so above that it is not a supply rating.
+  "fast_dc_a": [0, 100],
+  "fast_dc_limit_a": [0, 80],
+  "fast_dc_limit_max_a": [0, 80],
+  "ac_supply_limit_a": [0, 80],
+  // The charge manager's pack voltage, 0x615 b0 + 242.5. Its decoded range is 242.5…497.5 V and
+  // the "V" fallback is [-50, 900], so an all-ones payload draws 497.5 V as a measurement. It is
+  // the SAME QUANTITY as `pack_v`, which is named [0, 450] near the top of this table for
+  // exactly this reason, so it gets exactly that band: a second witness must not be looser,
+  // or the two disagree about what counts as a fault. The lower half is unreachable — the
+  // decoder drops b0 = 0 — and is kept only so the two entries stay visibly identical.
+  "charge_manager_pack_v": [0, 450],
   // 0x501, the PSU monitor. These three MUST be named here, and the first two are the
   // reason this comment exists: their unit is "mV", and BY_UNIT's mV fallback is
   // [0, 5000] because it was written for cell voltages. A healthy 12 704 mV rail would

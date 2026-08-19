@@ -35,6 +35,23 @@ import type { DecodedValue } from "../src/can/frame.ts";
 // with a blank unit, which switches off the dashboard's plausibility gate for it (see
 // public/lib/bounds.js — a blank unit in a non-boolean group is unbounded).
 //
+// ⚠️ That check used to enumerate the emitted keys by feeding PROBE_PAYLOADS to the ids that
+// answered PROBE_PAYLOADS, which is circular, and the circle closed the moment decoders started
+// gating on frame invariants. 0x625 wants b1 = 0x01, 0x615 wants b1 = 0x01 with a zero tail,
+// 0x610 wants b4-6 = F1 05 01 and 0x121 wants opcode 0x18 — none of the four probe payloads is
+// any of those shapes, so all four ids answer nothing, drop out of `answeringIds`, and their
+// nine keys quietly stop being checked. Nothing failed, because the entries exist; the
+// PROTECTION was gone, while the script went on printing "every emitted key is declared". That
+// is precisely the one-directional silence this file exists to catch, so it is worth saying how
+// it got in: the fix for a real decoder bug disabled the check that guards the same decoder.
+//
+// So the emitted set is now the UNION of what the probes produce and what the replay cases at
+// the bottom produce, and the check runs after both. A byte-gated decoder is covered by
+// convention rather than by anyone remembering, because a decoder gated tightly enough to dodge
+// the probes is a decoder that needed replay cases to be believable in the first place. A fifth
+// probe payload shaped like a real 0x625 would also have worked, and leaves the next gated
+// decoder to rediscover the hole.
+//
 // No signal bounds.js gates to 0/1 may carry a deadband of 1 or more. `Math.abs(1 - 0) > 1` is
 // false, so such a signal logs its first sample after boot and then never logs again — a trap
 // that looks exactly like a flag which never changed. Which signals those are is asked of
@@ -113,6 +130,11 @@ const REQUIRED_IN_FILTER: [number, string][] = [
   // four probe payloads is that shape. It is exactly the "future decoder that needs a
   // particular byte pattern" this list exists for — without this line, dropping it from the
   // filter would go unnoticed.
+  //
+  // ⚠️ As of 2026-08-20 that is no longer the exceptional case: 0x610, 0x615 and 0x625 all gate
+  // on their own frame invariants too, so four of the ids in this list are now invisible to the
+  // probe and this is the ONLY thing checking their filter entry. Anything added below that
+  // gates on a byte pattern must be named here; the probe will not do it for you.
   [0x121, "the rider's DC charge-current limit, set on the bike's own screen"],
   // The charge manager, 2026-08-19. Four of these five matter more than most: they are silent
   // on a parked bike, so dropping one from the filter cannot be noticed until the next charge —
@@ -131,7 +153,9 @@ for (const [id, what] of REQUIRED_IN_FILTER) {
 }
 
 // ---------------------------------------------------------------------------------------
-// 2. Registry coverage and the boolean-deadband trap.
+// 2. Collecting the emitted keys, and the boolean-deadband trap.
+//    The registry-coverage check itself is section 4, after the replay cases have contributed
+//    their keys — see the top of this file for why it cannot run here.
 // ---------------------------------------------------------------------------------------
 
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
@@ -146,11 +170,8 @@ for (const id of answeringIds) {
     }
   }
 }
-const undeclared = [...emitted].filter(key => !defined.has(key)).sort();
-if (undeclared.length > 0) {
-  failures.push(`decoders emit keys with no registry entry (they would log as group "misc"): ${undeclared.join(", ")}`);
-}
-console.log(`${emitted.size} distinct keys emitted, all declared in the registry`);
+const probedKeyCount = emitted.size;
+console.log(`${probedKeyCount} distinct keys emitted for the probe payloads`);
 
 // Which signals are 1/0 flags is bounds.js's decision, not this file's — it depends on a group
 // set (`BOOLEAN_GROUPS`) and a per-key table that both grow, and "buttons" joined that set on
@@ -550,7 +571,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x620,
     frame: "2C 00 00 51 00 00 00 00",
-    why: "DC late in a taper (2026-08-09 18:15:22) — the advertised ceiling has itself fallen to 44 A. It follows the station rather than commanding it, so this byte is not the rider's setting",
+    why: "DC late in a taper (2026-08-09 18:15:22) — the advertised ceiling has itself fallen to 44 A. It follows the station rather than commanding it, so this byte is not the rider's setting. This is also the frame that caught the b3 error: b3 = 0x51 = 81, outside the 9…64 the file claimed for DC until 2026-08-20, and 81 with 7 A flowing against 22 with 63 A flowing in the case above is the opposite sign to the r = +0.72 it claimed as well. Both are retracted in charge-manager.ts",
     expect: { fast_dc_limit_a: 44, ac_supply_limit_a: 0 },
   },
   {
@@ -586,7 +607,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x625,
     frame: "00 00 00 00 00 00 00 00",
-    why: "⚠️ SYNTHETIC, and the reason 0x625 checks its own invariants. b4's DC bit is read INVERTED, so an all-zero payload has bit 5 clear and would decode to dc_charging = 1 — a false charge claim that bounds.js cannot reject, because 1 is a legitimate value for a flag. b1 = 0x01 and b3 = 0xFF in 100.000 % of 44 262 real frames, so requiring them turns this shape back into no reading",
+    why: "⚠️ SYNTHETIC, and the reason 0x625 checks its own invariants. b4's DC bit is read INVERTED, so an all-zero payload has bit 5 clear and would decode to dc_charging = 1 — a false charge claim that bounds.js cannot reject, because 1 is a legitimate value for a flag. b1 = 0x01 and b3 = 0xFF in 100.000 % of 1 571 617 real frames, so requiring them turns this shape back into no reading",
     expect: {},
     absent: ["fast_dc_limit_max_a", "dc_charging", "ac_charging"],
   },
@@ -603,6 +624,34 @@ const REPLAY: ReplayCase[] = [
     why: "⚠️ SYNTHETIC — b0 = 0 would decode to 242.5 V, which is inside this pack's real range and inside bounds.js's V band, so it would look like a measurement rather than a fault. b0 spans 28…94 over all 47 632 captured frames and is never 0, so this should be unreachable; the guard is what makes that a fact rather than a hope. The other two fields still decode",
     expect: { fast_dc_a: 0, charge_manager_soc: 31 },
     absent: ["charge_manager_pack_v"],
+  },
+  {
+    id: 0x615,
+    frame: "FF FF FF FF FF FF FF FF",
+    why: "⚠️ SYNTHETIC — the all-ones dead-sender shape, and the worst-exposed frame in this group, because two of its three keys are measurements rather than flags. Ungated it decodes to charge_manager_pack_v = 255 + 242.5 = 497.5 V and fast_dc_a = 255 A; bounds.js passed BOTH until the entries added alongside this case (its V band is [-50, 900] and the A fallback [-1000, 1000]), and only charge_manager_soc = 255 was ever caught, by the % band. 255 A on the only DC charge current on this bus is a number that reaches a chart's autoscale and then a conclusion. b1 = 0x01 with b4-7 = 00 in 100.000 % of 941 765 real frames is what turns it back into no reading",
+    expect: {},
+    absent: ["charge_manager_pack_v", "fast_dc_a", "charge_manager_soc"],
+  },
+  {
+    id: 0x615,
+    frame: "00 00 00 00 00 00 00 00",
+    why: "⚠️ SYNTHETIC — the other dead-sender shape. The b0 = 0 guard alone would already drop the voltage, but not fast_dc_a = 0 and charge_manager_soc = 0, and those two are worse than a silly number: they read as a healthy 'plugged in, nothing flowing, empty pack'. b1 = 0x00 fails the invariant",
+    expect: {},
+    absent: ["charge_manager_pack_v", "fast_dc_a", "charge_manager_soc"],
+  },
+  {
+    id: 0x610,
+    frame: "00 00 00 00 00 00 00 00",
+    why: "⚠️ SYNTHETIC — all-zero, and the frame with the least defence of the three: both its keys are logged raw and are bounded to [0, 255] in bounds.js ON PURPOSE, so that a state nobody has seen yet is not rejected. That means bounds.js cannot reject anything at all for them and this invariant is the only check there is. b4-6 = F1 05 01 in 100.000 % of 968 629 real frames, and 0x00 0x00 0x00 is not it",
+    expect: {},
+    absent: ["charge_manager_status", "charge_manager_state"],
+  },
+  {
+    id: 0x610,
+    frame: "FF FF FF FF FF FF FF FF",
+    why: "⚠️ SYNTHETIC — all-ones, which ungated decodes to charge_manager_status = 255 and charge_manager_state = 255, both inside the deliberate [0, 255] band. Note what is NOT gated: b1-3, which read 07 55 03 through the aborted DC attempt of 2026-08-09 14:42 and are 00 everywhere else. Gating on them would have thrown away the most interesting DC data in the archive",
+    expect: {},
+    absent: ["charge_manager_status", "charge_manager_state"],
   },
   {
     id: 0x605,
@@ -627,6 +676,10 @@ const REPLAY: ReplayCase[] = [
 for (const testCase of REPLAY) {
   const data = Buffer.from(testCase.frame.split(" ").map(byte => Number.parseInt(byte, 16)));
   const decoded = new Map(decodeFrame(testCase.id, data).map(value => [value.key, value.value]));
+  // These are the only keys a byte-gated decoder ever produces here, so section 4 needs them.
+  for (const key of decoded.keys()) {
+    emitted.add(key);
+  }
   const label = `0x${testCase.id.toString(16).toUpperCase().padStart(3, "0")} ${testCase.frame}`;
   for (const [key, expected] of Object.entries(testCase.expect)) {
     const actual = decoded.get(key);
@@ -671,6 +724,20 @@ for (const [kmPerKwhRaw, kwhPer100KmRaw] of RECIPROCAL_PAIRS) {
   }
 }
 console.log(`\n0x10B: ${RECIPROCAL_PAIRS.length} captured pairs all satisfy b0-1 × b2-3 ≈ 10^6`);
+
+// ---------------------------------------------------------------------------------------
+// 4. Registry coverage. Last on purpose: `emitted` is only complete once the replay cases
+//    above have run, because a decoder that gates on a frame invariant answers none of the
+//    probe payloads. See "And the other two" at the top of this file.
+// ---------------------------------------------------------------------------------------
+
+const undeclared = [...emitted].filter(key => !defined.has(key)).sort();
+if (undeclared.length > 0) {
+  failures.push(`decoders emit keys with no registry entry (they would log as group "misc"): ${undeclared.join(", ")}`);
+}
+console.log(
+  `${emitted.size} distinct keys emitted, all declared in the registry — ${probedKeyCount} of them reachable from the probe payloads and ${emitted.size - probedKeyCount} only through the replay cases`
+);
 
 if (failures.length > 0) {
   console.error("\nFAILED:");
