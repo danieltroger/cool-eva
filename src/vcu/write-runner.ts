@@ -319,7 +319,7 @@ function summariseTarget(target: WriteTarget, sweep: VcuParameterSnapshot | null
  *  4. **Not a width mismatch.** A record whose length contradicts the table means the
  *     framing is in question, not merely the value.
  */
-function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | null): SweptValue | null {
+export function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | null): SweptValue | null {
   if (!sweep) {
     return null;
   }

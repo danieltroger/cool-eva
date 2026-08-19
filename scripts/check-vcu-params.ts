@@ -66,6 +66,7 @@ import {
   writeTargetNames,
 } from "../src/vcu/write-targets.ts";
 import { evaluateTableGate, registerAllowlistTableCheck } from "../src/vcu/table-gate.ts";
+import { sweptValueOf } from "../src/vcu/write-runner.ts";
 import { fingerprintTable } from "../src/vcu/table-catalog.ts";
 import {
   SERVICE_STAMP_IDENTIFIERS,
@@ -2066,6 +2067,106 @@ expect(
   "SecurityAccess is not index-addressed either and must not have acquired a table-type precondition"
 );
 
+// ── 14c. WHAT THE LAST SWEEP SAYS A WRITABLE PARAMETER HOLDS ───────────────
+// The write form's "on the bike" value. A completed sweep has already read all 277
+// parameters, so demanding a fresh per-parameter read before a write was asking for
+// something the Pi already had written down — and the form said "not read yet" to
+// somebody who had just read everything.
+//
+// ⚠️ This value becomes the compare-and-swap precondition, so every way of picking the
+// WRONG row is a way of sending `expected=` for a different parameter. The four
+// conditions in sweptValueOf() are checked one at a time below, because each of them
+// rules out a different wrong number.
+
+const sweptAt = 1_755_000_000_000;
+/** @param outcomes rows as a sweep would have written them. */
+function sweepOf(outcomes: VcuReadOutcome[], complete = true): VcuParameterSnapshot {
+  return { readAt: sweptAt, complete, micros: ["A9"], rows: outcomes.map(toParameterRow) };
+}
+
+const dcTarget = WRITE_TARGETS.find(target => target.name === "MAX_DC_CHG_CURRENT");
+const configTarget = WRITE_TARGETS.find(target => target.name === "VSM_CONFIG_1");
+if (!dcTarget || !configTarget) {
+  throw new Error("the allowlist no longer carries the two parameters §14c is written against");
+}
+
+// ✅ The case the whole change is for: a sweep that read 258 as 0x4B is 75 A on the form.
+const sweptDc = sweptValueOf(dcTarget, sweepOf([reading(258, "4B"), reading(16, "11 13")]));
+expect(
+  sweptDc?.value === 75 && sweptDc?.rawHex === "4B",
+  `a sweep holding 258 = 0x4B must offer 75 with its bytes, offered ${JSON.stringify(sweptDc)}`
+);
+// The label comes from the allowlist's own unit function, so the page cannot invent a
+// different rendering of the same count — 2300 is 230.0 Nm in exactly one place.
+expect(sweptDc?.label === "75 A", `the label must come from the allowlist's unit(), said ${sweptDc?.label}`);
+expect(sweptDc?.readAt === sweptAt && sweptDc?.complete === true, "the sweep's own timestamp must ride along");
+// A config word comes back as the word, not as a bit: the compare-and-swap is against
+// the whole word and planBitWrite() computes the new one from it.
+expect(
+  sweptValueOf(configTarget, sweepOf([reading(16, "11 13")]))?.value === 0x1113,
+  "VSM_CONFIG_1 must offer the whole word, which is what a bit write is computed from"
+);
+
+// ⚠️ NOTHING, in every way the row can fail to be a reading of this parameter.
+expect(sweptValueOf(dcTarget, null) === null, "no sweep at all must offer nothing rather than a zero");
+expect(
+  sweptValueOf(dcTarget, sweepOf([reading(16, "11 13")])) === null,
+  "a sweep that did not reach 258 must offer nothing — another row's value must never stand in for it"
+);
+expect(
+  sweptValueOf(dcTarget, sweepOf([refusedRead(258)])) === null,
+  "a refused row is not a value; the NRC must not become a number on the form"
+);
+expect(sweptValueOf(dcTarget, sweepOf([silent(258)])) === null, "a silent row is not a value either");
+// ⚠️ A reply whose length contradicts the table means the framing of the sweep is in
+// question, which is exactly when a number must not be offered as a precondition.
+expect(
+  sweptValueOf(dcTarget, sweepOf([reading(258, "00 4B")])) === null,
+  "a width-mismatched record must offer nothing, however plausible the number reads"
+);
+// ⚠️ AND THE NAME HAS TO AGREE. Snapshot rows are named from the table the BIKE
+// reported; the allowlist names an INDEX. A row at 258 called something else means that
+// index is a different parameter on this bike — the state table-gate.ts refuses as
+// `unwritable` — and the value belongs to whatever that parameter is.
+const renamed = sweepOf([reading(258, "4B")]);
+expect(
+  sweptValueOf(dcTarget, { ...renamed, rows: renamed.rows.map(row => ({ ...row, name: "SOMETHING_ELSE" })) }) === null,
+  "an index whose name on this bike is not the allowlist's must offer nothing"
+);
+expect(
+  sweptValueOf(dcTarget, { ...renamed, rows: renamed.rows.map(row => ({ ...row, name: null })) }) === null,
+  "a row the retabling could not name — an unrecognised table — must offer nothing"
+);
+
+// An incomplete sweep's rows are still true readings, and are offered as such: what is
+// carried is that the RUN did not finish, so the page can say so.
+const partial = sweptValueOf(dcTarget, sweepOf([reading(258, "4B")], false));
+expect(
+  partial?.value === 75 && partial?.complete === false,
+  "a cut-short sweep still read what it read — the value stands, labelled as from an incomplete run"
+);
+
+// ⚠️ The findings must survive being MOVED. `verify` was split out of `warnings` so the
+// page could show it after the write instead of before; the point of the split is that
+// the sentence still exists, and the 0x625 check is the one piece of free evidence this
+// parameter has.
+expect(
+  dcTarget.verify !== null && dcTarget.verify.includes("0x625"),
+  "MAX_DC_CHG_CURRENT's free 0x625 b2 verification must survive as `verify`"
+);
+for (const target of WRITE_TARGETS) {
+  expect(
+    target.verify === null || target.verify.trim().length > 0,
+    `${target.name}: verify must be a sentence or an honest null, not an empty string`
+  );
+  // A warning that is really an instruction for afterwards belongs in `verify`, where
+  // the page shows it at the moment it can be acted on.
+  expect(
+    !target.warnings.some(warning => warning.startsWith("Free check")),
+    `${target.name}: a "free check afterwards" sentence belongs in verify, not in warnings`
+  );
+}
+
 // ── 15. The clock: the bike's RTC frame, and whether the Pi may set it ─────
 // ✅ The two frames below really went out, on 2026-08-16, from another owner's tool.
 // They are the only end-to-end ground truth for the bit packing, so the builder is
@@ -2338,7 +2439,8 @@ console.log(
     "interpretation, diff, the energica_tool.py backup CSV, " +
     "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +
     "seed/key pairs, the write allowlist and its ranges against every carried table, the table-type gate that " +
-    "refuses a write until the bike has named a table we have, the RTC frame against two frames that really " +
+    "refuses a write until the bike has named a table we have, the value the last sweep offers the write form " +
+    "(and the five ways a row must not become one), the RTC frame against two frames that really " +
     "went out, " +
     "the service stamp, mode 04, the bus lease and the write request parser all check out"
 );
