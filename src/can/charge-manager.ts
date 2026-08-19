@@ -286,26 +286,31 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     //     REFUTED: it holds in 8.14 % of those samples, i.e. by coincidence.
     //
     // 🟡 One lead did come out of the re-measurement, recorded because the next pass should start
-    // here rather than at r = +0.72. The eleven DC sessions split in two on the value b3 takes
-    // once b0 is up but before any current flows — 50 in seven of them, 64 in four — and the two
-    // halves then behave differently.
+    // here rather than at r = +0.72. Read b3 as KILOWATTS — an available POWER — and b0 as that
+    // power converted to amps at the present pack voltage and clamped to the 75 A ceiling.
     //
-    // Read b3 as KILOWATTS and take the 37 754 samples where that power would ask for less than
-    // the 75 A ceiling at the pack voltage of the instant. There `b0 − b3 × 1000 / pack_v` is
-    // within ±2 A in 98.4 % of cases, and it is not scattered: the residual is −2 A in most of
-    // them, so b0 sits a consistent couple of amps under what b3 implies (a margin, or a
-    // rounding — not established which). On those stations b0 IS an available power converted to
-    // amps at the present pack voltage, which would explain the ladder AND the lag on a derate,
-    // and it makes a station-advertised figure the natural reading of both bytes. On the other
-    // four sessions b3 parks at 78-82 and tracks nothing, which the same reading predicts if
-    // those stations simply have more power spare than this bike can take.
+    // The falsifiable half of that is the 37 754 samples where b3-as-kW would ask for LESS than
+    // 75 A, because there the conversion has to land on a specific number. It does:
+    // `b0 − b3 × 1000 / pack_v` is within ±2 A in 98.4 % of them, and the residual is not
+    // scattered — it is −2 in 62 %, so b0 sits a consistent couple of amps under what b3 implies
+    // (a margin, or a rounding; which is not established). That would explain the ladder AND the
+    // lag on a derate, and makes a station-advertised figure the natural reading of both bytes.
     //
-    // That is a hypothesis with a mechanism and one strong test behind it, NOT a decode, and the
-    // difference matters: two of the eleven sessions (2026-08-08 17:44 and 18:02) fit neither
-    // half, sitting flat at b3 = 30 while b0 held 75 and 73 A flowed. Nothing is emitted for b3
-    // until a session at a station whose advertised power is known independently settles it —
-    // which is one photograph of a charger's rating away, and is the cheapest experiment on the
-    // whole of issue #21.
+    // ⚠️ The other 80 973 samples, where b3-as-kW asks for MORE than the ceiling, look consistent
+    // and prove nothing. b0 is 75 in 51 % of them and lower in the rest, and "lower" is exactly
+    // what a pack-side taper produces too, so that half cannot distinguish the hypothesis from
+    // anything else. Two sessions (2026-08-08 17:44 and 18:02) are entirely in this half, sitting
+    // at b3 = 30 with b0 pinned at 75 while 73 A flowed: consistent, and no evidence.
+    //
+    // The session split lines up with it. Seven of the eleven DC sessions keep b3 under 55 and
+    // four park it at 79-81 (96 % of their frames), and in the eight sessions where the window
+    // before the first amp is captured, the value b3 holds there predicts which half every time:
+    // 50 in all four low ones, 64 in all four high ones.
+    //
+    // That is a hypothesis with a mechanism and one strong test behind it, NOT a decode, and
+    // nothing is emitted for b3. What settles it is a session at a station whose advertised
+    // power is known independently — one photograph of a charger's rating plate — which makes
+    // it the cheapest open question on issue #21.
     case CHARGE_LIMITS_CAN_ID: {
       if (data.length < 8) return [];
       return [
