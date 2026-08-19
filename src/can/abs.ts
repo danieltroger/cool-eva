@@ -454,6 +454,24 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 // picture is the opposite and consistent: the baseline median is ≈ −0.06, and 80 % of the events
 // in the 40s bin fall outside p1-p99.
 //
+// ⚠️ **Why that is not two standards for one shape**, since a one-sample excursion IS read as a
+// real lockup in the braking case (the 16:53:18 replay frame in scripts/check-can-decoders.ts,
+// where the front wheel reads 6.13 km/h for exactly one frame and 20.48 the next). The asymmetry
+// is physical, not a convenience:
+//   • **Under brake, both directions are available.** A caliper can put far more retarding torque
+//     into a wheel than the tyre can hold, so a lockup is near-instant; and when the modulator
+//     releases, the road — still passing at 20 km/h — spins a wheel of a few tenths of a kg·m²
+//     back up in well under 100 ms. A 14 km/h drop and full recovery inside two frames is what
+//     that looks like sampled at 10 Hz.
+//   • **Under power, one direction is missing.** Shedding 4.56 km/h in 100 ms needs roughly 28 Nm
+//     of retarding torque at the wheel, and it has to overcome the +19.7 Nm the motor is pushing
+//     the other way — about 48 Nm net, with no brake applied and the tyre gripping. Nothing on
+//     the bike supplies that. A wheel LOSING speed under drive torque is the part that does not
+//     add up, and it is why those spikes are discounted while the braking one is not.
+// The test that separates them is the sign against the applied torque, not the duration. A
+// one-frame excursion is credible in the direction the available forces can produce and not in
+// the other.
+//
 // So: throttle/torque and wheel divergence **agree for the braking population and disagree for
 // the throttle-open one**, and no winner is picked here. What would settle it is named on issue
 // #51 rather than guessed at.
