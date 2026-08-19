@@ -535,7 +535,7 @@ body {
  *
  * ⚠️ EVERY tier keeps the filled tile. The first version of this made the read
  * tier transparent so it would recede, which is a fine idea on a monitor and a
- * bad one here: --tile against --bg is a 1.4:1 edge, so in daylight through a
+ * bad one here: --tile against --bg is a 1.22:1 edge, so in daylight through a
  * visor the only buttons still visible would have been the three that cannot be
  * undone. Recession is not worth buying with legibility on the controls used
  * most. Colour is the only thing that varies between tiers — the gutter and, at
@@ -584,13 +584,22 @@ body {
   box-shadow: inset 3px 0 0 var(--bad);
 }
 
-/* ⚠️ 0.62, not the 0.5 it was, and the number is measured rather than felt. This is
-   the state most of the sheet sits in whenever the bike is off or not in reach —
-   which is most of the time somebody opens it — and at 0.5 the label composites to
-   about 4.1:1 against its own dimmed fill, under the 6:1 floor this file sets at the
-   top. 0.62 brings it back to ~5.9:1 while still reading unmistakably as "off". */
+/* ⚠️ 0.66, and the number is measured rather than felt. This is the state most of the
+   sheet sits in whenever the bike is off or not in reach — which is most of the time
+   somebody opens it — so the label has to clear the 6:1 floor this file sets at the top
+   while the button still reads unmistakably as "off".
+
+   Composite --fg and --tile against --bg at the opacity, then measure the label against
+   its own dimmed fill:
+
+     0.50  4.08:1   what it was, and well under the floor
+     0.62  5.52:1   the first correction, which did NOT reach the floor and said ~5.9:1
+     0.66  6.06:1   clears it
+
+   0.65 gives 5.92 and misses. If you change this, compute it — the value that looks
+   right and the value that measures right were four hundredths apart here. */
 .action:disabled {
-  opacity: 0.62;
+  opacity: 0.66;
 }
 
 /* 0.2rem horizontally, matching .sheet-heading and .sheet-title rather than the 0.3rem

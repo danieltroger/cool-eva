@@ -275,10 +275,11 @@ function hasControls() {
 /**
  * Arms one control, and stamps when.
  *
- * ⚠️ The ONLY way `armed` is set to a non-empty key — all four arming sites go through
- * here, so no control can be armed without also being subject to the dwell. Disarming
- * stays a plain `armed.val = ""` and needs no stamp: every firing site tests
- * `armed.val` first, and an empty key matches none of them.
+ * ⚠️ The ONLY way `armed` is set to a non-empty key. All three arming sites go through
+ * here — ActionButton's own onclick, armWrite() and armClockSync() — so no control can
+ * be armed without also being subject to the dwell. Disarming stays a plain
+ * `armed.val = ""` and needs no stamp: every firing site tests `armed.val` first, and
+ * an empty key matches none of them.
  *
  * @param {string} key
  */
@@ -297,6 +298,34 @@ function arm(key) {
  */
 function armDwellElapsed() {
   return performance.now() - armedAt >= ARM_DWELL_MS;
+}
+
+/**
+ * Refuses a key AUTO-REPEAT, so one sustained keypress cannot arm and then fire.
+ *
+ * ⚠️ The one hole ARM_DWELL_MS does not close, and it does not close it by arithmetic:
+ * macOS repeats a held key at about 500 ms, which is on the far side of the 400 ms
+ * dwell, so Enter held down on an armed button would arm on the first event and fire on
+ * the repeat. Raising the dwell past 500 ms would be the wrong answer — it would slow
+ * the gesture that actually happens (a thumb) to close a hole that only a keyboard has,
+ * and the repeat interval is a per-machine setting that can go slower still.
+ *
+ * `event.repeat` is the browser saying "this is the same press continuing", which is
+ * precisely the distinction wanted, so the guard is exact rather than timed. Enter's
+ * activation of a `<button>` is the default action of the keydown, so preventing it
+ * there is what stops it; Space activates on keyup and so repeats harmlessly already.
+ *
+ * There is no keyboard on a handlebar-mounted phone. This is here for the same reason
+ * `.sheet` gained `visibility: hidden` — the argument for the fold is that an
+ * irreversible action must not be reachable by accident, and "the hardware makes it
+ * unlikely" is a different claim from "the page does not allow it".
+ *
+ * @param {KeyboardEvent} event
+ */
+function refuseKeyRepeat(event) {
+  if (event.repeat) {
+    event.preventDefault();
+  }
 }
 
 /**
@@ -696,6 +725,8 @@ function WriteButton() {
         // bike and can be written back — which is why it is amber and on screen,
         // rather than red and behind the fold with the three that cannot.
         class: "action writes",
+        // One held Enter must not arm and then fire. See refuseKeyRepeat.
+        onkeydown: refuseKeyRepeat,
         // Unavailable until a value has been read off this bike, until something has
         // been chosen to write, and until the bike has named its parameter table. The
         // server enforces all three — the compare-and-swap, the allowlist and the table
@@ -1003,6 +1034,8 @@ function ClockAction() {
       {
         class: "action irreversible",
         disabled: () => busy.val || !canReach() || state.val?.status.clock.trustworthy !== true,
+        // One held Enter must not arm and then fire. See refuseKeyRepeat.
+        onkeydown: refuseKeyRepeat,
         onclick: () => {
           if (armed.val !== "action:sync-clock") {
             // ⚠️ The FIRST tap refreshes before it arms, so the time the caption then
@@ -1120,6 +1153,8 @@ function ActionButton(action, caption, notes) {
       {
         class: `action${irreversible ? " irreversible" : ""}`,
         disabled: () => busy.val || !canReach(),
+        // One held Enter must not arm and then fire. See refuseKeyRepeat.
+        onkeydown: refuseKeyRepeat,
         onclick: () => {
           if (armed.val !== key) {
             arm(key);
