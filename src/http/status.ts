@@ -2,6 +2,7 @@ import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { ServerResponse } from "http";
 import { ageMs, snapshot } from "../can/signals.ts";
+import { SIGNALS } from "../can/registry.ts";
 import { waypointsSaved } from "./waypoint.ts";
 
 // GET /status — the things the dashboard needs that aren't telemetry.
@@ -84,11 +85,30 @@ export async function measureLog(directory: string): Promise<{ files: number; by
   }
 }
 
+// Seeded from the REGISTRY, not from what has arrived. snapshot() is liveState,
+// which only holds keys decoded at least once since boot — so a source that has
+// never said anything was absent from this map entirely rather than reading 0-live.
+// A dashboard asking "has anything gone dark" would then see no dark groups and
+// report health, which is the one answer it must never give wrongly. A group that
+// has never been heard from is the strongest possible dark, not the absence of a
+// question. Totals are now what the bike DECLARES rather than what it has managed
+// to send, which also makes the denominator stable instead of growing as a ride
+// goes on.
 function summariseGroups(): Record<string, [number, number]> {
   const groups: Record<string, [number, number]> = {};
+  const declared = new Set<string>();
+  for (const signal of SIGNALS) {
+    const counts = groups[signal.group] ?? [0, 0];
+    counts[1] += 1;
+    groups[signal.group] = counts;
+    declared.add(signal.key);
+  }
   for (const [key, value] of Object.entries(snapshot())) {
     const counts = groups[value.group] ?? [0, 0];
-    counts[1] += 1;
+    // Membership is tested per KEY, not per group: a group can be declared and
+    // still receive an undeclared key, and testing the group would count only the
+    // first such key. Either way the fraction can never read live > total.
+    if (!declared.has(key)) counts[1] += 1;
     // ageMs(), not Date.now() - value.ts: a clock step would otherwise flip every
     // group to 0-live at once, which reads as "the CAN bus died" — the exact
     // question this endpoint exists to answer, answered wrongly.

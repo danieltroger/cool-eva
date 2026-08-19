@@ -6,7 +6,9 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { gunzip } from "zlib";
-import { measureLog } from "../src/http/status.ts";
+import type { ServerResponse } from "http";
+import { handleStatusEndpoint, measureLog, type StatusPayload } from "../src/http/status.ts";
+import { SIGNALS } from "../src/can/registry.ts";
 import { appendReading, closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
 
 // Guards the number the download button puts under itself, and the claim it makes
@@ -109,6 +111,7 @@ try {
   const sealedDirectory = join(workDir, "sealed");
   const sealed = await sealRealSegments(sealedDirectory, own);
   await checkTheCaptionSaysWhatIsCounted();
+  await checkADeadBusIsNotReportedAsHealthy();
   if (sealed) {
     // §4 opens what §2 wrote, so it has nothing to say when §2 wrote nothing — and
     // its readdir() would reject ENOENT out of a try/finally with no catch, killing
@@ -262,12 +265,18 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
 }
 
 /**
- * §3 — the caption counts files and calls them files.
+ * §3 — IF the caption counts files, it calls them files.
  *
- * `log.files` being referenced is already enforced by tsc (public/**\/*.js is checked
- * against StatusPayload), so what is left to guard is the English: a caption that
- * interpolates the file count and then calls it "segments" type-checks perfectly and
- * is exactly the bug that was reported.
+ * The caption itself was removed on 2026-08-19: it was accurate after the rename but
+ * could not be useful, since one `.celog` is a whole calendar day of segments and the
+ * number therefore cannot move before midnight however far the bike rides. So this
+ * section now guards a conditional rather than a fact — nothing requires a caption to
+ * exist, but one that shows a count must not mislabel it.
+ *
+ * The spelling of the count is tsc's job (public/**\/*.js is checked against
+ * StatusPayload, so `log.segments` does not compile). What is left to guard is the
+ * English: a caption that interpolates the file count and then calls it "segments"
+ * type-checks perfectly and is exactly the bug that was reported.
  *
  * Comments are stripped first, and both kinds of them — the explanation living next
  * to that caption necessarily contains the word "segment", and it is long enough that
@@ -291,17 +300,21 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   // Narrowed 2026-08-19, which is the escape hatch the message below already offered:
   // the caption was removed outright for screen space, so there is no count to label
   // and the old "must read log.files" assertion was firing on a deliberate deletion
-  // rather than on a bug. What is still worth guarding is the pairing — a count the
-  // rider sees must be log.files and must not be called segments — so the assertion
-  // now runs only when the button actually shows a count, and going back to showing
-  // one re-arms it automatically.
-  const showsACount = /log\.(files|segments)/.test(code);
-  if (showsACount && !code.includes("log.files")) {
-    failures.push(
-      `DownloadButton() in ${path} shows a count that is not log.files. The status payload exposes exactly ` +
-        `one countable thing about the log and that is the file count; anything else is invented`
-    );
-  }
+  // rather than on a bug.
+  //
+  // That assertion is GONE rather than gated, because gating it made it unfirable:
+  // it was `showsACount && !includes("log.files")`, and showsACount was true only
+  // when `log.files` was present, so the two halves contradict. The `log.segments`
+  // arm could not save it either — `StatusPayload.log` is `{ files; bytes; enabled }`
+  // and public/**/*.js is checkJs'd against it, so tsc rejects that spelling before
+  // this script ever runs. Nothing was lost by deleting it; it was already dead.
+  //
+  // What survives is the half that tsc CANNOT check: the English. A caption that
+  // interpolates the file count and calls the result "segments" type-checks
+  // perfectly and is exactly the bug that was reported, so it stays guarded — and
+  // only when a count is actually shown, since "sealed every 30 s" is true prose
+  // that happens to contain the word.
+  const showsACount = code.includes("log.files");
   if (showsACount && /segment/i.test(code)) {
     failures.push(
       `DownloadButton() in ${path} says "segment" in text the rider sees, next to a count of files. One .celog ` +
@@ -344,6 +357,55 @@ function withoutComments(source: string): string {
     .filter(line => !line.trim().startsWith("//"))
     .join("\n")
     .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, " "));
+}
+
+/**
+ * §5 — a bus that has said nothing reports every source dark, not no sources.
+ *
+ * This check exists because the opposite shipped. `summariseGroups()` used to be
+ * built by walking `snapshot()`, which holds only keys decoded at least once since
+ * boot — so a source that had never spoken was ABSENT from the payload rather than
+ * present at zero. Anything asking "is a group dark" by testing `live === 0` then
+ * found nothing to report and said everything was fine, which is the one answer a
+ * liveness check must never give wrongly.
+ *
+ * It was visible in the wild and nobody noticed: a screenshot of the old sixteen-tile
+ * grid showed sixteen groups against a registry that declares seventeen. The missing
+ * one was `waypoint`, absent because no waypoint had been saved.
+ *
+ * This process never touches CAN, so `snapshot()` is empty here — which is exactly
+ * the dead-bus case, for free. The assertion is deliberately against the real
+ * endpoint rather than an exported internal: the bug was in what /status SERVES.
+ */
+async function checkADeadBusIsNotReportedAsHealthy(): Promise<void> {
+  let body = "";
+  const res = {
+    statusCode: 200,
+    writeHead() {},
+    setHeader() {},
+    end(chunk?: string) {
+      if (chunk) body = chunk;
+    },
+  } as unknown as ServerResponse;
+  await handleStatusEndpoint(res, join(workDir, "no-log-here"), false);
+
+  const payload = JSON.parse(body) as StatusPayload;
+  const declared = [...new Set(SIGNALS.map(signal => signal.group))].sort();
+  const reported = Object.keys(payload.groups).sort();
+  const missing = declared.filter(group => !reported.includes(group));
+
+  if (missing.length > 0) {
+    failures.push(
+      `/status omitted ${missing.length} declared group(s) from a bus that has sent nothing: ${missing.join(", ")}. ` +
+        `A group nothing has ever been heard from is the strongest possible "dark", and it must be reported as ` +
+        `[0, n] rather than left out — a dashboard that filters on live === 0 reads an omission as health`
+    );
+  }
+  const live = declared.filter(group => (payload.groups[group]?.[0] ?? 0) > 0);
+  if (live.length > 0) {
+    failures.push(`/status reported ${live.join(", ")} as live in a process that never opened can0`);
+  }
+  console.log(`  a silent bus reports ${reported.length} of ${declared.length} declared groups, all dark`);
 }
 
 /**

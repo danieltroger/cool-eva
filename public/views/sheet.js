@@ -229,6 +229,12 @@ export function hasTroubleCodes() {
  * The question this answers is "has a source gone dark", and only `live === 0`
  * answers it. So the dark ones get named and the rest get counted. The per-group
  * numbers are still in /status for anyone debugging a specific group.
+ *
+ * Reading `live === 0` is only safe because summariseGroups() is seeded from the
+ * registry. It used to be built from arrived keys alone, which meant a source that
+ * had never spoken was ABSENT rather than zero — so this filter would have found
+ * nothing on a completely dead bus and reported health. Do not go back to counting
+ * only what has arrived without changing this line too.
  */
 function SourceHealth() {
   return div({ class: "action-note" }, () => {
