@@ -152,8 +152,7 @@ export function advanceTab() {
  * @returns {boolean}
  */
 export function startRouting() {
-  const named = tabFromHash(location.hash) !== null;
-  showTabFromUrl();
+  const named = showTabFromUrl();
   // Two listeners, because these are two different events and browsers disagree about
   // which of them a fragment change deserves. `popstate` is the history cursor moving:
   // Back, Forward, and the edge-swipe that stands in for both in an iOS home-screen
@@ -171,11 +170,13 @@ export function startRouting() {
 
 /**
  * Point the screen at whatever the URL says now, and make the URL say something this
- * app actually has. The two lines that touch the browser; the rule they follow is
- * canonicalHash() below, where it can be checked.
+ * app actually has. The only place here that reads `location`; the rule it acts on is
+ * canonicalHash() below, where it can be checked without a browser.
+ *
+ * @returns {boolean} whether the fragment named a tab, rather than falling back to one.
  */
 function showTabFromUrl() {
-  const { tab: landing, rewriteTo } = canonicalHash(location.hash);
+  const { tab: landing, rewriteTo, named } = canonicalHash(location.hash);
   if (rewriteTo !== null) {
     try {
       history.replaceState(null, "", rewriteTo);
@@ -190,11 +191,17 @@ function showTabFromUrl() {
     }
   }
   tab.val = landing;
+  return named;
 }
 
 /**
- * What to do about a fragment: the tab it lands on, and what the URL should be
- * rewritten to — null when it already says the right thing.
+ * What to do about a fragment: the tab it lands on, what the URL should be rewritten
+ * to — null when it already says the right thing — and whether the fragment named that
+ * tab or merely fell back to it.
+ *
+ * The three are independent. `#Charge` names a tab *and* wants rewriting; `#ride` names
+ * one and does not; `#nope` names none and wants rewriting; `#ride` after a Back press
+ * is all three settled already.
  *
  * Pure, so the rule can be checked without a browser; the same split as
  * headroomMvWith() in lib/derive.js, and for the same reason.
@@ -210,12 +217,13 @@ function showTabFromUrl() {
  * cursor — pushing would strand it and turn one Back press into two.
  *
  * @param {string} hash
- * @returns {{ tab: TabName, rewriteTo: string | null }}
+ * @returns {{ tab: TabName, rewriteTo: string | null, named: boolean }}
  */
 export function canonicalHash(hash) {
-  const landing = tabFromHash(hash) ?? DEFAULT_TAB;
+  const named = tabFromHash(hash);
+  const landing = named ?? DEFAULT_TAB;
   const wanted = hashForTab(landing);
-  return { tab: landing, rewriteTo: hash === wanted ? null : wanted };
+  return { tab: landing, rewriteTo: hash === wanted ? null : wanted, named: named !== null };
 }
 
 /**

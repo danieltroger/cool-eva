@@ -161,6 +161,28 @@ for (const hash of EVERY_HASH_TRIED) {
   check(`${JSON.stringify(hash)} settles in one rewrite`, twice.rewriteTo === null && twice.tab === once.tab);
 }
 
+// --- 3b. Did the fragment NAME its tab, or only land on it? ------------------
+//
+// `named` is what app.js spends to decide whether the bike may overrule the screen the
+// page opened on: a link that asked for Faults keeps it through the first readings,
+// while the bare entry URL is left to the bike exactly as it always was. So the line
+// between the two is behaviour, not bookkeeping.
+//
+// It is independent of `rewriteTo`, which is the part easy to get wrong: `#Charge`
+// names its tab *and* wants rewriting, so deriving one from the other would quietly
+// hand the bike a link that did ask for a screen.
+
+console.log("\n3b. which fragments count as asking for a tab");
+
+for (const tab of TABS) {
+  check(`${hashForTab(tab.name)} asks for ${tab.name}`, canonicalHash(hashForTab(tab.name)).named);
+}
+check("#Charge asks for charge even though it is rewritten", canonicalHash("#Charge").named);
+
+for (const [hash, description] of NAMES_NOTHING) {
+  check(`${JSON.stringify(hash)} asks for nothing — ${description}`, canonicalHash(hash).named === false);
+}
+
 // --- 4. The high-beam ring ---------------------------------------------------
 
 console.log("\n4. the ring the high-beam gesture rides on");
