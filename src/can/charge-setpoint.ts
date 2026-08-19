@@ -8,11 +8,13 @@
 //                "Fast Charge 60/75/80 Amps" options — all three write this one byte.
 //   the SETTING  what the rider actually dialled in, ≤ the ceiling. This file.
 //
-// The setting is not a parameter. All 277 rows of this bike's own VCU parameter export
-// were searched and there is no second charge-current entry — 258 is the only one, and
-// the [EVSE] block's spare slots (EE_EVSE_DUMMY_1/2/3, EVSE_DUMMY_WORD4) all read 0.
-// The same holds across all 28 of Energica's parameter tables. So the setting lives in
-// RAM on the dash side, and 0x121 is the only place it is ever stated.
+// The setting is not a calibration parameter. All 277 rows of this bike's own VCU
+// parameter export were searched and there is no second charge-current entry — 258 is the
+// only one, and the [EVSE] block's spare slots (EE_EVSE_DUMMY_1/2/3, EVSE_DUMMY_WORD4)
+// all read 0. The same holds across all 28 of Energica's parameter tables, and none of the
+// 120 telemetry infokeys is a charge-current setpoint either. So WHERE the bike keeps it is
+// not known — only that 0x121 is the one place it is ever stated on this bus. Whether it
+// survives a power cycle is an open question; see the event note at the bottom.
 //
 // ## 0x121 is a dash↔VCU command channel, not a broadcast
 //
