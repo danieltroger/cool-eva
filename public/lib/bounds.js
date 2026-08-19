@@ -113,8 +113,15 @@ const BY_KEY = {
   //   100 leaves room for that and still rejects the 255 an all-ones payload decodes to.
   // • `ac_supply_limit_a` is SUPPLY-side — a cable or EVSE rating, not the bike's. It has only
   //   ever read 8, 10 and 13 A here and the bike's own AC charger stops at ~14.3 A, but a bound
-  //   drawn round either of those would reject a legitimate reading at a bigger outlet. 80 A is
-  //   the most a Type 2 control pilot can advertise, so above that it is not a supply rating.
+  //   drawn round either of those would reject a legitimate reading at a bigger outlet. The
+  //   ceiling comes from the STANDARD rather than from this bike: IEC 61851's control pilot
+  //   cannot encode more than 80 A, so above that it is not a supply rating at all.
+  //
+  // These are the second line of defence, not the first. `src/can/charge-manager.ts` now drops a
+  // 0x615 frame that fails the frame's own invariants, so the all-ones payload no longer reaches
+  // the decoder at all. Both layers are wanted: the invariant catches a dead sender, and these
+  // catch a decode that is wrong in a way the invariant cannot see — a byte read at the wrong
+  // offset still passes b1 = 0x01.
   "fast_dc_a": [0, 100],
   "fast_dc_limit_a": [0, 80],
   "fast_dc_limit_max_a": [0, 80],
