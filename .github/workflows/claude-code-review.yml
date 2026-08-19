@@ -1,3 +1,31 @@
+# DISABLED 2026-08-19. Reviews now run locally instead — see REVIEWING.md.
+#
+# This workflow billed ANTHROPIC_API_KEY per run and cost about €50 in a single
+# day of active development. The same reviews run on the maintainer's existing
+# subscription for nothing, so the spend bought nothing that was not already
+# available.
+#
+# It is disabled in TWO places on purpose, because either alone is a trap:
+#
+#   • `gh workflow disable "Claude Code"` — takes effect immediately, but it is a
+#     repository SETTING with no trace in the tree. A fresh clone shows a
+#     workflow that looks live, and anyone re-enabling it in the UI gets no hint
+#     that it costs money.
+#   • the `if: false` guards below — visible to anyone reading the repo, and they
+#     survive the setting being flipped back.
+#
+# To turn it back on: remove the `if: false` lines AND run
+# `gh workflow enable "Claude Code"`. Be deliberate about it; it bills per run
+# and fires on every PR open.
+#
+# The reviews themselves were genuinely valuable and are NOT being dropped — they
+# caught several real bugs, including a liveness summary that would have reported
+# a dead CAN bus as healthy. What changed is only where they run. Running them
+# locally is also strictly better in one respect the CI reviewer kept flagging
+# itself: it could not execute anything, and repeatedly had to write "I could not
+# run the tests here, so the passing run remains your report". A local reviewer
+# runs the suite and can re-measure a data claim against the capture archive.
+
 name: Claude Code
 
 on:
@@ -15,7 +43,7 @@ on:
 jobs:
   # Auto-review on PR creation
   auto-review:
-    if: github.event_name == 'pull_request'
+    if: false # DISABLED — see the header. Was: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -56,11 +84,11 @@ jobs:
 
   # Interactive mode for @claude mentions
   claude:
-    if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    if: false # DISABLED — see the header. The original condition is kept below.
+    # (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+    # (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+    # (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+    # (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
 
     runs-on: ubuntu-latest
     permissions:
