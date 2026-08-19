@@ -106,10 +106,31 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
   switch (id) {
     // 0x605 — what the vehicle tells the BMS about the session in progress.
     //
-    // b1 and b4-6 are 00 in all 44 323 frames of the corpus. b0 is 0x0F on AC and 0x11 on DC
-    // (99.93 %) but is not read here: 15 and 17 are not a bitfield relationship and naming a
-    // two-valued byte would be inventing a meaning for it. b3 is a byte-for-byte copy of b2 —
-    // 100.000 % over 44 323 frames — so only one of the pair is emitted.
+    // b1 and b4-6 are 00, and b3 is a byte-for-byte copy of b2, both in 100.000 % of 967 865
+    // frames, so only one of the b2/b3 pair is emitted.
+    //
+    // ⚠️ b0 is NOT the two-valued byte the 2026-08-19 pass recorded. "0x0F on AC and 0x11 on DC
+    // (99.93 %)" is 97.19 % at full rate, and the byte takes TEN values, not two: 0x0F 783 865,
+    // 0x11 156 765, 0x02 25 704, 0x0B 1 080, 0x00 196, 0x01 148, 0x0E 53, 0x06 28, 0x03 24,
+    // 0x0A 2. Still not read here, and now for a better reason than "15 and 17 are not a bitfield
+    // relationship" — a byte with ten values and a 3 % tail is a state or a sequence number, and
+    // the two-valued reading was an artefact of a sample that under-represented the transitions.
+    // ⚠️ This is the one frame in the group with NO invariant gate, and that is a measurement
+    // rather than a preference — worth stating, because four of the five now have one and the
+    // asymmetry otherwise looks like an oversight.
+    //
+    // It has no invariant left to gate on. The all-ones shape is caught by bounds.js (255 fails
+    // both `charge_type`'s [0, 2] and `bms_leak_detect_inhibit`'s [0, 1]). The all-zero shape
+    // cannot be caught at all: b1 and b4-6 are 00 by definition, b3 = b2 holds trivially, and
+    // every remaining byte takes 0 in real traffic — b0 = 0x00 in 196 frames, b2 = 0 in 27 134,
+    // b7 = 0 in 811 039. THE BUS ITSELF SENDS A COMPLETELY ZERO 0x605 PAYLOAD 126 TIMES in the
+    // archive, so any gate that rejected that shape would be dropping real frames.
+    //
+    // Which is tolerable here and would not be on 0x620, for a reason worth keeping: this frame's
+    // all-zero decode is FAIL-SAFE. charge_type = 0 says "no path live" and
+    // bms_leak_detect_inhibit = 0 says "the isolation monitor is running" — both the safe reading
+    // of a charge manager that has gone away. 0x620's all-zero decode claims two ceilings, which
+    // is a measurement, and that is why it is gated and this is not.
     case CHARGE_BMS_COMMAND_CAN_ID: {
       if (data.length < 8) return [];
       return [
