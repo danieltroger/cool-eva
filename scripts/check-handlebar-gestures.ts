@@ -407,11 +407,16 @@ function replayLongPress(samples: Sample[]): number[] {
 
   for (const sample of samples) {
     // Any deadline falling at or before this sample is a timer that would have run
-    // first. Bounded by the detector latching itself after it fires, so this cannot spin.
-    for (let deadline = detector.deadlineMs(); deadline !== null && deadline <= sample.at; ) {
+    // first. A `while` rather than a `for` with an empty increment clause, which
+    // Prettier 3.8 and 3.9 disagree about how to space and which therefore churns
+    // between a local run and CI's pinned version.
+    let deadline = detector.deadlineMs();
+    while (deadline !== null && deadline <= sample.at) {
       if (detector.observe(held, deadline)) {
         firedAt.push(deadline);
       }
+      // Only ever forwards. The detector latches after firing so deadlineMs() goes
+      // null, but a deadline that came back unchanged would spin here for ever.
       const next = detector.deadlineMs();
       deadline = next !== null && next !== deadline ? next : null;
     }
