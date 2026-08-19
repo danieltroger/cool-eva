@@ -246,8 +246,12 @@ interface ReplayCase {
   absent?: string[];
   /**
    * Keys whose expected value bounds.js is SUPPOSED to reject — sentinels replayed on purpose,
-   * like 0x0A0's 0xFFFF wheel counts. Everything else in `expect` is a real reading off the bike,
-   * so a bound that rejects one is a bug in bounds.js; see the check in the replay loop.
+   * like 0x0A0's 0xFFFF wheel counts. Everything else in `expect` is a value the decoder is
+   * pinned to produce, so a bound that rejects one is a bug in bounds.js.
+   *
+   * Checked in BOTH directions: naming a key here suppresses the too-tight failure, and it also
+   * asserts that bounds.js really does still reject it. Widen the bound past the sentinel and
+   * this fails rather than going quiet. A key named here that `expect` does not contain fails too.
    */
   outsideBounds?: string[];
 }
@@ -739,6 +743,7 @@ for (const testCase of REPLAY) {
     }
   }
   const label = `0x${testCase.id.toString(16).toUpperCase().padStart(3, "0")} ${testCase.frame}`;
+  const declaredOutside = new Set(testCase.outsideBounds ?? []);
   for (const [key, expected] of Object.entries(testCase.expect)) {
     const actual = decoded.get(key);
     if (actual === undefined) {
@@ -748,18 +753,48 @@ for (const testCase of REPLAY) {
     if (Math.abs(actual - expected) > 1e-9) {
       failures.push(`${label}: expected ${key} = ${expected}, got ${actual}`);
     }
-    // The other direction of the two-layer argument, and the one nothing checked until now.
-    // Every value in `expect` was copied byte for byte out of the archive, so it is a reading the
-    // bike really produced — which makes this the one place that can catch a bound drawn TOO
-    // TIGHT. That is not a hypothetical failure mode: the first version of this PR bounded
-    // `fast_dc_limit_max_a` at 80 because it read a write policy as a field range, and the only
-    // reason no real reading was rejected is that this bike happens to hold 75. `psu_12v_mv`
-    // exists in bounds.js for the same mistake made from the other end.
+    // The other direction of this PR's two-layer argument, and the one nothing checked until now.
+    // Every value in `expect` is one this decoder is PINNED to produce — most copied byte for byte
+    // out of the archive, the rest constructed for the ⚠️ SYNTHETIC cases — so a bounds.js that
+    // rejects one is a contradiction either way, and this is the one place that can catch a bound
+    // drawn TOO TIGHT. Not hypothetical: the first version of this PR bounded `fast_dc_limit_max_a`
+    // at 80 because it read a write policy as a field range, and the only reason no real reading
+    // was rejected is that this bike happens to hold 75. `psu_12v_mv` is in bounds.js for the same
+    // mistake made from the other end.
+    //
+    // `expected` is deliberately what is tested, not `actual`: the question is whether the gate
+    // accepts the reading the bike is known to produce, and on a decode mismatch `actual` is by
+    // definition not that. The mismatch is already a failure two lines up.
+    //
+    // Both directions are asserted. `outsideBounds` may only SUPPRESS the first failure, never
+    // stand in for the second — an annotation that merely silences is indistinguishable from one
+    // that has gone stale, which is the exact failure mode the header of this file is about.
     const signal = defined.get(key);
     const range = signal ? boundsFor(signal.key, signal.unit, signal.group) : null;
-    if (range && !(testCase.outsideBounds ?? []).includes(key) && (expected < range[0] || expected > range[1])) {
+    if (range) {
+      const insideBounds = expected >= range[0] && expected <= range[1];
+      if (!insideBounds && !declaredOutside.has(key)) {
+        failures.push(
+          `${label}: ${key} = ${expected} is a value this decoder is pinned to produce, but bounds.js gates it to [${range[0]}, ${range[1]}] — either the bound is too tight, or this case belongs in outsideBounds`
+        );
+      }
+      if (insideBounds && declaredOutside.has(key)) {
+        failures.push(
+          `${label}: ${key} = ${expected} is declared in outsideBounds, but bounds.js now accepts it within [${range[0]}, ${range[1]}] — the sentinel has stopped showing as a fault, or the annotation is stale`
+        );
+      }
+    } else if (declaredOutside.has(key)) {
       failures.push(
-        `${label}: ${key} = ${expected} is a real reading off the bike, but bounds.js gates it to [${range[0]}, ${range[1]}] — either the bound is too tight, or this case belongs in outsideBounds`
+        `${label}: ${key} is declared in outsideBounds, but bounds.js does not bound it at all — nothing can reject it, so "supposed to be rejected" is false`
+      );
+    }
+  }
+  // A key named in outsideBounds that this case does not expect asserts nothing and hides the
+  // fact — a rename or a deleted expectation would leave it behind looking like protection.
+  for (const key of declaredOutside) {
+    if (!(key in testCase.expect)) {
+      failures.push(
+        `${label}: outsideBounds names ${key}, which this case does not expect — a stale annotation asserts nothing`
       );
     }
   }
