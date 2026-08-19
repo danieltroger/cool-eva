@@ -438,6 +438,7 @@ const REPLAY: ReplayCase[] = [
     why: "⚠️ SYNTHETIC — the real 75 A frame with one bit set in the tail. b5-7 are zero in every captured frame of both ids except opcode 0x14, so a 0x18 that starts using them is a 0x18 that means something else; the decoder would rather go silent than report a number from a layout it does not recognise",
     expect: {},
     absent: ["dc_charge_limit_selected_a"],
+  },
   // The charge manager, added 2026-08-19. Every frame below is copied byte for byte out of
   // ~/Documents/cool-eva-archive, and each pair (one AC, one DC) is taken at the SAME instant
   // in the same session as its siblings, so the five ids can be read together as one state.

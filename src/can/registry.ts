@@ -260,6 +260,13 @@ export const SIGNALS: SignalDef[] = [
   //   ac_supply_limit_a   the supply's ceiling      NOT charge_limit_a, the setpoint it bounds
   //   fast_dc_limit_max_a the bike's fixed 75 A     NOT charger_max_dc_a, the AC charger's max
   //
+  // And there are now three DC current limits, which really are three different numbers —
+  // the ALL view renders them together, so read the qualifier and not just the prefix:
+  //
+  //   dc_charge_limit_selected_a  0x121 b2  what the RIDER picked on the bike's own screen
+  //   fast_dc_limit_max_a         0x625 b2  the configured ceiling the dial runs up to, 75
+  //   fast_dc_limit_a             0x620 b0  the limit in force this second, 0…75 in a session
+  //
   // No deadbands. Every one of them is either a flag, a 1-unit-quantised integer or a byte
   // that only moves on a state change, so log-on-change already is the right rate.
   { key: "charge_type", unit: "", group: "charge", source: "stream" }, // 0x605 b2: 1 AC, 2 DC ✅

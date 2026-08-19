@@ -195,15 +195,39 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     case CHARGE_LIMITS_CAN_ID: {
       if (data.length < 8) return [];
       return [
-        // ✅ b0 = the DC current ceiling in amps. It is a real ceiling, not a readback: the
-        // delivered current (0x615 b2) stays at or below it in 99.95 % of 9 865 DC frames.
+        // ✅ b0 = the DC current limit in force right now, in amps — the one of the three DC
+        // limits on this bus that moves during a session.
         //
-        // ⚠️ It FOLLOWS the station down rather than commanding it. On 2026-08-04 it dropped
-        // 75 → 64 eleven seconds AFTER the delivered current had already fallen to 55.6 A, and
-        // across the ten new DC sessions it takes 21 distinct values between 0 and 75. So it
-        // is what the vehicle currently advertises, which is not the same thing as what the
-        // rider asked for. (Whoever is chasing the rider-set limit: this byte is downstream of
-        // that setting, and 0x625 b2 below is the fixed ceiling it cannot exceed.)
+        // 🧨 It was put to a direct test, because #79 read the same byte as "not a limit at
+        // all — it follows the delivered current", having watched it ramp 0 → 22 → 44 → 66 →
+        // 75 → 66 → 44 and read 44 while only 10 A flowed. If that were right, naming it a
+        // limit would be this project's `charging`-was-the-high-beam mistake over again. It is
+        // not right, and the discriminator is headroom: an echo of delivered current has to
+        // touch it, and this byte never does. Over 10 771 aligned (0x620, 0x615) samples in
+        // all ten DC sessions that carry both:
+        //
+        //     b0 − b2 == 0 (hugging the delivery):        0.0 %      ← an echo lives here
+        //     b0 − b2 >= 5 A of headroom:                83.9 %
+        //     b0 − b2 median 12 A, p75 28 A, p95 44 A
+        //     b2 > b0 (the bound broken):                 0.4 %
+        //
+        // The 44-while-10-A reading is the headroom case, not a contradiction: session 27's
+        // median gap is 35 A because the pack was at 99 % and taking almost nothing. So b0
+        // bounds the delivery with room to spare and never tracks it. It is a limit.
+        //
+        // ⚠️ What it is NOT is a command, and #79 is right about the direction of causation.
+        // On 2026-08-04 it dropped 75 → 64 eleven seconds AFTER the delivered current had
+        // already fallen to 55.6 A. It reacts to the station.
+        //
+        // ❓ And whose limit it is stays open: vehicle-advertised and station-granted look
+        // identical from this port, and both would bound delivery and both would move when
+        // the station derates. All that is established is that it never exceeds 0x625 b2's
+        // configured 75. So the name says which limit (the live one) and not whose.
+        //
+        // The three DC current limits, which are genuinely three different numbers:
+        //   dc_charge_limit_selected_a  0x121 b2   what the RIDER picked (charge-setpoint.ts)
+        //   fast_dc_limit_max_a         0x625 b2   the configured ceiling, a static 75
+        //   fast_dc_limit_a             0x620 b0   what is in force this second
         { key: "fast_dc_limit_a", value: data[0] },
         // ✅ b1 = the AC current ceiling in amps. NEW — CAN_MAP.md records this byte as
         // "static 00" because the only session it had was a DC one, where it is.
