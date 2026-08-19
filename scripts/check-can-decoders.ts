@@ -246,6 +246,20 @@ const REPLAY: ReplayCase[] = [
   },
   {
     id: 0x0a0,
+    frame: "00 00 00 00 10 00 02 00",
+    why: "⚠️ SYNTHETIC — the asymmetric companion to the all-flags frame above, and it catches a failure that one structurally cannot. With every other case setting either all of these bits or none of them, two decoded keys could be SWAPPED and the whole suite would still pass: A_FSENS_FAIL (b4 bit4) against A_RSENS_FAIL (bit5), and A_F_PRESSURE_VALIDITY (b6 bit0) against A_F_CTRL_ACTIVE (bit1). A wrong position and a transposition are different bugs, and only an asymmetric frame separates the pairs. b4 = 0x10 and b6 = 0x02 set exactly one of each pair; the 18:01:34 frame's b6 = 0x04 already separates bit1 from bit2",
+    expect: {
+      abs_front_sensor_fault: 1,
+      abs_rear_sensor_fault: 0,
+      abs_event: 0,
+      abs_warning_lamp: 0,
+      abs_front_pressure_validity: 0,
+      abs_front_control_active: 1,
+      abs_rear_control_active: 0,
+    },
+  },
+  {
+    id: 0x0a0,
     frame: "CD 00 B3 00 00 00",
     why: "⚠️ SYNTHETIC — the lap's fastest frame truncated to 6 bytes. Every real frame of this ID is DLC 8, but b6 carries its own guard so that a short frame cannot silence the four signals logged since 2026-08-16 on account of the three added later. What must NOT happen is the b6 trio being decoded out of CAN padding: 'pressure invalid, neither channel active' reads as a healthy answer, not as a missing byte",
     expect: { wheel_speed_front_kmh: 11.53125, abs_warning_lamp: 0, abs_event: 0, front_brake_pressure_bar: 0 },

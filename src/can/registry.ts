@@ -527,6 +527,18 @@ export const SIGNALS: SignalDef[] = [
   // fault — and `diag` is 170 signals deep with the generated dtc_* flags, which would bury
   // them. `abs_event` sits with `abs_rear_control_active` deliberately: they fire in the same
   // frame, always, and splitting them across two sections of the All tab would hide that.
+  //
+  // ⚠️ These two are LOG-FIRST, and the All tab's flash should not be relied on to catch one.
+  // An intervention is 1-2 frames, 100-200 ms, which is at the edge of what a person notices —
+  // the same problem public/lib/press.js was written for, and it chose a 600 ms latch because
+  // ~200 ms is roughly the threshold. `controls` gets the plain RawTile, which renders the live
+  // value with no latch, so on screen an intervention is a brief flip to 1 and back. The RIDE
+  // LOG is unaffected: no deadband, so both edges are sealed, and that is where an intervention
+  // is meant to be read from. Deliberately not fixed here rather than overlooked — the latch
+  // lives in the `buttons` group's tile, that tile is being generalised for held vs momentary
+  // states in its own change, and bolting a second momentary path onto views/all.js in parallel
+  // would be the wrong shape. If these should flash properly, the move is to give the tile a
+  // per-key momentary set once that work lands, not to give this frame a private mechanism.
   { key: "abs_front_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x10 A_FSENS_FAIL
   { key: "abs_rear_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x20 A_RSENS_FAIL
   { key: "abs_event", unit: "", group: "controls", source: "stream" }, // b4 0x80 A_EVENT
