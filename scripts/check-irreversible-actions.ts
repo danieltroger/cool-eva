@@ -153,7 +153,14 @@ function serverActions(source: string): string[] {
   if (start === -1 || end === -1) {
     return [];
   }
-  return [...source.slice(start, end).matchAll(/^\s*case "([a-z-]+)":/gm)].map(match => match[1]);
+  // `[^"]+`, not `[a-z-]+`. A narrower class is the inversion coming back through a
+  // smaller door: a label carrying a digit, capital or underscore would be invisible to
+  // the parser, so a new confirm-gated action spelled `case "mode04-wipe":` would go
+  // unseen and the check would pass while it sat in the open list. That is not a
+  // hypothetical spelling in a file that says "OBD Mode 04" four times. Over-matching is
+  // safe by construction — an action this finds but has no fixture for is already a hard
+  // failure that names it.
+  return [...source.slice(start, end).matchAll(/^\s*case "([^"]+)":/gm)].map(match => match[1]);
 }
 
 const accepted = serverActions(SERVER_SOURCE);

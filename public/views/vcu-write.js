@@ -323,7 +323,12 @@ function armDwellElapsed() {
  * @param {KeyboardEvent} event
  */
 function refuseKeyRepeat(event) {
-  if (event.repeat) {
+  // Qualified by key, or this cancels every held key on these five buttons — a held
+  // ArrowDown, PageDown or Tab would stop scrolling dead after one line, which is a
+  // real cost on a phone paid to prevent something only a keyboard can do. The
+  // paragraph above already reasons that Enter is the only key that needs it; this
+  // is that reasoning written into the condition rather than left beside it.
+  if (event.repeat && event.key === "Enter") {
     event.preventDefault();
   }
 }
