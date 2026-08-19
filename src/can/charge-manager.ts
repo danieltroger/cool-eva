@@ -343,18 +343,40 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
     // before the first amp is captured, the value b3 holds there predicts which half every time:
     // 50 in all four low ones, 64 in all four high ones.
     //
-    // 🟢 Corroboration from a completely different direction, which is why this is worth keeping
-    // at all: `src/vcu/write-targets.ts` records, from the VCU-parameter side and on eight DC
-    // sessions, that "the ceiling is the STATION, not the bike — station identity explains 84 %
-    // of the variance, the highest ever delivered is 73.2 A, and no station has offered even the
-    // 75 A already permitted". A station-advertised figure arriving in this frame is exactly what
-    // that observation predicts, and the two were derived independently.
+    // 🟢 Corroboration from a completely different direction: `src/vcu/write-targets.ts` records,
+    // from the VCU-parameter side and on eight DC sessions, that "the ceiling is the STATION, not
+    // the bike — station identity explains 84 % of the variance". A station-advertised figure
+    // arriving in this frame is exactly what that observation predicts, and the two were derived
+    // independently.
     //
-    // So: a hypothesis with a mechanism, one supporting fit and one independent corroboration —
-    // NOT a decode, and nothing is emitted for b3. The corpus cannot settle it, for the selection
-    // reason above. What settles it is a session at a station whose advertised power is known
-    // independently, i.e. one photograph of a charger's rating plate, which makes it the cheapest
-    // open question on issue #21.
+    // ❌ AND IT IS STILL WRONG. Retracted 2026-08-19, by the test this comment asked for: the
+    // owner identified each session's charger from its GPS track. Every b3 value was extracted
+    // per session, the coordinates read out of the hub's 0x410 fixes while current was flowing,
+    // and the sites looked up:
+    //
+    //     b3 ≈ 80    57.10599, 13.03703   station is 320 kW
+    //     b3 = 20    56.50180, 12.95666   station is 225 kW
+    //     b3 = 22-23 56.65757, 12.90713   station is 400 kW
+    //     b3 = 20    56.28432, 13.33884   station is 300 or 400 kW
+    //
+    // Not the advertised power, and not a scaling of it either — the ratios are 4.0, 11.3 and
+    // 17.4, with the LARGEST b3 at the SMALLEST station. No rounding, quantisation or unit
+    // choice reconciles those. The mechanism, the supporting fit and the independent
+    // corroboration were all real and all pointed at the wrong answer, which is the lesson worth
+    // keeping: three lines of evidence agreeing is not the same as being right, and the thing
+    // that settled it was one measurement from outside the dataset.
+    //
+    // 🔍 What SURVIVES, and is now the interesting part: b3 is site-locked. The 320 kW station
+    // read 79-81 on two separate days (2026-08-08 13:02 and 2026-08-09 16:55), while three other
+    // sites read 20-23. So it does key on something about the charger — just not its power. A
+    // cable or connector current rating is the obvious next guess (80 A is the standard uncooled
+    // CCS figure), but that is one number's worth of coincidence and this comment has already
+    // been wrong once on exactly that basis. It stays undecoded and nothing is emitted for b3.
+    //
+    // ⚠️ The ~20-23 cluster is separately explained and is NOT evidence of anything: it equals
+    // `fast_dc_limit_a × pack_v / 1000`, i.e. the bike's own power draw at 75 A and ~300 V. The
+    // 98.4 % fit reported for the station hypothesis was measured on the sessions where that
+    // coincidence holds — a selection effect, not a result.
     case CHARGE_LIMITS_CAN_ID: {
       if (data.length < 8) return [];
       // This frame's invariants, and it is the one whose dead-sender decode is hardest to spot.
@@ -461,9 +483,11 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // a b0 step and the fiftieth is exactly 1.00 s from one, so all are the 10 Hz/20 Hz skew
         // across an edge, none is a sustained violation, and the overshoot never exceeds 12 A.
         //
-        // ❓ And whose limit it is stays open, though b3 above now has real evidence for the
-        // station-advertised reading. Vehicle-advertised and station-granted look identical from
-        // this port, and both would bound delivery and both would move when the station derates.
+        // ❓ And whose limit it is stays open — MORE open than it looked, since b3's
+        // station-advertised reading, cited here as support, was refuted on 2026-08-19 against
+        // four identified chargers (see b3 above). Vehicle-advertised and station-granted look
+        // identical from this port, and both would bound delivery and both would move when the
+        // station derates.
         // All that is established is that it never exceeds 0x625 b2's configured 75. So the name
         // says which limit (the live one) and not whose.
         //
