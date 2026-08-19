@@ -7,7 +7,7 @@ import { bytes, compass, duration } from "../lib/format.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 
-const { button, div, span } = van.tags;
+const { button, div } = van.tags;
 
 // The sheet behind the header button: trip summary, waypoints, and the two actions
 // that used to require typing a URL on a phone.
@@ -67,19 +67,34 @@ export function Sheet() {
       // No "Link" section. A per-source liveness readout was here in two shapes
       // and neither could be read: a grid of sixteen fractions needed the reader
       // to know sixteen normal denominators (BATTERY 17/46 is a HEALTHY parked
-      // bike), and collapsing it to "what is dark" cried wolf instead —
-      // `security` is measurably silent on two rides in three, because 0x480 has
-      // zero frames in two multi-gigabyte captures and its only companion is a
-      // one-shot at startup. Same for `obd` under OBD_ENABLED=0, `coolant` on a
-      // probe-init failure, and `gps` without a fix. Each exception is
-      // defensible and the list only grows; a widget that always names something
-      // teaches the rider to skip the name, which is the failure it exists to
-      // prevent.
+      // bike), and collapsing it to "what is dark" cried wolf instead.
       //
-      // The data is unchanged and still in /status — which is now correct in a
-      // way it was not before, since summariseGroups() is seeded from the
-      // registry (see src/http/status.ts). This is a decision about what belongs
-      // on a phone at the handlebars, not a retreat from measuring liveness.
+      // `security` is the case that was actually measured, over the 246 archived
+      // captures (14.4 GB). Its liveness rests entirely on 0x480, the other
+      // signal in the group being the one-shot E-LOCK read at startup — and
+      // 0x480 comes in bursts, so with FRESH_MS at 10 s the group reads dark for
+      // most of the wall clock even in captures where the frame is there. It
+      // reads live for 24.8 % of a 19.5 h capture (173 224 frames, and a 13.6 h
+      // hole in the middle of it), 28.3 % of a 6.7 h one, and 0.04 % of a 69 h
+      // one whose 917 frames all land in the first ninety seconds. Two more
+      // multi-hour captures have no 0x480 at all. Those spans include parked and
+      // charging time, so this is % of wall clock rather than of riding — the two
+      // cannot be told apart from a candump.
+      //
+      // `obd` under OBD_ENABLED=0, `coolant` on a probe-init failure and `gps`
+      // without a fix are the same shape, unmeasured because none of them reaches
+      // a candump. Every exemption is individually defensible and the list only
+      // grows, which is the tell: a widget that always names something teaches the
+      // rider to skip the name, which is the failure it exists to prevent.
+      //
+      // The per-group numbers stay in /status, and are more correct there than
+      // they were: summariseGroups() is seeded from the registry, so a source
+      // that has never spoken reads [0, n] instead of vanishing. One group did
+      // leave the payload — `waypoint`, excluded by design now (see
+      // onDemandOnlyGroups() in src/http/status.ts), where before it appeared
+      // once a waypoint had been saved this boot. This is a decision about what
+      // belongs on a phone at the handlebars, not a retreat from measuring
+      // liveness.
       button(
         {
           class: "sheet-close",
@@ -192,8 +207,10 @@ function DownloadButton() {
     // knowing and live in the code that owns them: one `.celog` is a whole day of
     // segments, so the count moves once a day rather than as you ride
     // (src/http/status.ts); and the log is unreadable without the laptop's
-    // private key, but /dl authenticates nobody, so the ciphertext is
-    // pullable by anyone on that wifi (src/http/download.ts, and the README).
+    // private key, but /dl authenticates nobody, so the ciphertext is pullable by
+    // anyone on that wifi (src/http/download.ts, and README "What this does and
+    // doesn't hide" — that section draws the line, the deploy instructions above
+    // it do not).
   );
 }
 

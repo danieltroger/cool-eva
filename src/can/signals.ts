@@ -22,14 +22,19 @@ export interface SignalDef {
   deadband?: number;
   /**
    * Written only when something asks for it, so silence is its resting state and
-   * says nothing about health. Excluded from the liveness summary in
-   * ../http/status.ts — a source that is dark by design would otherwise be named
-   * as dark forever, and a widget that always names something teaches the reader
-   * to skip the name, which is the failure it exists to prevent.
+   * says nothing about health. A group of nothing but these is left out of the
+   * liveness summary in ../http/status.ts: `live === 0` is what a reader of that
+   * summary filters on to find a dead source, and a source that is silent by
+   * design would match that filter forever while nothing was wrong.
    *
    * Not the same as a signal that is merely slow. If a real one stops arriving
    * that is a fault worth surfacing; if no waypoint has been saved, nothing is
    * wrong.
+   *
+   * Flagging one costs the whole group its liveness once every signal in it is
+   * flagged, so it is not a free annotation — scripts/check-ride-log-status.ts §5
+   * names the groups that must always be summarised, and goes red if one of them
+   * disappears from the payload.
    */
   onDemand?: true;
 }

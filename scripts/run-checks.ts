@@ -126,8 +126,11 @@ const CHECKS: SelfCheck[] = [
       "what /status reports about the ride log, and about the CAN sources: that the log count is read " +
       "off the directory rather than capped or hardcoded (13 files, sized, past the 10 that was reported as stuck), " +
       "that five real seals through src/storage/encrypted-log.ts still land in one day file — so a file is not a " +
-      "segment and the caption may not call it one — and that a sealed segment opens with the matching private key " +
-      "and with no other, which is the only security property the caption is allowed to claim",
+      "segment, and a caption that comes back may not call it one — that a group nothing has ever been heard from " +
+      "reads [0, n] rather than being left out of the payload, that a group is dropped from the summary only when " +
+      "every signal in it is written on request, that a group which does reach the payload is one the check names " +
+      "on purpose, and that a talking bus counts each key once — plus that a sealed segment opens with the matching " +
+      "private key and with no other, which is the only security property anything here is allowed to claim",
   },
   {
     script: "scripts/check-vcu-params.ts",

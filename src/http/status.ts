@@ -1,22 +1,31 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import type { ServerResponse } from "http";
-import { ageMs, snapshot } from "../can/signals.ts";
+import { ageMs, snapshot, type SignalDef } from "../can/signals.ts";
 import { SIGNALS } from "../can/registry.ts";
 import { waypointsSaved } from "./waypoint.ts";
 
-// GET /status — the things the dashboard needs that aren't telemetry.
+// GET /status — what can be asked about the bike that is not telemetry.
 //
-// Chiefly the size of the sealed ride log, so the download button can say
-// "Download 4.2 MB" before you commit to pulling it over a phone hotspot in a
-// garage. Also a per-source liveness summary, which answers "is the CAN bus
-// actually being read, or am I looking at a frozen snapshot?" — a question the
-// old dashboard could only answer by squinting at whether numbers moved.
+// The dashboard reads one part of it: the size of the sealed ride log, so the
+// download button can say "Download 4.2 MB" before you commit to pulling it over a
+// phone hotspot in a garage.
+//
+// The per-source liveness summary has no dashboard reader at all. The readout that
+// showed it was removed from the sheet on 2026-08-19 (public/views/sheet.js says
+// why), so "is the CAN bus actually being read, or am I looking at a frozen
+// snapshot?" is now answered by `curl`ing this from a laptop, or by anything
+// filtering `live === 0` — today that is scripts/check-ride-log-status.ts §5 and
+// nothing else in this repo. The question was worth answering; a phone at the
+// handlebars was the wrong place to answer it.
 
 const SEGMENT_EXTENSION = ".celog";
 
 /** A signal seen this recently counts as live. Slowest CAN frames here are 1 Hz. */
 const FRESH_MS = 10_000;
+
+/** Hoisted out of summariseGroups(): SIGNALS is fixed at import, so the answer is too. */
+const ON_DEMAND_ONLY = onDemandOnlyGroups(SIGNALS);
 
 export interface StatusPayload {
   uptimeSeconds: number;
@@ -88,30 +97,17 @@ export async function measureLog(directory: string): Promise<{ files: number; by
 // Seeded from the REGISTRY, not from what has arrived. snapshot() is liveState,
 // which only holds keys decoded at least once since boot — so a source that has
 // never said anything was absent from this map entirely rather than reading 0-live.
-// A dashboard asking "has anything gone dark" would then see no dark groups and
-// report health, which is the one answer it must never give wrongly. A group that
-// has never been heard from is the strongest possible dark, not the absence of a
-// question. Totals are now what the bike DECLARES rather than what it has managed
-// to send, which also makes the denominator stable instead of growing as a ride
-// goes on.
+// Anything asking "has anything gone dark" by filtering `live === 0` would then see
+// no dark groups and report health, which is the one answer it must never give
+// wrongly. A group that has never been heard from is the strongest possible dark,
+// not the absence of a question. Totals are now what the bike DECLARES rather than
+// what it has managed to send, which also makes the denominator stable instead of
+// growing as a ride goes on.
 function summariseGroups(): Record<string, [number, number]> {
   const groups: Record<string, [number, number]> = {};
   const declared = new Set<string>();
-  // Groups whose every signal is written only on request are left out entirely.
-  // `waypoint` is the case that forced this: it is [0, 3] before you ever save
-  // one and back to [0, 3] ten seconds after you do, so including it made the
-  // dashboard name it as dark permanently on a healthy bike — and a liveness
-  // widget that always names something is one the reader learns to ignore, which
-  // is the exact failure it exists to prevent. Whole-group, not per-signal: a
-  // group that mixes measured and on-demand signals still has something to say
-  // about its measured half.
-  const onDemandOnly = new Set(
-    [...new Set(SIGNALS.map(signal => signal.group))].filter(group =>
-      SIGNALS.filter(signal => signal.group === group).every(signal => signal.onDemand)
-    )
-  );
   for (const signal of SIGNALS) {
-    if (onDemandOnly.has(signal.group)) continue;
+    if (ON_DEMAND_ONLY.has(signal.group)) continue;
     const counts = groups[signal.group] ?? [0, 0];
     counts[1] += 1;
     groups[signal.group] = counts;
@@ -119,14 +115,16 @@ function summariseGroups(): Record<string, [number, number]> {
   }
   for (const [key, value] of Object.entries(snapshot())) {
     // Skipped here too, or saving a waypoint would put the group back into the
-    // payload for ten seconds and the summary would flicker between 16 and 17
-    // sources — worse than either steady answer.
-    if (onDemandOnly.has(value.group)) continue;
+    // payload for ten seconds and the count would flicker between 16 and 17
+    // groups — worse than either steady answer.
+    if (ON_DEMAND_ONLY.has(value.group)) continue;
     const counts = groups[value.group] ?? [0, 0];
     // Membership is tested per KEY, not per group: a group can be declared and
     // still receive an undeclared key, and testing the group would count only the
     // first such key. Either way the fraction can never read live > total.
-    if (!declared.has(key)) counts[1] += 1;
+    if (!declared.has(key)) {
+      counts[1] += 1;
+    }
     // ageMs(), not Date.now() - value.ts: a clock step would otherwise flip every
     // group to 0-live at once, which reads as "the CAN bus died" — the exact
     // question this endpoint exists to answer, answered wrongly.
@@ -137,4 +135,35 @@ function summariseGroups(): Record<string, [number, number]> {
     groups[value.group] = counts;
   }
   return groups;
+}
+
+/**
+ * Groups every one of whose signals is written on request, so the group is left out
+ * of the summary above entirely.
+ *
+ * `waypoint` is the only one today and the case that forced this. Its three signals
+ * are written by GET /waypoint and nothing else, so with FRESH_MS at 10 s the group
+ * reads [0, 3] before you ever save a waypoint and [0, 3] again ten seconds after
+ * you do. Reporting that is not reporting a fault; it is reporting the resting
+ * state, and anything filtering `live === 0` — a Grafana alert, a script, §5 of
+ * scripts/check-ride-log-status.ts — would fire on it forever and learn nothing.
+ * Silence that is not evidence should not be served as if it were.
+ *
+ * This is also the one thing /status stopped reporting, and worth saying plainly
+ * because the rest of the change runs the other way: `waypoint` used to appear once
+ * a waypoint had been saved this boot, since the map was built from what had
+ * arrived. Every other group went from sometimes-present to always-present.
+ *
+ * WHOLE-GROUP, not per-signal, and that is a decision rather than an accident: a
+ * group mixing measured and on-demand signals still has something to say about its
+ * measured half, so it stays. `.some` here would delete a whole group's liveness
+ * the moment one signal in it were flagged. The registry has no mixed group today,
+ * so nothing in the real data tells the two apart — which is why this is exported
+ * and scripts/check-ride-log-status.ts §5b feeds it a mixed group of its own.
+ */
+export function onDemandOnlyGroups(signals: readonly SignalDef[]): Set<string> {
+  const everyGroup = new Set(signals.map(signal => signal.group));
+  return new Set(
+    [...everyGroup].filter(group => signals.filter(signal => signal.group === group).every(signal => signal.onDemand))
+  );
 }

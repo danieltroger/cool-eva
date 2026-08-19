@@ -232,7 +232,7 @@ sudo journalctl -u cool-eva -f    # follow logs
 
 > ⚠️ **Don't run `npm install` or `npm ci` on the Pi unless a dependency actually changed.** `package-lock.json` is generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi deletes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will insist it's "up to date" even with `--force` — the fix is `rm package-lock.json && npm install` **on the Pi** (~4 min). A plain `git pull` never touches `node_modules` and is always safe.
 
-The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, ~10x smaller than the old SQLite download, and safe to fetch over any network because it's ciphertext. Decrypt it on the laptop (see below) to get a `.db` for Grafana.
+The sealed ride log can be downloaded from `http://<pi>/dl` — short enough to type on a phone, and ~10x smaller than the old SQLite download. What crosses the wire is ciphertext: without the laptop's private key those bytes are noise. That is a claim about the **bytes**, not about the **transfer** — `/dl` is unauthenticated plain HTTP, so anyone on that network can pull the whole log and keep the ciphertext against the day the key leaks, and anyone in the middle can truncate it, because segments are sealed one by one and nothing signs the sequence. See [What this does and doesn't hide](#what-this-does-and-doesnt-hide). Decrypt it on the laptop (see below) to get a `.db` for Grafana.
 
 ### Configuration
 
