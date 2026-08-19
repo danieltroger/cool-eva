@@ -295,11 +295,24 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
 //
 //    CAN_MAP.md's standing guess, "station / session / transaction identifier … needs a second
 //    session at a different charger to test", is now REFUTED: F2 3D 0E is byte-identical in
-//    all ten DC sessions, across three days and several different chargers. Whatever it is, it
+//    all eleven DC sessions, across three days and several different chargers. Whatever it is, it
 //    is a constant the vehicle learns at handshake, not anything about the station.
 //
-// ❌ 0x645 — all eight bytes are 00 in 100.000 % of 6 323 frames; only its presence carries
-//    anything. It appears only while DC current flows (100.000 % of 6 087 frames) — but the
-//    converse fails: session 24 (2026-08-09 15:23, 2 799 s, SOC 25 → 83 %, 69.5 A) is a DC
-//    session with no 0x645 at all. So presence implies DC, absence implies nothing, and it is
-//    NOT the clean DC discriminator it was hoped to be. 0x610 b7 is.
+// ❌ 0x645 — all eight bytes are 00 in 100.000 % of 7 713 frames, so only its presence carries
+//    anything, and that presence is a clean DC-session flag: it appears in all 11 DC sessions
+//    and in none of the 18 AC ones. Note it tracks the SESSION, not the current — it is there
+//    for all 155 s of the aborted DC attempt of 2026-08-09 14:42, during which not one amp
+//    flowed. Nothing is emitted for it because a decoder that returns a value for an all-zero
+//    frame would be logging "this id exists", which STREAM_IDS already says.
+//
+//    ⚠️ An earlier draft of this file claimed session 24 was a DC session with no 0x645 at
+//    all, and drew the conclusion that presence implied DC but absence implied nothing. That
+//    was an artefact of the analysis scanner, not of the bike, and it is recorded here because
+//    the failure mode generalises to anything reading these captures. The Pi's clock jumps to
+//    2060 when it boots without a fix (the archive has capture-20600808-*.log to prove it).
+//    The scanner emitted a row per payload CHANGE plus a keepalive every 2 s, and one
+//    2060-dated line pushed its "last emitted" mark into the far future — after which every
+//    real frame looked negatively aged, the keepalive never fired again, and any id with a
+//    CONSTANT payload silently stopped being recorded. 0x645 is the most constant frame on the
+//    bus, so it vanished first. Re-grepping the raw capture put 28 009 frames of 0x645 against
+//    27 987 of 0x615 in exactly that window, in lockstep.
