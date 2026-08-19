@@ -168,7 +168,9 @@ const CHECKS: SelfCheck[] = [
       "isStale() calls every reading stale while the link is not live so nothing frozen is shown at full " +
       "brightness — while the view rules hold their edges across the same gap, so a dropout during a DC charge " +
       "cannot throw the rider off the Charge tab and back — and that the Pi skips a client past the backlog cap " +
-      "and hangs up on one still past it a heartbeat later, with the cap still holding several full snapshots",
+      "and hangs up on one still past it a heartbeat later, with the cap still holding several full snapshots — " +
+      "and, against a real server on a loopback port, that neither an oversized frame nor a malformed one can end " +
+      "the process, which is what a missing `error` listener would turn a rejected frame into",
   },
   {
     script: "scripts/check-freeze-frame.ts",

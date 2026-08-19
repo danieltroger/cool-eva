@@ -2,7 +2,19 @@ import { POLL_MS, RECONNECT_DELAY_MS, SILENCE_LIMIT_MS, createConnection } from 
 import type { LinkStatus, SocketHandlers } from "../public/lib/connection.js";
 import { connect, connection, isStale, serverTime, signalState } from "../public/lib/store.js";
 import { viewRules } from "../public/lib/view-rules.js";
-import { HEARTBEAT_MS, MAX_CLIENT_BACKLOG_BYTES, broadcastTo, dropStuckClients } from "../src/ws.ts";
+import { createServer } from "http";
+import * as net from "net";
+import type { AddressInfo } from "net";
+import { randomBytes } from "crypto";
+import { WebSocket as WsClient } from "ws";
+import {
+  HEARTBEAT_MS,
+  MAX_CLIENT_BACKLOG_BYTES,
+  MAX_CLIENT_FRAME_BYTES,
+  broadcastTo,
+  dropStuckClients,
+  setupWs,
+} from "../src/ws.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import type { LiveValue } from "../src/can/signals.ts";
 
@@ -15,6 +27,10 @@ import type { LiveValue } from "../src/can/signals.ts";
 // the way charge-mode.js takes `read` and `stale`. So the whole of it can be driven
 // here against a stand-in socket, a fake clock and a fake `document.hidden`: no jsdom,
 // no headless browser, no dependency, no bike.
+//
+// §9 is the exception and says so at its own head: it binds an ephemeral loopback port,
+// because "a client cannot kill the service" is the one claim here that a stand-in
+// cannot make.
 //
 // ## What this is guarding
 //
@@ -61,6 +77,12 @@ import type { LiveValue } from "../src/can/signals.ts";
 // the bike. On a DC charge the contactor bit's freshness is the only evidence there is,
 // so a dropout would otherwise throw the rider off the Charge tab and back — with a
 // history entry each way, once per screen lock, at a charger.
+//
+// **And nobody else may take the bike's telemetry down.** §9 fires a rejected frame and
+// a malformed one at a real server and requires it to still be serving afterwards. `ws`
+// reports a protocol violation as an `error` event, and an EventEmitter with no `error`
+// listener throws — which on this service is the CAN reader and the ride-log sealing,
+// not just one dropped client.
 
 let failures = 0;
 
@@ -935,6 +957,141 @@ console.log("\n8. the view rules across a dropout");
     viewRules(memory, emptyAndUnplugged, "charge").join() === "ride,hypermile"
   );
   check("...and neither fires again", viewRules(memory, emptyAndUnplugged, "hypermile").length === 0);
+}
+
+// --- 9. What a client on the bike's wifi can do to the service ---------------
+//
+// The one section here that touches a socket, because it is the one claim that cannot
+// be made against a stand-in: that a hostile client cannot kill the process. It binds an
+// ephemeral port on 127.0.0.1 — no bike, no can0, nothing outside this machine — and
+// tears it down again.
+//
+// What it is guarding. `ws` reports a protocol violation by emitting `error` on the
+// connection, and an EventEmitter with no `error` listener THROWS. Uncaught, that is not
+// a dropped client, it is the whole service: the CAN reader, the ride-log sealing, and
+// every other dashboard connected to it. Measured on this repo before the listener
+// existed, a single 8 kB frame ended the process with exit 1.
+//
+// MAX_CLIENT_FRAME_BYTES is what makes that trigger easy — an oversized frame is now a
+// rejected frame, which is now an `error` — so the cap and the listener are one change
+// and this section fires both halves of it, and goes red for either one on its own. The
+// malformed-frame case below needed no cap at all and kills the service on main today,
+// which is the better argument for the check existing permanently: the Pi is reachable
+// by anyone on the same wifi as the bike.
+
+console.log("\n9. what a client on the bike's wifi can do to the service");
+
+{
+  // A recorder rather than a guard. Node's default for an uncaught exception is to end
+  // the process, which would make this check report a stack trace instead of a verdict;
+  // with this listener the exception is CAUGHT AND ASSERTED ON below, and its message is
+  // printed, so nothing is hidden — the check simply survives long enough to say what
+  // happened. Removed again at the end of the block.
+  const uncaught: Error[] = [];
+  const noteUncaught = (error: Error) => uncaught.push(error);
+  process.on("uncaughtException", noteUncaught);
+
+  const settle = () => new Promise<void>(resolve => setTimeout(resolve, 100));
+
+  const server = createServer();
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  const handle = setupWs(server);
+
+  const snapshotFrom = (client: WsClient) =>
+    new Promise<string>((resolve, reject) => {
+      client.once("message", data => resolve(String(data)));
+      client.once("error", reject);
+    });
+
+  const hostile = new WsClient(`ws://127.0.0.1:${port}`);
+  const greeting = await snapshotFrom(hostile);
+  check("a client is answered with a snapshot", JSON.parse(greeting).type === "snapshot");
+
+  // The client end needs its own error listener for the same reason the server end does
+  // — this process is an EventEmitter host too. Recorded, not discarded: the close code
+  // it produces is the evidence that the cap did the rejecting.
+  const clientErrors: Error[] = [];
+  hostile.on("error", error => clientErrors.push(error));
+  const closed = new Promise<number>(resolve => hostile.once("close", code => resolve(code)));
+
+  // Raced against a deadline rather than simply awaited. A cap that is not there does
+  // not reject anything, so the close would never come and this check would HANG —
+  // run-checks.ts would eventually kill it, but "no verdict in two minutes" is a poor
+  // way to say "the payload cap is gone". This way that mutation gets a clean ✗, and
+  // the cap stops being the thing I could not pin.
+  const NEVER_CLOSED = -1;
+  hostile.send("x".repeat(MAX_CLIENT_FRAME_BYTES * 2));
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const closeCode = await Promise.race([
+    closed,
+    new Promise<number>(resolve => {
+      deadline = setTimeout(() => resolve(NEVER_CLOSED), 2000);
+    }),
+  ]);
+  clearTimeout(deadline);
+  console.log(
+    closeCode === NEVER_CLOSED
+      ? `     a ${MAX_CLIENT_FRAME_BYTES * 2}-byte frame was ACCEPTED — nothing closed within 2 s`
+      : `     a ${MAX_CLIENT_FRAME_BYTES * 2}-byte frame closed that client with code ${closeCode}`
+  );
+  check("a frame over the cap gets the CLIENT closed", closeCode !== NEVER_CLOSED && closeCode !== 1000);
+  await settle();
+  check("...and the service is still standing", uncaught.length === 0);
+
+  // Now one that needs no cap to be invalid, and killed the service on main before any
+  // of this existed. Hand-rolled, because `ws` will not produce a malformed frame: the
+  // handshake by hand, then FIN + RSV1 + text, masked, one byte of payload. RSV1 is only
+  // legal under a negotiated extension and this handshake asks for none.
+  const raw = net.connect(port, "127.0.0.1");
+  const rawErrors: Error[] = [];
+  raw.on("error", error => rawErrors.push(error));
+  await new Promise<void>(resolve => raw.once("connect", () => resolve()));
+  raw.write(
+    `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\n` +
+      `Connection: Upgrade\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\n` +
+      `Sec-WebSocket-Version: 13\r\n\r\n`
+  );
+  const handshake = await new Promise<string>(resolve => raw.once("data", data => resolve(String(data))));
+  check("the hand-rolled handshake is accepted", handshake.startsWith("HTTP/1.1 101"));
+
+  raw.write(Buffer.from([0xc1, 0x81, 0x00, 0x00, 0x00, 0x00, 0x41]));
+  await settle();
+  check("a malformed frame does not take the service down either", uncaught.length === 0);
+
+  // The property all of that is in aid of: somebody else's bad frame must not cost the
+  // rider their dashboard.
+  const rider = new WsClient(`ws://127.0.0.1:${port}`);
+  const afterwards = await snapshotFrom(rider);
+  check("...and the next client is served exactly as before", JSON.parse(afterwards).type === "snapshot");
+
+  // NOT pinned here, and deliberately not faked into looking pinned: setupWs()'s
+  // `wss.on("error")`. With an external http.Server — which is how this service runs —
+  // `ws` reports connection-level faults on the connection, and the server-level event
+  // is left for faults in a listener `ws` owns itself. There is no handshake this check
+  // can send that reaches it, and the only way to make an assertion go green would be
+  // to expose the WebSocketServer purely so a test could emit on it, which is inventing
+  // an API to pin a spelling. It stays as cheap insurance against a `ws` version that
+  // routes something new that way, and it stays unpinned, said out loud.
+
+  check(
+    uncaught.length === 0
+      ? "nothing a client sent reached this process as an uncaught exception"
+      : `a client killed the service: ${uncaught[0].message}`,
+    uncaught.length === 0
+  );
+
+  // terminate(), not close(): server.close() waits for every connection to end, and a
+  // polite close is a handshake the other end has to answer. `hostile` in particular may
+  // still be open — if the payload cap is ever removed, nothing closed it — and a
+  // teardown that only completes when the assertions passed is a check that hangs
+  // instead of failing. That is what this did on the first run of the cap mutation.
+  hostile.terminate();
+  rider.terminate();
+  raw.destroy();
+  handle.stop();
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  process.off("uncaughtException", noteUncaught);
 }
 
 console.log("");

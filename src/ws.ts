@@ -173,8 +173,17 @@ export function dropStuckClients<Client extends BroadcastClient>(
  * the default is 100 MB, on a Pi Zero, reachable by anyone on the same wifi as the
  * bike. 4 kB is generous room for whatever the first client→server message turns out
  * to be, and four orders of magnitude off the default.
+ *
+ * ⚠️ **This limit and the `error` listener below are one change, not two.** Rejecting a
+ * frame is how `ws` reports a protocol violation, and it reports it by emitting `error`
+ * on the connection — which Node turns into an uncaught exception, and therefore a dead
+ * service, if nothing is listening. Setting a cap without the listener hands anyone on
+ * the bike's wifi a way to kill the process with one 8 kB frame, taking ride-log sealing
+ * down with it. Remove one and you must remove the other; scripts/check-connection.ts §9
+ * fires both a rejected frame and a malformed one at a real server and requires it to
+ * still be there afterwards.
  */
-const MAX_CLIENT_FRAME_BYTES = 4 * 1024;
+export const MAX_CLIENT_FRAME_BYTES = 4 * 1024;
 
 export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
   const wss = new WebSocketServer({ server, maxPayload: MAX_CLIENT_FRAME_BYTES });
@@ -185,10 +194,32 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
     broadcastTo(wss.clients, message);
   };
 
+  // A connection that fails at the protocol level — a frame over MAX_CLIENT_FRAME_BYTES,
+  // a reserved bit set, a client frame arriving unmasked — is reported by `ws` as an
+  // `error` event on that connection. An EventEmitter with no `error` listener THROWS,
+  // and an uncaught throw here is the whole service: the CAN reader, the ride log, the
+  // dashboards of anyone else connected. So this listener is not tidiness, it is the
+  // difference between one bad frame being logged and one bad frame killing the bike's
+  // telemetry. It was missing before the payload cap existed too — the cap is only what
+  // made the easy trigger reachable.
+  //
+  // Logged rather than swallowed, per CLAUDE.md, and at `log` rather than `warn`: on a
+  // machine anyone on the wifi can reach, a malformed frame is a thing that happens, and
+  // the reason to record it is to know it happened at all.
   wss.on("connection", (ws: WebSocket) => {
+    ws.on("error", (error: Error) => {
+      console.log(`ws: dropping a client after a protocol error: ${error.message}`);
+    });
     // Through the same path as everything else. This is the message a client's whole
     // recovery depends on, so it is not the one to send by a route nothing checks.
     broadcastTo([ws], { type: "snapshot", ts: Date.now(), signals: snapshot() });
+  });
+
+  // The same hazard one layer out: a handshake that fails before there is a connection
+  // to attach the listener above to is emitted here instead, and would throw just the
+  // same.
+  wss.on("error", (error: Error) => {
+    console.log(`ws: server error: ${error.message}`);
   });
 
   // Push only what changed, the moment it changes.
