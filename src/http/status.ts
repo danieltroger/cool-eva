@@ -20,7 +20,12 @@ const FRESH_MS = 10_000;
 export interface StatusPayload {
   uptimeSeconds: number;
   waypoints: number;
-  log: { segments: number; bytes: number; enabled: boolean };
+  /**
+   * `files` is a count of `.celog` FILES, not of the segments sealed into them.
+   * See measureLog() — the two differ by orders of magnitude, and the field was
+   * called `segments` until the dashboard caption built on that name went wrong.
+   */
+  log: { files: number; bytes: number; enabled: boolean };
   /** Live-vs-total signal counts per group, e.g. `{ battery: [16, 16] }`. */
   groups: Record<string, [live: number, total: number]>;
 }
@@ -42,18 +47,40 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
   res.end(body);
 }
 
-async function measureLog(directory: string): Promise<{ segments: number; bytes: number }> {
+/**
+ * Counts the `.celog` files in `directory` and adds their sizes up.
+ *
+ * ⚠️ **Files, not segments.** This used to return the same number under the name
+ * `segments`, and the dashboard printed it as "N sealed segments". It is not that,
+ * and the gap is not small: `storage/encrypted-log.ts` seals a segment on a timer
+ * (every 30 s by default) and **appends** each one to `rides-<YYYY-MM-DD>.celog`,
+ * so one file is one calendar day's worth of segments — hundreds or thousands of
+ * them. `scripts/decrypt-log.ts` is what counts the real thing, by walking the
+ * framing inside each file.
+ *
+ * That also explains how the caption managed to look broken without ever being
+ * stale: within a day the file count CANNOT change however long the bike runs, so
+ * it sat on one number while the log grew underneath it. The reported number was
+ * always the true file count — every entry is stat'd here, nothing is capped or
+ * sliced — it was the noun that was wrong.
+ *
+ * Counting segments instead would mean walking every file's framing (a 56-byte
+ * header, then a skip of the length it declares) on each /status poll, for a
+ * number the download button has no use for. So the cheap answer stays, and the
+ * name now says which answer it is.
+ */
+export async function measureLog(directory: string): Promise<{ files: number; bytes: number }> {
   try {
     const entries = await readdir(directory);
-    const segments = entries.filter(entry => entry.endsWith(SEGMENT_EXTENSION));
-    const sizes = await Promise.all(segments.map(async entry => (await stat(join(directory, entry))).size));
-    return { segments: segments.length, bytes: sizes.reduce((sum, size) => sum + size, 0) };
+    const segmentFiles = entries.filter(entry => entry.endsWith(SEGMENT_EXTENSION));
+    const sizes = await Promise.all(segmentFiles.map(async entry => (await stat(join(directory, entry))).size));
+    return { files: segmentFiles.length, bytes: sizes.reduce((sum, size) => sum + size, 0) };
   } catch (error) {
     // Missing directory is the normal "no key configured, nothing written yet"
     // case, so this is routine rather than alarming — but still say which path
     // failed, because a typo'd RIDE_LOG_DIR looks identical from the dashboard.
     console.log(`status: cannot size ride logs at ${directory}:`, (error as Error).message);
-    return { segments: 0, bytes: 0 };
+    return { files: 0, bytes: 0 };
   }
 }
 

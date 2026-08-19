@@ -178,9 +178,23 @@ function DownloadButton() {
       if (!current || !current.log.enabled) {
         return div();
       }
+      // Two things this line used to get wrong, both reported as "it always says 10".
+      //
+      // It said "sealed segments" over a count of FILES. A segment is sealed every
+      // 30 s and appended to that day's `rides-<date>.celog`, so one file holds a
+      // day of them — the number shown was right, the noun was off by orders of
+      // magnitude, and it could not move until midnight however far the bike rode.
+      //
+      // And "safe over any network" claimed more than the crypto gives. The Pi holds
+      // only the recipient's public key, so the log genuinely cannot be read back
+      // without the laptop's private key — that part is real, and is why serving it
+      // over untrusted wifi is fine. But the same public key is all anyone needs to
+      // WRITE a segment that decrypts cleanly, /dl is unauthenticated, and nothing
+      // here signs anything. Confidentiality is the property we have; say that one.
+      const fileCount = current.log.files;
       return div(
         { class: "action-note" },
-        `${current.log.segments} sealed segments · encrypted, safe over any network`
+        `${fileCount} daily log file${fileCount === 1 ? "" : "s"} · unreadable without the laptop's private key`
       );
     }
   );
