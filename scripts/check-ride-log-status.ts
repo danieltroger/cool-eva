@@ -192,22 +192,31 @@ async function checkTheCountIsTheDirectory(directory: string): Promise<void> {
  * The premise the caption got wrong, proven through the real sealer rather than
  * asserted: seal five segments, then look at how many files that made. It is one.
  *
- * The bound is `< SEGMENTS_TO_SEAL` rather than `=== 1` because a run that straddles
- * UTC midnight legitimately writes two files, and a check that goes red once a day is
- * a check people delete. Two is still the ceiling — reaching three would need the run
- * to cross midnight twice — and either number proves what this is here to prove.
+ * The bound is FILES_ONE_RUN_MAY_MAKE — see there for why two rather than one. It
+ * was `< SEGMENTS_TO_SEAL` first, and that was too loose to do the job: renaming the
+ * file to a full timestamp, which really does write a file per seal, still produced
+ * only three files out of five here, because seals landing in the same millisecond
+ * kept colliding onto one name. Three is under five, so the check stayed green
+ * through the exact regression it exists to catch. Bound it by what one run can
+ * legitimately produce instead, and that mutation goes red.
  */
 async function sealRealSegments(directory: string, recipient: ThrowawayKeypair): Promise<void> {
   const publicKeyPath = join(workDir, "throwaway.public.pem");
   await writeFile(publicKeyPath, spkiFor(recipient.publicRaw).export({ type: "spki", format: "pem" }));
 
-  await initEncryptedLog({
+  const enabled = await initEncryptedLog({
     publicKeyPath,
     directory,
     // An hour, so the periodic timer never fires and every seal below is one this
     // check asked for. flushEncryptedLog() is what actually writes them.
     segmentIntervalMs: 3_600_000,
   });
+  if (!enabled) {
+    // Without this, appendReading() silently no-ops and the failure surfaces as
+    // "produced no files at all" — the right verdict attached to the wrong cause.
+    failures.push(`initEncryptedLog() refused the throwaway public key at ${publicKeyPath}, so nothing was sealed`);
+    return;
+  }
 
   for (let index = 0; index < SEGMENTS_TO_SEAL; index += 1) {
     appendReading(Date.now(), "coolant_in", 20 + index, "°C", "cooling", "sensor");
@@ -247,12 +256,16 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
  * `log.files` being referenced is already enforced by tsc (public/**\/*.js is checked
  * against StatusPayload), so what is left to guard is the English: a caption that
  * interpolates the file count and then calls it "segments" type-checks perfectly and
- * is exactly the bug that was reported. Comment lines are stripped first — this
- * function's own explanation of the bug necessarily contains the word.
+ * is exactly the bug that was reported.
+ *
+ * Comments are stripped first, and both kinds of them — the explanation living next
+ * to that caption necessarily contains the word "segment", and it is long enough that
+ * reformatting it as a `/* … *\/` block is a plausible thing for a future editor to
+ * do. Stripping only `//` would turn that reformat into a red build for no reason.
  *
  * The phrase check is narrower on purpose. "Safe over any network" is not a wording
- * preference; it is a claim of authenticity the code does not make, and it is the
- * sentence that shipped, so it is the sentence worth naming.
+ * preference; it is a claim about the transfer that the crypto does not make, and it
+ * is the sentence that shipped, so it is the sentence worth naming.
  */
 async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   const path = join(projectDir, "public/views/sheet.js");
@@ -262,38 +275,65 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
     failures.push(`could not find function DownloadButton() in ${path} — this check can no longer see the caption`);
     return;
   }
-
-  const code = body
-    .split("\n")
-    .filter(line => !line.trim().startsWith("//"))
-    .join("\n");
+  const code = withoutComments(body);
 
   if (!code.includes("log.files")) {
     failures.push(`DownloadButton() in ${path} no longer reads log.files — what is the caption counting?`);
   }
   if (/segment/i.test(code)) {
     failures.push(
-      `DownloadButton() in ${path} says "segment" about a count of files. One .celog file is a whole day of ` +
-        `sealed segments (see src/http/status.ts) — count them properly or call them files`
+      `DownloadButton() in ${path} says "segment" in text the rider sees, next to a count of files. One .celog ` +
+        `file is a whole day of sealed segments (see src/http/status.ts), so a number labelled that way is wrong ` +
+        `by orders of magnitude — that is the bug this check was written for. If you are NOT labelling the count ` +
+        `— "sealed every 30 s" would be true and useful — then this assertion is in your way rather than wrong, ` +
+        `and the fix is to narrow it to the label, not to delete it`
     );
   }
   if (/safe over any network/i.test(code)) {
     failures.push(
-      `DownloadButton() in ${path} claims the log is "safe over any network". The encryption gives ` +
-        `confidentiality, not authenticity: the recipient public key is not a secret, so anyone holding it can ` +
-        `seal a segment that decrypts cleanly, and /dl authenticates nobody. Claim unreadability instead`
+      `DownloadButton() in ${path} claims the log is "safe over any network". That is a claim about the TRANSFER, ` +
+        `and the transfer is the part with no crypto in it: /dl is unauthenticated plain HTTP, so anyone on the ` +
+        `wifi can pull the whole log and keep the ciphertext against the day the key leaks, and a MITM can drop ` +
+        `or truncate segments holding no key at all (README, "No cross-segment integrity"). What is true is a ` +
+        `claim about the BYTES — without the laptop's private key they are noise. Claim that instead. ` +
+        `src/http/download.ts says something similar in a comment and is not held to this; a caption is a promise ` +
+        `made to the rider, a comment is a note to whoever is already reading the code`
     );
   }
+}
+
+/**
+ * Source with `//` and `/* … *\/` comments blanked out, so a text assertion about what
+ * a function displays cannot be tripped by prose explaining that function.
+ *
+ * Newlines are kept so line-based reading of the result still lines up. Crude — it has
+ * no idea about `//` inside a string literal — but it only ever runs over one small
+ * view function, and erring towards stripping too much makes this check quieter, never
+ * falsely red.
+ */
+function withoutComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, " "))
+    .split("\n")
+    .filter(line => !line.trim().startsWith("//"))
+    .join("\n");
 }
 
 /**
  * §4 — the claim the caption does make is true.
  *
  * Opens the first segment §2 sealed with the private key that matches it (must
- * succeed, and must contain the reading that went in), then with an unrelated private
- * key (must fail). The second half is the one that matters: it is the difference
- * between "encrypted" as a word in a caption and the property that makes a stolen
- * bike useless.
+ * succeed, and must contain the reading that went in), then twice more with a
+ * stranger's key (must fail). The refusals are the half that matters: they are the
+ * difference between "encrypted" as a word in a caption and the property that makes a
+ * stolen bike useless.
+ *
+ * Two refusals rather than one, because the obvious negative case moves two things at
+ * once. A stranger's keypair changes the ECDH private key AND the recipient half of
+ * the HKDF salt, so a refusal does not say which of them did the work — and the salt
+ * is not a secret, so if it were carrying the weight the property would be worthless.
+ * The second case holds the real salt and swaps only the private key, which isolates
+ * the Diffie-Hellman as the thing the caption's promise actually rests on.
  */
 async function checkOnlyThePrivateKeyOpensIt(
   directory: string,
@@ -327,16 +367,29 @@ async function checkOnlyThePrivateKeyOpensIt(
     );
   }
 
+  await mustRefuse(
+    "an unrelated keypair",
+    () => openSegment(stranger.privateKey, stranger.publicRaw, segment),
+    "a segment opened with an unrelated keypair — the caption's claim that the log is unreadable without the " +
+      "laptop's private key would be false"
+  );
+  await mustRefuse(
+    "a stranger's private key against the real salt",
+    () => openSegment(stranger.privateKey, recipient.publicRaw, segment),
+    "a segment opened with the right salt but the wrong private key — the salt is public, so if that is what " +
+      "locks the log then nothing does"
+  );
+}
+
+/** Runs an open that must throw, and says so either way. */
+async function mustRefuse(what: string, attempt: () => Promise<string>, ifItSucceeds: string): Promise<void> {
   try {
-    await openSegment(stranger.privateKey, stranger.publicRaw, segment);
-    failures.push(
-      "a segment opened with an unrelated private key — the caption's claim that the log is unreadable without " +
-        "the laptop's key would be false"
-    );
+    await attempt();
+    failures.push(ifItSucceeds);
   } catch (error) {
-    // The expected outcome, and the one worth naming in the log: a caption that
-    // promises unreadability is only as good as this line failing.
-    console.log(`  an unrelated private key is refused, as claimed (${(error as Error).message})`);
+    // The expected outcome, and the one worth naming in a run that passed: a caption
+    // that promises unreadability is only as good as these lines failing.
+    console.log(`  ${what} is refused, as claimed (${(error as Error).message})`);
   }
 }
 

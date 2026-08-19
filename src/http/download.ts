@@ -12,8 +12,15 @@ import type { ServerResponse } from "http";
 // with its own magic header, so the files can simply be concatenated in order
 // and fed straight to scripts/decrypt-log.ts.
 //
-// The payload is ciphertext, so serving it is safe even on a network you don't
-// trust — without the laptop's private key it is noise.
+// The payload is ciphertext: without the laptop's private key it is noise, which is
+// what makes serving it over garage wifi acceptable. That is a property of the bytes,
+// though, not of the transfer, and the difference is worth keeping straight — the
+// dashboard caption above this button used to blur the two and claimed the log was
+// "safe over any network". This endpoint authenticates nobody, so anyone on the
+// network can pull the whole log and keep the ciphertext against the day the key
+// leaks; and segments can be dropped or truncated in flight by someone holding no key
+// at all, because each is sealed on its own and nothing binds them into a sequence.
+// README, "What this does and doesn't hide", has the full list.
 
 const SEGMENT_EXTENSION = ".celog";
 
