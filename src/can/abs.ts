@@ -190,11 +190,17 @@ const WHEEL_SPEED_KMH_PER_COUNT = 0.05625;
 //     scale is some other constant every number here is wrong by that factor while still
 //     looking entirely plausible. The KEY says `_bar` because that is the manufacturer's
 //     stated unit; it is not a measured one.
-//  2. **"Front" rests on the name too.** 0x102's REAR brake bit was never set once in the
-//     whole 545 k-frame capture, so this lap cannot separate "front brake pressure" from
-//     "brake pressure". Energica calls it `A_F_PRESSURE` and there is no `A_R_PRESSURE` in
-//     the frame at all, which is the argument — a ride that uses the rear brake alone is the
-//     measurement that would close it.
+//  2. ~~**"Front" rests on the name too.**~~ **CLOSED 2026-08-19.** It used to say that
+//     0x102's REAR brake bit was never set once in the whole 545 k-frame capture, so that
+//     lap could not separate "front brake pressure" from "brake pressure", and that a ride
+//     using the rear brake alone was the measurement that would close it. Both halves of
+//     that measurement now exist. Across all 14 650 573 frames of 0x102 in the archive the
+//     rear bit fires 18 times on its own (median 0.46 s), so the corpus does contain
+//     rear-only braking; and the owner rode the other half deliberately, reporting that
+//     **pressing the rear pedal alone leaves b5 at 0 bar while the front lever drives it to
+//     5**. So b5 is the FRONT circuit, by measurement and not by its name, and the rear
+//     brake has no pressure channel anywhere on this bus — it is switch-only. Caveat 1
+//     stands: the SCALE is still Energica's word.
 //
 // A_WARN_LAMP: ✅ set in 3564 of 3601 standstill frames (99.0 %) and in 0 of 192 frames above
 // 6 km/h, which is the ABS self-test — it needs road speed to clear, and cannot clear on a

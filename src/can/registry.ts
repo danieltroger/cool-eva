@@ -235,11 +235,15 @@ export const SIGNALS: SignalDef[] = [
   { key: "throttle_pct", unit: "%", group: "drive", source: "stream", deadband: 0 },
 
   // 0x102 — handlebar/lights (decoded live on the bike)
-  { key: "high_beam", unit: "", group: "controls", source: "stream" }, // b0 bit6
-  { key: "brake", unit: "", group: "controls", source: "stream" }, // b2 0x20 front | 0x40 rear
-  { key: "blinker_left", unit: "", group: "controls", source: "stream" }, // b2 0x04
-  { key: "blinker_right", unit: "", group: "controls", source: "stream" }, // b2 0x08
+  //
+  // `high_beam` and the two blinkers moved to group "buttons" on 2026-08-19; the block
+  // down there says why, and `brake` deliberately did not go with them.
   { key: "horn", unit: "", group: "controls", source: "stream" }, // b2 0x10
+  // Front OR rear. Kept here, and kept whole, on purpose: it has logged under this key
+  // since June and grafana/dashboards/ride-summary.json selects it by name, so it is the
+  // continuous history. The split pair the dashboard shows is `front_brake`/`rear_brake`
+  // in the buttons group — same two bits, told apart.
+  { key: "brake", unit: "", group: "controls", source: "stream" }, // b2 0x20 | 0x40
 
   // OBD-II diagnostics/counters, polled with the rest — all slow-moving, so
   // log-on-change keeps them to a handful of rows per ride.
@@ -459,6 +463,57 @@ export const SIGNALS: SignalDef[] = [
   { key: "btn_cruise_enable", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit1
   { key: "btn_cruise_set", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit2
   { key: "btn_heated_grip", unit: "", group: "buttons", source: "stream" }, // 0x400 b2 bit3
+
+  // --- The rest of the rider's controls, added to this group 2026-08-19 --------------
+  // Asked for by the owner: "the buttons section should also get indicator and highbeam
+  // IMO, maybe also brake since that's technically a button?".
+  //
+  // Nothing but the `group` field does this. views/all.js picks the buttons section by
+  // `groupOf(key) === "buttons"` and nothing else, its header count is
+  // `groupKeys.length`, and `controls` and `buttons` are both BOOLEAN_GROUPS in
+  // bounds.js — so the 0/1 gate the moved keys already had is unchanged and the section
+  // reads "buttons · 13" on its own.
+  //
+  // None of these five is momentary, which the tile had to learn: see public/lib/press.js
+  // for the measured hold durations, the 1.46 Hz flasher, and why the answer is a clock
+  // reading rather than a list of held-state keys.
+  //
+  // `high_beam` is 0x102 b0 bit 6, the SWITCH — not `high_beam_lamp`, which is b2 bit 0
+  // and stays in `controls`. Two reasons for the switch over the lamp, given they agreed
+  // in all 1 103 000 frames ever captured and so cannot be told apart by measurement: a
+  // BUTTONS section should show the thing the rider's thumb moves, and this is also the
+  // bit public/app.js's own three-flash tab gesture reads, so the tile shows exactly what
+  // the dashboard is reacting to. The day they disagree is the day the bulb has failed,
+  // and having both keys is what makes that visible.
+  //
+  // The blinkers are the LAMP outputs (b2 bits 2/3), which is deliberate: "is my
+  // indicator on" is a question about the lamp. They are the flashers press.js has to
+  // coalesce. The b0 indicator SWITCHES are real and their sides are now known — bit 3
+  // right, bit 4 left, measured 2026-08-19 — but decoding them would put four tiles on
+  // screen for two indicators; decode.ts carries the evidence for whenever that changes.
+  //
+  // `front_brake` and `rear_brake` are b2 0x20 and 0x40, and they are two keys because
+  // they are two circuits: the rear pedal alone leaves 0x0A0's front brake pressure at
+  // 0 bar (owner, on the bike, 2026-08-19) and 1 899 captured frames carry both bits at
+  // once. Merging them into one "brake" tile would hide which lever is being used, which
+  // is most of what there is to see. ⚠️ These are on the OUTPUT byte, so strictly they
+  // are the brake-light lines rather than lever switches — there is no lever-switch bit
+  // on b0 to prefer, and they track braking closely (front: 491 applications, median
+  // 2.24 s). The bar-valued `front_brake_pressure_bar` from 0x0A0 is the front circuit's
+  // analogue partner and stays in `controls`, where a number belongs: a measurement in a
+  // grid of on/off tiles would read as a fault, not a feature.
+  //
+  // ⚠️ One loose end, deliberately left: db.ts writes the `signal` table with ON
+  // CONFLICT(key) DO NOTHING, so rides.db keeps `grp = 'controls'` for the three moved
+  // keys forever. The live dashboard reads the group off this registry and is right
+  // immediately; grafana/dashboards/explore.json reads `signal.grp` and will keep filing
+  // them under controls. That is cosmetic there, and fixing it means an UPDATE against
+  // the owner's live database, which is not this change's business.
+  { key: "high_beam", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit6
+  { key: "blinker_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x04
+  { key: "blinker_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x08
+  { key: "front_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x20
+  { key: "rear_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x40
   // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
   // other 0x102 state bits above rather than in `buttons`; `controls` is already a
   // BOOLEAN_GROUP so it gets the same 0/1 gate.

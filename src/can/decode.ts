@@ -237,6 +237,8 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // 3/4 and calls b2 bits 2/3 unknown. Both can be true — b0 the handlebar switch,
     // b2 the lamp output — but only ours was measured here, so ours stands and the
     // .xdbc is not allowed to overwrite it. Do not "fix" this from the third-party file.
+    // (The b0 pair is real, and 2026-08-19 settled which of the two is which; it is
+    // written down on handlebarButtons() below, along with why it stays undecoded.)
     //
     // 🚨 b2 bits 0 and 1 were `charging` and `charge_port_unlocked` until 2026-08-16.
     // THEY ARE THE BEAM LAMPS. Both names came off the .xdbc — a rider's file, not a
@@ -285,7 +287,27 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       const lampsAndState = data[2];
       const values: DecodedValue[] = [
         { key: "high_beam", value: handlebar & 0x40 ? 1 : 0 },
+        // `brake` is front OR rear, and stays exactly that. It has logged since June,
+        // grafana/dashboards/ride-summary.json selects it by name, and nothing is gained
+        // by breaking either for a value the two keys below can be OR-ed back into.
         { key: "brake", value: lampsAndState & 0x60 ? 1 : 0 },
+        // …and the two halves separately, added 2026-08-19 for the dashboard's buttons
+        // section. They are NOT redundant with each other and must not be folded back
+        // together: measured over all 14 650 573 frames of 0x102 in the archive, the
+        // front bit accounts for 491 applications (median 2.24 s, longest 47.2 s) and
+        // the rear 18 (median 0.46 s, longest 43.5 s) — and 1 899 frames carry both at
+        // once, so neither implies the other in either direction.
+        //
+        // That 18 also closes a question abs.ts had to leave open. It records that the
+        // rear bit "was never set once in the whole 545 k-frame capture", so that lap
+        // could not tell `front_brake_pressure_bar` (0x0A0 b5) apart from a plain brake
+        // pressure. The wider corpus has the rear bit firing on its own, and the owner
+        // confirmed the other half on the bike on 2026-08-19: pressing the rear pedal
+        // alone leaves 0x0A0 b5 at 0 bar while the front lever drives it to 5. So the
+        // ABS pressure channel really is the FRONT circuit only, and there is no rear
+        // equivalent anywhere on this bus — the rear brake is switch-only.
+        { key: "front_brake", value: bit(lampsAndState, 5) },
+        { key: "rear_brake", value: bit(lampsAndState, 6) },
         { key: "blinker_left", value: lampsAndState & 0x04 ? 1 : 0 },
         { key: "blinker_right", value: lampsAndState & 0x08 ? 1 : 0 },
         { key: "horn", value: lampsAndState & 0x10 ? 1 : 0 },
@@ -406,7 +428,8 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 //
 // Added 2026-08-16. These four are the ones Energica's free-frame table names
 // `Left/Right/Enter Mode Switch` and `RST Switch`. Bits 3 and 4 are the indicator
-// switches and are left undecoded on purpose — see below.
+// switches and are still left undecoded on purpose — see below, which now also records
+// which of the two is which, settled 2026-08-19.
 //
 // Of the other two: bit 6 is `high_beam`, read in the case above (set in 137 of the
 // 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture
@@ -448,14 +471,37 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
     // bit 2 — MODE ENTER. ✅ The cleanest of the three: 40 presses, all 0.08-0.29 s,
     // every one below 3 km/h, no outliers at all.
     { key: "btn_mode_enter", value: bit(handlebar, 2) },
-    // bits 3 and 4 are the turn-indicator switches (41 and 24 momentary presses, all
-    // but one above 3 km/h) and are DELIBERATELY NOT decoded here. 0x102 b2 bits 2/3
-    // are already logged as blinker_left/blinker_right and are the lamp outputs —
-    // they flash at 1.4 Hz (0.35 s on, 0.35 s off) where these do not — so decoding
-    // both pairs under button-ish names would put four keys on screen for two
-    // indicators and invite the b0-vs-b2 confusion the case comment above warns
-    // about. Nothing here needs them; add them under their own names if something
-    // ever does.
+    // bits 3 and 4 are the turn-indicator SWITCHES, and are still not decoded here —
+    // but which side is which is no longer an open question, so it is written down.
+    //
+    // 🚨 BIT 3 IS RIGHT AND BIT 4 IS LEFT, the opposite of the .xdbc's order, which
+    // puts them left-then-right. Measured 2026-08-19 over all 14 650 573 frames of
+    // 0x102 in the 248 captures in ~/Documents/cool-eva-archive, by taking every rising
+    // edge of each switch and asking which blinker lamp (b2 bits 2/3) was dark in the
+    // 3 s before it and lit in the 3 s after:
+    //
+    //   b0 bit 3, 464 presses → started the RIGHT lamp 437×, the left lamp 5×
+    //   b0 bit 4, 361 presses → started the LEFT  lamp 328×, the right lamp 2×
+    //
+    // The remaining 53 started nothing: 47 changed no lamp at all and 6 stopped one,
+    // which is what a cancelled thought and a re-press look like. Two consecutive
+    // frames, 10 ms apart on 2026-08-02 at 21:05:47, make the same point with no
+    // statistics at all:
+    //
+    //   .339152  88 BE 82 04 FA FF 34 00   ← b0 bit3 down, b2 has no blinker bit
+    //   .349109  88 BE 8A 04 FA FF 28 00   ← next frame, b2 bit3 (RIGHT lamp) lit
+    //
+    // Do not "fix" this from the third-party file. The case comment at 0x102 above says
+    // the same thing about the blinker bytes, for the same reason, and that file was
+    // already caught calling the high beam `charging`.
+    //
+    // They stay undecoded because nothing reads them: the dashboard's buttons section
+    // was given the LAMPS (`blinker_left` / `blinker_right`, b2 bits 2/3) on 2026-08-19,
+    // since what a rider means by "is my indicator on" is the lamp and not the thumb.
+    // Two more keys would put four tiles on screen for two indicators. If something ever
+    // wants the switches — telling a failed bulb from a missed press is the obvious one
+    // — they are `bit(handlebar, 3)` for right and `bit(handlebar, 4)` for left, and the
+    // measurement above is the evidence.
     //
     // bit 5 — the indicator-cancel press (push the turn switch in). ✅ CONFIRMED, and
     // this is the strongest identification of the seven: all 63 presses happened with
