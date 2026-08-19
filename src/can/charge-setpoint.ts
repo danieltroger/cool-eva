@@ -110,7 +110,8 @@ export function decodeChargeSetpointFrame(data: Buffer): DecodedValue[] {
   // is a COMMAND frame whose byte layout is chosen by the opcode. A future 0x18 meaning
   // something else would more plausibly show up as a changed length or a non-zero tail
   // than as a changed b1, and decoding it anyway would put a fabricated amp figure on a
-  // charging screen. Every captured frame on both ids is DLC 8 with b5-7 zero.
+  // charging screen. Every captured frame on both ids is DLC 8, and b5-7 are zero on every
+  // opcode but 0x14 — which is precisely the point: a tail in use marks a different layout.
   //
   // ⚠️ The price of that strictness is the direction it fails in: a firmware update that
   // starts using b5-7, or shortens the frame, makes this signal go SILENT rather than
