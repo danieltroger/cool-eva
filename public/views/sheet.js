@@ -4,7 +4,6 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, knownKeys, valueOf } from "../lib/store.js";
 import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
 import { bytes, compass, duration } from "../lib/format.js";
-import { MUTED } from "../lib/colors.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 
@@ -65,8 +64,22 @@ export function Sheet() {
       ServiceMode(),
       div({ class: "sheet-title" }, "Stored codes"),
       TroubleCodes(),
-      div({ class: "sheet-title" }, "Link"),
-      SourceHealth(),
+      // No "Link" section. A per-source liveness readout was here in two shapes
+      // and neither could be read: a grid of sixteen fractions needed the reader
+      // to know sixteen normal denominators (BATTERY 17/46 is a HEALTHY parked
+      // bike), and collapsing it to "what is dark" cried wolf instead —
+      // `security` is measurably silent on two rides in three, because 0x480 has
+      // zero frames in two multi-gigabyte captures and its only companion is a
+      // one-shot at startup. Same for `obd` under OBD_ENABLED=0, `coolant` on a
+      // probe-init failure, and `gps` without a fix. Each exception is
+      // defensible and the list only grows; a widget that always names something
+      // teaches the rider to skip the name, which is the failure it exists to
+      // prevent.
+      //
+      // The data is unchanged and still in /status — which is now correct in a
+      // way it was not before, since summariseGroups() is seeded from the
+      // registry (see src/http/status.ts). This is a decision about what belongs
+      // on a phone at the handlebars, not a retreat from measuring liveness.
       button(
         {
           class: "sheet-close",
@@ -215,43 +228,6 @@ function TroubleCodes() {
 /** True while the bike is reporting at least one stored trouble code. */
 export function hasTroubleCodes() {
   return knownKeys.val.some(key => /^dtc_\d+_\d+$/.test(key) && (valueOf(key) ?? 0) > 0);
-}
-
-/**
- * Which data sources are actually alive, rather than "some numbers are on screen".
- *
- * One line, not a grid of sixteen fractions. The grid was unreadable for a reason
- * worth stating: a partial count carries no verdict. BATTERY sat at 17/46 on a
- * perfectly healthy parked bike, because most of those signals only exist while
- * charging — so a reader had to already know each group's normal denominator
- * before any of the numbers meant anything, and nobody knows sixteen of those.
- *
- * The question this answers is "has a source gone dark", and only `live === 0`
- * answers it. So the dark ones get named and the rest get counted. The per-group
- * numbers are still in /status for anyone debugging a specific group.
- *
- * Reading `live === 0` is only safe because summariseGroups() is seeded from the
- * registry. It used to be built from arrived keys alone, which meant a source that
- * had never spoken was ABSENT rather than zero — so this filter would have found
- * nothing on a completely dead bus and reported health. Do not go back to counting
- * only what has arrived without changing this line too.
- */
-function SourceHealth() {
-  return div({ class: "action-note" }, () => {
-    const current = status.val;
-    if (!current) {
-      return "…";
-    }
-    const groups = Object.entries(current.groups);
-    const dark = groups
-      .filter(([, [live]]) => live === 0)
-      .map(([group]) => group)
-      .sort();
-    if (dark.length === 0) {
-      return `all ${groups.length} sources live`;
-    }
-    return `${dark.join(", ")} dark · ${groups.length - dark.length} live`;
-  });
 }
 
 /**

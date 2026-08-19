@@ -137,7 +137,8 @@ if (failures.length > 0) {
 console.log(
   `✓ /status counts all ${FIXTURE_FILE_COUNT} files and sizes them (no cap at 10), ` +
     `${SEGMENTS_TO_SEAL} real seals still land in one day file so a file is not a segment, ` +
-    `the download caption counts files and says so, and a sealed segment opens with its own ` +
+    `the button names no count at all (the caption was removed), a silent bus still reports every ` +
+    `measured group as dark rather than omitting it, and a sealed segment opens with its own ` +
     `private key and with no other`
 );
 
@@ -246,8 +247,8 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
     failures.push(
       `${SEGMENTS_TO_SEAL} sealed segments produced ${measured.files} files, and one run can only make ` +
         `${FILES_ONE_RUN_MAY_MAKE}. The sealer has stopped appending a day of segments to one ` +
-        `rides-<YYYY-MM-DD>.celog, so /status's file count is drifting towards being a segment count — and the ` +
-        `download caption, which is worded around day files, goes wrong again in the other direction`
+        `rides-<YYYY-MM-DD>.celog, so /status's file count is drifting towards being a segment count. Nothing ` +
+        `displays it today, but §3 exists so a caption that comes back cannot label it wrongly`
     );
   }
   if (measured.files < 1) {
@@ -297,6 +298,23 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   }
   const code = withoutComments(body);
 
+  // Canary. Every other assertion in this section fires on the PRESENCE of
+  // something wrong, so an over-eager withoutComments() that returned "" would
+  // make them all pass and the section would go quiet instead of red — and
+  // withoutComments()'s own docstring promises the opposite. That promise used to
+  // rest on the `log.files` assertion firing on absence; removing the caption
+  // removed the canary with it, silently. So assert the stripper left real code
+  // behind, against something structural rather than anything to do with the
+  // caption: DownloadButton exists to start the download, and if that line is
+  // gone the input was not this function.
+  if (!code.includes("/dl")) {
+    failures.push(
+      `withoutComments() left no recognisable code in DownloadButton() from ${path} — the download target "/dl" ` +
+        `is missing, so the stripper has eaten the function and every check below it would pass on an empty string`
+    );
+    return;
+  }
+
   // Narrowed 2026-08-19, which is the escape hatch the message below already offered:
   // the caption was removed outright for screen space, so there is no count to label
   // and the old "must read log.files" assertion was firing on a deliberate deletion
@@ -320,7 +338,27 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   //     return div({ class: "action-note" }, `${files} sealed segments`);
   // reads the count through a destructure and would have walked straight past.
   // Interpolation plus any reference to the log payload is the honest test.
-  const showsACount = /\$\{/.test(code) && /\blog\b/.test(code);
+  // Third attempt at this gate, and the first two were both wrong in opposite
+  // directions — worth recording, because the shape recurs.
+  //
+  //   1. `showsACount && !includes("log.files")` — contradictory halves, could
+  //      never fire.
+  //   2. `/\$\{/ && /\blog\b/` — the "any number reaches the rider" version. It
+  //      can never NOT fire: the button's own `${bytes(current.log.bytes)}` gives
+  //      the interpolation and the words "Download ride log" give the `log`. A
+  //      caption with no count at all still tripped it.
+  //
+  // So it is back to the file count's actual spelling. That is narrow, and the
+  // narrowness is the honest part: it catches the bug that was REPORTED — the
+  // count interpolated and labelled "segments" — and it does not pretend to catch
+  // a caption that reads the count through a destructure:
+  //
+  //     const { files } = current.log;   // ← walks past this
+  //
+  // A guard that fires on everything is worth less than one that fires on the
+  // real case and says what it misses. If the destructure form ever appears,
+  // widen it then, against a case that exists.
+  const showsACount = code.includes("log.files");
   if (showsACount && /segment/i.test(code)) {
     failures.push(
       `DownloadButton() in ${path} says "segment" in text the rider sees, next to a count of files. One .celog ` +
@@ -409,12 +447,41 @@ async function checkADeadBusIsNotReportedAsHealthy(): Promise<void> {
   // On-demand-only groups are deliberately absent — see summariseGroups(). Their
   // silence is a resting state, so asserting they are present would pin the very
   // behaviour that made the dashboard name `waypoint` as dark forever.
-  const onDemandOnly = new Set(
-    [...new Set(SIGNALS.map(signal => signal.group))].filter(group =>
-      SIGNALS.filter(signal => signal.group === group).every(signal => signal.onDemand)
-    )
-  );
-  const declared = [...new Set(SIGNALS.map(signal => signal.group))].filter(g => !onDemandOnly.has(g)).sort();
+  // Named, NOT re-derived. Computing `onDemandOnly` with the same expression the
+  // implementation uses makes the two agree by construction, so the check would
+  // bless whatever the implementation decided — including deleting liveness for
+  // the sensors this project exists for. Marking both coolant probes `onDemand`
+  // passed a version of this check that shared the formula.
+  //
+  // So the groups that must ALWAYS be summarised are written down here, and
+  // adding an exclusion means editing this list on purpose. `waypoint` is absent
+  // deliberately: it is the one group written only on request.
+  const MUST_BE_SUMMARISED = [
+    "battery",
+    "bms",
+    "cells",
+    "charge",
+    "controls",
+    "coolant",
+    "diag",
+    "drive",
+    "energy",
+    "gps",
+    "imu",
+    "obd",
+    "powertrain",
+    "security",
+    "vcu",
+    "buttons",
+  ];
+  const declared = [...MUST_BE_SUMMARISED].sort();
+  const unknown = declared.filter(group => !SIGNALS.some(signal => signal.group === group));
+  if (unknown.length > 0) {
+    failures.push(
+      `MUST_BE_SUMMARISED names ${unknown.join(", ")}, which no signal declares — the list has drifted from the ` +
+        `registry and is now asserting something that cannot be true`
+    );
+  }
   const reported = Object.keys(payload.groups).sort();
   const missing = declared.filter(group => !reported.includes(group));
 
