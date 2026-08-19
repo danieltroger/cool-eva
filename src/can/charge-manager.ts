@@ -35,10 +35,25 @@
 //     0x620   968 618      0x625 1 571 617   (0x625 is higher because it broadcasts parked too)
 //
 // Where a claim below has been re-measured at full rate it says so and carries the larger n.
-// The older numbers are not wrong, they are a 1-in-20 sample; nothing re-measured has changed
-// a percentage, which is the reassuring part. Note the sampling is NOT uniform — a keepalive
-// scanner over-represents frames that change — so it is worth re-deriving at full rate before
-// leaning on any of the remaining sampled percentages.
+// Every invariant re-checked so far came out at the same 100.000 %, which is the reassuring
+// part — but the sampling is NOT uniform, and one percentage moved twelvefold because of it.
+// A keepalive scanner over-represents frames that are CHANGING, so any statistic about
+// transients is inflated: 0x620's "b2 > b0 in 0.4 %" is 0.033 % at full rate (see b0 below).
+// Treat a sampled percentage about a steady state as sound and one about an edge as suspect,
+// and re-derive before leaning on it.
+//
+// One thing the recount turned up that is about the ARCHIVE rather than the bike. Every frame
+// of all five ids is DLC 8 — the `data.length < 8` guards below have never fired on real data —
+// with one apparent exception, and the exception is not a frame:
+//
+//     capture-20260807-211634-0541697e.log ends
+//      (2026-08-07 21:17:38.503667)  can0  625   [8]  6B 01
+//
+// candump was killed mid-write, so the line says DLC 8 and carries two bytes. Same family as
+// the 2060-clock artefact at the bottom of this file: a truncated capture is indistinguishable
+// from a truncated frame to anything that parses these logs by counting fields, and it would
+// have "shown" that this bus produces short frames. It does not. Any scan of the archive should
+// drop a final line whose byte count disagrees with its own DLC.
 
 import { bit, type DecodedValue } from "./frame.ts";
 
