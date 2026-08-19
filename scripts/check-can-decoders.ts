@@ -621,7 +621,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x615,
     frame: "00 01 00 1F 00 00 00 00",
-    why: "⚠️ SYNTHETIC — b0 = 0 would decode to 242.5 V, which is inside this pack's real range and inside bounds.js's V band, so it would look like a measurement rather than a fault. b0 spans 28…94 over all 47 632 captured frames and is never 0, so this should be unreachable; the guard is what makes that a fact rather than a hope. The other two fields still decode",
+    why: "⚠️ SYNTHETIC — b0 = 0 would decode to 242.5 V, which is inside this pack's real range and inside bounds.js's V band, so it would look like a measurement rather than a fault. b0 spans 28…94 over all 941 765 captured frames and is never 0, so this should be unreachable; the guard is what makes that a fact rather than a hope. The other two fields still decode",
     expect: { fast_dc_a: 0, charge_manager_soc: 31 },
     absent: ["charge_manager_pack_v"],
   },

@@ -206,7 +206,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
       const values: DecodedValue[] = [];
       // b0 = 0 would decode to 242.5 V, which is a believable reading for this pack and sails
       // straight through bounds.js's "V" band — a phantom that is far harder to spot later
-      // than an obviously silly number. It has never happened: b0 spans 28…94 over all 47 632
+      // than an obviously silly number. It has never happened: b0 spans 28…94 over all 941 765
       // frames of the corpus and is never 0, including through the ~3 s DC handshake before
       // any current flows. So this guard should be dead code, and it is here because the one
       // way to find out that it is not would otherwise be a plausible voltage in the log.
@@ -256,7 +256,10 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
 
     // 0x620 — the current ceilings. One byte per charge path, and each is 0 while the other
     // path is the live one: b0 is 0 in 100.000 % of 36 924 AC frames and b1 is 0 in 100.000 %
-    // of 10 057 DC frames. That mutual exclusion is the argument for reading them as a pair.
+    // of 10 057 DC frames. That mutual exclusion is the argument for reading them as a pair, and
+    // re-measuring it at full rate lets it be stated without needing the mode at all: across all
+    // 968 618 frames the two are NEVER both non-zero. b0 alone in 152 581, b1 alone in 784 508,
+    // both zero in 31 529 — no frame at all in the fourth cell.
     //
     // b2 is 1 on AC and 0 on DC (99.98 % of 46 625) — the same fact as b0/b1 in one bit, so it
     // is not logged separately. b4-7 are 00 in 100.000 % of 968 618 frames.
