@@ -111,9 +111,10 @@ The DC value `0x5E` decodes as mode 2 + relay + inlet + locked + `WAIT_AUTH` = 2
 | --- | --- | --- |
 | 2026-08-04 19:58 | `0x14` `0x04` `0x07` `0x0D` `0x11` `0x12` `0x11` `0x23` | 4.70 s (19:58:19.252 → 23.951) |
 | 2026-08-09 14:41, the aborted attempt | `0x14` `0x04` `0x07` `0x09` `0x23` | 3.70 s |
+| 2026-08-08 13:00, 46 min, completed | `0x14` `0x04` `0x07` `0x09` `0x11` `0x12` `0x11` `0x23` | 4.70 s |
 | 2026-08-09 14:42, its retry 66 s later | `0x14` `0x04` `0x23` | 2.10 s |
 
-The first is nine steps and not eight — `0x11` sits on both sides of `0x12` — and the second passes through an `0x09` neither other session shows. ⚠️ These come off the log at the 10 Hz frame rate, so a step held for less than ~100 ms would not appear: that the paths DIFFER is established, the complete step list for any one session is not. So the individual steps have no established names, the DBC does not name this byte at all, and a state table inferred from the order they appear in would have been wrong about the order itself. Keeping it raw was right.
+The first is nine steps and not eight — `0x11` sits on both sides of `0x12` — and two of the four pass through an `0x09`. ⚠️ An earlier version of this paragraph said the aborted attempt "passes through an `0x09` neither other session shows", and read it as a marker of the abort. **It is not.** The 2026-08-08 13:00 session is 46 minutes long, completed normally, took 13.66 kWh from 21 % to 90 % SOC — and passes through `0x09` as well. It is 2026-08-04's path with `0x09` substituted for `0x0D`. Whatever `0x09` means, it is not failure. ⚠️ These come off the log at the 10 Hz frame rate, so a step held for less than ~100 ms would not appear: that the paths DIFFER is established, the complete step list for any one session is not. So the individual steps have no established names, the DBC does not name this byte at all, and a state table inferred from the order they appear in would have been wrong about the order itself. Keeping it raw was right.
 
 ### b1-3 are a fault code, and it has fired three times
 

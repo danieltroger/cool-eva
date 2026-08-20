@@ -98,6 +98,23 @@ It was hand-maintained until 2026-08-16 and it had already gone stale: a change 
 
 Run every `rawQueryText` against `rides.db` with `$__from`/`$__to` and the template variables substituted, and confirm each returns rows. A panel that renders "No data" is indistinguishable from a broken bike, so it has to be ruled out at the query level first. Check `EXPLAIN QUERY PLAN` shows `SEARCH … USING INDEX idx_reading_sig_ts (signal_id=? AND ts>? AND ts<?)`: the only index on `reading` leads with `signal_id`, so a query filtered on `ts` alone scans. SQLite does flatten derived tables and push a `signal.key` predicate down through the join, so a subquery filtered only on `ts` is not automatically a scan — check the plan rather than assuming either way.
 
+## ⚠️ `rides.db` is in WAL mode, and that silently blanks panels
+
+Measured 2026-08-20, replaying a real DC session: a panel rendered **"No data in response"** with an error icon while its SQL, run directly, returned 10 rows. The datasource had come back with `{"error":"database is locked (5) (SQLITE_BUSY)"}` and Grafana surfaced it as an empty panel.
+
+The cause is SQLite's WAL journal read across a Docker bind mount. `docker-compose.yml` mounts the whole repo (`- .:/repo:rw`) and `rides.db` sits at its root, so this is the normal setup, not an exotic one. `PRAGMA journal_mode` on `rides.db` reads `wal` today.
+
+Measured, 17 panel queries × 5 concurrent rounds:
+
+| journal mode        | queries errored |
+| ------------------- | --------------- |
+| `wal`               | **3 of 85**     |
+| `delete` (rollback) | **0 of 85**     |
+
+So roughly **one panel per dashboard load** comes back blank, and a different one each time. Per this file's own argument in §"Every query has to be run" — _"a panel that renders 'No data' is indistinguishable from a broken bike"_ — that is the worst shape a failure can take here: it looks like a finding.
+
+`PRAGMA journal_mode=DELETE` on the database Grafana reads fixes it. ⚠️ Do that on a **copy** rather than on `rides.db` itself if the logger might be running: switching journal mode takes an exclusive lock, and the service writes to this file. The decrypt step that produces the file Grafana reads is the natural place to set it.
+
 ## Rows already in `rides.db` that this repo now decodes differently
 
 Two decoder fixes on 2026-08-16 changed what the code produces, but neither can change what is already stored: the sealed ride log holds the values the Pi decoded at the time, so re-running `decrypt-log.ts` reproduces them faithfully. Grafana reads those rows raw. Both are left as-is deliberately — this is the only copy of the data and correcting it in place is a one-way trip — but the queries below are here so the decision is yours and the SQL is not something you have to re-derive.
