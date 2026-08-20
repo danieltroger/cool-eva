@@ -62,52 +62,22 @@ export function decodeVcuFlagsFrame(data: Buffer): DecodedValue[] {
   ];
 }
 
-// ## What the captures on disk say, checked 2026-08-16
+// ✅ Scanned over 105 736 frames (every raw capture on disk, checked 2026-08-16): the frame
+// really is the named bitfield it claims to be. Three of its bits MOVE, and each moves when
+// the vendor's name says it should — `ERR_CheckModules` matches the mode-03 stored list of
+// open-circuit body modules exactly, `CheckModulesSts` sets on the second of the DC session's
+// unplug (established from an entirely different frame), and `WARN_SocMisaligned` appears
+// nine minutes after a partial fast charge ended at 57 % SOC.
 //
-// 0x100 was scanned across every raw capture there is: the 2026-08-02 garage lap (4087
-// frames), the 2026-08-02 AC charge (18 509), and all 59 files of the 2026-08-04 session
-// including the complete CCS DC fast charge (83 140). **105 736 frames, four distinct
-// payloads.**
-//
-//     00 00 80 00 00 00 00 01   riding, and most of the 08-04 session
-//     00 00 00 00 00 00 00 01   the whole AC charge, and the later 08-04 files
-//     00 00 80 00 00 00 10 01   from 20:25:49 on 08-04 onward
-//     00 00 00 00 08 00 00 01   two short bursts, 39 frames total
-//
-// ✅ **Byte 7 bit 1, `ERR_ChargeCM_Out`, is 0 in all 105 736 of them** — including every
-// frame of the 2026-08-04 DC session, which ran to 20.04 kW and 66.2 A and completed
-// cleanly. So the bit is well-formed and the charge manager was not complaining. ⚠️ That is
-// a NEGATIVE and nothing more: no capture on this disk contains a charge-manager fault. The
-// only time this bike's charge manager has ever complained is 2026-08-09 12:38:35-12:42:35,
-// and no raw CAN for that window exists locally. **This decode has never been seen to fire.**
-//
-// 🔎 For whoever recovers those 2026-08-09 captures — this is the check that would confirm
-// it outright in one pass. The bit should go **1 → 0 → 1 → 0 at 12:38:35 / 12:39:36 /
-// 12:41:36 / 12:42:35**, i.e. byte 7 stepping 0x03 → 0x01 → 0x03 → 0x01 against a payload
-// that is otherwise `00 00 ?? 00 00 00 ?? 01`. Four edges at four known seconds is not
-// something a wrong bit position produces.
-//
-// ✅ What the corpus DOES confirm is that this frame is the named bitfield it claims to be,
-// because three of its bits move and every one of them moves when the vendor's name says it
-// should:
-//
-//  1. **`ERR_CheckModules` (b2 bit7)** is set through both rides and clear through the whole
-//     AC charge. It matches the mode-03 stored list exactly — `B1000` position lights,
-//     `B1002` stop, `B1004`/`B1006` indicators, `B1009` low beam, `B1012` high beam, all
-//     open-circuit body modules — and it is the rolled-up version of the per-module round
-//     robin on 0x105.
-//  2. **`CheckModulesSts` (b4 bit3)** sets at **20:16:05.508 on 2026-08-04 and clears 2.5 s
-//     later**. The DC session's unplug is at 20:16:05, established from an entirely different
-//     frame. A bit transition landing on the second of a known event is the strongest single
-//     piece of evidence here: it is the VCU re-running its module check as the session tears
-//     down, and a wrong bit position does not coincide with anything.
-//  3. **`WARN_SocMisaligned` (b6 bit4)** first appears at 20:25:49, nine minutes after that
-//     same DC session ended at 57 % SOC — which is exactly when a coulomb-counted SOC estimate
-//     gets flagged after a partial fast charge. 🟡 Suggestive rather than proof.
-//
+// ⚠️ `ERR_ChargeCM_Out` reads 0 in all 105 736 — a NEGATIVE and nothing more, since no capture
+// on this disk contains a charge-manager fault. **This decode has never been seen to fire.**
+// 🔎 The one window where the charge manager did complain (2026-08-09 12:38-12:42) has no local
+// raw CAN; the doc records the exact four edges that would confirm the bit in one pass.
+
 // ⚠️ The other 57 bits, including all eleven broken out above beyond those three and
-// `V_PGood12V`, read 0 in every frame of every capture. Their positions come from Energica's
-// database and nothing on this bike has ever exercised them. Treat any of them reading 1 as
-// a lead to check against `0x201`, the mode-03 list and the bike's own dash — not as a
-// confirmed fault. That is also why both raw words are logged: if a position turns out to be
-// wrong, the log still holds the byte it came from.
+// `V_PGood12V`, read 0 in every frame of every capture. Their positions are Energica's word
+// and nothing on this bike has ever exercised them. Treat any of them reading 1 as a lead to
+// check against 0x201, the mode-03 list and the bike's own dash — not as a confirmed fault.
+// That is also why both raw words are logged: a wrong position still leaves the byte in the log.
+//
+// Payload census and the per-bit evidence: docs/can-decode-findings.md § "0x100".

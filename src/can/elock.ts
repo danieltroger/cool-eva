@@ -1,13 +1,13 @@
 import type { RawChannel } from "socketcan";
 import { record } from "./signals.ts";
 
-// One-shot read of "number of keys paired" from the E-LOCK / keyless ECU
-// (see obd-garage/CAN_MAP.md §E-LOCK). Plain KWP2000 over ISO-TP single frames:
-// request on 0x791, response on 0x790. Byte 0 of every frame is the payload
-// length, the rest is zero padding — e.g. `21 99` goes out as
-// `02 21 99 00 00 00 00 00` and comes back as `02 61 03 …` (3 keys paired).
+// One-shot read of "number of keys paired" from the E-LOCK / keyless ECU. Plain
+// KWP2000 over ISO-TP single frames, request on 0x791 and response on 0x790; the
+// framing is in docs/can-decode-findings.md § "0x480". The bare read is tried
+// first, and a diagnostic session is only opened (then closed immediately) if the
+// ECU won't answer without one.
 //
-// ⚠️ This is the immobilizer ECU, so this module is deliberately minimal:
+// ⚠️ This is the IMMOBILIZER ECU, so this module is deliberately minimal:
 //   • it runs ONCE at startup, never on a timer and never in a retry loop;
 //   • the only services it may ever send are 0x21 (ReadDataByLocalIdentifier),
 //     0x10 0x81 (start diagnostic session) and 0x20 (stop diagnostic session).
@@ -15,8 +15,6 @@ import { record } from "./signals.ts";
 //     0x14 / 0x3B) belongs here;
 //   • it is fully non-fatal — a timeout or a negative response just skips the
 //     signal and logs a line. It never throws and never blocks app startup.
-// The bare read is tried first; a diagnostic session is only opened (and then
-// closed immediately) if the ECU won't answer without one.
 
 const ELOCK_REQ_ID = 0x791;
 export const ELOCK_RESP_ID = 0x790;

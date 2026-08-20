@@ -14,7 +14,7 @@ import {
 // the ISO-TP reassembler, answer a First Frame with flow control, give up on time.
 // Decoding lives in src/diagnostics/obd-dtc.ts and reassembly in ./iso-tp.ts, both
 // pure; this module is the only part that touches the bus or the clock.
-//
+
 // ⚠️ READ-ONLY BY CONSTRUCTION. The only service bytes this module can put on the
 // bus are 0x03, 0x07 and 0x0A — all three are "tell me what is wrong", none of them
 // changes anything in an ECU, and requestTroubleCodeList() throws on anything else
@@ -24,58 +24,29 @@ import {
 // is not recoverable. SecurityAccess (0x27) is likewise absent. Same standing rule
 // as src/can/elock.ts keeps for the immobilizer ECU.
 //
-// ⚠️ Since 2026-08-16 Mode 04 does exist in the repository, in
-// src/vcu/service-actions.ts, reachable only from service mode's write path. That
-// changes nothing about this module and the rule above is unchanged in the way that
-// matters: THIS is the always-on poller, it runs unattended at 2 Hz while the bike is
-// being ridden, and a service that can erase diagnostic memory on a timer is a
-// different thing from one an owner runs deliberately with the bike parked, behind a
-// safety gate, an off-by-default switch and a two-tap confirmation. The distinction
-// is between what runs by itself and what a person asks for — not between services.
+// ⚠️ Mode 04 DOES exist in the repository since 2026-08-16, in vcu/service-actions.ts,
+// reachable only from service mode's write path. The rule above is unchanged in the
+// way that matters: THIS is the always-on poller, unattended at 2 Hz while the bike is
+// ridden. The distinction is between what runs by itself and what a person asks for
+// deliberately, parked, behind a safety gate — not between services.
+
+// Three measured properties of this transfer that the code below is shaped around.
+// Full figures and the frame trace: docs/can-decode-findings.md § "OBD-II mode 03".
 //
-// ── What the bus actually does, measured 2026-08-04 ──────────────────────────────
+// ⚠️ The VCU answers on 0x7EF, not the 0x7E8 a car would use.
 //
-// The request goes out functionally on 0x7DF; the VCU answers on **0x7EF**, not the
-// 0x7E8 a car would use. Mode 03's reply is 80 bytes, so it arrives as a First
-// Frame plus eleven Consecutive Frames with a flow-control frame from us in between:
-//
-//   →  7DF  01 03 00 00 00 00 00 00     one payload byte: service 03
-//   ←  7EF  10 50 43 27 05 62 10 00     First Frame, 0x050 = 80 bytes to come
-//   →  7E7  30 00 00 00 00 00 00 00     our flow control: send it all, no delay
-//   ←  7EF  21 10 03 05 14 C1 11 C1     … eleven of these, ~5 ms apart
-//
-// ⚠️ THE FLOW-CONTROL FRAME DRAWS A SPURIOUS NEGATIVE RESPONSE, and misreading it
-// is what made this look impossible. Sent to 0x7E7 — the physical request address
-// paired with the 0x7EF the VCU answers on — *something* on the bus replies
-// `03 7F 00 33`: a refusal of "service 0x00" with NRC 0x33 securityAccessDenied.
-// There is no service 0x00 and we never sent one; it is an artefact of an ECU
-// reading our flow-control frame as a request. It arrives whether or not the
-// transfer then succeeds — transfers that completed produced it too. So a negative
-// response naming a service we did not ask for is IGNORED here rather than ending
-// the wait. obd-garage/CAN_MAP.md recorded that NRC as mode 03 being locked behind
-// SecurityAccess; it never was, and the note there is now dated and corrected.
-//
-// ⚠️ THE TRANSFER IS NOT RELIABLE, and the failure mode is always the same: the
-// First Frame arrives, we answer it, and the Consecutive Frames never come. It is
-// never a refusal and never a partial payload — it is all 80 bytes or nothing.
-// Measured per-attempt success, sharing the bus with the 2 Hz mode-01 poller:
-//
-//   flow control → 0x7E7   2/8, 7/10, 7/10, and 4-5/12 across the latency sweep
-//   flow control → 0x7DF   2/8, 5/10
-//   no flow control        0/8, 0/5   ← so the flow control is genuinely required
-//
-// Somewhere between 25 % and 70 % per attempt, run to run, with no input of ours
-// that reliably moves it. Deliberately not dressed up as better than that: three
-// separate runs of ten-plus attempts disagree with each other, so retries are the
-// only honest answer and RETRY_ATTEMPTS is sized for the low end.
-//
-// One input does measurably matter, in the bad direction. Delaying the flow control
-// on purpose gave 4/12 at 0 ms, 5/12 at 10 ms, 3/12 at 20 ms and 1/12 at 40 ms — so
-// the VCU's patience runs out fast, and NOTHING here may sit between the First Frame
-// and its answer. The flow control is sent synchronously from the frame handler,
-// before the frame is even decoded. Seen from the other side: a completed transfer
-// had ZERO mode-01 replies interleaved and a failed one 50+, i.e. it finishes inside
-// one gap in the poller's own traffic or it does not finish at all.
+// ⚠️ THE FLOW-CONTROL FRAME DRAWS A SPURIOUS NEGATIVE RESPONSE, and misreading it is
+// what made this look impossible: something replies `03 7F 00 33` refusing a "service
+// 0x00" we never sent, whether or not the transfer then succeeds. So a negative
+// response naming a service we did not ask for is IGNORED rather than ending the wait.
+// (CAN_MAP.md read that NRC as mode 03 being locked behind SecurityAccess. It never was.)
+
+// ⚠️ THE TRANSFER IS NOT RELIABLE — 25-70 % per attempt, run to run, all 80 bytes or
+// nothing, with no input of ours that reliably improves it, so RETRY_ATTEMPTS is sized
+// for the low end. One input measurably makes it WORSE: any delay before the flow
+// control. NOTHING may sit between the First Frame and its answer, which is why the
+// flow control is sent synchronously from the frame handler, before the frame is
+// even decoded.
 
 const OBD_FUNCTIONAL_REQUEST_ID = 0x7df;
 

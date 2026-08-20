@@ -17,41 +17,21 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     // 0x200 — BMS: temps, SOC/SOH, pack V/I (20 Hz). ✅
     //
     // b0/b3 are logged as batt_temp_*_vcu, NOT as batt_temp_*, because what they mean
-    // depends on which BMS config is flashed. The VCU derates DC charging from 36 °C
-    // reported pack temperature, which is far too early for a watercooled pack, so the
-    // custom configs lower these two bytes to push that knee later. Only what is
-    // transmitted changes — every BMS protection threshold, the regen shaping curve and
-    // allowed_regen_a are still computed from the raw internal values.
-    //
-    // The size of that shift is NOT fixed, and assuming it is has already produced one
-    // false alarm. Four configs have been flashed:
-    //   5-custom-p32b-vcu-offset  a flat −15 °C. RETIRED — it broke charging.
-    //   11-full-conditional-offset  a no-op: its postprocessor line never ran (verified
-    //                             over 1900 samples, 0x660 b3/b4 identical to 0x200).
-    //   14-signbit-clamp  pinned the reported value at 35 °C for ANY true temperature
-    //                     above 35, and passed the true value through below it.
-    //                     SUPERSEDED — see 15 below.
-    //   15-bounded-clamp  (built 2026-08-09, NOT YET FLASHED) bounds that clamp at the top:
-    //                     below 35 °C it passes the truth through, from 35 to 54 °C it
-    //                     reports 35, and at 55 °C and above it reports the TRUTH again.
-    // So under the live config the difference batt_temp_hi − batt_temp_hi_vcu is 0 below
-    // 35 °C, (true − 35) from 35 to 54 °C, and 0 again from 55 °C up. A constant 15 is
-    // the one thing it is NOT, and it is not even monotonic in temperature. Do not treat
-    // any particular difference as a health check.
-    //
-    // The upper bound exists because the VCU enters limp mode at 55 °C (LIMP_B_TEMP = 55 in
-    // the A9 parameter block — obd-garage/DC_CHARGE_LIMITS.md §7 puts it plainly: pinned at
-    // 35, the unbounded clamp does not delay that protection, it disables it). Not
-    // hypothetical: this bike's own log has the pack at a true 55 °C on 2026-08-08 13:45 UTC
-    // with clamp_amount = 20 and batt_temp_hi_vcu last logged at 35.
-    //
-    // So these bytes are always "what the VCU and the dash see", which is honest under
-    // every config; the true temperature comes from 0x660 when one of these is loaded.
+    // depends on which BMS config is flashed: the custom configs lower these two bytes to
+    // push the VCU's 36 °C DC-charge derate knee later, so they are always "what the VCU
+    // and the dash see" rather than the truth. Only what is TRANSMITTED changes — every
+    // protection threshold and allowed_regen_a still come off the raw internal values.
+    // The true temperature comes from 0x660 when one of those configs is loaded, and
     // pack-temperature.ts resolves which source feeds batt_temp_lo/batt_temp_hi.
+
+    // ⚠️ The size of that shift is NOT fixed, and assuming it is has already produced one
+    // false alarm. Under the config this decoder targets it is 0 below 35 °C, (true − 35)
+    // from 35 to 54, and 0 again from 55 up — where the VCU's own limp protection has to
+    // see the truth. A constant 15 is the one thing it is NOT, and it is not even monotonic
+    // in temperature: do not treat any particular difference as a health check.
     //
-    // Measured 2026-08-02 under the retired flat-offset config: 0x200 reported 13/14 °C
-    // while 0x660 b3/b4 reported 28/29 °C. Measured 2026-08-04 under the clamp: 0x200
-    // reported 35/35 while 0x660 b3/b4 reported 36/36.
+    // The four flashed configs and what each does to these bytes:
+    // docs/can-decode-findings.md § "0x200 / 0x660 — pack temperature, and the clamp".
     case 0x200: {
       if (data.length < 8) return [];
       const packVolts = u16be(data[4], data[5]) / 10;
@@ -242,75 +222,38 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
           { key: "batt_temp_lo", value: signedByte(data[4]) }
         );
       }
-      // b5-7 instrument the temperature clamp, one byte each. They used to be a single
-      // 16-bit read of postprocessor slot Output3 spanning b5-6, which answered a
-      // one-off question (a 1-byte result lands in the LOW byte of a 16-bit slot —
-      // confirmed 2026-08-02, word 0x000E with b3 = 29 °C). The unconditional-offset
-      // config that used that layout is retired; it broke charging. Every config from 11
-      // on declares b5, b6 and b7 as three separate 1-byte signals, so the 16-bit decode
-      // would now silently pair two unrelated bytes: it reported 0x0202 on 2026-08-04 and
-      // was read as "the offset is not applied", when in fact diff = 2 and amount = 2 at a
-      // true 37 °C was the clamp working.
+      // b5-7 instrument the temperature clamp, ONE BYTE EACH — read out of
+      // 15-bounded-clamp.bms (CANTX_Frame_10, DLC 8):
       //
-      // Read out of 15-bounded-clamp.bms (CANTX_Frame_10, DLC 8):
-      //
-      //   clamp_gate   (b5, mem 2103) = the gate that decides which regime is in force.
-      //                  255 = closed, the clamp may subtract; 0 = open, the true
-      //                  temperature is going out untouched. Called `mask2` in the config,
-      //                  because it is an all-ones/all-zeroes byte ANDed over the amount.
-      //   clamp_amount (b6, mem 2087) = how much the clamp WOULD subtract, before the gate
+      //   clamp_gate   (b5, mem 2103) = which regime is in force. 255 = closed, the clamp
+      //                  may subtract; 0 = open, the truth goes out untouched.
+      //   clamp_amount (b6, mem 2087) = what it WOULD subtract, before the gate
       //   batt_temp_hi_vcu_echo (b7, mem 2075) = the result the VCU is actually shown
       //
       // and the identity that ties all three to b3, checkable from this frame alone:
       //
       //   batt_temp_hi_vcu_echo === batt_temp_hi − (clamp_amount & clamp_gate)
       //
-      // ⚠️ b6 is the PRE-gate amount, not "how much is being subtracted" — that changed
-      // with config 15 even though the byte's address did not. At 55 °C and up the gate
-      // opens, so clamp_amount reads (true − 35) ≥ 20 while nothing at all is subtracted.
-      // The two only coincide while the gate is closed, which is every ordinary
-      // temperature. Under 11-full-conditional-offset it is a flat 9 °C offset, and on
-      // 2026-08-04 that config's postprocessor line never ran at all, so b5 and b6 both
-      // read 0x00 through a whole DC charge while b7 carried the true temperature. So
-      // these two keys mean "whatever the live config feeds those slots"; only b7 is the
-      // same quantity in every config that has ever sent a long 0x660.
-      //
-      // The echo is not merely the same value as 0x200 b3, it is the same memory
-      // (mem 2075, in configs 11 through 15 — verified against the decrypted XML), so a
-      // disagreement between the two means a repointing error in the config rather than a
-      // decode error here. pack-temperature.ts watches for it.
-      //
-      // ── WHY b5 IS DECODED AS THE GATE AND NOT AS 14-signbit-clamp's clamp_diff ──
-      //
-      // There is no reliable way to tell 14 from 15 apart at runtime, and this decoder does
-      // not try. Both send 0x660 at DLC 8 with the same eight fields; only b5's source
-      // memory moved (2079 → 2103). Under 14 b5 was `true − 35` wrapped, which takes 255 at
-      // a true 34 °C and 0 at 35 °C — so a single frame at either of those temperatures is
-      // literally indistinguishable from a healthy config 15, and the two configs' visible
-      // behaviour only diverges above 54 °C.
-      //
-      // A per-frame discriminator does exist on paper (config 14 predicts b5 = (b3 − 35)
-      // mod 256, config 15 predicts 255 below 55 °C and 0 above; those differ at every
-      // temperature except exactly 34 °C) and it is deliberately NOT used. It is circular:
-      // it assumes the postprocessor chain is healthy in order to decide what the byte
-      // means, and telling us the chain is NOT healthy is the entire reason this byte is on
-      // the bus. It would mislabel precisely the frames it exists to catch. A statistical
-      // "b5 has only ever been 0 or 255" test is worse — it converges slowly and a pack
-      // parked at 34 °C fakes it indefinitely.
-      //
-      // So the honest answer is that the operator declares the config by flashing it, and
-      // this decoder is written for the config that is flashed. That is acceptable here,
-      // and would NOT be under batt_temp_lo/batt_temp_hi, for two reasons:
-      //   • b3/b4 are identical under both configs, so the true-temperature keys — the ones
-      //     with years of history that pack-temperature.ts exists to protect — cannot be
-      //     corrupted by getting this wrong. Only diagnostic instrumentation can.
-      //   • being wrong is recoverable rather than silent. Config 14's b5 was exactly
-      //     (batt_temp_hi − 35) mod 256, verified across all 198 same-timestamp pairs in the
-      //     ride log (true 28…55 °C, zero exceptions), so if this decode is applied to a
-      //     bike still on 14 the rows can be reconstructed from batt_temp_hi in the same
-      //     frame — nothing is destroyed. And it will not be quiet about it:
-      //     pack-temperature.ts warns once on any b5 that is not a mask.
-      //
+      // ⚠️ NOT a 16-bit read of b5-6, which is what this used to be: every config from 11 on
+      // declares three separate bytes, so the old decode silently paired two unrelated ones
+      // and misreported a working clamp as "the offset is not applied".
+
+      // ⚠️ b6 is the PRE-gate amount, not "how much is being subtracted" — above 55 °C the
+      // gate opens and it reads (true − 35) while nothing at all is subtracted. So b5 and b6
+      // mean "whatever the live config feeds those slots"; only b7 is the same quantity in
+      // every config that has ever sent a long 0x660. The echo is not merely the same VALUE
+      // as 0x200 b3, it is the same MEMORY, so a disagreement means a repointing error in
+      // the config rather than a decode error here — pack-temperature.ts watches for it.
+
+      // ❌ b5 is decoded as the gate and NOT as 14-signbit-clamp's clamp_diff, and no runtime
+      // discriminator is attempted even though one exists on paper. It would be CIRCULAR: it
+      // assumes the postprocessor chain is healthy in order to decide what the byte means,
+      // and telling us the chain is NOT healthy is the entire reason this byte is on the bus.
+      // So the operator declares the config by flashing it. Acceptable only because b3/b4 are
+      // identical under both configs — the true-temperature keys cannot be corrupted by
+      // getting this wrong — and because being wrong is recoverable rather than silent.
+      // Full argument: docs/can-decode-findings.md § "0x660 b5-7 — the clamp instrumentation".
+
       // clamp_gate is decoded UNSIGNED, unlike the clamp_diff it replaces. 255 is a mask of
       // all ones, not minus one; signing it would render the normal, healthy, everything-is-
       // working state as "−1" on every chart and invite exactly the arithmetic (gate − 1,
@@ -382,7 +325,7 @@ export function decodeBmsFrame(id: number, data: Buffer): DecodedValue[] {
     // therefore static by design — an unchanging value here is not a stuck signal —
     // and it goes stale if someone edits the limits in the Diagnostic Software
     // without regenerating the frame.
-    //
+
     // Reading cell_min_mv (0x203) against cell_cutoff_mv gives "how close am I to
     // cutting out", but two things stop that from being a cliff edge:
     // DischargeModeUnderVoltageCutOffTimer is 60 s, so the minimum cell has to stay
@@ -492,27 +435,20 @@ export type LmuTemperatureSensor = "bat1" | "pcb1" | "pcb2";
 // state), and these are three separate messages, so the module can advance between
 // 0x662 and 0x664.
 //
-// The multiplexing itself is confirmed by the manual — from v6.11 the BMCU polls the
-// LMUs one by one and overwrites mem [2129]-[2149] with each one's data, which is
-// also why 20 Hz matters: the manual's recommended broadcast interval for the block
-// is 50 ms, and sampling slower than the BMCU's poll silently skips modules.
+// The multiplexing is confirmed by the manual — from v6.11 the BMCU polls the LMUs one
+// by one and overwrites mem [2129]-[2149] with each one's data, which is also why 20 Hz
+// matters: sampling slower than the BMCU's poll silently skips modules.
 //
 // The range check below still earns its keep: if byte 0 ever came back static or out
 // of range we would keep re-logging one module rather than smear its values across
 // the others' keys.
-//
-// KNOWN GAP (config-side, not a decode fault): 0x662 samples all 11 modules evenly,
-// but 0x663 and 0x664 never sampled LMU 1 or 2 across 499 frames each on 2026-08-02,
-// and the rest is heavily skewed. All three frames read the same mem 2129 at the same
-// 20 Hz, so the fixed CAN transmit order is phase-locked to the BMCU's LMU poll.
-// Consequence: cells 4-8 of LMU 1 and 2 were unobtainable, and it was a systematic
-// zero rather than sparse sampling — a longer capture would not have filled it in.
-// Keying every value off the LMU number in its own frame is what made this show up as
-// missing data instead of as another module's cells being silently overwritten.
-//
-// Fixed config-side in 6-custom-p32b-lmu-phase.bms by slowing 0x663 to 150 ms and
-// 0x664 to 250 ms so they no longer march in step with the poll. No decoder change was
-// needed, which is the whole point of keying off the in-frame module number.
+
+// ⚠️ Keying off the in-frame module number is what made a real config-side gap show up as
+// MISSING DATA rather than as another module's cells being silently overwritten: 0x663 and
+// 0x664 were phase-locked to the BMCU's poll and never sampled LMU 1 or 2 at all — a
+// systematic zero, not sparse sampling, so a longer capture would not have filled it in.
+// Fixed config-side by de-phasing those two frames, with no decoder change needed, which is
+// the whole point. Detail: docs/can-decode-findings.md § "0x662 / 0x663 / 0x664".
 function decodeLmuCellVoltages(data: Buffer, cellNumbers: number[]): DecodedValue[] {
   const lmuNumber = data[0];
   // Always log the selector itself, valid or not. Without it, "byte 0 isn't the LMU

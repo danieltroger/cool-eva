@@ -134,31 +134,22 @@ export const SIGNALS: SignalDef[] = [
   { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream" },
   { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
   // Clamp instrumentation, one byte each. No deadband: these are small integers whose
-  // whole purpose is to show the clamp's arithmetic, so smoothing would hide it.
-  // clamp_gate is the mask that decides which regime is in force — 255 while the clamp is
-  // subtracting, 0 while the true temperature is going to the VCU (below 35 °C, or from
-  // 55 °C up where the VCU's limp protection has to be able to see the truth). clamp_amount
-  // is what it would subtract; what it actually subtracts is clamp_amount & clamp_gate.
+  // whole purpose is to show the clamp's arithmetic, so smoothing would hide it. What the
+  // clamp actually subtracts is clamp_amount & clamp_gate.
   //
-  // Both carry NO unit on purpose, and for two different reasons. clamp_gate is not a
-  // quantity at all, it is a byte of all ones or all zeroes. clamp_amount happens to be
-  // degrees under the current config but is a raw config-dependent slot — under
-  // 11-full-conditional-offset it was a flag × 9. Tagging either "°C" would also opt it into
-  // bounds.js's BY_UNIT["°C"] = [-40, 200] fallback, which would reject 255 as a dead sensor
-  // and draw the healthy state as a fault. Same treatment as bms_post_processor_1 and the
-  // iso_test_* signals.
-  //
-  // clamp_gate REPLACES clamp_diff, which 206 rows have already shipped under (Aug 2026,
-  // 14-signbit-clamp) meaning "true pack temp high − 35 °C, signed". It is retired rather
-  // than repurposed: −1 under the old meaning is a pack at 34 °C, and −1 is also what a
-  // signed read of a closed gate would say, so reusing the key would put two unrelated
-  // meanings in one series with nothing in the data to mark where one ends. Retiring it
-  // costs nothing, because clamp_diff was exactly batt_temp_hi − 35 and always was —
-  // verified over all 198 same-timestamp pairs in the log, true 28…55 °C, no exceptions — so
-  // every old row can still be reconstructed from batt_temp_hi, which is in the same frame.
-  // The units and group of those rows live in the sealed log segments themselves
-  // (scripts/decrypt-log.ts prefers them over this registry), so dropping the entry here
-  // does not orphan them.
+  // ⚠️ Both carry NO unit on purpose, and for two different reasons: clamp_gate is not a
+  // quantity at all but a byte of all ones or all zeroes, and clamp_amount is a raw
+  // config-dependent slot that only happens to be degrees today. Tagging either "°C" would
+  // opt it into bounds.js's BY_UNIT fallback, which would reject 255 as a dead sensor and
+  // draw the HEALTHY state as a fault. Same treatment as bms_post_processor_1 and iso_test_*.
+
+  // clamp_gate REPLACES clamp_diff, which 206 rows have already shipped under. Retired
+  // rather than repurposed: −1 under the old meaning is a pack at 34 °C and −1 is also what
+  // a signed read of a closed gate would say, so reusing the key would put two unrelated
+  // meanings in one series with nothing in the data to mark where one ends. Retiring costs
+  // nothing — clamp_diff was exactly batt_temp_hi − 35, verified over all 198 same-timestamp
+  // pairs — so every old row is reconstructible, and their units live in the sealed log
+  // segments rather than here. docs/can-decode-findings.md § "Units and groups".
   { key: "clamp_gate", unit: "", group: "bms", source: "stream" },
   { key: "clamp_amount", unit: "", group: "bms", source: "stream" },
   // Echo of the byte 0x200 b3 carries — genuinely a temperature, so "°C" is right here.
@@ -186,24 +177,20 @@ export const SIGNALS: SignalDef[] = [
   // 0x662-0x664 b0 — the raw module selector, logged so that "byte 0 isn't the LMU
   // number after all" is distinguishable from "the frames never arrived": with no
   // per-cell signals and no mux row, they never arrived; with a mux row and no cells,
-  // the selector is out of range and the assumption is wrong.
-  //
-  // The one shape the guard can't see is a 0-BASED selector — modules 0…10 would drop
-  // module 0 and shift the rest onto the wrong keys, with healthy-looking cells. That
-  // is ruled out by measurement, not by the guard: the config-5 capture saw all eleven
-  // LMUs on 0x662, which a 0-based scheme could not produce.
-  //
-  // The deadband deliberately stops it after the first row per boot. It rotates at
-  // 20 Hz, so log-on-change would be ~1.7M rows/day for a number that never carries
-  // new information once you've seen it move. What keeps the rotation observable is
-  // the 5 s full-snapshot heartbeat in ws.ts, which broadcasts liveState — liveState
-  // updates on every sample, but notifyChange sits inside the deadband branch, so the
-  // patch path never fires for this signal. That heartbeat is therefore load-bearing
-  // here: drop it as "redundant" and this becomes invisible.
+  // the selector is out of range and the assumption is wrong. The one shape the guard
+  // can't see is a 0-BASED selector, and that is ruled out by measurement rather than by
+  // the guard — the config-5 capture saw all eleven LMUs on 0x662.
   //
   // The only signal here written by three frames, and safe precisely because they all
   // read the same memory (2129) — unlike a duplicated measurement, they can't disagree
   // in a way that would make the value flap.
+
+  // ⚠️ The deadband deliberately stops it after the first row per boot (20 Hz rotation
+  // would be ~1.7 M rows/day for a number that carries nothing new once you have seen it
+  // move). What keeps the rotation OBSERVABLE is the 5 s full-snapshot heartbeat in ws.ts:
+  // liveState updates on every sample, but notifyChange sits inside the deadband branch,
+  // so the patch path never fires for this signal. That heartbeat is load-bearing here —
+  // drop it as "redundant" and this becomes invisible.
   { key: "lmu_cell_mux", unit: "", group: "bms", source: "stream", deadband: 100 },
 
   // 0x025 (inst) / 0x10A (residual) — energy
@@ -233,16 +220,13 @@ export const SIGNALS: SignalDef[] = [
   // ⚠️ An EVENT signal: the frame arrives only when the dial moves, so the tile shows the
   // last setting seen and greys out 8 s later. That is honest, and charge-setpoint.ts
   // explains why it must not be papered over with a timer.
-  //
-  // ⚠️ And a consequence of log-on-change that bites HERE and nowhere else: record() seals
-  // a row only when the value differs from `lastLogged` by more than the deadband, so
-  // RE-SELECTING THE VALUE YOU ALREADY HAD WRITES NO ROW — and notifyChange, inside the
-  // same branch, does not fire either. Dial 5 A, then dial 5 A again on the next charge in
-  // the same process lifetime, and the second one leaves no trace in the ride log. The
-  // dashboard is fine (the 5 s snapshot heartbeat refreshes ts, so the tile un-greys), but
-  // an absent row means "not touched OR re-picked the same number", not "not touched".
-  // waypoint_seq escapes this by being a monotonic counter; a setting cannot. Setting a
-  // deadband here would make it strictly worse, which is why there is none.
+
+  // ⚠️ A consequence of log-on-change that bites HERE and nowhere else: record() seals a row
+  // only when the value differs from lastLogged by more than the deadband, so RE-SELECTING
+  // THE VALUE YOU ALREADY HAD WRITES NO ROW, and notifyChange does not fire either. So an
+  // absent row means "not touched OR re-picked the same number", not "not touched".
+  // waypoint_seq escapes this by being a monotonic counter; a setting cannot. A deadband
+  // here would make it strictly worse, which is why there is none.
   { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
   // 0x605 / 0x610 / 0x615 / 0x620 / 0x625 — the charge manager (src/can/charge-manager.ts),
   // added 2026-08-19 from 29 charge sessions. Present only while a cable is live, EXCEPT the
@@ -250,16 +234,15 @@ export const SIGNALS: SignalDef[] = [
   // included, so fast_dc_limit_max_a, dc_charging and ac_charging log one row on every boot
   // rather than only on a charge.
   //
-  // These are the only signals that see a DC fast charge at all: the AC charger's frames
+  // ⚠️ These are the only signals that see a DC fast charge at all: the AC charger's frames
   // (0x305/0x306, above) never appear during one, so every `charge` signal above this block
-  // reads "nothing happening" at a fast charger while 20 kW goes in. Which is exactly why
-  // three of the names below are so close to older ones, and the pairs are worth telling
-  // apart before reading either — the ALL view sorts by group, so each pair renders adjacent:
+  // reads "nothing happening" at a fast charger while 20 kW goes in. Which is why three of
+  // the names below are so close to older ones, and the ALL view renders each pair adjacent:
   //
   //   fast_dc_a           the DC fast-charge port   NOT dc_a, the onboard charger's DC output
   //   ac_supply_limit_a   the supply's ceiling      NOT charge_limit_a, the setpoint it bounds
   //   fast_dc_limit_max_a the bike's fixed 75 A     NOT charger_max_dc_a, the AC charger's max
-  //
+
   // And there are now three DC current limits, which really are three different numbers —
   // the ALL view renders them together, so read the qualifier and not just the prefix:
   //
@@ -442,13 +425,10 @@ export const SIGNALS: SignalDef[] = [
   // `V_TC_EVENT`. In `controls` beside the ABS flags, which is where they belong twice
   // over: they are the same kind of thing (a rider aid saying "I just acted"), and
   // `controls` is a BOOLEAN_GROUP so bounds.js gates them to [0, 1] with no entry
-  // needed — the same free gating the six 0x0A0 flags get. No deadband, for the reason
-  // every flag here carries none: |1 − 0| > 1 is false, so a deadband of 1 would log
-  // one row at boot and then silently never again.
-  //
-  // Cheap despite 0x109 being 100 Hz, because they are events: `tc_event` is set in 1326
-  // of 438 228 frames (0.3 %) and `eabs_event` in 26, so log-on-change is a few hundred
-  // edges across many hours rather than anything like a 100 Hz signal.
+  // needed. No deadband, for the reason every flag here carries none: |1 − 0| > 1 is
+  // false, so a deadband of 1 would log one row at boot and then silently never again.
+  // Cheap despite 0x109 being 100 Hz, because they are events — `tc_event` is set in
+  // 1326 of 438 228 frames and `eabs_event` in 26.
   //
   // ⚠️ `tc_event` is NOT `abs_rear_control_active`, and the whole point of having both is
   // that they disagree. This is the VCU's traction control, firing at 77 % throttle and
@@ -503,21 +483,16 @@ export const SIGNALS: SignalDef[] = [
   //
   // ⚠️ Gravity-referenced, so neither means what a rider would assume from the name.
   // attitude_roll_deg reads ≈0 in a steady corner, because the bike leans into the
-  // resultant, and outside one 230 ms transient it never left ±17.9° over a week of
-  // riding that reached 186 km/h; attitude_pitch_deg mostly reports braking and
-  // acceleration rather than gradient. They answer "which way is down, as far as the
-  // bike can tell" — not "how far over is the bike".
-  //
+  // resultant; attitude_pitch_deg mostly reports braking and acceleration rather than
+  // gradient. They answer "which way is down, as far as the bike can tell".
+
   // 1.0° replaces the old 100 counts, which under the wrong scale was believed to be
   // ~0.5 g and is really 10° — coarse enough to quantise a lean trace into three or four
-  // levels, which is what made the Grafana panel unreadable. The old comment's objection
-  // was row rate, so here is the measured answer. Summing |Δ| across the rows already
-  // logged puts a 1.0° deadband at ≥161 000 rows for pitch and ≥6 600 for roll over the
-  // seven days of ride log that exist; over that same window throttle_pct logged
-  // 1 038 747 rows, speed_can_kmh 828 304 and inst_consumption_wh 1 745 373. Those
-  // floors are floors — they cannot see the movement the old 10° deadband hid — but the
-  // headroom is an order of magnitude, and the instantaneous ceiling is still the 100 Hz
-  // frame rate. Count a real ride's rows before tightening further.
+  // levels, which is what made the Grafana panel unreadable. The old objection was row
+  // rate; the measured answer is a floor of ≥161 000 rows for pitch and ≥6 600 for roll
+  // over the seven days of log that exist, against 1 038 747 for throttle_pct in the same
+  // window — an order of magnitude of headroom, with the 100 Hz frame rate still the
+  // ceiling. Count a real ride's rows before tightening further.
   { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
   { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
 
@@ -529,13 +504,11 @@ export const SIGNALS: SignalDef[] = [
   // ⚠️ NO DEADBAND, ever, on any of these, and that is load-bearing rather than a
   // default. signals.ts logs when `Math.abs(value - lastLogged) > deadband`, so a
   // deadband of 1 on a 0/1 signal makes `|1 − 0| > 1` false and the signal is never
-  // logged again after its first sample — silently, with no error, forever. The
-  // chatter a deadband would exist to tame does not exist here anyway: the busiest of
-  // these bits moved 141 times in twelve hours of capture.
+  // logged again after its first sample — silently, with no error, forever.
   //
-  // The shortest press measured is 30 ms and the median is ~140 ms, against a 10 ms
-  // frame period, so every real press is sampled by at least three frames and both its
-  // edges are logged. What log-on-change cannot do is make a 30 ms press VISIBLE — see
+  // The shortest press measured is 30 ms and the median ~140 ms, against a 10 ms frame
+  // period, so every real press is sampled by at least three frames and both its edges
+  // are logged. What log-on-change cannot do is make a 30 ms press VISIBLE — see
   // public/lib/press.js, which latches it for the display without touching the log.
   { key: "btn_mode_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit0
   { key: "btn_mode_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit1
@@ -551,40 +524,31 @@ export const SIGNALS: SignalDef[] = [
   // IMO, maybe also brake since that's technically a button?".
   //
   // Nothing but the `group` field does this. views/all.js picks the buttons section by
-  // `groupOf(key) === "buttons"` and nothing else, its header count is
-  // `groupKeys.length`, and `controls` and `buttons` are both BOOLEAN_GROUPS in
-  // bounds.js — so the 0/1 gate the moved keys already had is unchanged and the section
-  // reads "buttons · 13" on its own.
-  //
+  // `groupOf(key) === "buttons"` and nothing else, and `controls` and `buttons` are both
+  // BOOLEAN_GROUPS in bounds.js — so the 0/1 gate the moved keys already had is unchanged.
   // None of these five is momentary, which the tile had to learn: see public/lib/press.js
   // for the measured hold durations, the 1.46 Hz flasher, and why the answer is a clock
   // reading rather than a list of held-state keys.
+
+  // `high_beam` is 0x102 b0 bit 6, the SWITCH — not `high_beam_lamp`, which is b2 bit 0 and
+  // stays in `controls`. They agreed in all 1 103 000 frames ever captured, so measurement
+  // cannot separate them; the switch wins because a BUTTONS section should show what the
+  // rider's thumb moves, and because it is the bit public/app.js's three-flash tab gesture
+  // reads. The day they disagree is the day the bulb has failed, and having BOTH keys is
+  // what makes that visible.
   //
-  // `high_beam` is 0x102 b0 bit 6, the SWITCH — not `high_beam_lamp`, which is b2 bit 0
-  // and stays in `controls`. Two reasons for the switch over the lamp, given they agreed
-  // in all 1 103 000 frames ever captured and so cannot be told apart by measurement: a
-  // BUTTONS section should show the thing the rider's thumb moves, and this is also the
-  // bit public/app.js's own three-flash tab gesture reads, so the tile shows exactly what
-  // the dashboard is reacting to. The day they disagree is the day the bulb has failed,
-  // and having both keys is what makes that visible.
-  //
-  // The blinkers are the LAMP outputs (b2 bits 2/3), which is deliberate: "is my
-  // indicator on" is a question about the lamp. They are the flashers press.js has to
-  // coalesce. The b0 indicator SWITCHES are real and their sides are now known — bit 3
-  // right, bit 4 left, measured 2026-08-19 — but decoding them would put four tiles on
-  // screen for two indicators; decode.ts carries the evidence for whenever that changes.
-  //
-  // `front_brake` and `rear_brake` are b2 0x20 and 0x40, and they are two keys because
-  // they are two circuits: the rear pedal alone leaves 0x0A0's front brake pressure at
-  // 0 bar (owner, on the bike, 2026-08-19) and 1 899 captured frames carry both bits at
-  // once. Merging them into one "brake" tile would hide which lever is being used, which
-  // is most of what there is to see. ⚠️ These are on the OUTPUT byte, so strictly they
-  // are the brake-light lines rather than lever switches — there is no lever-switch bit
-  // on b0 to prefer, and they track braking closely (front: 491 applications, median
-  // 2.24 s). The bar-valued `front_brake_pressure_bar` from 0x0A0 is the front circuit's
-  // analogue partner and stays in `controls`, where a number belongs: a measurement in a
-  // grid of on/off tiles would read as a fault, not a feature.
-  //
+  // The blinkers are the LAMP outputs (b2 bits 2/3), deliberately: "is my indicator on" is
+  // a question about the lamp. The b0 indicator SWITCHES are real and their sides are known
+  // (bit 3 right, bit 4 left), but decoding them would put four tiles on screen for two
+  // indicators — decode.ts carries the evidence for whenever that changes.
+
+  // `front_brake` and `rear_brake` are two keys because they are two circuits, and merging
+  // them would hide which lever is in use. ⚠️ They are on the OUTPUT byte, so strictly they
+  // are the brake-light lines rather than lever switches — there is no lever-switch bit on
+  // b0 to prefer, and they track braking closely. `front_brake_pressure_bar` is the front
+  // circuit's analogue partner and stays in `controls`, where a number belongs: a
+  // measurement in a grid of on/off tiles would read as a fault, not a feature.
+
   // ⚠️ One loose end, deliberately left: db.ts writes the `signal` table with ON
   // CONFLICT(key) DO NOTHING, so rides.db keeps `grp = 'controls'` for the three moved
   // keys forever. The live dashboard reads the group off this registry and is right
@@ -608,15 +572,13 @@ export const SIGNALS: SignalDef[] = [
   // writes more; and each frame's own rate is the hard ceiling (10 Hz = 36 000 rows/h).
   //
   // The whole block costs 3820 rows over that lap — 33 700 rows/h of bike-on time, against
-  // 64 100/h for the 224 signals already logged from the same capture. So this is a ~53 %
-  // increase in the ride log's row rate while riding, for the 31 signals that batch added, and
-  // the three biggest contributors are the torque pair and the 12 V load current: between them
-  // they are more than half of it, and 0x100's fourteen flags are 14 rows in total. (0x0A0's six
-  // flags joined on 2026-08-19 and are NOT in that measurement; they cost ~52 rows a ride, argued
-  // where they are declared below.) That is the number to argue with if the SD card starts
-  // complaining; the deadbands most worth revisiting first are noted per signal below, and every
-  // one of them was chosen off a measured curve rather than a round number.
-  //
+  // 64 100/h for the 224 signals already logged from the same capture, i.e. a ~53 % increase
+  // in the ride log's row rate while riding for the 31 signals that batch added. The three
+  // biggest contributors are the torque pair and the 12 V load current. That is the number
+  // to argue with if the SD card starts complaining; every deadband here was chosen off a
+  // measured curve rather than a round number, and the per-signal figures are in
+  // docs/can-decode-findings.md § "The signal registry".
+
   // 0x0A0 — the ABS module. See src/can/abs.ts for what the capture proves and what it can't.
   //
   // The two wheel speeds get 0.25 km/h rather than the 0.5 that speed_can_kmh uses. They are
@@ -644,20 +606,16 @@ export const SIGNALS: SignalDef[] = [
   // enforced rather than merely intended: scripts/check-can-decoders.ts asks bounds.js which
   // signals are gated to 0/1 and fails the build for any of them carrying one.
   //
-  // Free to log, and this is measured rather than assumed. Three of the six have never been seen
-  // set in 565 376 captured frames of this ID — every 0x0A0 frame in the archive, rescanned
-  // 2026-08-20 — so they are one row each at boot and nothing after. The three that do fire,
-  // `abs_event`, `abs_rear_control_active` and `abs_front_control_active`, fire in 162 frames
-  // total across 15 captures — 61 bursts of 1-17 frames, median 2, so a few hundred edges spread
-  // over many hours of riding. Against the 33 700 rows/h this block already costs, that is
-  // nothing, and there is no deadband that could reduce it without hiding the whole signal.
+  // Free to log, and measured rather than assumed: three of the six have never been seen set
+  // in 565 376 captured frames, so they are one row each at boot; the three that do fire cost
+  // 162 frames in 61 bursts across 15 captures. Against the 33 700 rows/h this block already
+  // costs that is nothing, and no deadband could reduce it without hiding the whole signal.
   //
   // No entry is needed in public/lib/bounds.js for any of them: `diag` and `controls` are both
-  // BOOLEAN_GROUPS and their unit is "", so the group rule already gates them to [0, 1] — which
-  // is exactly right here, and is the opposite of the situation `abs_warning_lamp` above had to
-  // be named for. That gate is also what catches a decoder returning the vendor's mask (16 or
-  // 128) instead of the bit; see the note in src/can/abs.ts on why they read through `bit()`.
-  //
+  // BOOLEAN_GROUPS and their unit is "", so the group rule already gates them to [0, 1] — the
+  // opposite of the situation `abs_warning_lamp` above had to be named for. That gate is also
+  // what catches a decoder returning the vendor's mask (16 or 128) instead of the bit.
+
   // The two `*SENS_FAIL` bits go in `diag` beside the warning lamp they would light. The event
   // and the two channel-active bits go in `controls`, next to front_brake_pressure_bar and the
   // combined `brake` switch, because that is where you look when watching the brakes rather
@@ -669,37 +627,24 @@ export const SIGNALS: SignalDef[] = [
   // names are close enough to be worth separating explicitly. `rear_brake` (0x102 b2 0x40, in
   // the `buttons` group) is the pedal switch — the rider's foot. `abs_rear_control_active`
   // (0x0A0 b6 bit2) is the ABS module modulating the rear channel.
-  //
-  // ⚠️ Corrected 2026-08-20 against every capture in the archive rather than two of them (245
-  // files, 565 376 frames of 0x0A0, 162 interventions in 15 captures). They are NOT disjoint from
-  // the brakes, which is what this note used to say:
-  //   • `rear_brake` still is — the rear pedal is on in **0 of 162** intervention frames, across
-  //     all 15 captures. That half held up and is now much better evidenced.
-  //   • `front_brake` is NOT. It is on in **35 of 162**, with 1-21 bar of line pressure in the
-  //     same 35. The "neither brake switch was on" reading was true of the 25 frames from
-  //     2026-08-04 and does not generalise.
-  // ❌ The 🟡 that stood here — that an intervention with no brake applied is rear-wheel slip
-  // under regen on a closed throttle — is withdrawn as the general explanation. The throttle is
-  // OPEN at 117 of the 162, and traction control is refuted as the alternative (drive torque is
-  // cut in 0 of 93 throttle-open interventions). src/can/abs.ts carries the measurement and the
-  // split; the short version is that both regimes produce these and only the braking one has a
-  // confirmed cause.
-  //
-  // ⚠️ These two are LOG-FIRST, and the All tab's flash should not be relied on to catch one.
-  // A typical intervention is 1-2 frames, 100-200 ms (median 2 frames over 61 bursts; the
-  // longest in the archive is 17 frames / 1.6 s), which is at the edge of what a person notices —
-  // the same problem public/lib/press.js was written for, and it chose a 600 ms latch because
-  // ~200 ms is roughly the threshold. `controls` gets the plain RawTile, which renders the live
-  // value with no latch, so on screen an intervention is a brief flip to 1 and back. The RIDE
-  // LOG is unaffected: no deadband, so both edges are sealed, and that is where an intervention
-  // is meant to be read from. Deliberately not fixed here rather than overlooked, and the shape
-  // of the fix is now known: views/all.js picks its latching tile by `groupOf(key) ===
-  // BUTTON_GROUP` and press.js's derive tracks that one group, so the change is to generalise
-  // that switch from a single group to a per-key momentary SET, and add these two to it.
-  // Moving them into `buttons` instead would be wrong — nothing presses an ABS intervention,
-  // and that tile's whole vocabulary is "PRESSED", "3 presses", "held for". A separate
-  // momentary path in views/all.js would be worse still. Neither belongs in a change whose
-  // subject is a frame decode, so it is named here rather than done here.
+
+  // ⚠️ Corrected 2026-08-20 against every capture in the archive rather than two of them: these
+  // are NOT disjoint from the brakes, which is what this note used to say. `rear_brake` still is
+  // (0 of 162 intervention frames), but `front_brake` is ON in 35 of 162, with 1-21 bar of line
+  // pressure in the same 35. ❌ And the 🟡 that stood here — that an intervention with no brake
+  // applied is rear-wheel slip under regen — is WITHDRAWN as the general explanation: the
+  // throttle is open at 117 of the 162, and traction control is refuted as the alternative.
+  // Both regimes produce these and only the braking one has a confirmed cause. Measurement and
+  // split: src/can/abs.ts and docs/can-decode-findings.md § "The six flags".
+
+  // ⚠️ These two are LOG-FIRST, and the All tab's flash should not be relied on to catch one: a
+  // typical intervention is 1-2 frames, 100-200 ms, which is at the edge of what a person
+  // notices, and `controls` gets the plain RawTile with no latch. The RIDE LOG is unaffected —
+  // no deadband, so both edges are sealed, and that is where an intervention is meant to be
+  // read from. Deliberately not fixed here rather than overlooked, and the shape of the fix is
+  // known: generalise views/all.js's `groupOf(key) === BUTTON_GROUP` latch switch to a per-key
+  // momentary SET. Moving them into `buttons` instead would be WRONG — nothing presses an ABS
+  // intervention, and that tile's vocabulary is "PRESSED", "3 presses", "held for".
   { key: "abs_front_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x10 A_FSENS_FAIL
   { key: "abs_rear_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x20 A_RSENS_FAIL
   { key: "abs_event", unit: "", group: "controls", source: "stream" }, // b4 0x80 A_EVENT
@@ -733,18 +678,14 @@ export const SIGNALS: SignalDef[] = [
   // (23 806, 30 846 and 34 872 rows/h at log-on-change, i.e. essentially the frame rate), so
   // all three need a deadband or they are the chattiest thing on the bus after the BMS cells.
   //
-  // The two rails: 30 mV, measured 2493 and 405 rows/h against 23 806 and 30 846. There is a
-  // cliff just past that worth knowing about before anyone tunes it — the rails only moved 64
-  // and 47 mV across the WHOLE lap, so a 50 mV deadband logs exactly one row each and then goes
-  // silent, and what these exist to catch is a rail sagging. 30 mV resolves a 0.24 % drift on a
-  // 12.7 V rail, which is early-warning territory; hundreds of millivolts is what an actually
-  // failing converter does, and either band sees that.
-  //
-  // 400 mA on the load current, measured 2229 rows/h against 34 872 (250 mA would be 9110 — the
-  // cliff is between 300 and 400 here too). Sized against the SMALLEST load step actually
-  // identified on this bike, the brake light at +693 mA: 400 is 58 % of it, so every switching
-  // event still crosses with margin while the 10 Hz measurement dither does not. The high beam
-  // (+1788 mA) and blinker (+1030 mA) clear it by 4.5× and 2.6×.
+  // ⚠️ The two rails get 30 mV, and there is a CLIFF just past it: the rails moved only 64 and
+  // 47 mV across the whole lap, so a 50 mV deadband logs one row each and then goes silent —
+  // on signals whose whole purpose is to catch a rail sagging. 30 mV resolves 0.24 % drift.
+
+  // 400 mA on the load current, sized against the SMALLEST load step actually identified on
+  // this bike, the brake light at +693 mA: 400 is 58 % of it, so every switching event still
+  // crosses with margin while the 10 Hz measurement dither does not. (250 mA would be 9110
+  // rows/h against 2229 — the cliff is between 300 and 400 here too.)
   { key: "psu_12v_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30 },
   { key: "psu_12v_lowpower_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30 },
   { key: "psu_12v_load_ma", unit: "mA", group: "powertrain", source: "stream", deadband: 400 },

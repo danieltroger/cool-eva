@@ -10,42 +10,29 @@ import { monotonicNow, since } from "../monotonic.ts";
 
 // Decides which frame is allowed to write batt_temp_lo / batt_temp_hi.
 //
-// Those two keys have years of history behind them and must keep meaning the TRUE
-// pack temperature. On a stock Energica that is 0x200 bytes 0/3, full stop. Once the
-// custom LiBAL config is flashed those bytes carry the VCU's lowered view instead — to
-// push its DC-charge derate knee, which starts at a reported 36 °C, past the point where
-// a watercooled pack actually needs derating — and the truth moves to the long 0x660.
-// How much lower depends on the config and is not a fixed number: 15-bounded-clamp, which
-// this decoder targets, reports 35 °C for any true temperature from 35 to 54 and the truth
-// either side of that band. (It is built but NOT yet flashed as of 2026-08-09 — the bike
-// still runs 14-signbit-clamp, which never reports above 35. Both send the same frames at
-// the same length, so the bus cannot tell them apart; see decode-bms.ts on why no runtime
-// discriminator is offered.) This routing is the ONLY config-dependent decode in the repo;
-// every other frame and correction is right on both.
+// Those two keys have years of history and must keep meaning the TRUE pack temperature.
+// On a stock Energica that is 0x200 b0/b3; once the custom LiBAL config is flashed those
+// bytes carry the VCU's lowered view and the truth moves to the long 0x660. This routing
+// is the ONLY config-dependent decode in the repo. No single frame announces which config
+// is flashed, so it is established from what arrives: a long 0x660 proves the offset config
+// and carries the truth itself; two consecutive short ones prove the extended config
+// WITHOUT the offset, so 0x200 is true; and no 0x660 at all, while the BMS is demonstrably
+// transmitting, means a stock pack.
+
+// ⚠️ Until one of those holds, batt_temp_lo/batt_temp_hi are NOT EMITTED AT ALL. That is
+// the rule this module exists to enforce, and it is deliberately asymmetric: a gap in a
+// log-on-change series reads as "not known yet", whereas a lowered value under the
+// true-temperature key reads as a plunge indistinguishable from a failing sensor — and the
+// ride log is SEALED, so it can never be corrected afterwards. There is no such thing as a
+// safe fallback here; going quiet IS the fallback.
 //
-// No single frame announces which config is flashed, so it has to be established from
-// what arrives:
-//   • a long 0x660 (DLC >= OFFSET_CONFIG_MIN_DLC) proves the offset config, and carries
-//     the true temperatures itself;
-//   • two consecutive short 0x660s prove the extended config WITHOUT the offset, so
-//     0x200 is true;
-//   • no 0x660 at all, while the BMS is demonstrably transmitting, means a stock pack.
+// CUSTOM_BMS_CONFIG says which config to expect, but the frames say what actually arrived
+// and THE FRAMES WIN. The flag decides nothing that could corrupt data — only how the one
+// case the bus can't answer is read, and which mismatch gets warned about. This is routing,
+// not deriving: a measured byte is passed through under its historical key or left alone.
 //
-// Until one of those holds, batt_temp_lo/batt_temp_hi are not emitted AT ALL. That is
-// the rule the module exists to enforce, and it is deliberately asymmetric: a gap in a
-// log-on-change series costs nothing and reads as "not known yet", whereas a lowered
-// value under the true-temperature key reads as a plunge indistinguishable from a failing
-// sensor — up to 19 °C under the bounded clamp, and it was 15 °C flat under the retired
-// offset config — and the ride log is sealed, so it can never be corrected afterwards.
-// There is no such thing as a safe fallback here; going quiet IS the fallback.
-//
-// CUSTOM_BMS_CONFIG says which config to expect, but the frames say what actually
-// arrived and the frames win. The flag by itself decides nothing that could corrupt
-// data: it decides how the one case the bus can't answer (no 0x660 at all) is read, and
-// which mismatch gets warned about.
-//
-// This is routing, not deriving: no value is computed here. A measured byte is either
-// passed through under its historical key or left alone.
+// The configs, what each does to those bytes, and why no runtime discriminator is offered:
+// docs/can-decode-findings.md § "0x200 / 0x660 — pack temperature, and the clamp".
 
 const PACK_THERMAL_FRAME_ID = 0x660;
 
@@ -71,13 +58,11 @@ const THERMAL_FRAME_WAIT_MS = 5000;
 //
 // Promotion the other way needs none — a long 0x660 carries the true values itself, so
 // acting on the first one is never wrong, and a reflash into the offset config still
-// recovers within a second.
-//
-// Two frames is ~2 s at 1 Hz, well inside THERMAL_FRAME_WAIT_MS, so the cost is a second
-// of extra silence in a log-on-change series. The one rough edge: if 0x660 only starts
-// about 4 s after 0x200, the wait window can expire between the two short frames and log
-// its "no 0x660 arrived" line just before they settle it. The routing that results is the
-// same either way — only the wording of a one-shot log is briefly wrong.
+// recovers within a second. Two frames is ~2 s at 1 Hz, well inside
+// THERMAL_FRAME_WAIT_MS, so the cost is a second of extra silence. One rough edge, and it
+// is cosmetic: a 0x660 starting ~4 s after 0x200 can expire the wait window between the
+// two short frames, logging "no 0x660 arrived" just before they settle it. Same routing
+// either way — only the wording of a one-shot log is briefly wrong.
 const SHORT_THERMAL_FRAMES_TO_TRUST = 2;
 
 // 0x200's two temperature bytes, and the true-temperature key each one feeds when 0x200
@@ -219,26 +204,21 @@ function noteEchoAgreement(decoded: DecodedValue[]): void {
 // clamp itself — that is invisible from every other signal on the bus, because a wrong mask
 // still produces a temperature that looks perfectly reasonable.
 //
-// This is worth checking because b5 is the one byte whose meaning is not settled by the
-// frame itself: it carried 14-signbit-clamp's clamp_diff until 2026-08-09 (see the b5-7
-// comment in decode-bms.ts for why no runtime discriminator is attempted). The three
-// diagnoses a bad value gives, in the order they are worth suspecting:
-//
+// Worth checking because b5 is the one byte whose meaning is not settled by the frame
+// itself: it carried 14-signbit-clamp's clamp_diff until 2026-08-09 (see the b5-7 comment
+// in decode-bms.ts for why no runtime discriminator is attempted).
+
+// The three diagnoses a bad value gives, in the order they are worth suspecting:
 //   • not 0 or 255 → the bike is almost certainly still on 14-signbit-clamp, where this byte
 //     is (true_hi − 35) wrapped. Cheap to confirm: it will equal batt_temp_hi − 35 exactly.
 //   • 254 specifically → the Divide operator rounds instead of truncating. Then the mask
 //     drops bit 0 of the amount and the reported temperature is up to 1 °C off — a ±1 °C
-//     error is the whole symptom, which is why it needs saying out loud rather than being
-//     left to be noticed.
+//     error is the whole symptom, which is why it needs saying out loud.
 //   • 0 while the pack sits in the clamped band → the Divide operator is signed, so the gate
 //     never closes and the clamp never applies. Fails safe (the VCU sees the truth, and its
-//     55 °C limp protection works), but the DC-charge derate relief the config exists for is
-//     simply not happening.
-//
-// Only the third needs the temperature for context, and it uses a band that config 14 cannot
-// produce: between the clamp floor and limp threshold, exclusive, 14's b5 is 1…19 and never
-// 0. So this warning means "the gate failed to close", never "you are on the old config" —
-// that is the first warning's job, and the two stay separable.
+//     55 °C limp protection works), but the derate relief the config exists for is not
+//     happening. It uses a band config 14 cannot produce, so this warning means "the gate
+//     failed to close" and never "you are on the old config" — the two stay separable.
 const CLAMP_GATE_FAULTS_BEFORE_WARNING = 3;
 
 // The gate a rounding Divide would emit throughout the clamped band: 2 × 255 truncated to a

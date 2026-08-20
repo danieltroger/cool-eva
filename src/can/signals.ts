@@ -27,14 +27,12 @@ export interface SignalDef {
    * summary filters on to find a dead source, and a source that is silent by
    * design would match that filter forever while nothing was wrong.
    *
-   * Not the same as a signal that is merely slow. If a real one stops arriving
-   * that is a fault worth surfacing; if no waypoint has been saved, nothing is
-   * wrong.
+   * Not the same as a signal that is merely slow — if a real one stops arriving
+   * that is a fault worth surfacing, whereas no waypoint saved is nothing wrong.
    *
    * Flagging one costs the whole group its liveness once every signal in it is
    * flagged, so it is not a free annotation — scripts/check-ride-log-status.ts §5
-   * names the groups that must always be summarised, and goes red if one of them
-   * disappears from the payload.
+   * names the groups that must always be summarised and goes red if one vanishes.
    */
   onDemand?: true;
 }
