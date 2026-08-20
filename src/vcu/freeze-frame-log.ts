@@ -18,8 +18,9 @@ import type { VcuTarget } from "./param-codec.ts";
 // layout that has never been seen is how you get 1198 plausible wrong answers instead of
 // one. The bytes are kept whole so the first real transfer can be read by a human.
 //
-// ⚠️ Much of the request side was never captured (./multiframe-codec.ts says which bytes
-// are guessed), so this can fail on the first frame and is built to fail LOUDLY.
+// ✅ Since 2026-08-20 every REQUEST byte is captured rather than guessed, and three
+// defects that came out of reading the capture are fixed. The REPLY side is still where
+// this can fail on the first frame, so it is built to fail LOUDLY.
 //
 // ⚠️ AND IT MUST BE STOPPABLE. `cancel()` takes effect between blocks and inside the block
 // in flight, and the `0x37` still goes out afterwards: an abandoned upload is a micro left

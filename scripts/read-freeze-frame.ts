@@ -30,8 +30,8 @@ import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 //    docs/diagnostics-and-checks.md §13.
 //
 // ⚠️ EVERY REPLY IS PRINTED AS RAW HEX FIRST, and that is the point of the run rather
-// than the decode: the reply layout of all three services is unverified (see
-// src/vcu/multiframe-codec.ts for which bytes are guessed), so the bytes are the
+// than the decode: the REQUEST bytes are all captured now (docs/vcu-parameters.md §10),
+// but the reply LAYOUT of all three services is still unverified, so the bytes are the
 // evidence and the decode is a hypothesis printed beside them. If they disagree, the
 // bytes are right.
 //

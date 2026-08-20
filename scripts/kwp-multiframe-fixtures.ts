@@ -34,10 +34,9 @@
  * it is inferred from two independent live records that had to agree and did.
  * docs/diagnostics-and-checks.md §11.3 shows the arithmetic.
  *
- * ⚠️ Its SEQUENCE NUMBER was inferred wrongly and was `F1 21` until 2026-08-20. These
- * micros number the first Consecutive Frame 0, in 1229 of 1229 captured replies, so the
- * frame that actually went past was `F1 20 3C B6 …`. The bytes were never in doubt; the
- * PCI was, and nothing had noticed because the reassembler was wrong the same way.
+ * ⚠️ Its SEQUENCE NUMBER was inferred wrongly and read `F1 21` until 2026-08-20: these
+ * micros number the first Consecutive Frame 0 (docs/vcu-parameters.md §10). The bytes were
+ * never in doubt; the PCI was.
  *
  * ⚠️ What it does NOT establish: THE ZERO PADDING. Both DLC modes exist on this bus and
  * the length byte governs either way — the reassembler takes 2 bytes here because the

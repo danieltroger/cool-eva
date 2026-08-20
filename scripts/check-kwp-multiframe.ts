@@ -54,20 +54,18 @@ import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 //   node --experimental-strip-types scripts/check-kwp-multiframe.ts
 //
 // ── ⚠️ WHAT THIS PROVES, AND WHAT IT CANNOT ────────────────────────────────
-// Every REQUEST frame this repo can emit on this channel is now asserted against a frame
-// captured off this bike on 2026-08-08 — `0x17`, `0x18`, the whole three-frame `0x35`,
-// `0x36` and `0x37`. That is what §1 and §2 are for, and it is what caught the bare `36`.
+// Every REQUEST frame this repo can emit here is asserted against a frame captured off
+// this bike on 2026-08-08 — that is §1 and §2, and it is what caught the bare `36`.
 //
-// The REPLY side is still mostly CONSTRUCTED. §3 replays two independent live records
-// joined by one inferred frame (the fixtures' §A), and §4 onwards prove that this transport
-// is self-consistent and refuses what it should — properties of our code, which is what a
+// The REPLY side is still mostly CONSTRUCTED, so §4 onwards prove that this transport is
+// self-consistent and refuses what it should — properties of our code, which is what a
 // check can honestly cover. ⚠️ 1198 real `0x36` block bodies and 29 real `0x17` replies do
 // exist in that capture; docs/vcu-parameters.md §§10-11 says what is in the way of using
 // them here, and it is not effort.
 //
-// §5 is the part worth keeping whatever the wire turns out to look like: a
-// transport that completes a transfer from a short Consecutive Frame produces a
-// plausible wrong answer, and that failure is ours to prevent, not the bike's.
+// §5 is the part worth keeping whatever the wire turns out to look like: a transport that
+// completes a transfer from a short Consecutive Frame produces a plausible wrong answer,
+// and that failure is ours to prevent, not the bike's.
 
 const failures: string[] = [];
 
