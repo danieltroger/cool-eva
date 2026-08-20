@@ -1,160 +1,169 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cool Eva — service sheet preview</title>
-<style>
-  /* The artifact host supplies a reset and a ground; opened as a file, this has to.
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cool Eva — service sheet preview</title>
+    <style>
+      /* The artifact host supplies a reset and a ground; opened as a file, this has to.
      Painted explicitly rather than left transparent so the page holds its own dark
      palette regardless of the browser's theme. */
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: #10131a; }
-</style>
-</head>
-<body>
-<title>Sheet Risk Hierarchy</title>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #10131a;
+      }
+    </style>
+  </head>
+  <body>
+    <title>Sheet Risk Hierarchy</title>
 
-<style>
-__CSS__
-</style>
+    <style>
+      __CSS__
+    </style>
 
-<style>
-/* Preview chrome — everything OUTSIDE the sheet.
+    <style>
+      /* Preview chrome — everything OUTSIDE the sheet.
  *
  * Deliberately built from the dashboard's own tokens (--bg, --tile, --sub, …) so the
  * page around the sheet cannot introduce a colour or a type size that the sheet is
  * then judged against. It is quiet on purpose: the subject is the panel, not the frame.
  */
 
-body {
-  /* The dashboard reserves the bottom of the screen for its tab bar. There is no tab
+      body {
+        /* The dashboard reserves the bottom of the screen for its tab bar. There is no tab
      bar here, so the reservation would just be dead space under the last panel. */
-  padding-bottom: 3rem;
-  line-height: 1.45;
-}
+        padding-bottom: 3rem;
+        line-height: 1.45;
+      }
 
-.pv-page {
-  max-width: 880px;
-  margin: 0 auto;
-  padding: 1.6rem 1rem 0;
-}
+      .pv-page {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 1.6rem 1rem 0;
+      }
 
-.pv-eyebrow {
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--sub);
-}
+      .pv-eyebrow {
+        font-size: 0.68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--sub);
+      }
 
-.pv-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  line-height: 1.2;
-  margin-top: 0.5rem;
-}
+      .pv-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        line-height: 1.2;
+        margin-top: 0.5rem;
+      }
 
-.pv-lede {
-  font-size: 0.9rem;
-  color: var(--label);
-  margin-top: 0.8rem;
-  max-width: 56ch;
-}
+      .pv-lede {
+        font-size: 0.9rem;
+        color: var(--label);
+        margin-top: 0.8rem;
+        max-width: 56ch;
+      }
 
-.pv-lede + .pv-lede {
-  margin-top: 0.6rem;
-}
+      .pv-lede + .pv-lede {
+        margin-top: 0.6rem;
+      }
 
-.pv-lede b {
-  color: var(--fg);
-  font-weight: 600;
-}
+      .pv-lede b {
+        color: var(--fg);
+        font-weight: 600;
+      }
 
-.pv-note {
-  margin-top: 1.2rem;
-  padding: 0.75rem 0.9rem;
-  border: 1px solid var(--tile-edge);
-  border-radius: 0.7rem;
-  background: var(--tile);
-  font-size: 0.78rem;
-  color: var(--label);
-}
+      .pv-note {
+        margin-top: 1.2rem;
+        padding: 0.75rem 0.9rem;
+        border: 1px solid var(--tile-edge);
+        border-radius: 0.7rem;
+        background: var(--tile);
+        font-size: 0.78rem;
+        color: var(--label);
+      }
 
-.pv-note b {
-  color: var(--fg);
-}
+      .pv-note b {
+        color: var(--fg);
+      }
 
-/* ---------- one panel: a caption, then a rendering ---------- */
+      /* ---------- one panel: a caption, then a rendering ---------- */
 
-.pv-panel {
-  margin-top: 2.6rem;
-}
+      .pv-panel {
+        margin-top: 2.6rem;
+      }
 
-.pv-caption {
-  max-width: 880px;
-  margin: 0 auto 0.7rem;
-  padding: 0 1rem;
-}
+      .pv-caption {
+        max-width: 880px;
+        margin: 0 auto 0.7rem;
+        padding: 0 1rem;
+      }
 
-.pv-caption-index {
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--sub);
-}
+      .pv-caption-index {
+        font-size: 0.68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--sub);
+      }
 
-.pv-caption-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin-top: 0.15rem;
-}
+      .pv-caption-title {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin-top: 0.15rem;
+      }
 
-.pv-caption-body {
-  font-size: 0.8rem;
-  color: var(--label);
-  margin-top: 0.3rem;
-  max-width: 56ch;
-}
+      .pv-caption-body {
+        font-size: 0.8rem;
+        color: var(--label);
+        margin-top: 0.3rem;
+        max-width: 56ch;
+      }
 
-/* The rendering itself. 390 px is the iPhone's CSS width; below that the stage simply
+      /* The rendering itself. 390 px is the iPhone's CSS width; below that the stage simply
    takes what there is, so a narrower phone still never scrolls sideways. */
-.pv-stage {
-  width: 100%;
-  max-width: 390px;
-  margin: 0 auto;
-  /* The sheet's own background is --bg, i.e. the page's. The hairline is what says
+      .pv-stage {
+        width: 100%;
+        max-width: 390px;
+        margin: 0 auto;
+        /* The sheet's own background is --bg, i.e. the page's. The hairline is what says
      "this is one screen" without painting a fake phone around it. */
-  border: 1px solid var(--tile-edge);
-  border-radius: 1.2rem;
-  overflow: hidden;
-}
+        border: 1px solid var(--tile-edge);
+        border-radius: 1.2rem;
+        overflow: hidden;
+      }
 
-/* The sheet is a fixed, translucent overlay that slides up from the bottom of a phone.
+      /* The sheet is a fixed, translucent overlay that slides up from the bottom of a phone.
    Made static here so a whole panel can be read in one pass instead of through an 88vh
    window — nothing else about it is changed. */
-.pv-stage .sheet {
-  position: static;
-  inset: auto;
-  opacity: 1;
-  pointer-events: auto;
-  background: transparent;
-  display: block;
-  transition: none;
-  z-index: auto;
-}
+      .pv-stage .sheet {
+        position: static;
+        inset: auto;
+        opacity: 1;
+        pointer-events: auto;
+        background: transparent;
+        display: block;
+        transition: none;
+        z-index: auto;
+      }
 
-.pv-stage .sheet-body {
-  max-height: none;
-  overflow-y: visible;
-  transform: none;
-  transition: none;
-  border-top: 0;
-  border-radius: 0;
-}
+      .pv-stage .sheet-body {
+        max-height: none;
+        overflow-y: visible;
+        transform: none;
+        transition: none;
+        border-top: 0;
+        border-radius: 0;
+      }
 
-/* ---------- close-ups ----------
+      /* ---------- close-ups ----------
  *
  * Panels 2-6 are about one block of the write section. The whole section is rendered
  * and left bound — cutting a node out of a VanJS tree leaves the panel showing a copy
@@ -164,995 +173,1001 @@ body {
  * message, the controls) and the controls hold three (the parameter form, the service
  * actions, the journal). The runtime checks that shape at render and warns if it has
  * moved, so this cannot rot quietly. */
-.pv-scope > div > :nth-child(-n + 4) {
-  display: none;
-}
+      .pv-scope > div > :nth-child(-n + 4) {
+        display: none;
+      }
 
-.pv-scope-actions > div > :nth-child(5) > :nth-child(1),
-.pv-scope-actions > div > :nth-child(5) > :nth-child(3),
-.pv-scope-form > div > :nth-child(5) > :nth-child(2),
-.pv-scope-form > div > :nth-child(5) > :nth-child(3) {
-  display: none;
-}
+      .pv-scope-actions > div > :nth-child(5) > :nth-child(1),
+      .pv-scope-actions > div > :nth-child(5) > :nth-child(3),
+      .pv-scope-form > div > :nth-child(5) > :nth-child(2),
+      .pv-scope-form > div > :nth-child(5) > :nth-child(3) {
+        display: none;
+      }
 
-/* ---------- the tier key ---------- */
+      /* ---------- the tier key ---------- */
 
-.pv-key {
-  width: 100%;
-  max-width: 390px;
-  margin: 0 auto;
-  padding: 0 0.9rem;
-}
+      .pv-key {
+        width: 100%;
+        max-width: 390px;
+        margin: 0 auto;
+        padding: 0 0.9rem;
+      }
 
-.pv-key-label {
-  font-size: 0.72rem;
-  color: var(--label);
-  padding: 0.35rem 0.2rem 0;
-}
+      .pv-key-label {
+        font-size: 0.72rem;
+        color: var(--label);
+        padding: 0.35rem 0.2rem 0;
+      }
 
-.pv-key-label b {
-  color: var(--fg);
-  font-weight: 600;
-}
+      .pv-key-label b {
+        color: var(--fg);
+        font-weight: 600;
+      }
 
-/* ---------- what a tap would have done ---------- */
+      /* ---------- what a tap would have done ---------- */
 
-.pv-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 1.2rem;
-  transform: translateX(-50%);
-  max-width: min(22rem, calc(100vw - 2rem));
-  padding: 0.7rem 0.9rem;
-  border: 1px solid var(--tile-edge);
-  border-radius: 0.7rem;
-  background: rgba(30, 41, 59, 0.97);
-  color: var(--fg);
-  font-size: 0.78rem;
-  z-index: 100;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-}
+      .pv-toast {
+        position: fixed;
+        left: 50%;
+        bottom: 1.2rem;
+        transform: translateX(-50%);
+        max-width: min(22rem, calc(100vw - 2rem));
+        padding: 0.7rem 0.9rem;
+        border: 1px solid var(--tile-edge);
+        border-radius: 0.7rem;
+        background: rgba(30, 41, 59, 0.97);
+        color: var(--fg);
+        font-size: 0.78rem;
+        z-index: 100;
+        opacity: 0;
+        transition: opacity 0.15s;
+        pointer-events: none;
+      }
 
-.pv-toast.on {
-  opacity: 1;
-}
+      .pv-toast.on {
+        opacity: 1;
+      }
 
-.pv-foot {
-  max-width: 880px;
-  margin: 3rem auto 0;
-  padding: 1.4rem 1rem 0;
-  border-top: 1px solid var(--tile-edge);
-  font-size: 0.75rem;
-  color: var(--sub);
-}
+      .pv-foot {
+        max-width: 880px;
+        margin: 3rem auto 0;
+        padding: 1.4rem 1rem 0;
+        border-top: 1px solid var(--tile-edge);
+        font-size: 0.75rem;
+        color: var(--sub);
+      }
 
-/* On anything wider than a phone the caption moves alongside the rendering rather than
+      /* On anything wider than a phone the caption moves alongside the rendering rather than
    above it, and follows it down — the panels are up to 2 600 px tall, and a caption
    scrolled off the top is a caption that is not doing its job. */
-@media (min-width: 760px) {
-  .pv-panel {
-    display: flex;
-    align-items: flex-start;
-    gap: 2.5rem;
-    max-width: 880px;
-    margin: 3.4rem auto 0;
-    padding: 0 1rem;
-  }
+      @media (min-width: 760px) {
+        .pv-panel {
+          display: flex;
+          align-items: flex-start;
+          gap: 2.5rem;
+          max-width: 880px;
+          margin: 3.4rem auto 0;
+          padding: 0 1rem;
+        }
 
-  .pv-caption {
-    flex: 1 1 auto;
-    position: sticky;
-    top: 1.6rem;
-    margin: 0;
-    padding: 0;
-  }
+        .pv-caption {
+          flex: 1 1 auto;
+          position: sticky;
+          top: 1.6rem;
+          margin: 0;
+          padding: 0;
+        }
 
-  .pv-stage {
-    flex: 0 0 390px;
-    margin: 0;
-  }
-}
+        .pv-stage {
+          flex: 0 0 390px;
+          margin: 0;
+        }
+      }
 
-/* Wide enough for a phone-shaped column to look deliberate rather than cramped. */
-@media (max-width: 430px) {
-  .pv-page {
-    padding-left: 0.9rem;
-    padding-right: 0.9rem;
-  }
+      /* Wide enough for a phone-shaped column to look deliberate rather than cramped. */
+      @media (max-width: 430px) {
+        .pv-page {
+          padding-left: 0.9rem;
+          padding-right: 0.9rem;
+        }
 
-  .pv-caption {
-    padding: 0 0.9rem;
-  }
+        .pv-caption {
+          padding: 0 0.9rem;
+        }
 
-  .pv-stage {
-    border-left: 0;
-    border-right: 0;
-    border-radius: 0;
-  }
-}
+        .pv-stage {
+          border-left: 0;
+          border-right: 0;
+          border-radius: 0;
+        }
+      }
+    </style>
 
-</style>
+    <div class="pv-page">
+      <div class="pv-eyebrow">Cool Eva · menu sheet</div>
+      <h1 class="pv-title">Three risk tiers, and a fold over the ones that cannot be undone</h1>
+      <p class="pv-lede">
+        The service sheet as it will look after <b>#86</b> and <b>#83</b>. Real stylesheet, real markup, real behaviour
+        — every panel below is the dashboard's own code running, not a picture of it.
+      </p>
+      <p class="pv-lede">
+        Three of the buttons in this sheet looked identical until you read them, and one of them cannot be undone. Every
+        control now carries a 3&nbsp;px gutter down its left edge saying which of three things it is, and the three with
+        no undo sit behind a fold that is shut every time the sheet opens.
+      </p>
+      <div class="pv-note">
+        <b>Nothing here touches the bike.</b> There is no Pi and no CAN bus at the other end: the readings are a
+        stand-in with this bike's own numbers in them — 58&nbsp;% charge, <code>MAX_DC_CHG_CURRENT</code> reading 75,
+        parameter table 16407, the water-pump code that has been stored since before anyone looked. Buttons arm and fire
+        against that stand-in, so the two-tap confirmations are real to press.
+      </div>
+    </div>
 
-<div class="pv-page">
-  <div class="pv-eyebrow">Cool Eva · menu sheet</div>
-  <h1 class="pv-title">Three risk tiers, and a fold over the ones that cannot be undone</h1>
-  <p class="pv-lede">
-    The service sheet as it will look after <b>#86</b> and <b>#83</b>. Real stylesheet, real markup, real behaviour —
-    every panel below is the dashboard's own code running, not a picture of it.
-  </p>
-  <p class="pv-lede">
-    Three of the buttons in this sheet looked identical until you read them, and one of them cannot be undone. Every
-    control now carries a 3&nbsp;px gutter down its left edge saying which of three things it is, and the three with no
-    undo sit behind a fold that is shut every time the sheet opens.
-  </p>
-  <div class="pv-note">
-    <b>Nothing here touches the bike.</b> There is no Pi and no CAN bus at the other end: the readings are a stand-in
-    with this bike's own numbers in them — 58&nbsp;% charge, <code>MAX_DC_CHG_CURRENT</code> reading 75, parameter table
-    16407, the water-pump code that has been stored since before anyone looked. Buttons arm and fire against that
-    stand-in, so the two-tap confirmations are real to press.
-  </div>
-</div>
+    <div id="pv-panels"></div>
 
-<div id="pv-panels"></div>
+    <div class="pv-foot">
+      Rendered from <code>public/</code> on <code>sheet-risk-hierarchy</code> with <code>drop-log-caption</code> merged
+      in. Self-contained: no network at runtime.
+    </div>
 
-<div class="pv-foot">
-  Rendered from <code>public/</code> on <code>sheet-risk-hierarchy</code> with <code>drop-log-caption</code> merged in.
-  Self-contained: no network at runtime.
-</div>
+    <div class="pv-toast" id="pv-toast"></div>
 
-<div class="pv-toast" id="pv-toast"></div>
+    <script>
+      const __MODULES = {
+        __MODULES__,
+      };
 
-<script>
-const __MODULES = {
-__MODULES__
-};
+      // ─────────────────────────────────────────────────────────────────────────────
+      // The preview harness. Everything above this line is the dashboard's own code,
+      // unmodified except for the import/export rewrite the bundler describes.
+      //
+      // Three things stand in for the Raspberry Pi: `fetch`, `WebSocket`, and `location`.
+      // Nothing here changes what the sheet LOOKS like — the stylesheet and the markup are
+      // the shipped ones — it only decides what the bike says when the sheet asks.
+      // ─────────────────────────────────────────────────────────────────────────────
 
+      // The file may be opened straight off a disk, where nothing has set a viewport and
+      // iOS would lay it out at 980 px and shrink it. Idempotent: a host that already
+      // provides one wins.
+      if (!document.querySelector('meta[name="viewport"]')) {
+        const meta = document.createElement("meta");
+        meta.name = "viewport";
+        meta.content = "width=device-width, initial-scale=1, viewport-fit=cover";
+        (document.head || document.documentElement).appendChild(meta);
+      }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The preview harness. Everything above this line is the dashboard's own code,
-// unmodified except for the import/export rewrite the bundler describes.
-//
-// Three things stand in for the Raspberry Pi: `fetch`, `WebSocket`, and `location`.
-// Nothing here changes what the sheet LOOKS like — the stylesheet and the markup are
-// the shipped ones — it only decides what the bike says when the sheet asks.
-// ─────────────────────────────────────────────────────────────────────────────
+      // ── what a tap would have done ───────────────────────────────────────────────
 
-// The file may be opened straight off a disk, where nothing has set a viewport and
-// iOS would lay it out at 980 px and shrink it. Idempotent: a host that already
-// provides one wins.
-if (!document.querySelector('meta[name="viewport"]')) {
-  const meta = document.createElement("meta");
-  meta.name = "viewport";
-  meta.content = "width=device-width, initial-scale=1, viewport-fit=cover";
-  (document.head || document.documentElement).appendChild(meta);
-}
+      let toastTimer = 0;
+      function toast(text) {
+        const node = document.getElementById("pv-toast");
+        if (!node) {
+          return;
+        }
+        node.textContent = text;
+        node.classList.add("on");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => node.classList.remove("on"), 3200);
+      }
 
-// ── what a tap would have done ───────────────────────────────────────────────
-
-let toastTimer = 0;
-function toast(text) {
-  const node = document.getElementById("pv-toast");
-  if (!node) {
-    return;
-  }
-  node.textContent = text;
-  node.classList.add("on");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => node.classList.remove("on"), 3200);
-}
-
-// Two controls in the sheet hand the file to the browser by navigating — the ride log
-// and the parameter export. A shadowed `location` inside those modules (see the
-// bundler) turns the navigation into this, so a tap says what it would have done
-// instead of blanking the page.
-const __previewLocation = {
-  protocol: "http:",
-  host: "eva.local",
-  get href() {
-    return "http://eva.local/";
-  },
-  set href(target) {
-    toast(`Preview — this would download ${target} from the Pi.`);
-  },
-};
-window.__previewLocation = __previewLocation;
-
-// The one real link in the sheet ("Open the full parameter table →"). Captured rather
-// than rewritten, so the anchor the design uses is the anchor that renders.
-document.addEventListener(
-  "click",
-  event => {
-    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
-    if (anchor && anchor.closest(".pv-stage")) {
-      event.preventDefault();
-      toast(`Preview — this would open ${anchor.getAttribute("href")} on the Pi.`);
-    }
-  },
-  true
-);
-
-// ── this bike ────────────────────────────────────────────────────────────────
-//
-// Numbers from the Ribelle rather than placeholders: the sweep read 233 of 277
-// parameters seventeen minutes ago, MAX_DC_CHG_CURRENT holds 75, both micros name
-// parameter table 16407, and the stored codes include the water-pump open circuit
-// that has been there since before anyone started looking.
-
-const NOW = Date.now();
-const MINUTE = 60 * 1000;
-const DAY = 24 * 60 * MINUTE;
-const SWEPT_AT = NOW - 17 * MINUTE;
-
-const SWEPT = {
-  MAX_DC_CHG_CURRENT: { value: 75, rawHex: "4B", label: "75 A", readAt: SWEPT_AT, complete: true },
-  FCHG_CURRENT_GAIN: {
-    value: 225,
-    rawHex: "00E1",
-    label: "225 (raw — the unit is not known)",
-    readAt: SWEPT_AT,
-    complete: true,
-  },
-  TORQUE_LIMIT: { value: 2300, rawHex: "08FC", label: "230.0 Nm", readAt: SWEPT_AT, complete: true },
-  REGEN_TORQUE_LIMIT: { value: 600, rawHex: "0258", label: "60.0 Nm", readAt: SWEPT_AT, complete: true },
-  VSM_CONFIG_1: { value: 0x1113, rawHex: "1113", label: "0x1113", readAt: SWEPT_AT, complete: true },
-};
-
-const TARGETS = [
-  {
-    name: "MAX_DC_CHG_CURRENT",
-    index: 258,
-    micro: "A9",
-    purpose:
-      "The DC fast-charge current this bike advertises to a charger, in amperes. Reads 75. Energica's own 60/75/80 A options write this parameter and nothing else, so 80 is a value the factory shipped.",
-    warnings: [
-      "⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.",
-      "⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling.",
-      "Free check afterwards, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should change from 0x4B to 0x50.",
-      "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
-    ],
-    control: { kind: "number", min: 0, max: 80, minLabel: "0 A", maxLabel: "80 A" },
-    verify:
-      "Free check, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike.",
-    onBike: SWEPT.MAX_DC_CHG_CURRENT,
-  },
-  {
-    name: "FCHG_CURRENT_GAIN",
-    index: 259,
-    micro: "A9",
-    purpose:
-      "An EVSE-block scalar whose meaning has never been established. Reads 225. Absent from Energica's tooling entirely — no option, no label, no range, no code path.",
-    warnings: ["⚠️⚠️ THE DIRECTION OF EFFECT IS UNKNOWN.", "Change ONE parameter per charge session."],
-    control: { kind: "number", min: 0, max: 512, minLabel: "0 (raw)", maxLabel: "512 (raw)" },
-    verify: "No broadcast field carries this one, so the read-back above is the only confirmation.",
-    onBike: SWEPT.FCHG_CURRENT_GAIN,
-  },
-  {
-    name: "TORQUE_LIMIT",
-    index: 48,
-    micro: "A9",
-    purpose: "The drive torque ceiling, 0.1 Nm per count. Reads 230.0 Nm.",
-    warnings: ["⚠️ Raising this raises what the bike will deliver at full throttle."],
-    control: { kind: "number", min: 0, max: 2760, minLabel: "0.0 Nm", maxLabel: "276.0 Nm" },
-    verify: "Nothing broadcasts this, so the read-back above is the only confirmation.",
-    onBike: SWEPT.TORQUE_LIMIT,
-  },
-  {
-    name: "REGEN_TORQUE_LIMIT",
-    index: 49,
-    micro: "A9",
-    purpose: "The regenerative braking torque ceiling, 0.1 Nm per count. Reads 60.0 Nm.",
-    warnings: ["⚠️ REGEN_MAP0..3_TRQ (63-66) are almost certainly PERCENTAGES of this limit."],
-    control: { kind: "number", min: 0, max: 900, minLabel: "0.0 Nm", maxLabel: "90.0 Nm" },
-    verify: "Nothing broadcasts this either — the read-back above is the confirmation.",
-    onBike: SWEPT.REGEN_TORQUE_LIMIT,
-  },
-  {
-    name: "VSM_CONFIG_1",
-    index: 16,
-    micro: "A9",
-    purpose:
-      "The VCU's option word. Only the heated-handlebar bit is offered here; the same word also carries the PSU type and the Bluetooth variant.",
-    warnings: [
-      "⚠️ The whole word is NOT writable through this repo, on purpose.",
-      "⚠️ A successful write does NOT mean the feature turned on. See the bit's own note.",
-      "This changes a flag, not wiring. There is no heated-grip circuit on this bike unless one was fitted.",
-    ],
-    control: {
-      kind: "bits",
-      bits: [
-        {
-          key: "heated-handlebars",
-          mask: 4,
-          label: "Heated handlebars",
-          caveat:
-            "Energica's option OP0024 sets exactly this bit and nothing else — but activation is normally granted per-VIN on Energica's server. Config words are only read at boot: key-cycle before judging it.",
+      // Two controls in the sheet hand the file to the browser by navigating — the ride log
+      // and the parameter export. A shadowed `location` inside those modules (see the
+      // bundler) turns the navigation into this, so a tap says what it would have done
+      // instead of blanking the page.
+      const __previewLocation = {
+        protocol: "http:",
+        host: "eva.local",
+        get href() {
+          return "http://eva.local/";
         },
-      ],
-    },
-    verify: "⚠️ Config words are only read at BOOT: key-cycle the bike before judging it.",
-    onBike: SWEPT.VSM_CONFIG_1,
-  },
-];
-
-/** The journal, newest first — the record of what has been done to this motorcycle. */
-const JOURNAL = [
-  {
-    at: NOW - 2 * DAY,
-    clockTrustworthy: true,
-    action: "read-service-stamp",
-    status: "read",
-    before: "2024-11-08",
-    after: 8421,
-  },
-  {
-    at: NOW - 9 * DAY,
-    clockTrustworthy: true,
-    action: "parameter-write",
-    name: "MAX_DC_CHG_CURRENT",
-    before: 80,
-    after: 75,
-    status: "written",
-  },
-  { at: NOW - 26 * DAY, clockTrustworthy: false, action: "clear-dtcs", status: "cleared" },
-];
-
-const WRITE_STATUS = {
-  enabled: true,
-  gate: { safe: true, blockers: [], chargingEvidence: null, checks: [], readings: {} },
-  tableGate: {
-    state: "confirmed",
-    writesAllowed: true,
-    noReadWillHelp: false,
-    reason: "Both micros name table 16407, which is a table this software carries.",
-    remedy: "",
-    outstanding: [],
-    tableType: 16407,
-  },
-  clock: {
-    trustworthy: true,
-    iso: new Date(NOW).toISOString(),
-    offsetFromGpsSeconds: 0.2,
-    reasons: [],
-  },
-  targets: TARGETS,
-  recent: JOURNAL,
-  busHeldBy: null,
-};
-
-const STATUS = {
-  uptimeSeconds: 4173,
-  waypoints: 4,
-  log: { files: 13, bytes: 4812442, enabled: true },
-  groups: {
-    battery: [17, 46],
-    cells: [81, 81],
-    charge: [8, 8],
-    coolant: [4, 4],
-    drive: [11, 11],
-    gps: [9, 9],
-    obd: [6, 6],
-  },
-};
-
-/**
- * The last parameter sweep, and any sweep started from the preview.
- *
- * Shared across panels because there is one bike: a sweep started in the full-sheet
- * panel is the same sweep every other panel would be watching.
- */
-const READ_STATE = {
-  run: {
-    phase: "finished",
-    startedAt: SWEPT_AT,
-    finishedAt: SWEPT_AT + 41000,
-    complete: true,
-    expected: 277,
-    tally: {
-      total: 277,
-      read: 233,
-      byStatus: { read: 233, refused: 30, "no-response": 14 },
-      micros: [
-        { micro: "A9", read: 201, failed: 22 },
-        { micro: "A8", read: 32, failed: 22 },
-      ],
-    },
-  },
-  gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
-  enabled: true,
-  export: { rows: 233, readAt: SWEPT_AT, complete: true },
-  message: null,
-};
-
-/** One WebSocket snapshot, in the shape src/ws.ts broadcasts. */
-function snapshot() {
-  const at = NOW;
-  const signal = (value, unit, group) => ({ value, unit, group, ts: at });
-  return {
-    type: "snapshot",
-    ts: at,
-    signals: {
-      "soc": signal(58, "%", "battery"),
-      "pack_v": signal(346.8, "V", "battery"),
-      "pack_kw": signal(0.1, "kW", "battery"),
-      "cell_min_mv": signal(3612, "mV", "cells"),
-      "cell_max_mv": signal(3641, "mV", "cells"),
-      "cell_spread_mv": signal(29, "mV", "cells"),
-      "range_km": signal(96, "km", "battery"),
-      "coolant_in": signal(31.4, "°C", "coolant"),
-      "coolant_out": signal(34.9, "°C", "coolant"),
-      "odometer_can_km": signal(14849.4, "km", "drive"),
-      "gps_speed_kmh": signal(0, "km/h", "gps"),
-      "gps_altitude_m": signal(84, "m", "gps"),
-      "gps_course_deg": signal(228, "°", "gps"),
-      "gps_satellites": signal(11, "", "gps"),
-      "waypoint_seq": signal(4, "", "waypoint"),
-      // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
-      // and permanent on this bike, because the coolant pump is wired to the
-      // heated-grip output and the VCU's own pump driver is left open.
-      "dtc_0044_0": signal(1, "", "diag"),
-      "dtc_0002_0": signal(1, "", "diag"),
-      "dtc_count": signal(2, "", "diag"),
-    },
-  };
-}
-
-// ── the Pi, stubbed ──────────────────────────────────────────────────────────
-
-/**
- * A Response, near enough.
- *
- * ⚠️ It deep-copies, and that is load-bearing rather than tidiness. A real `json()`
- * parses the body afresh every time, so the dashboard gets a NEW object per response
- * — and VanJS only re-renders when a state is set to something `!==` what it held
- * (van-1.6.1.js's `set val`). Handing back the same mutated object left the sweep's
- * progress line advancing (it is also paced by a tick) while the button above it
- * stayed on "Stop the parameter read" forever, which would have looked like a bug in
- * the sheet and is not one.
- */
-function json(body) {
-  const text = JSON.stringify(body);
-  return Promise.resolve({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve(JSON.parse(text)),
-    text: () => Promise.resolve(text),
-  });
-}
-
-/** Advances a sweep started from the preview, one poll at a time. */
-function stepSweep() {
-  const run = READ_STATE.run;
-  if (run.phase !== "running") {
-    return;
-  }
-  const read = Math.min(run.tally.total, run.tally.read + 19);
-  run.tally.read = read;
-  run.tally.byStatus.read = read;
-  run.tally.micros[0].read = Math.min(223, Math.round(read * 0.86));
-  run.tally.micros[1].read = read - run.tally.micros[0].read;
-  if (read >= run.tally.total - 44) {
-    run.phase = "finished";
-    run.complete = true;
-    run.finishedAt = Date.now();
-    run.tally.read = 233;
-    run.tally.byStatus.read = 233;
-    run.tally.micros = [
-      { micro: "A9", read: 201, failed: 22 },
-      { micro: "A8", read: 32, failed: 22 },
-    ];
-    READ_STATE.export = { rows: 233, readAt: Date.now(), complete: true };
-  }
-}
-
-function serviceWrite(query) {
-  const action = query.get("action");
-  const record = extra => {
-    JOURNAL.unshift(Object.assign({ at: Date.now(), clockTrustworthy: true }, extra));
-    JOURNAL.length = Math.min(JOURNAL.length, 6);
-  };
-
-  if (action === "read-service-stamp") {
-    record({ action: "read-service-stamp", status: "read", before: "2024-11-08", after: 8421 });
-    return {
-      action: "read-service-stamp",
-      status: "read",
-      message: "Last service stamped 2024-11-08 at 8421 (km or miles, per market).",
-      succeeded: true,
-    };
-  }
-  if (action === "set-service-point") {
-    record({ action: "set-service-point", status: "started", before: "2024-11-08", after: "2026-08-19" });
-    return {
-      action: "set-service-point",
-      status: "started",
-      message:
-        "Service point set. The bike stamped 2026-08-19 at 14849, over 2024-11-08 at 8421.",
-      succeeded: true,
-    };
-  }
-  if (action === "clear-dtcs") {
-    record({ action: "clear-dtcs", status: "cleared" });
-    return {
-      action: "clear-dtcs",
-      status: "cleared",
-      message:
-        "Mode 04 accepted. The stored list is gone; codes whose faults are still active will come back on the next drive cycle. Read the list again to see what remains.",
-      succeeded: true,
-    };
-  }
-  if (action === "sync-clock") {
-    const when = new Date().toISOString();
-    record({ action: "rtc-sync", status: "sent", requested: when, after: null });
-    return {
-      action: "rtc-sync",
-      status: "sent",
-      message:
-        `Broadcast ${when} UTC on 0x120 (120#07E00813 0E1A0000). ` +
-        "⚠️ CHECK THE DASHBOARD NOW to see whether the bike took it. " +
-        "There is no reply to this frame and no documented way to read the bike's clock back, so the dash is the only " +
-        "confirmation that exists. Note the bike was sent UTC, so a dash showing local time will differ by your offset. " +
-        "Confirm it before using Set Service Point, which stamps whatever the bike's clock says.",
-      succeeded: true,
-    };
-  }
-  if (action === "parameter" || action === "bit") {
-    const name = query.get("name");
-    const target = TARGETS.find(candidate => candidate.name === name);
-    if (!target) {
-      return null;
-    }
-    let value;
-    let description;
-    if (action === "bit") {
-      const on = query.get("on") === "1";
-      const bit = target.control.bits[0];
-      value = on ? target.onBike.value | bit.mask : target.onBike.value & ~bit.mask;
-      description = `${name} ${bit.label} → ${on ? "ON" : "OFF"}`;
-    } else {
-      value = Number(query.get("value"));
-      description = `${name} ${query.get("expected")} → ${value}`;
-    }
-    const rawHex = value.toString(16).toUpperCase().padStart(target.onBike.rawHex.length, "0");
-    // The write lands, and the sweep's snapshot is updated with it — so the form goes
-    // on telling the truth about what the bike holds.
-    target.onBike = { value, rawHex, label: null, readAt: Date.now(), complete: true };
-    record({ action: "parameter-write", status: "written", name, before: Number(query.get("expected")), after: value });
-    return {
-      action: "parameter-write",
-      status: "written",
-      message: `${description} — written and read back as ${value} (${rawHex}).`,
-      succeeded: true,
-      onBike: { name, value, rawHex },
-    };
-  }
-  return null;
-}
-
-
-window.fetch = function previewFetch(input, init) {
-  const request = typeof input === "string" ? input : input && input.url ? input.url : String(input);
-  const url = new URL(request, "http://eva.local/");
-  const method = ((init && init.method) || "GET").toUpperCase();
-  const path = url.pathname;
-
-  if (path === "/status") {
-    return json(STATUS);
-  }
-  if (path === "/waypoint") {
-    STATUS.waypoints += 1;
-    return json({ saved: true, message: `Waypoint ${STATUS.waypoints} saved — 57.0000, 12.0000, 11 satellites.` });
-  }
-  if (path === "/vcu-read") {
-    if (method === "POST") {
-      READ_STATE.run = {
-        phase: "running",
-        startedAt: Date.now(),
-        finishedAt: null,
-        complete: false,
-        expected: 277,
-        tally: {
-          total: 277,
-          read: 0,
-          byStatus: { read: 0 },
-          micros: [
-            { micro: "A9", read: 0, failed: 0 },
-            { micro: "A8", read: 0, failed: 0 },
-          ],
+        set href(target) {
+          toast(`Preview — this would download ${target} from the Pi.`);
         },
       };
-      READ_STATE.message = "Started. Nothing here blocks — the sweep runs on the Pi.";
-    } else if (method === "DELETE") {
-      READ_STATE.run.phase = "finished";
-      READ_STATE.run.complete = false;
-      READ_STATE.message = "Stopped on request.";
-    } else {
-      stepSweep();
-      READ_STATE.message = null;
-    }
-    return json(READ_STATE);
-  }
-  if (path === "/vcu-probe") {
-    const index = Number(url.searchParams.get("index"));
-    const target = TARGETS.find(candidate => candidate.index === index);
-    if (!target) {
-      return json({
-        reading: {
-          status: "read",
-          target: url.searchParams.get("target"),
-          bank: Number(url.searchParams.get("bank")),
-          index,
-          identifier: (Number(url.searchParams.get("bank")) << 12) | index,
-          rawHex: "01F4",
-          unsigned: 500,
-          signed: 500,
-          value: null,
-          name: null,
-          note: "No name-table row describes this identifier, so only the bytes are known.",
+      window.__previewLocation = __previewLocation;
+
+      // The one real link in the sheet ("Open the full parameter table →"). Captured rather
+      // than rewritten, so the anchor the design uses is the anchor that renders.
+      document.addEventListener(
+        "click",
+        event => {
+          const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+          if (anchor && anchor.closest(".pv-stage")) {
+            event.preventDefault();
+            toast(`Preview — this would open ${anchor.getAttribute("href")} on the Pi.`);
+          }
         },
-        message: null,
+        true
+      );
+
+      // ── this bike ────────────────────────────────────────────────────────────────
+      //
+      // Numbers from the Ribelle rather than placeholders: the sweep read 233 of 277
+      // parameters seventeen minutes ago, MAX_DC_CHG_CURRENT holds 75, both micros name
+      // parameter table 16407, and the stored codes include the water-pump open circuit
+      // that has been there since before anyone started looking.
+
+      const NOW = Date.now();
+      const MINUTE = 60 * 1000;
+      const DAY = 24 * 60 * MINUTE;
+      const SWEPT_AT = NOW - 17 * MINUTE;
+
+      const SWEPT = {
+        MAX_DC_CHG_CURRENT: { value: 75, rawHex: "4B", label: "75 A", readAt: SWEPT_AT, complete: true },
+        FCHG_CURRENT_GAIN: {
+          value: 225,
+          rawHex: "00E1",
+          label: "225 (raw — the unit is not known)",
+          readAt: SWEPT_AT,
+          complete: true,
+        },
+        TORQUE_LIMIT: { value: 2300, rawHex: "08FC", label: "230.0 Nm", readAt: SWEPT_AT, complete: true },
+        REGEN_TORQUE_LIMIT: { value: 600, rawHex: "0258", label: "60.0 Nm", readAt: SWEPT_AT, complete: true },
+        VSM_CONFIG_1: { value: 0x1113, rawHex: "1113", label: "0x1113", readAt: SWEPT_AT, complete: true },
+      };
+
+      const TARGETS = [
+        {
+          name: "MAX_DC_CHG_CURRENT",
+          index: 258,
+          micro: "A9",
+          purpose:
+            "The DC fast-charge current this bike advertises to a charger, in amperes. Reads 75. Energica's own 60/75/80 A options write this parameter and nothing else, so 80 is a value the factory shipped.",
+          warnings: [
+            "⚠️ It will probably do nothing. Across eight logged DC sessions the ceiling is the STATION, not the bike: station identity explains 84 % of the variance, the highest ever delivered is 73.2 A, and no station has offered even the 75 A already permitted.",
+            "⚠️ 80 A is 1.25C for this pack. The cell datasheet allows 1.10C = 70.4 A, and only between 25 and 35 °C — and the VCU is shown 35 °C while the pack is really at 44-54 °C, so 91 % of DC charging time above 30 A is already over the cell's fast-charge ceiling.",
+            "Free check afterwards, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike. It should change from 0x4B to 0x50.",
+            "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
+          ],
+          control: { kind: "number", min: 0, max: 80, minLabel: "0 A", maxLabel: "80 A" },
+          verify:
+            "Free check, no charger needed: 0x625 b2 is the configured max DC current and is broadcast on a merely-awake bike.",
+          onBike: SWEPT.MAX_DC_CHG_CURRENT,
+        },
+        {
+          name: "FCHG_CURRENT_GAIN",
+          index: 259,
+          micro: "A9",
+          purpose:
+            "An EVSE-block scalar whose meaning has never been established. Reads 225. Absent from Energica's tooling entirely — no option, no label, no range, no code path.",
+          warnings: ["⚠️⚠️ THE DIRECTION OF EFFECT IS UNKNOWN.", "Change ONE parameter per charge session."],
+          control: { kind: "number", min: 0, max: 512, minLabel: "0 (raw)", maxLabel: "512 (raw)" },
+          verify: "No broadcast field carries this one, so the read-back above is the only confirmation.",
+          onBike: SWEPT.FCHG_CURRENT_GAIN,
+        },
+        {
+          name: "TORQUE_LIMIT",
+          index: 48,
+          micro: "A9",
+          purpose: "The drive torque ceiling, 0.1 Nm per count. Reads 230.0 Nm.",
+          warnings: ["⚠️ Raising this raises what the bike will deliver at full throttle."],
+          control: { kind: "number", min: 0, max: 2760, minLabel: "0.0 Nm", maxLabel: "276.0 Nm" },
+          verify: "Nothing broadcasts this, so the read-back above is the only confirmation.",
+          onBike: SWEPT.TORQUE_LIMIT,
+        },
+        {
+          name: "REGEN_TORQUE_LIMIT",
+          index: 49,
+          micro: "A9",
+          purpose: "The regenerative braking torque ceiling, 0.1 Nm per count. Reads 60.0 Nm.",
+          warnings: ["⚠️ REGEN_MAP0..3_TRQ (63-66) are almost certainly PERCENTAGES of this limit."],
+          control: { kind: "number", min: 0, max: 900, minLabel: "0.0 Nm", maxLabel: "90.0 Nm" },
+          verify: "Nothing broadcasts this either — the read-back above is the confirmation.",
+          onBike: SWEPT.REGEN_TORQUE_LIMIT,
+        },
+        {
+          name: "VSM_CONFIG_1",
+          index: 16,
+          micro: "A9",
+          purpose:
+            "The VCU's option word. Only the heated-handlebar bit is offered here; the same word also carries the PSU type and the Bluetooth variant.",
+          warnings: [
+            "⚠️ The whole word is NOT writable through this repo, on purpose.",
+            "⚠️ A successful write does NOT mean the feature turned on. See the bit's own note.",
+            "This changes a flag, not wiring. There is no heated-grip circuit on this bike unless one was fitted.",
+          ],
+          control: {
+            kind: "bits",
+            bits: [
+              {
+                key: "heated-handlebars",
+                mask: 4,
+                label: "Heated handlebars",
+                caveat:
+                  "Energica's option OP0024 sets exactly this bit and nothing else — but activation is normally granted per-VIN on Energica's server. Config words are only read at boot: key-cycle before judging it.",
+              },
+            ],
+          },
+          verify: "⚠️ Config words are only read at BOOT: key-cycle the bike before judging it.",
+          onBike: SWEPT.VSM_CONFIG_1,
+        },
+      ];
+
+      /** The journal, newest first — the record of what has been done to this motorcycle. */
+      const JOURNAL = [
+        {
+          at: NOW - 2 * DAY,
+          clockTrustworthy: true,
+          action: "read-service-stamp",
+          status: "read",
+          before: "2024-11-08",
+          after: 8421,
+        },
+        {
+          at: NOW - 9 * DAY,
+          clockTrustworthy: true,
+          action: "parameter-write",
+          name: "MAX_DC_CHG_CURRENT",
+          before: 80,
+          after: 75,
+          status: "written",
+        },
+        { at: NOW - 26 * DAY, clockTrustworthy: false, action: "clear-dtcs", status: "cleared" },
+      ];
+
+      const WRITE_STATUS = {
+        enabled: true,
+        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [], readings: {} },
+        tableGate: {
+          state: "confirmed",
+          writesAllowed: true,
+          noReadWillHelp: false,
+          reason: "Both micros name table 16407, which is a table this software carries.",
+          remedy: "",
+          outstanding: [],
+          tableType: 16407,
+        },
+        clock: {
+          trustworthy: true,
+          iso: new Date(NOW).toISOString(),
+          offsetFromGpsSeconds: 0.2,
+          reasons: [],
+        },
+        targets: TARGETS,
+        recent: JOURNAL,
+        busHeldBy: null,
+      };
+
+      const STATUS = {
+        uptimeSeconds: 4173,
+        waypoints: 4,
+        log: { files: 13, bytes: 4812442, enabled: true },
+        groups: {
+          battery: [17, 46],
+          cells: [81, 81],
+          charge: [8, 8],
+          coolant: [4, 4],
+          drive: [11, 11],
+          gps: [9, 9],
+          obd: [6, 6],
+        },
+      };
+
+      /**
+       * The last parameter sweep, and any sweep started from the preview.
+       *
+       * Shared across panels because there is one bike: a sweep started in the full-sheet
+       * panel is the same sweep every other panel would be watching.
+       */
+      const READ_STATE = {
+        run: {
+          phase: "finished",
+          startedAt: SWEPT_AT,
+          finishedAt: SWEPT_AT + 41000,
+          complete: true,
+          expected: 277,
+          tally: {
+            total: 277,
+            read: 233,
+            byStatus: { read: 233, refused: 30, "no-response": 14 },
+            micros: [
+              { micro: "A9", read: 201, failed: 22 },
+              { micro: "A8", read: 32, failed: 22 },
+            ],
+          },
+        },
         gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
-        targets: [],
-      });
-    }
-    return json({
-      reading: {
-        status: "read",
-        target: target.micro,
-        bank: 1,
-        index: target.index,
-        identifier: 0x1000 | target.index,
-        rawHex: target.onBike.rawHex,
-        unsigned: target.onBike.value,
-        signed: target.onBike.value,
-        value: target.onBike.value,
-        name: target.name,
-        note: null,
-      },
-      message: null,
-      gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
-      targets: [],
-    });
-  }
-  if (path === "/vcu-write") {
-    if (method !== "POST") {
-      return json({ status: WRITE_STATUS, result: null, message: null });
-    }
-    const result = serviceWrite(url.searchParams);
-    // The full-sheet panel renders the answer under the button, the way the bike would.
-    // The close-ups below it do not — they are one block of the section — so the answer
-    // is also said here, marked as the preview talking rather than the motorcycle.
-    if (result) {
-      const said = result.message.length > 150 ? `${result.message.slice(0, 147)}…` : result.message;
-      toast(`Preview — nothing was sent. A Pi would have answered: ${said}`);
-    }
-    return json({
-      status: WRITE_STATUS,
-      result,
-      message: result ? null : "The preview does not carry that action.",
-    });
-  }
-  if (/^https?:/.test(request)) {
-    // Deliberately NOT passed to the real fetch. This file is published as a
-    // shareable artifact under a CSP that blocks external hosts, so a passthrough
-    // is not "works when online" — it is a silent failure with no stub behind it.
-    return json({ error: "preview: external requests are not made", url: request });
-  }
-  return Promise.reject(new Error(`preview: nothing serves ${path}`));
-};
+        enabled: true,
+        export: { rows: 233, readAt: SWEPT_AT, complete: true },
+        message: null,
+      };
 
-/** Delivers one snapshot and then goes quiet — the bike is parked. */
-window.WebSocket = class PreviewWebSocket {
-  constructor(url) {
-    this.url = url;
-    this.readyState = 1;
-    queueMicrotask(() => {
-      if (this.onopen) {
-        this.onopen();
+      /** One WebSocket snapshot, in the shape src/ws.ts broadcasts. */
+      function snapshot() {
+        const at = NOW;
+        const signal = (value, unit, group) => ({ value, unit, group, ts: at });
+        return {
+          type: "snapshot",
+          ts: at,
+          signals: {
+            "soc": signal(58, "%", "battery"),
+            "pack_v": signal(346.8, "V", "battery"),
+            "pack_kw": signal(0.1, "kW", "battery"),
+            "cell_min_mv": signal(3612, "mV", "cells"),
+            "cell_max_mv": signal(3641, "mV", "cells"),
+            "cell_spread_mv": signal(29, "mV", "cells"),
+            "range_km": signal(96, "km", "battery"),
+            "coolant_in": signal(31.4, "°C", "coolant"),
+            "coolant_out": signal(34.9, "°C", "coolant"),
+            "odometer_can_km": signal(14849.4, "km", "drive"),
+            "gps_speed_kmh": signal(0, "km/h", "gps"),
+            "gps_altitude_m": signal(84, "m", "gps"),
+            "gps_course_deg": signal(228, "°", "gps"),
+            "gps_satellites": signal(11, "", "gps"),
+            "waypoint_seq": signal(4, "", "waypoint"),
+            // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
+            // and permanent on this bike, because the coolant pump is wired to the
+            // heated-grip output and the VCU's own pump driver is left open.
+            "dtc_0044_0": signal(1, "", "diag"),
+            "dtc_0002_0": signal(1, "", "diag"),
+            "dtc_count": signal(2, "", "diag"),
+          },
+        };
       }
-      if (this.onmessage) {
-        this.onmessage({ data: JSON.stringify(snapshot()) });
+
+      // ── the Pi, stubbed ──────────────────────────────────────────────────────────
+
+      /**
+       * A Response, near enough.
+       *
+       * ⚠️ It deep-copies, and that is load-bearing rather than tidiness. A real `json()`
+       * parses the body afresh every time, so the dashboard gets a NEW object per response
+       * — and VanJS only re-renders when a state is set to something `!==` what it held
+       * (van-1.6.1.js's `set val`). Handing back the same mutated object left the sweep's
+       * progress line advancing (it is also paced by a tick) while the button above it
+       * stayed on "Stop the parameter read" forever, which would have looked like a bug in
+       * the sheet and is not one.
+       */
+      function json(body) {
+        const text = JSON.stringify(body);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(JSON.parse(text)),
+          text: () => Promise.resolve(text),
+        });
       }
-    });
-  }
-  send() {}
-  close() {}
-  addEventListener() {}
-  removeEventListener() {}
-};
 
-// ── one instance of the dashboard per panel ──────────────────────────────────
-//
-// views/vcu-write.js keeps `dangerOpen`, `armed`, `wanted` and the rest as
-// module-level van states. Two panels sharing one instance would share the fold and
-// the armed button — so each panel gets the whole module graph to itself.
-
-function instantiate() {
-  const cache = Object.create(null);
-  function imp(path) {
-    const existing = cache[path];
-    if (existing) {
-      return existing;
-    }
-    const exports = (cache[path] = {});
-    const factory = __MODULES[path];
-    if (!factory) {
-      throw new Error(`preview: no module ${path}`);
-    }
-    factory(exports, imp);
-    return exports;
-  }
-  return imp;
-}
-
-/** Seeds the store from one WebSocket snapshot, then walks a finished ride past the trip counters. */
-async function seed(imp) {
-  const store = imp("lib/store.js");
-  const trip = imp("lib/trip.js");
-  store.connect();
-  await new Promise(resolve => setTimeout(resolve, 0));
-
-  // 37.4 km in 41 minutes, which is what the last ride was. updateTrip() credits at
-  // most two seconds per call — the guard that stops a backgrounded tab claiming its
-  // whole absence as riding time — so the ride is walked past it at its own pace.
-  const odometer = store.signalState("odometer_can_km");
-  const speed = store.signalState("gps_speed_kmh");
-  const start = 14849.4 - 37.4;
-  const steps = 1230;
-  odometer.val = { value: start, unit: "km", group: "drive", ts: NOW };
-  speed.val = { value: 0, unit: "km/h", group: "gps", ts: NOW };
-  trip.updateTrip(0);
-  for (let step = 1; step <= steps; step++) {
-    const fraction = step / steps;
-    odometer.val = { value: start + 37.4 * fraction, unit: "km", group: "drive", ts: NOW };
-    // A shape rather than a constant, so "Top" is a speed the bike actually reached
-    // on the way rather than the average with a digit changed.
-    const kmh = 46 + 34 * Math.sin(fraction * Math.PI * 3) + (step === 812 ? 42 : 0);
-    speed.val = { value: Math.max(4, kmh), unit: "km/h", group: "gps", ts: NOW };
-    trip.updateTrip(step * 2000);
-  }
-  odometer.val = { value: 14849.4, unit: "km", group: "drive", ts: NOW };
-  speed.val = { value: 0, unit: "km/h", group: "gps", ts: NOW };
-}
-
-// ── waiting on VanJS ─────────────────────────────────────────────────────────
-//
-// van schedules DOM updates on a microtask, and several of these steps go through a
-// stubbed fetch first, so every step waits for the DOM it needs rather than guessing
-// at a delay.
-
-function settle(test) {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + 4000;
-    const attempt = () => {
-      let found = null;
-      try {
-        found = test();
-      } catch (error) {
-        reject(error);
-        return;
+      /** Advances a sweep started from the preview, one poll at a time. */
+      function stepSweep() {
+        const run = READ_STATE.run;
+        if (run.phase !== "running") {
+          return;
+        }
+        const read = Math.min(run.tally.total, run.tally.read + 19);
+        run.tally.read = read;
+        run.tally.byStatus.read = read;
+        run.tally.micros[0].read = Math.min(223, Math.round(read * 0.86));
+        run.tally.micros[1].read = read - run.tally.micros[0].read;
+        if (read >= run.tally.total - 44) {
+          run.phase = "finished";
+          run.complete = true;
+          run.finishedAt = Date.now();
+          run.tally.read = 233;
+          run.tally.byStatus.read = 233;
+          run.tally.micros = [
+            { micro: "A9", read: 201, failed: 22 },
+            { micro: "A8", read: 32, failed: 22 },
+          ];
+          READ_STATE.export = { rows: 233, readAt: Date.now(), complete: true };
+        }
       }
-      if (found) {
-        resolve(found);
-        return;
+
+      function serviceWrite(query) {
+        const action = query.get("action");
+        const record = extra => {
+          JOURNAL.unshift(Object.assign({ at: Date.now(), clockTrustworthy: true }, extra));
+          JOURNAL.length = Math.min(JOURNAL.length, 6);
+        };
+
+        if (action === "read-service-stamp") {
+          record({ action: "read-service-stamp", status: "read", before: "2024-11-08", after: 8421 });
+          return {
+            action: "read-service-stamp",
+            status: "read",
+            message: "Last service stamped 2024-11-08 at 8421 (km or miles, per market).",
+            succeeded: true,
+          };
+        }
+        if (action === "set-service-point") {
+          record({ action: "set-service-point", status: "started", before: "2024-11-08", after: "2026-08-19" });
+          return {
+            action: "set-service-point",
+            status: "started",
+            message: "Service point set. The bike stamped 2026-08-19 at 14849, over 2024-11-08 at 8421.",
+            succeeded: true,
+          };
+        }
+        if (action === "clear-dtcs") {
+          record({ action: "clear-dtcs", status: "cleared" });
+          return {
+            action: "clear-dtcs",
+            status: "cleared",
+            message:
+              "Mode 04 accepted. The stored list is gone; codes whose faults are still active will come back on the next drive cycle. Read the list again to see what remains.",
+            succeeded: true,
+          };
+        }
+        if (action === "sync-clock") {
+          const when = new Date().toISOString();
+          record({ action: "rtc-sync", status: "sent", requested: when, after: null });
+          return {
+            action: "rtc-sync",
+            status: "sent",
+            message:
+              `Broadcast ${when} UTC on 0x120 (120#07E00813 0E1A0000). ` +
+              "⚠️ CHECK THE DASHBOARD NOW to see whether the bike took it. " +
+              "There is no reply to this frame and no documented way to read the bike's clock back, so the dash is the only " +
+              "confirmation that exists. Note the bike was sent UTC, so a dash showing local time will differ by your offset. " +
+              "Confirm it before using Set Service Point, which stamps whatever the bike's clock says.",
+            succeeded: true,
+          };
+        }
+        if (action === "parameter" || action === "bit") {
+          const name = query.get("name");
+          const target = TARGETS.find(candidate => candidate.name === name);
+          if (!target) {
+            return null;
+          }
+          let value;
+          let description;
+          if (action === "bit") {
+            const on = query.get("on") === "1";
+            const bit = target.control.bits[0];
+            value = on ? target.onBike.value | bit.mask : target.onBike.value & ~bit.mask;
+            description = `${name} ${bit.label} → ${on ? "ON" : "OFF"}`;
+          } else {
+            value = Number(query.get("value"));
+            description = `${name} ${query.get("expected")} → ${value}`;
+          }
+          const rawHex = value.toString(16).toUpperCase().padStart(target.onBike.rawHex.length, "0");
+          // The write lands, and the sweep's snapshot is updated with it — so the form goes
+          // on telling the truth about what the bike holds.
+          target.onBike = { value, rawHex, label: null, readAt: Date.now(), complete: true };
+          record({
+            action: "parameter-write",
+            status: "written",
+            name,
+            before: Number(query.get("expected")),
+            after: value,
+          });
+          return {
+            action: "parameter-write",
+            status: "written",
+            message: `${description} — written and read back as ${value} (${rawHex}).`,
+            succeeded: true,
+            onBike: { name, value, rawHex },
+          };
+        }
+        return null;
       }
-      if (Date.now() > deadline) {
-        reject(new Error("preview: timed out waiting for the sheet to settle"));
-        return;
+
+      window.fetch = function previewFetch(input, init) {
+        const request = typeof input === "string" ? input : input && input.url ? input.url : String(input);
+        const url = new URL(request, "http://eva.local/");
+        const method = ((init && init.method) || "GET").toUpperCase();
+        const path = url.pathname;
+
+        if (path === "/status") {
+          return json(STATUS);
+        }
+        if (path === "/waypoint") {
+          STATUS.waypoints += 1;
+          return json({
+            saved: true,
+            message: `Waypoint ${STATUS.waypoints} saved — 57.0000, 12.0000, 11 satellites.`,
+          });
+        }
+        if (path === "/vcu-read") {
+          if (method === "POST") {
+            READ_STATE.run = {
+              phase: "running",
+              startedAt: Date.now(),
+              finishedAt: null,
+              complete: false,
+              expected: 277,
+              tally: {
+                total: 277,
+                read: 0,
+                byStatus: { read: 0 },
+                micros: [
+                  { micro: "A9", read: 0, failed: 0 },
+                  { micro: "A8", read: 0, failed: 0 },
+                ],
+              },
+            };
+            READ_STATE.message = "Started. Nothing here blocks — the sweep runs on the Pi.";
+          } else if (method === "DELETE") {
+            READ_STATE.run.phase = "finished";
+            READ_STATE.run.complete = false;
+            READ_STATE.message = "Stopped on request.";
+          } else {
+            stepSweep();
+            READ_STATE.message = null;
+          }
+          return json(READ_STATE);
+        }
+        if (path === "/vcu-probe") {
+          const index = Number(url.searchParams.get("index"));
+          const target = TARGETS.find(candidate => candidate.index === index);
+          if (!target) {
+            return json({
+              reading: {
+                status: "read",
+                target: url.searchParams.get("target"),
+                bank: Number(url.searchParams.get("bank")),
+                index,
+                identifier: (Number(url.searchParams.get("bank")) << 12) | index,
+                rawHex: "01F4",
+                unsigned: 500,
+                signed: 500,
+                value: null,
+                name: null,
+                note: "No name-table row describes this identifier, so only the bytes are known.",
+              },
+              message: null,
+              gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+              targets: [],
+            });
+          }
+          return json({
+            reading: {
+              status: "read",
+              target: target.micro,
+              bank: 1,
+              index: target.index,
+              identifier: 0x1000 | target.index,
+              rawHex: target.onBike.rawHex,
+              unsigned: target.onBike.value,
+              signed: target.onBike.value,
+              value: target.onBike.value,
+              name: target.name,
+              note: null,
+            },
+            message: null,
+            gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+            targets: [],
+          });
+        }
+        if (path === "/vcu-write") {
+          if (method !== "POST") {
+            return json({ status: WRITE_STATUS, result: null, message: null });
+          }
+          const result = serviceWrite(url.searchParams);
+          // The full-sheet panel renders the answer under the button, the way the bike would.
+          // The close-ups below it do not — they are one block of the section — so the answer
+          // is also said here, marked as the preview talking rather than the motorcycle.
+          if (result) {
+            const said = result.message.length > 150 ? `${result.message.slice(0, 147)}…` : result.message;
+            toast(`Preview — nothing was sent. A Pi would have answered: ${said}`);
+          }
+          return json({
+            status: WRITE_STATUS,
+            result,
+            message: result ? null : "The preview does not carry that action.",
+          });
+        }
+        if (/^https?:/.test(request)) {
+          // Deliberately NOT passed to the real fetch. This file is published as a
+          // shareable artifact under a CSP that blocks external hosts, so a passthrough
+          // is not "works when online" — it is a silent failure with no stub behind it.
+          return json({ error: "preview: external requests are not made", url: request });
+        }
+        return Promise.reject(new Error(`preview: nothing serves ${path}`));
+      };
+
+      /** Delivers one snapshot and then goes quiet — the bike is parked. */
+      window.WebSocket = class PreviewWebSocket {
+        constructor(url) {
+          this.url = url;
+          this.readyState = 1;
+          queueMicrotask(() => {
+            if (this.onopen) {
+              this.onopen();
+            }
+            if (this.onmessage) {
+              this.onmessage({ data: JSON.stringify(snapshot()) });
+            }
+          });
+        }
+        send() {}
+        close() {}
+        addEventListener() {}
+        removeEventListener() {}
+      };
+
+      // ── one instance of the dashboard per panel ──────────────────────────────────
+      //
+      // views/vcu-write.js keeps `dangerOpen`, `armed`, `wanted` and the rest as
+      // module-level van states. Two panels sharing one instance would share the fold and
+      // the armed button — so each panel gets the whole module graph to itself.
+
+      function instantiate() {
+        const cache = Object.create(null);
+        function imp(path) {
+          const existing = cache[path];
+          if (existing) {
+            return existing;
+          }
+          const exports = (cache[path] = {});
+          const factory = __MODULES[path];
+          if (!factory) {
+            throw new Error(`preview: no module ${path}`);
+          }
+          factory(exports, imp);
+          return exports;
+        }
+        return imp;
       }
-      requestAnimationFrame(attempt);
-    };
-    attempt();
-  });
-}
 
-/** A button by a distinctive fragment of its caption — never by its glyph. */
-function buttonSaying(root, fragment) {
-  return [...root.querySelectorAll("button")].find(node => node.textContent.includes(fragment)) ?? null;
-}
+      /** Seeds the store from one WebSocket snapshot, then walks a finished ride past the trip counters. */
+      async function seed(imp) {
+        const store = imp("lib/store.js");
+        const trip = imp("lib/trip.js");
+        store.connect();
+        await new Promise(resolve => setTimeout(resolve, 0));
 
-// ── the panels ───────────────────────────────────────────────────────────────
-
-const PANELS = [
-  {
-    kind: "key",
-    index: "The key",
-    title: "Three tiers, carried by a gutter",
-    body:
-      "The same 3 px gutter down the left edge of every control, in the same place and the same width on all three — so the colours are what you compare, rather than the presence of a stripe being a shape you have to notice first. Grey is the default, so a control acquires risk by being marked and never by being forgotten.",
-  },
-  {
-    kind: "sheet",
-    index: "1",
-    title: "The sheet as it opens",
-    body:
-      "Top to bottom, exactly as it arrives — the fold shut, five real headings instead of nine identical grey caps, and one amber heading where the sheet stops reading the bike and starts being able to change it. Everything above that rule is grey.",
-  },
-  {
-    kind: "actions",
-    index: "2",
-    title: "The fold, shut",
-    body:
-      "The read-only stamp action stays outside the fold: it changes nothing, and it is the one you want before the service point overwrites what it shows you. Below it, the fold names both why it is shut and what is in it, so somebody who came for the clock does not have to open it to find out the clock is there.",
-    open: false,
-  },
-  {
-    kind: "actions",
-    index: "3",
-    title: "The fold, opened",
-    body:
-      "Three cards, each with the one thing it cannot take back in red ABOVE its button — on a phone, reading order is tap order, so the sentence that could stop you has to be crossed on the way to the control. The category is a badge because the word was appearing five times in a screen and a half; the consequence gets the weight.",
-    open: true,
-  },
-  {
-    kind: "actions",
-    index: "4",
-    title: "Primed: the service point",
-    body:
-      "The second tap names what is armed. It used to read “Tap again — this cannot be undone” on all three, so an armed button said only that something irreversible was waiting, never which. Toggling the fold disarms, and the fold re-shuts every time the sheet is opened.",
-    open: true,
-    armAction: { caption: "Say a service was performed", armed: "STAMP A SERVICE NOW" },
-  },
-  {
-    kind: "form",
-    index: "5",
-    title: "The amber tier: a parameter write",
-    body:
-      "The middle tier, and the only control in it. A parameter write changes the bike and can be written back, which is what earns it a tier of its own rather than being lumped in with the red. Four reasons not to touch this one are folded behind a counted amber toggle rather than stacked over the input.",
-    value: "80",
-  },
-  {
-    kind: "form",
-    index: "6",
-    title: "The amber tier, armed",
-    body:
-      "Old → new, spelled out with the parameter's name in it: 75 → 80 alone reads identically for four of the five entries at plausible values. Any change to the form drops the arming — retyping, a different parameter, a refreshed reading — so the second tap can only ever send what the first one agreed to.",
-    value: "80",
-    armWrite: true,
-  },
-];
-
-function caption(panel) {
-  const wrap = document.createElement("div");
-  wrap.className = "pv-caption";
-  const index = document.createElement("div");
-  index.className = "pv-caption-index";
-  index.textContent = panel.index;
-  const title = document.createElement("div");
-  title.className = "pv-caption-title";
-  title.textContent = panel.title;
-  const body = document.createElement("p");
-  body.className = "pv-caption-body";
-  body.textContent = panel.body;
-  wrap.append(index, title, body);
-  return wrap;
-}
-
-/** The three tiers as three real buttons, with the sheet's own captions on them. */
-function renderKey(stage) {
-  const key = document.createElement("div");
-  key.className = "pv-key";
-  const tiers = [
-    ["", "📖  Read the last-service stamp", "<b>Grey — reads.</b> Cannot change the bike."],
-    ["writes", "✏️  Write  MAX_DC_CHG_CURRENT: 75 → 80", "<b>Amber — the parameter write.</b> Changes the bike, and can be written back."],
-    ["irreversible", "🔧  Say a service was performed NOW", "<b>Red — no undo.</b> 31 FC, Mode 04, the clock. Behind the fold."],
-  ];
-  for (const [modifier, label, note] of tiers) {
-    const button = document.createElement("button");
-    button.className = `action${modifier ? ` ${modifier}` : ""}`;
-    button.type = "button";
-    button.textContent = label;
-    button.addEventListener("click", () => toast("Preview — the tiers are a key, not a screen. The panels below are live."));
-    const caption = document.createElement("div");
-    caption.className = "pv-key-label";
-    caption.innerHTML = note;
-    key.append(button, caption);
-  }
-  stage.appendChild(key);
-}
-
-async function renderSheet(stage) {
-  const imp = instantiate();
-  await seed(imp);
-  const van = imp("vendor/van-1.6.1.js").default;
-  const sheet = imp("views/sheet.js");
-  van.add(stage, sheet.Sheet());
-  sheet.openSheet();
-  await settle(() => stage.querySelector("button.risk-fold"));
-}
-
-/**
- * The write section, scoped to one of its blocks.
- *
- * The whole section is rendered — it is one bound tree and cutting a node out of it
- * would leave the panel showing a copy VanJS had stopped updating — and the stage
- * carries a class that hides the blocks this panel is not about. See chrome.css.
- */
-async function renderWriteSection(stage, panel) {
-  const imp = instantiate();
-  await seed(imp);
-  const van = imp("vendor/van-1.6.1.js").default;
-  const write = imp("views/vcu-write.js");
-
-  const overlay = document.createElement("div");
-  overlay.className = "sheet open";
-  const body = document.createElement("div");
-  body.className = `sheet-body pv-scope pv-scope-${panel.kind}`;
-  overlay.appendChild(body);
-  stage.appendChild(overlay);
-
-  van.add(body, write.VcuWrite());
-  await write.refreshVcuWrite();
-  const root = await settle(() => {
-    const candidate = body.firstElementChild;
-    return candidate && candidate.children.length === 5 && candidate.children[4].children.length === 3
-      ? candidate
-      : null;
-  });
-  if (root.children[4].children.length !== 3) {
-    console.warn("preview: the write section's shape has moved — check pv-scope in chrome.css");
-  }
-
-  if (panel.open) {
-    (await settle(() => body.querySelector("button.risk-fold"))).click();
-    await settle(() => body.querySelector(".danger-zone"));
-  }
-  if (panel.armAction) {
-    const zone = body.querySelector(".danger-zone");
-    (await settle(() => buttonSaying(zone, panel.armAction.caption))).click();
-    await settle(() => buttonSaying(body.querySelector(".danger-zone"), panel.armAction.armed));
-  }
-  if (panel.value) {
-    const control = TARGETS[0].control;
-    const input = await settle(() =>
-      body.querySelector(`input.probe-input[placeholder="${control.min}…${control.max}"]`)
-    );
-    input.value = panel.value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await settle(() => buttonSaying(body, `75 → ${panel.value}`));
-  }
-  if (panel.armWrite) {
-    (await settle(() => body.querySelector("button.action.writes"))).click();
-    // The first tap re-reads the Pi before it arms, so the number the second tap
-    // agrees to is the Pi's answer now. Two captions pass through on the way.
-    await settle(() => buttonSaying(body, "Tap again to write"));
-  }
-}
-
-async function boot() {
-  const host = document.getElementById("pv-panels");
-  for (const panel of PANELS) {
-    const section = document.createElement("section");
-    section.className = "pv-panel";
-    section.appendChild(caption(panel));
-    const stage = document.createElement("div");
-    stage.className = "pv-stage";
-    section.appendChild(stage);
-    host.appendChild(section);
-
-    try {
-      if (panel.kind === "key") {
-        renderKey(stage);
-      } else if (panel.kind === "sheet") {
-        await renderSheet(stage);
-      } else {
-        await renderWriteSection(stage, panel);
+        // 37.4 km in 41 minutes, which is what the last ride was. updateTrip() credits at
+        // most two seconds per call — the guard that stops a backgrounded tab claiming its
+        // whole absence as riding time — so the ride is walked past it at its own pace.
+        const odometer = store.signalState("odometer_can_km");
+        const speed = store.signalState("gps_speed_kmh");
+        const start = 14849.4 - 37.4;
+        const steps = 1230;
+        odometer.val = { value: start, unit: "km", group: "drive", ts: NOW };
+        speed.val = { value: 0, unit: "km/h", group: "gps", ts: NOW };
+        trip.updateTrip(0);
+        for (let step = 1; step <= steps; step++) {
+          const fraction = step / steps;
+          odometer.val = { value: start + 37.4 * fraction, unit: "km", group: "drive", ts: NOW };
+          // A shape rather than a constant, so "Top" is a speed the bike actually reached
+          // on the way rather than the average with a digit changed.
+          const kmh = 46 + 34 * Math.sin(fraction * Math.PI * 3) + (step === 812 ? 42 : 0);
+          speed.val = { value: Math.max(4, kmh), unit: "km/h", group: "gps", ts: NOW };
+          trip.updateTrip(step * 2000);
+        }
+        odometer.val = { value: 14849.4, unit: "km", group: "drive", ts: NOW };
+        speed.val = { value: 0, unit: "km/h", group: "gps", ts: NOW };
       }
-    } catch (error) {
-      console.error(`preview: panel ${panel.index} failed`, error);
-      const failure = document.createElement("div");
-      failure.className = "pv-note";
-      failure.textContent = `This panel did not render: ${error && error.message ? error.message : error}`;
-      stage.appendChild(failure);
-    }
-  }
-  document.documentElement.dataset.previewReady = "yes";
-}
 
-boot();
+      // ── waiting on VanJS ─────────────────────────────────────────────────────────
+      //
+      // van schedules DOM updates on a microtask, and several of these steps go through a
+      // stubbed fetch first, so every step waits for the DOM it needs rather than guessing
+      // at a delay.
 
-</script>
+      function settle(test) {
+        return new Promise((resolve, reject) => {
+          const deadline = Date.now() + 4000;
+          const attempt = () => {
+            let found = null;
+            try {
+              found = test();
+            } catch (error) {
+              reject(error);
+              return;
+            }
+            if (found) {
+              resolve(found);
+              return;
+            }
+            if (Date.now() > deadline) {
+              reject(new Error("preview: timed out waiting for the sheet to settle"));
+              return;
+            }
+            requestAnimationFrame(attempt);
+          };
+          attempt();
+        });
+      }
 
-</body>
+      /** A button by a distinctive fragment of its caption — never by its glyph. */
+      function buttonSaying(root, fragment) {
+        return [...root.querySelectorAll("button")].find(node => node.textContent.includes(fragment)) ?? null;
+      }
+
+      // ── the panels ───────────────────────────────────────────────────────────────
+
+      const PANELS = [
+        {
+          kind: "key",
+          index: "The key",
+          title: "Three tiers, carried by a gutter",
+          body: "The same 3 px gutter down the left edge of every control, in the same place and the same width on all three — so the colours are what you compare, rather than the presence of a stripe being a shape you have to notice first. Grey is the default, so a control acquires risk by being marked and never by being forgotten.",
+        },
+        {
+          kind: "sheet",
+          index: "1",
+          title: "The sheet as it opens",
+          body: "Top to bottom, exactly as it arrives — the fold shut, five real headings instead of nine identical grey caps, and one amber heading where the sheet stops reading the bike and starts being able to change it. Everything above that rule is grey.",
+        },
+        {
+          kind: "actions",
+          index: "2",
+          title: "The fold, shut",
+          body: "The read-only stamp action stays outside the fold: it changes nothing, and it is the one you want before the service point overwrites what it shows you. Below it, the fold names both why it is shut and what is in it, so somebody who came for the clock does not have to open it to find out the clock is there.",
+          open: false,
+        },
+        {
+          kind: "actions",
+          index: "3",
+          title: "The fold, opened",
+          body: "Three cards, each with the one thing it cannot take back in red ABOVE its button — on a phone, reading order is tap order, so the sentence that could stop you has to be crossed on the way to the control. The category is a badge because the word was appearing five times in a screen and a half; the consequence gets the weight.",
+          open: true,
+        },
+        {
+          kind: "actions",
+          index: "4",
+          title: "Primed: the service point",
+          body: "The second tap names what is armed. It used to read “Tap again — this cannot be undone” on all three, so an armed button said only that something irreversible was waiting, never which. Toggling the fold disarms, and the fold re-shuts every time the sheet is opened.",
+          open: true,
+          armAction: { caption: "Say a service was performed", armed: "STAMP A SERVICE NOW" },
+        },
+        {
+          kind: "form",
+          index: "5",
+          title: "The amber tier: a parameter write",
+          body: "The middle tier, and the only control in it. A parameter write changes the bike and can be written back, which is what earns it a tier of its own rather than being lumped in with the red. Four reasons not to touch this one are folded behind a counted amber toggle rather than stacked over the input.",
+          value: "80",
+        },
+        {
+          kind: "form",
+          index: "6",
+          title: "The amber tier, armed",
+          body: "Old → new, spelled out with the parameter's name in it: 75 → 80 alone reads identically for four of the five entries at plausible values. Any change to the form drops the arming — retyping, a different parameter, a refreshed reading — so the second tap can only ever send what the first one agreed to.",
+          value: "80",
+          armWrite: true,
+        },
+      ];
+
+      function caption(panel) {
+        const wrap = document.createElement("div");
+        wrap.className = "pv-caption";
+        const index = document.createElement("div");
+        index.className = "pv-caption-index";
+        index.textContent = panel.index;
+        const title = document.createElement("div");
+        title.className = "pv-caption-title";
+        title.textContent = panel.title;
+        const body = document.createElement("p");
+        body.className = "pv-caption-body";
+        body.textContent = panel.body;
+        wrap.append(index, title, body);
+        return wrap;
+      }
+
+      /** The three tiers as three real buttons, with the sheet's own captions on them. */
+      function renderKey(stage) {
+        const key = document.createElement("div");
+        key.className = "pv-key";
+        const tiers = [
+          ["", "📖  Read the last-service stamp", "<b>Grey — reads.</b> Cannot change the bike."],
+          [
+            "writes",
+            "✏️  Write  MAX_DC_CHG_CURRENT: 75 → 80",
+            "<b>Amber — the parameter write.</b> Changes the bike, and can be written back.",
+          ],
+          [
+            "irreversible",
+            "🔧  Say a service was performed NOW",
+            "<b>Red — no undo.</b> 31 FC, Mode 04, the clock. Behind the fold.",
+          ],
+        ];
+        for (const [modifier, label, note] of tiers) {
+          const button = document.createElement("button");
+          button.className = `action${modifier ? ` ${modifier}` : ""}`;
+          button.type = "button";
+          button.textContent = label;
+          button.addEventListener("click", () =>
+            toast("Preview — the tiers are a key, not a screen. The panels below are live.")
+          );
+          const caption = document.createElement("div");
+          caption.className = "pv-key-label";
+          caption.innerHTML = note;
+          key.append(button, caption);
+        }
+        stage.appendChild(key);
+      }
+
+      async function renderSheet(stage) {
+        const imp = instantiate();
+        await seed(imp);
+        const van = imp("vendor/van-1.6.1.js").default;
+        const sheet = imp("views/sheet.js");
+        van.add(stage, sheet.Sheet());
+        sheet.openSheet();
+        await settle(() => stage.querySelector("button.risk-fold"));
+      }
+
+      /**
+       * The write section, scoped to one of its blocks.
+       *
+       * The whole section is rendered — it is one bound tree and cutting a node out of it
+       * would leave the panel showing a copy VanJS had stopped updating — and the stage
+       * carries a class that hides the blocks this panel is not about. See chrome.css.
+       */
+      async function renderWriteSection(stage, panel) {
+        const imp = instantiate();
+        await seed(imp);
+        const van = imp("vendor/van-1.6.1.js").default;
+        const write = imp("views/vcu-write.js");
+
+        const overlay = document.createElement("div");
+        overlay.className = "sheet open";
+        const body = document.createElement("div");
+        body.className = `sheet-body pv-scope pv-scope-${panel.kind}`;
+        overlay.appendChild(body);
+        stage.appendChild(overlay);
+
+        van.add(body, write.VcuWrite());
+        await write.refreshVcuWrite();
+        const root = await settle(() => {
+          const candidate = body.firstElementChild;
+          return candidate && candidate.children.length === 5 && candidate.children[4].children.length === 3
+            ? candidate
+            : null;
+        });
+        if (root.children[4].children.length !== 3) {
+          console.warn("preview: the write section's shape has moved — check pv-scope in chrome.css");
+        }
+
+        if (panel.open) {
+          (await settle(() => body.querySelector("button.risk-fold"))).click();
+          await settle(() => body.querySelector(".danger-zone"));
+        }
+        if (panel.armAction) {
+          const zone = body.querySelector(".danger-zone");
+          (await settle(() => buttonSaying(zone, panel.armAction.caption))).click();
+          await settle(() => buttonSaying(body.querySelector(".danger-zone"), panel.armAction.armed));
+        }
+        if (panel.value) {
+          const control = TARGETS[0].control;
+          const input = await settle(() =>
+            body.querySelector(`input.probe-input[placeholder="${control.min}…${control.max}"]`)
+          );
+          input.value = panel.value;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          await settle(() => buttonSaying(body, `75 → ${panel.value}`));
+        }
+        if (panel.armWrite) {
+          (await settle(() => body.querySelector("button.action.writes"))).click();
+          // The first tap re-reads the Pi before it arms, so the number the second tap
+          // agrees to is the Pi's answer now. Two captions pass through on the way.
+          await settle(() => buttonSaying(body, "Tap again to write"));
+        }
+      }
+
+      async function boot() {
+        const host = document.getElementById("pv-panels");
+        for (const panel of PANELS) {
+          const section = document.createElement("section");
+          section.className = "pv-panel";
+          section.appendChild(caption(panel));
+          const stage = document.createElement("div");
+          stage.className = "pv-stage";
+          section.appendChild(stage);
+          host.appendChild(section);
+
+          try {
+            if (panel.kind === "key") {
+              renderKey(stage);
+            } else if (panel.kind === "sheet") {
+              await renderSheet(stage);
+            } else {
+              await renderWriteSection(stage, panel);
+            }
+          } catch (error) {
+            console.error(`preview: panel ${panel.index} failed`, error);
+            const failure = document.createElement("div");
+            failure.className = "pv-note";
+            failure.textContent = `This panel did not render: ${error && error.message ? error.message : error}`;
+            stage.appendChild(failure);
+          }
+        }
+        document.documentElement.dataset.previewReady = "yes";
+      }
+
+      boot();
+    </script>
+  </body>
 </html>
