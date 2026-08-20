@@ -93,6 +93,14 @@ const BY_KEY = {
   "charge_type": [0, 2],
   "charge_manager_status": [0, 255],
   "charge_manager_state": [0, 255],
+  // 0x610 b1 and b2-3, `CM_ERROR_SRC` and `CM_ERROR_CODE` — a fault SOURCE and a fault CODE, so
+  // like `freeze_frame_dtc` above they are identifiers and the whole field is legitimate. The
+  // source is a byte; the code is a signed 16 and the sign is the manufacturer's, not ours, so
+  // the negative half stays in. Only two of each have ever been seen (sources 7 and 8, codes 853
+  // and 1101) and bounding round those would reject every fault this bike has not had yet, which
+  // is the entire reason the pair is logged.
+  "charge_manager_error_src": [0, 255],
+  "charge_manager_error_code": [-32_768, 32_767],
   // The charge manager's NUMERIC signals, added 2026-08-20. Same miss as
   // `dc_charge_limit_selected_a` above from the other direction: these DO reach a rule,
   // but it is BY_UNIT's "A" fallback of [-1000, 1000] and every one of them is a plain
@@ -101,23 +109,27 @@ const BY_KEY = {
   // ⚠️ 127 is `MAX_DC_CHG_CURRENT`'s FIELD range, NOT the 80 this project's write policy
   // stops at: a plausibility gate is about what the field can legitimately carry, and
   // bounding at 80 would draw a dealer write or a differently-optioned bike as a dead
-  // SENSOR. 150 on `fast_dc_a` covers a measured 12 A step-edge skew; 80 on
+  // SENSOR. 150 on `fast_dc_target_a` covers a measured 12 A step-edge skew; 80 on
   // `ac_supply_limit_a` is IEC 61851's control-pilot ceiling, not this bike's.
   //
-  // These are the second line of defence — src/can/charge-manager.ts checks frame
+// These are the second line of defence — src/can/charge-manager.ts checks frame
   // invariants first — and the two layers fail differently. Each bound's derivation:
   // docs/dashboard-decisions.md §"The charge manager's numeric bounds".
-  "fast_dc_a": [0, 150],
+  "fast_dc_target_a": [0, 150],
   "fast_dc_limit_a": [0, 127],
   "fast_dc_limit_max_a": [0, 127],
   "ac_supply_limit_a": [0, 80],
-  // The charge manager's pack voltage, 0x615 b0 + 242.5. Its decoded range is 242.5…497.5 V and
-  // the "V" fallback is [-50, 900], so an all-ones payload draws 497.5 V as a measurement. It is
-  // the SAME QUANTITY as `pack_v`, which is named [0, 450] near the top of this table for
-  // exactly this reason, so it gets exactly that band: a second witness must not be looser,
-  // or the two disagree about what counts as a fault. The lower half is unreachable — the
-  // decoder drops b0 = 0 — and is kept only so the two entries stay visibly identical.
-  "charge_manager_pack_v": [0, 450],
+  // The two DC voltages the VCU sends the charge manager, 0x615 b0-1 and 0x625 b0-1. Both are
+  // 16-bit with the high byte gated to 0x01, so each can only emit 256…511 V, and the "V"
+  // fallback of [-50, 900] would draw the top of that as a measurement.
+  //
+  // ⚠️ `fast_dc_target_v` replaced `charge_manager_pack_v` on 2026-08-20 and is NOT the quantity
+  // that key claimed. It was described here as "the SAME QUANTITY as `pack_v`, a second witness";
+  // it is a REQUEST, a median 13.4 V above the pack. Both keep `pack_v`'s [0, 450] because all
+  // three are voltages for the same 81-series pack and must agree about what counts as a fault.
+  // Why the number changed: docs/charge-manager.md §"The 242.5 offset dissolves".
+  "fast_dc_target_v": [0, 450],
+  "fast_dc_limit_max_v": [0, 450],
   // 0x501, the PSU monitor. These three MUST be named here, and the first two are the
   // reason this comment exists: their unit is "mV", and BY_UNIT's mV fallback is
   // [0, 5000] because it was written for cell voltages. A healthy 12 704 mV rail would
