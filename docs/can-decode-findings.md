@@ -320,7 +320,9 @@ That is real but it is **four times smaller** than the "10-20 km/h over" this bi
 
 Energica's `FramesDB.ParseVCU_VEHICLE_FLAGS` names all 64 bits of it — byte 0 bit 0 through byte 7 bit 7, one named flag each, no multi-byte fields at all (the 2024 service-tool analysis in `obd-garage/`, §`0x100` `VCU_VEHICLE_FLAGS`). That makes it the VCU's counterpart to the BMS's own error/warning words on 0x201, and it is handled the same way this repo already handles those: log the raw words so no flag can ever be lost, then break out only the ones worth an alert.
 
-**The reason it is worth having at all is `ERR_ChargeCM_Out`, byte 7 bit 1.** The charge manager has never been read on this bike — its own `CM_ERROR` / `CM_ERROR_SOURCE` / `CM_ERROR_CODE_*` telemetry is not broadcast anywhere and needs a diagnostic session with an ECU that was only recently located. This summary bit IS broadcast, so a charge-manager fault becomes visible passively, which matters directly to the open question of why DC fast charging caps below the bike's advertised 75 A.
+**The reason it is worth having at all is `ERR_ChargeCM_Out`, byte 7 bit 1** — a rollup of charge-manager faults, which matters directly to the open question of why DC fast charging caps below the bike's advertised 75 A.
+
+⚠️ **This paragraph used to say the charge manager's own `CM_ERROR_SOURCE` / `CM_ERROR_CODE` "is not broadcast anywhere and needs a diagnostic session". That was wrong.** It is on `0x610` b1 and b2-3 at 10 Hz, decoded since 2026-08-20 once Energica's factory DBC named the bytes — see `docs/charge-manager.md` §"b1-3 are a fault code". The two are worth keeping side by side rather than one replacing the other: through all three fault episodes in the archive, `0x610` carried a source and a code while **this bit stayed 0**, so the rollup is not simply a summary of them.
 
 **Why the raw halves are logged as two 32-bit words.** So a flag this file does not break out is still recorded and a future reader can go back through the log for it. Two 32-bit words rather than one 64-bit number because JavaScript's bitwise operators truncate to 32 bits, so a single value would be unusable for exactly the thing it exists for. Little-endian within each half, which makes bit N of the word byte N>>3, bit N&7 — the same convention every other multi-byte field on this bus uses. Nothing reads meaning out of the words themselves; they are a lossless record, not a measurement.
 
@@ -660,8 +662,11 @@ From the archive, 10 DC sessions (0x645 present) and 8 AC ones:
 
 - **26/26 events satisfy every structural invariant** — b1 = 0xFF, b3 = 1, b2 ≥ 1, b2 ≤ b4, b5-7 = 0, DLC 8, and a matching 0x120 twin within 50 ms.
 - Opcode 0x18 fired **18/18 inside a DC session** and opcode 0x1A **0/8** — the two never cross, which is what says b4 is the mode's ceiling rather than a coincidence.
-- **THE CURRENT OBEYS IT.** Whenever the rider dialled DOWN below what was flowing, the measured DC current (0x615 b2) settled on the commanded value EXACTLY, **9 times out of 9**, in 0.31-2.25 s. 2026-08-09 walks 1 → 5 → 10 → 15 → 20 → 35 A and the current lands on each one in turn.
-- Over the 15 plateaus that follow an event — **53 268 measured-current samples** — the delivered current NEVER ONCE exceeded the commanded setpoint. **100.000 %.**
+- **THE REQUEST OBEYS IT.** Whenever the rider dialled DOWN below what was flowing, `0x615` b2 settled on the commanded value EXACTLY, **9 times out of 9**, in 0.31-2.25 s. 2026-08-09 walks 1 → 5 → 10 → 15 → 20 → 35 A and it lands on each one in turn.
+
+  ⚠️ **Relabelled 2026-08-20.** This bullet said "the measured DC current (0x615 b2)". `0x615` is `V_CM_CHG`, the VCU's request frame, and b2 is `V_CMDC_TARGET_I` — what the vehicle **asks the station for**, now logged as `fast_dc_target_a` (`docs/charge-manager.md`). The evidence is unchanged and the mechanism it implies is cleaner: the dial moves what the bike requests, and a request landing exactly on an integer setpoint is what a setpoint should do, where a delivered current landing exactly on one was always slightly surprising. ⚠️ What it no longer establishes is that the **delivery** follows the dial — that needs `0x200`'s pack current, which this measurement did not use. Same caveat applies to the plateau bullet below.
+
+- Over the 15 plateaus that follow an event — **53 268 samples** — the current NEVER ONCE exceeded the commanded setpoint. **100.000 %.** 🟡 Read this as the request never exceeding the setpoint unless the samples are known to come from `0x200`; see the relabelling note above.
 
 **Dialling UP is not obeyed the same way, and that is the point of having the signal:** set 75 and the current stops at 66, 73, 53 or 36 depending on the session. Something else is binding (station envelope, VCU pack-temperature derate — see `obd-garage/DC_CHARGE_LIMITS.md`). So this signal answers "did I cap it myself?", which is exactly the question that was unanswerable while the two numbers were conflated.
 
@@ -679,7 +684,7 @@ This is a COMMAND frame whose byte layout is chosen by the opcode. A future 0x18
 
 ### ⚠️ THIS FRAME IS AN EVENT
 
-It fires when the rider moves the dial and at no other time — **5 of the 10 captured DC sessions contain no 0x121 setpoint event at all**, because the dial was never touched. Nothing rebroadcasts the value, and it is not mirrored anywhere on the bus: every byte and 16-bit pair of every id was scanned across three known plateaus and the only field tracking the setting was 0x615 b2, the MEASURED current. On AC there is a continuous echo (0x10A b7); on DC that byte reads 0 for the whole session (1300/1300 frames checked). Consequences worth knowing before relying on this:
+It fires when the rider moves the dial and at no other time — **5 of the 10 captured DC sessions contain no 0x121 setpoint event at all**, because the dial was never touched. Nothing rebroadcasts the value, and it is not mirrored anywhere on the bus: every byte and 16-bit pair of every id was scanned across three known plateaus and the only field tracking the setting was 0x615 b2 — which is the vehicle's REQUESTED current, not a measured one (see above). On AC there is a continuous echo (0x10A b7); on DC that byte reads 0 for the whole session (1300/1300 frames checked). Consequences worth knowing before relying on this:
 
 - **The value is the LAST SETTING SEEN, not a poll.** After a service restart it is absent until the rider next touches the dial.
 - **Its dashboard tile greys out 8 s after arriving**, like `waypoint_seq` and for the same reason. That is not a bug and must not be papered over by re-asserting it on a timer — `record()` refreshing `liveState` is how "this signal stopped arriving" stays honest everywhere else.

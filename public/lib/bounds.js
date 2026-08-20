@@ -112,7 +112,7 @@ const BY_KEY = {
   // SENSOR. 150 on `fast_dc_target_a` covers a measured 12 A step-edge skew; 80 on
   // `ac_supply_limit_a` is IEC 61851's control-pilot ceiling, not this bike's.
   //
-// These are the second line of defence — src/can/charge-manager.ts checks frame
+  // These are the second line of defence — src/can/charge-manager.ts checks frame
   // invariants first — and the two layers fail differently. Each bound's derivation:
   // docs/dashboard-decisions.md §"The charge manager's numeric bounds".
   "fast_dc_target_a": [0, 150],

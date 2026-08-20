@@ -165,7 +165,7 @@ What the corpus adds, which the DBC does not state:
 
 ⚠️ The old writeup's careful derivation of 242.5 (median 242.6, p5 241.4, p95 243.3, least squares `0.9943 × b0 + 242.79`) was all correct arithmetic on the wrong model, and its speculation that 242.5 might come from 81 series cells at the 3.0 V under-voltage limit (= 243.0 V) is now moot. It also superseded `CAN_MAP.md`'s "242 and 245 both fit" by ruling out 245; that stands, for whatever it is still worth.
 
-**Consequence for the key.** `charge_manager_pack_v` was renamed to `fast_dc_target_v` and its value changed from `b0 + 242.5` to `256 + b0` — 13.5 V higher. The rename is not cosmetic: the old key is described in `bounds.js` as "the SAME QUANTITY as `pack_v`… a second witness", and it is not. It is the VCU's request. Rows logged under the old key before 2026-08-20 are still correct readings of b0; they are just 13.5 V below what the same byte now logs, which is exactly why they must not share a series.
+**Consequence for the key.** `charge_manager_pack_v` was renamed to `fast_dc_target_v` and its value changed from `b0 + 242.5` to `256 + b0` — 13.5 V higher. The rename is not cosmetic: the old key was documented as "the SAME QUANTITY as `pack_v`… a second witness" (now `docs/dashboard-decisions.md` §"The charge manager's numeric bounds"), and it is not. It is the VCU's request. Rows logged under the old key before 2026-08-20 are still correct readings of b0; they are just 13.5 V below what the same byte now logs, which is exactly why they must not share a series.
 
 ### b2 — the current the vehicle asks for
 

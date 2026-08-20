@@ -249,15 +249,13 @@ export const SIGNALS: SignalDef[] = [
   //   dc_charge_limit_selected_a  0x121 b2  what the RIDER picked on the bike's own screen
   //   fast_dc_limit_max_a         0x625 b2  the configured ceiling the dial runs up to, 75
   //   fast_dc_limit_a             0x620 b0  the limit in force this second, 0…75 in a session
-  //
-  // ⚠️ TWO KEYS WERE RENAMED on 2026-08-20 and old rows do not carry over. `0x615` is the VCU's
-  // REQUEST frame, not the charge manager reporting, so `fast_dc_a` → `fast_dc_target_a` (same
-  // number, truthful name) and `charge_manager_pack_v` → `fast_dc_target_v` (a DIFFERENT number:
-  // b0-1 are one 16-bit target voltage, so the value went from b0 + 242.5 to 256 + b0, 13.5 V
-  // higher). Rows logged under the old keys are still correct readings of the same bytes under
-  // the old model; they must not share a series with the new ones, which is why they got new
-  // keys rather than a redefinition in place.
-  //
+
+  // ⚠️ TWO KEYS WERE RENAMED on 2026-08-20 and old rows do NOT carry over: `fast_dc_a` →
+  // `fast_dc_target_a` (same number) and `charge_manager_pack_v` → `fast_dc_target_v` (13.5 V
+  // higher — b0-1 are one 16-bit target, not a byte plus an offset). New keys rather than a
+  // redefinition in place, because the old rows are correct under the old model and must not
+  // share a series. Why: docs/charge-manager.md §"The 242.5 offset dissolves".
+
   // No deadbands. Every one of them is either a flag, a 1-unit-quantised integer or a byte
   // that only moves on a state change, so log-on-change already is the right rate.
   { key: "charge_type", unit: "", group: "charge", source: "stream" }, // 0x605 b2: 1 AC, 2 DC ✅
