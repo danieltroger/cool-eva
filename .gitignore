@@ -185,3 +185,6 @@ ride-logs
 # own. Committing one deliberately, as a reference set of real Eva Ribelle values,
 # would be a fine thing to do; it just should not happen by accident on every run.
 vcu-params
+
+# Built by scripts/build-service-preview.ts — regenerate rather than commit
+service-sheet-preview.html

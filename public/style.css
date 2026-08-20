@@ -1112,7 +1112,7 @@ body {
   min-height: 3rem;
   padding: 0.7rem 1rem;
   box-shadow: none;
-  color: var(--muted);
+  color: var(--label);
 }
 
 /* The caret carried the whole "this opens" signal at text size, and did not read
