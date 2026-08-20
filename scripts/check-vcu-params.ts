@@ -1779,8 +1779,16 @@ expect(unreadGate.remedy.includes("277") && unreadGate.remedy.includes("TABLE_TY
 expect(unreadGate.remedy.includes("A8"), "the remedy must name the micro to ask — the A9's answer is already in");
 expect(unreadGate.remedy.includes("22 11 15"), "the remedy must give the request bytes, 22 11 15");
 expect(
-  unreadGate.remedy.includes("Probe one identifier"),
-  "the remedy must point at the probe UI that can already do this, by the name on the button"
+  unreadGate.remedy.includes("/vcu-probe?target="),
+  "the remedy must point at the route that can already do this, by the URL a reader can actually use"
+);
+// ⚠️ This used to assert the remedy said “Probe one identifier”, the name on a button.
+// The button was removed in 2026-08 and the assertion kept passing, because a string
+// check cannot tell whether the thing it names still exists. It now names the endpoint,
+// which src/index.ts routes and public/views/vcu-write.js calls — both greppable.
+expect(
+  !unreadGate.remedy.includes("Probe one identifier"),
+  "the remedy must not name a UI panel that no longer exists"
 );
 expect(unreadGate.remedy.includes("read-only"), "the remedy must say the read changes nothing, or nobody will run it");
 expect(

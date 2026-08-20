@@ -1105,8 +1105,11 @@ body {
 }
 
 /* Export is a twice-a-year action sitting directly under a button pressed every
-   visit. At the same size the sheet claimed they matter equally. Quieter, not
-   hidden: same target height for a gloved thumb, less of everything else. */
+   visit. At the same size the sheet claimed they matter equally.
+   ⚠️ This DOES shrink the target: 48px against .action's 60px, which that rule's own
+   comment calls "tall enough for a gloved thumb". 48 still clears the 44pt guidance
+   and the smaller target is the point — but it is a real trade, not a free one, and
+   an earlier version of this comment claimed the height was unchanged. */
 .action.action-quiet {
   font-size: 0.9rem;
   min-height: 3rem;

@@ -303,7 +303,7 @@ function describeUnread(index: number): string {
  * nobody could act on, and the honest end of that road is the gate being switched off.
  *
  * ⚠️⚠️ SEEING THE ANSWER AND RECORDING IT ARE DIFFERENT ACTS. The gate is fed from the last
- * SWEEP's snapshot; "probe one identifier" performs precisely this read and returns it in
+ * SWEEP's snapshot; a one-identifier probe performs precisely this read and returns it in
  * an HTTP response that nothing persists. An earlier wording conflated the two and sent
  * someone back to a button still amber with the identical message. The full account, and
  * why this no longer says what the answer SHOULD be: docs/vcu-parameters.md §4.
@@ -321,8 +321,9 @@ function readInstructionFor(index: number): string {
     `(${KNOWN_TABLE_TYPES.join(", ")}); anything else is answered by the remedy above. ` +
     "⚠️ It has to be RECORDED, not merely seen: this gate reads the last parameter sweep's snapshot, so run " +
     `Service mode → read the parameters and let it finish. ${sweepOrderCaveatFor(index)} ` +
-    `“Probe one identifier” (target ${micro}, bank 1, index ${index}) shows the same answer in one frame and is ` +
-    "the quickest way to find out what the bike says — but it stores nothing, so it cannot open this gate."
+    `The /vcu-probe endpoint shows the same answer in one frame — ` +
+    `curl -X POST -H 'X-Cool-Eva: service-mode' '<pi>/vcu-probe?target=${micro}&bank=1&index=${index}' — ` +
+    "but it stores nothing, so it cannot open this gate."
   );
 }
 

@@ -405,7 +405,7 @@ The opposite failure, a unit fallback that is too tight, has its own examples. `
 
 `freeze_frame_dtc` is an IDENTIFIER, not a measurement, so the whole 16-bit space is legitimate (P0514 is 0x0514 = 1300, and a U-code reaches 0xFFFF). 0 is meaningful too: it is the bike's own way of saying no freeze frame is stored.
 
-`COUNTER_KEYS` exists because `dtc_count` (0…127, PID 01) and `warmups_since_clear` (0…255, PID 30) share the `diag` group with the 154 generated `dtc_*` flags but are counts, not flags — the group-wide 1/0 rule would reject every value above 1 as a sensor fault, gating out exactly the stored-code count that the Faults tab's OBD cross-check exists to show, precisely when there is something to cross-check. (The service sheet carried a weaker copy of that cross-check until 2026-08-20; the Faults tab's version is the one that survives, because it compares PID 01's counter against the length of mode 03's list and says so when they disagree, rather than printing both numbers and leaving the reader to notice.) `dtc_stored_count` reads 39 on this bike today.
+`COUNTER_KEYS` exists because `dtc_count` (0…127, PID 01) and `warmups_since_clear` (0…255, PID 30) share the `diag` group with the 154 generated `dtc_*` flags but are counts, not flags — the group-wide 1/0 rule would reject every value above 1 as a sensor fault, gating out exactly the stored-code count that the Faults tab's OBD cross-check exists to show, precisely when there is something to cross-check. (The service sheet carried a tile until 2026-08-20 that put the Hub's ACTIVE `dtc_*` flags beside PID 01's STORED count — two numbers `Counters()` says measure different things and always disagree — and left the reader to make of that what they would. It was removed as a duplicate of the Faults tab, which is strictly more: it names the codes, carries their history, and runs a real cross-check of PID 01's counter against the length of mode 03's list, saying so when those two disagree. Note that is a DIFFERENT pair of numbers, so nothing was 'moved' — the tile's juxtaposition simply had no reading worth keeping.) `dtc_stored_count` reads 39 on this bike today.
 
 `buttons` joined `BOOLEAN_GROUPS` on 2026-08-16. Today their decoder can only emit 0 or 1 (it returns `bit()`), so the gate rejects nothing — it is there for the same reason `controls` is, which is that `high_beam` once read 193. A decoder that later returned the masked byte instead of the bit (`handlebar & 0x20` is 32, not 1) would otherwise paint a pressed button as an ordinary number, and a button tile that lights on 32 but not on 1 is exactly the kind of quiet wrong answer this file exists to stop.
 
@@ -563,7 +563,7 @@ The per-group numbers stay in `/status`, and are more correct there than they we
 
 ---
 
-## Service mode: reading the VCU — `views/service-mode.js`, `views/vcu-probe.js`, `lib/params-page.js`
+## Service mode: reading the VCU — `views/service-mode.js`, `lib/params-page.js`
 
 ### Why the sweep lives in the sheet, and the table is a page of its own
 
@@ -599,9 +599,11 @@ Three states, three appearances. "A micro never answered" must not render identi
 
 `ageInWords` in `lib/format.js` is where the phone-clock reasoning lives now — three pages were computing it inline off the same `readAt`, with thresholds that had already drifted apart: `/params.html` said "73 h ago" where the same snapshot on the service sheet said "3 days ago".
 
-### The probe form — `views/vcu-probe.js`
+### The probe form — REMOVED 2026-08, was `views/vcu-probe.js`
 
-"Probe index N" reads ONE identifier off ONE ECU, from the phone. It is the replacement for `scripts/read-vcu-params.ts --index N`, which went away when the sweep moved into the service, and it reaches further than that flag did: the identifier is `(bank << 12) | index`, the sweep reads bank 1 (the calibration EEPROM), and **bank 2 is live data** — the running values rather than the stored settings — which nothing in this project had ever read.
+⚠️ **The form is gone; the `/vcu-probe` endpoint is not.** The panel was removed from the service sheet as clutter — a handful of uses ever, sitting in the scroll on every visit — and what it was wanted for is recorded on issue #51. The route stays live (`src/index.ts`) and stays exercised: the write flow's "read it off the bike again" calls it. Reach it with `curl -X POST -H 'X-Cool-Eva: service-mode' '<pi>/vcu-probe?target=A9&bank=2&index=258'`. Everything below describes what the form did, and is kept because the ENDPOINT still behaves this way.
+
+"Probe index N" read ONE identifier off ONE ECU, from the phone. It is the replacement for `scripts/read-vcu-params.ts --index N`, which went away when the sweep moved into the service, and it reaches further than that flag did: the identifier is `(bank << 12) | index`, the sweep reads bank 1 (the calibration EEPROM), and **bank 2 is live data** — the running values rather than the stored settings — which nothing in this project had ever read.
 
 **⚠️ It offered a CHARGE MANAGER target for part of 2026-08-16 and no longer does.** The id pair it was given, `0x7C3`/`0x7E3`, is not the charge manager's: **`0x7E3` is the dashboard's request id**, so that option could have questioned the dashboard while the page said otherwise. The real charge manager is 29-bit ISO-TP and needs transport work this form cannot fake. See `src/vcu/param-codec.ts` above `VcuTarget`.
 

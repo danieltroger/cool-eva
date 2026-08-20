@@ -44,6 +44,13 @@ async function transform(key: string): Promise<{ code: string; deps: string[] }>
     const imported = importRe.exec(line);
     if (imported) {
       const [, defaultName, namedList, specifier] = imported;
+      // ⚠️ importRe MATCHES `{ bytes as toBytes }` and would rewrite it to
+      // `const {bytes as toBytes} = …` — which looks fine and is a syntax error.
+      if (namedList && /\bas\b/.test(namedList)) {
+        throw new Error(
+          `build-service-preview: ${key} aliases an import with 'as', which this bundler cannot rewrite: ${line.trim()}`
+        );
+      }
       const target = resolveSpecifier(key, specifier);
       deps.push(target);
       // `.ts` type-only imports have no runtime module behind them; JSDoc typedefs that
@@ -64,6 +71,13 @@ async function transform(key: string): Promise<{ code: string; deps: string[] }>
       deps.push(target);
       return `const ${binding} = __imp(${JSON.stringify(target)});`;
     }
+    // Anything import-shaped that got past the branches above. Symmetrical with the
+    // export guard below: an unhandled form must fail HERE, not in the browser. Bare
+    // (`import "./x.js"`), mixed (`import van, { add } from`) and dynamic imports all
+    // land here — each of which used to emit a cheerful "✓" and a bundle that died.
+    if (/^import\s/.test(line)) {
+      throw new Error(`build-service-preview: ${key} uses an import form this bundler does not handle: ${line.trim()}`);
+    }
     const fn = exportFnRe.exec(line);
     if (fn) {
       exported.push(fn[2]);
@@ -81,6 +95,9 @@ async function transform(key: string): Promise<{ code: string; deps: string[] }>
       const [, namedList, specifier] = reExported;
       const target = resolveSpecifier(key, specifier);
       deps.push(target);
+      if (/\bas\b/.test(namedList)) {
+        throw new Error(`build-service-preview: ${key} aliases a re-export with 'as': ${line.trim()}`);
+      }
       const names = namedList
         .split(",")
         .map(name => name.trim())
@@ -127,7 +144,18 @@ const modules = [...registry]
 
 const template = await readFile(join(HERE, "service-preview-template.html"), "utf8");
 const css = await readFile(join(PUBLIC, "style.css"), "utf8");
-const html = template.replace("__CSS__", css).replace(/__MODULES__,?/, modules);
+// String.replace no-ops SILENTLY when the pattern is absent. Deleting either
+// placeholder produced "✓ 32 modules" and an empty registry that renders nothing —
+// the same outcome as the `},,` bug, reached a different way.
+if (!template.includes("__CSS__")) {
+  throw new Error("build-service-preview: the template has no __CSS__ placeholder");
+}
+if (!/__MODULES__,?/.test(template)) {
+  throw new Error("build-service-preview: the template has no __MODULES__ placeholder");
+}
+// Function replacements, not strings: a `$&` or `$1` inside the substituted CSS or JS
+// would otherwise be read as a replacement pattern and silently corrupt the output.
+const html = template.replace("__CSS__", () => css).replace(/__MODULES__,?/, () => modules);
 
 const out = process.argv[2] ?? join(HERE, "..", "service-sheet-preview.html");
 await writeFile(out, html, "utf8");

@@ -118,6 +118,11 @@ const CHECKS: SelfCheck[] = [
       "FAILS still does end it, rather than leaving a live process with nothing listening for systemd to call healthy",
   },
   {
+    script: "scripts/check-service-preview.ts",
+    covers:
+      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",
