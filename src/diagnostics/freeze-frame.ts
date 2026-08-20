@@ -234,10 +234,10 @@ export interface FreezeFrame {
    * Every byte of the body that no field consumed, as hex — surplus after the
    * last field, or the fragment of a field that did not fit when `truncated`.
    *
-   * MUST be empty if the inferred layout (docs/diagnostics-and-checks.md §5.1) is
-   * right, which makes it the single most informative field in the whole structure on
-   * the first live read. Never dropped: on a real reply these are the bytes that would
-   * explain what the layout actually is.
+   * Written as "MUST be empty if the layout is right". It is non-empty on all 29
+   * captured replies and the layout IS right — the reply simply carries one byte the
+   * fields do not account for (FREEZE_FRAME_TRAILING_BYTES), still undecoded. Never
+   * dropped, because those are the bytes that would explain what it is.
    */
   trailingHex: string;
   /**

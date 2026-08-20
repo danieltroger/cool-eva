@@ -490,7 +490,11 @@ for (const entry of CAPTURED_FREEZE_FRAMES) {
       frame.values.length === shortlist.infokeys.length,
       `${label}: decoded ${frame.values.length} fields for a ${shortlist.infokeys.length}-infokey shortlist`
     );
-    const expected = FREEZE_FRAME_HEADER_BYTES + freezeFrameFieldBytes(shortlist) + 1;
+    // expectedFreezeFramePayloadBytes, not the arithmetic spelled out again: this is
+    // the most important use of the layout model, and open-coding the `+ 1` here is
+    // how the 17-vs-18 contradiction got in — one site followed the constant and the
+    // other silently didn't.
+    const expected = expectedFreezeFramePayloadBytes(shortlist);
     check(payload.length === expected, `${label}: ${payload.length} bytes, layout predicts ${expected}`);
   }
   check(
@@ -504,11 +508,19 @@ for (const entry of CAPTURED_FREEZE_FRAMES) {
   check(frame.recordCount === 1, `${label}: recordCount ${frame.recordCount}, every captured reply carries 1`);
   check(payload[2] === 0x00, `${label}: DTC high byte 0x${payload[2].toString(16)}, expected 0x00`);
 
-  // The status LOW nibble, which the symptom check above cannot see. It is 5 on 28
-  // of the 29 and 7 on component 44 alone — the bike's one permanently-present fault,
-  // and the reason that reply is the layout's anchor. An observation about the
-  // capture, not a rule about the protocol: if a later read disagrees, that is a
-  // finding rather than a broken check.
+  // The status LOW nibble, which the symptom check above cannot see. It is 5 on 28 of
+  // the 29 and 7 on component 44 alone — the bike's one permanently-present fault.
+  //
+  // This guards FIXTURE INTEGRITY, not the bike. CAPTURED_FREEZE_FRAMES is frozen
+  // committed data, so no future read can flow into this assertion; only editing the
+  // file can break it, which is exactly what it should catch. (An earlier version of
+  // this comment claimed a later read disagreeing would be "a finding rather than a
+  // broken check" — a later read cannot reach here at all.)
+  //
+  // ⚠️ Those two values are not cosmetic: 5 decodes to activity 2, 7 to activity 3,
+  // and `hasFreezeFrame` is true only for 2 — so it reads FALSE for component 44, the
+  // one reply proven to carry a freeze frame. See issue for the two-independent-bits
+  // hypothesis (#102); do not "fix" the fixture to make the flag agree.
   const lowNibble = payload[4] & 0x0f;
   check(
     lowNibble === (entry.component === 44 ? 0x7 : 0x5),
