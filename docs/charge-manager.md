@@ -510,6 +510,42 @@ All eight bytes are `00` in 100.000 % of 157 441 frames, so only its presence ca
 
 ---
 
+## What actually reaches the ride log, and why `rides.db` had none of it
+
+On 2026-08-20 `SELECT COUNT(*) FROM signal WHERE key='fast_dc_target_a'` against `rides.db` returned 0, and so did every other key in this group. **Nothing in the logging path drops them.** The path was traced and then run end to end: `decodeFrame()` routes the five ids off `CHARGE_MANAGER_CAN_IDS` (`src/can/decode.ts`), the same exported list is what puts them in the kernel RX filter, all fifteen keys are declared in `src/can/registry.ts` and bounded in `public/lib/bounds.js`, `record()` seals them through `src/storage/encrypted-log.ts`, and `scripts/decrypt-log.ts` rebuilds them into `signal`/`reading`. There is no allowlist anywhere on that path.
+
+**The file simply predates the decoder.** `rides.db` was rebuilt on 2026-08-16; this group was decoded on 2026-08-19 and reconciled against the DBC on 2026-08-20. No segment on that disk was ever written by a Pi carrying this code, and no query recovers what was never sealed. 55 other non-DTC keys added in the same window are missing for exactly the same reason — the ABS block, the handlebar buttons, the IMU attitude pair, the PSU rail, drive torque, both VCU flag words — which is what rules out anything charge-manager-specific. What this needs is a deploy and a re-decrypt, not a code change.
+
+**The canary after a deploy is `0x625`.** `fast_dc_limit_max_v`, `fast_dc_limit_max_a`, `dc_charging` and `ac_charging` write one row each on the first frame after boot, parked and unplugged included, because `lastLogged` starts empty. Those four appearing and the other eleven not means the charge manager is asleep, which is its normal state. None of the fifteen appearing on a bike that has been awake means something else, and the first thing to suspect is the `b4 = 0xF1` gate and the `b1`/`b3` gates above: a gate that drops is silent by construction, and quiet looks exactly like an ECU that never woke up.
+
+### Replayed through the real path, 2026-08-20
+
+Four captures were replayed frame by frame through `decodeFrame` → `record` → a sealed `.celog` → `decrypt-log.ts` → SQLite — every step the Pi and the laptop actually run, with the capture's own wall clock passed to `record()` in place of `Date.now()`. All fifteen keys land, with the units, group and source the registry declares.
+
+The **2026-08-04 DC session** (`capture-20260804-193952-4b4cdd2b.log`, 3 834 783 frames), 19:58:19 → 20:16:04, SOC 30 → 57 %:
+
+    fast_dc_target_a     93 rows   0 → 66 A          fast_dc_limit_a       5 rows   0, 75, 64, 65, 0
+    charge_manager_soc   28 rows   30 → 57 %         dc_charging           3 rows   0, 1, 0
+    fast_dc_target_v     22 rows   298 → 319 V       charge_type           2 rows   0, 2
+    charge_manager_status 10 rows  0x10 → 0x5E       bms_leak_detect_inhibit 2 rows 0, 1
+    charge_manager_state  9 rows   0x02 → 0x23       the other five        1 row each
+
+**176 rows across the whole 18-minute session** — 180 over the entire 47-minute capture, the extra four being `0x625`'s rows from the first frame after boot — against 267 890 rows from every signal in that capture. No flood, and nothing here wants a deadband. The `0x610` b7 handshake came out of the log as `0x02` → `0x14` → `0x04` → `0x07` → `0x0D` → `0x11` → `0x12` → `0x11` → `0x23` in 4 s, matching the sequence recorded above from the raw frames. `fast_dc_target_a` peaked at 66 A against a `pack_a` of 66.3 A, and at 20:05:19-20 the request read 63 A against 63.1-63.2 A delivered — the same instant the fixture in `scripts/check-can-decoders.ts` is taken from.
+
+⚠️ **Do not read a per-sample agreement off the LOG the way it can be read off the raw frames.** Pairing each of the 23 post-ramp request rows with the last `pack_a` row before it gives a mean gap of +0.53 A, which is close to the corpus's +0.30 A — but the individual pairs run from −5.4 to +6.2 A. Both series are logged on change and step at different instants, so a carry-forward pair straddling a step compares a new request against an old measurement. The corpus figures above (r = +0.9951, median 0.30 A) come from aligned raw frames at full rate; the log is a different, coarser thing and the two must not be quoted as if they were the same measurement.
+
+⚠️ **Through that entire session, `dc_a`, `dc_v`, `mains_a` and `mains_v` logged zero rows.** The onboard charger's frames are not merely uninformative during a fast charge, they are absent, which is the measurement behind "these are the only signals that see a DC fast charge at all".
+
+The **2026-08-09 14:41 aborted attempt** (`capture-20260809-080235-cd40b535.log`) puts the fault pair in the log for the first time: `charge_manager_error_src` = 7 and `charge_manager_error_code` = 853 at 14:41:46, both back to 0 at 14:42:32, with a successful retry reaching `0x23` at 14:42:53. The **2026-08-08 AC session** (`capture-20260808-182129-600daf87.log`) gives `ac_supply_limit_a` = 8 A, `ac_charging` = 1, status `0x19` and substate `0x02`. The **2026-08-09 18:10 taper** (`capture-20260809-181059-551bae3b.log`) gives `fast_dc_limit_max_v` = 371 V, the post-change value.
+
+### The gap this leaves, which is a reader's problem and not the logger's
+
+Four of the five frames stop when the cable comes out, and the log stores a row only on change, so **eleven of the fifteen keys have no closing row at all** in the 2026-08-04 capture — every one except `0x625`'s `fast_dc_limit_max_v`, `fast_dc_limit_max_a`, `dc_charging` and `ac_charging`. Anything that step-holds the other eleven carries their last value onwards indefinitely: `charge_type`'s last row is at 19:58:20 and it still reads DC when the capture ends at 20:26:42, ten minutes after the session finished, and would a week later.
+
+That is not something to fix in the logger. A timer-driven keepalive is the wrong answer here for the same reason it is wrong for `dc_charge_limit_selected_a` (`src/can/charge-setpoint.ts`), and `record()` deliberately refreshes `liveState` on every sample so the phone dashboard can grey a stale tile without any row being written. **`0x625` is what closes the picture**: it broadcasts at 10 Hz whenever the bike is awake, so `dc_charging` and `ac_charging` genuinely do write a 0 when the current stops — 20:16:03 in the session above, three rows in total. Read the held state bytes next to those two, never instead of them. `grafana/dashboards/charge-manager.json` is built round exactly that division and says so on every panel that holds.
+
+---
+
 ## Method notes, and two artefacts of the archive rather than the bike
 
 **Where the percentages come from.** The counts added on 2026-08-19 (44 262, 44 862, 47 642, …) came from a change-plus-keepalive scanner — a row per payload CHANGE plus one every 2 s, not a row per frame. Every later pass re-ran the invariants over EVERY raw frame, at roughly 20× the resolution. Every invariant re-checked came out at the same 100.000 %, which is the reassuring part, **but the sampling is NOT uniform and one percentage moved twelvefold because of it.** A keepalive scanner over-represents frames that are CHANGING, so any statistic about transients is inflated: `0x620`'s "b2 > b0 in 0.4 %" is 0.033 % at full rate. Treat a sampled percentage about a steady state as sound and one about an edge as suspect, and re-derive before leaning on it.

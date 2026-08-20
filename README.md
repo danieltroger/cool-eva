@@ -281,7 +281,7 @@ docker compose up -d
 
 The datasource points at `/repo/rides.db` (`grafana/provisioning/datasources/sqlite.yml`), which is this repo's directory mounted into the container — so `rides.db` must sit at the repo root. Decrypt more `.celog` files into the same `rides.db` later and they append; every panel says **No data** until step 2 has run at least once.
 
-Six dashboards are provisioned from `grafana/dashboards/`, one file each:
+Nine dashboards are provisioned from `grafana/dashboards/`, one file each:
 
 - **Cooling** (`cooling.json`) — ΔT across the pack, heat removed against an assumed coolant flow, inlet/outlet/ambient, per-module temperatures, powertrain temps.
 - **Battery & cell balancing** (`battery-cells.json`) — per-cell voltage and per-module temperature heatmaps, spread over time, the cell limits the BMS is actually configured with.
@@ -289,6 +289,9 @@ Six dashboards are provisioned from `grafana/dashboards/`, one file each:
 - **Charging** (`charging.json`) — charge sessions, charger mains and DC side, the BMS system-state lanes.
 - **Isolation & faults** (`isolation-faults.json`) — the BMS isolation test in raw ADC counts, the error and warning flags, the stored diagnostic code counts, the BMS IO lines.
 - **Explore & data health** (`explore.json`) — every logged signal, a browser over the whole registry, and how long each signal has been quiet.
+- **Charge manager** (`charge-manager.json`) — the DC fast-charge side, off CAN `0x605`/`0x610`/`0x615`/`0x620`/`0x625`: the current the vehicle requests against the three separate limits that bound it and against what the pack actually took, the state machine split back out into its factory fields, and the fault source and code. The **Charging** tab above cannot show a DC session — the onboard charger's frames are absent through one.
+- **Power & battery** (`power-battery.json`) — power in kW against battery percentage, charge power derived from `dc_v × dc_a` and pack power measured, plus cell-vs-board pack temperature.
+- **Trouble codes** (`trouble-codes.json`) — every diagnostic code the bike has reported, named from Energica's own type-approval table. The code table in that file is generated; see `grafana/README.md`.
 
 `grafana/README.md` collects the datasource and panel traps that querying log-on-change data in this plugin keeps producing — read it before writing a new dashboard.
 
