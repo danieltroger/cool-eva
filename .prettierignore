@@ -25,3 +25,4 @@ obd-garage
 # comma after __MODULES__, and the generated bundle then carries `},,` — which no check
 # in this repo catches, because nothing here executes the bundle.
 scripts/service-preview-template.html
+scripts/app-preview-template.html

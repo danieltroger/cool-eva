@@ -145,7 +145,14 @@ const modules = [...registry]
   .map(([key, code]) => `  ${JSON.stringify(key)}: function (__exports, __imp) {\n${code}\n  }`)
   .join(",\n");
 
-const template = await readFile(join(HERE, "service-preview-template.html"), "utf8");
+// Two templates. The default is the WHOLE dashboard as it actually runs — every tab,
+// the real navigation, nothing annotated — because that is what you want when checking
+// a change. `--annotated` gives the design-review sheet instead: the same modules, but
+// mounted one state per panel with prose explaining each, which is only useful while
+// arguing about a specific design decision.
+const annotated = process.argv.includes("--annotated");
+const templateFile = annotated ? "service-preview-template.html" : "app-preview-template.html";
+const template = await readFile(join(HERE, templateFile), "utf8");
 const css = await readFile(join(PUBLIC, "style.css"), "utf8");
 // String.replace no-ops SILENTLY when the pattern is absent. Deleting either
 // placeholder produced "✓ 32 modules" and an empty registry that renders nothing —
@@ -160,6 +167,10 @@ if (!/__MODULES__,?/.test(template)) {
 // would otherwise be read as a replacement pattern and silently corrupt the output.
 const html = template.replace("__CSS__", () => css).replace(/__MODULES__,?/, () => modules);
 
-const out = process.argv[2] ?? join(HERE, "..", "service-sheet-preview.html");
+const out =
+  process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");
 await writeFile(out, html, "utf8");
-console.log(`✓ ${out} — ${registry.size} modules, ${Math.round(html.length / 1024)} kB, no network at runtime`);
+console.log(
+  `✓ ${out} — ${annotated ? "annotated sheet" : "whole dashboard"}, ${registry.size} modules, ` +
+    `${Math.round(html.length / 1024)} kB, no network at runtime`
+);
