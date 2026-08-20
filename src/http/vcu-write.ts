@@ -13,35 +13,22 @@ import type { ServiceWriteRequest, ServiceWriteResult, VcuWriteRunner, VcuWriteS
 // to put a value — and that has not changed. This is a separate door with separate
 // locks, and it is closed by default.
 //
-// ── Why a different header VALUE from /vcu-read ─────────────────────────────
-// Both endpoints require a header a CORS-simple request cannot set, for the reason
-// src/http/vcu-read.ts's own header explains at length: a bare POST with no body and
-// no custom header is CORS-simple, so any page open on the bike's hotspot could
-// otherwise fire one. That argument applies here unchanged.
-//
-// What is new is that this one wants `X-Cool-Eva: service-write` rather than
+// ⚠️ It wants `X-Cool-Eva: service-write`, deliberately NOT the read path's
 // `service-mode`. Neither value is a secret — being unsettable cross-origin is the
 // whole property — but making them DIFFERENT means a caller that only knows about
 // reads cannot reach a write by accident, including a script of the owner's own
-// written before this endpoint existed. It costs one string and closes a whole class
-// of "I pointed my read tool at the wrong URL".
+// written before this endpoint existed.
 //
-// ── Why the irreversible actions want a `confirm` parameter as well ─────────
-// The UI does the real confirming: it shows old → new and needs two taps
-// (public/views/vcu-write.js). But the UI is not the only thing that can reach this
-// endpoint — `curl` can, which is correct, and so can a script someone wrote in a
-// hurry. So the two actions that cannot be undone, and the one whose whole point is
-// that a human agreed to a specific time, additionally require the caller to say what
-// it thinks it is doing:
+// ⚠️ Three actions additionally require the caller to say what it thinks it is doing,
+// because `curl` can reach this endpoint and the UI's two taps cannot follow it there:
 //
 //   set-service-point  confirm=set-service-point
 //   clear-dtcs         confirm=clear-dtcs
 //   sync-clock         confirm=<the UTC minute the caller displayed, ISO>
 //
-// The clock one is not ceremony. It is the server-side half of "Is it <date and
-// time>?": the caller has to echo back the minute it showed the owner, and the Pi
-// refuses if that is no longer the minute it is in. A page left open since this
-// morning therefore cannot sync this morning's time.
+// The clock one is not ceremony — it is the server-side half of "Is it <date and
+// time>?", so a page left open since this morning cannot sync this morning's time.
+// Why a header at all, and the rest of the argument: docs/diagnostics-and-checks.md §7.2–7.3.
 
 /** The header, and the value that is not the read path's. */
 export const SERVICE_WRITE_HEADER = "x-cool-eva";
@@ -220,7 +207,8 @@ export function utcMinute(epochMs: number): string {
  * twice — `parseInt("-50", 16)` is already −80, and multiplying by −1 turned it back
  * into **+80**. So `value=-0x50` parsed as 80: a negative that every allowlist entry
  * would have refused with a reason instead became a positive, in-range value on its
- * way to a calibration EEPROM. Caught in review, never shipped; §16 covers it now.
+ * way to a calibration EEPROM. Caught in review, never shipped; check-vcu-params.ts
+ * §16 covers it now.
  */
 function parseNumber(raw: string | null): number | null {
   if (raw === null || raw.trim().length === 0) {

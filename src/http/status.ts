@@ -60,24 +60,16 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
 /**
  * Counts the `.celog` files in `directory` and adds their sizes up.
  *
- * ⚠️ **Files, not segments.** This used to return the same number under the name
- * `segments`, and the dashboard printed it as "N sealed segments". It is not that,
- * and the gap is not small: `storage/encrypted-log.ts` seals a segment on a timer
- * (every 30 s by default) and **appends** each one to `rides-<YYYY-MM-DD>.celog`,
- * so one file is one calendar day's worth of segments — hundreds or thousands of
- * them. `scripts/decrypt-log.ts` is what counts the real thing, by walking the
- * framing inside each file.
+ * ⚠️ **Files, not segments**, and the gap is not small: `storage/encrypted-log.ts`
+ * seals a segment on a timer (every 30 s by default) and **appends** each one to
+ * `rides-<YYYY-MM-DD>.celog`, so one file is one calendar day's worth of segments —
+ * hundreds or thousands of them. `scripts/decrypt-log.ts` counts the real thing, by
+ * walking the framing inside each file. This used to return the same number under
+ * the name `segments`, and the dashboard printed it as "N sealed segments".
  *
- * That also explains how the caption managed to look broken without ever being
- * stale: within a day the file count CANNOT change however long the bike runs, so
- * it sat on one number while the log grew underneath it. The reported number was
- * always the true file count — every entry is stat'd here, nothing is capped or
- * sliced — it was the noun that was wrong.
- *
- * Counting segments instead would mean walking every file's framing (a 56-byte
- * header, then a skip of the length it declares) on each /status poll, for a
- * number the download button has no use for. So the cheap answer stays, and the
- * name now says which answer it is.
+ * Counting segments here would mean walking every file's framing on each /status
+ * poll, for a number the download button has no use for. So the cheap answer stays
+ * and the name says which answer it is. docs/diagnostics-and-checks.md §9.4.
  */
 export async function measureLog(directory: string): Promise<{ files: number; bytes: number }> {
   try {
@@ -141,25 +133,16 @@ function summariseGroups(): Record<string, [number, number]> {
  * Groups every one of whose signals is written on request, so the group is left out
  * of the summary above entirely.
  *
- * `waypoint` is the only one today and the case that forced this. Its three signals
- * are written by GET /waypoint and nothing else, so with FRESH_MS at 10 s the group
- * reads [0, 3] before you ever save a waypoint and [0, 3] again ten seconds after
- * you do. Reporting that is not reporting a fault; it is reporting the resting
- * state, and anything filtering `live === 0` — a Grafana alert, a script, §5 of
- * scripts/check-ride-log-status.ts — would fire on it forever and learn nothing.
- * Silence that is not evidence should not be served as if it were.
+ * `waypoint` is the only one today and the case that forced this: it reads [0, 3]
+ * before you ever save a waypoint and [0, 3] again ten seconds after you do, so
+ * anything filtering `live === 0` would fire on the resting state forever and learn
+ * nothing. Silence that is not evidence should not be served as if it were.
  *
- * This is also the one thing /status stopped reporting, and worth saying plainly
- * because the rest of the change runs the other way: `waypoint` used to appear once
- * a waypoint had been saved this boot, since the map was built from what had
- * arrived. Every other group went from sometimes-present to always-present.
- *
- * WHOLE-GROUP, not per-signal, and that is a decision rather than an accident: a
- * group mixing measured and on-demand signals still has something to say about its
- * measured half, so it stays. `.some` here would delete a whole group's liveness
- * the moment one signal in it were flagged. The registry has no mixed group today,
- * so nothing in the real data tells the two apart — which is why this is exported
- * and scripts/check-ride-log-status.ts §5b feeds it a mixed group of its own.
+ * ⚠️ WHOLE-GROUP, not per-signal, and that is a decision rather than an accident:
+ * `.some` here would delete a whole group's liveness the moment one signal in it
+ * were flagged. The registry has no mixed group today, so nothing in the real data
+ * tells the two apart — which is why this is exported and §5b of
+ * scripts/check-ride-log-status.ts feeds it a mixed group of its own.
  */
 export function onDemandOnlyGroups(signals: readonly SignalDef[]): Set<string> {
   const everyGroup = new Set(signals.map(signal => signal.group));

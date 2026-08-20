@@ -13,44 +13,25 @@ import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
 // fold constructs nothing while collapsed — which is what lets this file exist with no
 // jsdom and no headless browser.
 //
-// ## What this is guarding
+// ⚠️ THE FOLD MAKES A PROMISE ABOUT WHAT IS INSIDE IT, to somebody standing at a bike.
+// Collapsed it shows a count and three short names, and that line is what a rider reads
+// to decide whether to open the drawer at all. Behind it are `31 FC` (which stamps a
+// service point on the bike's own clock and odometer, with no unset), OBD Mode 04 (which
+// takes the freeze frame with the codes) and a clock write that cannot be read back. A
+// drawer that names the wrong three, or says three and holds four, is worse than one that
+// names nothing.
 //
-// **The fold makes a promise about what is inside it, to somebody standing at a bike.**
-// Collapsed, all it shows is a count and three short names — "3 actions that cannot be
-// undone / Service stamp · Bike clock · Clear codes" — and that line is what a rider
-// reads to decide whether to open the drawer at all. Behind it are `31 FC` (which stamps
-// a service point on the bike's own clock and odometer, with no unset), OBD Mode 04
-// (which takes the freeze frame with the codes) and a clock write that cannot be read
-// back. A drawer that names the wrong three, or says three and holds four, is worse than
-// one that names nothing.
+// ⚠️ THE REAL INVARIANT SPANS TWO FILES THAT CANNOT SEE EACH OTHER: src/http/vcu-write.ts
+// decides which actions demand `confirm=`, public/views/vcu-write.js decides which ones a
+// thumb has to open a drawer to reach. A fourth confirm-gated action added to the Pi and
+// not put behind the fold is a destructive control sitting in the open list with the
+// read-only ones, and nothing else in the repo would notice. So §3 reads the actions off
+// the `case` labels of parseWriteRequest's own switch and asks the server of each whether
+// a complete request is still refused with no `confirm=`; §4 calls `confirmationFor`, the
+// single site the page builds `confirm=` from, rather than listing what it should produce
+// — a list here would be the parallel array the check exists to abolish.
 //
-// Both halves of that used to be able to drift. The count was derived, but the names
-// were a second hand-written array kept alongside, and the guard between them compared
-// their LENGTHS — so reordering the list or swapping one action for another left the
-// label wrong and the guard green. And it reported by `console.warn`, on a page whose
-// entire deployment target is a phone clamped to a handlebar, where nobody has a console
-// open, ever. The names are now read off the list itself, so that class of drift is
-// gone; what remains is what no data structure can enforce, and it is what is below.
-//
-// **The fold must hold exactly the actions the Pi refuses without a confirmation.**
-// That is the real invariant, and it spans two files that cannot see each other:
-// src/http/vcu-write.ts decides which actions are dangerous enough to demand
-// `confirm=`, and public/views/vcu-write.js decides which ones a thumb has to open a
-// drawer to reach. A fourth confirm-gated action added to the Pi and not put behind the
-// fold is a destructive control sitting in the open list with the read-only ones — the
-// exact state this PR existed to end — and nothing else in the repo would notice.
-//
-// So §3 does not take a list of dangerous actions on trust. It reads the actions off the
-// `case` labels of parseWriteRequest's own switch, asks the server of each one whether a
-// complete request is still refused with no `confirm=`, and compares that set against the
-// fold. Adding an action to either side alone fails this check, and fails it in the
-// direction that names what is wrong — see the note above §3 for the version of this that
-// got the polarity backwards.
-//
-// **And the confirmation strings are the page's own.** §4 calls `confirmationFor`, the
-// single site the page builds `confirm=` from, rather than listing what it is expected to
-// produce. A list here would be the same parallel array in the check meant to prevent it,
-// and it would stay green while `31 FC` and Mode 04 were refused on every press.
+// The drift both halves used to be able to do: docs/diagnostics-and-checks.md §11.4.
 
 let failures = 0;
 
@@ -111,28 +92,18 @@ check(`the contents line reads "${namesLine}"`, namesLine === EXPECTED.map(([nam
 // --- 3. The fold and the Pi's confirmation gates agree ------------------------
 //
 // The one assertion that spans the two files, and the reason this check is worth a
-// process. Nothing derives the fold's membership from the server, so this is where the
-// two are made to answer the same question.
+// process: nothing derives the fold's membership from the server.
 //
-// ⚠️ The vocabulary is read off the `case` labels of parseWriteRequest's own switch, by
-// parsing the source. The first version of this check read it out of the ENGLISH
-// SENTENCE in that switch's `default:` arm instead, and that was worse than having no
-// check at all, because it inverted:
+// ⚠️ THE VOCABULARY IS READ OFF THE `case` LABELS of parseWriteRequest's own switch, by
+// parsing the source — NOT off the English sentence in that switch's `default:` arm,
+// which is what the first version did and which INVERTED the check (green when you were
+// wrong, red when you were right; docs/diagnostics-and-checks.md §11.4). The `case`
+// labels cannot drift from the dispatch because they ARE the dispatch, and the sentence
+// is now checked against them (§3a) rather than trusted.
 //
-//   a new confirm-gated `case` whose author did not also edit that sentence was
-//   invisible here, so the check went GREEN when the action was left in the open list
-//   — the exact state §3 exists to prevent — and RED when it was correctly put behind
-//   the fold, complaining that the fold held something "merely scary".
-//
-// A check that is green when you are wrong and red when you are right does not fail
-// safe; it actively misleads. The `case` labels cannot drift from the dispatch because
-// they ARE the dispatch. The sentence is now checked against them (§3a) rather than
-// trusted, which also catches the stale error message the old version depended on.
-//
-// Reading a sibling module's source is the same move scripts/check-vendor-names.ts
-// makes, and is preferred here over exporting a list from src/http/vcu-write.ts,
-// because an exported list would itself be a second place the actions are written down
-// — the parallel array this whole check exists to abolish.
+// Reading a sibling module's source is preferred here over exporting a list from
+// src/http/vcu-write.ts: an exported list would be a second place the actions are
+// written down — the parallel array this whole check exists to abolish.
 
 console.log("\n3. the fold against the Pi's confirmation gates");
 

@@ -34,25 +34,16 @@ export const FRAME_SIZE = 8;
  * The earliest satellite UTC that could possibly be real. A fix from before this
  * bike had any telemetry on it did not happen.
  *
- * A FLOOR, deliberately, and there is no matching ceiling anywhere. A floor cannot
- * expire — it only becomes more conservative as it ages, never wrong — whereas the
- * "year 24 to 99" window this replaced was a ceiling in disguise: it let a corrupted
- * year byte of 60 through as 2060 and stepped the Pi's clock 34 years forward. What
- * an absurd year is caught by instead is corroboration, in ./clock-gate.ts, which
- * compares readings with each other and names no year at all.
+ * ⚠️ A FLOOR, deliberately, and there is no matching ceiling anywhere — an absurd
+ * FUTURE year is caught by corroboration in ./clock-gate.ts instead. What this catches
+ * is the GPS week-number rollover (1980 or 1999) and a zeroed date field (2000).
  *
- * What it is actually for is the GPS week-number rollover — the one failure that puts
- * a receiver in a *past* year, reading 1980 or 1999 — and a zeroed date field, which
- * decodes as 2000. All three are decades below this.
- *
- * ⚠️ Set to the start of 2026, NOT to the day this was written, and the difference
- * matters. This module also runs over history: scripts/decrypt-log.ts rebuilds
- * segments sealed weeks ago and scripts/replay-capture.ts replays old candumps, and a
- * floor at "today" would silently drop gps_epoch_s out of every one of them. It has to
- * sit below the oldest data the repo can be handed, which is April 2026 (see the
- * legacy coolant history in public/lib/bounds.js); the first ride in rides.db is
- * 2026-08-02. The check in scripts/check-gps-clock.ts replays 2026-08 sequences and
- * fails if this is ever raised past them.
+ * ⚠️ Set to the start of 2026, NOT to the day this was written. This module also runs
+ * over history — scripts/decrypt-log.ts rebuilds segments sealed weeks ago and
+ * scripts/replay-capture.ts replays old candumps — so a floor at "today" would silently
+ * drop gps_epoch_s out of every one. It has to sit below the oldest data the repo can be
+ * handed, April 2026 (the legacy coolant history in public/lib/bounds.js), and
+ * scripts/check-gps-clock.ts fails if it is ever raised past the sequences it replays.
  */
 export const GPS_UTC_FLOOR_EPOCH_S = Date.UTC(2026, 0, 1) / 1000;
 
@@ -148,32 +139,18 @@ export class GpsMessageDecoder {
         (this.#longitudeDegrees + (this.#longitudeMinutes + this.#longitudeDeciMilliminutes / 10000) / 60);
       const satellites = (frame[7] >> 3) & 31;
       const values: DecodedValue[] = [{ key: "gps_satellites", value: satellites }];
-      // Three guards. The stream can carry this time sub-frame *before* either
-      // coordinate sub-frame on a fresh connection (seen live over BLE), which
-      // would otherwise log a bogus 0; like the app we suppress the null island it
-      // emits before it has a fix; and — since 2026-08-16 — both coordinate
-      // sub-frames must have arrived within THIS cycle, not merely at some point
-      // in the past.
+      // Three guards: the stream can carry this time sub-frame *before* either
+      // coordinate sub-frame on a fresh connection (which would log a bogus 0); like
+      // the app we suppress the null island it emits before it has a fix; and both
+      // coordinate sub-frames must have arrived within THIS cycle.
       //
-      // ⚠️ The have-flags used to latch for the life of the stream, which made a
-      // fix out of whatever the decoder happened to be holding. A latitude
-      // sub-frame that stopped arriving was re-emitted as current indefinitely,
-      // paired with a fresh longitude — a position that was never anywhere. The
-      // #fix check cannot catch it, because #fix is set by the LONGITUDE sub-frame
-      // (0x01) and so stays healthy exactly while the latitude is the dead half.
-      //
-      // rides.db has 84 consecutive-sample transitions implying over 250 km/h at
-      // more than 3× the bike's own speedometer, including single-sample jumps of
-      // 21 km on latitude alone and 6 km on longitude alone, each going straight
-      // back where it came from on the next sample. That is one axis current and
-      // one axis not.
-      //
-      // Expressed in sub-frames rather than milliseconds on purpose: the hub sends
-      // 00, 01 and FE in a strict 1:1:1 cycle (measured 2026-08-02: 72/72/72 in
-      // 40 s with a BLE session up, 58/58/58 in 30 s with none), so "since the last
-      // fix we emitted" IS the hub's own idea of one fix. A wall-clock window would
-      // be an arbitrary translation of that — and this decoder is pure, so it has
-      // no clock to read anyway.
+      // ⚠️ The have-flags used to LATCH for the life of the stream, which made a fix
+      // out of whatever the decoder happened to be holding: a latitude sub-frame that
+      // stopped arriving was re-emitted as current indefinitely, paired with a fresh
+      // longitude — a position that was never anywhere. The #fix check cannot catch
+      // that, because #fix is set by the LONGITUDE sub-frame (0x01) and stays healthy
+      // exactly while the latitude is the dead half. 84 such transitions are in rides.db;
+      // docs/diagnostics-and-checks.md §8.6 also has why this counts sub-frames, not ms.
       const bothAxesFresh = this.#haveLatitude && this.#haveLongitude && this.#fix !== 0;
       if (bothAxesFresh && (latitude !== 0 || longitude !== 0)) {
         values.push({ key: "gps_lat", value: latitude }, { key: "gps_lon", value: longitude });
@@ -206,21 +183,17 @@ export class GpsMessageDecoder {
   /**
    * Satellite UTC out of the GPS sub-0xFE frame, as epoch seconds.
    *
-   * This is the Pi's only trustworthy time source: it has no RTC, so after a
-   * boot with no network every row gets stamped from a bogus clock (a real ride
-   * once landed years in the past). Returns null unless the fix and the field
-   * ranges are all sane.
+   * The Pi's only trustworthy time source: it has no RTC, so after a boot with no
+   * network every row gets stamped from a bogus clock.
    *
-   * What "sane" means here is narrower than it used to be, and on purpose. This
-   * decoder answers "is this a syntactically valid date at or after the floor",
-   * nothing more; whether the value is trustworthy enough to STEP THE CLOCK to is
-   * ./clock-gate.ts's question, because answering it needs several frames and a
-   * monotonic clock, neither of which belongs in a pure decoder.
+   * "Sane" here is narrow on purpose — a syntactically valid date at or after the
+   * floor, nothing more. Whether it is trustworthy enough to STEP THE CLOCK to is
+   * ./clock-gate.ts's question, which needs frames and a monotonic clock.
    *
-   * That split is also why a value the gate will refuse is still returned rather
-   * than dropped: gps_epoch_s is logged raw against every row's own timestamp, so
-   * a frame that lies about the year stays visible in the database instead of
-   * vanishing. All four corrupt frames behind the 2060 bursts were found that way.
+   * ⚠️ That split is also why a value the gate WILL refuse is still returned rather
+   * than dropped: gps_epoch_s is logged raw against every row's own timestamp, so a
+   * frame that lies about the year stays visible in the database. All four corrupt
+   * frames behind the 2060 bursts were found that way.
    */
   #decodeUtc(frame: Uint8Array, satellites: number): number | null {
     if (this.#fix === 0 || satellites < 4) {

@@ -19,43 +19,26 @@ import {
 // sequence can be replayed here at all, and why the thresholds can be argued about
 // against measured durations rather than against a feel.
 //
-// ## What a "sample" is here
+// ⚠️ A "sample" here is one WebSocket message, carrying the SERVER's timestamp, not the
+// phone's — so every `at` below is the Pi's clock. That is the whole point of the design
+// (see the top of public/lib/gestures.js) and it is what makes a stalled link
+// representable: a stall is simply a gap with no samples in it.
 //
-// One WebSocket message. The detectors are driven by messages arriving, and each
-// carries the SERVER's timestamp — not the phone's — so every `at` below is the Pi's
-// clock. That distinction is the whole point of the design and half of what this file
-// exists to hold in place; see the note at the top of public/lib/gestures.js.
+// ⚠️ WHAT THIS IS REALLY GUARDING is not "does a double click work". Both gestures sit
+// on buttons with primary vehicle functions — `btn_cruise_set` sets the cruise speed,
+// `btn_indicator_cancel` cancels the turn signal — so the failure that matters is a
+// gesture firing on an ORDINARY press. Most cases below are therefore real durations
+// measured off this bike's own bus that must NOT be recognised: 140 ms (the corpus
+// median press), 120–260 ms (the MODE buttons, instructed presses, 8/8), 920 ms (the
+// longest ordinary press ever recorded — the long-press threshold has to clear it or a
+// rider leaning on a button saves a waypoint) and 1794 ms (the only `btn_cruise_set`
+// press in the corpus, which must never pair into a double click).
+// docs/diagnostics-and-checks.md §11.3 has where each number comes from.
 //
-// It also means a stalled link is representable, and is tested: a stall is simply a
-// gap with no samples in it. The detector cannot see wall-clock time passing on the
-// phone, because it is never given it.
-//
-// ## What this is really guarding
-//
-// Not "does a double click work". That is the easy half. Both gestures sit on buttons
-// with primary vehicle functions — `btn_cruise_set` sets the cruise speed,
-// `btn_indicator_cancel` cancels the turn signal — and the failure that matters is a
-// gesture firing on an ORDINARY press of one of them. So most of the cases below are
-// real durations measured off this bike's own bus that must NOT be recognised:
-//
-//   • 140 ms — the median handlebar press across 14 candump captures, and since
-//     indicator-cancel is 63 of the ~70 presses in that corpus, effectively the median
-//     cancel tap.
-//   • 120–260 ms — the MODE buttons and `btn_set_back`, confirmed 2026-08-19 by
-//     instructed presses, 8/8 each, as clean momentary 0→1→0 pulses. An independent
-//     measurement of what an ordinary deliberate handlebar press looks like, and it
-//     agrees with the corpus median.
-//   • 920 ms — the longest ordinary press ever recorded on any handlebar button
-//     (`btn_cruise_enable`, 2026-08-04 19:45:47.924). The long-press threshold has to
-//     clear this, or a rider who leans on a button saves a waypoint by accident.
-//   • 1794 ms — the only `btn_cruise_set` press in the corpus (2026-08-04 18:04:45.055),
-//     held while cruise took the speed. A press this long must never pair with the one
-//     after it into a double click.
-//
-// It also checks that the gestures are bound to the buttons they claim, because the
-// names are a trap: `btn_cruise_enable` sits next to `btn_cruise_set` and BOTH of its
-// recorded presses armed cruise control 0.53 s later. Binding a UI gesture to that bit
-// would put a tab switch on a control that changes how the bike is moving.
+// ⚠️ The bindings are checked too, because the names are a trap: `btn_cruise_enable`
+// sits next to `btn_cruise_set` and BOTH of its recorded presses armed cruise control
+// 0.53 s later. A UI gesture on that bit puts a tab switch on a control that changes
+// how the bike is moving.
 
 const failures: string[] = [];
 

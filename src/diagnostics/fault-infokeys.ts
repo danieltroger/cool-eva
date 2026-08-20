@@ -1,14 +1,10 @@
 import { lookupInfokey, infokeyWidth, type InfokeyField } from "./infokey-table.ts";
 
-// Energica's own answer to "what do you need to see to diagnose THIS fault" —
-// one ordered shortlist of ./infokey-table.ts ids per fault. Data only.
-//
-// 155 faults, 944 references, every one resolving into 1…120 with none dangling.
-// Extracted 2026-08-16 from the `DTCodes` JSON embedded in the service-tool
-// executable (2024 build, via the second owner's `dtc_codes.py`); the 2021 build
-// carried the same table with 153 faults and 931 references, and the newer one
-// only ADDS (4,5) U0115 and (35,2) B1021 — no removals and no changes to a shared
-// list. So the two builds are one source carried forward, not two agreeing sources.
+// Energica's own answer to "what do you need to see to diagnose THIS fault" — one
+// ordered shortlist of ./infokey-table.ts ids per fault. Data only. 155 faults, 944
+// references, every one resolving into 1…120 with none dangling. Extracted from the
+// manufacturer's service-tool data; provenance, and why the two tool builds are ONE
+// source rather than two: docs/diagnostics-and-checks.md §5.3.
 //
 // ── ⚠️ THE ORDER IS THE WIRE LAYOUT, NOT A DISPLAY PREFERENCE ───────────────
 // A freeze-frame payload is these fields concatenated in exactly this order, each
@@ -19,29 +15,21 @@ import { lookupInfokey, infokeyWidth, type InfokeyField } from "./infokey-table.
 // thing that walks them.
 //
 // ── ⚠️ KEYED (component, symptom), WHICH IS NOT THE MODE-03 ENCODING ────────
-// The same trap src/diagnostics/obd-dtc.ts' header warns about, from the other
-// side. This table's key is Energica's own (COD., SYMPTOM) pair — the SAME key
-// ./dtc-table.ts uses and the same one the Connectivity Hub's type-25 list
-// speaks. It is NOT the 16-bit binary DTC that OBD-II mode 03 returns. The two
-// are not convertible by arithmetic: (44,2) is `P0A07` here, and the 16-bit field
-// `0x2C00` reads as `P002C` under the mode-03 encoding. Reaching this table from
-// a mode-03 code means going through ./dtc-table.ts' OBD column, which is what
-// `infokeysForObdCode` below does — and which is why it can return more than one
-// answer.
+// The same trap ./obd-dtc.ts' header warns about, from the other side: this key is
+// Energica's own (COD., SYMPTOM) pair, NOT the 16-bit binary DTC mode 03 returns,
+// and the two are not convertible by arithmetic. Reaching this table from a mode-03
+// code means going through ./dtc-table.ts' OBD column, which is what
+// `infokeysForObdCode` does — and why it can return more than one answer.
 //
 // ── ⚠️ `serviceToolObdCode` IS A CROSS-CHECK, NOT AN AUTHORITY ──────────────
-// It is what the manufacturer's service tool calls each (component, symptom) pair,
-// carried so a change in either source shows up as a diff rather than as nothing.
 // Where it disagrees with ./dtc-table.ts, THE DTC TABLE WINS: that table is
-// reconciled against the type-approval PDF and against this bike's own mode-03
-// reply, and this one is a single vendor build. There are exactly two disagreements
-// today, both the water pump — the tool swaps (44,0) and (44,2) relative to the
-// PDF — and scripts/check-freeze-frame.ts asserts that the set is still exactly
-// those two, so a third one cannot appear quietly.
+// reconciled against the type-approval PDF and this bike's own mode-03 reply, and
+// this one is a single vendor build. Exactly two disagreements today, both the
+// water pump, and scripts/check-freeze-frame.ts asserts the set is still those two.
 //
-// One fault, (60,0) `P1052` BATTERY STATISTICS INFO3, has an EMPTY shortlist. That
-// is Energica's data, not a gap in the extraction, and it decodes to a freeze
-// frame with no fields — which is a real answer and not an error.
+// One fault, (60,0) `P1052`, has an EMPTY shortlist. That is Energica's data, not
+// a gap in the extraction, and it decodes to a frame with no fields — a real
+// answer, not an error.
 
 /** One fault's shortlist. */
 export interface FaultInfokeys {

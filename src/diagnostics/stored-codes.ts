@@ -18,11 +18,8 @@ import { describeReadOutcome, type DtcReadOutcome } from "../can/obd-dtc.ts";
 // Rendering that as "0 pending" would be inventing a reassurance the bike never
 // gave. It is `no-response`, all the way to the screen.
 //
-// Only counts become signals. The list itself does not: 39 stored codes would mean
-// 39 more keys in liveState, which ws.ts broadcasts whole every 5 seconds, for a
-// list that changes about as often as the bike is serviced. The codes go out over
-// /stored-dtcs instead, and the journal names every one of them when the list
-// changes — which is where the evidence lives if a future ride needs it.
+// Why only the counts become signals, and why the journal signs on the codes rather
+// than the summary line: docs/diagnostics-and-checks.md §4.
 
 /** What we currently know about one of the three lists. */
 export type TroubleCodeListState =

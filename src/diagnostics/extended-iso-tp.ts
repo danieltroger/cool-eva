@@ -2,56 +2,32 @@
 // micros use, and the one thing standing between a `0x17` reply and a decoded
 // freeze frame.
 //
-// Pure: frames in, payload out. No clock, no socket, nothing sent. Sending the
-// flow-control frame and giving up on a stalled transfer belong to a caller, the
-// same split src/can/iso-tp.ts makes — and for the same reason, which is that it
-// lets a transfer be replayed from a capture with no bike attached.
+// Pure: frames in, payload out. Sending the flow-control frame and giving up on a
+// stalled transfer belong to a caller, the same split src/can/iso-tp.ts makes, so a
+// transfer can be replayed from a capture.
 //
 // ── ⚠️ WHY THIS IS NOT src/can/iso-tp.ts ────────────────────────────────────
-// That module assumes NORMAL addressing: byte 0 is the PCI and the payload starts
-// at byte 1. The VCU's diagnostic channel puts the ADDRESS in byte 0 — `0xA8` /
-// `0xA9` outbound, `0xF1` (the tester) inbound — and everything shifts one along.
-// Every length in the two files therefore differs by one:
+// There byte 0 is the PCI; here it is the ADDRESS (`0xA8`/`0xA9` out, `0xF1` — the
+// tester — in), so every length differs by one:
 //
 //                          normal (src/can/iso-tp.ts)   extended (here)
 //   Single Frame payload            up to 7                 up to 6
 //   First Frame payload               6                       5
 //   Consecutive Frame payload         7                       6
 //
-// Feeding an extended-addressed frame to the normal reassembler does not throw.
-// It reads the address byte as a PCI — `0xF1` has top nibble 0xF, so a reply
-// would be silently `ignored` as an unknown PCI and the transfer would simply
-// never complete. src/vcu/param-codec.ts' header records the same incompatibility
-// from the other direction. Two small correct readers beat one parameterised one
-// whose caller has to remember which mode it is in.
+// Feeding an extended-addressed frame to the normal reassembler DOES NOT THROW: it
+// reads the address byte as a PCI — `0xF1`'s top nibble is 0xF — so the reply is
+// silently `ignored` as an unknown PCI and the transfer never completes.
 //
-// ── ⚠️ THE FLOW-CONTROL FRAME, AND WHO SENDS IT ────────────────────────────
-// Since 2026-08-16 somebody does: src/vcu/multiframe-transfer.ts drives this
-// class, answers a First Frame with `<target> 30 FF 00` synchronously from its
-// frame handler, and takes a lease from src/vcu/bus-lease.ts before it starts.
-// The paragraph below is kept because it is still the reason this split exists —
-// and because the property it worries about was preserved rather than spent: the
-// flow control is addressed to the target the CALLER named, never to an address
-// read off the bus.
-//
-// A multi-frame reply does not arrive unless the tester answers the First Frame
-// with `<target> 30 FF 00`. Verified on this bike for the OBD channel on
-// 2026-08-04: with no flow control, 0 of 8 mode-03 requests produced a single
-// Consecutive Frame. So reading a freeze frame means TRANSMITTING between the
-// request and the rest of the reply — and every freeze frame is multi-frame,
-// because the header alone is 5 bytes and a single frame holds 6.
-//
-// src/vcu/kwp-client.ts, which owns the only KWP session machinery in this repo,
-// deliberately never sends one: "no flow-control frame is ever sent: this module
-// derives no transmit address from anything the bus said". That property survives
-// a freeze-frame read — the flow-control frame goes to the target the CALLER
-// named, never to anything read off the bus — but the transport still has to be
-// taught to send it, and that is a change to src/vcu/, not to this file.
-//
-// Whoever does it: take a lease from src/vcu/bus-lease.ts first. The micros answer
-// on ONE CAN id with no request/response tag, so a freeze-frame reply and a
-// parameter read in flight together are resolved by whichever frame lands first —
-// and a multi-frame read holds the bus for several frames rather than one.
+// ── ⚠️ A MULTI-FRAME REPLY DOES NOT ARRIVE UNLESS THE TESTER ANSWERS ────────
+// the First Frame with `<target> 30 FF 00`. Measured on this bike 2026-08-04: with
+// no flow control, 0 of 8 mode-03 requests produced a single Consecutive Frame. And
+// every freeze frame is multi-frame, so reading one means TRANSMITTING mid-reply.
+// src/vcu/multiframe-transfer.ts does that today. Whoever else does it: TAKE A
+// LEASE FROM src/vcu/bus-lease.ts FIRST — these micros answer on ONE CAN id with no
+// request tag, so two reads in flight are resolved by whichever frame lands first —
+// and address the flow control to the target the CALLER named, never to an address
+// read off the bus. Background: docs/diagnostics-and-checks.md §6.
 
 /** What one frame did to the transfer. Mirrors src/can/iso-tp.ts' vocabulary on purpose. */
 export type ExtendedIsoTpResult =
@@ -72,16 +48,13 @@ const TESTER_ADDRESS = 0xf1;
 /**
  * Longest payload this will assemble.
  *
- * The largest freeze frame Energica's own table can describe is 25 bytes — a
- * 5-byte header plus (51,0) P1050's twelve fields, which is
- * `MAX_FREEZE_FRAME_FIELD_BYTES` in ./fault-infokeys.ts and is asserted at 20 by
- * scripts/check-freeze-frame.ts. This is deliberately well ABOVE that rather than
- * derived from it, so the two are tied together by that assertion rather than by
- * an import. That slack is the whole point: if the
- * layout inferred in ./freeze-frame.ts is wrong, the reply will be some other
- * length, and a cap set at 25 would throw away the one piece of evidence that
- * would show it. A generous cap keeps the bytes so the decoder can report them;
- * it is here only to bound what a stuck responder can make us hold.
+ * The largest freeze frame Energica's own table can describe is 25 bytes, and this
+ * is deliberately well ABOVE that rather than derived from it — the two are tied
+ * together by an assertion in scripts/check-freeze-frame.ts, not by an import.
+ * ⚠️ The slack is the point: if the layout inferred in ./freeze-frame.ts is wrong
+ * the reply will be some other length, and a cap set at 25 would throw away the
+ * one piece of evidence that would show it. The cap exists only to bound what a
+ * stuck responder can make us hold.
  */
 const MAX_PAYLOAD_BYTES = 64;
 

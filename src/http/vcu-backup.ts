@@ -3,22 +3,19 @@ import { BACKUP_CSV_FILENAME, exportableRowCount, snapshotToBackupCsv } from "..
 import { loadLatestSnapshot } from "./vcu-params.ts";
 
 // GET /vcu-backup.csv — the last parameter snapshot as `vcu_backup.csv`, the file
-// another owner's energica_tool.py writes and reads. Byte-compatible on purpose:
-// the format is that tool's, not ours, so a set of values can be sent to someone
-// with a different bike and opened in the tool they already have. See
-// src/vcu/backup-csv.ts for what "byte-compatible" was checked to mean.
+// another owner's energica_tool.py writes and reads. Byte-compatible on purpose, so
+// a set of values can be sent to someone with a different bike and opened in the
+// tool they already have. See src/vcu/backup-csv.ts for what that was checked to mean.
 //
 // ⚠️ IT NEVER TOUCHES THE BUS. Same standing rule as /vcu-params and /stored-dtcs:
-// it serves a file a previous sweep wrote. Downloading cannot make the
-// bike answer anything. /vcu-read is where a fresh read is asked for.
+// it serves a file a previous sweep wrote. /vcu-read is where a fresh read is asked for.
 //
-// ⚠️ What the receiving tool can do with this file is a WRITE. energica_tool.py's
-// "Restore backup..." reads exactly this shape and puts every row back into an ECU
-// over `3B` WriteDataByLocalIdentifier. Nothing on this side can do that — the
-// point of the standing read-only rule — but the file is one input to something
-// that can, on someone else's bike, with different values. That is a reason the
-// download is a deliberate act in service mode rather than a link on the riding
-// screens, and a reason the filename says backup.
+// ⚠️ But what the RECEIVING tool can do with this file is a WRITE — energica_tool.py's
+// "Restore backup…" puts every row back into an ECU over `3B`
+// WriteDataByLocalIdentifier. Nothing on this side can do that, but the file is one
+// input to something that can, on someone else's bike, with different values. Hence
+// a deliberate act in service mode rather than a link on the riding screens, and a
+// filename that says backup. docs/diagnostics-and-checks.md §7.5.
 
 export async function handleVcuBackupEndpoint(res: ServerResponse, directory: string): Promise<void> {
   const latest = await loadLatestSnapshot(directory);

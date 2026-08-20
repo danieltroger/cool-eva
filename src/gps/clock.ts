@@ -54,38 +54,18 @@ export type ClockTrust = "satellite-backed" | "never-synced" | "contested";
 
 /**
  * Whether anything may stamp a record with the system clock and be believed later.
+ * src/http/waypoint.ts refuses to save a waypoint unless this says "satellite-backed".
  *
- * The Pi has no RTC. On a boot with no network its clock starts wherever the
- * filesystem left it, and ./clock-gate.ts exists because a corrupt hub frame once
- * stepped it to 2060 and cost 49 772 rows. Rows are logged regardless — a timestamp
- * that is merely wrong is still recoverable from `gps_epoch_s`, which is logged raw
- * beside it — but a caller creating a *record whose whole point is when and where*
- * needs to know, and src/http/waypoint.ts refuses to save one unless this says
- * "satellite-backed".
+ * ⚠️ Deliberately NOT derived from the `gps_epoch_s` signal, which is the obvious way
+ * and is wrong: that signal is recorded RAW, refused frames included, so one corrupt
+ * frame would make a good clock look 34 years out for as long as it sat in liveState.
  *
- * Deliberately not derived from the `gps_epoch_s` signal, which would be the obvious
- * way and is wrong: that signal is recorded RAW, refused frames included (see
- * syncSystemClockFromGps below), so a single corrupt frame would make a perfectly good
- * clock look 34 years out and refuse waypoints for as long as it sat in liveState.
- * The gate's verdict is the corroborated view, and corroboration is the whole defence.
- *
- * ⚠️ There is deliberately NO staleness bound here, and the first version of this had
- * one — KNOWN_GOOD_MAX_AGE_MS, which looked like the obvious constant to reuse. It is
- * not, and reviewing #74 is where that came out. That bound is about an ANCHOR used to
- * validate the next satellite reading, where expiry means "re-derive from scratch" and
- * costs a few seconds. Here expiry would mean "refuse to record anything", and nothing
- * re-derives it until a fresh reading turns up — which is a different thing entirely
- * once you notice that ./decode.ts withholds `gps_epoch_s` below 4 satellites while
- * still emitting `gps_lat`/`gps_lon` for any fix at all. A bike parked under a partial
- * sky view with a 3-satellite fix has a fresh position, a clock that was stepped from
- * satellite time an hour ago and is still right to the second, and no time frames at
- * all — and would have been told its clock was unsynced, at exactly the moment (parked
- * somewhere worth remembering) the feature exists for.
- *
- * So what expires it is a CONTRADICTION, not silence. Once `date` has returned, the
- * monotonic clock has been running ever since and nothing has disagreed, the wall clock
- * is still satellite-backed however long the sky has been quiet. A reboot clears it by
- * construction: this is process state, and the process is what has no RTC.
+ * ⚠️ And there is deliberately NO STALENESS BOUND here. The first version reused
+ * KNOWN_GOOD_MAX_AGE_MS, which looked like the obvious constant; it is about an
+ * ANCHOR, where expiry means "re-derive from scratch" and costs seconds, whereas here
+ * it would mean "refuse to record anything" until a fresh reading turns up. What
+ * expires this is a CONTRADICTION, not silence. Why that matters at a 3-satellite
+ * fix, and the review it came out of: docs/diagnostics-and-checks.md §8.5.
  */
 export function systemClockTrust(): ClockTrust {
   if (!SYNC_ENABLED) {

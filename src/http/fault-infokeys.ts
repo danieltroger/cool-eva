@@ -9,16 +9,11 @@ import { INFOKEY_TABLE } from "../diagnostics/infokey-table.ts";
 // An endpoint rather than a JS copy in public/, for exactly the reason
 // ./dtc-table.ts gives: the dashboard has no build step and cannot import the
 // TypeScript tables, and a hand-maintained duplicate of 944 references would
-// drift silently in a direction nobody would notice.
+// drift silently in a direction nobody would notice. The two halves go separately
+// (dictionary once, shortlists as id arrays) because inlining costs ~80 kB against
+// ~16 kB — docs/diagnostics-and-checks.md §7.5.
 //
-// ── Why the two halves are sent separately ─────────────────────────────────
-// The obvious shape — every fault carrying its fields inline — repeats the same
-// handful of field definitions 944 times and comes to roughly 80 kB. Sending the
-// 120-entry dictionary once and the shortlists as id arrays is about 16 kB, and
-// the join is one array lookup on the client. That matters here: this is served
-// to a phone over a hotspot in a garage with no reception.
-//
-// It NEVER touches the bus, and it cannot: both tables are static data compiled
+// ⚠️ It NEVER touches the bus, and it cannot: both tables are static data compiled
 // into the process. Nothing on this endpoint tells you what the bike actually
 // recorded — for that a freeze frame has to be READ, which nothing in this repo
 // does yet (see src/diagnostics/freeze-frame.ts).

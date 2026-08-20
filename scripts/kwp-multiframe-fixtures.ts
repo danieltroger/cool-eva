@@ -24,33 +24,17 @@
 /**
  * §A — the one multi-frame reply on this channel with real bytes behind it.
  *
- * ✅ The FIRST FRAME is quoted verbatim off the bike. obd-garage/DIAG_ADDRESSES.md
- * §3's responder table records A8 answering `22 2001` (bank 2, live data) with
- * `F1 10 07 62 20 01 00 09`, marked "(multiframe) **no auth**", from this
- * project's own live probing on 2026-08-08.
+ * ✅ Both halves are quoted verbatim off the bike, from two DIFFERENT sessions and two
+ * different tools: the First Frame from this project's own live probing on 2026-08-08,
+ * the 4-byte record it carries from a bank-2 scan of 2026-07-26. 🔗 They agree — the
+ * record's first two bytes are exactly the First Frame's last two — which leaves only
+ * one Consecutive Frame it can have been. That single frame is the inferred part, and
+ * it is inferred from two independent live records that had to agree and did.
+ * docs/diagnostics-and-checks.md §11.3 shows the arithmetic.
  *
- * ✅ The PAYLOAD is quoted verbatim off the bike too, from a DIFFERENT session
- * and a different tool. obd-garage/CAN_MAP.md's A8 scan of 2026-07-26 records
- * bank-2 record `0001` = `00093cb6` — one of four multi-byte records that a bug
- * in `kwp_scan.py` had been silently dropping until it was fixed and re-run.
- *
- * 🔗 The two agree, and that is what makes this a real fixture rather than a
- * construction. The First Frame declares 7 payload bytes and carries five of
- * them: `62 20 01 00 09`. The scan says the record is `00 09 3C B6`. The first
- * two bytes of the record are exactly the last two bytes of the First Frame, and
- * `62` + identifier `20 01` + a 4-byte record is exactly 7. So the Consecutive
- * Frame carried `3C B6`, and there is only one frame it can have been:
- *
- *     F1 21 3C B6 00 00 00 00
- *
- * That single frame is the inferred part, and it is inferred from two independent
- * live records that had to agree and did. Everything else here is quotation.
- *
- * ⚠️ What it does NOT establish: the zero padding. Both DLC modes exist on this
- * bus (obd-garage/SERVICE_RESET.md, and DIAG_ADDRESSES.md §9.2 records the same
- * write both padded and not), and the length byte governs either way — the
- * reassembler takes 2 bytes here because the First Frame said 7, not because the
- * frame is 8 long.
+ * ⚠️ What it does NOT establish: THE ZERO PADDING. Both DLC modes exist on this bus and
+ * the length byte governs either way — the reassembler takes 2 bytes here because the
+ * First Frame said 7, not because the frame is 8 long.
  */
 export const BANK2_IDENTIFIER_0001_FRAMES = ["F1 10 07 62 20 01 00 09", "F1 21 3C B6 00 00 00 00"];
 

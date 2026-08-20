@@ -16,63 +16,28 @@ import type { DecodedValue } from "../src/can/frame.ts";
 //
 // Run by `npm test` via scripts/run-checks.ts. Takes no arguments.
 //
-// ## Why the RX-filter check is here at all
+// The three structural checks, and why each exists: docs/diagnostics-and-checks.md §11.4.
+//   1. every ID that decodes must be in STREAM_IDS — an ID missing from the kernel RX
+//      filter never reaches decodeFrame, and NOTHING SAYS SO. One-directional by design.
+//   2. every emitted key must have a registry entry, or it lands in "misc" with a blank
+//      unit, where the dashboard's plausibility gate cannot reach it.
+//   3. no signal bounds.js gates to 0/1 may carry a deadband ≥ 1: `Math.abs(1 - 0) > 1`
+//      is false, so it logs once after boot and never again. Which signals those are is
+//      asked of bounds.js directly, so the two cannot disagree.
 //
-// STREAM_IDS sets the kernel's CAN_RAW filters (src/index.ts). An ID missing from it never
-// reaches decodeFrame, so the decoder is dead and NOTHING SAYS SO: no error, no warning, no
-// failing test — the signal is simply absent, which is indistinguishable from a bike that
-// never sent it. That has already cost real time on this project once, on 0x400.
-//
-// So the check runs the other way round, from the decoders to the filter: probe decodeFrame
-// across the whole 11-bit ID space and fail if any ID that answers is missing from STREAM_IDS.
-// Adding a decoder and forgetting the filter is then a red build instead of a silent nothing.
-// It is deliberately one-directional — an ID in STREAM_IDS with no decoder is fine and there
-// are several (0x410's non-GPS sub-frames, frames only present while charging), so the check
-// never complains about those.
-//
-// ## And the other two
-//
-// Every emitted key must have a registry entry, or it logs into the catch-all "misc" group
-// with a blank unit, which switches off the dashboard's plausibility gate for it (see
-// public/lib/bounds.js — a blank unit in a non-boolean group is unbounded).
-//
-// ⚠️ That check used to enumerate the emitted keys by feeding PROBE_PAYLOADS to the ids that
-// answered PROBE_PAYLOADS, which is circular, and the circle closed the moment decoders started
-// gating on frame invariants. 0x625 wants b1 = 0x01, 0x615 wants b1 = 0x01 with a zero tail,
-// 0x610 wants b4-6 = F1 05 01 and 0x121 wants opcode 0x18 — none of the four probe payloads is
-// any of those shapes, so all four ids answer nothing, drop out of `answeringIds`, and their
-// nine keys quietly stop being checked. Nothing failed, because the entries exist; the
-// PROTECTION was gone, while the script went on printing "every emitted key is declared". That
-// is precisely the one-directional silence this file exists to catch, so it is worth saying how
-// it got in: the fix for a real decoder bug disabled the check that guards the same decoder.
-//
-// So the emitted set is now the UNION of what the probes produce and what the replay cases at
-// the bottom produce, and the check runs after both. That a gated id has replay cases is itself
-// asserted in section 4, so for every id NAMED IN `REQUIRED_IN_FILTER` it is a check rather than
-// a convention: gated tightly enough to dodge the probes and carrying no replay case now fails
-// the build. A fifth probe payload shaped like a real 0x625 would have patched today's symptom
-// and left the next differently-gated frame to rediscover the hole.
-//
-// ⚠️ Read that scope literally. An id that is NOT in `REQUIRED_IN_FILTER` is invisible to all
-// three guards at once: it answers no probe so it never enters `answeringIds`, the STREAM_IDS
-// check is one-directional by design so it never fires for a silent id, and the section-4
-// assertion only walks that list. So a gated decoder for, say, 0x400 wired into STREAM_IDS but
-// not into the list below is exactly as unprotected as 0x625 was — the hole has moved up a
-// level, not closed. What actually closes it is the `CHARGE_MANAGER_CAN_IDS` cross-check below
-// generalised: more modules exporting their own id list, and less prose here.
-//
-// ⚠️ The residual hole, stated rather than left implicit. This covers an id with no coverage at
-// all; it does NOT cover a NEW KEY added to an already-gated decoder whose existing replay cases
-// do not happen to produce it. That key is still invisible here. Closing it properly means
-// asserting a full expected key set per gated id — deriving the expectation from SIGNALS via a
-// per-id annotation — which is more machinery than this file has earned so far. Until then, a
-// key added to 0x610, 0x615, 0x620, 0x625 or 0x121 needs a replay case that emits it, and that
-// is a rule a person has to follow.
-//
-// No signal bounds.js gates to 0/1 may carry a deadband of 1 or more. `Math.abs(1 - 0) > 1` is
-// false, so such a signal logs its first sample after boot and then never logs again — a trap
-// that looks exactly like a flag which never changed. Which signals those are is asked of
-// bounds.js directly rather than restated here, so the two cannot disagree.
+// ⚠️ WHAT §2 DOES NOT COVER, STATED RATHER THAN LEFT IMPLICIT — it is a check whose
+// silence has already been mistaken for coverage once:
+//   • An id NOT in `REQUIRED_IN_FILTER` is invisible to all three guards at once. It
+//     answers no probe so it never enters `answeringIds`, the STREAM_IDS check never
+//     fires for a silent id, and the section-4 assertion only walks that list. A gated
+//     decoder wired into STREAM_IDS but not into that list is exactly as unprotected as
+//     0x625 was. What closes it is more modules exporting their own id list the way
+//     `CHARGE_MANAGER_CAN_IDS` does, and less prose here.
+//   • A NEW KEY added to an already-gated decoder whose existing replay cases do not
+//     happen to produce it is still invisible. Closing that properly means a full
+//     expected key set per gated id, which is more machinery than this file has earned.
+//     Until then, a key added to 0x610, 0x615, 0x620, 0x625 or 0x121 needs a replay case
+//     that emits it, and that is a rule a person has to follow.
 
 const failures: string[] = [];
 
@@ -822,29 +787,20 @@ for (const testCase of REPLAY) {
     if (Math.abs(actual - expected) > 1e-9) {
       failures.push(`${label}: expected ${key} = ${expected}, got ${actual}`);
     }
-    // The other direction of this PR's two-layer argument, and the one nothing checked until now.
-    // Every value in `expect` is one this decoder is PINNED to produce — most copied byte for byte
-    // out of the archive, the rest constructed for the ⚠️ SYNTHETIC cases — so a bounds.js that
-    // rejects one is a contradiction either way, and this is the one place that can catch a bound
-    // drawn TOO TIGHT. Not hypothetical: the first version of this PR bounded `fast_dc_limit_max_a`
-    // at 80 because it read a write policy as a field range, and the only reason no real reading
-    // was rejected is that this bike happens to hold 75. `psu_12v_mv` is in bounds.js for the same
-    // mistake made from the other end.
+    // ⚠️ The one place that can catch a bound drawn TOO TIGHT. Every value in `expect` is one
+    // this decoder is PINNED to produce, so a bounds.js that rejects one is a contradiction
+    // either way — and it is not hypothetical: `fast_dc_limit_max_a` was once bounded at 80
+    // because a write policy was read as a field range, and only this bike happening to hold 75
+    // kept a real reading from being rejected. `psu_12v_mv` is the same mistake from the other end.
     //
     // `expected` is deliberately what is tested, not `actual`: the question is whether the gate
-    // accepts the reading the bike is known to produce, and on a decode mismatch `actual` is by
-    // definition not that. The mismatch is already a failure two lines up.
+    // accepts the reading the bike is KNOWN to produce, and on a decode mismatch `actual` is by
+    // definition not that. ⚠️ `outsideBounds` may only SUPPRESS the first failure, never stand in
+    // for the second — an annotation that merely silences is indistinguishable from one that has
+    // gone stale.
     //
-    // Both directions are asserted. `outsideBounds` may only SUPPRESS the first failure, never
-    // stand in for the second — an annotation that merely silences is indistinguishable from one
-    // that has gone stale, which is the exact failure mode the header of this file is about.
-    //
-    // The predicate is `isPlausible`, not a comparison written here, for the same reason section 2
-    // asks bounds.js which signals are 0/1 flags instead of restating the rule: "showing as a
-    // fault" is decided in exactly one place, `isPlausible` at public/lib/store.js:236, and a copy
-    // of its body here would go on asserting a rejection that no longer happens the moment either
-    // comparison turns exclusive or a rule is added above the range test. `boundsFor` is still
-    // called, but only to name the band in the message.
+    // The predicate is `isPlausible` rather than a comparison written here, so "showing as a
+    // fault" stays decided in exactly one place; `boundsFor` is called only to name the band.
     const signal = defined.get(key);
     const range = signal ? boundsFor(signal.key, signal.unit, signal.group) : null;
     const accepted = signal ? isPlausible(signal.key, expected, signal.unit, signal.group) : true;

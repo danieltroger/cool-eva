@@ -4,39 +4,20 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 // here talks to a bus.
 //
 // ── ⚠️ THESE ARE CONSTRUCTED, NOT CAPTURED. THE NAME OF THE FILE SAYS SO. ───
-// scripts/captured-dtc-transfer.ts holds a REAL 2026-08-04 candump, byte for
-// byte, and that is why the checks built on it prove something about the bike.
-// This file cannot make that claim. No `0x17` payload has ever been recorded:
-// the 2026-08-08 capture of the factory software counted 29 of them and 29
-// positive `57` replies (obd-garage/DIAG_ADDRESSES.md §9.1) but kept only the
-// service bytes, not the data.
+// scripts/captured-dtc-transfer.ts holds a REAL 2026-08-04 candump, byte for byte, and
+// that is why the checks built on it prove something about the bike. This file cannot
+// make that claim: no `0x17` payload has ever been recorded — the 2026-08-08 capture
+// counted 29 of them and 29 positive `57` replies but kept only the service bytes.
 //
-// So what the check below verifies is INTERNAL CONSISTENCY: that the decoder
-// reproduces the layout src/diagnostics/freeze-frame.ts documents, applies
-// Energica's own scalings to Energica's own field widths, and rejects the
-// malformed shapes. If the layout is wrong, every assertion here still passes
-// and the bike still tells us something different. That is the honest limit of
-// this fixture, and it is why `trailingHex` exists.
+// So what the check verifies is INTERNAL CONSISTENCY: that the decoder reproduces the
+// layout src/diagnostics/freeze-frame.ts documents, applies Energica's own scalings to
+// Energica's own field widths, and rejects the malformed shapes. ⚠️ IF THE LAYOUT IS
+// WRONG, EVERY ASSERTION HERE STILL PASSES and the bike still tells us something
+// different. That is the honest limit of this fixture, and it is why `trailingHex`
+// exists.
 //
-// ── How these were built ────────────────────────────────────────────────────
-// Payload, per src/diagnostics/freeze-frame.ts:
-//
-//   57 <count> <componentHi> <componentLo> <status> <fields…>
-//
-// then the fault's own infokey shortlist from src/diagnostics/fault-infokeys.ts,
-// in order, each field big-endian at its datatype's width. Framed as extended-
-// addressed ISO-TP to the tester (0xF1): a First Frame carrying 5 payload bytes
-// and Consecutive Frames carrying 6, zero-padded to a full 8-byte DLC.
-//
-// The two faults were chosen because this bike has met both:
-//   • P0A07, the water-pump code, which the bike reports intermittently
-//   • P0514, which mode 01 PID 02 named as the freeze-frame code on 2026-08-04
-//     and which is in the 39 stored codes (scripts/captured-dtc-transfer.ts)
-//
-// The VALUES are invented, but not arbitrarily — each was picked to exercise a
-// decoding path that would otherwise go unchecked: a zero-current open circuit,
-// a negative int16 (`B_PACK_I` = −1.8 A), a negative int8 (`B_L_TEMP` = −1 °C),
-// the ×0.1 scaling, and the `(X/2)-40` air-temperature encoding.
+// How these were built, which two faults were chosen and why the invented VALUES are
+// the ones they are: docs/diagnostics-and-checks.md §11.3.
 
 /**
  * Component 44 symptom 0 — `P0A07`, water pump open circuit, per

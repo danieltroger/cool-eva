@@ -19,33 +19,25 @@ import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 //   node --experimental-strip-types scripts/read-freeze-frame.ts --log
 //
 // ── ⚠️ READ THIS BEFORE RUNNING IT ─────────────────────────────────────────
-//  • **Stop the service first**: `sudo systemctl stop cool-eva`. It holds its own
-//    socket on can0 and restarting it re-initialises the interface, which kills
-//    ours (CLAUDE.md). Two testers on one bus is also how you get a reply matched
-//    to the wrong request — these micros answer on ONE id with no request tag.
-//  • **It does NOT bring up can0**, deliberately, because `bringUpCan` takes the
-//    interface DOWN first and that kills every other socket on it. Bring the
-//    interface up yourself, ACTIVE (not listen-only), or nothing will transmit:
-//      `sudo ip link set can0 down`
-//      `sudo ip link set can0 type can bitrate 500000 restart-ms 100 listen-only off`
-//      `sudo ip link set can0 up`
-//  • **Park the bike.** There is no service gate on this script — it is a scratch
-//    tool, not a feature — so that judgement is yours. Reading is read-only, but a
-//    bus shared with the ABS is not somewhere to be careless.
-//  • **Run it detached** if you are over ssh. DIAG_ADDRESSES.md's method note is
-//    from a link drop that cost a whole result set:
-//      `nohup setsid node --experimental-strip-types scripts/read-freeze-frame.ts --log > /tmp/ff.txt 2>&1 &`
+//  • **Stop the service first**: `sudo systemctl stop cool-eva`. It holds its own socket
+//    on can0, and two testers on one bus is how you get a reply matched to the wrong
+//    request — these micros answer on ONE id with no request tag.
+//  • **It does NOT bring up can0**, deliberately: `bringUpCan` takes the interface DOWN
+//    first, killing every other socket on it. Bring it up yourself, ACTIVE (not
+//    listen-only), or nothing transmits — the three commands are in the doc below.
+//  • **Park the bike.** No service gate on this script, so that judgement is yours.
+//  • **Run it detached** over ssh; a link drop has already cost a whole result set.
+//    docs/diagnostics-and-checks.md §13.
 //
-// ── ⚠️ EVERY REPLY IS PRINTED AS RAW HEX FIRST ─────────────────────────────
-// That is the point of this run, not the decode. The reply layout of all three
-// services is unverified (see src/vcu/multiframe-codec.ts for which bytes are
-// guessed), so the bytes are the evidence and the decode is a hypothesis printed
-// beside them. If the two disagree, the bytes are right.
+// ⚠️ EVERY REPLY IS PRINTED AS RAW HEX FIRST, and that is the point of the run rather
+// than the decode: the reply layout of all three services is unverified (see
+// src/vcu/multiframe-codec.ts for which bytes are guessed), so the bytes are the
+// evidence and the decode is a hypothesis printed beside them. If they disagree, the
+// bytes are right.
 //
-// ── ⚠️ READ-ONLY ───────────────────────────────────────────────────────────
-// Everything here goes through the same closed union as the rest of the client:
-// `0x10`, `0x3E`, `0x17`, `0x18`, `0x35`, `0x36`, `0x37`. There is no argument that
-// names a service and none that names a value.
+// ⚠️ READ-ONLY. Everything goes through the same closed union as the rest of the
+// client: `0x10`, `0x3E`, `0x17`, `0x18`, `0x35`, `0x36`, `0x37`. There is no argument
+// that names a service and none that names a value.
 
 const CAN_IFACE = process.env.CAN_IFACE ?? "can0";
 

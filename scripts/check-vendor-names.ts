@@ -5,58 +5,34 @@ import { promisify } from "util";
 
 // Fails the build if the manufacturer's service-tool product name — or any of the file
 // and library names that only exist inside it — appears anywhere in a TRACKED file.
-//
 //     node --experimental-strip-types scripts/check-vendor-names.ts
 //
-// ## Why this check exists
+// It exists because the names come back on their own: obd-garage/ is gitignored, uses
+// them correctly, and is where nearly every fact in src/vcu/ and src/diagnostics/ came
+// from, so anybody who reads it to write a comment copies one across without deciding
+// to. ⚠️ REPLACE THE NAME, KEEP THE CLAIM — the provenance is the valuable part and none
+// of it needs a product name. docs/diagnostics-and-checks.md §11.5.
 //
-// This is a public repo and the owner does not want a third-party product name in it.
-// It was scrubbed by hand on 2026-08-16 and was back within a dozen PRs, 92 lines
-// across 27 files. Not through carelessness: the reverse-engineering notes under
-// `obd-garage/` are gitignored, they are where nearly every fact in src/vcu/ and
-// src/diagnostics/ came from, and they use the real names throughout — correctly, since
-// they are local-only. So anybody (human or agent) who reads them to write a comment
-// copies the name across without ever deciding to. A review catches it sometimes. A
-// grep catches it every time, which is the difference between a policy and a rule.
+// ⚠️ THE NEEDLES ARE SPELLED `"em" + "suite"` AND MUST STAY THAT WAY. This file is itself
+// a tracked file, so it is scanned by its own check; a needle written as one literal
+// would sit in this source AS that literal, the check would find itself on its first run,
+// and the build would be permanently red with no fix short of deleting the check. Split
+// across two literals, the forbidden text never exists in the file at all — deliberately
+// better than an exemption, since there is then no path this check skips and no file it
+// declines to read. Do not "tidy" the concatenations.
 //
-// The names are NOT the valuable part of those comments. What is valuable is the
-// provenance — proven vs inferred, which build, which section, how many rows agreed —
-// and none of that needs a product name to survive. Replace the name, keep the claim.
+// ## What it cannot do — it searches TRACKED FILES ONLY, which is load-bearing:
+// obd-garage/ is invisible here by construction rather than by an ignore list, because
+// those notes must keep the real names. It sees text, not intent, and knows only the
+// names written below — a new artefact name out of the same tool needs a new entry. If
+// git is missing or this is not a checkout it FAILS: a check that could not look is not
+// a check that found nothing.
 //
-// ## ⚠️ Why the needles are spelled `"em" + "suite"`
-//
-// This file is itself a tracked file, so it is scanned by its own check. A needle
-// written as a single literal would sit in this source AS that literal, the check would
-// find itself on its first run, and the build would be permanently red with no fix short
-// of deleting the check. Splitting each needle across two string literals means the
-// forbidden text never exists in the file at all — it comes into being at runtime, after
-// the `+`. That is deliberately better than an exemption: there is no path this check
-// skips and no file whose contents it declines to read, so nothing can be hidden from it
-// by being moved into the one file it does not look at. Do not "tidy" the concatenations.
-//
-// ## Tracked files only, and that is load-bearing
-//
-// `git grep` with no tree-ish searches the working tree, restricted to files git tracks.
-// `obd-garage/` is gitignored, so it is invisible here by construction rather than by an
-// ignore list this check maintains — which is what we want, because those notes must
-// keep the real names. `manuals`, `Energica_Manuals`, `vcu-params`, ride logs and
-// `node_modules` are out for the same reason.
-//
-// ## What it cannot do
-//
-// It sees text, not intent, and it only knows the names written down below. A new
-// artefact name out of the same tool needs a new entry here. If git is missing or this
-// is not a checkout, the check FAILS rather than passing: a check that could not look is
-// not a check that found nothing.
-//
-// ⚠️ AND IT GUARDS THE WORKING TREE, NOT HISTORY. Every earlier commit still contains
-// the names in full and stays readable through `git log -p`, the merged PR diffs and
-// GitHub search — including the diff of the change that removed them. Making them
-// unfindable rather than merely unshipped is a different and much larger job (a history
-// rewrite, a force-push, and asking GitHub to collect the unreachable blobs its
-// /commit/<sha> URLs otherwise keep serving), and it is not what this check is for.
-// What this check guarantees is the narrower, useful thing: nothing this repo currently
-// ships attributes anything to a named third-party product.
+// ⚠️ AND IT GUARDS THE WORKING TREE, NOT HISTORY. Every earlier commit still carries the
+// names in full, readable through `git log -p`, the merged PR diffs and GitHub search —
+// including the diff of the change that removed them. What this check guarantees is the
+// narrower, useful thing: nothing this repo currently SHIPS attributes anything to a
+// named third-party product.
 
 const execFileAsync = promisify(execFile);
 

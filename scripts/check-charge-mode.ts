@@ -10,50 +10,26 @@ import { chargeMode } from "../public/lib/charge-mode.js";
 //
 // Run by `npm test` via scripts/run-checks.ts. Takes no arguments.
 //
-// ## What went wrong, and why replaying the decoder alone would not have caught it
+// It sits one level above the frame decoders — real bytes in, the answer the SCREEN
+// acts on out — because that join is what had nothing testing it when the charging
+// screen said "DC charging" on a bike parked in a garage with nothing plugged in.
+// docs/diagnostics-and-checks.md §11.4.
 //
-// The charging screen showed "DC charging" on a bike parked in a garage with nothing
-// plugged into it, directly above a card correctly reporting that the pack was
-// DELIVERING 0.1 kW. Every decoder involved was right: `0x201` byte 0 read `01`, the
-// bits came out as Discharge, and the delivery card read them correctly. What was
-// wrong was one line of the view, which asked only "are the AC charger's frames
-// arriving?" and called everything else DC — never asking whether a charge was
-// happening at all.
-//
-// So this check sits one level above the frame decoders: real bytes in, and the answer
-// the SCREEN acts on out. It is the join that had nothing testing it.
-//
-// ## The three values, and the two traps in them
-//
-// Across ~24 M frames `0x201` byte 0 takes exactly three values, and each has caught
-// somebody:
-//
-//   0x01  Not charging — parked at −0.2 A and riding at −166 A alike. Two independent
-//         reverse engineers labelled it "IDLE", which makes a discharging pack look
-//         idle (obd-garage/CAN_MAP.md §"the .xdbc").
+// ⚠️ The two traps in `0x201` byte 0, which across ~24 M frames takes three values:
+//   0x01  NOT charging — parked at −0.2 A and riding at −166 A alike. Two independent
+//         reverse engineers labelled it "IDLE", which makes a discharging pack look idle.
 //   0x02  AC charging. Solid.
-//   0x10  The BMS is not charge-managing. It covers a whole DC session — the current
-//         bypasses the BMS charge path — but ALSO the last ~2 s of every AC session,
-//         at −0.1 A. Reading it as "DC" is therefore wrong, which is why case 5 below
-//         exists and why the DC arm rests on the contactor monitor instead.
+//   0x10  the BMS is not charge-managing. Covers a whole DC session, but ALSO the last
+//         ~2 s of every AC session, so reading it as "DC" is wrong — which is why the
+//         DC arm rests on the contactor monitor instead.
 //
-// ## Provenance of the frames
-//
-// The 0x102 payloads are REAL, copied byte for byte with their timestamps out of the
-// candump captures, the same ones scripts/check-button-decode.ts asserts the button
-// and contactor bits against.
-//
-// The 0x201 payloads are CONSTRUCTED, and it is worth being exact about how: byte 0 is
-// an observed value in every case (the `01` is from a live candump taken beside the
-// bike the day this bug was reported; the `02` and `10` are the states CAN_MAP.md
-// records for an AC session and its tail), and bytes 1-7 are the error and warning
-// words, which have read all-zero in every capture of this healthy pack. So the byte
-// under test is measured and the rest is the quiet background it has always sat in.
-//
-// The charger frames — 0x305 and 0x306 — are not replayed at all, on purpose. The rule
-// never reads their values, only whether they arrived, so a case sets their FRESHNESS
-// directly rather than inventing charger bytes that would imply a precision this has
-// no need of.
+// ⚠️ PROVENANCE, because it is uneven. The 0x102 payloads are REAL, copied byte for
+// byte with their timestamps out of the candump captures. The 0x201 payloads are
+// CONSTRUCTED: byte 0 is an observed value in every case, and bytes 1-7 are the error
+// and warning words, all-zero in every capture of this healthy pack — so the byte under
+// test is measured and the rest is the quiet background it has always sat in. The
+// charger frames 0x305/0x306 are not replayed at all, on purpose: the rule reads only
+// whether they ARRIVED, so a case sets their freshness rather than inventing bytes.
 
 const failures: string[] = [];
 

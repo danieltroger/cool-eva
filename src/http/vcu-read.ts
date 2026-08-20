@@ -25,37 +25,9 @@ import { loadLatestSnapshot } from "./vcu-params.ts";
 // service, an identifier or a value — POST takes no body at all — so there is
 // nothing here for a widened union to leak through either.
 //
-// ── Why POST returns immediately ─────────────────────────────────────────────
-// A sweep is ~277 reads at a 300 ms reply window; on a bike whose link drops as
-// routine it can take a minute or stall entirely. Holding the response open for
-// that would freeze the phone's request, time out on garage wifi, and leave the
-// dashboard unable to say what had been read so far. So POST starts it and
-// returns, and GET is how the page follows along — which also means closing the
-// page, or walking out of wifi range, does not stop the sweep. Riding away does,
-// but that is the gate rather than the HTTP layer.
-//
-// ── Why starting a read needs a header ──────────────────────────────────────
-// A bare `POST` with no body and no custom headers is a CORS-SIMPLE request: any
-// page open in the phone's browser while it is on the bike's hotspot can fire one
-// at this endpoint (`fetch(url, {method: "POST", mode: "no-cors"})`, or a plain
-// cross-origin `<form method=post>`) without a preflight. It never sees the
-// response — but here the side effect IS the point, and it is the only side effect
-// in this repo that reaches the bus. The two-tap arming on the page guards against
-// a thumb, not against that.
-//
-// Requiring a header a simple request cannot set makes the browser send a
-// preflight first; nothing here answers OPTIONS, so the browser blocks the request
-// and the sweep never starts. Same-origin fetches from our own page need no
-// preflight, so the dashboard is unaffected. `curl` can still start a read, which
-// is correct — anything with a shell on that network already has the bus.
-//
-// The gate does not replace this and this does not replace the gate. One answers
-// "did the owner ask for this", the other "can the motorcycle move". A parked bike
-// is exactly when a drive-by request would succeed, so the cheap check still earns
-// its keep.
-//
-// DELETE needs no such guard: a non-simple method already forces a preflight, and
-// stopping a sweep is never the dangerous direction anyway.
+// Why POST returns immediately rather than holding the response open for a ~277-read
+// sweep, and why starting a read needs a header a CORS-simple request cannot set:
+// docs/diagnostics-and-checks.md §7.1–7.2.
 
 /** Header the dashboard sends to start a read. Its VALUE is not a secret — being unsettable cross-origin is the point. */
 export const SERVICE_MODE_HEADER = "x-cool-eva";
@@ -114,9 +86,9 @@ export async function handleVcuReadEndpoint(
       return;
     case "POST": {
       if (!hasServiceModeHeader(req)) {
-        // See the header. This is the one request in the repo whose SIDE EFFECT is
-        // the point, so it is the one that has to be unavailable to a page the
-        // owner did not open.
+        // A bare POST is CORS-simple. This is the one request in the repo whose SIDE
+        // EFFECT is the point, so it is the one that has to be unavailable to a page
+        // the owner did not open — docs/diagnostics-and-checks.md §7.2.
         res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
         res.end(`starting a read needs the ${SERVICE_MODE_HEADER}: ${SERVICE_MODE_HEADER_VALUE} header\n`);
         return;

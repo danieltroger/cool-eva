@@ -1,42 +1,29 @@
 import { formatObdDtc, lookupByObdCode, type DtcTableEntry } from "./dtc-table.ts";
 
 // Decoder for the OBD-II trouble-code services — mode 03 (stored), 07 (pending)
-// and 0A (permanent). Pure: bytes in, codes out, no I/O and no clock reads, so a
-// reply captured off the bus can be replayed through it on a laptop. That is what
-// scripts/decode-dtc-response.ts does, and the 2026-08-04 transfer below is its
-// default input.
+// and 0A (permanent). Pure: bytes in, codes out, so a reply captured off the bus
+// can be replayed on a laptop; scripts/decode-dtc-response.ts does that against
+// the 2026-08-04 transfer, which is proven byte-identical across five captures.
 //
-// This is a DIFFERENT list from the one src/diagnostics/decode.ts decodes, and the
-// two must not be merged:
-//   • the Connectivity Hub's type-25 message is the bike's ACTIVE fault list —
-//     0 or 1 entries here, and it flickers minute to minute (see CAN_MAP.md)
-//   • mode 03 is STORED history — 39 entries here, and it does not flicker
-// A bike with 39 stored and 1 active is exactly this bike's current state.
+// This is a DIFFERENT list from the one src/diagnostics/decode.ts decodes — that
+// one is the bike's ACTIVE faults (0 or 1 here, and it flickers minute to minute),
+// this one is STORED history (39 here, and it does not).
 //
-// ⚠️ The two also use different code encodings, which is the trap. The hub sends a
-// 20-bit (component, symptom) pair keyed the way Energica's own type-approval
-// table is keyed. Mode 03 sends the 16-bit binary DTC a generic scan tool would
-// print — so the table is reached through its OBD column instead, via
-// lookupByObdCode(). Feeding one encoding to the other's lookup silently produces
-// wrong names rather than no names: the hub's `2C 00 00` reads as P0A07 under the
-// component reading and as P002C under the binary one.
+// ⚠️ AND THE TWO USE DIFFERENT CODE ENCODINGS, WHICH IS THE TRAP. The hub sends a
+// 20-bit (component, symptom) pair keyed the way Energica's own table is keyed;
+// mode 03 sends the 16-bit binary DTC a generic scan tool prints, so the table is
+// reached through its OBD column instead, via lookupByObdCode(). Feeding one
+// encoding to the other's lookup silently produces WRONG NAMES rather than no
+// names: the hub's `2C 00 00` reads as P0A07 one way and as P002C the other.
 //
-// ✅ PROVEN ON THE BIKE 2026-08-04. Mode 03 returns, byte-identical across five
-// captured transfers, an 80-byte payload starting `43 27`:
-//
-//   43 27 05 62 10 00 10 03 05 14 C1 11 C1 12 …
-//   ^^ ^^ ^^^^^ ^^^^^
-//   |  |  |     second code, P1000
-//   |  |  first code, P0562
-//   |  count = 0x27 = 39, exactly what mode 01 PID 01 reports
-//   mode 03 positive response
-//
-// ⚠️ Mode 07 and mode 0A got NO REPLY AT ALL — six attempts over 5 s windows on a
+// ⚠️ MODES 07 AND 0A HAVE NEVER ANSWERED — six attempts over 5 s windows on a
 // quiet bus, silence rather than a negative response. That is NOT the same claim
 // as "nothing is pending", and nothing here or on the dashboard may render it as
 // one: an ECU that does not implement the service and an ECU suppressing the
 // answer look identical from here. The transport reports silence as its own
-// outcome (see src/can/obd-dtc.ts) rather than as an empty list.
+// outcome (src/can/obd-dtc.ts) rather than as an empty list.
+//
+// The captured payload and what it establishes: docs/diagnostics-and-checks.md §4.
 
 /** The three read-only trouble-code request services. Nothing else belongs here. */
 export const MODE_STORED_DTCS = 0x03;

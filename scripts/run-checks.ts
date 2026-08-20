@@ -3,79 +3,23 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 // `npm test` — runs every self-check in the repo, in order, and exits non-zero if any
-// of them does.
+// of them does. A runner, not a framework: the checks predate it and are top-level
+// scripts that report failure with `process.exit(1)`, so each gets its OWN PROCESS.
+// Imported into one, the first failure would take the runner down and leave every later
+// check unreported — the opposite of what a red build should tell you.
 //
-// Added 2026-08-16. Until then `npm test` was still the npm placeholder (`echo
-// "Error: no test specified" && exit 1`) while the checks below had been passing for
-// weeks and gating nothing: CI ran Prettier and tsc, so a change that broke the
-// parameter table or a decoder went green.
+// ⚠️ Only checks that pass or fail on their own, with no bike and no local-only files,
+// belong here. The rest of scripts/ is left out on purpose, and one exclusion matters
+// more than the others: scripts/read-freeze-frame.ts TALKS TO THE BIKE. It is the only
+// thing in the repo that opens a socket outside the service, so it must never appear in
+// CHECKS. Which others are out, and why each: docs/diagnostics-and-checks.md §11.2.
 //
-// ## Why there is no test framework here
+// ⚠️ Nothing below opens a CAN socket, and CHECK_TIMEOUT_MS is the guard against that
+// quietly changing: a check that DID reach for hardware would mostly not fail — it
+// would sit waiting on a bus that is not there — so a check that stops producing a
+// verdict is counted as one that failed.
 //
-// The checks predate this file and were written as scripts, because that is what this
-// repo is: TypeScript run directly under --experimental-strip-types, no build step, no
-// bundler, deployed by `git pull`. Jest or Vitest would add a transform pipeline and a
-// dependency tree to a project whose whole shape is "the file on disk is the file that
-// runs" — to gain assertion sugar over the dozen-line `expect()` each check already
-// carries, and nothing else those checks need. So this is a runner, not a framework:
-// the checks stay runnable by hand exactly as their own comments document them, and
-// this file only decides what runs and what a failure means.
-//
-// ## Why each check gets its own process
-//
-// They are top-level scripts that do their work at import time and report failure with
-// `process.exit(1)`. Imported into one process, the first failure would take the runner
-// down with it and every later check would go unreported — the opposite of what a red
-// build should tell you. Separate processes also keep their module state apart.
-//
-// ## What is deliberately not run here
-//
-// Only checks that pass or fail on their own, with no bike and no local-only files,
-// belong in `npm test`. The rest of scripts/ is left out on purpose:
-//
-//   setup-service.ts      installs a systemd unit, and wants root to do it
-//   generate-log-key.ts   writes the keypair once and refuses to overwrite it
-//   decrypt-log.ts        needs the private key and .celog segments, neither in the repo
-//   replay-capture.ts     needs a candump capture — gitignored, and one bike's ride
-//                         history — and serves a dashboard to look at rather than
-//                         asserting anything, so there is no verdict to collect
-//   extract-vcu-tables.ts needs a copy of the manufacturer's service-tool executable —
-//                         ~137 MB of somebody else's proprietary install, neither in
-//                         this repo nor on an Actions runner. It is a GENERATOR anyway:
-//                         it rewrites src/vcu/table-catalog.data.ts. What CI checks is
-//                         the output, and it checks it hard — check-vcu-params.ts §1e
-//                         rebuilds all 28 tables and compares each against the
-//                         fingerprint the extractor took from Energica's own bundle, so
-//                         a delta that has drifted from the params.ecf text underneath
-//                         it fails the build without the exe being anywhere near it.
-//   read-freeze-frame.ts  TALKS TO THE BIKE. It is the live test for the multi-frame
-//                         KWP transport and the only thing in the repo that opens a
-//                         socket outside the service, so it must never be in this
-//                         list — CHECK_TIMEOUT_MS exists precisely to catch a check
-//                         that started waiting on a bus that is not there. Its own
-//                         replayable half is scripts/check-kwp-multiframe.ts
-//
-// captured-dtc-transfer.ts, captured-vcu-records.ts, freeze-frame-fixtures.ts and
-// simulated-vcu-micro.ts are fixtures and a test double: data and a stand-in bus,
-// not checks. The replay scripts in CHECKS are what read them. Note that
-// freeze-frame-fixtures.ts is the one that is CONSTRUCTED rather than captured,
-// and says so at length — what the check built on it proves is correspondingly
-// narrower.
-//
-// generate-grafana-dtc.ts is in CHECKS but only ever as `--check`. Run bare it rewrites
-// grafana/dashboards/trouble-codes.json and exits 0, which is a generator, not a check;
-// SelfCheck.args is what keeps the distinction in the list rather than in a habit.
-//
-// ## No bike — and no waiting for one
-//
-// Nothing below opens a CAN socket. `socketcan` is imported at runtime in exactly one
-// place, src/can/socket.ts, which none of these reach; everywhere else it is `import
-// type`, which type stripping removes before Node ever sees it. That is why the suite
-// runs on macOS and on an Actions runner, neither of which has a can0.
-//
-// CHECK_TIMEOUT_MS is the guard against that quietly changing. A check that did reach
-// for hardware would mostly not fail — it would sit waiting on a bus that is not there
-// — so a check that stops producing a verdict is counted as one that failed.
+// Why there is no test framework here: docs/diagnostics-and-checks.md §11.1.
 
 /**
  * Per-check wall-clock limit. The whole suite runs in about a second today, so this is

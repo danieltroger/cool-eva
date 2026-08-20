@@ -19,51 +19,26 @@ import { appendReading, closeEncryptedLog, flushEncryptedLog, initEncryptedLog }
 //
 //   node --experimental-strip-types scripts/check-ride-log-status.ts
 //
-// ## The bug this exists because of
+// The bugs it exists because of — a caption that read "10 sealed segments · encrypted,
+// safe over any network" for weeks, and a liveness summary built from the keys that had
+// ARRIVED so a dead source was absent rather than zero — are in
+// docs/diagnostics-and-checks.md §11.4. Both are a true number answering a different
+// question from the one being asked of it.
 //
-// The caption read "10 sealed segments · encrypted, safe over any network", and it
-// read that for weeks — reported as "it always says 10". Ten was in fact the honest
-// count of something: `.celog` FILES in RIDE_LOG_DIR, stat'd one by one, nothing
-// hardcoded and nothing capped. It was the noun that was wrong. A segment is sealed
-// every 30 s and APPENDED to that day's `rides-<YYYY-MM-DD>.celog`, so one file is a
-// day of segments — decrypt-log.ts says the same thing from the other end, and is
-// what counts the real ones. Two consequences, both of which the owner saw:
+//   §1–§3  the count is computed from the directory and scales past any plausible cap;
+//          a file is genuinely not a segment, so nothing may relabel one as the other
+//   §4     a segment opens with the matching private key and refuses any other
+//   §5     a bus that has said nothing reports every source dark, not no sources
 //
-//   * the number was smaller than the truth by three or four orders of magnitude;
-//   * it could not move until midnight, however long the bike rode. A count that is
-//     wired to a constant and a count that is wired to the calendar look identical
-//     from a garage.
-//
-// So this check pins both halves — that the count is computed from the directory and
-// scales past any plausible cap (§1), and that a file is genuinely not a segment, so
-// nothing may relabel one as the other again (§2 and §3).
-//
-// ## And the security sentence
-//
-// "Safe over any network" was doing the same thing in words: broader than what the
-// code provides. What the code provides is confidentiality, and it really does — the
-// Pi holds only the recipient's public key, and §4 proves a segment opens with the
-// matching private key and refuses any other. What it does not provide is
-// authenticity: that public key is not a secret, and anyone holding it can seal a
-// segment that decrypts and passes its GCM tag exactly like a real one. /dl is
-// unauthenticated and nothing is signed. The caption itself is gone, so §3 guards a
-// conditional: a caption that comes back may claim unreadability, and may not drift
+// ⚠️ What §4 proves is CONFIDENTIALITY, not authenticity: the recipient public key is
+// not a secret, so anyone holding it can seal a segment that decrypts and passes its GCM
+// tag exactly like a real one, and /dl is unauthenticated. §3 guards the conditional
+// that follows — a caption that comes back may claim unreadability, and may not drift
 // back to claiming safety.
 //
-// ## And the liveness summary
-//
-// §5 is here for a defect of the same family, found while deleting the readout that
-// displayed it: `summariseGroups()` was built from the keys that had ARRIVED, so a
-// source which had never spoken was missing from the payload rather than reading
-// zero. Anything looking for a dead source by filtering `live === 0` therefore found
-// nothing to report on a completely dead bus. Both bugs are a true number that
-// answers a different question from the one being asked of it.
-//
-// ## No bike, no Pi, no local-only files
-//
-// Everything below runs against a keypair generated here and thrown away, in a temp
-// directory, through the real src/storage/encrypted-log.ts and the real
-// src/http/status.ts. The repo's own private key is never read and never needed.
+// No bike, no Pi, no local-only files: everything runs against a keypair generated here
+// and thrown away, in a temp directory, through the real src/storage/encrypted-log.ts
+// and the real src/http/status.ts. The repo's own private key is never read.
 
 const gunzipAsync = promisify(gunzip);
 const hkdfAsync = promisify(hkdf);
@@ -238,13 +213,11 @@ async function checkTheCountIsTheDirectory(directory: string): Promise<void> {
  * The premise the caption got wrong, proven through the real sealer rather than
  * asserted: seal five segments, then look at how many files that made. It is one.
  *
- * The bound is FILES_ONE_RUN_MAY_MAKE — see there for why two rather than one. It
- * was `< SEGMENTS_TO_SEAL` first, and that was too loose to do the job: renaming the
- * file to a full timestamp, which really does write a file per seal, still produced
- * only three files out of five here, because seals landing in the same millisecond
- * kept colliding onto one name. Three is under five, so the check stayed green
- * through the exact regression it exists to catch. Bound it by what one run can
- * legitimately produce instead, and that mutation goes red.
+ * ⚠️ The bound is FILES_ONE_RUN_MAY_MAKE, not `< SEGMENTS_TO_SEAL`, which was too
+ * loose to do the job: renaming the file to a full timestamp really does write a file
+ * per seal, yet still produced only three out of five here because seals in the same
+ * millisecond collided onto one name — and three is under five, so the check stayed
+ * GREEN through the exact regression it exists to catch.
  *
  * Returns whether anything was actually sealed, because §4 reads what this wrote.
  */
@@ -304,25 +277,17 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
 /**
  * §3 — IF the caption counts files, it calls them files.
  *
- * The caption itself was removed on 2026-08-19: it was accurate after the rename but
- * could not be useful, since one `.celog` is a whole calendar day of segments and the
- * number therefore cannot move before midnight however far the bike rides. So this
- * section now guards a conditional rather than a fact — nothing requires a caption to
- * exist, but one that shows a count must not mislabel it.
+ * The caption was removed on 2026-08-19, so this guards a conditional rather than a
+ * fact: nothing requires one to exist, but one that shows a count must not mislabel it.
+ * The SPELLING is tsc's job (public/**\/*.js is checked against StatusPayload, so
+ * `log.segments` does not compile); what is left is the English.
  *
- * The spelling of the count is tsc's job (public/**\/*.js is checked against
- * StatusPayload, so `log.segments` does not compile). What is left to guard is the
- * English: a caption that interpolates the file count and then calls it "segments"
- * type-checks perfectly and is exactly the bug that was reported.
- *
- * Comments are stripped first, and both kinds of them — the explanation living next
- * to that caption necessarily contains the word "segment", and it is long enough that
- * reformatting it as a `/* … *\/` block is a plausible thing for a future editor to
- * do. Stripping only `//` would turn that reformat into a red build for no reason.
- *
- * The phrase check is narrower on purpose. "Safe over any network" is not a wording
- * preference; it is a claim about the transfer that the crypto does not make, and it
- * is the sentence that shipped, so it is the sentence worth naming.
+ * Comments are stripped first, and BOTH KINDS: the explanation next to that caption
+ * necessarily contains the word "segment", and reformatting it as a block comment is a
+ * plausible thing for a future editor to do — stripping only `//` would turn that
+ * reformat into a red build for no reason. The phrase check is narrow on purpose:
+ * "safe over any network" is a claim about the transfer that the crypto does not make,
+ * and it is the sentence that shipped.
  */
 async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
   const path = join(projectDir, "public/views/sheet.js");
@@ -351,44 +316,17 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
     return;
   }
 
-  // Narrowed 2026-08-19, which is the escape hatch the message below already offered:
-  // the caption was removed outright for screen space, so there is no count to label
-  // and the old "must read log.files" assertion was firing on a deliberate deletion
-  // rather than on a bug.
+  // ⚠️ NARROW ON PURPOSE, AND THE NARROWNESS IS THE HONEST PART. It guards the half tsc
+  // CANNOT check — the English — and only when a count is actually shown, since "sealed
+  // every 30 s" is true prose that happens to contain the word.
   //
-  // That assertion is GONE rather than gated, because gating it made it unfirable:
-  // it was `showsACount && !includes("log.files")`, and showsACount was true only
-  // when `log.files` was present, so the two halves contradict. The `log.segments`
-  // arm could not save it either — `StatusPayload.log` is `{ files; bytes; enabled }`
-  // and public/**/*.js is checkJs'd against it, so tsc rejects that spelling before
-  // this script ever runs. Nothing was lost by deleting it; it was already dead.
+  // ⚠️ AND IT DOES NOT PRETEND to catch a caption reading the count through a
+  // destructure: `const { files } = current.log;` walks straight past it. A guard that
+  // fires on everything is worth less than one that fires on the real case and says what
+  // it misses; if that form ever appears, widen it then, against a case that exists.
   //
-  // What survives is the half that tsc CANNOT check: the English. A caption that
-  // interpolates the file count and calls the result "segments" type-checks
-  // perfectly and is exactly the bug that was reported, so it stays guarded — and
-  // only when a count is actually shown, since "sealed every 30 s" is true prose
-  // that happens to contain the word.
-  //
-  // Third attempt at this gate, and the first two were both wrong in opposite
-  // directions — worth recording, because the shape recurs.
-  //
-  //   1. `showsACount && !includes("log.files")` — contradictory halves, could
-  //      never fire.
-  //   2. `/\$\{/ && /\blog\b/` — the "any number reaches the rider" version. It
-  //      can never NOT fire: the button's own `${bytes(current.log.bytes)}` gives
-  //      the interpolation and the words "Download ride log" give the `log`. A
-  //      caption with no count at all still tripped it.
-  //
-  // So it is back to the file count's actual spelling. That is narrow, and the
-  // narrowness is the honest part: it catches the bug that was REPORTED — the
-  // count interpolated and labelled "segments" — and it does not pretend to catch
-  // a caption that reads the count through a destructure:
-  //
-  //     const { files } = current.log;   // ← walks past this
-  //
-  // A guard that fires on everything is worth less than one that fires on the
-  // real case and says what it misses. If the destructure form ever appears,
-  // widen it then, against a case that exists.
+  // Third attempt at this gate. The first two were wrong in OPPOSITE directions and both
+  // are recorded in docs/diagnostics-and-checks.md §11.4, because the shape recurs.
   const showsACount = code.includes("log.files");
   if (showsACount && /segment/i.test(code)) {
     failures.push(
@@ -417,17 +355,15 @@ async function checkTheCaptionSaysWhatIsCounted(): Promise<void> {
  * a function displays cannot be tripped by prose explaining that function.
  *
  * Line comments go first, so a `/*` inside one cannot open a block that swallows real
- * code below it. Block comments are then blanked in place, keeping their newlines, so
- * nothing on either side of one gets joined into a token that was never there. Crude —
- * it has no idea about `//` inside a string literal — but it only ever runs over one
- * small view function.
+ * code below it. Block comments are blanked in place, keeping their newlines. Crude, but
+ * it only runs over one small view function.
  *
- * Note that stripping too much is not automatically the safe direction. Every
- * assertion in §3 fires on the PRESENCE of something wrong, so a stripper that ate
- * the function would make all of them pass and the section would go quiet instead of
- * red. What stops that is the `/dl` canary the caller runs first, and nothing else —
- * the `log.files` assertion that used to hold this property was deleted with the
- * caption. Widen this and check that canary still catches an empty return.
+ * ⚠️ STRIPPING TOO MUCH IS NOT THE SAFE DIRECTION. Every assertion in §3 fires on the
+ * PRESENCE of something wrong, so a stripper that ate the function would make all of
+ * them pass and the section would go QUIET instead of red. What stops that is the `/dl`
+ * canary the caller runs first, and nothing else — the `log.files` assertion that used
+ * to hold this property was deleted with the caption. Widen this and check that canary
+ * still catches an empty return.
  */
 function withoutComments(source: string): string {
   return source
@@ -438,23 +374,13 @@ function withoutComments(source: string): string {
 }
 
 /**
- * §5a — a bus that has said nothing reports every source dark, not no sources.
+ * §5a — a bus that has said nothing reports every source dark, not no sources. The
+ * opposite shipped, unnoticed, for the reasons in docs/diagnostics-and-checks.md §11.4.
  *
- * This check exists because the opposite shipped. `summariseGroups()` used to be
- * built by walking `snapshot()`, which holds only keys decoded at least once since
- * boot — so a source that had never spoken was ABSENT from the payload rather than
- * present at zero. Anything asking "is a group dark" by testing `live === 0` then
- * found nothing to report and said everything was fine, which is the one answer a
- * liveness check must never give wrongly.
- *
- * It was visible in the wild and nobody noticed: a screenshot of the old sixteen-tile
- * grid showed sixteen groups against a registry that declares seventeen. The missing
- * one was `waypoint`, absent because no waypoint had been saved.
- *
- * This process never touches CAN, so `snapshot()` is empty here — which is exactly
- * the dead-bus case, for free. It also means this has to run BEFORE §5c, which is
- * what puts something in the snapshot. The assertion is deliberately against the real
- * endpoint rather than an exported internal: the bug was in what /status SERVES.
+ * ⚠️ This process never touches CAN, so `snapshot()` is empty here — which is exactly
+ * the dead-bus case, for free, and means this must run BEFORE §5c, which is what puts
+ * something in the snapshot. The assertion is deliberately against the real endpoint
+ * rather than an exported internal: the bug was in what /status SERVES.
  *
  * Returns the payload, because §5c reads the same numbers back off a live bus.
  */
@@ -511,22 +437,18 @@ async function checkADeadBusIsNotReportedAsHealthy(): Promise<StatusPayload | nu
         `[0, n] rather than left out — a dashboard that filters on live === 0 reads an omission as health`
     );
   }
-  // The other direction, and without it the list catches drift one way only.
-  // `unknown` above notices a group leaving the registry; nothing noticed one
-  // ARRIVING, so a group added to SIGNALS after today sat outside the list and was
-  // therefore unguarded — and the next `onDemand` on it would delete its liveness
-  // in silence, which is the hole the list exists to close. Deliberately NOT
-  // phrased as an exclusion: it says only "everything /status summarises is named
-  // here on purpose", so it cannot agree with the implementation by construction
+  // The other direction: `unknown` above notices a group LEAVING the registry, nothing
+  // noticed one ARRIVING, so a group added to SIGNALS sat outside the list unguarded and
+  // the next `onDemand` on it would delete its liveness in silence. Deliberately NOT
+  // phrased as an exclusion, so it cannot agree with the implementation by construction
   // the way a shared formula did.
   //
-  // What it still misses, since a guard is worth more with its blind spot written
-  // down: a group born with EVERY signal already `onDemand` never reaches the
-  // payload, so it is never compared against this list at all. That is exactly
-  // `waypoint`'s shape, and telling a deliberate one from a copy-pasted flag would
-  // need a second hand-kept list of the groups allowed to be absent. Adding the
-  // group first and the flag second — which is how it happens in practice — is
-  // caught here on the first step.
+  // ⚠️ WHAT IT STILL MISSES, since a guard is worth more with its blind spot written
+  // down: a group born with EVERY signal already `onDemand` never reaches the payload,
+  // so it is never compared against this list at all. That is exactly `waypoint`'s
+  // shape, and telling a deliberate one from a copy-pasted flag would need a second
+  // hand-kept list of the groups allowed to be absent. Adding the group first and the
+  // flag second — which is how it happens in practice — is caught on the first step.
   const extra = reported.filter(group => !declared.includes(group));
   if (extra.length > 0) {
     failures.push(
@@ -675,18 +597,15 @@ async function checkALiveBusCountsEachKeyOnce(deadBus: StatusPayload): Promise<v
 /**
  * §4 — the claim the caption does make is true.
  *
- * Opens the first segment §2 sealed with the private key that matches it (must
- * succeed, and must contain the reading that went in), then twice more with a
- * stranger's key (must fail). The refusals are the half that matters: they are the
- * difference between "encrypted" as a word in a caption and the property that makes a
- * stolen bike useless.
+ * Opens the first segment §2 sealed with the private key that matches it (must succeed,
+ * and must contain the reading that went in), then twice more with a stranger's key
+ * (must fail). The refusals are the half that matters.
  *
- * Two refusals rather than one, because the obvious negative case moves two things at
- * once. A stranger's keypair changes the ECDH private key AND the recipient half of
- * the HKDF salt, so a refusal does not say which of them did the work — and the salt
- * is not a secret, so if it were carrying the weight the property would be worthless.
- * The second case holds the real salt and swaps only the private key, which isolates
- * the Diffie-Hellman as the thing the caption's promise actually rests on.
+ * ⚠️ TWO refusals rather than one, because the obvious negative case moves two things at
+ * once: a stranger's keypair changes the ECDH private key AND the recipient half of the
+ * HKDF salt, so a refusal does not say which did the work — and the salt is not a
+ * secret, so if it were carrying the weight the property would be worthless. The second
+ * case holds the real salt and swaps only the private key, isolating the Diffie-Hellman.
  */
 async function checkOnlyThePrivateKeyOpensIt(
   directory: string,

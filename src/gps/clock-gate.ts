@@ -5,59 +5,25 @@
 // scripts/check-gps-clock.ts replay real sequences out of rides.db through the very
 // code the Pi runs. src/gps/clock.ts is the I/O half.
 //
-// ## The failure this exists to stop (measured in rides.db, 2026-08-02 … 08-15)
+// It exists because one corrupt frame used to cost five minutes of corrupt
+// timestamps: #decodeUtc accepted any two-digit year, so a field reading 60 decoded
+// to 2060, the clock stepped 34 years forward, and MIN_SECONDS_BETWEEN_STEPS — there
+// to stop thrashing — then blocked the correction that would have undone it. 49 772
+// rows in rides.db are stamped 2060 because of four such frames.
 //
-// One corrupt frame used to cost five minutes of corrupt timestamps. #decodeUtc
-// accepted any two-digit year from 24 to 99, so a frame whose year field read 60
-// decoded to 2060; syncSystemClockFromGps stepped the system clock 34 years forward;
-// and MIN_SECONDS_BETWEEN_STEPS — there to stop the clock thrashing — then blocked
-// the correction that would have undone it. The guard against thrashing was also the
-// guard against recovery.
+// ⚠️ TWO FIXES THAT LOOK OBVIOUS AND ARE BOTH WRONG, so neither is here:
+//   • A YEAR CEILING ("2024 to 2035", say) is a fix with an expiry date and the bike
+//     will outlive it. Every rule below is either a FLOOR (GPS_UTC_FLOOR_EPOCH_S in
+//     ./decode.ts, which only ever becomes more conservative) or a comparison against
+//     a clock that advances on its own. A frame claiming 2060 is rejected because no
+//     other frame agrees with it, not because 2060 is a year we decided to disbelieve.
+//   • A MINIMUM SATELLITE COUNT does not discriminate: the four corrupt frames read
+//     10, 9 and (no sample within 15 s) twice, against a population where 41 % of all
+//     readings are BELOW 8. The corruption is a single mangled frame in an otherwise
+//     healthy stream, not a weak fix. The floor of 4 in #decodeUtc stays, but as a
+//     sanity check on the receiver. Corroboration is the defence.
 //
-// Four such frames are in the log. Two of them landed while the service could set the
-// time, and each produced a burst of rows stamped 2060: 2 192 rows over 299.9 s
-// (exactly the 300 s cooldown) and 47 580 rows over 501.5 s. 49 772 rows in total —
-// 0.8 % of the database, and enough to make a ride's own analysis wrong rather than
-// merely ugly.
-//
-// ## Why there is no year ceiling here
-//
-// A hard window — "2024 to 2035", say — is a fix with an expiry date, and the bike
-// will outlive it. Every rule below is either a floor, which stays true forever, or a
-// comparison against a clock that advances on its own:
-//
-//   * GPS_UTC_FLOOR_EPOCH_S (./decode.ts) is a FLOOR. A satellite fix from before
-//     this bike had telemetry on it cannot be real, and that stays true in 2035 and
-//     in 2060. It only ever becomes more conservative as it ages, never wrong. What
-//     it actually catches is the GPS week-number rollover, which lands a receiver in
-//     1980 or 1999, and a zeroed date field, which reads as 2000.
-//   * Corroboration compares GPS readings with each other and with the MONOTONIC
-//     clock. It asserts nothing but "time advances at one second per second", which
-//     names no year and cannot expire. This is what actually rejects the 2060 frames.
-//   * The known-good anchor is a satellite time we already accepted, projected
-//     forward by monotonic elapsed time. It advances by itself, every second the
-//     bike runs.
-//
-// So there is no upper bound on the calendar anywhere in this file. A frame claiming
-// 2060 is rejected because no other frame agrees with it — not because 2060 is a year
-// we decided to disbelieve.
-//
-// ## Why a minimum satellite count is not the discriminator
-//
-// The obvious guard — demand more satellites before trusting a big step — does not
-// work here, and the log says so plainly. gps_satellites at the four corrupt frames
-// read 10, 9, and (no sample within 15 s) twice, against a population where 41 % of
-// all readings are BELOW 8. Every threshold that would have rejected a corrupt frame
-// would have rejected the majority of good ones with it. The corruption is a single
-// mangled frame in an otherwise healthy stream, not a weak fix.
-//
-// The floor of 4 satellites stays where it is, in #decodeUtc — a 3-satellite fix has
-// no altitude solution and a poor time solution — but it is a sanity check on the
-// receiver, not a defence against this. Corroboration is the defence.
-//
-// Nor is an implausible satellite count a usable tell: the log has readings of 18, 28
-// and 30 satellites (7 rows), none of them at a corrupt-year frame. The hub corrupts
-// single frames across every sub-field independently; no one field predicts another.
+// The measurements behind all of that: docs/diagnostics-and-checks.md §8.
 
 import { GPS_UTC_FLOOR_EPOCH_S } from "./decode.ts";
 
@@ -110,23 +76,17 @@ export const REQUIRED_CONSISTENT_READINGS = 5;
 /**
  * How far two readings may disagree about how much time passed between them.
  *
- * Measured over the 90 622 consecutive gps_epoch_s pairs in rides.db that have no
- * clock step between them: the median disagreement is 0.101 s and the 90th percentile
- * 0.445 s. The long tail is the two transports interleaving — CAN and BLE deliver the
- * same fix a few milliseconds apart and their seconds field can differ by one, which
- * shows up as a 2.1 s disagreement. So the tolerance has to clear 2.1 s.
+ * 3 s, because the worst observed transport jitter is 2.1 s (CAN and BLE deliver the
+ * same fix milliseconds apart and their seconds field can differ by one) and the
+ * corrupt frames disagree with their neighbours by around 1.06e9 s. There is no value
+ * between "transport jitter" and "34 years" to be careful about.
  *
- * 3 s clears it with room to spare and is still eight orders of magnitude below what a
- * corrupt frame produces: the four in the log disagree with their neighbours by
- * 1 057 967 999.9 s, 1 073 001 599.7 s, 1 058 745 599.5 s and 1 057 276 799.5 s. There
- * is no value between "transport jitter" and "34 years" to be careful about.
- *
- * ⚠️ Read the margin carefully: the percentiles above are PER PAIR, but the rule is the
- * worst of the whole window against its newest reading. One reading over the line kills
- * the window, so with an observed worst pair of 2.1 s the real headroom is 0.9 s, not
- * the 2.5 s the median and p90 suggest. If the transports ever drift further apart this
- * is the constant that gives, and it gives by refusing to sync at all — which is why
- * `inconsistent-readings` is warned about rather than logged.
+ * ⚠️ READ THE MARGIN CAREFULLY: the percentiles behind that 2.1 s are PER PAIR, but
+ * the rule is the worst of the whole window against its newest reading — one reading
+ * over the line kills the window, so the real headroom is 0.9 s, not the 2.5 s the
+ * median and p90 suggest. If the transports ever drift further apart this is the
+ * constant that gives, and it gives by refusing to sync at all, which is why
+ * `inconsistent-readings` is warned about. Distributions: the doc's §8.4.
  */
 export const CONSISTENCY_TOLERANCE_SECONDS = 3;
 
@@ -140,15 +100,12 @@ export const READING_WINDOW_MAX_AGE_MS = 30_000;
 /**
  * How long a known-good satellite time stays authoritative without being reconfirmed.
  *
- * This is the line between "we have never had a good time this session" and "we had
- * one and something now disagrees with it", which need different rules — a cold boot
- * SHOULD step by hours, an established session should not. It has to expire, or a
- * session that once had a good time could never re-establish one and would be locked
- * out of correcting itself forever. Ten minutes of GPS silence (a garage, a tunnel, a
- * hub that stopped talking) is long enough that we would rather re-derive the time
- * from scratch than keep projecting a stale anchor forward.
+ * It has to expire, or a session that once had a good time could never re-establish
+ * one and would be locked out of correcting itself forever. Ten minutes of GPS
+ * silence (a garage, a tunnel, a hub that stopped talking) is long enough that we
+ * would rather re-derive the time from scratch than keep projecting a stale anchor.
  *
- * ⚠️ Deliberately NOT equal to MIN_SECONDS_BETWEEN_STEPS. They were both 300 by
+ * ⚠️ DELIBERATELY NOT EQUAL TO MIN_SECONDS_BETWEEN_STEPS. They were both 300 by
  * accident, which meant the anchor's life and the anti-thrash cooldown expired in
  * lockstep and the cooldown damped nothing at exactly the period the expiry can
  * generate. Keeping this at least twice the cooldown means a flip always costs a full
@@ -160,17 +117,14 @@ export const KNOWN_GOOD_MAX_AGE_MS = 600_000;
  * How many consecutive agreeing readings it takes to displace an anchor that expired
  * while being CONTRADICTED, rather than while starved of readings.
  *
- * The two are not the same event and must not cost the same. An anchor that went stale
- * because the hub stopped talking tells us nothing — cold-boot rules are right. An
- * anchor that went stale because something spent ten minutes disagreeing with it is a
- * fight between two sources, and letting whichever one happens to be present at the
- * moment of expiry win by default makes the clock an oscillator: adopt A, refuse B for
- * an anchor life, adopt B, refuse A for an anchor life, forever.
- *
- * So the contradicting time has to work harder, not less hard. 30 readings is 8–30 s of
- * unbroken agreement at the measured rates — nothing to a genuinely new correct time,
- * and out of reach of the sporadic single-frame corruption that is the only kind this
- * bike has ever produced.
+ * ⚠️ The two are not the same event and must not cost the same. An anchor that went
+ * stale because something spent ten minutes disagreeing with it is a fight between
+ * two sources, and letting whichever one happens to be present at the moment of
+ * expiry win by default makes the clock an oscillator: adopt A, refuse B for an
+ * anchor life, adopt B, refuse A for an anchor life, forever. So the contradicting
+ * time has to work harder, not less hard. 30 readings is 8–30 s of unbroken agreement
+ * at the measured rates — nothing to a genuinely new correct time, and out of reach
+ * of the sporadic single-frame corruption this bike produces.
  */
 export const READINGS_TO_DISPLACE_CONTESTED_ANCHOR = 30;
 

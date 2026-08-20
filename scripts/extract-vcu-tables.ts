@@ -13,69 +13,29 @@ import { PARAMETER_TABLE_DELTAS } from "../src/vcu/table-catalog.data.ts";
 //
 //     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
 //
-// ── ⚠️ This is the script that makes this repo usable on somebody else's bike ─
-// A VCU addresses its calibration parameters BY INDEX, and what an index means comes
-// from the table the VCU is running. Energica ships many; the 2024 service-tool build has
-// 28 and another owner has reported a build with roughly five more, including one for
-// a Corsa. If this repo does not carry your bike's table it will refuse to write
-// anything (src/vcu/table-gate.ts) — correctly, because it would otherwise be writing
-// a number into whichever parameter our table happens to give your name to.
+// ⚠️ THIS IS THE SCRIPT THAT MAKES THIS REPO USABLE ON SOMEBODY ELSE'S BIKE. A VCU
+// addresses its parameters BY INDEX, and what an index means comes from the table it is
+// running; if this repo does not carry yours, src/vcu/table-gate.ts refuses every write
+// rather than put a number into whichever parameter our table gives your name to. Run
+// this against your own install and commit the diff — README.md, "Adding your bike's VCU
+// parameter table", is the walkthrough.
 //
-// So: run this against your own service-tool install, commit the diff, and the refusal
-// turns into a working tool for one more bike. README.md §"Adding your bike's VCU
-// parameter table" is the walkthrough.
+// ⚠️ IT MERGES, AND THAT IS NOT A NICETY. Energica builds do not all carry the same
+// tables (the 2021 build has 18 where the 2024 has 28), so a straight overwrite from an
+// older install would delete this repo's own bike's table and 19 others while the owner
+// believed they had contributed something. A TABLE_TYPE present in both with DIFFERENT
+// content STOPS the script: that means Energica reissued a table or params.ecf moved
+// underneath the catalogue, both worth a human deciding. `--replace` is the escape hatch.
 //
-// ── ⚠️ It MERGES, and that is not a nicety ──────────────────────────────────
-// Energica builds do not all carry the same tables. The 2021 build has 18 where the
-// 2024 build has 28 — a strict subset, and the ten it lacks include every table with the
-// battery cell block at ids 70–94. An owner running this against a 2021 install and
-// getting a straight overwrite would delete this repo's own bike's table, and 19 others,
-// while believing they had contributed something. So the existing catalogue is kept and
-// the exe's tables are merged into it.
+// ⚠️ THE RESOURCE NAME IS THE ANSWER. DO NOT BYTE-SCAN. Each table is a ZIP stored as a
+// .NET `ManifestResource` named `_<TABLE_TYPE>`, and that name is the ONLY thing in the
+// binary binding a table to the number the bike reports. Scanning for ZIP archives finds
+// more of them and throws the binding away — which is how an earlier attempt identified
+// the wrong table for the bike this repo runs on. Walk the resource directory, take the
+// name, ignore anything not called `_<digits>`.
 //
-// ⚠️ A TABLE_TYPE present in both with DIFFERENT content stops the script. Across the
-// two builds available when this was written, every shared table is byte-identical, export
-// stamp included — so a conflict means either Energica reissued a table under the same
-// number or the base params.ecf text has moved underneath the catalogue. Both are worth a
-// human deciding, and neither is worth guessing at. `--replace` is the deliberate escape
-// hatch and says so.
-//
-// ── ⚠️ THE RESOURCE NAME IS THE ANSWER. Do not byte-scan. ────────────────────
-// The executable is a .NET assembly and each table is a ZIP archive stored as a
-// `ManifestResource` byte array. The resource is NAMED `_<TABLE_TYPE>` — `_16407` is
-// the table a VCU reporting 16407 runs — and that name is the ONLY thing in the binary
-// that binds a table to the number the bike reports. It is corroborated inside the same
-// exe by 28 compiler-generated accessors (`strings <the exe> | grep '^get__[0-9]*$'`)
-// and by Energica's own changelog text ("Parameters bundle 61451 fixed").
-//
-// An earlier attempt scanned the file for ZIP archives instead. That finds MORE
-// archives — 58, because every resource is stored twice, covering 28 distinct export
-// stamps of which only 24 are reachable by a `TABLE_TYPE` name — and it throws the
-// binding away, which is how it managed to identify the wrong table for the bike this
-// repo runs on. Four of those stamps have no numeric resource name at all and the tool
-// itself can therefore never select them. Hence: walk the resource directory, take the
-// name, and ignore anything not called `_<digits>`.
-//
-// ── What a bundle does and does not contain ──────────────────────────────────
-// Each ZIP holds `<stamp>.emcpd` (the parameter table: id, name, datatype,
-// signedness, ecu, min, max) and `<stamp>.emcpc` (GUI editor panels, empty in 20 of
-// the 28). ⚠️ There are NO VALUES and NO SECTIONS in a bundle: `vehicleValue` is null
-// in all of them and `min`/`max` are just the datatype's range. That is why
-// src/vcu/param-file.ts keeps `params.ecf`'s text — it is the only source of the
-// `[SECTION]` grouping and the comparison column — and why this script emits DELTAS
-// against it rather than 28 standalone tables.
-//
-// ── Why the output is a delta and not 28 tables ──────────────────────────────
-// `id → ecu` and `id → datatype` are byte-identical across all 28 bundles, and only
-// names (151 ids) and signedness (30 ids) vary. Writing all 28 out in full would be
-// ~1.1 MB of JSON to ship to a Pi Zero to say the same thing 28 times. The delta form
-// is ~32 KB and is also the more reviewable artefact: the diff for a new table is a
-// list of exactly which ids it renames.
-//
-// Each emitted table carries a FINGERPRINT taken here, from the bundle's own records,
-// before any delta arithmetic. src/vcu/table-catalog.ts recomputes it from the
-// reconstruction, so a delta that does not rebuild the bundle it came from is a loud
-// failure rather than a subtly wrong name table. See ./check-vcu-params.ts §1e.
+// What a bundle does and does not contain, why the output is a delta rather than 28
+// tables, and what the fingerprint is for: docs/diagnostics-and-checks.md §12.
 
 const inflateRawAsync = promisify(inflateRaw);
 

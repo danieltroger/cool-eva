@@ -47,51 +47,21 @@ const ROOT = join(__dirname, "..");
 const PORT = 80;
 const CAN_IFACE = "can0";
 
-// Config (env overrides) — all of these are documented in the README's Configuration
-// section, which is the copy a newcomer will actually find:
+// Config (env overrides). README's Configuration section is the full table; this indexes it:
 //   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
-//   BLE_ENABLED=0 → skip the Bluetooth link to the Connectivity Hub (torque/power,
-//                   odometer, vehicle state; GPS also comes in over CAN 0x410)
-//   BLE_MAC=…     → pin the hub's address (default: discover it by name)
+//   BLE_ENABLED=0 / BLE_MAC=… → skip the Connectivity Hub link, or pin its address
 //   GPS_TIME_SYNC=0 → never step the system clock from satellite time
-//   RIDE_LOG_PUBKEY=… → X25519 public key enabling the write-only encrypted log
-//   RIDE_LOG_DIR=…    → where the sealed .celog segments go
-//   CUSTOM_BMS_CONFIG=1 → this pack has the custom LiBAL BMS config flashed, which lowers
-//     the temperatures on 0x200 (by a config-dependent amount, not a constant) and moves
-//     the true ones onto 0x660. Leave unset on a stock Energica. Only affects temperature
-//     routing; every other decode is correct either way, and the frames override a wrong flag.
-//   VCU_PARAM_DIR=… → where service mode leaves its parameter snapshots, which
-//     /vcu-params and /vcu-backup.csv serve.
-//   SERVICE_MODE_ENABLED=0 → the dashboard cannot start a parameter read. That read
-//     is the one thing here that puts requests on the bike's bus on purpose, so it
-//     has the same kind of off switch as every other subsystem that touches it.
-//     Reading the last snapshot and exporting it are unaffected: neither goes near
-//     the bike. Note this is the SECOND lock on that door — the first is
-//     src/vcu/service-gate.ts, which will not let a read start unless the bike is
-//     stationary and out of drive, and stops one that is running when it stops
-//     being either.
-//   SERVICE_WRITE_ENABLED=1 → the dashboard may CHANGE things on the bike: write one
-//     of the five allowlisted calibration parameters, set the service point, sync the
-//     bike's clock, or clear the stored trouble codes.
-//     ⚠️ This is the only switch here that defaults to OFF, and the asymmetry is
-//     deliberate. Every other subsystem's flag turns something off; this one turns
-//     something on, so a Pi that has never been told about it cannot change a
-//     motorcycle's calibration EEPROM. It is also SEPARATE from SERVICE_MODE_ENABLED:
-//     reads and writes are not the same risk and must not share an off button.
-//     Everything else still applies on top — the same safety gate, an allowlist of
-//     five parameters with per-parameter ranges, a compare-and-swap against a fresh
-//     read, a read-back after every write, and an audit journal in VCU_PARAM_DIR.
-//     ⚠️ Plus one precondition this switch cannot satisfy: a PARAMETER write is
-//     refused until a sweep has read BOTH the VCU's own TABLE_TYPE copies and they
-//     name one table src/vcu/table-catalog.ts carries (src/vcu/table-gate.ts). All 28
-//     Energica ships in its 2024 tool are carried, so this is not "is it that one
-//     bike" — but on the bike this repo runs on the A8's copy, parameter 277, has
-//     never been read, so that gate is shut and setting this variable alone will not
-//     open it. The service actions are not affected — none of them addresses a
-//     parameter by index.
+//   RIDE_LOG_PUBKEY=… / RIDE_LOG_DIR=… → the X25519 public key that enables the
+//     write-only encrypted log, and where its sealed .celog segments go
+//   CUSTOM_BMS_CONFIG=1 → only with the custom LiBAL BMS config flashed; moves the
+//     true pack temperatures onto 0x660. Leave unset on a stock Energica.
+//   VCU_PARAM_DIR=… → where service mode leaves its parameter snapshots
+//   SERVICE_MODE_ENABLED=0 → the dashboard cannot start a parameter read; serving and
+//     exporting the last snapshot are unaffected, neither goes near the bike
+//   SERVICE_WRITE_ENABLED=1 → the dashboard may CHANGE things on the bike; see below.
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -102,7 +72,13 @@ const RIDE_LOG_DIR = process.env.RIDE_LOG_DIR ?? join(ROOT, "ride-logs");
 const CUSTOM_BMS_CONFIG = process.env.CUSTOM_BMS_CONFIG === "1";
 const VCU_PARAM_DIR = process.env.VCU_PARAM_DIR ?? join(ROOT, "vcu-params");
 const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
-// Opt IN, not opt out — see the note above. `=== "1"` rather than `!== "0"`.
+// ⚠️ OPT IN, NOT OPT OUT — `=== "1"`, not `!== "0"`, and the asymmetry is deliberate:
+// every other flag above turns something off, this one turns something on, so a Pi
+// nobody has told about it cannot change a motorcycle's calibration EEPROM. Separate
+// from SERVICE_MODE_ENABLED because reads and writes are not the same risk and must
+// not share an off button. ⚠️ And it cannot satisfy src/vcu/table-gate.ts: a PARAMETER
+// write stays refused until a sweep has read both TABLE_TYPE copies, which on this
+// bike it never has. README, "Changing something on the bike".
 const SERVICE_WRITE_ENABLED = process.env.SERVICE_WRITE_ENABLED === "1";
 
 // --- Signal registry ---

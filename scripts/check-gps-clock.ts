@@ -9,32 +9,20 @@ import { GpsClockGate, MIN_SECONDS_BETWEEN_STEPS, REQUIRED_CONSISTENT_READINGS }
 //
 //   node --experimental-strip-types scripts/check-gps-clock.ts
 //
-// ## What this is guarding
+// It guards a regression that would be SILENT — nothing crashes, nothing logs an
+// error, the dashboard looks fine, and you find out weeks later when a ride's own
+// analysis is wrong. Which is why it asserts against measured numbers rather than
+// made-up ones. The 2060 incident behind it: docs/diagnostics-and-checks.md §8.1.
 //
-// A corrupted year byte used to cost five minutes of corrupt timestamps. #decodeUtc
-// accepted any two-digit year from 24 to 99, so a byte reading 60 decoded to 2060;
-// the clock was stepped 34 years forward; and MIN_SECONDS_BETWEEN_STEPS — there to
-// stop the clock thrashing — then blocked the correction that would have undone it.
-// 49 772 rows in rides.db are stamped 2060 because of four such frames, two of which
-// landed while the service could set the time.
-//
-// The regression would be silent. Nothing crashes, nothing logs an error, and the
-// dashboard looks fine; you find out weeks later when a ride's own analysis is wrong.
-// That is exactly what a check is for, and why this one asserts against measured
-// numbers rather than made-up ones.
-//
-// ## Where the fixtures come from
-//
-// PROVEN — copied out of rides.db (269 MB, 6 200 564 rows, 2026-08-02 … 2026-08-15)
-// on 2026-08-16, as `[row timestamp ms, gps_epoch_s]` pairs exactly as logged. The
-// four corrupt sequences are the only four frames in the whole database whose decoded
-// UTC is beyond year 2049; the two cold-boot sequences are real stale-clock starts.
-//
-// INFERRED — the raw 8-byte frames in the decoder section below. rides.db stores
-// decoded values, not bus bytes, and the one committed capture
-// (obd-garage/captures/2026-08-02_bms_90s.log) was taken in a garage with no fix. So
-// these are re-encoded from logged values through the documented bit layout: they
-// prove the decoder's arithmetic, not that the hub emitted those exact bytes.
+// ⚠️ THE FIXTURES ARE OF TWO GRADES AND THE DIFFERENCE MATTERS:
+//   PROVEN    the `[row timestamp ms, gps_epoch_s]` pairs, copied out of rides.db
+//             exactly as logged. The four corrupt sequences are the only four frames in
+//             the whole database whose decoded UTC is beyond year 2049.
+//   INFERRED  the raw 8-byte frames in the decoder section. rides.db stores decoded
+//             values, not bus bytes, and the one committed capture was taken in a
+//             garage with no fix — so these are re-encoded from logged values through
+//             the documented bit layout. They prove the decoder's ARITHMETIC, not that
+//             the hub ever emitted those exact bytes.
 
 interface ReplaySequence {
   name: string;

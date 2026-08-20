@@ -37,37 +37,17 @@ export interface DashboardMessage {
 
 /**
  * How much unsent traffic one client may be behind by before we stop adding to it.
+ * iOS suspends the dashboard when the screen locks without closing the socket, so
+ * uncapped the Pi queues every patch of however long the phone spends in a pocket and
+ * delivers all of it at once when the page wakes. 256 kB is ten seconds of riding and
+ * six times the largest possible snapshot — a cap under one snapshot would cut a
+ * recovering client off from the message that resynchronises it. check-connection.ts §7
+ * keeps both ends; docs/diagnostics-and-checks.md §10.1 has the measurements.
  *
- * A client that is not reading is not a client to keep writing to. iOS suspends the
- * dashboard whenever the screen locks or another app comes forward, and it does not
- * close the socket on the way — so without this the Pi queues every patch of however
- * long the phone spends in a pocket, and delivers all of it at once when the page wakes.
- * That is a fast-forward of old telemetry on the phone and an unbounded buffer here, on
- * a Pi Zero that is also sealing the ride log. `public/lib/connection.js` now closes the
- * socket before the page is suspended, which is the real fix; this is the half that does
- * not depend on the client being well-behaved, and it also covers a phone that walks out
- * of wifi range without ever sending a FIN.
- *
- * 256 kB is about ten seconds of riding: measured over this bike's own ride log (6.2 M
- * readings), a patch is 152 bytes and riding produces 19–27 kB/s of them (p90–p99). It
- * is also six times the largest snapshot that could ever go out (38 kB with every
- * declared signal live, 20 kB of what this bike has actually produced), which is the
- * floor that matters — a cap under one snapshot would cut a recovering client off from
- * the very message that resynchronises it. scripts/check-connection.ts §7 keeps both
- * ends of that.
- *
- * Nothing is lost by dropping a patch, which is the property that makes this safe: the
- * heartbeat below re-sends the complete state every 5 s, so a client that falls behind
- * and catches up is fully correct one heartbeat later without any resend protocol.
- *
- * ⚠️ What this does NOT bound is a client that is slow rather than absent. A phone whose
- * downlink is merely slower than the patch rate keeps draining the queue, so its own
- * 12 s silence watchdog never fires and it never reconnects — and what it drains is old
- * telemetry that store.js applies as current. This cap holds that lag to roughly ten
- * seconds instead of the whole ride, which is worth having, but it is not a lag
- * detector and the dashboard has none of its own. Comparing `message.ts` deltas against
- * the phone's own monotonic deltas would be one — same clock on each side of both
- * subtractions, so it stays legal — and is the missing half of this.
+ * ⚠️ IT DOES NOT BOUND A CLIENT THAT IS SLOW RATHER THAN ABSENT: one whose downlink is
+ * merely slower than the patch rate keeps draining the queue, so its 12 s silence
+ * watchdog never fires and it never reconnects, while what it drains is old telemetry
+ * store.js applies as current. Not a lag detector; the dashboard has none either.
  */
 export const MAX_CLIENT_BACKLOG_BYTES = 256 * 1024;
 
@@ -109,37 +89,18 @@ export function broadcastTo(clients: Iterable<BroadcastClient>, message: Dashboa
 
 /**
  * Hangs up on any client that was already past the cap at the previous heartbeat.
- *
  * Skipping a stuck client stops the queue growing but never lets go of the ~256 kB it
- * is already holding, nor of its slot in `wss.clients`. The phone that rides out of
- * wifi range sends no FIN, so nothing else notices until the kernel gives up on the TCP
- * retransmits — on the order of fifteen minutes with the default `tcp_retries2`, once
- * per out-of-range event, on a Pi Zero that is also sealing the ride log.
+ * already holds, nor of its slot in `wss.clients` — a phone that rides out of wifi range
+ * sends no FIN, so nothing notices for the ~fifteen minutes the kernel spends on TCP
+ * retransmits. Terminate, not close: close() is a handshake a dead peer will not answer.
  *
- * Two consecutive heartbeats rather than one reading, so a client that is briefly over
- * the cap is not hung up on for a spike. Be precise about what that does and does not
- * say, though: this samples two INSTANTS a heartbeat apart, not the interval between
- * them. A client over the cap at both is terminated however much it drained in between.
+ * ⚠️ Two consecutive heartbeats, but be precise: it samples two INSTANTS a heartbeat
+ * apart, not the interval between them, so a client over the cap at both is terminated
+ * however much it drained in between. The doc's §10.2 has why that is right here.
  *
- * That is the right call at the rates involved, which is why the coarse test is enough.
- * A client over the cap is sent nothing more (broadcastTo skips it), so its buffer only
- * drains; and the overshoot is at most one message, the largest of which is a full
- * snapshot at ~38 kB. So anything draining faster than ~7.6 kB/s — 38 kB across one
- * 5 s heartbeat — is back under the cap before the second sample is taken. A client
- * that cannot manage even that is moving at under half of what riding produces at its
- * QUIETEST (19 kB/s, p90), so it is not recovering from a spike, it is falling behind
- * for good.
- *
- * `alreadyStuck` is a WeakSet so a client that closes on its own takes its entry with
- * it.
- *
- * Terminate rather than close: close() is a handshake, and a peer that is not reading
- * is not going to answer one.
- *
- * @returns the clients hung up on and what each was holding, so the caller can say so
- * out loud. The byte count is taken BEFORE the terminate: `bufferedAmount` is the sum
- * of the socket's write buffer and the sender's, and destroying the socket has already
- * emptied the first half of that by the time the caller could read it.
+ * @returns the clients hung up on and what each held. ⚠️ The byte count is taken BEFORE
+ * the terminate — `bufferedAmount` sums the socket's and the sender's write buffers, and
+ * destroying the socket empties the first.
  */
 export function dropStuckClients<Client extends BroadcastClient>(
   clients: Iterable<Client>,
@@ -164,24 +125,18 @@ export function dropStuckClients<Client extends BroadcastClient>(
 }
 
 /**
- * The largest frame a client may send us.
+ * The largest frame a client may send us. It can be this small because **nothing here
+ * reads client messages at all** — there is no `on("message")` handler in this file or
+ * below it. What was not bounded is how many bytes `ws` would buffer before ignoring
+ * them: the default is 100 MB, on a Pi Zero, reachable by anyone on the bike's wifi.
  *
- * The receive-side mirror of MAX_CLIENT_BACKLOG_BYTES, and it can be this small because
- * **nothing here reads client messages at all** — there is no `on("message")` handler
- * anywhere in this file or below it, so every byte a client sends is already ignored.
- * What was not bounded is how many bytes `ws` would buffer up before ignoring them:
- * the default is 100 MB, on a Pi Zero, reachable by anyone on the same wifi as the
- * bike. 4 kB is generous room for whatever the first client→server message turns out
- * to be, and four orders of magnitude off the default.
- *
- * ⚠️ **This limit and the `error` listener below are one change, not two.** Rejecting a
+ * ⚠️ **THIS LIMIT AND THE `error` LISTENER BELOW ARE ONE CHANGE, NOT TWO.** Rejecting a
  * frame is how `ws` reports a protocol violation, and it reports it by emitting `error`
  * on the connection — which Node turns into an uncaught exception, and therefore a dead
  * service, if nothing is listening. Setting a cap without the listener hands anyone on
  * the bike's wifi a way to kill the process with one 8 kB frame, taking ride-log sealing
  * down with it. Remove one and you must remove the other; scripts/check-connection.ts §9
- * fires both a rejected frame and a malformed one at a real server and requires it to
- * still be there afterwards.
+ * fires both a rejected frame and a malformed one at a real server.
  */
 export const MAX_CLIENT_FRAME_BYTES = 4 * 1024;
 
@@ -215,24 +170,18 @@ export function setupWs(server: Server, heartbeatMs = HEARTBEAT_MS): WsHandle {
     broadcastTo([ws], { type: "snapshot", ts: Date.now(), signals: snapshot() });
   });
 
-  // The same hazard one layer out — but NOT for the reason it is tempting to assume.
-  //
+  // ⚠️ The same hazard one layer out — but NOT for the reason it is tempting to assume.
   // With `options.server`, ws 8.20.0 forwards the http server's own `error` straight to
-  // this emitter: `addListeners(this._server, { …, error: this.emit.bind(this, "error"),
-  // … })`, websocket-server.js:116-125. So what arrives here is not a failed handshake —
-  // handshake faults are answered with an HTTP response and never reach an emitter — it
-  // is whatever goes wrong with the listener itself. In practice, the bind failing.
+  // this emitter (websocket-server.js:116-125), so what arrives is NOT a failed
+  // handshake: it is whatever goes wrong with the listener itself, in practice the bind
+  // failing. index.ts calls setupWs() BEFORE server.listen(), so EADDRINUSE lands here,
+  // and merely logging it leaves the process alive with nothing bound — systemd restarts
+  // a failed unit, not a running one that serves nothing, so the dashboard would be dead
+  // and every report on it would say fine. Not listening means not a service.
   //
-  // Which makes this listener's default answer the wrong one, and dangerously so: index.ts
-  // calls setupWs() BEFORE server.listen(), so EADDRINUSE lands here, and merely logging it
-  // leaves the process alive with nothing bound. systemd restarts a failed unit; it does
-  // not restart a running one that happens to serve nothing. The dashboard would be dead
-  // and everything that reports on it — the unit's state, the exit code — would say fine.
-  //
-  // So: not listening means not a service. Rethrown rather than exited, because an
-  // uncaught exception prints the whole error and exits 1 — exactly what this did before
-  // the listener existed — while process.exit() would abandon whatever stdio is still
-  // queued, which on a journald pipe is the message saying why (see scripts/run-checks.ts).
+  // Rethrown rather than exited: an uncaught exception prints the whole error and exits
+  // 1, while process.exit() would abandon whatever stdio is still queued, which on a
+  // journald pipe is the message saying why. docs/diagnostics-and-checks.md §10.3.
   wss.on("error", (error: Error) => {
     if (!server.listening) {
       throw error;

@@ -12,29 +12,18 @@ import { DEFAULT_TAB, TABS, canonicalHash, hashForTab, nextTabAfter, tabFromHash
 // (VanJS itself imports fine under Node; the router's state lives in a van.state and
 // nothing here reads it.)
 //
-// ## What this is guarding
+// ⚠️ A TAB'S NAME IS A URL. `/#charge` is what a bookmark on the phone's home screen
+// holds. Renaming a tab in TABS silently breaks every one of them and nothing else in
+// the repo would notice — the dashboard still builds, still typechecks and still works
+// for anyone who opens it fresh. So the names are pinned here BY HAND, spelled out
+// rather than derived from TABS, which makes changing one a decision.
 //
-// **A tab's name is a URL.** `/#charge` is what a bookmark on the phone's home screen
-// holds, and what a link sent to somebody else holds. Renaming a tab in TABS silently
-// breaks every one of them, and nothing else in the repo would notice: the dashboard
-// would still build, still typecheck and still work perfectly for anyone who opened it
-// fresh. So the names are pinned here by hand, spelled out rather than derived from
-// TABS, which is what makes changing one a decision rather than an accident.
-//
-// **A URL that names nothing must still open something.** tabFromHash runs before the
-// first render, so anything it threw on would be a blank screen rather than a wrong
-// one — a bookmark with a stray `%` in it must land on the riding screen, not on
-// nothing at all. Half the cases below are malformed on purpose.
-//
-// **And it must stop lying about it.** canonicalHash decides both halves of the
-// rewrite: correct a URL that says nothing this app has, and leave one alone that
-// already says the right thing. The second half is not cosmetic — showTabFromUrl runs
-// on every Back press, and a rule that rewrote unconditionally would spend Safari's
-// history-call budget restating what the address bar already said.
-//
-// **The ring must close.** Three flashes of the high beam advance one tab, and that
-// gesture is the only input this dashboard has that works with both hands on the bars.
-// A ring that skipped or stuck would make it useless.
+// The other three properties, and why each matters: docs/diagnostics-and-checks.md §11.4.
+// A URL that names nothing must still open something (tabFromHash runs before the first
+// render, so a throw is a blank screen — half the cases below are malformed on purpose);
+// canonicalHash must leave a correct URL alone as well as fix a wrong one; and the
+// high-beam ring must close, since it is the only input this dashboard has that works
+// with both hands on the bars.
 
 let failures = 0;
 

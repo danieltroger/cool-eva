@@ -1,49 +1,25 @@
 // Energica's own freeze-frame field dictionary — the 120 "info keys" a stored
-// freeze frame is built out of. Data only: no I/O, no state, no clock.
+// freeze frame is built out of, taken from the manufacturer's service tool's own
+// `DTCInfoKeys` resource. Data only: no I/O, no state, no clock.
 //
-// ── What this is, and where it came from ─────────────────────────────────────
-// The manufacturer's service tool (Energica's dealer software) carries a resource
-// it calls `DTCInfoKeys`: 120 records of {id, name, unit, equation, datatype}.
 // Every fault in ./fault-infokeys.ts names a subset of these ids, IN ORDER, and
 // that ordered subset IS the layout of that fault's freeze-frame payload. So this
 // table is two things at once: the names and units that make a freeze frame
 // readable, and — through `datatype` — the byte widths that make it decodable at all.
 //
-// TWO INDEPENDENT COPIES WERE COMPARED, 2026-08-16, and they agree on all 120
-// rows for `name`, `equation` and `datatype`:
-//   • the telemetry-scaling table extracted from the 2021 build, under the
-//     service tool's own folder in `<Energica_Manuals>/`
-//   • the `DTCInfoKeys` JSON embedded in the service-tool executable (2024
-//     build), by way of the second owner's `dtc_infokeys.py`
-// The tool did not change this table between its 1.2.0 and 1.3.0 builds.
-//
-// ⚠️ THE UNITS COME FROM THE CSV, DELIBERATELY. The 2024 executable's own copy
-// has `EF BF BD` (U+FFFD REPLACEMENT CHARACTER) where the degree sign belongs,
-// in all 11 temperature rows — Energica destroyed it in their own build, so any
-// extraction from the binary inherits `<?>C`. The CSV is the only clean source
-// for `°C` and is therefore authoritative for `unit`. That is the one column
-// where the two sources differ, and it differs in exactly those 11 rows.
-//
 // ── ⚠️ `id` IS NOT AN ADDRESS ───────────────────────────────────────────────
 // It is the service tool's internal signal index and it has no meaning on the
 // wire. The tempting reading `CommonIdentifier = 0x2000 | id` was tested against a
-// real bank-2 dump and REFUTED (the service-tool file analysis in obd-garage/,
-// §2.3: width agreement is 31.7 % against a 39.0 % chance baseline, and a 29-long
-// run of 2-byte signals cannot be placed anywhere in bank 2 at any offset). The
-// 2024 service-tool analysis in obd-garage/, §7.2, then found the reason in
-// Energica's own source: `(bank << 12) | id` is real but applies to a DIFFERENT
-// table, the tool's `LiveData`, which carries its own per-signal `bank`. This one
-// carries none.
+// real bank-2 dump and REFUTED. These ids index INTO A FREEZE-FRAME PAYLOAD, which
+// is the only context this file is used in — do not pass one to
+// src/vcu/param-codec.ts.
 //
-// So: these ids are an index INTO A FREEZE-FRAME PAYLOAD, which is exactly the
-// context this file is used in. Do not pass one to src/vcu/param-codec.ts.
+// ⚠️ `unit` COMES FROM THE CSV EXTRACT, NOT THE EXECUTABLE: the 2024 build has
+// U+FFFD where the degree sign belongs in all 11 temperature rows, so anything
+// extracted from the binary inherits `<?>C`.
 //
-// ── What is NOT known ───────────────────────────────────────────────────────
-// Nothing here has been read off this bike. The table is the manufacturer's,
-// the widths are the manufacturer's, and the claim that a payload is these
-// fields concatenated in infokey order is the service tool's own decoder behaviour
-// as read out of `DTCode.GetInfoDetails` — see ./freeze-frame.ts, which is where
-// the layout is asserted and where the caveat belongs.
+// The two copies that were compared, the refutation above, and what has NOT been
+// read off this bike: docs/diagnostics-and-checks.md §5.3.
 
 /** Every C type the 120 records use. `int32_t` never appears, so it is not admitted. */
 export type InfokeyDatatype = "uint8_t" | "int8_t" | "uint16_t" | "int16_t" | "uint32_t";

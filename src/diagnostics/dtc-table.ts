@@ -1,57 +1,27 @@
 // Energica's own diagnostic-trouble-code table, transcribed from
 // `<Energica_Manuals>/2 Technical/CAN & Diagnostics/CANBUS from Type Approval.pdf`
 // (EN.H.010134.001.OBD E2110, 24/03/2022, §7.6.2.7.4 "List of all OBD output
-// codes and formats used"). Data only — no I/O, no state.
+// codes and formats used") and reconciled against a second source, the
+// manufacturer's service-tool data. Data only — no I/O, no state. 154 codes: the
+// union of the two, less (35,2) B1021. A code in neither is reported as
+// unrecognised rather than guessed at.
 //
-// SECOND SOURCE, 2026-08-15 — the manufacturer's service-tool data. The tool
-// ships the same table as JSON embedded in its own executable, one
-// {id, code, symptom, title} record per fault; the extract and the notes on it
-// are kept outside this repo, with the rest of the source material. That is a
-// second path to the same data — a shipped binary rather than a PDF read by eye
-// — so where the two agree the transcription below is corroborated, not merely
-// careful. Against the 2021 extract they share 147 (component, symptom) pairs
-// and 144 of those carry an IDENTICAL OBD code; the 2024 extract adds two pairs
-// and changes none of those numbers otherwise. The disagreements are argued at
-// the entries themselves: (44,0) and (44,2), where the PDF wins on the bike's
-// own evidence, and (61,2), where the service-tool data replaced a dual code
-// with a single one.
-//
-// ⚠️ THE TWO SERVICE-TOOL VINTAGES ARE ONE SOURCE, NOT TWO. Both the 2021 tool
-// (153 records) and the 2024 tool (155) were extracted; the 2024 table is a
-// strict superset with ZERO id or title changes — it only adds (4,5) U0115 and
-// (35,2) B1021 "REAR BRAKE PROLONGED PRESSURE FAULT". So the newer tool cannot
-// be cited as agreeing with the older one: it is the same file carried forward.
-// Where the tool and the PDF conflict, three years of shipping did not settle it.
-//
-// (35,2) B1021 is deliberately NOT added below: nothing states its MIL, and this
-// file's third column is what Energica means by a code on this vehicle, which
-// that source does not carry either. It is a real gap, listed here so the next
-// reader does not have to re-derive the extract to find it.
-//
-// Coverage is one-directional once both tool vintages are counted: the PDF has
-// nothing the 2024 tool lacks, and the tool carries seven codes the PDF omits —
-// 51/0, 52/0, 54/13, 60/0, 63/0, 63/1, all six of which are below, plus (35,2)
-// B1021, which is not. "Coverage differs in both directions" was the 2021
-// reading and it died with the U0115 retraction above.
-//
-// ⚠️ MIL IS UNKNOWN FOR THE SIX SERVICE-TOOL-ONLY CODES BELOW, and they carry `null`
-// to say so. Only the PDF has a MIL column and it does not list them; the
-// service tool's JSON has no MIL field at all, for any code. `false` would have
-// been a claim — the dashboard renders it as "warning lamp: no" and sorts the
-// code with the harmless ones — so the unknown is in the data rather than in
-// this comment, the same way stored-codes.ts nulls a code that is not in the
-// table at all.
-//
-// The table is keyed by TWO columns, not one:
+// ⚠️ KEYED BY TWO COLUMNS, NOT ONE:
 //   • COD.    — the VCU's component number, 1…63 and every one of them used
 //   • SYMPTOM — which fault of that component, 0…15
-// The OBD column is the translation for a generic scan tool. It is not unique:
-// U0182 appears under both component 39 and 40. So (component, symptom) is the
-// primary key here.
+// The OBD column is the translation for a generic scan tool and is NOT unique —
+// U0182 appears under both component 39 and 40 — so (component, symptom) is the
+// primary key and lookupByObdCode() is the lossy way in.
 //
-// 154 codes — the union of the two sources, less (35,2) B1021, which the note
-// above explains. A code the bike reports that is in neither is reported as
-// unrecognised rather than guessed at.
+// ⚠️ `illuminatesMil` IS `boolean | null`, AND NULL MEANS "NO SOURCE STATES IT",
+// not "no lamp". Only the PDF has a MIL column and it does not list the six
+// service-tool-only codes; the service tool's JSON has no MIL field at all, for
+// any code. `false` would be a claim — the dashboard renders it as "warning lamp:
+// no" and sorts the code with the harmless ones.
+//
+// How the two sources were reconciled, why the two service-tool VINTAGES are one
+// source rather than two, which codes each source is missing, and the arguments
+// at (44,x) and (61,2): docs/diagnostics-and-checks.md §2.
 
 export interface DtcTableEntry {
   /** "COD." column — the VCU's component number. */
@@ -65,11 +35,8 @@ export interface DtcTableEntry {
   /** "DESCRIPTION" column — what Energica means by it on this vehicle. */
   description: string;
   /**
-   * "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on, and
-   * null ⇒ no source states it. Null rather than false for the same reason
-   * stored-codes.ts uses null for a code that isn't in the table at all:
-   * rendering an absent MIL column as "warning lamp: no" would be an answer we
-   * do not have. Only the six service-tool-only codes are null.
+   * "MIL" column — 1 ⇒ this code turns the malfunction indicator lamp on, null ⇒
+   * no source states it (only the six service-tool-only codes). See the header.
    */
   illuminatesMil: boolean | null;
 }
@@ -307,73 +274,21 @@ export const DTC_TABLE: DtcTableEntry[] = [
   entry(43, 0, "B1015", "HORN OC", "Horn open circuit fault", false),
   entry(43, 1, "B1016", "HORN SC", "Horn short circuit fault", false),
 
-  // ⚠️ REVERTED 2026-08-16 — these were swapped on 2026-08-15 and the swap was
-  // wrong. The type-approval PDF's original pairing is restored: symptom 0 (open
-  // circuit) is P0A07, symptom 2 (locked) is P0A05. THE BIKE ITSELF SETTLES IT,
-  // and the evidence was already in this repo.
+  // ⚠️ DO NOT SWAP THESE THREE. They were swapped on 2026-08-15 and the swap was
+  // reverted on 2026-08-16: symptom 0 (open circuit) is P0A07, symptom 2 (locked)
+  // is P0A05, and THE BIKE ITSELF SETTLES IT. scripts/captured-dtc-transfer.ts
+  // holds a real mode-03 reply, byte-identical across five transfers, whose 39
+  // DTCs contain `0A 07` and NO `0A 05` — and (44,0), the open pump driver, is
+  // necessarily among the stored codes because it is permanently present.
   //
-  // ✅ WHAT THE VCU ACTUALLY TRANSMITS. scripts/captured-dtc-transfer.ts holds a
-  // real mode-03 reply, 2026-08-04, byte-identical across five transfers. Its 39
-  // two-byte DTCs contain `0A 07` — P0A07 — and NO `0A 05`. This bike's chronic
-  // fault is (44,0), the open pump driver: it is the one fault known to be real
-  // independently of anything on the bus, it is permanently present, and it is
-  // therefore necessarily among the stored codes. Under the swap the stored list
-  // claimed a *seized* pump and no open-circuit fault at all, on a bike whose
-  // pump is not connected to that driver and so cannot seize. Run
-  // `node --experimental-strip-types scripts/decode-dtc-response.ts` to see it.
+  // ⚠️ SYMPTOM 0 IS THIS BIKE'S OWN FAULT: the coolant pump is wired to the
+  // heated-grip output, leaving the VCU's pump driver open. P0A05 here would mean
+  // a SEIZED pump, on a bike whose pump is not connected to that driver.
   //
-  // ✅ THE LIST IS IN COMPONENT ORDER, which is a check on the reading rather
-  // than an argument for it. The 39 codes walk components 1,3,4,4,5,6,7,10,11,
-  // 12,12,16,20,22,34…40,41,42,44,46,48,49,53,53,54×6,56,56,61,62 — strictly
-  // ascending, symptoms ascending within a component. P0A07 lands between P0121
-  // (42,0) and P1044 (46,0), i.e. in component 44's slot. That is worth nothing
-  // as evidence about WHICH symptom, since both readings put the code on
-  // component 44; it only confirms the code was read off the right row. Do not
-  // stretch it further — the list carries plenty of non-minimal symptoms (P0514
-  // is (4,2), P1012 (10,2), P1016 (11,2), P1020 (12,2), P1021 (12,3), P0601
-  // (53,4), and the charge-manager block reaches symptom 11), so "symptom 2
-  // would be the odd one out" is FALSE and was claimed here once.
-  //
-  // ❌ WHY THE SAE J2012 ARGUMENT FOR THE SWAP DOES NOT HOLD. It ran: an "open
-  // circuit" description under a "CIRCUIT HIGH" name is self-contradictory, so
-  // the rows must be swapped. But HIGH ⇒ OPEN and LOW ⇒ SHORT is Energica's
-  // convention throughout this very table, and it is the physically right one for
-  // a pulled-up driver-diagnostic input — an open circuit floats high, a short to
-  // ground reads low. Uncontested examples in this file: (4,3) P0516 "…CIRCUIT
-  // LOW" = short circuit against (4,4) P0517 "…CIRCUIT HIGH" = open circuit, and
-  // (16,0) P0A10 "…CIRCUIT HIGH INPUT" against (16,1) P0A09 "…LOW INPUT". The
-  // type-approval PDF spells it out in the code names themselves: P0117/P0118
-  // "COOLANT TEMPERATURE CIRCUIT LOW (SHORT CIRCUIT)" / "HIGH (OPEN CIRCUIT)",
-  // and P0A02/P0A03 the same. So P0A07 "CIRCUIT HIGH" = open circuit is the
-  // CONSISTENT reading; the premise of the swap was backwards.
-  //
-  // 🟡 THE SERVICE TOOL STILL SAYS OTHERWISE, in both the 2021 and the 2024
-  // build — {P0A05: open, P0A06: short, P0A07: locked} — and that is left
-  // recorded rather than explained away. Three things weigh against it: the two
-  // builds are one file carried forward, not two witnesses (see the header); the
-  // tool is generic across Energica's range while the Ribelle workshop manual
-  // p.288 is bike-specific and agrees with the type-approval PDF; and nothing in
-  // the tool depends on this string being what the VCU puts on the wire — it
-  // looks faults up by (code, symptom) and prints the id, so an id that never
-  // matched the transmitted DTC would never misbehave for a technician. That is
-  // exactly the kind of field that rots unnoticed.
-  //
-  // 📌 THE ROW THAT STILL LOOKS WRONG, AND WHY IT ISN'T EVIDENCE. Symptom 2 now
-  // reads P0A05 "…CONTROL CIRCUIT/OPEN" against the description "Water pump
-  // locked", which is the same shape of mismatch #48 pointed at. Saying so here
-  // so round three does not start from it: the `name` column is the code's
-  // GENERIC SAE name and `description` is what Energica means by it ON THIS
-  // VEHICLE, and those two are allowed to diverge — that is the whole reason the
-  // table has both columns. More to the point the mismatch is symmetric and so
-  // decides nothing: a locked rotor is not a circuit fault at all, so whichever
-  // of the three codes Energica hands it will carry a name that does not fit.
-  // Under the 2026-08-15 swap the very same complaint applied to P0A07 "…CIRCUIT
-  // HIGH" = "locked". Only symptom 0 has a name that must fit, and it does.
-  //
-  // ⚠️ SYMPTOM 0 IS THIS BIKE'S OWN FAULT — the coolant pump is wired to the
-  // heated-grip output, leaving the VCU's pump driver open. It is P0A07, as older
-  // notes here, in obd-garage/, and to other owners have always said. P0A05 on
-  // this bike would mean a seized pump.
+  // 🟡 The service tool still says {P0A05: open, P0A06: short, P0A07: locked}, in
+  // both builds. That disagreement is recorded, weighed and rejected — with the
+  // SAE-name argument the swap rested on, and the row that still looks wrong and is
+  // not evidence — in docs/diagnostics-and-checks.md §2.2. Read it before round three.
   entry(44, 0, "P0A07", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT HIGH", "Water pump open circuit fault", false),
   entry(44, 1, "P0A06", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT LOW", "Water pump short circuit fault", false),
   entry(44, 2, "P0A05", "MOTOR ELECTRONICS COOLANT PUMP CONTROL CIRCUIT/OPEN", "Water pump locked", false),

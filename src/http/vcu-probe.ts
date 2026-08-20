@@ -12,31 +12,23 @@ import { SERVICE_MODE_HEADER, SERVICE_MODE_HEADER_VALUE } from "./vcu-read.ts";
 // any of the three targets — including the CHARGE MANAGER, which nothing in this
 // project had ever addressed. See src/vcu/probe.ts for why that matters.
 //
-// ── ⚠️ Why this is a POST with a query string, and not a GET ─────────────────
-// It puts a frame on the bike's bus. GET must be safe — a browser, a prefetcher, a
-// link preview or a `curl` of the URL bar must not be able to open a diagnostic
-// session — so the side effect goes behind a method that is not safe by definition.
-// The parameters ride in the query string rather than a body because a body would
-// make this the only endpoint here that parses one, and there is nothing to gain:
-// three scalars, all validated.
+// ⚠️ A POST, not a GET, because it puts a frame on the bike's bus and GET must be
+// safe: a browser, a prefetcher, a link preview or a `curl` of the URL bar must not
+// be able to open a diagnostic session. Same `X-Cool-Eva: service-mode` requirement
+// as /vcu-read, and the query string does not weaken it — `Content-Type` is what a
+// simple request is judged on, and this sends none (§7.2 of the doc below).
 //
-// It carries the same `X-Cool-Eva: service-mode` header requirement as /vcu-read,
-// and for the same reason — a POST with no body and no custom header is CORS-simple,
-// so any page open on the bike's hotspot could otherwise fire one. A query string
-// does not change that; `Content-Type` is what a simple request is judged on, and
-// this sends none.
+// ⚠️ And it is behind the same safety gate. A probe is one read, not 277, but
+// "short" is not the property the gate is about: nothing transmits while the
+// motorcycle can move, and one frame breaks that exactly as well as a burst does.
+// The runner checks the gate before the session opens and a watchdog re-checks it
+// while the read is in flight.
 //
-// ── ⚠️ And it is behind the same safety gate ─────────────────────────────────
-// A probe is one read, not 277, but "short" is not the property the gate is about.
-// The rule is that nothing transmits while the motorcycle can move, and one frame
-// breaks it exactly as well as a burst does. The runner checks the gate before the
-// session is opened and a watchdog re-checks it while the read is in flight.
-//
-// ── What comes back ──────────────────────────────────────────────────────────
-// The raw bytes, and BOTH the unsigned and the signed reading of them, always.
-// Outside bank 1 nothing here knows a width or a sign, so naming one of them "the
-// value" would be inventing the half of the answer that was not read off the bus.
-// `value` is non-null only where the name table has an opinion.
+// ⚠️ What comes back is the raw bytes and BOTH the unsigned and the signed reading
+// of them, always. Outside bank 1 nothing here knows a width or a sign, so naming
+// one of them "the value" would be inventing the half of the answer that was not
+// read off the bus. `value` is non-null only where the name table has an opinion.
+// docs/diagnostics-and-checks.md §7.2.
 
 export interface VcuProbeResponse {
   /** The reading, or null when nothing was asked. */

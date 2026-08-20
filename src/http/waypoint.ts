@@ -8,24 +8,18 @@ import { systemClockTrust } from "../gps/clock.ts";
 // body to configure, and a short plain-text reply that Siri reads back out loud —
 // which is the only feedback you get with the phone in a pocket and gloves on.
 //
-// It has two more callers now, both on the dashboard and both wanting the same
-// judgement: the menu button, and a long press of the handlebar indicator-cancel
-// switch (public/lib/handlebar-gestures.js). They ask for `Accept: application/json`
-// and get the same outcome as a machine-readable WaypointReply, because a banner that
-// has to decide whether to be green or red cannot do it by reading English. Siri's
-// contract is untouched: no Accept header, or any other Accept, still gets exactly the
-// plain-text line it always did.
+// Two dashboard callers now ask for `Accept: application/json` and get the same
+// outcome as a machine-readable WaypointReply, because a banner deciding whether to
+// be green or red cannot do it by reading English. ⚠️ Siri's contract is untouched:
+// no Accept header, or any other Accept, still gets exactly the plain-text line it
+// always did.
 //
-// Nothing new goes on the wire. A waypoint is recorded as three ordinary signals
-// (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`), so it travels the existing
-// path: sealed into the encrypted log by record(), and pushed to any open
-// dashboard by the WebSocket patch it already triggers. The log format is
-// unchanged, and `scripts/decrypt-log.ts` needs no special case.
-//
-// Position is copied into the waypoint's own signals rather than left implicit in
-// whatever gps_lat/gps_lon happened to be logged nearby: those carry a ~3 m
-// deadband, so at a standstill the last logged fix can be minutes old even though
-// the live one is current.
+// Nothing new goes on the wire — a waypoint is three ordinary signals, so it travels
+// the existing path and scripts/decrypt-log.ts needs no special case. Position is
+// copied into those signals rather than left implicit in whatever gps_lat/gps_lon
+// was logged nearby: those carry a ~3 m deadband, so at a standstill the last logged
+// fix can be minutes old even though the live one is current.
+// docs/diagnostics-and-checks.md §9.5.
 
 /** A fix older than this is not where you are any more. */
 const FIX_MAX_AGE_MS = 30_000;

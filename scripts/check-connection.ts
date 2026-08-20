@@ -28,66 +28,24 @@ import type { LiveValue } from "../src/can/signals.ts";
 // here against a stand-in socket, a fake clock and a fake `document.hidden`: no jsdom,
 // no headless browser, no dependency, no bike.
 //
-// §9 and §10 are the exceptions and say so at their own heads: they bind ephemeral
-// loopback ports, because "a client cannot kill the service" and "a service that cannot
-// bind does not pretend to be up" are the two claims here that a stand-in cannot make.
+// What each section holds:
 //
-// ## What this is guarding
+//   §1–§2   no socket at all while the page is hidden, and no replay of frames already
+//           in flight when it closes
+//   §3      the silence watchdog, driven by a stand-in socket that NEVER fires `close`
+//           — and the other end of it: nothing may happen at eleven point nine seconds
+//   §4      the same fix with both directions of `visibilitychange` taken away
+//   §5      nothing stale may be shown as live. The assertion worth the most here: a
+//           frozen pack current at full brightness is worse than a visible dropout,
+//           because the rider has no cue that what they read is minutes old
+//   §6–§7   the real connect() with the browser globals faked, and the Pi's half
+//   §8      …and nothing may MOVE THE SCREEN because of a dropout
+//   §9–§10  ⚠️ the two that BIND EPHEMERAL LOOPBACK PORTS (127.0.0.1 only; no bike, no
+//           can0), because "a client cannot kill the service" and "a service that
+//           cannot bind does not pretend to be up" are the two claims here that a
+//           stand-in cannot make
 //
-// **The fast-forward.** The bike's phone is handlebar-mounted, so it spends much of a
-// ride locked or behind another app, and iOS suspends this page for all of it. What was
-// observed on this bike is that the socket survives that, the Pi keeps sending, and the
-// backlog is delivered in a burst when the page wakes: about thirty seconds of the last
-// few minutes replayed at speed, on tiles that look exactly like live telemetry. The
-// fix is that there must be NO socket while the page is hidden — §1 is that rule and
-// §2 is the anti-replay guard that goes with it, because closing a socket does not
-// guarantee the frames already in flight are never delivered.
-//
-// **Recovery must not depend on a close event.** §3 drives the silence watchdog with a
-// stand-in socket that NEVER fires `close` — that is the point of it. A socket can stop
-// carrying data without closing (a hotspot dropping out mid-ride; iOS Safari is
-// documented as reaching the same state with readyState still reading OPEN), and a
-// reconnect path that only runs from `onclose` would sit there for ever. §3 also covers
-// the handshake that never completes at all — the bike off, or the phone out of range —
-// which is the case that decides whether the watchdog has a mark to measure from.
-//
-// **Nor on a visibility event.** §4 takes both directions of `visibilitychange` away and
-// requires the fix to engage anyway. The hidden direction is the one that matters: a
-// socket left open behind a page nobody is reading is not silent, so no watchdog can
-// find it — it is busy filling up with the backlog, and the header goes on saying
-// "live". `pagehide` and a branch in tick() are the two nets under it.
-//
-// **And it must not churn.** The bike is often parked and silent, so §3 also pins the
-// other end: nothing may happen at eleven point nine seconds. ws.ts heartbeats a full
-// snapshot every 5 s whether or not the bus is saying anything, which is what makes
-// silence a statement about the LINK and never about a quiet bike.
-//
-// **Nothing stale may be shown as live.** §5 holds the real isStale() from store.js up
-// against the real connection states. This is the assertion worth the most: a frozen
-// pack current at full brightness is worse than a visible dropout, because the rider
-// has no cue that what they are reading is minutes old.
-//
-// §6 then runs the real connect() with the browser globals faked, because everything
-// above it drives the policy directly and would stay green if the wiring that attaches
-// it to `visibilitychange` were deleted. §7 is the Pi's half of the same question.
-//
-// **And nothing may move the screen because of it.** §8 is the other side of §5: making
-// everything stale while the link is down is right for anything that DISPLAYS a value
-// and wrong for the edge-triggered view rules, which read freshness as evidence about
-// the bike. On a DC charge the contactor bit's freshness is the only evidence there is,
-// so a dropout would otherwise throw the rider off the Charge tab and back — with a
-// history entry each way, once per screen lock, at a charger.
-//
-// **And nobody else may take the bike's telemetry down.** §9 fires a rejected frame and
-// a malformed one at a real server and requires it to still be serving afterwards. `ws`
-// reports a protocol violation as an `error` event, and an EventEmitter with no `error`
-// listener throws — which on this service is the CAN reader and the ride-log sealing,
-// not just one dropped client.
-//
-// **But a service that cannot bind must still die.** §10 is the other edge of the same
-// listener: an error before the bind is fatal, an error after it is logged and survived.
-// Getting that backwards leaves the process up with nothing listening, which is the one
-// state that looks healthy to systemd and serves nobody.
+// The bugs each of those was written for: docs/diagnostics-and-checks.md §11.4.
 
 let failures = 0;
 
@@ -104,15 +62,12 @@ function check(what: string, condition: boolean) {
  * Runs a block that needs to observe uncaught exceptions, and guarantees it lets go
  * again — of the recorder and of every socket it opened.
  *
- * §9 and §10 both have to catch a throw that Node would otherwise turn into a dead
- * process, which means installing a process-wide net. While that net is up it also
- * catches failures in the CHECK, and an absorbed failure is worse than a loud one: the
- * assertions stop half-made and the run hangs on the sockets nobody closed, until
- * run-checks.ts kills it two minutes later with "no verdict". Two mutations landed
- * exactly there before this existed.
- *
- * So a synchronous throw inside `body` is reported as the failed assertion it is, and
- * `cleanup` runs either way.
+ * ⚠️ §9 and §10 install a PROCESS-WIDE net to catch a throw Node would otherwise turn
+ * into a dead process, and while it is up it also catches failures in the CHECK. An
+ * absorbed failure is worse than a loud one: the assertions stop half-made and the run
+ * hangs on the sockets nobody closed until run-checks.ts kills it with "no verdict".
+ * Two mutations landed exactly there before this existed. So a synchronous throw inside
+ * `body` is reported as the failed assertion it is, and `cleanup` runs either way.
  *
  * @param section named in the failure, so a red run says which block gave up
  * @param body receives the exceptions seen so far and a place to register teardown
@@ -1006,23 +961,14 @@ console.log("\n8. the view rules across a dropout");
 
 // --- 9. What a client on the bike's wifi can do to the service ---------------
 //
-// The one section here that touches a socket, because it is the one claim that cannot
-// be made against a stand-in: that a hostile client cannot kill the process. It binds an
-// ephemeral port on 127.0.0.1 — no bike, no can0, nothing outside this machine — and
-// tears it down again.
+// ⚠️ Binds an ephemeral port on 127.0.0.1 — no bike, no can0, nothing outside this
+// machine — because "a hostile client cannot kill the process" is a claim no stand-in
+// can make. `ws` reports a protocol violation by emitting `error` on the connection,
+// and an EventEmitter with no `error` listener THROWS: uncaught, that is not a dropped
+// client, it is the CAN reader, the ride-log sealing and every other dashboard.
 //
-// What it is guarding. `ws` reports a protocol violation by emitting `error` on the
-// connection, and an EventEmitter with no `error` listener THROWS. Uncaught, that is not
-// a dropped client, it is the whole service: the CAN reader, the ride-log sealing, and
-// every other dashboard connected to it. Measured on this repo before the listener
-// existed, a single 8 kB frame ended the process with exit 1.
-//
-// MAX_CLIENT_FRAME_BYTES is what makes that trigger easy — an oversized frame is now a
-// rejected frame, which is now an `error` — so the cap and the listener are one change
-// and this section fires both halves of it, and goes red for either one on its own. The
-// malformed-frame case below needed no cap at all and kills the service on main today,
-// which is the better argument for the check existing permanently: the Pi is reachable
-// by anyone on the same wifi as the bike.
+// The cap and the listener are ONE change, so this section fires both halves and goes
+// red for either on its own. docs/diagnostics-and-checks.md §10.3.
 
 console.log("\n9. what a client on the bike's wifi can do to the service");
 
@@ -1119,24 +1065,16 @@ await watchingForCrashes("§9", async (uncaught, cleanup) => {
 
 // --- 10. The server-level fault, which is not the one it looks like ---------
 //
-// This section exists because the disclosure that used to stand in its place was wrong,
-// and wrong in the way that matters: it rested on a claim about `ws` that nobody had
-// checked against `ws`. The claim was that the server-level `error` is reserved for a
-// listener `ws` owns itself, so no external-server deployment could reach it. What ws
-// 8.20.0 actually does, in the `options.server` branch this service takes, is
-// `addListeners(this._server, { …, error: this.emit.bind(this, "error"), … })`
-// (websocket-server.js:116-125) — the http server's `error` is forwarded straight here.
+// ⚠️ The way in is NOT a handshake, which is why looking for one found nothing: ws
+// 8.20.0 forwards the http server's own `error` straight to that emitter, and index.ts
+// calls setupWs() before server.listen(), so EADDRINUSE arrives there. A listener that
+// merely logs it leaves the process alive with nothing bound — dashboard dead, systemd
+// told everything is fine.
 //
-// The way in was never a handshake, which is why looking for a handshake found nothing.
-// It is the bind failing. index.ts calls setupWs() before server.listen(), so EADDRINUSE
-// arrives at that listener, and a listener that merely logs it leaves the process alive
-// with nothing bound: the dashboard dead, and systemd — which restarts a failed unit and
-// not a running one — told everything is fine.
-//
-// Both branches are pinned below, because the two failures are opposite. Logging a bind
-// failure is the regression above. Rethrowing an error that arrived on a listener which
-// is up would be the opposite one, and having no listener at all is that same failure by
-// omission.
+// Both branches are pinned below, because the two failures are OPPOSITE: logging a bind
+// failure is one regression, rethrowing an error that arrived after the bind is the
+// other, and having no listener at all is the second by omission.
+// docs/diagnostics-and-checks.md §10.3.
 
 console.log("\n10. a server-level fault: fatal before the bind, survivable after it");
 

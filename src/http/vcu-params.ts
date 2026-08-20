@@ -37,13 +37,10 @@ export type VcuParamsResponse =
   /**
    * The last snapshot, whole. `complete: false` inside it means the sweep was cut short.
    *
-   * `tableType` is derived here rather than in the browser, and that is deliberate:
-   * deciding whether a `TABLE_TYPE` reading is one this software carries means holding
-   * all 28 of Energica's parameter tables (src/vcu/table-catalog.ts), and the page has
-   * no way to import a TypeScript module at runtime. Re-implementing the comparison in
-   * public/lib/params-page.js would put a second copy of "which table are we" in a
-   * file that cannot be checked against the first — which is the same drift this
-   * banner exists to catch.
+   * `tableType` is derived here rather than in the browser: the comparison needs all
+   * 28 of Energica's parameter tables (src/vcu/table-catalog.ts) and the page cannot
+   * import a TypeScript module at runtime, so re-implementing it in
+   * public/lib/params-page.js would be the same drift this banner exists to catch.
    *
    * ⚠️ `snapshot` is served with its rows re-named from that same reading — see
    * loadLatestSnapshot(). A stored snapshot's names are a DERIVED view, and deriving

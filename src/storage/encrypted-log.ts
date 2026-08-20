@@ -61,25 +61,19 @@ interface Reading {
 }
 
 /**
- * Row ordering that no clock can corrupt.
+ * Row ordering that no clock can corrupt. `ts` says WHEN a row happened and is only
+ * good at that: this process steps its own wall clock from GPS (../gps/clock.ts), so
+ * a step reorders every row around it — sorting the 2060 incident by `ts` scatters
+ * 49 772 rows to the end of the log.
  *
- * `ts` has been doing two jobs — saying WHEN a row happened and saying what order
- * the rows came in — and it is only good at the first. This process steps its own
- * wall clock from GPS (../gps/clock.ts), so a step reorders every row around it: in
- * the 2060 incident the bad rows were stamped 34 years AHEAD, which means sorting by
- * `ts` scatters 49 772 rows to the end of the log and interleaves nothing correctly.
+ * ⚠️ Repairing that by forcing timestamps to increase would be WORSE: it recovers
+ * ordering by destroying time, dragging every good row after a forward step up to
+ * 2060 and pinning it there. So the two jobs get two fields. `seq` counts rows and is
+ * never derived from a clock, so it orders correctly however badly the clock behaves,
+ * including retroactively for rows already written with a wrong `ts`.
  *
- * Repairing that by forcing timestamps to increase would be worse, not better. It
- * recovers ordering by destroying time: every good row after a forward step would be
- * dragged up to 2060 and pinned there, turning a five-minute wound into a permanent
- * one. So the two jobs get two fields instead. `seq` counts rows and is never derived
- * from a clock, so it orders correctly however badly the clock behaves — including
- * retroactively, for rows already written with a wrong `ts`. Together with the raw
- * `gps_epoch_s` logged alongside, a reader can reconstruct both order and true time.
- *
- * Per process, starting at 0, which is why the segment header carries `session`:
- * across a restart the counter restarts too, and the session id is what keeps two
- * runs' sequences from being mistaken for one run's.
+ * Per process, starting at 0, which is why the segment header carries `session`.
+ * docs/diagnostics-and-checks.md §9.2.
  */
 let nextSequence = 0;
 
@@ -211,24 +205,15 @@ function sealPendingSegment(): Promise<void> {
  *
  * Body is a JSON header line naming the signals in this segment, then one
  * `[ts, key, value, seq]` array per line. gzip collapses the repeated keys to almost
- * nothing, and the format stays trivially readable once decrypted — which
- * matters for data that cannot be re-collected.
+ * nothing, and the format stays trivially readable once decrypted — which matters for
+ * data that cannot be re-collected.
  *
- * ## v2, and why nothing needs to be migrated
- *
- * v1 lines were `[ts, key, value]` and the header was `{ v: 1, signals }`. The
- * fourth element and the header's `session` were added 2026-08-16. Both are
- * backward AND forward compatible by construction, so old and new segments can sit
- * in the same directory and be read by either reader:
- *
- *   * a v1 reader destructures `const [ts, key, value] = parsed`, which ignores a
- *     fourth element outright — scripts/decrypt-log.ts has always done exactly
- *     that — and it never looked at `v` either;
- *   * a v2 reader gets `undefined` for `seq` on a v1 line and stores NULL, which is
- *     the honest answer: those rows were written before anything counted them.
- *
- * The version number is bumped anyway. Nothing reads it today, but a segment that
- * says what shape it is costs one integer and this is the only copy of the data.
+ * v1 lines were `[ts, key, value]` with a `{ v: 1, signals }` header; the fourth
+ * element and `session` were added 2026-08-16, and both are backward AND forward
+ * compatible by construction, so nothing needs migrating and old and new segments can
+ * share a directory. The version is bumped anyway: nothing reads it today, but a
+ * segment that says what shape it is costs one integer and this is the only copy of
+ * the data. docs/diagnostics-and-checks.md §9.3.
  */
 async function sealSegment(readings: Reading[], publicKey: KeyObject, publicRaw: Buffer): Promise<void> {
   try {

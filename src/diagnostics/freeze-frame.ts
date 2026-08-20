@@ -4,115 +4,23 @@ import { infokeyWidth, scaleInfokeyValue, type InfokeyDatatype, type InfokeyFiel
 import { describeNegativeResponseCode } from "./obd-dtc.ts";
 
 // The third fault channel: what the bike was doing at the moment a code latched.
+// Pure — bytes in, values out — so it is exercised from a laptop against
+// constructed payloads (scripts/check-freeze-frame.ts).
 //
-// Pure — bytes in, values out, no socket and no clock — so the whole thing is
-// exercised from a laptop against constructed payloads (scripts/check-freeze-frame.ts).
-// Same split as ./obd-dtc.ts and src/vcu/param-codec.ts.
+// The request is proven twice over; the RESPONSE LAYOUT IS INFERRED, and the
+// decoder reports rather than assumes — `headerBytesThatFit`, `trailingHex`,
+// `truncated` and `recordCount` are the tells, and none is smoothed away.
+// Provenance, the two candidate layouts and the other freeze-frame route:
+// docs/diagnostics-and-checks.md §5.
 //
-// ── ⚠️ THE THREE CHANNELS ARE DIFFERENT QUESTIONS. DO NOT MERGE THEM. ───────
-//   • Connectivity Hub type-25 (mirrored to CAN 0x410) — what is ACTIVE right
-//     now. 0 or 1 entries, and it flickers. src/diagnostics/decode.ts.
-//   • OBD-II mode 03 — what is STORED. 39 entries on this bike, stable.
-//     src/diagnostics/obd-dtc.ts.
-//   • THIS — the conditions when ONE code latched. One record per component.
-// Conflating them has already caused confusion in this project's own notes.
-//
-// ── ⚠️ AND THE ENCODINGS ARE DIFFERENT TOO, WHICH IS THE ACTUAL TRAP ────────
-// This service speaks Energica's (component, symptom) pair, NOT the 16-bit
-// binary DTC that mode 03 returns. The `code` in the request is the COMPONENT
-// NUMBER, 1…63 — the "COD." column of ./dtc-table.ts. Sending 0x0514 here
-// because mode 03 called something P0514 asks for component 1300, which does not
-// exist. Going the other way, mode 03's `2C 00` is P002C under its own encoding
-// and P0A07 under this one. src/diagnostics/obd-dtc.ts' header warns about the
-// same trap from the other side.
-//
-// The SYMPTOM is not in the request. It comes back in the status byte's high
-// nibble, so the caller asks about a component and the ECU says which of that
-// component's faults it has a frame for. Everything below therefore keys off the
-// RETURNED pair, never the requested one.
-//
-// ── The wire format, and exactly how much of it is established ──────────────
-//
-// ✅ THE REQUEST IS PROVEN, twice over.
-//   • On the wire, 2026-08-08, passive capture of the Energica factory software
-//     (obd-garage/DIAG_ADDRESSES.md §9.1): service `0x17` was sent 29 times, to
-//     micro A8 and to no other, and every one of the 29 got a POSITIVE `57`
-//     reply. So the service exists on THIS bike, on that micro, and it answers.
-//   • In Energica's own code, 2026-08-16: the service tool's shared library has
-//     `KWP2000::ReadDiagnosticTroubleCodeInformation` emitting service byte `0x17`
-//     with a two-byte identifier `[(code & 0xFF00) >> 8, code & 0xFF]`, and its
-//     caller `ReadDTCDetails` does TesterPresent → `10 81` → SetFullDLC → send,
-//     against `MotorbikeECU.VCUSafety`. No SecurityAccess anywhere in that path.
-//
-//   request   7C0:  A8 03 17 <componentHi> <componentLo> 00 00 00
-//   response  7E0:  F1 ..  57 …
-//
-// ⚠️ THE RESPONSE LAYOUT IS NOT PROVEN. The census counted service bytes and
-// discarded the payloads, so no `0x17` reply has ever been recorded.
-//
-// 🟡 What IS known: the service tool's `DTCode.GetInfoDetails` reads the status from
-// index 3 of its buffer and starts the fields at index 4, walking the DTC's infokeys in
-// order by datatype width (recovered from IL; the second owner's tool documents
-// the same two constants). Both agree the status sits immediately before the
-// fields. What neither settles is whether that buffer still has the `57` service
-// byte on the front — so there are two readings, and they differ by ONE byte:
-//
-//   5-byte header  57 <count> <compHi> <compLo> <status> <fields…>   ← implemented
-//   4-byte header  57         <compHi> <compLo> <status> <fields…>
-//
-// The 5-byte reading is preferred because it makes `0x17` the same shape as its
-// sibling `0x18` ReadDTCByStatus, which was seen on A8 in the same capture and
-// answers `58 <count>` followed by 3-byte `<hi> <lo> <status>` records — the tool
-// "unconditionally skips payload[0]" before walking those. A `0x17` reply that is
-// that header with exactly one record, then the fields, puts status at index 3
-// and fields at index 4 of a service-byte-less buffer, which is precisely what
-// GetInfoDetails does. That is a coherent story, not a proof.
-//
-// ⚠️ SO THE DECODER REPORTS RATHER THAN ASSUMES, and the reply's own LENGTH is
-// what settles it: the two readings predict payloads one byte apart, and the
-// fault's shortlist says exactly how many field bytes there should be.
-// `headerBytesThatFit` does that arithmetic on every decode and is the first
-// thing to read on the first live reply. `trailingHex`, `truncated` and a
-// `recordCount` that is not 1 are the other tells, and none of them is smoothed
-// away.
-//
-// ── The OTHER freeze-frame route, deliberately not implemented ──────────────
-// The service tool has a second one: `KWP2000Moto.ReadFreezeFrame` dumps the whole
-// stored freeze-frame LOG as a stream, via `0x35` RequestUpload with identifier byte
-// `0x12` (`RoutinesID.ReadFreezeFrame`) and operand `FF`×10, then N × `0x36`
-// TransferData, then `0x37`. That is what the 1198-frame transfer in
-// obd-garage/DIAG_ADDRESSES.md §9.6 actually was: `A8 10 0C 35 12 FF FF FF` is
-// RequestUpload with identifier `0x12` and a 10-byte operand, and `1 + 1 + 10`
-// is the `0x0C` the First Frame declares. ⚠️ That file (local-only, not in this
-// repo) calls it "the software dumping A8's memory image", which is WRONG and
-// should be corrected there. Each `0x36` reply carries one record: a 4-byte big-endian timestamp
-// (seconds since 2000-01-01), then `<compHi> <compLo> <status>`, then the same
-// info-key field block. It is a read, and it would give timestamps this service
-// does not — but it is 1200 frames of upload-family services, and `0x17` answers
-// the question this app is asking about one code at a time.
-//
-// ── ⚠️ READ-ONLY, AND STRUCTURALLY SO ──────────────────────────────────────
-// `FreezeFrameRequest` is a closed union with ONE member, and the encoder throws
-// on anything else. `0x17` is a read; the things next to it in the tool are not,
-// and none of them may ever be expressible here:
-//
-//   • `31 FE` StartRoutine (`RoutinesID.VCUErase`) with the 8-byte operand
-//     `01 00 00 00 01 FF FF FF`, then `33 FE` RequestRoutineResults polled until
-//     it reports 0 — the tool's freeze-frame ERASE, and it takes SecurityAccess
-//     first (`27 01` on A8) where the read takes none. It exists, it is written
-//     down here so nobody has to rediscover it, and it is deliberately not
-//     implemented. It is a flash erase of the bike's own record of why it
-//     faulted: the least reversible thing in this corner of the protocol, and
-//     worth nothing to a telemetry app.
-//   • `14 FF FF` ClearDiagnosticInformation — clears the stored codes. Also not
-//     ours. Note the factory software sends both, erase then clear, in that order.
-//   • `0x35`/`0x36`/`0x37` upload — the factory tool's 7-minute bulk read-out of
-//     A8. A read, but a 1200-frame one, and not this.
-//
-// src/vcu/param-codec.ts' header lists the services that must never appear there;
-// this is the same rule for this service's own module. Why this is a separate
-// closed union rather than a fourth member of that one is argued at
-// `buildFreezeFrameRequestFrame`.
+// ── ⚠️ THE `code` IN THE REQUEST IS A COMPONENT NUMBER, 1…63 ────────────────
+// This service speaks Energica's (component, symptom) pair — the "COD." column of
+// ./dtc-table.ts — NOT the 16-bit binary DTC mode 03 returns. Sending 0x0514 here
+// because mode 03 called something P0514 asks for component 1300. Going the other
+// way, mode 03's `2C 00` is P002C under its own encoding and P0A07 under this one.
+// The SYMPTOM is not in the request at all: it comes back in the status byte's
+// high nibble, so everything below keys off the RETURNED pair, never the
+// requested one. ./obd-dtc.ts warns about the same trap from the other side.
 
 /** `0x17` ReadDiagnosticTroubleCodeInformation, in KWP2000 terms. The only service here. */
 const SERVICE_READ_DTC_INFORMATION = 0x17;
@@ -129,9 +37,9 @@ const NEGATIVE_RESPONSE_SERVICE = 0x7f;
  * went to A8, the service tool's own code targets `MotorbikeECU.VCUSafety`, and the
  * freeze-frame flash bookkeeping fields (`FlashExt*`, infokeys 102…105) sit with
  * the safety micro. Making the target callable would invite asking A9, which
- * would at best answer nothing and at worst answer something else. The CAN ids
- * are the ordinary VCU pair, 0x7C0 out and 0x7E0 back — stated in the header
- * rather than as constants here, since nothing in this module sends a frame.
+ * would at best answer nothing and at worst answer something else. The CAN ids are
+ * the ordinary VCU pair, 0x7C0 out and 0x7E0 back — not constants here, since nothing
+ * in this module sends a frame.
  */
 const VCU_SAFETY_ADDRESS = 0xa8;
 
@@ -142,9 +50,9 @@ export const FREEZE_FRAME_HEADER_BYTES = 5;
  * The header lengths that are still on the table, longest first.
  *
  * 5 is what this module decodes with; 4 is the same layout without the record-count
- * byte. See the header for why 5 is preferred and why neither is proven. A reply's
- * length picks between them, because the two predict payloads exactly one byte
- * apart — `headerBytesThatFit` on every decoded frame does that arithmetic.
+ * byte. ⚠️ NEITHER IS PROVEN — docs/diagnostics-and-checks.md §5.1 has why 5 is
+ * preferred. A reply's LENGTH picks between them, because the two predict payloads
+ * exactly one byte apart; `headerBytesThatFit` does that arithmetic on every decode.
  */
 const CANDIDATE_HEADER_BYTES: readonly number[] = [FREEZE_FRAME_HEADER_BYTES, 4];
 
@@ -153,8 +61,17 @@ const MIN_COMPONENT = 1;
 const MAX_COMPONENT = 63;
 
 /**
- * Everything this module is permitted to ask. One member, on purpose — see the
- * header for the neighbouring services that must stay unexpressible.
+ * Everything this module is permitted to ask. ONE MEMBER, ON PURPOSE — `0x17` is a
+ * read, and ⚠️ what sits beside it in the factory tool is not. Neither of these may
+ * ever become a second member here (nor may they in src/vcu/param-codec.ts):
+ *
+ *   31 FE  StartRoutine `RoutinesID.VCUErase`, operand `01 00 00 00 01 FF FF FF`,
+ *          then `33 FE` polled until it reports 0 — the freeze-frame ERASE, taking
+ *          SecurityAccess (`27 01` on A8) where the read takes none. A flash erase
+ *          of the bike's own record of WHY it faulted: the least reversible thing
+ *          in this corner of the protocol, and worth nothing to a telemetry app.
+ *   14 FF FF  ClearDiagnosticInformation — clears the stored codes. Also not ours;
+ *          the factory software sends both, erase then clear, in that order.
  */
 export type FreezeFrameRequest = { kind: "read-freeze-frame"; component: number };
 
@@ -164,22 +81,13 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([SERVICE_READ_DTC_INFORM
 /**
  * The 8-byte CAN frame that asks for one component's freeze frame.
  *
- * Zero-padded to a full 8-byte DLC because that is what the service tool sends
- * (OTHER_TOOL_AUDIT.md §4.3, "full 8-byte DLC") — the length byte governs, but a
- * short frame is a difference from the only known-good sender and this is not the
- * place to introduce one.
- *
- * ⚠️ NOT built through src/vcu/param-codec.ts, and that is deliberate rather than
- * duplication. That module's request union is the guarantee that nothing in this
- * repo can write to the VCU's calibration EEPROM, and its comment says which
- * services may never be added to it. Widening it for a service that reads a
- * different thing entirely would spend that guarantee for no gain, and would put
- * `0x17` one keystroke away from `0x14` and `0x31` in the same switch. The
- * FRAMING is shared — same extended addressing, same target byte, same PCI, same
- * request and response ids — and it is shared by being the same three lines,
- * which is cheaper than the coupling. What CANNOT be duplicated so cheaply is the
- * session, which is why nothing in this repo sends this frame yet: see the note
- * on flow control in ./extended-iso-tp.ts.
+ * ⚠️ NOT built through src/vcu/param-codec.ts, deliberately rather than by
+ * duplication: widening that module's union would put `0x17` one keystroke away
+ * from `0x14` and `0x31` in the same switch, and that union is the guarantee that
+ * nothing here can write to the calibration EEPROM. Only the FRAMING is shared,
+ * and it is these three lines. docs/diagnostics-and-checks.md §5.1 has the rest —
+ * why the frame is padded to a full 8-byte DLC, and why nothing in this repo
+ * sends it yet (the session, not the encoding, is what is missing).
  *
  * Throws rather than returning an error: every caller is this repo's own code.
  */
@@ -217,22 +125,18 @@ function encodeRequestPayload(request: FreezeFrameRequest): Uint8Array {
 }
 
 /**
- * What the status byte says, beyond the symptom.
- *
- * 🟡 INFERRED, 2026-08-16, and one notch weaker than the layout above: this comes
- * from the second owner's reading of the service tool's `DTCodeKey` UF* properties
- * (obd-garage/OTHER_TOOL_AUDIT.md), not from any capture. It is NOT the generic
- * ISO 14229 DTCStatusMask, which assigns those bits differently — so decoding one
- * of these with a standard scan-tool status decoder gives confident nonsense.
+ * What the status byte says, beyond the symptom. 🟡 INFERRED 2026-08-16, not
+ * captured — and ⚠️ NOT the generic ISO 14229 DTCStatusMask, which assigns these
+ * bits differently, so a standard scan-tool status decoder gives confident
+ * nonsense here. Provenance: docs/diagnostics-and-checks.md §5.2.
  *
  *   bits 7:4  symptom — part of the code's identity, not a flag
  *   bit  3    lamp on
  *   bits 2:1  0 = not active · 1 = active · 2 = memory / freeze frame
  *   bit  0    stored in memory
  *
- * `activity` is kept as the raw two-bit field rather than being flattened into
- * booleans: the value 3 is not described by any source, and a boolean pair would
- * have to invent a meaning for it.
+ * `activity` stays the raw two-bit field: the value 3 is described by no source,
+ * and a boolean pair would have to invent a meaning for it.
  */
 export interface FreezeFrameStatusFlags {
   /** Bit 3 — this code has the malfunction indicator lamp on. */
@@ -316,10 +220,10 @@ export interface FreezeFrame {
    * Every byte of the body that no field consumed, as hex — surplus after the
    * last field, or the fragment of a field that did not fit when `truncated`.
    *
-   * MUST be empty if the layout in this file's header is right, which makes it
-   * the single most informative field in the whole structure on the first live
-   * read. Never dropped: on a real reply these are the bytes that would explain
-   * what the layout actually is.
+   * MUST be empty if the inferred layout (docs/diagnostics-and-checks.md §5.1) is
+   * right, which makes it the single most informative field in the whole structure on
+   * the first live read. Never dropped: on a real reply these are the bytes that would
+   * explain what the layout actually is.
    */
   trailingHex: string;
   /**
@@ -347,9 +251,9 @@ export interface FreezeFrame {
  *
  * ⚠️ EVERY variant carries `rawHex`, not just the successful one, and that is
  * deliberate: on the first read against a real bike the LIKELIEST outcome is
- * `unrecognised` — the header below is an inference — and that is precisely the
- * reply whose bytes would say what the layout actually is. A one-line reason with
- * the payload thrown away would waste the only run that could settle it.
+ * `unrecognised` — the reply's own header layout is an inference — and that is
+ * precisely the reply whose bytes would say what the layout actually is. A one-line
+ * reason with the payload thrown away would waste the only run that could settle it.
  */
 export type FreezeFrameResponse =
   | { kind: "frame"; frame: FreezeFrame }
@@ -419,11 +323,11 @@ export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponen
   }
   if (payload.length < FREEZE_FRAME_HEADER_BYTES) {
     // ⚠️ A reply of exactly 4 bytes is the interesting case here: that is a valid
-    // empty-shortlist frame UNDER THE 4-BYTE READING this file's header says is
-    // still on the table, i.e. the one reply shape that would falsify the choice.
-    // It is still reported rather than decoded — reading it would mean silently
-    // switching layouts mid-flight — but `rawHex` carries the bytes out, which is
-    // what makes it actionable instead of merely rejected.
+    // empty-shortlist frame under the 4-byte reading CANDIDATE_HEADER_BYTES keeps on
+    // the table, i.e. the one reply shape that would falsify the choice. It is still
+    // reported rather than decoded — reading it would mean silently switching layouts
+    // mid-flight — but `rawHex` carries the bytes out, which is what makes it
+    // actionable instead of merely rejected.
     return {
       kind: "unrecognised",
       reason: `positive reply of ${payload.length} bytes is shorter than the ${FREEZE_FRAME_HEADER_BYTES}-byte header`,
