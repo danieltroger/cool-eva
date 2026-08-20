@@ -160,7 +160,9 @@ async function runFreezeFrame(component: number): Promise<void> {
         ? "✅ 5 — the implemented reading is right"
         : frame.headerBytesThatFit.includes(4)
           ? "⚠️ 4 — shift everything by one, change FREEZE_FRAME_HEADER_BYTES"
-          : "✅ neither — expected, and what every captured reply returns: one trailing byte")
+          : frame.shortlistKnown
+            ? "✅ neither — expected, and what every captured reply returns: one trailing byte"
+            : "— nothing to compare: this fault has no shortlist, so no length was checked")
   );
   // One trailing byte is normal here; ZERO would be the surprise, and more than one
   // would mean a field is missing from the shortlist.
@@ -169,7 +171,10 @@ async function runFreezeFrame(component: number): Promise<void> {
     `  trailingHex: "${frame.trailingHex}"  ` +
       (trailingBytes === 1 ? "✅ the expected single undecoded byte" : `⚠️ ${trailingBytes} bytes, expected 1`)
   );
-  console.log(`  recordCount: ${frame.recordCount} (expected 1)   truncated: ${frame.truncated}`);
+  console.log(
+    `  recordCount: ${frame.recordCount} (expected 1)   truncated: ${frame.truncated}   ` +
+      `shortlistKnown: ${frame.shortlistKnown}`
+  );
 }
 
 /** `0x35`/`0x36`/`0x37` — the whole stored log. Minutes. */

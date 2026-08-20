@@ -11,7 +11,6 @@ import {
   buildFreezeFrameRequestFrame,
   decodeFreezeFrameResponse,
   decodeFreezeFrameStatus,
-  FREEZE_FRAME_HEADER_BYTES,
   expectedFreezeFramePayloadBytes,
   formatFreezeFrameValue,
   toHex,

@@ -488,6 +488,9 @@ export function isUploadFinished(body: Uint8Array): boolean {
  * which the second owner's tool documents identically (the service tool
  * "unconditionally skips payload[0]", then walks 3-byte records). `declaredCount` and
  * `trailingHex` are both reported so the first live reply settles it instead of
+ * ✅ It has since been captured. The 2026-08-08 session holds an 89-byte `0x58` reply —
+ * count byte `0x1D` = 29, then 29 three-byte `<hi> <lo> <status>` records whose pairs match
+ * the 29 freeze-frame replies exactly, in order. The decompiled layout was right.
  * being smoothed over — the same tell `headerBytesThatFit` gives for `0x17`.
  */
 export interface VcuStoredDtcList {
