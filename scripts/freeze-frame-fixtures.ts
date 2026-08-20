@@ -9,8 +9,11 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 // make that claim. The REAL `0x17` payloads are now in scripts/captured-freeze-frames.ts
 // — all 29 of them — and the note that used to stand here, saying none had ever been
 // recorded, was wrong: it searched `7C0`, which carries only requests. Replies are on
-// `7E0`. What survives here is the shapes the bike never sent, which is the one thing a
-// capture cannot supply: a refusal, a wrong-component answer, a short CF mid-transfer.
+// `7E0`. What survives here is two complete transfers whose values are INVENTED to reach
+// decode paths no capture does — a zero-current open circuit, a negative int16 and int8,
+// the ×0.1 scaling, the `(X/2)-40` air temperature — plus the malformed shapes the bike
+// never sent: a refusal, a wrong-component answer, a short CF mid-transfer. The second
+// group is checked frame by frame rather than replayed as transfers.
 //
 // The two invented frames below also DISAGREE with the real ones, which is worth knowing
 // before trusting them for anything else: component 44 really answered 18 bytes with
