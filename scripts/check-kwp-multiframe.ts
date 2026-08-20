@@ -32,10 +32,14 @@ import {
   REQUEST_UPLOAD_FIRST_FRAME,
   SHORT_FINAL_FRAME_PAYLOAD,
   SHORT_FINAL_FRAME_TRANSFER,
+  REQUEST_TRANSFER_EXIT_FRAME,
   STORED_DTC_LIST_EXPECTED,
   STORED_DTC_LIST_FRAMES,
+  TRANSFER_DATA_FRAME,
   UPLOAD_BLOCK_BODIES,
   UPLOAD_GRANT_BODY,
+  UPLOAD_MAX_BLOCK_PAYLOAD_BYTES,
+  UPLOAD_MAX_LENGTH_BLOCK_BODY,
 } from "./kwp-multiframe-fixtures.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 
@@ -48,18 +52,16 @@ import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 //   node --experimental-strip-types scripts/check-kwp-multiframe.ts
 //
 // ── ⚠️ WHAT THIS PROVES, AND WHAT IT CANNOT ────────────────────────────────
-// The REQUEST side has real evidence and this check leans on all of it. §2 asserts
-// that the segmenter reproduces `A8 10 0C 35 12 FF FF FF` byte for byte — a frame
-// captured off this bike — and §1 that the `0x18` request matches the one
-// recovered from the manufacturer's code.
+// Every REQUEST frame this repo can emit on this channel is now asserted against a frame
+// captured off this bike on 2026-08-08 — `0x17`, `0x18`, the whole three-frame `0x35`,
+// `0x36` and `0x37`. That is what §1 and §2 are for, and it is what caught the bare `36`.
 //
-// The REPLY side has almost none. §3 replays the only multi-frame reply on this
-// channel with real bytes behind it, and even that is two independent live
-// records joined by one inferred frame (see the fixtures' §A). Every other reply
-// below is CONSTRUCTED from the documented framing, so §4 onwards prove that this
-// transport is self-consistent and that it refuses what it should — properties of
-// our code, which is what a check can honestly cover — and prove nothing about
-// what the VCU actually sends.
+// The REPLY side is still mostly CONSTRUCTED. §3 replays two independent live records
+// joined by one inferred frame (the fixtures' §A), and §4 onwards prove that this transport
+// is self-consistent and refuses what it should — properties of our code, which is what a
+// check can honestly cover. ⚠️ 1198 real `0x36` block bodies and 29 real `0x17` replies do
+// exist in that capture; docs/vcu-parameters.md §§10-11 says what is in the way of using
+// them here, and it is not effort.
 //
 // §5 is the part worth keeping whatever the wire turns out to look like: a
 // transport that completes a transfer from a short Consecutive Frame produces a
@@ -96,10 +98,20 @@ check(
   `0x18 should be "${LIST_STORED_DTCS_FRAME}", got "${framesFor({ kind: "list-stored-dtcs" })[0]}"`
 );
 
-check(framesFor({ kind: "transfer-data" })[0] === "A8 01 36 00 00 00 00 00", "0x36 should be a bare single frame");
+// ⚠️ REGRESSION GUARD, and the reason this file changed on 2026-08-20. `0x36` is NOT a
+// bare service byte: all 1198 captured requests carry the routine id, `A8 02 36 12`. A bare
+// `36` is one byte short of anything this micro has been seen to accept, and the whole
+// 1198-block read is the one path in this repo that has never been run.
 check(
-  framesFor({ kind: "request-transfer-exit" })[0] === "A8 01 37 00 00 00 00 00",
-  "0x37 should be a bare single frame"
+  framesFor({ kind: "transfer-data" })[0] === TRANSFER_DATA_FRAME,
+  `0x36 should be the captured "${TRANSFER_DATA_FRAME}", got "${framesFor({ kind: "transfer-data" })[0]}"`
+);
+check(framesFor({ kind: "transfer-data" }).length === 1, "a 0x36 request is 2 payload bytes and must be one frame");
+// And `0x37` genuinely IS bare — captured as `A8 01 37`, answered `77 FF`. The `FF` is the
+// micro's own status byte, so there is no `37 FF` to fall back to.
+check(
+  framesFor({ kind: "request-transfer-exit" })[0] === REQUEST_TRANSFER_EXIT_FRAME,
+  `0x37 should be the captured "${REQUEST_TRANSFER_EXIT_FRAME}", got "${framesFor({ kind: "request-transfer-exit" })[0]}"`
 );
 
 check(expectedResponseService(freezeFrameRequest) === 0x57, "0x17 should expect a 0x57 reply");
@@ -477,6 +489,42 @@ for (const sendsRequestFlowControl of [true, false]) {
   );
   client.stop();
   console.log(`  ✓ ${label}: ${describeFreezeFrameLogResult(read)}`);
+}
+
+// ⚠️ REGRESSION GUARD, second of the two the 2026-08-08 capture bought. A block of the
+// FULL granted length — `0xE9` = 233 bytes, which is the longest in the captured transfer.
+// The other block fixtures are 9…12 bytes, so they cleared the 128-byte reassembly cap this
+// module used to impose and no check noticed that every real block is 206…233.
+{
+  const bus = simulateVcuMicros([
+    {
+      target: "A8",
+      records: new Map(),
+      sendsRequestFlowControl: true,
+      upload: {
+        grantBody: parseHexFrame(UPLOAD_GRANT_BODY),
+        blocks: [parseHexFrame(UPLOAD_MAX_LENGTH_BLOCK_BODY)],
+      },
+    },
+  ]);
+  const client = createVcuKwpClient(bus.channel, {
+    paceMs: 1,
+    responseTimeoutMs: 400,
+    multiFrame: { firstReplyTimeoutMs: 400, transferTimeoutMs: 800, requestFlowControlTimeoutMs: 40 },
+  });
+  bus.channel.addListener("onMessage", message => client.handleFrame(message.id, message.data));
+  const read = await startFreezeFrameLogRead({ client, paceMs: 1 }).finished;
+  check(
+    read.completion === "finished",
+    `a ${UPLOAD_MAX_BLOCK_PAYLOAD_BYTES}-byte block is what the grant allows and must be read, ` +
+      `got "${read.completion}" ${read.reason}`
+  );
+  check(
+    read.blocks.length === 1 && toHex(read.blocks[0]) === UPLOAD_MAX_LENGTH_BLOCK_BODY,
+    "and it must come back whole, not truncated to the reassembler's cap"
+  );
+  client.stop();
+  console.log(`  ✓ a full-length block (${UPLOAD_MAX_BLOCK_PAYLOAD_BYTES} bytes, the granted maximum) reads whole`);
 }
 
 // A micro that ends the upload by refusing rather than by an empty body.

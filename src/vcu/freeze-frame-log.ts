@@ -61,12 +61,16 @@ const DEFAULT_MAX_BLOCKS = 5000;
 /**
  * Largest single `0x36` reply to assemble.
  *
- * A log record is a 4-byte timestamp, 3 bytes of component and status, and a
- * field block that ../diagnostics/fault-infokeys.ts caps at 20 bytes — so ~28,
- * plus the `76`. 128 is well above that and well below what a stuck responder
- * could make this hold across 1198 iterations.
+ * 🔴 This was 128, sized from ONE log record (~28 bytes) plus slack. A block is not a
+ * record: it is as many records as fit, and the `75 12 E9` grant says how many —
+ * `0xE9` = 233 bytes. The 1198 blocks in the 2026-08-08 capture run 206…233, so at 128
+ * the reassembler abandoned block 1 with "first frame declares 231 bytes, over the 128
+ * cap" and the read came back with nothing. docs/vcu-parameters.md §11.
+ *
+ * 256 is above the 233 the micro is granted, and still a bound on what a stuck responder
+ * can make this process hold across 1198 iterations.
  */
-const TRANSFER_BLOCK_MAX_PAYLOAD_BYTES = 128;
+const TRANSFER_BLOCK_MAX_PAYLOAD_BYTES = 256;
 
 export interface FreezeFrameLogOptions {
   /** The client to run this on. Its session machinery and single-flight rule are reused, not copied. */

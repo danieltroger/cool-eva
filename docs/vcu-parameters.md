@@ -618,42 +618,87 @@ That is ISO-TP with EXTENDED addressing: byte 0 is an address and every length s
 
 ✅ The SERVICE and its ROUTING are proven: 29 `0x17` requests went to A8 in the 2026-08-08 capture and all 29 drew a positive `57` (`DIAG_ADDRESSES.md` §9.1), and Energica's own `KWP2000::ReadDiagnosticTroubleCodeInformation` emits `0x17 <hi> <lo>` against `MotorbikeECU.VCUSafety` with no SecurityAccess in the path.
 
-⚠️ The literal FRAME is a reconstruction, not a quotation. The census counted service bytes and discarded payloads, so `A8 03 17 <hi> <lo> 00 00 00` has never been written down off a wire — it is the decompiled three-byte payload put into this channel's documented framing. The framing rule is independently established (`CAN_MAP.md` §"Custom KWP-over-CAN"), so this is a sound reconstruction rather than a guess, but it is worth not repeating as "captured".
+✅ **The literal FRAME is a quotation now** (2026-08-20). It used to say "reconstruction, not a quotation, because the census discarded payloads" — but the census is not the capture, and the capture kept everything. All 29 requests are `A8 03 17 00 <component> 00 00 00`, zero-padded to DLC 8, for components `03 04 05 06 07 08 0A 0B 0C 14 16 22 23 24 25 27 28 29 2A 2C 2E 30 31 33 34 35 36 3C 3E`. The reconstruction was right.
 
-### ⚠️⚠️ `0x35` RequestUpload — seven operand bytes are a guess
+⚠️⚠️ **The 29 REPLIES are in the capture too, and they do not match the constructed fixture.** Component 44 (`0x2C`, P0A07, the water-pump code) answered `57 01 00 2C 07 16 00 00 FF FC 01 5D 01 5D 01 5D 89 FF` — 18 payload bytes with status `07`, where `scripts/freeze-frame-fixtures.ts` invents 17 bytes with status `05` and a different field block. Reply lengths across the 29 run 6…26 bytes. **This is not settled here and nothing in this PR acts on it**: it is a question about the `0x17` RESPONSE LAYOUT and `src/diagnostics/fault-infokeys.ts`' info-key shortlists, which is its own investigation. It is written down so that the next person starts from the bytes rather than from the fixture.
 
-`35 12 FF FF FF FF FF FF FF FF FF FF` opens the bulk freeze-frame log read-out. `0x12` is `RoutinesID.ReadFreezeFrame`.
+### ✅ `0x35` RequestUpload — captured whole, 2026-08-20
 
-✅ The FIRST FIVE payload bytes are captured verbatim: `7C0: A8 10 0C 35 12 FF FF FF` (`DIAG_ADDRESSES.md` §9.6), a First Frame declaring `0x00C` = 12 payload bytes of which it carries five.
+`35 12 FF FF FF FF FF FF FF FF FF FF` opens the bulk freeze-frame log read-out. `0x12` is `RoutinesID.ReadFreezeFrame`. Upload means ECU → tester, so this is a read; `0x34` RequestDownload, which is not, must never be added beside it.
 
-⚠️⚠️ **The other seven operand bytes were never captured.** They travelled in the Consecutive Frame that followed, and the census that produced §9.6 filtered by service byte — a Consecutive Frame has none, so it was discarded. Ten `0xFF` is a GUESS, and it is the single least-supported byte sequence in this repo. What supports it: the three operand bytes we can see are all `0xFF`, and every other wildcard operand on this bus is all-`FF` too (`18 02 FF FF` all-groups, `14 FF FF` all-DTCs). What does not support it: nothing at all was recovered from `KWP2000Moto.ReadFreezeFrame`'s operand.
+The ten `0xFF` were this repo's least-supported byte sequence for two weeks. They are captured now, all of them, at 19:04:32 in `capture-20260808-182129-600daf87.log`:
 
-This is settleable OFFLINE and in minutes, without the bike: the passive capture `capture-20260808-182129-600daf87.log` on the Pi (`/home/pi/ride-captures/`) contains the whole exchange, and grepping it for `7C0` frames whose second byte is `0x21` yields the missing seven bytes — along with the flow-control frame discussed below. Do that before trusting this constant.
+```
+19:04:32.265292  7C0  [8]  A8 10 0C 35 12 FF FF FF   First Frame, 0x00C = 12 payload bytes, carrying 5
+19:04:32.276207  7E0  [8]  F1 30 FF 00 00 00 00 00   A8's flow control — BlockSize 255, STmin 0
+19:04:32.279852  7C0  [8]  A8 20 FF FF FF FF FF FF   Consecutive Frame, sequence 0, carrying 6
+19:04:32.282207  7C0  [8]  A8 21 FF 00 00 00 00 00   Consecutive Frame, sequence 1, carrying the 12th byte
+19:04:32.316132  7E0  [8]  F1 03 75 12 E9 00 00 00   granted
+```
 
-Upload means ECU → tester. This is a read; `0x34` RequestDownload, which is not, must never be added beside it.
+5 + 6 + 1 = 12 = the `0x0C` the First Frame declared, and every operand byte is `0xFF`. The guess was right. It is the ONLY multi-frame request the tester sends in the whole 55-minute session, which is why there is exactly one flow control from a micro to compare against.
 
-### ⚠️ `0x36` carries no block-sequence counter here
+### ⚠️ How to read that capture — the instruction that used to be here does not work
 
-Documented as a named constant (`TRANSFER_DATA_CARRIES_NO_BLOCK_COUNTER`) because it is the assumption most likely to be wrong, and the one that would be silently wrong.
+The note this replaces said to grep the capture for "`7C0` frames whose second byte is `0x21`". That is wrong twice, and it cost the next reader a session before anyone got a byte out of the file:
 
-ISO 14229's TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, … and wrapping. The evidence for a bare `36` on this bike is indirect: the 2026-08-08 census recorded 1198 `0x36` requests as one service with no note of a varying operand, and the service tool's `KWP2000Moto.ReadFreezeFrame` loops sending the service with no counter argument. Neither is a captured payload.
+- **`0x21` is the wrong frame.** Under extended addressing byte 0 is the ADDRESS (`A8`) and byte 1 is the PCI, so the frame carrying the operand is `A8 20 …`. The payload splits **5 / 6 / 1** across the First Frame and TWO Consecutive Frames, and `A8 21 …` is the second one — it holds the twelfth byte and nothing else.
+- **Anchoring on `[8]` silently drops 48 frames.** The tool mixes DLC modes in one session: of the 26 662 `7C0` frames, 26 614 are padded to `[8]` and 48 are not (39 at `[3]`, 9 at `[4]`). The `0x37` that settles the transfer exit is one of the 48 — `A8 01 37` at `[3]` — so a pattern with `[8]` or a fixed run of spaces in it finds a perfectly consistent, perfectly wrong answer. (The spacing itself does NOT vary; every line has the same field padding. It is the DLC that does.)
 
-If it turns out to need one, the symptom is unambiguous rather than subtle — the first `0x36` is refused, most likely NRC `0x13` incorrectMessageLength or `0x24` requestSequenceError — so this is a wrong assumption that announces itself instead of producing 1198 blocks of shifted bytes.
+What works, on either copy of the file (`/home/pi/ride-captures/` on the Pi, `~/Documents/cool-eva-archive/` on the laptop). The format is one frame per line, whitespace-separated, `$4` the CAN id and `$6…` the data bytes:
 
-### ⚠️ `0x37` RequestTransferExit — request bytes never recorded
+```sh
+# every request and reply on the diagnostic channel, ~96k lines out of 4.3M
+awk '$4=="7C0" || $4=="7E0"' capture-20260808-182129-600daf87.log > diag.log
 
-Only the service number and the reply, `77 FF`, were recorded. That reply is itself the puzzle: `0x37` takes no parameters in both KWP2000 and ISO 14229, so there is nothing for a `FF` to echo. Either the micro appends a status byte of its own, or the request was `37 FF` and the reply echoes it. A bare `37` is sent because that is what both standards specify; if it is refused with NRC `0x13` incorrectMessageLengthOrInvalidFormat, `37 FF` is the one thing to try next.
+# the request census that answers "what did the tool actually send"
+awk '$4=="7C0"{print $6,$7,$8,$9}' diag.log | sort | uniq -c | sort -rn
+
+# the 0x35/0x36/0x37 exchange itself, in order
+grep -n "35 12" diag.log        # the First Frame; read the next few lines
+```
+
+Two counts that make a parse self-checking: the tester sends 1227 `A8 30 FF 00` flow controls, and A8 sends 1227 First Frames (1198 `0x36` blocks + 29 `0x17` replies). If those do not match, the parse is wrong.
+
+### 🔴 `0x36` TransferData is `36 12`, not a bare `36` — fixed 2026-08-20
+
+**This was a live defect, and it was on the one path in this repo that has never been run.** The note that stood here reasoned that `0x36` carries no block-sequence counter, which is true, and then shipped a bare `36`, which does not follow.
+
+Every one of the 1198 TransferData requests in the capture is the same Single Frame:
+
+```
+19:04:32.342118  7C0  [8]  A8 02 36 12 00 00 00 00   → F1 10 E7 76 …  (231 bytes)
+…1196 more, byte-identical…
+19:11:49.5      7C0  [8]  A8 02 36 12 00 00 00 00   → F1 10 41 76 …  (65 bytes, the last)
+```
+
+`A8 02` declares TWO payload bytes. The operand is `0x12` — `RoutinesID.ReadFreezeFrame`, the same identifier `0x35` opened the upload with — and it is CONSTANT across all 1198, which is what rules out an ISO 14229 block counter. So both halves of the question are now settled from the wire, and they have different answers: no counter, but not empty either.
+
+What the bare `36` would have done: it is one byte short of anything this micro has been seen to accept, so the first block draws NRC `0x13` incorrectMessageLengthOrInvalidFormat (or `0x24` requestSequenceError) and the read fails at block 1 of 1198. Loud rather than silent — the old note was right about that — but a failure standing next to the motorcycle, which is the thing this file exists to prevent.
+
+Pinned by `scripts/check-kwp-multiframe.ts` in two independent places: a byte-exact assertion against `TRANSFER_DATA_FRAME`, and `scripts/simulated-vcu-micro.ts` now refusing any `0x36` that is not `36 12` with the NRC the bike would have used, so the end-to-end §7 sequence fails too.
+
+### ✅ `0x37` RequestTransferExit — a bare `37`, captured
+
+```
+19:11:49.670991  7C0  [3]  A8 01 37
+19:11:49.693356  7E0  [8]  F1 02 77 FF 00 00 00 00
+```
+
+`A8 01` declares one payload byte, so the request carries no operand at all — exactly what KWP2000 and ISO 14229 specify. That resolves the `77 FF` puzzle in favour of the first reading: the `FF` is a status byte of the micro's own, not an echo of anything we sent. **The `37 FF` fallback this section used to name is not needed and should not be tried** — it was an untested branch guarding against a case that cannot arise.
+
+Note the `[3]` DLC: the tool did NOT pad this one, where it padded the `0x35` and `0x36` frames to 8. Both modes appear in the same session (3050 of its `A8 01 3E` are padded, 31 are not) and the length byte governs, so this repo's uniform zero-padding is fine.
 
 It is sent even when the read is abandoned early: an ECU left holding an open upload may refuse the next one. It is still a read — it transfers nothing and stores nothing.
 
-### The `75` RequestUpload reply: two readings, neither settled
+### ✅ The `75` RequestUpload reply: settled by what followed it
 
-⚠️ Only ONE such reply has ever been seen — `75 12 E9`, in the 2026-08-08 census — and the census kept the bytes without recording what they mean. Two readings fit, and `VcuUploadGrant` reports both rather than picking:
+`F1 03 75 12 E9`. Two readings used to fit; the 1198 blocks that followed pick one.
 
-- `12` echoes the routine id `RoutinesID.ReadFreezeFrame` and `E9` is a maxNumberOfBlockLength of 233. This is the reading the field names assume, because the echo makes `12` self-evidently the routine.
-- `12` is ISO 14229's lengthFormatIdentifier and `E9` the first byte of a maxNumberOfBlockLength. Under that reading a `12` would mean one length byte and two address bytes, which does not fit a 3-byte body — so it is the weaker of the two, but it is not excluded by three bytes of evidence.
+- **`12` echoes the routine id and `E9` = 233 is a maxNumberOfBlockLength.** ✅ The longest `76` reply in the transfer is exactly 233 bytes, and none is longer. The blocks run 206…233 with 233 hit 26 times.
+- ~~`12` is ISO 14229's lengthFormatIdentifier and `E9` the first byte of a maxNumberOfBlockLength.~~ Out: it never fitted the 3-byte body, and it predicts nothing about the block sizes that then matched the other reading exactly.
 
-Nothing in this repo ACTS on either number: the block length is not used to size anything, and the loop stops on what the micro does rather than on a count derived from `E9`. It is carried so the first live run can settle it.
+Nothing here ACTS on the number even so — the loop still stops on what the micro does rather than on a count derived from `E9`. But `freeze-frame-log.ts` has to be able to HOLD 233 bytes, and until 2026-08-20 it could not; see [§11](#11-the-freeze-frame-log).
 
 ### The flow-control frame we send
 
@@ -661,7 +706,12 @@ Nothing in this repo ACTS on either number: the block length is not used to size
 
 `FF 00` is BlockSize 255, SeparationTime 0, taken from `DIAG_ADDRESSES.md` §3 and `CAN_MAP.md` rather than from the `30 00 00` `src/can/obd-dtc.ts` sends on the OBD channel.
 
-⚠️ Both of those notes state it as a PROSE TEMPLATE with `[target]` unresolved — no flow-control frame has ever been captured on this channel, in either direction. So `FF 00` is what the notes say to send, not what anything was observed sending. Under ISO 15765-2 a BlockSize of 255 means the sender pauses for another flow control after 255 Consecutive Frames, where 0 means "send it all"; the difference cannot arise here, because the largest reply this transport will accept is bounded well under 255 frames by `multiframe-transfer.ts`'s cap. So the two candidate values are indistinguishable in effect, and following the documented one costs nothing.
+✅ **Captured on this channel in BOTH directions, 2026-08-20.** This section used to say no flow-control frame ever had been, and that was a fact about the census rather than about the capture:
+
+- **Ours**, 1227 times: `7C0: A8 30 FF 00 00 00 00 00` — one per multi-frame reply from A8 (1198 `0x36` blocks + 29 `0x17` replies). Byte for byte what `buildFlowControlFrame` builds, including the padding.
+- **The micro's**, once: `7E0: F1 30 FF 00 00 00 00 00`, 11 ms after our `0x35` First Frame and 3.6 ms before the first Consecutive Frame went out. Once is all there can be — the `0x35` is the only multi-frame REQUEST in the session.
+
+So `FF 00` is what this bus actually uses, BlockSize 255 and SeparationTime 0, and the choice between it and `30 00 00` is no longer a judgement call. It also settles `sawFlowControlFromMicro`: **A8 does answer a multi-frame request with a flow control**, so the unprompted-send fallback in `onRequestFlowControlTimeout` is a fallback rather than the expected path.
 
 ### The transport half
 
@@ -678,7 +728,7 @@ Nothing in this repo ACTS on either number: the block length is not used to size
 
 **The frame ceiling per exchange** is over and above the reassembler's own cap. The reassembler bounds frames that CONTRIBUTE to a payload; this bounds the ones that do not: a micro repeating flow-control frames — which the reassembler deliberately ignores, so nothing there counts them — would otherwise keep an exchange alive doing nothing until the timer saved us. The timer would save us; this is the cheaper guard, and it makes the loop terminate on its own terms rather than on the clock's. ⚠️ It is DERIVED from the payload cap rather than fixed, for the same reason `maxFramesFor` itself is. As a constant the two caps only stayed ordered while the payload cap was small: a caller that raised it past ~380 bytes would have seen a legitimate long reply abandoned as "more than 64 frames in one exchange" — a true statement about the wrong number, and a guard firing where it was never meant to.
 
-**When the micro never answers our request's First Frame.** ⚠️ This is a judgement call and it deserves to be read before it is trusted. NO flow-control frame has ever been captured on this channel in either direction (`DIAG_ADDRESSES.md` and `CAN_MAP.md` state the tester's as a prose template, not a capture), so whether A8 emits one before the `0x35` Consecutive Frames is genuinely unknown. What IS known is that the factory tool's 12-byte `0x35` request was ANSWERED — `75 12 E9` came back — so its Consecutive Frames certainly reached A8. Either A8 sent a flow control the census discarded, or the tool sent them unprompted.
+**When the micro never answers our request's First Frame.** ✅ The question this used to hedge is answered: A8 DOES emit a flow control before the `0x35` Consecutive Frames — `F1 30 FF 00`, 11 ms after the First Frame — so waiting for one is the right default and the timeout path is a genuine fallback. It is kept because a fallback that never runs is still cheaper than a read that stalls.
 
 So on a timeout the remaining frames go out anyway, loudly. Refusing instead would make the whole bulk read untestable on the guess that turns out wrong, and the frames themselves are close to inert: a Consecutive Frame carries PCI `0x2N` and no service byte at all, so a micro not in a receive state either discards it as ISO-TP noise or reads `0x21` as a length and `0xFF` as a service, which is not a service and draws a refusal. Neither outcome writes anything. `sawFlowControlFromMicro` rides out on the result either way, so the first live run settles the question that the capture could have.
 
@@ -692,13 +742,33 @@ The factory tool did exactly this on 2026-08-08 and it took **~7 minutes for 119
 
 Timestamps and history. `0x17` answers "what was the bike doing when component N last latched" — one record per component, no date on it. This is the whole stored LOG: every freeze frame the micro has kept, each (per the service tool's `KWP2000Moto.ReadFreezeFrame`) a 4-byte big-endian timestamp in seconds since 2000-01-01, then `<compHi> <compLo> <status>`, then the same info-key field block `src/diagnostics/freeze-frame.ts` decodes.
 
-⚠️ The module does NOT decode those records, on purpose. It hands back the block bodies exactly as they arrived. Decoding them means trusting a record layout that has never been seen — where the transport at least has captured framing behind it — and a decoder written against a guessed layout is how you get 1198 plausible wrong answers instead of one. The bytes are kept whole so that the first real transfer can be read by a human, and the decoder written against it afterwards.
+⚠️ The module does NOT decode those records, on purpose. It hands back the block bodies exactly as they arrived. A decoder written against a guessed layout is how you get 1198 plausible wrong answers instead of one. The bytes are kept whole so that the first real transfer can be read by a human, and the decoder written against it afterwards.
 
-### ⚠️ How much of this is established
+### ✅ How much of this is established (rewritten 2026-08-20)
+
+Everything in the list that stood here rested on a CENSUS that had kept service bytes and thrown payloads away. The capture itself kept the payloads, so:
 
 - ✅ The service sequence and the counts: 1 × `0x35`, 1198 × `0x36`, 1 × `0x37`, with positive `75` / `76` / `77` for every one, on A8, in a `10 81` session with NO SecurityAccess anywhere in the capture.
-- ⚠️ Seven of the ten operand bytes after `35 12`, the whole of every request and reply payload for `0x36`, and the `0x37` request bytes were **never recorded** — the census kept service bytes and threw the payloads away. See [§10](#10-multi-frame-reads) for exactly which bytes are guessed and why.
-- ⚠️ So this can fail on the first frame, and the honest expectation is that it might. It is built to fail LOUDLY and to leave the micro tidy when it does.
+- ✅ Every REQUEST byte, verbatim: `35 12` + ten `FF`, `36 12` × 1198, a bare `37`. [§10](#10-multi-frame-reads) quotes the frames.
+- ✅ **1198 real block bodies**, 206…233 bytes each, 261 kB in total. Nothing in this repo reads them yet.
+- ✅ The record layout the module refuses to decode is nonetheless CORROBORATED by the capture. The last block's second record is `00 4D F4 7D | 00 2C 07 | 16 00 00 FF FC 01 5D 01 5D 01 5D 89 FF`: a 4-byte stamp, then `00 2C 07` = component 44 status `07`, then a field block that is byte for byte the body of the `0x17` reply the same tool got for component 44 eight minutes earlier. Same shape, two services, one session.
+- 🟡 What the tool used as an END marker is still unknown — see below.
+
+### ⚠️ The end of the upload is NOT an empty block
+
+`isUploadFinished` treats an empty `76` body as the end. The capture does not support that and does not refute it either, which is worth stating precisely because it is now the largest remaining guess on this path:
+
+- The 1198th reply was `F1 10 41 76 …` — **65 bytes, a 64-byte body**, not empty. The other 1197 run 206…233.
+- No `7F` refusal followed it. The tool simply sent `0x37` 61 ms later and closed the session.
+- So an empty body was never observed, and "shorter than the last one" is not a rule either — the lengths vary by 27 bytes block to block.
+
+Whatever told the factory tool to stop, this repo does not know it. Left alone deliberately: being wrong here is bounded rather than silent — the 5000-block ceiling stops the read and reports `block-cap`, with every block that arrived kept exactly as it arrived. The first live run against a bike is what settles it, and it will settle it cheaply because block 1199 is 25 ms away rather than 7 minutes.
+
+### 🔴 The block cap was 128 bytes, and every block is bigger than that — fixed 2026-08-20
+
+`TRANSFER_BLOCK_MAX_PAYLOAD_BYTES` was 128, reasoned from the size of ONE log record (~28 bytes) plus slack. But a block is not a record: it is as many records as fit, and the `75 12 E9` grant says how many — `E9` = 233 bytes. The captured blocks are 206…233.
+
+At 128 the reassembler abandons the very first block with `first frame declares 231 bytes, over the 128 cap`, and the read fails having collected nothing. It is now 256: above the 233 the micro is granted, still a bound on what a stuck responder can make this process hold, and still under the frame ceiling `maxFramesFor` derives from it.
 
 ### Not starving the OBD poller, which is the operational risk
 

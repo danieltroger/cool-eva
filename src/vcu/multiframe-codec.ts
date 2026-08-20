@@ -41,10 +41,9 @@ export type VcuMultiFrameRequest =
    * component-number range check and the decode; this union carries it so that one
    * transport can run every multi-frame read.
    *
-   * ✅ The SERVICE and its ROUTING are proven — 29 of 29 `0x17` requests to A8 drew a
-   * positive `57` in the 2026-08-08 capture. ⚠️ The literal FRAME is a reconstruction, not
-   * a quotation: the census counted service bytes and discarded payloads, so this exact
-   * frame has never been written down off a wire. docs/vcu-parameters.md §10.
+   * ✅ The REQUEST is now a quotation rather than a reconstruction: the 2026-08-08 capture
+   * has all 29 of them as `A8 03 17 00 <component> 00 00 00`, each answered `57`. ⚠️ The
+   * REPLY layout is a different question and is still open — docs/vcu-parameters.md §10.
    */
   | FreezeFrameRequest
   /**
@@ -52,13 +51,11 @@ export type VcuMultiFrameRequest =
    * stored code at all, so `0x17` can be asked about components that exist
    * instead of all 63 in turn.
    *
-   * 🟡 The best-attested request in this union after `0x35`. The literal frame
-   * `7C0: A8 04 18 02 FF FF` is written down in obd-garage/OTHER_TOOL_AUDIT.md
-   * §4.3 — DECOMPILED from the second owner's tool, not sniffed — together with
-   * the detail that **a bare status byte is rejected with
-   * incorrectMessageLengthOrInvalidFormat**, so the three operand bytes are
-   * required rather than conventional. The 2026-08-08 capture independently saw
-   * `0x18` once on A8 with a positive `58`, but kept no payload.
+   * ✅ CAPTURED: `7C0: A8 04 18 02 FF FF 00 00`, once on A8 in the 2026-08-08 capture,
+   * answered `58`. That is byte for byte the frame obd-garage/OTHER_TOOL_AUDIT.md §4.3 had
+   * DECOMPILED from the second owner's tool — the two now agree. §4.3 also records that **a
+   * bare status byte is rejected with incorrectMessageLengthOrInvalidFormat**, so the three
+   * operand bytes are required rather than conventional.
    */
   | { kind: "list-stored-dtcs" }
   /**
@@ -66,30 +63,28 @@ export type VcuMultiFrameRequest =
    * read-out. `0x12` is `RoutinesID.ReadFreezeFrame`. Upload means ECU → tester, so this is
    * a read; `0x34` RequestDownload, which is not, must never be added beside it.
    *
-   * ✅ The FIRST FIVE payload bytes are captured verbatim.
-   * ⚠️⚠️ **THE OTHER SEVEN OPERAND BYTES WERE NEVER CAPTURED.** Ten `0xFF` is a GUESS, and
-   * the single least-supported byte sequence in this repo. It is settleable OFFLINE and in
-   * minutes from a passive capture already on the Pi — docs/vcu-parameters.md §10 names the
-   * file and the grep. Do that before trusting this constant.
+   * ✅ CAPTURED VERBATIM, all twelve payload bytes, 2026-08-08 19:04:32. The ten `0xFF` were
+   * this repo's least-supported byte sequence until then; they are not a guess any more.
+   * The three request frames, the micro's flow control between them and the `75 12 E9` that
+   * answered are quoted in docs/vcu-parameters.md §10.
    */
   | { kind: "request-upload-freeze-frame-log" }
   /**
-   * `36` TransferData — one block of the open upload. Sent 1198 times in the
+   * `36 12` TransferData — one block of the open upload. Sent 1198 times in the
    * captured transfer, each answered `76 …`.
    *
-   * ⚠️ No block-sequence counter, and no payload was recorded either — see
-   * `TRANSFER_DATA_CARRIES_NO_BLOCK_COUNTER` for why a bare `36` is the guess and
-   * why being wrong about it is loud rather than silent.
+   * ✅ The operand is CAPTURED: all 1198 requests are `A8 02 36 12`. This repo sent a bare
+   * `36` until 2026-08-20 — see `TRANSFER_DATA_OPERAND` for which half of the old note was
+   * right and which half was wrong.
    */
   | { kind: "transfer-data" }
   /**
    * `37` RequestTransferExit — closes the upload.
    *
-   * ⚠️ The request bytes were never recorded; only the service number and the reply,
-   * `77 FF`, which is itself a puzzle since `0x37` takes no parameters in either standard.
-   * A bare `37` is sent because that is what both specify; if it draws NRC `0x13`
-   * incorrectMessageLengthOrInvalidFormat, `37 FF` is the one thing to try next
-   * (docs/vcu-parameters.md §10).
+   * ✅ CAPTURED: `7C0: A8 01 37` → `7E0: F1 02 77 FF`. A bare `37`, exactly as KWP2000 and
+   * ISO 14229 specify, so the `FF` is a status byte of the micro's own and not an echo of
+   * anything we sent. The `37 FF` this note used to hold out as the fallback to try next is
+   * NOT needed and should not be sent (docs/vcu-parameters.md §10).
    *
    * Sent even when the read is abandoned early: an ECU left holding an open upload may
    * refuse the next one. It is still a read — it transfers nothing and stores nothing.
@@ -133,15 +128,13 @@ const ROUTINE_READ_FREEZE_FRAME = 0x12;
 const FREEZE_FRAME_REQUEST_PAYLOAD_BYTES = 3;
 
 /**
- * The operand after `35 12`: ten bytes, of which only the first three are known.
+ * The operand after `35 12`: ten `0xFF`, captured whole rather than reasoned to.
  *
- * Ten is arithmetic and is solid — it is what makes the captured First Frame's
- * declared length `1 + 1 + 10 = 0x0C`. The VALUE is not: see the ⚠️⚠️ on
- * `request-upload-freeze-frame-log` above. Split into a captured half and a
- * guessed half here so the guess is countable rather than buried in a fill().
+ * Ten is arithmetic as well — it is what makes the First Frame's declared length
+ * `1 + 1 + 10 = 0x0C`. This used to be split into a captured half and a guessed half so
+ * that the guess stayed countable; the capture settled it, so it is one array again.
  */
-const READ_FREEZE_FRAME_OPERAND_CAPTURED = [0xff, 0xff, 0xff];
-const READ_FREEZE_FRAME_OPERAND_GUESSED = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+const READ_FREEZE_FRAME_OPERAND = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
 
 /**
  * `18 02 FF FF` — status mask `02` ("all identified DTCs"), DTC group `FF FF`
@@ -155,18 +148,16 @@ const READ_FREEZE_FRAME_OPERAND_GUESSED = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0
 const LIST_STORED_DTCS_OPERAND = [0x02, 0xff, 0xff];
 
 /**
- * ⚠️ `0x36` carries no block-sequence counter here — a named constant because it is the
- * assumption most likely to be wrong, and the one that would be silently wrong. ISO 14229's
- * TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, … and wrapping; the
- * evidence for a bare `36` on this bike is indirect, and neither strand of it is a captured
- * payload (docs/vcu-parameters.md §10).
+ * The operand after `36`: the routine id again — and still NOT a block-sequence counter.
  *
- * If it turns out to need one, the symptom is unambiguous rather than subtle — the first
- * `0x36` is refused, most likely NRC `0x13` incorrectMessageLength or `0x24`
- * requestSequenceError — so this is a wrong assumption that announces itself instead of
- * producing 1198 blocks of shifted bytes.
+ * ISO 14229's TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, … and
+ * wrapping. This micro does neither. All 1198 requests in the 2026-08-08 capture are
+ * `A8 02 36 12`: a CONSTANT `0x12`, the `RoutinesID.ReadFreezeFrame` the upload was opened
+ * with. The note that stood here was half right — no counter — and half wrong, because it
+ * read "no counter" as "no operand" and shipped a bare `36`, which is one byte short of
+ * anything this micro has been seen to accept. docs/vcu-parameters.md §10.
  */
-const TRANSFER_DATA_CARRIES_NO_BLOCK_COUNTER = true;
+const TRANSFER_DATA_OPERAND = [ROUTINE_READ_FREEZE_FRAME];
 
 /** ISO-TP PCI nibbles, under extended addressing they live in byte 1 rather than byte 0. */
 const SINGLE_FRAME = 0x00;
@@ -220,17 +211,9 @@ function encodePayload(request: VcuMultiFrameRequest): Uint8Array {
     case "list-stored-dtcs":
       return Uint8Array.from([SERVICE_READ_DTC_BY_STATUS, ...LIST_STORED_DTCS_OPERAND]);
     case "request-upload-freeze-frame-log":
-      return Uint8Array.from([
-        SERVICE_REQUEST_UPLOAD,
-        ROUTINE_READ_FREEZE_FRAME,
-        ...READ_FREEZE_FRAME_OPERAND_CAPTURED,
-        ...READ_FREEZE_FRAME_OPERAND_GUESSED,
-      ]);
+      return Uint8Array.from([SERVICE_REQUEST_UPLOAD, ROUTINE_READ_FREEZE_FRAME, ...READ_FREEZE_FRAME_OPERAND]);
     case "transfer-data":
-      if (!TRANSFER_DATA_CARRIES_NO_BLOCK_COUNTER) {
-        throw new Error("vcu: transfer-data needs a block counter, and this encoder does not have one to give");
-      }
-      return Uint8Array.from([SERVICE_TRANSFER_DATA]);
+      return Uint8Array.from([SERVICE_TRANSFER_DATA, ...TRANSFER_DATA_OPERAND]);
     case "request-transfer-exit":
       return Uint8Array.from([SERVICE_REQUEST_TRANSFER_EXIT]);
     default:
@@ -312,11 +295,10 @@ export function segmentRequestPayload(target: VcuTarget, payload: Uint8Array): U
  * client ("no transmit address is ever derived from something the bus said") and the one
  * thing that could quietly be lost by teaching this client to answer a First Frame.
  *
- * ⚠️ `FF 00` is what obd-garage's notes say to send, not what anything was observed
- * sending: no flow-control frame has ever been captured on this channel, in either
- * direction. It is indistinguishable in effect from the `30 00 00` src/can/obd-dtc.ts sends
- * on the OBD channel, because ./multiframe-transfer.ts caps a reply well under 255 frames.
- * docs/vcu-parameters.md §10.
+ * ✅ `FF 00` — BlockSize 255, SeparationTime 0 — is CAPTURED on this channel in both
+ * directions, which it was not when this note said no flow-control frame ever had been: the
+ * 2026-08-08 capture has ours 1227 times as `A8 30 FF 00`, and the micro's own once as
+ * `F1 30 FF 00`, sent 11 ms after our `0x35` First Frame. docs/vcu-parameters.md §10.
  */
 export function buildFlowControlFrame(target: VcuTarget): Uint8Array {
   const frame = new Uint8Array(8);
@@ -438,14 +420,14 @@ export function decodeMultiFrameReply(payload: Uint8Array, expectedService: numb
 /**
  * What a `75` RequestUpload reply said, from the body after the service byte.
  *
- * ⚠️ Only ONE such reply has ever been seen — `75 12 E9`, in the 2026-08-08 census — and
- * the census kept the bytes without recording what they mean. Two readings fit, and this
- * reports both rather than picking; the field names below assume the stronger one. See
- * docs/vcu-parameters.md §10.
+ * ✅ `75 12 E9`, and the capture settles what the two bytes mean: `12` echoes the routine
+ * id, and `E9` = 233 is a maxNumberOfBlockLength — the longest of the 1198 `76` replies
+ * that followed is exactly 233 bytes. The rival reading (`12` as a lengthFormatIdentifier)
+ * is out. docs/vcu-parameters.md §10.
  *
- * Nothing in this repo ACTS on either number: the block length is not used to size
- * anything, and the loop stops on what the micro does rather than on a count derived from
- * `E9`. It is carried so the first live run can settle it.
+ * Nothing here ACTS on the number even so: the loop stops on what the micro does rather
+ * than on a count derived from `E9`. But ./freeze-frame-log.ts DOES have to be able to hold
+ * 233 bytes, which is what `TRANSFER_BLOCK_MAX_PAYLOAD_BYTES` is now sized from.
  */
 export interface VcuUploadGrant {
   /** Byte 0 of the body. Expected to echo `0x12`; reported whatever it is. */
@@ -471,17 +453,15 @@ export function readUploadGrant(body: Uint8Array): VcuUploadGrant {
 /**
  * Is this `76` body the end of the upload?
  *
- * ⚠️ INFERRED, and it is the second assumption most likely to be wrong. The
- * captured transfer ran 1198 blocks and then sent `0x37`, but the census did not
- * record what the 1198th reply looked like or what made the software stop. An
- * empty body is the conventional end-of-upload marker and is what this treats as
- * the end.
+ * ⚠️⚠️ STILL INFERRED, and the capture makes it LESS likely rather than more: the factory
+ * tool's 1198th reply was 64 body bytes, not empty, and no `7F` refusal followed it either.
+ * So whatever told that tool to stop, an empty body is not it, and this test may simply
+ * never fire. Read docs/vcu-parameters.md §11 before changing it — the block lengths vary
+ * 206…233, so "shorter than the last one" is not a rule either.
  *
- * The consequence of being wrong is bounded rather than silent, which is why it
- * is acceptable to guess here at all: too eager and the log comes back short with
- * its block count visible in the result; too lax and the block cap in
- * ./freeze-frame-log.ts stops it and says so. Neither produces a wrong record —
- * every block that arrived is kept exactly as it arrived.
+ * Left as it is because being wrong here is bounded rather than silent: too lax and the
+ * block cap in ./freeze-frame-log.ts stops the read and says so, with every block that
+ * arrived kept exactly as it arrived.
  */
 export function isUploadFinished(body: Uint8Array): boolean {
   return body.length === 0;

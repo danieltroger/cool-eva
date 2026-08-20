@@ -2,19 +2,21 @@
 // to a bus.
 //
 // ── ⚠️ HOW MUCH OF EACH ONE IS REAL. READ THIS BEFORE TRUSTING A PASS. ─────
-// This channel has almost no captured payloads. The 2026-08-08 passive capture of
-// the factory software counted 26 662 requests and kept only their SERVICE bytes,
-// so `0x17`, `0x18`, `0x36` and `0x37` have counts and outcomes behind them and
-// no bytes. What follows is graded, and the grades differ sharply:
+// ⚠️ The paragraph that stood here said this channel "has almost no captured payloads",
+// because a 2026-08-08 CENSUS of the passive capture had kept service bytes and thrown the
+// payloads away. The capture itself kept everything — see docs/vcu-parameters.md §10 — so
+// the grades below now say "captured" where they used to say "constructed":
 //
-//   §A  RECONSTRUCTED FROM TWO INDEPENDENT LIVE RECORDS. The strongest thing
-//       here, and the only multi-frame reply on this channel with any real bytes
-//       in it at all. See `BANK2_IDENTIFIER_0001_FRAMES`.
-//   §B  CAPTURED VERBATIM, request side only — the `0x35` First Frame.
-//   §C  DECOMPILED, not sniffed — the `0x18` request.
-//   §D  CONSTRUCTED. Everything else, including every `0x36` block. These prove
-//       the transport is self-consistent and rejects what it should. They prove
-//       nothing about the bike.
+//   §A  RECONSTRUCTED FROM TWO INDEPENDENT LIVE RECORDS, then corrected against the
+//       capture's sequence numbering. See `BANK2_IDENTIFIER_0001_FRAMES`.
+//   §B  CAPTURED VERBATIM — the whole `0x35` request, the `0x36` request, the `0x37`
+//       request, and the `75` grant.
+//   §C  CAPTURED VERBATIM, and it agrees byte for byte with the decompiled note that was
+//       all this had before — the `0x18` request.
+//   §D  CONSTRUCTED. The replies, including every `0x36` block body. These prove the
+//       transport is self-consistent and rejects what it should. They prove nothing about
+//       the bike. ⚠️ Real `0x36` block bodies ARE in the capture now, 1198 of them; see
+//       docs/vcu-parameters.md §11 for why replacing these is its own piece of work.
 //
 // The malformed frames in §D are the ones actually worth having regardless of
 // provenance: a transport that completes a transfer from a short Consecutive
@@ -45,21 +47,33 @@ export const BANK2_IDENTIFIER_0001_PAYLOAD = "62 20 01 00 09 3C B6";
 export const BANK2_IDENTIFIER_0001_RECORD = "00 09 3C B6";
 
 /**
- * §B — the `0x35` RequestUpload First Frame, captured verbatim.
- *
- * obd-garage/DIAG_ADDRESSES.md §9.6, from the 2026-08-08 passive capture of the
- * factory software: `A8 10 0C 35 12 FF FF FF`, declaring `0x00C` = 12 payload
- * bytes and carrying the first five. This repo's segmenter must produce this
- * frame byte for byte, which is the single strongest assertion in the check.
- *
- * ⚠️ The Consecutive Frames that followed it were NOT captured — the census
- * filtered by service byte and a Consecutive Frame has none. So the seven operand
- * bytes they carried are unknown, and the two frames below are what
- * src/vcu/multiframe-codec.ts' guess produces, not what the tool sent.
+ * §B — the `0x35` RequestUpload First Frame, captured verbatim: `A8 10 0C 35 12 FF FF FF`,
+ * declaring `0x00C` = 12 payload bytes and carrying the first five, at 19:04:32.265292.
+ * This repo's segmenter must produce it byte for byte.
  */
 export const REQUEST_UPLOAD_FIRST_FRAME = "A8 10 0C 35 12 FF FF FF";
 
-/** §C — `7C0: A8 04 18 02 FF FF`, from obd-garage/OTHER_TOOL_AUDIT.md §4.3. Decompiled, not sniffed. */
+/**
+ * §B — `0x36` TransferData, captured verbatim and 1198 times over.
+ *
+ * Every request in the 2026-08-08 transfer is this frame: `A8 02 36 12`, a Single Frame
+ * declaring TWO payload bytes. The operand never varies across the 1198, which is what
+ * rules out a block-sequence counter — and it is not empty either, which is what this repo
+ * assumed until 2026-08-20.
+ */
+export const TRANSFER_DATA_FRAME = "A8 02 36 12 00 00 00 00";
+
+/**
+ * §B — `0x37` RequestTransferExit, captured verbatim: `A8 01 37` at 19:11:49.670991,
+ * answered `F1 02 77 FF`. A bare `37`; there is no `37 FF` to fall back to.
+ *
+ * ⚠️ Zero-padded here where the tool sent a 3-byte DLC. Both DLC modes appear in the same
+ * session — 3050 of the tool's own `A8 01 3E` are padded to 8 and 31 are not — and the
+ * length byte governs, so the padding is not what this fixture asserts.
+ */
+export const REQUEST_TRANSFER_EXIT_FRAME = "A8 01 37 00 00 00 00 00";
+
+/** §C — `7C0: A8 04 18 02 FF FF 00 00`, captured on A8 at 19:03:59 and answered `58`. */
 export const LIST_STORED_DTCS_FRAME = "A8 04 18 02 FF FF 00 00";
 
 /**
@@ -91,8 +105,27 @@ export const UPLOAD_BLOCK_BODIES = [
   "0C A1 B5 42 00 33 11 00 01",
 ];
 
-/** The `75` grant body, captured as part of `75 12 E9` in DIAG_ADDRESSES.md §9.6. */
+/**
+ * §B — the `75` grant body, captured as `F1 03 75 12 E9`.
+ *
+ * `E9` = 233 is a maxNumberOfBlockLength, settled rather than guessed: the longest of the
+ * 1198 `76` replies that followed is exactly 233 bytes, and none is longer.
+ */
 export const UPLOAD_GRANT_BODY = "12 E9";
+/** The longest `0x36` reply in the captured transfer, and what `E9` turns out to mean. */
+export const UPLOAD_MAX_BLOCK_PAYLOAD_BYTES = 233;
+
+/**
+ * §D — one block of the largest size the grant allows: `76` plus 232 body bytes.
+ *
+ * ⚠️ The CONTENT is filler and means nothing; the LENGTH is the assertion. It is here
+ * because `TRANSFER_BLOCK_MAX_PAYLOAD_BYTES` was 128 until 2026-08-20 — under the 206…233
+ * every real block turns out to be — so the reassembler abandoned block 1 and the read
+ * collected nothing. Every other block fixture here is 9…12 bytes and sailed past that.
+ */
+export const UPLOAD_MAX_LENGTH_BLOCK_BODY = Array.from({ length: UPLOAD_MAX_BLOCK_PAYLOAD_BYTES - 1 }, (_, index) =>
+  (index & 0xff).toString(16).padStart(2, "0").toUpperCase()
+).join(" ");
 
 /**
  * §D — the malformed replies the transport must ABANDON rather than complete.
