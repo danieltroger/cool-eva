@@ -15,6 +15,10 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 // The two invented frames below also DISAGREE with the real ones, which is worth knowing
 // before trusting them for anything else: component 44 really answered 18 bytes with
 // status 0x07, not 17 with 0x05, and component 4 answered status 0x25, not 0x2D.
+// Both are also a byte SHORT — 17 and 16 against the real 18 and 17 — because they were
+// built with no trailing byte, the one part of the layout no constructed fixture could
+// have guessed. That is the concrete form of the warning above: these frames satisfy
+// every assertion about a layout that turned out to be missing a field.
 //
 // So what the check verifies is INTERNAL CONSISTENCY: that the decoder reproduces the
 // layout src/diagnostics/freeze-frame.ts documents, applies Energica's own scalings to

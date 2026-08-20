@@ -1,3 +1,4 @@
+import { ExtendedIsoTpReassembler } from "../src/diagnostics/extended-iso-tp.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 
 // The 29 freeze-frame replies the VCU actually sent, from capture-20260808-182129
@@ -16,7 +17,7 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 //
 // Layout, confirmed against all 29: `57 <recordCount> <DTC-hi> <DTC-lo> <status>`,
 // then the fault's infokey fields in payload order, then ONE trailing byte whose
-// meaning is not known. See docs/diagnostics-and-checks.md §11.4.
+// meaning is not known. See docs/diagnostics-and-checks.md §11.3.1.
 
 export interface CapturedFreezeFrame {
   readonly component: number;
@@ -234,17 +235,24 @@ export const CAPTURED_FREEZE_FRAMES: readonly CapturedFreezeFrame[] = [
   },
 ];
 
-/** Reassembled payload for one captured reply, PCI bytes stripped. */
+/**
+ * Reassembled payload for one captured reply, PCI bytes stripped.
+ *
+ * Deliberately the PRODUCTION reassembler and not a local one. A hand-rolled version
+ * here concatenated frames in arrival order and never looked at the sequence numbers
+ * or the address byte — so renumbering every CF 0-based to 1-based, the exact mistake
+ * PR #98 was about, left these fixtures passing. Now that mutation fails.
+ */
 export function capturedFreezeFramePayload(entry: CapturedFreezeFrame): Uint8Array {
-  const frames = entry.frames.map(parseHexFrame);
-  const first = frames[0];
-  if ((first[1] & 0xf0) === 0x00) {
-    return first.slice(2, 2 + (first[1] & 0x0f));
+  const reassembler = new ExtendedIsoTpReassembler();
+  let result;
+  for (const frame of entry.frames) {
+    result = reassembler.push(parseHexFrame(frame));
   }
-  const declared = ((first[1] & 0x0f) << 8) | first[2];
-  const payload = [...first.slice(3)];
-  for (const frame of frames.slice(1)) {
-    payload.push(...frame.slice(2));
+  if (!result || result.status !== "complete") {
+    throw new Error(
+      `captured-freeze-frames: component ${entry.component} did not reassemble (${result?.status ?? "no frames"})`
+    );
   }
-  return new Uint8Array(payload.slice(0, declared));
+  return result.payload;
 }

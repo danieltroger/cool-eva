@@ -47,9 +47,13 @@ import {
 // they check the manufacturer's own data against this repo's independently
 // sourced DTC table, and a disagreement there would be real.
 //
-// The one number to watch when the bike is back is `trailingHex`. It is empty in
-// every fixture below by construction; if it is non-empty on a real reply, the
-// layout is wrong and the bytes are still in hand to work out how.
+// `trailingHex` was written down as the number to watch, on the rule that a
+// non-empty value on a real reply would mean the layout was wrong. The bike is back,
+// §8 replays 29 real replies, and it is non-empty on ALL of them — so the rule as
+// stated would condemn a layout that the same 29 replies confirm. What the rule
+// actually caught is that the reply is one byte longer than the fields account for;
+// the fields themselves decode correctly, which is a different fault to the one it
+// predicted. The trailing byte is FREEZE_FRAME_TRAILING_BYTES, and still undecoded.
 
 const failures: string[] = [];
 
@@ -270,9 +274,10 @@ if (lampFrame) {
   }
 }
 
-// The layout's own prediction: a reply is the header plus the shortlist's bytes,
-// and nothing else. If this ever disagrees with a real capture, the header
-// comment in src/diagnostics/freeze-frame.ts is what needs correcting.
+// The layout's own prediction: header, the shortlist's bytes, and one trailing byte.
+// It DID disagree with a real capture — it said 17 where all 29 replies carry a byte
+// the fields do not account for — and the correction is the trailing byte, now part
+// of expectedFreezeFramePayloadBytes rather than a surprise at the call site.
 // Symptom 0, matching the fixture and dtc-table.ts' (44,0) = P0A07. All three of
 // component 44's symptoms carry the same shortlist, so picking the wrong one
 // would still pass — which is exactly why it is worth being explicit here, on the
@@ -280,8 +285,8 @@ if (lampFrame) {
 const pumpShortlist = infokeysFor(FREEZE_FRAME_P0A07_COMPONENT, 0);
 if (pumpShortlist) {
   check(
-    expectedFreezeFramePayloadBytes(pumpShortlist) === 17,
-    `a P0A07 reply should be 17 payload bytes, the model says ${expectedFreezeFramePayloadBytes(pumpShortlist)}`
+    expectedFreezeFramePayloadBytes(pumpShortlist) === 18,
+    `a P0A07 reply should be 18 payload bytes, the model says ${expectedFreezeFramePayloadBytes(pumpShortlist)}`
   );
   check(freezeFrameFieldBytes(pumpShortlist) === 12, "P0A07's seven fields are 12 bytes");
 }
@@ -491,6 +496,23 @@ for (const entry of CAPTURED_FREEZE_FRAMES) {
   check(
     /^[0-9A-F]{2}$/.test(frame.trailingHex),
     `${label}: expected exactly one unexplained trailing byte, got "${frame.trailingHex}"`
+  );
+
+  // Header bytes 1 and 2. Every reply in the capture answers about exactly one DTC
+  // and every component fits in a byte, so the count is 1 and the high byte is zero
+  // — 29 times. Without these two the whole `57 01 00` header goes unwatched.
+  check(frame.recordCount === 1, `${label}: recordCount ${frame.recordCount}, every captured reply carries 1`);
+  check(payload[2] === 0x00, `${label}: DTC high byte 0x${payload[2].toString(16)}, expected 0x00`);
+
+  // The status LOW nibble, which the symptom check above cannot see. It is 5 on 28
+  // of the 29 and 7 on component 44 alone — the bike's one permanently-present fault,
+  // and the reason that reply is the layout's anchor. An observation about the
+  // capture, not a rule about the protocol: if a later read disagrees, that is a
+  // finding rather than a broken check.
+  const lowNibble = payload[4] & 0x0f;
+  check(
+    lowNibble === (entry.component === 44 ? 0x7 : 0x5),
+    `${label}: status low nibble 0x${lowNibble.toString(16)} — expected 0x7 for component 44, 0x5 otherwise`
   );
 }
 

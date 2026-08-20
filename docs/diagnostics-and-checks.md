@@ -636,17 +636,40 @@ A "sample" there is one WebSocket message, carrying the SERVER's timestamp — n
 
 The names are a trap: `btn_cruise_enable` sits next to `btn_cruise_set` and BOTH of its recorded presses armed cruise control 0.53 s later. Binding a UI gesture to that bit would put a tab switch on a control that changes how the bike is moving — which is why the check also pins which buttons the gestures are bound to.
 
-### 11.4 What the 29 captured replies settled
+#### 11.3.1 What the 29 captured replies settled
 
-The reply layout, confirmed on all 29: `57 <recordCount> <DTC-hi> <DTC-lo> <status>`, then the fault's infokey fields in payload order, then **one trailing byte**. `FREEZE_FRAME_HEADER_BYTES = 5` is right.
+Numbered inside 11.3 rather than taking 11.4, because ten comments across nine check scripts already point at "§11.4" meaning the section below, and renumbering them to make room for this one would have broken all ten silently.
 
-**The shortlists are correct 29 times out of 29.** Every reply's length equals the 5-byte header plus that fault's own infokey widths plus one, for components from 3 to 62 and field payloads from 0 to 20 bytes. A 944-reference table extracted from Energica's tooling now has 29 independent confirmations, and `MAX_FREEZE_FRAME_FIELD_BYTES = 20` is met exactly by component 51 rather than exceeded.
+The reply layout, confirmed on all 29: `57 <recordCount> <DTC-hi> <DTC-lo> <status>`, then the fault's infokey fields in payload order, then **one trailing byte**.
 
-**The one claim about the motorcycle rather than about the code**: component 44 decodes as `P0A07`, `ai_WaterPumpCurrent_In` = **0 mA** against a 400 mA open-circuit threshold — the pump is wired to the heated-grip output, so its driver sits open — and the three IGBT legs read an identical 34.9 °C. Three legs of one inverter sampled in one instant _must_ agree, and a one-byte misalignment destroys that: reading the header as 6 gives 23809, 23809, 23945. That is the assertion that pins the layout down, and it is one a constructed fixture could only make by having been told the answer first.
+⚠️ **The lengths alone do NOT settle the header split.** `5 + fields + 1` and `6 + fields` are the same number, 29 times out of 29 — the arithmetic cannot tell a 5-byte header with a trailer from a 6-byte header without one. What the lengths confirm is the shortlists' total widths. The split is settled by decoding, below.
 
-**The trailing byte is not decoded.** It is not a checksum — sum, XOR, field-sum and one's-complement all match 0 of 29. Values are small integers (1, 2, 3, 5…61, 118) plus `0xFF` on six replies. The working hypothesis is a **saturating occurrence counter**: component 44, this bike's permanent standing fault, is one of the `0xFF`s, and components seen once read `01`. **This is a hypothesis, not a decode** — only one session has ever captured these, so it cannot be tested against a second. The test that would settle it is cheap and belongs on the on-bike list: read the frames again, and see whether the counters have gone up. If they have not moved, the counter reading is dead.
+**The header is 5 bytes, and 25 of the 29 replies say so.** Apply physical bounds to every decoded field at once — SOC and SOH within 0–100, pack voltage under 400, cell millivolts at or under 4500, temperatures within −40…80 — plus the cross-field orderings `MIN_CELL ≤ AVG_CELL ≤ MAX_CELL` and `L_TEMP ≤ H_TEMP`:
 
-`headerBytesThatFit` returns `[]` on all 29 real replies, because no candidate header length explains a payload that is one byte longer than header-plus-fields. That empty array is the correct answer and not an error — the docstring in `src/diagnostics/freeze-frame.ts` now says so, since the one state the bike actually produces was the one state the documentation did not cover.
+| header | replies containing an impossible value | violations |
+| ------ | -------------------------------------- | ---------- |
+| 4      | 11 of 29                               | 27         |
+| **5**  | **0 of 29**                            | **0**      |
+| 6      | 14 of 29                               | 31         |
+
+The single sharpest reply is component 44, `P0A07`: `ai_WaterPumpCurrent_In` reads **0 mA** against a 400 mA open-circuit threshold — the pump is wired to the heated-grip output, so its driver sits open — and the three IGBT legs read an identical **34.9 °C**. Three legs of one inverter sampled in one instant must agree. Note this is doing real work only because it is a _three_-way test: at headers 3, 4 and 6, two of the three still agree by chance. Corroborating: component 46 (`P1044`, cell overvoltage) reads SOC 100 % with a 4201 mV maximum cell; component 7 (`P1004`, cell undervoltage) reads SOC 12 %, −88.3 A, minimum cell 3259 mV; components 36, 37 and 48 read `P_V12` at 12720, 12720 and 12736 mV. Those are self-consistent stories rather than coincidences.
+
+**A second, independent witness to the count.** 30 ms before the first `0x17`, the tool sent `18 02 FF FF` (ReadDTCByStatus) and got back an 89-byte `0x58`: a count byte of `0x1D` = **29**, then 29 three-byte records whose `(component, status)` pairs are identical, and in the same order, to the 29 freeze-frame replies. The count and the status bytes are each confirmed down a second path.
+
+**How far the shortlists are actually confirmed.** Every reply's length equals the header plus that fault's own infokey widths plus one, for components 3 to 62 and field payloads from 0 to 20 bytes, and 20 is reached by component 51 — so `MAX_FREEZE_FRAME_FIELD_BYTES = 20` is met exactly rather than exceeded. But **"29 of 29" is not 29 independent confirmations of the 944-reference table**, and the earlier wording here overstated it. The 29 replies touch **191 of 944 references (20 %)**, **65 of 120 infokeys**, and only **23 distinct shortlists** — five shortlists are shared by two or three captured faults ((41,0)+(42,0); (3,0)+(4,2); (5,0)+(6,0); (7,0)+(22,0)+(46,0); (39,0)+(40,0)), so those do not independently confirm each other. The length test distinguishes only **12 distinct total widths**, and length-consistency cannot detect two same-width fields being transposed. The cross-field orderings above do confirm ordering for the battery faults; nothing confirms it for the rest.
+
+**The trailing byte is not decoded.** It is not a checksum, and this was tested exhaustively rather than casually: the entire CRC-8 space (256 polynomials × 256 inits × 256 xorouts × 4 reflection combinations × 7 byte ranges), nine accumulator variants (sum mod 256, sum mod 255, end-around carry, one's and two's complement, XOR, XOR complement, LRC, byte count) and 18 named CRC-8 presets. **Nothing beats a degenerate 6 of 29** — polynomial 0 with xorout `FF`, which only reproduces the six `0xFF` values and would match any data containing six `0xFF`s.
+
+Values are small integers (1, 2, 3, 5…61, 118) plus `0xFF` on six replies. Two readings fit, and the evidence does not separate them:
+
+- **A saturating occurrence counter.** Component 44 — this bike's permanent standing fault — is one of the `0xFF`s.
+- **A "not applicable" sentinel.** Three of the six `0xFF`s sit on components 51, 52 and 60: `P1050`, `P1051` and `P1052`, _Battery statistics info 1/2/3_. Those are informational pseudo-codes, not faults that "occur" — a saturated occurrence count on a statistics record is odd, where a sentinel is natural. The distribution, topping out at 118 and then jumping to 255, suits either.
+
+⚠️ Do NOT reason from "components seen once read `01`". Nothing in the capture measures how many times a component was seen; that sentence is the counter hypothesis restated as if it corroborated itself, and it stood here until a review caught it. The `0x58` list carries no per-DTC counter — exactly three bytes per record — so there is no second source.
+
+⚠️ **The obvious test is compromised by this same capture.** "Read them again and see whether the counters moved" looks decisive but is not: at `19:04:28.392`, 25 s after the last freeze-frame read, the factory tool sent `14 FF FF` (ClearDiagnosticInformation) to the A8 and got `54 FF FF` back. The codes were cleared in this session. Unchanged or low values on a re-read are therefore consistent with the counter reading _and_ with its negation, since a clear would plausibly reset a counter too. A test that does discriminate has to span a clear it knows about, or find a component whose fault recurs on a known schedule.
+
+`headerBytesThatFit` returns `[]` on all 29 real replies, because no candidate header length explains a payload one byte longer than header-plus-fields. That empty array is the correct answer and not an error. It also means the field can no longer do the job its docstring assigns it — it was written as the tie-breaker for the header split, and on real data it breaks no ties. It is kept because an empty result is itself the signal that the length is not header-plus-fields.
 
 ### 11.4 The bugs the checks were written for
 
