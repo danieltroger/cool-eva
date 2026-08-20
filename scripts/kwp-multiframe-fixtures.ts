@@ -162,11 +162,11 @@ export const MALFORMED_TRANSFERS: readonly {
     name: "gapped consecutive frame",
     frames: ["F1 10 0D 62 20 01 00 09", "F1 21 3C B6 00 00 00 00"],
     refusal: "abandoned",
-    because: "sequence 2 arrived where 1 was expected, so bytes are missing",
+    because: "sequence 1 arrived where 0 was expected, so bytes are missing",
   },
   {
     // THE one that matters. A Consecutive Frame with a short DLC in the MIDDLE of
-    // a transfer: the sequence numbers still run 1, 2, 3…, so nothing looks wrong,
+    // a transfer: the sequence numbers still run 0, 1, 2…, so nothing looks wrong,
     // and a transport that takes what arrived writes every later byte at the wrong
     // offset and completes at the declared length. A review caught exactly this in
     // the freeze-frame decoder — it produced an int16 with °C on it and an empty

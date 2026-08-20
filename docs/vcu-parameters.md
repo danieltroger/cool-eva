@@ -667,7 +667,7 @@ The ten `0xFF` were this repo's least-supported byte sequence for two weeks. The
 The note this replaces said to grep the capture for "`7C0` frames whose second byte is `0x21`". That is wrong twice, and it cost the next reader a session before anyone got a byte out of the file:
 
 - **`0x21` is the wrong frame.** Under extended addressing byte 0 is the ADDRESS (`A8`) and byte 1 is the PCI, so the frame carrying the operand is `A8 20 …`. The payload splits **5 / 6 / 1** across the First Frame and TWO Consecutive Frames, and `A8 21 …` is the second one — it holds the twelfth byte and nothing else.
-- **Anchoring on `[8]` silently drops 48 frames.** The tool mixes DLC modes in one session: of the 26 662 `7C0` frames, 26 614 are padded to `[8]` and 48 are not (39 at `[3]`, 9 at `[4]`). The `0x37` that settles the transfer exit is one of the 48 — `A8 01 37` at `[3]` — so a pattern with `[8]` or a fixed run of spaces in it finds a perfectly consistent, perfectly wrong answer. (The spacing itself does NOT vary; every line has the same field padding. It is the DLC that does.)
+- **Anchoring on `[8]` silently drops 48 frames.** The tool mixes DLC modes in one session: of the 26 662 `7C0` frames, 26 614 are padded to `[8]` and 48 are not (39 at `[3]`, 9 at `[4]`). The `0x37` that settles the transfer exit is one of the 48 — `A8 01 37` at `[3]` — so a pattern with `[8]` or a fixed run of spaces in it finds a perfectly consistent, perfectly wrong answer. ⚠️ The spacing varies too, and the trap is nastier than it looks: **48 lines also use a narrow interface field — but a DIFFERENT 48.** Cross-tabulated, 35 of the short-DLC frames are wide-padded and 35 full-DLC frames are narrow-padded. Two independent partitions that happen to be the same size, which is how an earlier reading matched the counts and concluded the padding was uniform. Anchor on neither: split on whitespace and read fields by position.
 
 What works, on either copy of the file (`/home/pi/ride-captures/` on the Pi, `~/Documents/cool-eva-archive/` on the laptop). The format is one frame per line, whitespace-separated, `$4` the CAN id and `$6…` the data bytes:
 
@@ -682,7 +682,7 @@ awk '$4=="7C0"{print $6,$7,$8,$9}' diag.log | sort | uniq -c | sort -rn
 grep -n "35 12" diag.log        # the First Frame; read the next few lines
 ```
 
-Two counts that make a parse self-checking: the tester sends 1227 `A8 30 FF 00` flow controls, and A8 sends 1227 First Frames (1198 `0x36` blocks + 29 `0x17` replies). If those do not match, the parse is wrong.
+Two counts that make a parse self-checking: the tester sends 1227 `A8 30 FF 00` flow controls, and A8 sends 1227 First Frames — 1198 `0x36` blocks + **28** `0x17` replies + **1** `0x18`. (There are 29 `0x17` replies in the session, but component 60's fits a Single Frame, so it is not among the First Frames). If those do not match, the parse is wrong.
 
 ### 🔴 `0x36` TransferData is `36 12`, not a bare `36` — fixed 2026-08-20
 
