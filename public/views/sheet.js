@@ -83,8 +83,6 @@ export function Sheet() {
       // for a rule, and states its own risk under its own heading.
       div({ class: "sheet-heading-note" }, "Reads the bike. Nothing in this part changes it."),
       ServiceMode(),
-      h2({ class: "sheet-heading" }, "Stored codes"),
-      TroubleCodes(),
       // No "Link" section, deliberately. A per-source liveness readout was here in
       // two shapes and neither could be read: a grid of sixteen fractions needed the
       // reader to know sixteen normal denominators (BATTERY 17/46 is a HEALTHY parked
@@ -211,34 +209,6 @@ function DownloadButton() {
     // anyone on that wifi (src/http/download.ts, and README "What this does and
     // doesn't hide").
   );
-}
-
-/**
- * Trouble codes the bike has stored, from the Connectivity Hub's diagnostics
- * message. Moved off the riding screens and in here: a stored code is never
- * something to read about at speed, but it is the first thing worth checking when
- * you stop.
- *
- * Each code is its own 1/0 signal keyed `dtc_<component>_<symptom>` — see
- * src/diagnostics/dtc-table.ts. The count is cross-checked against OBD-II PID 01,
- * which reaches the same number down a completely different path.
- */
-function TroubleCodes() {
-  return div({ class: "action-note" }, () => {
-    // `\d+`, not `\d{4}`: dtcSignalKey pads the component to a MINIMUM of four
-    // digits, and a code no table row names keeps its raw low 16 bits — up to five
-    // digits. Those are exactly the codes worth seeing.
-    const active = knownKeys.val
-      .filter(key => /^dtc_\d+_\d+$/.test(key) && (valueOf(key) ?? 0) > 0)
-      .map(key => key.slice(4).replace("_", "/"))
-      .sort();
-    const viaObd = valueOf("dtc_count");
-    const crossCheck = viaObd == null ? "" : ` · OBD reports ${Math.round(viaObd)}`;
-    if (active.length === 0) {
-      return `none set${crossCheck}`;
-    }
-    return `${active.join(" · ")}${crossCheck} — named, with history, on the Faults tab`;
-  });
 }
 
 /** True while the bike is reporting at least one stored trouble code. */

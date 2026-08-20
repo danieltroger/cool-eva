@@ -700,6 +700,12 @@ body {
 .code-toggle.risk-fold {
   width: 100%;
   text-align: left;
+  /* Flex so the caret can be pushed to the right edge — see .risk-fold-caret. The
+     label and the caret share the first line; .risk-fold-contents takes a full basis
+     and drops to the second, which is the two-line shape this had before. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   font-size: 0.85rem;
   font-weight: 600;
   line-height: 1.4;
@@ -723,7 +729,7 @@ body {
    at the bike who wants the clock should not have to open it to find out the clock is
    in there. */
 .risk-fold-contents {
-  display: block;
+  flex-basis: 100%;
   margin-top: 0.2rem;
   font-weight: 400;
   color: var(--label);
@@ -1096,4 +1102,27 @@ body {
   line-height: 1.2;
   /* Refusals are a sentence, not a word, and they must not spill off a narrow phone. */
   overflow-wrap: break-word;
+}
+
+/* Export is a twice-a-year action sitting directly under a button pressed every
+   visit. At the same size the sheet claimed they matter equally. Quieter, not
+   hidden: same target height for a gloved thumb, less of everything else. */
+.action.action-quiet {
+  font-size: 0.9rem;
+  min-height: 3rem;
+  padding: 0.7rem 1rem;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+/* The caret carried the whole "this opens" signal at text size, and did not read
+   as one. Sized up and pushed to the end of the row so the control has an edge to
+   aim at rather than a glyph trailing two spaces after a sentence. */
+.risk-fold-caret {
+  margin-left: auto;
+  padding-left: 0.75rem;
+  font-size: 1.5rem;
+  line-height: 1;
+  /* The one part of this control that says "there is more behind it". It was text-
+     sized and trailing two spaces after a sentence, which read as punctuation. */
 }

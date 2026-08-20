@@ -284,6 +284,20 @@ function TableTypeNote() {
 function ParameterForm() {
   return div(
     div({ class: "probe-row" }, Field("Parameter", ParameterSelect)),
+    // Five, and that is the entire list. Without saying so the select looks like a
+    // filter that dropped the other 272 — src/vcu/write-targets.ts is an allowlist,
+    // and two identifiers away from these five sit CELL_OVERVOLTAGE, THROTTLE_MAX_TH
+    // and ACTIVE_CURRENT_LIMIT. All 277 stay READABLE; only these five can be written.
+    div({ class: "action-note" }, () => {
+      const count = state.val?.status.targets.length ?? 0;
+      if (count === 0) {
+        return "";
+      }
+      return (
+        `These ${count} are the only parameters this can write, by design. ` +
+        "Every one of the 277 stays readable — the full table is behind “Open the full parameter table”."
+      );
+    }),
     TargetNote(),
     ChangeRow(),
     ValueNote(),
@@ -695,9 +709,12 @@ function ServiceActions() {
     // Outside the fold, deliberately: it changes nothing, and it is the action you
     // want BEFORE the service point below — which stamps the bike's own clock and
     // odometer over whatever this one shows you.
-    ActionButton("read-service-stamp", () => "📖  Read the last-service date and odometer", {
+    ActionButton("read-service-stamp", () => "📖  Read the last-service stamp", {
       confirm: "ask the A8 for the service stamp",
-      does: "Reads four identifiers on the A8 that no sweep covers. Read-only.",
+      does:
+        "Reads four identifiers on the A8 that no sweep covers. Read-only. The date and " +
+        "odometer AT THE LAST SERVICE — not the current mileage, which is already live " +
+        "as odometer_can_km and needs no read.",
       caution:
         "⚠️ Untried: nothing has ever read these off this bike, so a refusal may simply mean it does not carry a service stamp.",
     }),
@@ -741,9 +758,8 @@ function IrreversibleActions() {
       // ⚠️ The SENTENCE does not change between states — only the caret turns, so the
       // eye does not have to re-find the one control standing between a thumb and
       // Mode 04 after every tap.
-      () =>
-        `${IRREVERSIBLE_COUNT} action${IRREVERSIBLE_COUNT === 1 ? "" : "s"} that cannot be undone  ` +
-        `${dangerOpen.val ? "▴" : "▾"}`,
+      () => `${IRREVERSIBLE_COUNT} action${IRREVERSIBLE_COUNT === 1 ? "" : "s"} that cannot be undone`,
+      () => span({ class: "risk-fold-caret" }, dangerOpen.val ? "▴" : "▾"),
       // The contents, under the caveat rather than instead of it — and only while SHUT,
       // since open the three buttons are spelled out directly underneath.
       () =>

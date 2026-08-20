@@ -4,7 +4,6 @@ import van from "../vendor/van-1.6.1.js";
 import { monotonicNow, since } from "../lib/clock.js";
 import { ageInWords, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
-import { VcuProbe } from "./vcu-probe.js";
 import { VcuWrite, refreshVcuWrite } from "./vcu-write.js";
 
 const { a, button, div, h3 } = van.tags;
@@ -59,13 +58,6 @@ export function ServiceMode() {
       { class: "action-note" },
       a({ href: "/params.html", style: `color:${MUTED}` }, "Open the full parameter table →")
     ),
-    // The sweep covers the 277 parameters the name table describes. This is how you
-    // reach anything else — another bank, or another ECU. It is handed the same
-    // "can we reach the bike" answer this section already has, rather than fetching
-    // its own: both are governed by the same gate and the same switch, and two
-    // sections deciding separately could only disagree.
-    h3({ class: "sheet-title" }, "Probe one identifier"),
-    VcuProbe(() => state.val !== null && state.val.enabled && state.val.gate.safe),
     // ⚠️ Everything above this line reads. Everything below it can CHANGE the
     // motorcycle, and it is behind its own switch (SERVICE_WRITE_ENABLED, off by
     // default) and fetches its own state. It is last on the sheet on purpose: the
@@ -233,7 +225,7 @@ function ExportButton() {
   return div(
     button(
       {
-        class: "action",
+        class: "action action-quiet",
         disabled: () => (state.val?.export.rows ?? 0) === 0,
         onclick: () => {
           // A plain navigation rather than fetch(): the browser's own download UI
