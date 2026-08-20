@@ -651,13 +651,13 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x620,
     frame: "4B 00 00 16 00 00 00 00",
-    why: "DC, same instant as the 63 A frame: the vehicle advertising its full 75 A while the station delivers 63. b1 (the AC ceiling) is 0, which is what it reads in 100 % of DC frames",
+    why: "DC, same instant as the 63 A frame: the station offering its full 75 A while 63 flows. b1 (the AC ceiling) is 0, which is what it reads in 100 % of DC frames",
     expect: { fast_dc_limit_a: 75, ac_supply_limit_a: 0 },
   },
   {
     id: 0x620,
     frame: "2C 00 00 51 00 00 00 00",
-    why: "DC late in a taper (2026-08-09 18:15:22) — the advertised ceiling has itself fallen to 44 A. It follows the station rather than commanding it, so this byte is not the rider's setting. This is also the frame that caught the b3 error: b3 = 0x51 = 81, outside the 9…64 the file claimed for DC until 2026-08-20, and 81 with 7 A flowing against 22 with 63 A flowing in the case above is the opposite sign to the r = +0.72 it claimed as well. Both are retracted in charge-manager.ts",
+    why: "DC late in a taper (2026-08-09 18:15:22) — the offered ceiling has itself fallen to 44 A. It comes FROM the station (CM_EVSE_FDB is CM → VCU) and reacts to it rather than commanding it, so this byte is not the rider's setting. This is also the frame that caught the b3 error: b3 = 0x51 = 81, outside the 9…64 the file claimed for DC until 2026-08-20, and 81 with 7 A flowing against 22 with 63 A flowing in the case above is the opposite sign to the r = +0.72 it claimed as well. Both are retracted in charge-manager.ts",
     expect: { fast_dc_limit_a: 44, ac_supply_limit_a: 0 },
   },
   {

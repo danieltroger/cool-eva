@@ -105,7 +105,15 @@ CM → VCU. Both decoded bytes are logged RAW and are deliberately bounded only 
 
 The DC value `0x5E` decodes as mode 2 + relay + inlet + locked + `WAIT_AUTH` = 2; the AC `0x19` as mode 1 + inlet + locked, `WAIT_AUTH` = 0. thimo's AC-only captures never set `WAIT_AUTH` and had it flagged "untested for DC" — this corpus tests it: it is a DC-path field.
 
-**b7 `charge_manager_state`** — the single cleanest AC/DC discriminator on this bus: `0x23` while DC current flows (**99.974 %** of 151 096 frames) and `0x02` while AC mains current flows (**99.999 %** of 784 599). ⚠️ Re-measured at full rate; the 2026-08-19 figure was 100.000 % of a 44 444-frame sample, and the sample was what made it exceptionless — it still reads the other mode's value in fewer than 40 frames in a million. (`0x102` b3 bit 0, the fast-DC contactor, is the other clean one and is already decoded — they agree.) The state sequence is legible — b7 steps `0x02` → `0x14` → `0x04` → `0x07` → `0x0D` → `0x11` → `0x12` → `0x23` over the ~3 s of a DC handshake — but the individual steps have no established names, the DBC does not name this byte at all, and inventing a state table from the order they appear in is exactly the kind of confident guess this project has been burned by. Keeping it raw was right.
+**b7 `charge_manager_state`** — the single cleanest AC/DC discriminator on this bus: `0x23` while DC current flows (**99.974 %** of 151 096 frames) and `0x02` while AC mains current flows (**99.999 %** of 784 599). ⚠️ Re-measured at full rate; the 2026-08-19 figure was 100.000 % of a 44 444-frame sample, and the sample was what made it exceptionless — it still reads the other mode's value in fewer than 40 frames in a million. (`0x102` b3 bit 0, the fast-DC contactor, is the other clean one and is already decoded — they agree.) ❌ **The handshake is NOT one fixed sequence, and this line said it was.** It read "b7 steps `0x02` → `0x14` → `0x04` → `0x07` → `0x0D` → `0x11` → `0x12` → `0x23` over the ~3 s of a DC handshake" until 2026-08-20. Three sessions replayed through the ride log take three different paths out of `0x02`:
+
+| session | path out of `0x02` | span |
+| --- | --- | --- |
+| 2026-08-04 19:58 | `0x14` `0x04` `0x07` `0x0D` `0x11` `0x12` `0x11` `0x23` | 4.70 s (19:58:19.252 → 23.951) |
+| 2026-08-09 14:41, the aborted attempt | `0x14` `0x04` `0x07` `0x09` `0x23` | 3.70 s |
+| 2026-08-09 14:42, its retry 66 s later | `0x14` `0x04` `0x23` | 2.10 s |
+
+The first is nine steps and not eight — `0x11` sits on both sides of `0x12` — and the second passes through an `0x09` neither other session shows. ⚠️ These come off the log at the 10 Hz frame rate, so a step held for less than ~100 ms would not appear: that the paths DIFFER is established, the complete step list for any one session is not. So the individual steps have no established names, the DBC does not name this byte at all, and a state table inferred from the order they appear in would have been wrong about the order itself. Keeping it raw was right.
 
 ### b1-3 are a fault code, and it has fired three times
 
@@ -522,15 +530,16 @@ On 2026-08-20 `SELECT COUNT(*) FROM signal WHERE key='fast_dc_target_a'` against
 
 Four captures were replayed frame by frame through `decodeFrame` → `record` → a sealed `.celog` → `decrypt-log.ts` → SQLite — every step the Pi and the laptop actually run, with the capture's own wall clock passed to `record()` in place of `Date.now()`. All fifteen keys land, with the units, group and source the registry declares.
 
-The **2026-08-04 DC session** (`capture-20260804-193952-4b4cdd2b.log`, 3 834 783 frames), 19:58:19 → 20:16:04, SOC 30 → 57 %:
+The **2026-08-04 DC session** (`capture-20260804-193952-4b4cdd2b.log`, 3 834 783 frames), 19:58:19 → 20:16:05, SOC 30 → 57 %. Rows written INSIDE that window, with the value span each covers — first and last are called out separately where they are not the extremes:
 
-    fast_dc_target_a     93 rows   0 → 66 A          fast_dc_limit_a       5 rows   0, 75, 64, 65, 0
-    charge_manager_soc   28 rows   30 → 57 %         dc_charging           3 rows   0, 1, 0
-    fast_dc_target_v     22 rows   298 → 319 V       charge_type           2 rows   0, 2
-    charge_manager_status 10 rows  0x10 → 0x5E       bms_leak_detect_inhibit 2 rows 0, 1
-    charge_manager_state  9 rows   0x02 → 0x23       the other five        1 row each
+    fast_dc_target_a         93   spans 0…66 A, ends at 0        dc_charging               2   1 then 0
+    charge_manager_soc       28   30 → 57 %                      charge_type               2   0 then 2, no closing row
+    fast_dc_target_v         22   spans 298…319 V, ends at 317   bms_leak_detect_inhibit   2   0 then 1, no closing row
+    charge_manager_status    10   spans 0x08…0x5E, 0x10 → 0x48   ac_supply_limit_a         1   0
+    charge_manager_state      9   0x02 → 0x23                    error_src, error_code     1 each, 0
+    fast_dc_limit_a           5   0, 75, 64, 65, 0
 
-**176 rows across the whole 18-minute session** — 180 over the entire 47-minute capture, the extra four being `0x625`'s rows from the first frame after boot — against 267 890 rows from every signal in that capture. No flood, and nothing here wants a deadband. The `0x610` b7 handshake came out of the log as `0x02` → `0x14` → `0x04` → `0x07` → `0x0D` → `0x11` → `0x12` → `0x11` → `0x23` in 4 s, matching the sequence recorded above from the raw frames. `fast_dc_target_a` peaked at 66 A against a `pack_a` of 66.3 A, and at 20:05:19-20 the request read 63 A against 63.1-63.2 A delivered — the same instant the fixture in `scripts/check-can-decoders.ts` is taken from.
+⚠️ **Two scopes, and they must not be added together.** **176 rows inside the session, from 12 of the 15 keys.** The other three — `ac_charging`, `fast_dc_limit_max_a`, `fast_dc_limit_max_v` — wrote their only row at 19:39:52.898, the capture's first `0x625` frame, 18 minutes before the session started; `dc_charging` wrote one there too as well as its two inside. So the whole 47-minute capture holds **180 rows across all 15 keys**, against 267 890 rows from every signal in it. Either way there is no flood, and nothing here wants a deadband. The `0x610` b7 handshake came out of the log as `0x02` → `0x14` → `0x04` → `0x07` → `0x0D` → `0x11` → `0x12` → `0x11` → `0x23` over 4.70 s — nine steps, not the eight over "~3 s" this document claimed until 2026-08-20, and §0x610 b7 above is corrected with the two other sessions that take other paths again. `fast_dc_target_a` peaked at 66 A against a `pack_a` of 66.3 A, and at 20:05:19-20 the request read 63 A against 63.1-63.2 A delivered — the same instant the fixture in `scripts/check-can-decoders.ts` is taken from.
 
 ⚠️ **Do not read a per-sample agreement off the LOG the way it can be read off the raw frames.** Pairing each of the 23 post-ramp request rows with the last `pack_a` row before it gives a mean gap of +0.53 A, which is close to the corpus's +0.30 A — but the individual pairs run from −5.4 to +6.2 A. Both series are logged on change and step at different instants, so a carry-forward pair straddling a step compares a new request against an old measurement. The corpus figures above (r = +0.9951, median 0.30 A) come from aligned raw frames at full rate; the log is a different, coarser thing and the two must not be quoted as if they were the same measurement.
 
