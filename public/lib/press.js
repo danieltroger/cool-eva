@@ -9,7 +9,7 @@ export { isFlasher } from "./flasher.js";
 
 // Making a momentary button visible on a phone screen.
 //
-// A 140 ms median press is one or two frames of a 60 Hz display, so each button gets
+// The shortest measured press, 30 ms, is under two frames of a 60 Hz display, so each button gets
 // three things the raw bit does not give you: a LATCH (lit for LATCH_MS after the bit
 // drops), a COUNT and timestamp (which survive a missed flash — trust these over the
 // light when the two disagree), and a HELD-SINCE stamp. Display state only, computed on

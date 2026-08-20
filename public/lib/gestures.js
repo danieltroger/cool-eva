@@ -12,7 +12,7 @@
 // the rest of this codebase follows for durations, and it is deliberate: these measure
 // how long a button was down ON THE BIKE, and the phone's monotonic clock can only
 // measure when two messages ARRIVED. On a stalling link the two differ, and a 140 ms
-// tap would read as a 1.2 s hold. IMPLAUSIBLE_HOLD_MS covers the one thing a server
+// tap would read as a 1.5 s hold. IMPLAUSIBLE_HOLD_MS covers the one thing a server
 // clock can do that a monotonic one cannot, which is jump.
 //
 // That argument in full, and why no gesture here can degrade the button it listens to:

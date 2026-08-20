@@ -29,7 +29,8 @@ export const FLASHER_KEYS = new Set(["blinker_left", "blinker_right"]);
  * cancelled rather than the relay opening.
  *
  * 700 ms sits in an empty valley: of the 1875 gaps between `blinker_left` flashes in
- * `rides.db`, 1556 are ≤ 400 ms and 302 are > 3 s, with eight in between. Anywhere from
+ * `rides.db`, 1556 are ≤ 400 ms and 302 are > 3 s, leaving 17 in between — and only
+ * **eight** of those fall in the 0.4-1.5 s window a threshold has to land in. Anywhere from
  * 0.4 s to 1.5 s classifies all but those eight identically, and they are ambiguous by
  * nature. Full histogram: docs/dashboard-decisions.md §"a flasher is not a finger".
  *
