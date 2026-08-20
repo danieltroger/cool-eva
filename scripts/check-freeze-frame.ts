@@ -354,12 +354,12 @@ check(
 
 // A short Consecutive Frame must be abandoned, not under-filled. Taking what
 // arrived would put the NEXT frame's bytes 4 bytes early, the sequence numbers
-// would still run 1, 2, 3…, and the transfer would complete at its declared
+// would still run 0, 1, 2…, and the transfer would complete at its declared
 // length with every later field shifted — into int16s with °C on them and an
 // empty trailingHex. The sequence check would not see it; nothing would.
 const shortCf = new ExtendedIsoTpReassembler();
 shortCf.push(parseHexFrame(FREEZE_FRAME_P0A07_FRAMES[0]));
-const shortCfResult = shortCf.push(parseHexFrame("F1 21 03 00"));
+const shortCfResult = shortCf.push(parseHexFrame("F1 20 03 00"));
 check(
   shortCfResult.status === "abandoned",
   `a consecutive frame carrying 2 bytes where 6 were needed must be abandoned, got ${shortCfResult.status}`

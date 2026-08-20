@@ -404,7 +404,7 @@ Every freeze frame is multi-frame — the header alone is 5 bytes and an extende
 | **`src/vcu/multiframe-transfer.ts`** | One exchange over the bus: answers a First Frame with `<target> 30 FF 00` **synchronously from the frame handler** (delaying it measurably cost transfers on the OBD channel), segments a request that does not fit one frame, and bounds a stuck responder with a frame cap, a payload cap and per-stage timeouts. |
 | **`src/vcu/freeze-frame-log.ts`** | The bulk read: `0x35`, then N × `0x36`, then `0x37`. Takes a bus lease, paces itself, yields between blocks, is cancellable mid-transfer, and sends the closing `0x37` on every path out — including a cancel. |
 
-A reply that **under-fills** is abandoned, never completed at its declared length. That is the specific failure this is built around: a short Consecutive Frame mid-transfer leaves the sequence numbers running 1, 2, 3…, so nothing looks wrong, and taking what arrived shifts every later field into numbers that still have units on them. `scripts/check-kwp-multiframe.ts` asserts it, along with the gapped, oversized, foreign and flooding replies.
+A reply that **under-fills** is abandoned, never completed at its declared length. That is the specific failure this is built around: a short Consecutive Frame mid-transfer leaves the sequence numbers running 0, 1, 2…, so nothing looks wrong, and taking what arrived shifts every later field into numbers that still have units on them. `scripts/check-kwp-multiframe.ts` asserts it, along with the gapped, oversized, foreign and flooding replies.
 
 ```bash
 node --experimental-strip-types scripts/check-kwp-multiframe.ts   # no bike

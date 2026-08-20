@@ -37,8 +37,8 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 export const FREEZE_FRAME_P0A07_COMPONENT = 44;
 export const FREEZE_FRAME_P0A07_FRAMES = [
   "F1 10 11 57 01 00 2C 05",
-  "F1 21 03 00 00 00 02 01",
-  "F1 22 9C 01 95 01 8E 6C",
+  "F1 20 03 00 00 00 02 01",
+  "F1 21 9C 01 95 01 8E 6C",
 ];
 
 /**
@@ -51,8 +51,8 @@ export const FREEZE_FRAME_P0A07_FRAMES = [
 export const FREEZE_FRAME_P0514_COMPONENT = 4;
 export const FREEZE_FRAME_P0514_FRAMES = [
   "F1 10 10 57 01 00 04 2D",
-  "F1 21 02 00 00 0D 7C FF",
-  "F1 22 EE 18 FF 57 6E 00",
+  "F1 20 02 00 00 0D 7C FF",
+  "F1 21 EE 18 FF 57 6E 00",
 ];
 
 /**

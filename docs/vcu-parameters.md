@@ -614,6 +614,30 @@ flow ctrl 7C0: [target] 30 FF 00                 ours to send
 
 That is ISO-TP with EXTENDED addressing: byte 0 is an address and every length shifts one along from the normal-addressed form in `src/can/iso-tp.ts`. A Single Frame holds 6 payload bytes, a First Frame 5, a Consecutive Frame 6. `src/diagnostics/extended-iso-tp.ts` reassembles the receive side and its header argues why it is not `src/can/iso-tp.ts`; `multiframe-codec.ts` is the transmit side of the same framing, plus the service encodings that need it.
 
+### 🔴 Consecutive Frames are numbered from 0 on this channel, not from 1 — fixed 2026-08-20
+
+ISO 15765-2 assigns the First Frame sequence number 0 and says **"the SN of the first ConsecutiveFrame shall be set to 1"**. These micros do not. Both halves of this repo followed the standard, and both were wrong about this bus.
+
+The evidence is not a reading of the spec, it is a count over the whole 55-minute capture:
+
+|                                            | first CF is SN 0          | first CF is SN 1 |
+| ------------------------------------------ | ------------------------- | ---------------- |
+| micro → tester (A8 and A9), 1229 transfers | **1229**                  | 0                |
+| tester → micro, the 1 multi-frame request  | **1** — and A8 granted it | 0                |
+
+Every one of the 1229 runs is exactly `0, 1, … 15, 0, …` with a Consecutive Frame count matching `ceil((declaredLength − 5) / 6)` to the frame, so this is not a misparse of a dropped first frame — a 1-based run would come up one frame short of its own declared length, 1229 times.
+
+Two separate defects came out of it, one per direction:
+
+- **Transmit.** `segmentRequestPayload` started at 1, so the `0x35` request went out as `A8 10 0C …` / `A8 21 …` / `A8 22 …` where the only sender this ECU is known to have accepted sent `A8 20` / `A8 21`. Whether A8 would have taken it is untested and unknowable from here; what IS known is that its own stack is 0-based in every frame it emits, and that the 0-based form was granted.
+- **Receive.** `ExtendedIsoTpReassembler` expected 1, so every real multi-frame reply is abandoned with `consecutive frame out of sequence (expected 1, got 0)`. That is 1229 of 1229 — the `0x36` blocks, all 29 `0x17` freeze frames, and the `1A 90` VIN read. This is the more serious of the two: it breaks `0x17` as well, which is the other thing on the on-bike list.
+
+They had to be fixed together, and the check that says so is the segment→reassemble round trip in `scripts/check-kwp-multiframe.ts` §2: change one side alone and it returns `null`.
+
+⚠️ **Why the constructed fixtures did not catch it.** Every reply fixture in `scripts/` was written 1-based, from the standard, including the one graded as strongest — §A's `F1 21 3C B6 …`, whose BYTES are quoted from two independent live records but whose PCI byte was inferred. Reassembler and fixtures agreed with each other and with ISO 15765-2, and disagreed with the motorcycle. They are 0-based now.
+
+⚠️ Deviating from a standard inside a decoder is normally how a silent wrong answer gets shipped, so it is worth being explicit about which way round this is: the standard-conforming value **was** the silent wrong answer here, and the gap check itself is untouched — a missing frame is still abandoned, it is just counted from the right place.
+
 ### `0x17` — one component's freeze frame
 
 ✅ The SERVICE and its ROUTING are proven: 29 `0x17` requests went to A8 in the 2026-08-08 capture and all 29 drew a positive `57` (`DIAG_ADDRESSES.md` §9.1), and Energica's own `KWP2000::ReadDiagnosticTroubleCodeInformation` emits `0x17 <hi> <lo>` against `MotorbikeECU.VCUSafety` with no SecurityAccess in the path.

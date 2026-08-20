@@ -86,6 +86,22 @@ const CONSECUTIVE_FRAME_PAYLOAD_BYTES = 6;
 const MAX_SINGLE_FRAME_PAYLOAD = 6;
 
 /**
+ * 🔴 The sequence number of the FIRST Consecutive Frame on this channel is 0, not the 1
+ * ISO 15765-2 specifies. This was 1 until 2026-08-20, which abandoned every real reply.
+ *
+ * Not a reading of the standard — a reading of the wire. In
+ * `capture-20260808-182129-600daf87.log`, 1229 of 1229 multi-frame replies from A8 and A9
+ * open with `F1 20 …` and run 0,1,…,15,0,… with a frame count that matches the declared
+ * length exactly. Zero of them start at 1. The factory tool numbers its own request the
+ * same way and A8 accepts it. docs/vcu-parameters.md §10.
+ *
+ * ⚠️ Deviating from the standard in a decoder is normally how you get a silent wrong
+ * answer. Here the standard-conforming value WAS the silent wrong answer — 1229/1229
+ * replies abandoned — and this is what the bus does.
+ */
+const FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER = 0;
+
+/**
  * Reassembles one extended-addressed ISO-TP transfer.
  *
  * Stateful, like IsoTpReassembler. One instance follows one transfer; `reset()`
@@ -95,7 +111,7 @@ const MAX_SINGLE_FRAME_PAYLOAD = 6;
 export class ExtendedIsoTpReassembler {
   #payload: Uint8Array = new Uint8Array(0);
   #filled = 0;
-  #expectedSequenceNumber = 1;
+  #expectedSequenceNumber = FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER;
   #frames = 0;
   #receiving = false;
   readonly #maxPayloadBytes: number;
@@ -160,7 +176,7 @@ export class ExtendedIsoTpReassembler {
   reset(): void {
     this.#payload = new Uint8Array(0);
     this.#filled = 0;
-    this.#expectedSequenceNumber = 1;
+    this.#expectedSequenceNumber = FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER;
     this.#frames = 0;
     this.#receiving = false;
   }
@@ -210,7 +226,7 @@ export class ExtendedIsoTpReassembler {
     this.#payload = new Uint8Array(totalLength);
     this.#payload.set(frame.subarray(3, 8));
     this.#filled = FIRST_FRAME_PAYLOAD_BYTES;
-    this.#expectedSequenceNumber = 1;
+    this.#expectedSequenceNumber = FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER;
     this.#frames = 1;
     this.#receiving = true;
     return { status: "flow-control-required", totalLength };
@@ -239,7 +255,7 @@ export class ExtendedIsoTpReassembler {
       // and then only down to `remaining` — which is what `wanted` already
       // accounts for. Anything shorter than that is a truncated DLC, i.e. missing
       // bytes, and taking what arrived would write the NEXT frame's bytes at the
-      // wrong offset. The sequence numbers would still run 1, 2, 3…, so nothing
+      // wrong offset. The sequence numbers would still run 0, 1, 2…, so nothing
       // would be abandoned and the transfer would complete at its declared length
       // with every field after the short frame shifted — decoding into int16s
       // with °C on them and an empty `trailingHex`, which is indistinguishable

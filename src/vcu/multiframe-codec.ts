@@ -172,6 +172,18 @@ export const FIRST_FRAME_PAYLOAD_BYTES = 5;
 /** Payload bytes a Consecutive Frame carries: 8 − 1 address − 1 PCI. */
 export const CONSECUTIVE_FRAME_PAYLOAD_BYTES = 6;
 
+/**
+ * 🔴 The first Consecutive Frame is sequence 0 here, where ISO 15765-2 says 1. This was 1
+ * until 2026-08-20, so the `0x35` request went out as `A8 21`/`A8 22` where the only sender
+ * this ECU is known to have accepted sent `A8 20`/`A8 21`.
+ *
+ * The capture settles it in both directions: the factory tool's own request is 0-based and
+ * was granted, and 1229 of 1229 replies FROM the micros are 0-based too. Shared with
+ * ../diagnostics/extended-iso-tp.ts, which had the mirror image of this bug.
+ * docs/vcu-parameters.md §10.
+ */
+const FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER = 0;
+
 /** The tester's own address, which every reply meant for us is addressed to. */
 export const TESTER_ADDRESS = 0xf1;
 
@@ -270,12 +282,12 @@ export function segmentRequestPayload(target: VcuTarget, payload: Uint8Array): U
 
   const frames = [first];
   let sent = FIRST_FRAME_PAYLOAD_BYTES;
-  let sequenceNumber = 1;
+  let sequenceNumber = FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER;
   while (sent < payload.length) {
     const consecutive = new Uint8Array(8);
     consecutive[0] = address;
-    // Wraps 1…15, 0, 1… — the low nibble is all there is room for, and a transfer
-    // long enough to wrap cannot be produced by this union anyway.
+    // Wraps 0…15, 0… — the low nibble is all there is room for, and a transfer long
+    // enough to wrap cannot be produced by this union anyway.
     consecutive[1] = CONSECUTIVE_FRAME | (sequenceNumber & 0x0f);
     const take = Math.min(CONSECUTIVE_FRAME_PAYLOAD_BYTES, payload.length - sent);
     consecutive.set(payload.subarray(sent, sent + take), 2);

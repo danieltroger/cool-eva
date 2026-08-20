@@ -112,6 +112,15 @@ const DEFAULT_SESSION_IDLE_MS = 2500;
 /** Replies land on the next tick or two, so the client's timers are exercised rather than short-circuited. */
 const REPLY_DELAY_MS = 2;
 
+/**
+ * ⚠️ The first Consecutive Frame is sequence 0 on this channel, not the 1 ISO 15765-2
+ * specifies — 1229 of 1229 captured replies, and the factory tool's own request. This
+ * double is 0-based in BOTH halves so it stays a double of the bike rather than of the
+ * standard: it refuses a 1-based request, and it numbers its own replies the way A8 does.
+ * src/diagnostics/extended-iso-tp.ts holds the evidence.
+ */
+const FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER = 0;
+
 /** Payload bytes each frame type carries under extended addressing. */
 const MAX_SINGLE_FRAME_PAYLOAD = 6;
 const FIRST_FRAME_PAYLOAD_BYTES = 5;
@@ -188,7 +197,7 @@ function receiveFrame(context: BusContext, data: Buffer): void {
       conversation.incoming = {
         payload: new Uint8Array(totalLength),
         filled: FIRST_FRAME_PAYLOAD_BYTES,
-        expectedSequenceNumber: 1,
+        expectedSequenceNumber: FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER,
       };
       conversation.incoming.payload.set(data.subarray(3, 8));
       if (context.micro.sendsRequestFlowControl !== false) {
@@ -383,7 +392,7 @@ function sendReply(context: BusContext, payload: Uint8Array): void {
 
   conversation.outgoing = [];
   let sent = FIRST_FRAME_PAYLOAD_BYTES;
-  let sequenceNumber = 1;
+  let sequenceNumber = FIRST_CONSECUTIVE_FRAME_SEQUENCE_NUMBER;
   while (sent < payload.length) {
     const consecutive = new Uint8Array(8);
     consecutive[0] = TESTER_ADDRESS;

@@ -33,6 +33,8 @@ import {
   SHORT_FINAL_FRAME_PAYLOAD,
   SHORT_FINAL_FRAME_TRANSFER,
   REQUEST_TRANSFER_EXIT_FRAME,
+  REQUEST_UPLOAD_FLOW_CONTROL_FROM_MICRO,
+  REQUEST_UPLOAD_FRAMES,
   STORED_DTC_LIST_EXPECTED,
   STORED_DTC_LIST_FRAMES,
   TRANSFER_DATA_FRAME,
@@ -156,8 +158,19 @@ check(
   `the 0x35 first frame should be the captured "${REQUEST_UPLOAD_FIRST_FRAME}", got "${uploadFrames[0]}"`
 );
 check(uploadFrames.length === 3, `12 payload bytes should segment into 3 frames, got ${uploadFrames.length}`);
-check(uploadFrames[1] === "A8 21 FF FF FF FF FF FF", `consecutive frame 1 wrong: "${uploadFrames[1]}"`);
-check(uploadFrames[2] === "A8 22 FF 00 00 00 00 00", `consecutive frame 2 wrong: "${uploadFrames[2]}"`);
+// ⚠️ REGRESSION GUARD. Not just the operand — the SEQUENCE NUMBERS. These micros open a
+// Consecutive Frame run at 0 where ISO 15765-2 says 1, in 1229 of 1229 captured replies and
+// in the one request the factory tool sent, which A8 granted. This repo emitted `A8 21` /
+// `A8 22` until 2026-08-20.
+check(
+  uploadFrames.join(" / ") === REQUEST_UPLOAD_FRAMES.join(" / "),
+  `the 0x35 request should be the three captured frames, got "${uploadFrames.join(" / ")}"`
+);
+check(
+  toHex(buildFlowControlFrame("A8")) === "A8 30 FF 00 00 00 00 00" &&
+    parseFlowControlFrame(parseHexFrame(REQUEST_UPLOAD_FLOW_CONTROL_FROM_MICRO))?.status === "clear-to-send",
+  "the captured flow control, in both directions, must round-trip through this codec"
+);
 
 // The segmenter and the reassembler must be exact inverses, or a request that
 // looks right in isolation still arrives wrong.
@@ -391,7 +404,7 @@ check(otherTester.consumed === 0, "a frame addressed to another tester must not 
 // the reassembler's bounds frames it is offered, and the transport's bounds the
 // ones it never sees. A flow-control frame is the second kind — the reassembler
 // deliberately ignores those, so nothing there would ever count them.
-const consecutiveFlood = await replayReply(new Array<string>(200).fill("F1 21 3C B6 00 00 00 00"), freezeFrameRequest, {
+const consecutiveFlood = await replayReply(new Array<string>(200).fill("F1 20 3C B6 00 00 00 00"), freezeFrameRequest, {
   firstReplyTimeoutMs: 5000,
 });
 check(
