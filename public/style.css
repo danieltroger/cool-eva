@@ -1114,7 +1114,6 @@ body {
   font-size: 0.9rem;
   min-height: 3rem;
   padding: 0.7rem 1rem;
-  box-shadow: none;
   color: var(--label);
 }
 

@@ -73,8 +73,11 @@ async function transform(key: string): Promise<{ code: string; deps: string[] }>
     }
     // Anything import-shaped that got past the branches above. Symmetrical with the
     // export guard below: an unhandled form must fail HERE, not in the browser. Bare
-    // (`import "./x.js"`), mixed (`import van, { add } from`) and dynamic imports all
-    // land here — each of which used to emit a cheerful "✓" and a bundle that died.
+    // (`import "./x.js"`) and mixed (`import van, { add } from`) forms land here — each
+    // used to emit a cheerful "✓" and a bundle that died. ⚠️ A dynamic `import()` does
+    // NOT: this is line-anchored, and widening it to /\bimport\s*\(/ would fire on every
+    // JSDoc `@typedef {import("./router.js").TabName}` in the repo. public/ has none
+    // today, and check-service-preview.ts would catch the bundle it produced anyway.
     if (/^import\s/.test(line)) {
       throw new Error(`build-service-preview: ${key} uses an import form this bundler does not handle: ${line.trim()}`);
     }
