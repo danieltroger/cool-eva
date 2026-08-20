@@ -117,13 +117,17 @@ while (pending.length > 0) {
   pending.push(...deps);
 }
 
+// Joined WITHOUT a trailing comma, and the placeholder is matched with an optional
+// one after it. Prettier once reformatted the template and added that comma; the
+// bundle became `},,` and nothing in `npm test` noticed, because no check here runs
+// the generated file. Belt and braces: the template is also in .prettierignore.
 const modules = [...registry]
-  .map(([key, code]) => `  ${JSON.stringify(key)}: function (__exports, __imp) {\n${code}\n  },`)
-  .join("\n");
+  .map(([key, code]) => `  ${JSON.stringify(key)}: function (__exports, __imp) {\n${code}\n  }`)
+  .join(",\n");
 
 const template = await readFile(join(HERE, "service-preview-template.html"), "utf8");
 const css = await readFile(join(PUBLIC, "style.css"), "utf8");
-const html = template.replace("__CSS__", css).replace("__MODULES__", modules);
+const html = template.replace("__CSS__", css).replace(/__MODULES__,?/, modules);
 
 const out = process.argv[2] ?? join(HERE, "..", "service-sheet-preview.html");
 await writeFile(out, html, "utf8");
