@@ -57,7 +57,7 @@ VCU → CM. b4-6 are `00` and b3 is a byte-for-byte copy of b2, both in 100.000 
 
 **`V_CHGMODE_FDB` and `charge_type` are the same fact — measured, not assumed.** `(b0 >> 3) & 3` equals b2 in **99.822 %** of 967 865 frames, and every disagreement is a mode transition where one of the two is briefly 0 while the other is not (the disagreeing pairs are (2,0) 898, (1,0) 480, (0,1) 274, (0,2) 70 — there is no frame where they name _different_ modes). So b2 is a wider echo of the 2-bit field, and 1 = AC / 2 = DC applies to both. b2 is what is decoded because a whole byte survives a bit-position error and a 2-bit field does not.
 
-**b2 `charge_type`** — 1 = AC, 2 = DC. 99.991 % of the 151 200 frames where DC current is flowing read 2 (the 2026-08-19 figure was 99.975 % of a 43 994-frame sample). ⚠️ It is a property of the SESSION, not of current flowing: in the aborted DC attempt of 2026-08-09 14:42 it reads 2 for the whole 155 s while not one amp moves. For "is charge actually flowing", use `dc_charging` / `ac_charging`.
+**b2 `charge_type`** — 1 = AC, 2 = DC. 99.991 % of the 151 200 frames where DC current is flowing read 2 (the 2026-08-19 figure was 99.975 % of a 43 994-frame sample). ⚠️ It is a property of the SESSION, not of current flowing: in the aborted DC attempt of 2026-08-09 14:42 it reads 2 for the whole 139.3 s (⚠️ not 155 s — see §The fault corpus, "An artefact that contaminates any analysis timed across a Pi restart") while not one amp moves. For "is charge actually flowing", use `dc_charging` / `ac_charging`.
 
 **b7 `V_IMD_DISABLE` → `bms_leak_detect_inhibit`** (IMD = insulation monitoring device; BMS memory 2122). The factory name is our name almost verbatim, with one direction correction: this is the **VCU commanding** the monitor off, not the BMS reporting that it is off. The BMS's isolation monitor cannot run against a station-driven DC bus, so the vehicle switches it off for the duration of a DC session. Match rates, all at full frame rate:
 
@@ -131,7 +131,7 @@ b0 is `0x08` or `0x0A` in the first and third and `0x28` or `0x2A` in the second
 
 Both fields are now decoded, because the DBC supplies exactly the evidence that was missing before: the reason they were left alone was "one aborted session is not enough to decode a fault code", and a factory name is not a second session but it does settle _what the bytes are_. Two sources and two codes is not a table anyone can name yet; the values are logged raw so a future fault can be matched against them.
 
-🟡 This also corrects `src/can/vcu-flags.ts`, whose header says the charge manager's "own `CM_ERROR` / `CM_ERROR_SOURCE` / `CM_ERROR_CODE_*` telemetry is not broadcast anywhere and needs a diagnostic session". It is broadcast, on this frame, at 10 Hz. `vcu_err_charge_manager` (`0x100` b7 bit 1) remains the rollup and remains 0 in every captured frame — including all three windows above, which is itself worth knowing: these codes did not raise the VCU's summary bit.
+🟡 This also corrects `src/can/vcu-flags.ts`, whose header says the charge manager's "own `CM_ERROR` / `CM_ERROR_SOURCE` / `CM_ERROR_CODE_*` telemetry is not broadcast anywhere and needs a diagnostic session". It is broadcast, on this frame, at 10 Hz. ❌ **The next sentence used to read "`vcu_err_charge_manager` (`0x100` b7 bit 1) … remains 0 in every captured frame — including all three windows above". That is wrong.** The bit fires in all three, 0.162 s after the first error frame each time, and in a fourth failure that published no code at all. §The fault corpus below has the measurement; it is the best corroboration these two bytes have.
 
 Energica's own service tool carries five DTC titles for this ECU (`CM INTERNAL ERROR`, `CM APPLICATION LAYER ERROR`, `CM-VEHICLE COMMUNICATION ERROR`, two unclassified), served through the VCU. So the fault path exists; what these two codes map to is unknown.
 
@@ -345,7 +345,7 @@ Per-session b3, for whoever picks this up:
     2026-08-08 15:09  n=21 624  modal 20  range 20..50
     2026-08-08 17:44  n= 5 732  modal 30  range 30..50
     2026-08-08 18:02  n=   442  modal 30  range 30..30
-    2026-08-09 14:43  n=11 940  modal 20  range 19..21   (the aborted attempt)
+    2026-08-09 14:43  n=11 940  modal 20  range 19..21   (⚠️ NOT the aborted attempt — mislabelled, see §The fault corpus)
     2026-08-09 15:23  n=27 582  modal 22  range  9..50
     2026-08-09 16:55  n=29 276  modal 81  range 35..82
     2026-08-09 17:51  n=16 811  modal 81  range 64..81
@@ -427,7 +427,7 @@ The five two-frame clusters are frame skew at the very end of a taper and carry 
 
 All nine satisfy both bit rules, so the decode is unaffected — but a whitelist of {0x12, 0x2C, 0x32} as the frame's sanity check would have thrown away 129 601 real frames, 8.2 % of them. That is why the gate reads b1/b3, which are genuinely constant, rather than the byte whose meaning we are trying to read. Anyone hardening this frame further will look at the three named values and reach for the whitelist; this is the note saying it was tried and is wrong.
 
-These are "current is flowing", not "a session exists" — through the 155 s aborted DC attempt of 2026-08-09 14:42 b4 stays `0x32` while `0x605` b2 says DC and `0x610` says the session is established. That is the right split, and it is why both are logged.
+These are "current is flowing", not "a session exists" — through the 139.3 s aborted DC attempt of 2026-08-09 14:42 b4 stays `0x32` while `0x605` b2 says DC and `0x610` says the session is established. That is the right split, and it is why both are logged.
 
 ### The gate: `b1 = 0x01` and `b3 = 0xFF`
 
@@ -514,7 +514,212 @@ b0-2 are the constant `DC DD 24` (100.000 % of 968 595 frames). b3-5 take exactl
 
 ### 0x645
 
-All eight bytes are `00` in 100.000 % of 157 441 frames, so only its presence carries anything — and that presence is a clean DC-session flag: it appears in all 11 DC sessions and in none of the 18 AC ones. It tracks the SESSION, not the current: it is there for all 155 s of the aborted DC attempt of 2026-08-09 14:42, during which not one amp flowed. That is what makes it the ground truth for `bms_leak_detect_inhibit`'s session-level match rate above. Nothing is emitted, because a decoder returning a value for an all-zero frame would be logging "this id exists", which `STREAM_IDS` already says.
+All eight bytes are `00` in 100.000 % of 157 441 frames, so only its presence carries anything — and that presence is a clean DC-session flag: it appears in all 11 DC sessions and in none of the 18 AC ones. It tracks the SESSION, not the current: it is there for all 139.3 s of the aborted DC attempt of 2026-08-09 14:42, during which not one amp flowed. That is what makes it the ground truth for `bms_leak_detect_inhibit`'s session-level match rate above. Nothing is emitted, because a decoder returning a value for an all-zero frame would be logging "this id exists", which `STREAM_IDS` already says.
+
+---
+
+## The fault corpus — every charge failure in the archive, and what it decodes to
+
+Written 2026-08-20 from a fresh sweep, to answer one question: **with every fault the archive contains, what can actually be decoded about `charge_manager_error_src` and `charge_manager_error_code`?** The short answer is at the top of §"What the failures share", and it is mostly negative. The useful results are elsewhere: a second, independent frame that agrees with these bytes, a fourth failure the error bytes did not report at all, a step-path split that is clean but tiny, and two things in this document that were wrong.
+
+### The sweep, and what it covers
+
+Every `.log` in `~/Documents/cool-eva-archive` over 1 024 bytes — **116 files**, the other 209 being 0- or 22-byte service stubs with no frames in them — plus `can_log-2026-06-14.txt` in its own format, grepped for `0x610` with a non-zero `data[1]`. That is 100 % of the raw CAN on this disk; `.celog` files are this project's own derived output and are not raw.
+
+    0x610 frames, raw:      850 361 in the 116 .log files + 71 027 in the .txt = 921 388
+    with data[1] != 0:      500, in 3 files
+    in can_log-2026-06-14:  0 of 71 027
+
+🟡 The 500 matches the count already in this document exactly, and the three windows are the same three. Nothing new was found by looking harder, which is the first thing worth saying. ⚠️ But 921 388 raw is **fewer** than the 968 629 "deduplicated" this document records above, and deduplication can only remove frames. One of the two counts is wrong; the fault conclusions do not depend on which, because the sweep here reads every file and the fault frames are 500 either way. Recorded so the next person recounting does not think they have found a new discrepancy.
+
+Every frame of `0x610` in the archive is DLC 8, so no fault frame can have been missed by a length mismatch.
+
+### There are FOUR failed charge attempts, not three — and the fourth has no code
+
+The three `0x610` error episodes are not the whole set of charge failures, because **the VCU has its own rollup and it fires in a fourth place where the charge manager published nothing.**
+
+A second archive-wide sweep, for `0x100` byte 7 bit 1 — `vcu_err_charge_manager`, Energica's `ERR_ChargeCM_Out` — finds it set in **3 563 frames, in exactly three capture files, all within four events**:
+
+| #   | when                    | where                | `0x610` code                   | duration of the VCU bit |
+| --- | ----------------------- | -------------------- | ------------------------------ | ----------------------- |
+| E0  | 2026-08-09 14:37:09.720 | 56.50178, 12.95665   | **none — src and code stay 0** | 269.7 s                 |
+| E1  | 2026-08-02 18:55:16.011 | no GPS fix           | (7, 1101)                      | ≥ 17.3 s, capture ends  |
+| E2  | 2026-08-08 17:41:32.413 | 55.72463, 13.14987 † | (8, 1101)                      | ≥ 6.5 s, capture ends   |
+| E3  | 2026-08-09 14:41:46.240 | 56.50178, 12.95665   | (7, 853)                       | 62.6 s                  |
+
+† E2's own capture carries no `0x410` at all; the position is from the capture two minutes later, at the same stop. E1 has no fix — the hub reports 0, 0 — and so does the capture that follows it.
+
+✅ **The two fields corroborate each other, and this is the strongest single result here.** In all three episodes that have a code, the VCU raises its rollup bit **0.162, 0.163 and 0.162 s** after the charge manager's first error frame — one 10 Hz tick plus change, three times, to the millisecond. Two ECUs on two frames agreeing on the same event that precisely is what says `data[1]`/`data[2:3]` really are the fault path and not a coincidence of bytes.
+
+❌ **This corrects §0x610 above and `src/can/vcu-flags.ts` together.** This document said "`vcu_err_charge_manager` … remains 0 in every captured frame — including all three windows above". `src/can/vcu-flags.ts` says "⚠️ `ERR_ChargeCM_Out` reads 0 in all 105 736 — a NEGATIVE and nothing more … **This decode has never been seen to fire.**" Both are wrong, and the 105 736-frame sample is why: the bit is set in 3 563 frames out of an archive with millions, all inside four short windows. **The decode has fired, four times.** It was decoded on Energica's word alone, before anything had ever exercised it, and that is the case for having decoded it. 🔍 The note in `vcu-flags.ts` pointing at "the one window where the charge manager did complain (2026-08-09 12:38-12:42)" is chasing a window that has no local raw CAN; the confirmation was in the archive the whole time, at 14:37 and 14:41 on the same day.
+
+⚠️ **The two are not equivalent, and E0 is why.** At 14:37 the VCU raised the bit and held it for 269.7 s — through the whole gap to the next attempt — while `0x610` b1-b3 stayed `00 00 00` throughout. It cleared at 14:41:39.440, the instant the charge manager woke for E3, and came back 6.8 s later with E3's own error. E0 never became a DC session at all: `0x615` was never transmitted, `0x645` never appeared, `0x605` b2 never reached 2, and `0x610` b0 sat at `0x00` — no inlet present, no lock — for 12.4 of the 14.8 s the charge manager was on the bus. So the VCU's rollup covers charge failures the charge manager's own code does not report, and **an "any charge fault" alarm must read both**. It is also the counterexample to any hope that a fault always publishes a code: the most likely diagnosis for E0 is an inlet or plug-detection failure, and it produced no `CM_ERROR_SRC` at all.
+
+### The three (src, code) pairs
+
+    (7, 1101)   E1   2026-08-02 18:55:15.849 → 16.548     8 frames    0.80 s
+    (8, 1101)   E2   2026-08-08 17:41:32.250 → 37.550    54 frames    5.40 s
+    (7, 853)    E3   2026-08-09 14:41:46.078 → 14:42:29.781   438 frames   43.80 s
+
+Three episodes, two sources, two codes, and the pairing is not one-to-one in either direction — source 7 emits both codes and sources 7 and 8 both emit 1101. That is already in this document and the sweep confirms it exhaustively rather than adding to it. **`src` never takes a third value; `code` never takes a third value.** Two samples of each is a corpus that cannot support a table, and no amount of care changes that.
+
+The values `data[1]` takes archive-wide are only `0`, `7` and `8`. `data[2:3]` takes only `0`, `853` and `1101`.
+
+### Episode by episode, and the 30 seconds before
+
+Reconstructed at full frame rate from the raw captures. Pack state comes from `0x200`, BMS flags from `0x201`, position from `0x410`.
+
+**E1 — 2026-08-02 18:55, (7, 1101), the shortest.** The charge manager wakes at 18:55:12.913 (first `0x605`). `0x610` b0 walks `0x10` → `0x08` → `0x0A`; at 18:55:14.313 the VCU declares a DC session (`0x605` b0 = `0x11`, `charge_type` = 2, `bms_leak_detect_inhibit` = 1) and `0x645` appears. At 18:55:15.849 — **2.94 s after the charge manager first spoke** — one frame carries the error and `b7` = `0x23` together. Eight frames later the entire charge-manager group leaves the bus for 2.6 s and comes back with `0x630`'s `0xA1` slot reading `0x1B`, the value §0x630 records for AC. Pack: SOC 38 %, 288.0 V, −0.2 A, 13/14 °C, `0x201` state `0x01` Discharge, error and warning words both zero. No GPS fix (0, 0), and the capture that follows also has no fix, so this one is indoors. No `0x305`/`0x306` anywhere in the capture — nothing was charging before it.
+
+**E2 — 2026-08-08 17:41, (8, 1101), the one with a dead bus in front of it.** The capture opens at 17:39:43 with the session already at `b7` = `0x23`, b0 = `0x2A`, SOC 9 %, 272.2 V, 35 °C. Then **the entire bus goes silent for 92.72 s** — not one frame of any of the 62 ids, `0x101`/`0x102`/`0x104` included, from 17:39:59.003 to 17:41:31.720, in the middle of one continuous capture file. 0.53 s after traffic resumes the error appears; it holds 5.4 s; the file ends 1.4 s later and the next capture carries a new boot id. ⚠️ A hole this shape has two readings and this capture cannot separate them: the bus was down, or the Pi's `can0` was. The `thermometer` service re-initialising the interface is a documented way to kill a reader (`CAPTURES.md` §Gotchas), which argues for the second; a reader that died would normally not resume inside the same file, which argues for the first.
+
+**E3 — 2026-08-09 14:41, (7, 853), the one with the most in it.** Charge manager wakes 14:41:39.441; the handshake steps `0x02` → `0x14` → `0x04` → `0x07` → `0x09`; at 14:41:46.078 the same frame carries `0x23` and the error. **6.64 s after the charge manager first spoke.** The error holds 43.80 s and clears at 14:42:32.481. Pack: SOC 9 %, 269.9-271.1 V, −0.1 A, 35/35 °C, BMS error word zero. Position 56.50178, 12.95665 — the same station as E0 four minutes earlier.
+
+🔍 **One concrete thing E3 shows that the others cannot.** `0x605` and `0x615` — the two VCU→CM frames — **stop entirely for 46.00 s**, from 14:41:46.142 to 14:42:32.145 — beginning 0.064 s after the first error frame and ending 0.336 s before the error clears. `0x625` keeps broadcasting throughout, so this is the VCU dropping the session conversation specifically, not the VCU going quiet. E1 does the same for 3.00 s. In both cases the last VCU frame is **0.063 s after** the charge manager's first error frame — inside one 100 ms tick, so the capture cannot say which caused which, and it would be wrong to read it as either.
+
+Both readings are worth writing down because they point opposite ways: a CM that raises an error and a VCU that then withdraws, or a VCU that withdraws and a CM that reports the withdrawal. The second would sit naturally with `C1006 CM-VEHICLE COMMUNICATION ERROR`, whose factory description is "Charging Manager is not communicating with the motorcycle". 🟡 That is a hypothesis on two samples with a 63 ms ordering that resolves neither way, and nothing here promotes it further.
+
+### Mode A or Mode B — classified from the bus, and they do split
+
+The owner describes two failure modes that feel different from the saddle: **Mode A**, the bike drops out of charging and the charger errors, and a retry works without a restart; **Mode B**, the bike hangs about a minute on a "DC fast charging initialisation" screen, cannot be switched off, and has to be waited out. Mode B implies something power-cycled or hung; Mode A does not. The test is whether the bus keeps running, using `0x101`/`0x102`/`0x104` at 100 Hz as the pulse.
+
+|               | bus gaps > 0.2 s in the window        | reading                                    |
+| ------------- | ------------------------------------- | ------------------------------------------ |
+| E0            | **0**, over 2.5 min at 100 Hz         | Mode A                                     |
+| E1            | **0**, over 2.5 min at 100 Hz         | Mode A                                     |
+| E2            | **one, of 92.72 s**, every id at once | **Mode B, or a capture artefact**          |
+| E3            | **0**, over 6.2 min at 100 Hz         | Mode A (agrees with the owner's own check) |
+| 15:23 success | 0                                     | —                                          |
+
+So three of the four are unambiguously Mode A: 15 099 (E0), 15 333 (E1) and 36 819 (E3) consecutive frames of `0x101` with no gap over half a second, straight through the fault, the clear and the retry. **The one that is not is E2** — and E2 is also the only one of the four whose capture file ends within 1.4 s of the last error frame, with the next capture carrying a new boot id 9 s later.
+
+⚠️ **This is suggestive and it is not proof, for the reason in §E2 above**: a 92.7 s hole in a single continuous candump is what a dead bus looks like and also what a re-initialised `can0` looks like. What can be said without hedging is that the bus-continuity test **works** and **separates** — it is not a test that says the same thing about every episode.
+
+🟡 If the split is real, the pairing so far is `(7, 853)` and `(7, 1101)` with Mode A, and `(8, 1101)` with Mode B — i.e. **`src` 8 with the hang and `src` 7 with the clean drop-out**, on one sample of each. That is exactly the shape of claim this project has shipped wrong before, so it is recorded as the thing to check on the next fault and nothing more. The prediction it makes is cheap to falsify: a Mode A failure reporting src 8, or a Mode B failure reporting src 7, kills it.
+
+### What the failures share that the successes do not
+
+**Mostly nothing, and the honest answer is that for two of the three episodes there is no "before" to compare.** E1 faults 2.94 s after the charge manager first speaks and E3 6.64 s. The 30 seconds before each is 27 and 23 seconds of a parked bike with the charge manager asleep — which is byte-for-byte the same thing as the 30 seconds before every successful session.
+
+Everything measurable was compared against the successful 2026-08-09 15:23 session (47 min, 69 A) and against the corpus's other DC sessions. **None of it separates:**
+
+|                | E1           | E2               | E3               | success 15:23    |
+| -------------- | ------------ | ---------------- | ---------------- | ---------------- |
+| SOC            | 38 %         | 9 %              | 9 %              | 25 %             |
+| pack V         | 288.0        | 272.2            | 269.9            | 282.4            |
+| pack temp      | 13/14 °C     | 35/35 °C         | 35/35 °C         | 35/35 °C         |
+| `0x201` state  | `0x01`       | `0x01`           | `0x01`           | `0x01`           |
+| BMS error word | 0            | 0                | 0                | 0                |
+| `0x625` limits | 363 V / 75 A | 363 V / 75 A     | 363 V / 75 A     | 363 V / 75 A     |
+| station        | no fix       | 55.7246, 13.1499 | 56.5018, 12.9567 | 56.6576, 12.9072 |
+
+SOC, pack voltage, both pack temperatures, the BMS state byte, the BMS error and warning words, the vehicle's own configured limits, the `0x615` target voltage — every one of them is inside the range the successful sessions cover. **There is no pack-side or configuration-side precondition in this data.** That is a real answer and it is the answer.
+
+🧨 **And the station is not it either, which one visit settles on its own.** E0 failed at 56.50178, 12.95665 at 14:37 with no code. E3 failed at the same coordinates at 14:41 with (7, 853). Then, at the same coordinates, in the same visit, the bike charged for **19.9 minutes at up to 60 A** — the session that runs 14:46:47 → 15:06:38 in `capture-20260809-144317-edcdcf23.log`, whose own `0x410` fixes read 56.50178, 12.95665. Same charger, same cable, same pack at 9 % and 35 °C, minutes apart, two failures and then a success. Whatever `(7, 853)` is, it is not "this station does not work with this bike".
+
+**And E2's stop does the same thing independently.** E2 fails at 17:41:32; at 17:43:40, at 55.72463, 13.14987 — the same stop — the bike starts the session that delivers **73 A** for the next 11 minutes. Two stops, two failure-then-success pairs, on two different days at two different chargers.
+
+❌ **"The station never offered anything" is NOT the discriminator, and this is the trap.** `0x620` reads `00 00 00 FF` for the whole of all three episodes, which looks decisive until it is timed. The successful 15:23 session **also** reads `00 00 00 FF` for its first **25.04 s** — and E1 faults at 2.94 s and E3 at 6.64 s, both well inside that. Across the corpus, in the six sessions captured from the charge manager's first frame, the first real offer arrives at **+9.5, +9.6, +10.6, +10.7, +13.5 and +25.0 s**. (A seventh, 2026-08-08 17:43, reads +64.2 s, but its capture opens mid-session so its zero is the capture start rather than a wake — an upper bound, not a measurement.) At the instant either fault fires, "no offer yet" is the normal state. It is confirmed that no offer ever came in any failed attempt, and that is a description of the failure, not a precondition of it.
+
+🟡 One lead that is not nothing and is also not much: **`0x630` with b0 = `0xA1`, byte 2.** It reads `0x07` through a live DC session and `0x00` otherwise (this document's §0x630 records `0x1B` on AC against `0x07` on DC). In E1 and E2 it drops `0x07` → `0x00` **0.387 s and 0.387 s before the first error frame**; in E3 it does not, staying `0x07` for the whole 43.8 s of the fault and only dropping at teardown. Two identical numbers out of three tries, and no control was run over how often that byte drops without a fault, so this is recorded as an observation for whoever has more faults, not as a signal.
+
+### `b7` step semantics — a clean split on nine samples
+
+Every `0x610` `b7` path in the archive, computed **per capture file** so that no path is stitched across two files with different clocks (see the artefact note below). Nine handshakes begin at `0x02` and are therefore complete:
+
+| when             | path out of `0x02`                    | outcome                              |
+| ---------------- | ------------------------------------- | ------------------------------------ |
+| 2026-08-04 19:58 | `14 04 07 0D 11 12 11 23`             | delivered 66 A                       |
+| 2026-08-08 13:00 | `14 04 07 09 11 12 11 23`             | delivered 73 A                       |
+| 2026-08-08 15:09 | `14 04 07 0D 11 12 23`                | delivered 66 A                       |
+| 2026-08-09 15:22 | `14 04 07 0D 11 12 11 12 11 23`       | delivered 69 A                       |
+| 2026-08-09 16:55 | `14 04 05 07 09 0D 11 12 11 12 11 23` | delivered 73 A                       |
+| 2026-08-09 17:51 | `14 04 07 09 11 12 11 12 11 23`       | delivered 11 A                       |
+| 2026-08-02 18:55 | `23`                                  | **fault (7, 1101)**                  |
+| 2026-08-09 14:41 | `14 04 07 09 23`                      | **fault (7, 853)**                   |
+| 2026-08-09 14:42 | `14 04 23`                            | no fault, nothing delivered in 139 s |
+
+Plus one partial that starts mid-path at `0x04` (2026-08-09 17:55, `04 05 07 09 12 11 12 11 12 11 23`, delivered 66 A) and eleven fragments that open already at `0x23`.
+
+✅ **What can be concluded.** All **six** complete handshakes that delivered current pass through both `0x11` and `0x12`; the seventh delivery, the partial, does too. All **three** that delivered nothing reach `0x23` without either. Seven for seven and three for three — and the split does not depend on the fault bytes, since the third no-delivery case has none. On this corpus, **`0x11`/`0x12` is where a DC handshake either completes or does not**, and `0x23` on its own says nothing about whether charging will start.
+
+⚠️ **What cannot.** Nine samples, six of one outcome and three of the other. And the split is partly circular for E1 and E3: in both, `0x23` and the error arrive in the same 10 Hz frame, so "reached `0x23` without `0x11`" and "faulted" are one observation described twice, not two agreeing observations. The 2026-08-09 14:42 retry is the case that rescues it from being circular — no error bytes at all, no `0x11`/`0x12`, no current — and it is one sample.
+
+⚠️ **And the step vocabulary is far thinner than the paths make it look.** Across all 850 361 raw `0x610` frames, `b7` reads:
+
+    02  693 029      23  157 013      04  180      11   89      07   16
+    12   12          14    9          09    7      0D    4      05    2
+
+**Every intermediate step in every table above rests on 319 frames in total, 0.0375 % of the id.** `0x05` has been seen twice ever, `0x0D` four times. A step held for under ~100 ms cannot appear at 10 Hz at all, so no path here is known to be complete, and two paths differing is established while either path being the whole truth is not. The DBC does not name this byte; nothing here names it either.
+
+✅ Consistent with PR #105, and worth restating from a second direction: **`0x09` is not an abort marker.** It appears in four of the seven paths that delivered current (13:00, 16:55, 17:51, 17:55) and in one that faulted.
+
+### The code value itself — no structure recoverable from two numbers
+
+`853` = `0x0355`, `1101` = `0x044D`. Everything below was checked and none of it produced anything:
+
+- **Not a DTC number.** `src/diagnostics/dtc-table.ts` carries fourteen charge-manager codes under component 54, `C1003`…`C1018`. Neither 853 nor 1101 is any of those numerals, nor a component/symptom pair (`853` → 3/85 and `1101` → 4/77 under a byte split; symptoms only run 0-15), nor a decimal split that lands in range.
+- **Not a subsystem in the high byte, on two samples.** The high bytes are 3 and 4 and the low bytes 0x55 and 0x4D. With one code per high byte there is nothing to test.
+- **Nothing on disk carries either number** in a charge-manager context — `obd-garage/`, the service-tool extracts, the factory PDFs and the community repos were all searched.
+- 1101 − 853 = 248, which is not 256 and not anything else.
+
+🟡 **One coincidence that is worth naming precisely so it is not mistaken for a finding.** `CM_ERROR_SRC` takes the values 7 and 8, and component 54's symptoms run 0…13, so both land in range — and (54, 7) is `C1010 PROTOCOL ERROR`, (54, 8) is `C1011 CM APPLICATION LAYER ERROR`, both plausible for a failed CCS handshake. **It is very likely a coincidence.** Energica's freeze-frame shortlist for every one of `C1003`…`C1018` is `[VEHICLE_SUBSTATE, VCU_CM_COM_BYTE0, CM_ERROR_SOURCE, CM_ERROR_CODE_MSB, CM_ERROR_CODE_LSB]` — the source is captured _alongside_ the symptom, in all fourteen. A field that is stored next to the symptom is not the symptom. Two values in a fourteen-wide range is also a 1-in-... nothing: any two values would have landed in it.
+
+⚠️ **A real risk in the current decode, from the factory side.** Every factory artefact on this machine describes these as **three independent `uint8_t`** — `CM_ERROR_SOURCE` (118), `CM_ERROR_CODE_MSB` (119), `CM_ERROR_CODE_LSB` (120) — with no equation and no combination rule. The "signed 16-bit little-endian" reading comes from thimo's DBC alone. The two agree on the observed data (`b3` is the MSB, `b2` the LSB, so `i16le` and `MSB×256 + LSB` give the same 853 and 1101), and they diverge only above 32 767, where `i16le` returns a negative. `bounds.js` admits −32 768…32 767 so nothing would be dropped, but a code of 40 000 would be logged as −25 536. Left as is, because changing a decode on a hypothetical is worse than recording the exposure — but if a negative `charge_manager_error_code` ever appears in the log, it is this and not a bike fault.
+
+### The factory files, re-checked specifically for an enumeration
+
+**There is no enumeration of `CM_ERROR_SOURCE` or `CM_ERROR_CODE` values anywhere on this machine.** Checked and negative: the manufacturer's telemetry-scaling table (ids 92, 118, 119, 120 — `unit` and `equation` columns empty), a byte-level scan of the service tool's shared library, the manufacturer's CAN signal database and the service tool's network library (zero occurrences of the strings at all), the embedded JSON resource inside the service-tool executable (the signals are there, `"equation": ""`), the rider-supplied `.xdbc`, the type-approval PDF, the Ribelle workshop and owner manuals, `Component and diagnosis information`, and the three community repos. thimo's own report says the same from the DBC side: names only, factor 1, offset 0.
+
+Two things the search did turn up that this document did not have:
+
+🟡 **`0x610` is in no factory CAN database on this disk.** The manufacturer's CAN signal database, extracted from a 2024 service-tool build, has no entry for id `0x610` — its highest is `0x501` — and the 2022 type-approval PDF reaches `CM_V_COM_BYTE0` as a diagnostic freeze-frame info-key over KWP2000, not as a broadcast frame. **The `CM_V_COM` / `CM_ERROR_SRC` / `CM_ERROR_CODE` naming of this frame rests on thimo's DBC and on nothing else available here.** That is not a reason to doubt it — the type-approval PDF independently names `VCU_CM_COM_BYTE0`, `V_EV_ERROR`, `CM_V_COM_BYTE0` and `CM_ERROR` as the VCU↔CM signal set, which is exactly the naming convention thimo describes, and the 0.162 s agreement with `0x100` is a measurement rather than a name. It is a reason to say "one source" out loud wherever this decode is quoted.
+
+🧨 **The charge-manager error triple HAS been captured, and it reads zero.** `src/diagnostics/fault-infokeys.ts` says at (54, 13): "The charge-manager error triple this project has never captured." It has — in `scripts/captured-freeze-frames.ts`, which carries a component-54 freeze frame the bike actually sent on 2026-08-08:
+
+    component 54, symptom 11 → C1014 UNCLASSIFIED CM ERROR
+    57 01 00 36 B5 22 0A 00 00 00 FF
+      VEHICLE_SUBSTATE   34
+      VCU_CM_COM_BYTE0   0x0A
+      CM_ERROR_SOURCE     0
+      CM_ERROR_CODE_MSB   0
+      CM_ERROR_CODE_LSB   0
+
+Decoded through `decodeFreezeFrameResponse()` itself, not by hand. **A stored charge-manager DTC's own freeze frame preserved the error triple as all zeros** — so the freeze-frame route, which the service-tool file analysis in obd-garage/ §3.4 and this project's own notes both nominate as the way to see these values without a live fault, did not preserve them on the one occasion it was read. Whether that is because the fault was recorded before the triple was populated, because the record is stale, or because the VCU stores zero when the CM did not supply a value, this capture cannot say. It does mean the freeze-frame route is not the shortcut it looked like.
+
+🔍 And the corresponding positive: **six charge-manager DTCs are stored on this bike.** The mode-03 list captured 2026-08-04 (39 codes, in `scripts/captured-dtc-transfer.ts`) decodes to `C1003`, `C1006`, `C1008`, `C1010`, `C1012` and `C1014` among others — unspecified CM error, CM-vehicle communication error, EVSE emergency shutdown, protocol error, SLAC process error, unclassified CM error. So the charge manager's fault path has fired in at least six distinct ways on this motorcycle over its life, while the entire live capture corpus caught three episodes carrying two codes. **The live corpus is a small and probably unrepresentative sample of this ECU's failure modes**, and any table built from it would be built from the wrong end.
+
+### ❌ Refuted: the `0x400` rate change is not a fault signal
+
+A lead worth testing and worth writing down as dead. `0x400` — the dashboard's own digital inputs — was observed running at 120 Hz for ~11 s during the 2026-08-09 14:41 episode, spanning exactly the gap between the fault clearing at 14:42:32.481 and the retry starting at 14:42:48.845, against a flat 80 Hz through the successful 15:23 handshake. Byte-identical payload throughout, so a real second cyclic slot rather than a button press: gaps are bimodal at ~5/10 ms (three frames per 25 ms cycle) at 120 Hz and ~10/15 ms (two per cycle) at 80 Hz.
+
+**It fails its control by a wide margin.** In the same capture file, `0x400` runs at 120 Hz continuously from 08:02 to 14:41:38 — **6.6 hours, with no fault anywhere in it** — and drops to 80 Hz for exactly the 12 s at 14:36:59-14:37:10 when the charge manager was on the bus during E0. The 11-second "bump" is one instance of the state the bike sits in for most of its life:
+
+    E1 window: 120 Hz for 148 s while 0x610 absent,  80 Hz for 6 s while present
+    E3 window: 120 Hz for 175 s while 0x610 absent,  80 Hz for 194 s while present
+
+⚠️ **And it is not simply "charge manager present" either**, which is the tidy explanation that also fails. In `capture-20260809-144317-edcdcf23.log` the rate is 80 Hz for the entire capture including the 16 minutes between sessions when the charge manager is asleep. Two captures of the same bike on the same day have different `0x400` baselines. What drives the third slot is unresolved; **what is settled is that it is not a fault indicator**, and a rule built on it would fire for hours a day.
+
+### ⚠️ An artefact that contaminates any analysis timed across a Pi restart
+
+Found while reconciling the fault windows, and it affects more than the faults. **When the capture service restarts with a new boot id, the new file's clock can be minutes behind the old file's, so the two overlap in wall-clock time while recording different moments.** Three instances, all confirmed by content rather than by inference:
+
+- **2026-08-09.** `capture-20260809-080235-cd40b535.log` at 14:45:00 reads 271.1 V and −0.1 A; `capture-20260809-144317-edcdcf23.log` at "14:43:17" reads 275.6 V and **+59.7 A**. A pack cannot be at rest and taking 60 A at the same instant, and the higher voltage belongs to the loaded one, so edcdcf23's clock lags by at least two minutes.
+- **2026-08-02.** `capture-20260802-184638-1c8fc1e2.log` at 18:55:14 reads −0.1 A with no `0x305`/`0x306` in the file at all; `capture-20260802-185513-563dd217.log` at "18:55:15" reads +2.1 A with 17 632 frames of `0x305`/`0x306`. Same conclusion.
+- **2026-08-08 17:42-17:44** is the same shape and the two files happen not to contradict each other, which is luck rather than a different mechanism.
+
+🧨 **This document already has a casualty of it.** §0x620 lists "2026-08-09 14:43 n = 11 940 modal 20 range 19..21 **(the aborted attempt)**" and §0x615 lists "2026-08-09 14:43:17.121 +0.03" as one of the eight captured ramp-ups. Those are the same session, and it is a **successful** one at 60 A in edcdcf23 — not the aborted attempt, which is in cd40b535 and never saw an amp. The related "155 s aborted DC attempt of 2026-08-09 14:42" in §0x605, §0x625 and §0x645 also comes from merging the two: what is actually captured is **139.3 s**, from 14:42:48.846 to the end of cd40b535 at 14:45:08, with `0x620` at `00 00 00 FF` and `0x615` b2 at 0 throughout. What happened after that is in a file with an unknown clock offset, and the retry may well have succeeded there.
+
+**The rule for anyone pairing frames across captures: dedupe on `(timestamp, id, payload)` is not enough.** Two files can carry different payloads at the same timestamp, and the merge then produces state sequences that never happened — the first run of this analysis "found" `b7` flapping `02` ⇄ `23` at frame rate for 0.8 s on 2026-08-02 and again for many seconds on 2026-08-09, and both were two files disagreeing, not the bike. Segment by capture file first, then reconcile by content.
+
+### What all of this leaves decodable
+
+- ✅ `data[1]` and `data[2:3]` are the fault path, corroborated by `0x100` b7 bit 1 at a fixed +0.162 s in 3 of 3.
+- ✅ Non-zero here means a charge attempt failed, in 3 of 3 — but not the converse: E0 failed with these bytes at zero.
+- ✅ The full observed value set: src ∈ {7, 8}, code ∈ {853, 1101}, pairs {(7,853), (7,1101), (8,1101)}.
+- ❌ What either number **means**: unknown, with no factory enumeration in existence on this disk and no structure derivable from two values.
+- ❌ Which of `C1003`…`C1018` a given pair maps to: unknown. Six of them are stored on this bike, the one freeze frame that was read carries zeros, and nothing correlates.
+- 🔍 The reading that would settle it, unchanged and now sharper: a fault where the live `charge_manager_error_src`/`_code` and a **freshly cleared then re-read** stored DTC list are captured in the same minute. Clear the codes first — six are already stored, so a post-fault read without a clear cannot attribute anything.
 
 ---
 

@@ -242,10 +242,11 @@ export const FAULT_INFOKEYS: readonly FaultInfokeys[] = [
   shortlist(54, 10, "C1013", [1, 89, 118, 119, 120]),
   shortlist(54, 11, "C1014", [1, 89, 118, 119, 120]),
   shortlist(54, 12, "C1015", [1, 89, 118, 119, 120]),
-  // The charge-manager error triple this project has never captured. Energica's
-  // own answer to a charge-current fault is CM_ERROR_SOURCE plus a 16-bit
-  // CM_ERROR_CODE split MSB/LSB — a freeze frame is one way to see it without
-  // reaching the charge manager on its own CAN id pair.
+  // Energica's own answer to a charge-current fault is CM_ERROR_SOURCE plus a
+  // 16-bit CM_ERROR_CODE split MSB/LSB. ⚠️ The freeze-frame route is NOT the
+  // shortcut it looks like: the one component-54 reply this bike actually sent
+  // (54,11 in scripts/captured-freeze-frames.ts) carries the triple as 0, 0, 0.
+  // docs/charge-manager.md § "The fault corpus".
   shortlist(54, 13, "C1018", [1, 89, 118, 119, 120]),
   shortlist(55, 0, "P2637", [1, 93, 94, 95]),
   shortlist(56, 0, "C1016", [1, 96, 97, 98, 99, 100, 101]),

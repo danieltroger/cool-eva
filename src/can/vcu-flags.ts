@@ -73,10 +73,11 @@ export function decodeVcuFlagsFrame(data: Buffer): DecodedValue[] {
 // unplug (established from an entirely different frame), and `WARN_SocMisaligned` appears
 // nine minutes after a partial fast charge ended at 57 % SOC.
 //
-// ⚠️ `ERR_ChargeCM_Out` reads 0 in all 105 736 — a NEGATIVE and nothing more, since no capture
-// on this disk contains a charge-manager fault. **This decode has never been seen to fire.**
-// 🔎 The one window where the charge manager did complain (2026-08-09 12:38-12:42) has no local
-// raw CAN; the doc records the exact four edges that would confirm the bit in one pass.
+// ✅ `ERR_ChargeCM_Out` HAS fired — this paragraph said the opposite until 2026-08-20, on the
+// strength of a 105 736-frame sample. Archive-wide it is set in 3 563 frames, in four windows,
+// and in three of them it rises exactly 0.162 s after 0x610 publishes a charge-manager error
+// code. The fourth has no code, so this bit and 0x610 b1-3 are not equivalent and a charge-fault
+// check needs both. Evidence: docs/charge-manager.md § "The fault corpus".
 
 // ⚠️ The other 57 bits, including all eleven broken out above beyond those three and
 // `V_PGood12V`, read 0 in every frame of every capture. Their positions are Energica's word

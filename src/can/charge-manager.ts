@@ -79,7 +79,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // frames where DC current flows read 2.
         //
         // ⚠️ A property of the SESSION, not of current flowing. In the aborted DC attempt of
-        // 2026-08-09 14:42 it reads 2 for the whole 155 s while not one amp moves. For "is
+        // 2026-08-09 14:42 it reads 2 for the whole 139 s while not one amp moves. For "is
         // charge actually flowing", use dc_charging / ac_charging below.
         { key: "charge_type", value: data[2] },
         // ✅ b7 = `V_IMD_DISABLE`: the VCU commanding the insulation monitor off, which is the
@@ -130,9 +130,9 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // fault code" and left them alone for want of a second observation, and a factory name is
         // what closes that. Logged raw because two values are not a table.
         //
-        // 🟡 This contradicts src/can/vcu-flags.ts, which says the CM's own error telemetry "is
-        // not broadcast anywhere". It is, here, at 10 Hz — and `vcu_err_charge_manager` stayed 0
-        // through all three episodes.
+        // ✅ Corroborated on a second frame: `vcu_err_charge_manager` (0x100 b7 bit 1) rises
+        // 0.162 s after the first error frame in all 3 episodes. It also rises in a 4th failure
+        // where these bytes stayed 0, so an "any charge fault" check must read both.
         { key: "charge_manager_error_src", value: errorSource },
         { key: "charge_manager_error_code", value: errorCode },
       ];
@@ -292,7 +292,7 @@ export function decodeChargeManagerFrame(id: number, data: Buffer): DecodedValue
         // is asserted when NOT DC charging, so a frame that never arrives cannot be mistaken for
         // a DC charge. The byte takes 0x32 parked or idle, 0x12 on DC, 0x2C on AC.
         //
-        // These say current is FLOWING, not that a session exists — through the 155 s aborted DC
+        // These say current is FLOWING, not that a session exists — through the 139 s aborted DC
         // attempt of 2026-08-09 14:42, b4 stays 0x32 while 0x605 and 0x610 both say the session
         // is established. That split is why both these and `charge_type` are logged.
         { key: "dc_charging", value: bit(flags, 5) ? 0 : 1 },
