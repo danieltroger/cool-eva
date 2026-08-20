@@ -592,9 +592,13 @@ Only checks that pass or fail on their own, with no bike and no local-only files
 - `CAPTURED_FRAMES` — whole CAN frames, quoted byte for byte from `obd-garage/DIAG_ADDRESSES.md` §3, where they were written down as they came off the bus on 2026-08-08. **These are the only things that prove the FRAMING.**
 - `LIVE_BANK1_READS` — parameter values read live on 2026-08-08 (§4 and §5). The notes recorded the identifier, the record bytes and the decoded value, but NOT the enclosing frame — so the frame is reconstructed around them in the check script. They prove the name table, the routing and the interpretation; **they do not independently prove the framing, and are not presented as if they did.**
 
-**`scripts/freeze-frame-fixtures.ts`** — **⚠️ constructed, not captured. The name of the file says so.** No `0x17` payload has ever been recorded: the 2026-08-08 capture of the factory software counted 29 of them and 29 positive `57` replies (`obd-garage/DIAG_ADDRESSES.md` §9.1) but kept only the service bytes, not the data.
+**`scripts/captured-freeze-frames.ts`** — the 29 real `0x17` replies from `capture-20260808-182129`, byte for byte, PCI bytes included.
 
-So what the check built on it verifies is INTERNAL CONSISTENCY: that the decoder reproduces the layout `src/diagnostics/freeze-frame.ts` documents, applies Energica's own scalings to Energica's own field widths, and rejects the malformed shapes. **If the layout is wrong, every assertion still passes and the bike still tells us something different.** That is the honest limit of this fixture, and it is why `trailingHex` exists.
+**`scripts/freeze-frame-fixtures.ts`** — **⚠️ constructed, not captured. The name of the file says so.** It now holds only the shapes the bike never sent, which is the one thing a capture cannot supply: a refusal, an answer naming the wrong component, a short Consecutive Frame mid-transfer.
+
+The note that used to stand here said no `0x17` payload had ever been recorded, and that the 2026-08-08 capture "kept only the service bytes, not the data" (`obd-garage/DIAG_ADDRESSES.md` §9.1). **That was wrong, and the reason is worth keeping.** The search looked at `7C0`. `7C0` carries only requests — byte 0 is the addressed component, `A8` or `A9`, on all 26 662 of them. Replies come back on **`7E0`** with byte 0 = `F1`, the tester. Both directions of a KWP session are not on one CAN id here, and assuming they were hid 29 real payloads for long enough that a fixture was built in their place. §9.1 of the garage notes is still uncorrected; it is gitignored, so this paragraph is the correction of record.
+
+Two of the invented frames also **disagree with the real ones**, which matters before trusting them for anything else: component 44 really answered 18 bytes with status `0x07`, not 17 with `0x05`, and component 4 answered `0x25`, not `0x2D`.
 
 How they were built: payload per §5.1, then the fault's own infokey shortlist in order, each field big-endian at its datatype's width; framed as extended-addressed ISO-TP to the tester (`0xF1`), a First Frame carrying 5 payload bytes and Consecutive Frames carrying 6, zero-padded to a full 8-byte DLC. The two faults were chosen because this bike has met both: **P0A07**, the water-pump code, which the bike reports intermittently; and **P0514**, which mode 01 PID 02 named as the freeze-frame code on 2026-08-04 and which is in the 39 stored codes. The VALUES are invented, but not arbitrarily — each was picked to exercise a decoding path that would otherwise go unchecked: a zero-current open circuit, a negative int16 (`B_PACK_I` = −1.8 A), a negative int8 (`B_L_TEMP` = −1 °C), the ×0.1 scaling, and the `(X/2)-40` air-temperature encoding.
 
@@ -631,6 +635,18 @@ The malformed frames in §D are the ones worth having regardless of provenance: 
 A "sample" there is one WebSocket message, carrying the SERVER's timestamp — not the phone's — so every `at` is the Pi's clock. That means a stalled link is representable, and is tested: a stall is simply a gap with no samples in it. The detector cannot see wall-clock time passing on the phone, because it is never given it.
 
 The names are a trap: `btn_cruise_enable` sits next to `btn_cruise_set` and BOTH of its recorded presses armed cruise control 0.53 s later. Binding a UI gesture to that bit would put a tab switch on a control that changes how the bike is moving — which is why the check also pins which buttons the gestures are bound to.
+
+### 11.4 What the 29 captured replies settled
+
+The reply layout, confirmed on all 29: `57 <recordCount> <DTC-hi> <DTC-lo> <status>`, then the fault's infokey fields in payload order, then **one trailing byte**. `FREEZE_FRAME_HEADER_BYTES = 5` is right.
+
+**The shortlists are correct 29 times out of 29.** Every reply's length equals the 5-byte header plus that fault's own infokey widths plus one, for components from 3 to 62 and field payloads from 0 to 20 bytes. A 944-reference table extracted from Energica's tooling now has 29 independent confirmations, and `MAX_FREEZE_FRAME_FIELD_BYTES = 20` is met exactly by component 51 rather than exceeded.
+
+**The one claim about the motorcycle rather than about the code**: component 44 decodes as `P0A07`, `ai_WaterPumpCurrent_In` = **0 mA** against a 400 mA open-circuit threshold — the pump is wired to the heated-grip output, so its driver sits open — and the three IGBT legs read an identical 34.9 °C. Three legs of one inverter sampled in one instant _must_ agree, and a one-byte misalignment destroys that: reading the header as 6 gives 23809, 23809, 23945. That is the assertion that pins the layout down, and it is one a constructed fixture could only make by having been told the answer first.
+
+**The trailing byte is not decoded.** It is not a checksum — sum, XOR, field-sum and one's-complement all match 0 of 29. Values are small integers (1, 2, 3, 5…61, 118) plus `0xFF` on six replies. The working hypothesis is a **saturating occurrence counter**: component 44, this bike's permanent standing fault, is one of the `0xFF`s, and components seen once read `01`. **This is a hypothesis, not a decode** — only one session has ever captured these, so it cannot be tested against a second. The test that would settle it is cheap and belongs on the on-bike list: read the frames again, and see whether the counters have gone up. If they have not moved, the counter reading is dead.
+
+`headerBytesThatFit` returns `[]` on all 29 real replies, because no candidate header length explains a payload that is one byte longer than header-plus-fields. That empty array is the correct answer and not an error — the docstring in `src/diagnostics/freeze-frame.ts` now says so, since the one state the bike actually produces was the one state the documentation did not cover.
 
 ### 11.4 The bugs the checks were written for
 

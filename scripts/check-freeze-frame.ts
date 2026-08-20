@@ -11,6 +11,7 @@ import {
   buildFreezeFrameRequestFrame,
   decodeFreezeFrameResponse,
   decodeFreezeFrameStatus,
+  FREEZE_FRAME_HEADER_BYTES,
   expectedFreezeFramePayloadBytes,
   formatFreezeFrameValue,
   toHex,
@@ -19,6 +20,7 @@ import {
 } from "../src/diagnostics/freeze-frame.ts";
 import { INFOKEY_TABLE, lookupInfokey, scaleInfokeyValue } from "../src/diagnostics/infokey-table.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
+import { CAPTURED_FREEZE_FRAMES, capturedFreezeFramePayload } from "./captured-freeze-frames.ts";
 import {
   FREEZE_FRAME_P0514_COMPONENT,
   FREEZE_FRAME_P0514_EXPECTED,
@@ -447,6 +449,81 @@ if (unknownPair.kind === "frame") {
   check(unknownPair.frame.values.length === 0, "no shortlist means no fields could be named");
 }
 
+// ── §8 The 29 replies the bike actually sent ───────────────────────────────
+//
+// Everything above this line proves the decoder is consistent with its own
+// tables. This section is the only part that can be wrong in the bike's favour:
+// the payloads are the VCU's, from capture-20260808-182129.
+
+check(CAPTURED_FREEZE_FRAMES.length === 29, `expected 29 captured 0x17 replies, got ${CAPTURED_FREEZE_FRAMES.length}`);
+
+const singleFrameCaptures = CAPTURED_FREEZE_FRAMES.filter(entry => entry.frames.length === 1);
+check(
+  singleFrameCaptures.length === 1 && singleFrameCaptures[0].component === 60,
+  `component 60 has an empty shortlist, so it should be the one and only Single Frame; got ${singleFrameCaptures.map(entry => entry.component).join(", ")}`
+);
+
+for (const entry of CAPTURED_FREEZE_FRAMES) {
+  const label = `captured component ${entry.component}`;
+  const payload = capturedFreezeFramePayload(entry);
+  const response = decodeFreezeFrameResponse(payload, entry.component);
+  if (response.kind !== "frame") {
+    failures.push(`${label}: a real reply decoded as ${response.kind}, not a frame`);
+    continue;
+  }
+  const frame = response.frame;
+  check(frame.component === entry.component, `${label}: decoded component ${frame.component}`);
+  check(frame.symptom === entry.symptom, `${label}: decoded symptom ${frame.symptom}, expected ${entry.symptom}`);
+  check(frame.shortlistKnown, `${label}: no shortlist for a fault the bike actually reported`);
+
+  // The layout claim, tested 29 times: 5-byte header, the shortlist's fields, then
+  // exactly one byte over. Every reply is one longer than the shortlist accounts for
+  // — not one component, all of them — so the surplus is structural, not a bad row.
+  const shortlist = infokeysFor(entry.component, entry.symptom);
+  if (shortlist) {
+    check(
+      frame.values.length === shortlist.infokeys.length,
+      `${label}: decoded ${frame.values.length} fields for a ${shortlist.infokeys.length}-infokey shortlist`
+    );
+    const expected = FREEZE_FRAME_HEADER_BYTES + freezeFrameFieldBytes(shortlist) + 1;
+    check(payload.length === expected, `${label}: ${payload.length} bytes, layout predicts ${expected}`);
+  }
+  check(
+    /^[0-9A-F]{2}$/.test(frame.trailingHex),
+    `${label}: expected exactly one unexplained trailing byte, got "${frame.trailingHex}"`
+  );
+}
+
+// The one assertion here that is a claim about the motorcycle rather than about
+// the code. The coolant pump on this bike is wired to the heated-grip output, so
+// its driver sits open — and the VCU's own freeze frame for P0A07 says 0 mA
+// against an open-circuit threshold of 400 mA. A constructed fixture could assert
+// this only by having been told the answer first.
+const capturedPump = CAPTURED_FREEZE_FRAMES.find(entry => entry.component === 44);
+if (!capturedPump) {
+  failures.push("the capture should contain component 44");
+} else {
+  const response = decodeFreezeFrameResponse(capturedFreezeFramePayload(capturedPump), 44);
+  if (response.kind !== "frame") {
+    failures.push(`the pump's real reply decoded as ${response.kind}`);
+  } else {
+    const byName = new Map(response.frame.values.map(value => [value.name, value]));
+    check(response.frame.obdCode === "P0A07", `the pump reply should be P0A07, got ${response.frame.obdCode}`);
+    check(
+      byName.get("ai_WaterPumpCurrent_In")?.raw === 0,
+      `the open pump driver must read 0 mA, got ${byName.get("ai_WaterPumpCurrent_In")?.raw}`
+    );
+    // Three legs of one inverter, sampled in the same instant. Equal values are
+    // what physics requires and what a one-byte misalignment destroys — this is
+    // the assertion that would have caught reading the header as 4 or 6 bytes.
+    const legs = ["D_IGBTA_T", "D_IGBTB_T", "D_IGBTC_T"].map(name => byName.get(name)?.value);
+    check(
+      legs.every(leg => closeEnough(leg, 34.9)),
+      `the three IGBT legs should agree at 34.9 °C, got ${legs.join(", ")}`
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error("\nFAILED:");
   for (const failure of failures) {
@@ -459,7 +536,10 @@ console.log(
     " both constructed transfers reassemble and decode; refusals, wrong components, gapped," +
     " short, oversized, truncated, surplus and foreign replies all rejected, with their bytes kept"
 );
-console.log("⚠️  the transfers are CONSTRUCTED — no 0x17 payload has ever been captured. See the PR.");
+console.log(
+  "✓ 29 CAPTURED 0x17 replies decode, every infokey resolves, and the layout predicts" +
+    " all 29 lengths to the byte — with one trailing byte per reply still unexplained"
+);
 
 /** Reassembles and decodes one transfer, printing every step. Returns null on failure. */
 function replay(frames: readonly string[], component: number, label: string): FreezeFrame | null {

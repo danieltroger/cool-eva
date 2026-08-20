@@ -185,3 +185,10 @@ ride-logs
 # own. Committing one deliberately, as a reference set of real Eva Ribelle values,
 # would be a fine thing to do; it just should not happen by accident on every run.
 vcu-params
+
+# Local ride database and scratch probes — never commit (large, and full of VIN/GPS)
+rides.db
+rides.db-shm
+rides.db-wal
+rides.db.bak-*
+energica_probe.py

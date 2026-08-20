@@ -234,6 +234,13 @@ export interface FreezeFrame {
    *   [5]     the implemented reading is right
    *   [4]     🚨 the header has no record-count byte; every field here is shifted
    *           one byte and the numbers are wrong. Change FREEZE_FRAME_HEADER_BYTES.
+   *   []      No candidate explains the length. This is what the bike ACTUALLY
+   *           sends on all 29 captured replies, and it is not an error: the reply
+   *           is one byte longer than the header plus the shortlist accounts for,
+   *           and that byte lands in `trailingHex`. The fields ahead of it decode
+   *           correctly — verified against P0A07, where the open pump driver reads
+   *           0 mA and the three IGBT legs agree. Do NOT "fix" this by growing the
+   *           header to 6; that shifts every field and the legs stop agreeing.
    *   []      neither fits — the layout is something else again, and `rawHex` is
    *           the evidence
    *   [5, 4]  impossible unless the shortlist is empty, since the two differ by one
