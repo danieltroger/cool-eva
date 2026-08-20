@@ -1,6 +1,7 @@
 import {
   activeParameterTable,
   parameterAtIndex,
+  parameterTable,
   recordLengthFor,
   type VcuMicro,
   type VcuParameter,
@@ -86,7 +87,7 @@ export interface WriteTarget {
  * does, what its bounds are and why — which is the friction this file exists to
  * create.
  */
-export const WRITE_TARGETS: WriteTarget[] = [
+export const CURATED_WRITE_TARGETS: WriteTarget[] = [
   {
     name: "MAX_DC_CHG_CURRENT",
     index: 258,
@@ -237,18 +238,138 @@ export interface ParameterWritePlan {
   description: string;
 }
 
+/**
+ * Why writing THIS parameter on a bike running `bikeTable` would be unsafe, or null.
+ *
+ * The write encodes with the ACTIVE table's index for this name. If the bike's table
+ * puts a different parameter at that index, the bytes land in the wrong calibration
+ * cell — so the two tables have to agree about this index, in name, storage type,
+ * signedness and micro. Checked per parameter rather than table-wide, because tables
+ * renumber wholesale and one disagreement elsewhere is not a reason to refuse a write
+ * to a cell both tables agree about.
+ */
+export function writeTargetProblemIn(target: WriteTarget, bikeTable: VcuParameterTable): string | null {
+  const onBike = bikeTable.byIndex.get(target.index);
+  if (!onBike) {
+    return `index ${target.index} (“${target.name}”) is not in table ${bikeTable.tableType} at all`;
+  }
+  if (onBike.name.toUpperCase() !== target.name.toUpperCase()) {
+    return (
+      `writing “${target.name}” would go to index ${target.index}, which table ${bikeTable.tableType} ` +
+      `calls “${onBike.name}” — that is a different calibration cell`
+    );
+  }
+  const encoding = parameterAtIndex(target.index);
+  if (
+    !encoding ||
+    encoding.type !== onBike.type ||
+    encoding.signed !== onBike.signed ||
+    encoding.micro !== onBike.micro
+  ) {
+    return (
+      `${target.name} would be encoded as ` +
+      `${encoding ? `${encoding.type} ${encoding.signed ? "S" : "U"} on ${encoding.micro}` : "nothing at all"}` +
+      `, but table ${bikeTable.tableType} stores it as ${onBike.type} ${onBike.signed ? "S" : "U"} on ${onBike.micro}`
+    );
+  }
+  return null;
+}
+
 /** A refusal carries the reason, because every one of these is a person to be told something. */
 export type WritePlanOutcome = { ok: true; plan: ParameterWritePlan } | { ok: false; reason: string };
+
+/**
+ * Every parameter this repo will write: the five researched ones, then the rest of the
+ * bike's own table.
+ *
+ * ⚠️ This USED to be the five alone, and the argument for that was: an identifier two
+ * away from the five is `CELL_OVERVOLTAGE`, `THROTTLE_MAX_TH` or `ACTIVE_CURRENT_LIMIT`,
+ * so a typo reaches something that matters. That argument was about INDEX typos, and
+ * nothing here has ever taken an index — the HTTP layer takes a name and always has
+ * (src/http/vcu-write.ts). The owner pointed this out; it is their motorcycle, and the
+ * restriction was protecting against a mistake the interface cannot make.
+ *
+ * What the five still have that the rest do not is RESEARCH: measured bounds, the
+ * evidence behind them, and a warning written by someone who went and looked. A
+ * generated target carries the datatype's full range and says, in as many words, that
+ * nothing here knows what it does. That distinction is the safety property now, and it
+ * is on screen rather than enforced by absence.
+ *
+ * Every write is still a compare-and-swap against a fresh read, still refused when the
+ * bike's table disagrees with this one (`allowlistProblemsIn`), and still read back
+ * afterwards. None of that changed.
+ */
+export function writeTargets(): WriteTarget[] {
+  const curated = new Map(CURATED_WRITE_TARGETS.map(target => [target.name.toUpperCase(), target]));
+  const seen = new Map<string, number>();
+  for (const parameter of parameterTable()) {
+    seen.set(parameter.name.toUpperCase(), (seen.get(parameter.name.toUpperCase()) ?? 0) + 1);
+  }
+  const generated: WriteTarget[] = [];
+  for (const parameter of parameterTable()) {
+    const key = parameter.name.toUpperCase();
+    if (curated.has(key)) {
+      continue;
+    }
+    // ⚠️ Four names appear twice — VSM_DUMMY_WORD8…11, and #13/#14 are not even the same
+    // storage type as #24/#25. A write is addressed by NAME, so those eight rows cannot
+    // be named unambiguously, and inventing a key would mean parameterFor() could no
+    // longer check the name it was given against the one params.ecf carries. They are
+    // padding words; the ambiguity is not worth a bespoke addressing scheme.
+    if ((seen.get(key) ?? 0) > 1) {
+      continue;
+    }
+    generated.push(generatedTarget(parameter));
+  }
+  return [...CURATED_WRITE_TARGETS, ...generated];
+}
+
+/** The widest value the record can physically carry. NOT a safe range — see below. */
+function datatypeBounds(parameter: VcuParameter): { min: number; max: number } {
+  if (parameter.type === "BOOL") {
+    return { min: 0, max: 1 };
+  }
+  const bits = parameter.type === "BYTE" ? 8 : 16;
+  return parameter.signed ? { min: -(2 ** (bits - 1)), max: 2 ** (bits - 1) - 1 } : { min: 0, max: 2 ** bits - 1 };
+}
+
+/**
+ * A target for a parameter nobody has researched.
+ *
+ * ⚠️ The bounds are what the RECORD can hold, not what the bike can survive. That is
+ * the honest position — a narrower invented range would look researched and would not
+ * be — and it is why every warning here says so rather than implying a safe window.
+ */
+function generatedTarget(parameter: VcuParameter): WriteTarget {
+  const bounds = datatypeBounds(parameter);
+  const storage = `${parameter.type} ${parameter.signed ? "signed" : "unsigned"} on the ${parameter.micro}`;
+  return {
+    name: parameter.name,
+    index: parameter.index,
+    control: { kind: "number", min: bounds.min, max: bounds.max },
+    unit: raw => `${raw}`,
+    purpose:
+      `Parameter ${parameter.index}, ${storage}${parameter.section ? `, under “${parameter.section}”` : ""}. ` +
+      "Nothing in this repo knows what it does or what a sane value is — the name is the whole of what is known.",
+    warnings: [
+      "⚠️ NOT researched. This is reachable because every parameter is, not because anyone established it is safe to change.",
+      `⚠️ The range ${bounds.min}…${bounds.max} is the datatype's full range, not a safe range. A value inside it can still be one the bike cannot run on.`,
+      "⚠️ Read the current value first and write it down. There is no factory default in this repo to put back.",
+      "A dealer visit reverts it. The service tool reinstalls parameter values from Energica's server, keyed by VIN.",
+    ],
+    verify: null,
+  };
+}
 
 /** The target with this name, or null. Case-insensitive, because a name arrives from a manual or a URL. */
 export function writeTargetNamed(name: string): WriteTarget | null {
   const wanted = name.trim().toUpperCase();
-  return WRITE_TARGETS.find(target => target.name.toUpperCase() === wanted) ?? null;
+  return writeTargets().find(target => target.name.toUpperCase() === wanted) ?? null;
 }
 
-/** Every name on the allowlist, so a UI's list cannot drift from the codec's. */
+/** Every writable name, so a UI's list cannot drift from the codec's. */
 export function writeTargetNames(): string[] {
-  return WRITE_TARGETS.map(target => target.name);
+  return writeTargets().map(target => target.name);
 }
 
 /**
@@ -447,7 +568,7 @@ function parameterFor(target: WriteTarget): VcuParameter {
 // default until a bike says otherwise. It is therefore a check on this repo's own
 // consistency and not on any motorcycle — allowlistProblemsIn() below is the one that
 // asks about the bike, and it is the one the gate consults before every write.
-for (const target of WRITE_TARGETS) {
+for (const target of CURATED_WRITE_TARGETS) {
   parameterFor(target);
 }
 
@@ -464,10 +585,18 @@ for (const target of WRITE_TARGETS) {
  * allowlist alone, because the active table is what buildPlan() will encode with. Name,
  * storage type, signedness and micro all have to line up: the name is what the owner
  * asked for, and the other three are what the bytes on the wire will be.
+ *
+ * ⚠️ CURATED targets only, and that is deliberate. Those five carry a hand-written
+ * index↔name binding that can drift from any table; the other 264 take their names FROM
+ * the active table and so cannot drift from it. What they CAN do is disagree with the
+ * bike's table — index 1 is `VSM_DUMMY_WORD1` here and `TH_HIGH_B_H_TEMP` in table 4102,
+ * and tables renumber wholesale — but that is a question about one parameter, not a
+ * reason to veto every write on the bike. `writeTargetProblemIn` answers it per
+ * parameter, and ./write-runner.ts asks before each write.
  */
 export function allowlistProblemsIn(bikeTable: VcuParameterTable): string[] {
   const problems: string[] = [];
-  for (const target of WRITE_TARGETS) {
+  for (const target of CURATED_WRITE_TARGETS) {
     const onBike = bikeTable.byIndex.get(target.index);
     if (!onBike) {
       problems.push(`index ${target.index} (“${target.name}”) is not in table ${bikeTable.tableType} at all`);

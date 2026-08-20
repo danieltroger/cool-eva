@@ -19,7 +19,7 @@ import {
   type ServicePointOutcome,
   type ServiceWriteOutcome,
 } from "./write-session.ts";
-import { planBitWrite, planWrite, WRITE_TARGETS, type WriteTarget } from "./write-targets.ts";
+import { planBitWrite, planWrite, writeTargets, type WriteTarget } from "./write-targets.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
 // to it, read the result back, and write down what happened. The read engine is
@@ -235,7 +235,7 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
     gate: context.gate(),
     tableGate: evaluateTableGate(sweep?.report ?? null),
     clock: readPiClock(),
-    targets: WRITE_TARGETS.map(target => summariseTarget(target, sweep?.snapshot ?? null)),
+    targets: writeTargets().map(target => summariseTarget(target, sweep?.snapshot ?? null)),
     recent: await recentAuditRecords(context.directory, RECENT_AUDIT_LINES),
     busHeldBy: busHeldBy(),
   };
