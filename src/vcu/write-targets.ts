@@ -11,69 +11,20 @@ import { registerAllowlistTableCheck } from "./table-gate.ts";
 import { registerWritePlanVerifier } from "./write-codec.ts";
 
 // THE ALLOWLIST. The only VCU calibration parameters this repo will ever write, the
-// only values it will write into them, and the pure function that turns a request
-// into bytes or into a refusal.
+// only values it will write into them, and the pure function that turns a request into
+// bytes or into a refusal. Data and arithmetic only — no socket, no clock, no state;
+// scripts/check-vcu-params.ts §14 exercises every branch below.
 //
-// Everything here is data and arithmetic — no socket, no clock, no state — which is
-// the whole point: the bike is a week away (2026-08-16), so the only claims that can
-// be tested at all are the ones that live in a function taking numbers and returning
-// numbers. scripts/check-vcu-params.ts §14 exercises every branch below.
+// ⚠️ An identifier not on this list is not "out of range", it is UNEXPRESSIBLE. There
+// is no `writeIdentifier(id, value)` in this repo, the HTTP layer takes a NAME rather
+// than a number (src/http/vcu-write.ts), and ./write-codec.ts re-checks the plan against
+// this module immediately before the bytes are built. Two identifiers away from the five
+// below sit `CELL_OVERVOLTAGE`, `THROTTLE_MAX_TH` and `ACTIVE_CURRENT_LIMIT`.
 //
-// ── ⚠️ Why an allowlist and not a range check on an arbitrary identifier ─────
-// Bank 1 is the VCU's calibration EEPROM. Two identifiers away from the ones below
-// sit `CELL_OVERVOLTAGE`, `THROTTLE_MAX_TH`, `ACTIVE_CURRENT_LIMIT` and
-// `LIMP_MIN_CELL`; one mistyped index writes a cell limit or a throttle map instead
-// of a charge current, and obd-garage/VCU_PARAM_CHANGES.md is a list of how
-// interdependent those are (change `CELL_TARGET_AC` without `CHG_OVERSHOOT` and the
-// charge stops with the same symptom you were trying to fix). A range check cannot
-// see that. A closed list of parameters someone has actually reasoned about can.
-//
-// So: an identifier not on this list is not "out of range", it is UNEXPRESSIBLE.
-// There is no `writeIdentifier(id, value)` anywhere in this repo, the HTTP layer
-// takes a NAME rather than a number (src/http/vcu-write.ts), and ./write-codec.ts
-// re-checks the plan against this module immediately before the bytes are built.
-//
-// ── ⚠️ The ranges are POLICY, not measured hardware limits ───────────────────
-// Every bound below is stated with its reasoning, and most of the reasoning is "this
-// is as far as anyone here has an argument for", not "the hardware fails past here".
-// They are deliberately narrow: a bound that is too tight costs one PR to widen, and
-// a bound that is too loose costs a calibration EEPROM. Where a number IS anchored to
-// something measured, the anchor is named.
-//
-// ── ⚠️ The list is a list of NAMES, and a name is a claim about a table ──────
-// Every entry below pairs a name with an index, and which parameter that index IS
-// depends on which of Energica's parameter tables the bike runs. There are two checks
-// for that, and they answer different questions:
-//
-//   parameterFor(), at module load — does the allowlist agree with the table this Pi is
-//     naming parameters from? A code-versus-code check between two files in this repo,
-//     so it THROWS: a service whose own allowlist disagrees with its own name table must
-//     refuse to start rather than write 80 into whatever now sits at index 258.
-//
-//   allowlistProblemsIn(), per write, through ./table-gate.ts — does the allowlist agree
-//     with the table THE BIKE named? That one cannot throw, because the answer belongs to
-//     a motorcycle rather than to a build; it comes back as a refusal with a sentence.
-//     ⚠️ It compares width, signedness and micro as well as the name, because those are
-//     what turn a value into bytes — signedness varies at 30 ids between Energica's
-//     tables, so a table that agreed on every name and disagreed on one S/U column would
-//     still encode −1 as 0xFFFF where the bike expected 0x0001.
-//
-// ✅ As of 2026-08-18 all five ids here — 16, 48, 49, 258, 259 — are identical in name,
-// width, signedness and micro across ALL 28 tables Energica ships in the 2024 build
-// (measured; scripts/check-vcu-params.ts §1e re-measures it on every run). So the second
-// check has nothing to refuse today. It is here for the tables this repo does not have
-// yet: another owner has reported a build carrying roughly five more, one of them for a
-// Corsa. What neither check can see is a rename in the OTHER direction — a table where
-// some other id is called `MAX_DC_CHG_CURRENT` — which is why ./snapshot.ts's
-// reportTableType() exists and why a sweep says out loud which table the bike named.
-//
-// ── ⚠️ NONE OF THIS HAS BEEN TRANSMITTED (2026-08-16) ────────────────────────
-// The write SERVICE, framing and auth rule are proven — obd-garage/DIAG_ADDRESSES.md
-// §9 is passive analysis of Energica's own software writing to this bike's A8, and
-// obd-garage/VCU_PARAM_CHANGES.md records five parameters written to this bike with
-// vcu_param.py on 2026-08-09, persisting across a power cycle. What has NOT been
-// tried is any of the five below, at any value, by this repo. The direction of effect
-// of `FCHG_CURRENT_GAIN` is not merely untested but genuinely unknown — see its entry.
+// ⚠️ Every bound below is POLICY, not a measured hardware limit; every name is a claim
+// about which of Energica's 28 parameter tables the bike runs; and NONE of these five has
+// ever been written by this repo, at any value. Why each entry is on the list, where each
+// bound came from, and what the two table checks can and cannot see: docs/vcu-parameters.md §5.
 
 /** How a caller may change a parameter: as a number, or as one named bit of a word. */
 export type WriteControl =
@@ -139,25 +90,16 @@ export const WRITE_TARGETS: WriteTarget[] = [
   {
     name: "MAX_DC_CHG_CURRENT",
     index: 258,
-    // BYTE S per params.ecf, and Energica's own option data gives `mask=0x7F` — bit 7
-    // is reserved, so the value field is 0…127 whatever the sign column says. 80 is
-    // 0x50, bit 7 clear, so the sign question does not arise at any value on this
-    // list. The unit is literal amperes: the service tool writes the integer 75 with no
-    // scaling anywhere (the 2024 service-tool analysis in obd-garage/), and 75 appears
-    // verbatim as `0x4B` in three independent broadcast fields — 0x620 b0, 0x625 b2 and
-    // 0x121 b4.
+    // BYTE S per params.ecf, but Energica's own option data gives `mask=0x7F` — bit 7 is
+    // RESERVED, so the value field is 0…127 whatever the sign column says. ⚠️ That is the
+    // constraint on the ceiling below: a bound past 127 would be writing into the reserved
+    // bit, which is not a larger current. 80 is 0x50, bit 7 clear, so the sign question
+    // does not arise at any value on this list. The unit is literal amperes, unscaled.
     //
-    // The ceiling is 80 because Energica shipped exactly that: OP0002/OP0003/OP0004
-    // are "Fast Charge 60 / 75 / 80 Amps", all three writing THIS parameter and
-    // nothing else. That is the evidence the owner remembered, and it holds up in two
-    // separate service-tool builds. It is worth noting how unusual that is in the
-    // option data — `OP0100 Charge Limit 4300` moves four parameters together — so "only
-    // this byte" is a positive finding rather than an absence of evidence.
-    //
-    // The floor is 0: turning DC charging DOWN is the safe direction, and is the
-    // obvious thing to want if a charger or the pack is unhappy. Nothing above 80,
-    // because past it there is no factory variant to point at and the next thing in
-    // the chain is the pack.
+    // 80 because Energica shipped exactly that — its "Fast Charge 60 / 75 / 80 Amps"
+    // options all write THIS parameter and nothing else — and 0 because turning DC
+    // charging down is the safe direction. The evidence for both, and the three
+    // independent 0x4B cross-checks on the broadcast side: docs/vcu-parameters.md §5.
     control: { kind: "number", min: 0, max: 80 },
     unit: raw => `${raw} A`,
     purpose:

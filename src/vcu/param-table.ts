@@ -7,31 +7,22 @@ import {
 } from "./table-catalog.ts";
 import type { VcuMicro, VcuParameter } from "./param-file.ts";
 
-// WHICH of Energica's parameter tables this software is currently reading names out
-// of, how a bike changes that, and what a `TABLE_TYPE` reading means.
+// WHICH of Energica's parameter tables this software is currently reading names out of, how
+// a bike changes that, and what a `TABLE_TYPE` reading means.
 //
-// ./param-file.ts holds `params.ecf`'s text; ./table-catalog.ts holds all 28 tables
-// built from it. This module is the one everything else imports, and it answers exactly
-// one question the other two cannot: *whose bike is this*.
+// ./param-file.ts holds `params.ecf`'s text; ./table-catalog.ts holds all 28 tables built
+// from it. This module is the one everything else imports, and it answers exactly one
+// question the other two cannot: *whose bike is this*. Names are selected from what the
+// bike reports at 276/277 rather than assumed, so reads name themselves correctly on any of
+// the 28.
 //
-// ── ⚠️ Why there is an ACTIVE table rather than one table ────────────────────
-// A parameter is addressed by index, and what an index means comes from the table the
-// VCU runs. This repo used to encode one — 16407, the Ribelle it was written for — and
-// refuse everything else. That was safe and it was narrow: on another owner's bike every
-// name could be wrong, and on the 20 tables where ids 70–94 are `RegenFade_0…24` rather
-// than the battery cell block, "wrong" means calling a regen curve `CELL_COUNT`.
+// ⚠️ THE ACTIVE TABLE IS NOT WHAT MAKES A WRITE SAFE, and must never be relied on for that.
+// It is module state, set from a snapshot on disk, and right only for as long as the Pi is
+// bolted to the bike it was last swept on. The write path re-derives the bike's table from
+// the raw `TABLE_TYPE` words in the report it is handed, every time — see ./table-gate.ts
+// and ./write-targets.ts. Selection is for NAMES; the gate is for BYTES.
 //
-// So the names are now selected from what the bike reports at 276/277 instead of being
-// assumed. Reads name themselves correctly on any of the 28; writes still refuse unless
-// the bike named a table this software carries (./table-gate.ts).
-//
-// ⚠️ THE ACTIVE TABLE IS NOT WHAT MAKES A WRITE SAFE, and must never be relied on for
-// that. It is module state, it is set from a snapshot on disk, and it is right only for
-// as long as the Pi is bolted to the bike it was last swept on. The write path re-derives
-// the bike's table from the raw `TABLE_TYPE` words in the report it is handed, every
-// time, and additionally checks that this table encodes the allowlist's five parameters
-// the same way that one does — see ./table-gate.ts and ./write-targets.ts. Selection is
-// for NAMES; the gate is for BYTES.
+// Why one hardcoded table was safe but narrow: docs/vcu-parameters.md §3.
 
 /**
  * The table used before any bike has said otherwise: **16407**, the Eva Ribelle this
@@ -93,20 +84,16 @@ export interface TableSelectionOutcome {
 /**
  * Points the name lookups at the table a bike says it is running.
  *
- * ⚠️ Refuses rather than throws for an unknown table, and leaves the previous table in
- * place. A bike this software does not carry the table for must still be readable — the
- * names will be another table's and every surface says so, and the way OUT of that state
- * is a read. Throwing here would take the service down on the one bike that most needs
- * to be able to report what it saw.
+ * ⚠️ Refuses rather than throws for an unknown table, and leaves the previous one in place:
+ * a bike this software does not carry the table for must still be readable, because the way
+ * OUT of that state is a read. Throwing would take the service down on the one bike that
+ * most needs to be able to report what it saw.
  *
- * ⚠️ It throws for one thing only: a table in the catalogue that does not rebuild to its
- * recorded fingerprint (./table-catalog.ts). That is this repo's own data disagreeing
- * with itself, which is worse than carrying one hardcoded table, and it is not
- * survivable by carrying on with different names.
+ * ⚠️ It throws for one thing only — a catalogue table that does not rebuild to its recorded
+ * fingerprint, which is this repo's own data disagreeing with itself.
  *
- * Logs on every change and on every refusal, because this decides what every parameter
- * on the dashboard is called and a silent switch is exactly the kind of thing that is
- * baffling six months later in a garage.
+ * Logs on every change and every refusal: this decides what every parameter on the
+ * dashboard is called, and a silent switch is baffling six months later in a garage.
  */
 export function selectParameterTable(tableType: number): TableSelectionOutcome {
   if (tableType === active.tableType) {

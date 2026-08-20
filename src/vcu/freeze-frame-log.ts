@@ -4,63 +4,29 @@ import type { VcuKwpClient, VcuMultiFrameOutcome } from "./kwp-client.ts";
 import { isUploadFinished, readUploadGrant, toHex, type VcuUploadGrant } from "./multiframe-codec.ts";
 import type { VcuTarget } from "./param-codec.ts";
 
-// The bulk freeze-frame log: `0x35` RequestUpload, then N × `0x36` TransferData,
-// then `0x37` RequestTransferExit.
+// The bulk freeze-frame log: `0x35` RequestUpload, then N × `0x36` TransferData, then
+// `0x37` RequestTransferExit. It is the whole stored LOG with timestamps, where `0x17`
+// gives one undated record per component.
 //
-// The factory tool did exactly this on 2026-08-08 and it took **~7 minutes for
-// 1198 blocks** (obd-garage/DIAG_ADDRESSES.md §9.6). That single fact drives most
-// of the design below: everything here is about a read that runs for minutes on a
-// bus shared with the brakes, rather than about the protocol, which is three
-// services and a loop.
+// The factory tool did exactly this on 2026-08-08 and it took **~7 minutes for 1198
+// blocks**. That single fact drives most of the design: everything here is about a read
+// that runs for minutes on a bus shared with the brakes, rather than about the protocol,
+// which is three services and a loop. A bus lease, pacing, timers rather than loops, and a
+// `handleFrame` that hands back everything not ours are what keep the OBD poller alive.
 //
-// ── ⚠️ WHAT THIS GIVES THAT `0x17` DOES NOT ────────────────────────────────
-// Timestamps and history. `0x17` answers "what was the bike doing when component
-// N last latched" — one record per component, no date on it. This is the whole
-// stored LOG: every freeze frame the micro has kept, each (per the service tool's
-// `KWP2000Moto.ReadFreezeFrame`) a 4-byte big-endian timestamp in seconds since
-// 2000-01-01, then `<compHi> <compLo> <status>`, then the same info-key field
-// block ../diagnostics/freeze-frame.ts decodes.
+// ⚠️ This module does NOT decode those records, on purpose — a decoder written against a
+// layout that has never been seen is how you get 1198 plausible wrong answers instead of
+// one. The bytes are kept whole so the first real transfer can be read by a human.
 //
-// ⚠️ This module does NOT decode those records, on purpose. It hands back the
-// block bodies exactly as they arrived. Decoding them means trusting a record
-// layout that has never been seen — where the transport at least has captured
-// framing behind it — and a decoder written against a guessed layout is how you
-// get 1198 plausible wrong answers instead of one. The bytes are kept whole so
-// that the first real transfer can be read by a human, and the decoder written
-// against it afterwards.
+// ⚠️ Much of the request side was never captured (./multiframe-codec.ts says which bytes
+// are guessed), so this can fail on the first frame and is built to fail LOUDLY.
 //
-// ── ⚠️ HOW MUCH OF THIS IS ESTABLISHED ─────────────────────────────────────
-// ✅ The service sequence and the counts: 1 × `0x35`, 1198 × `0x36`, 1 × `0x37`,
-//    with positive `75` / `76` / `77` for every one, on A8, in a `10 81` session
-//    with NO SecurityAccess anywhere in the capture.
-// ⚠️ Seven of the ten operand bytes after `35 12`, the whole of every request and
-//    reply payload for `0x36`, and the `0x37` request bytes were **never
-//    recorded** — the census kept service bytes and threw the payloads away. See
-//    ./multiframe-codec.ts for exactly which bytes are guessed and why.
-// ⚠️ So this can fail on the first frame, and the honest expectation is that it
-//    might. It is built to fail LOUDLY and to leave the micro tidy when it does.
+// ⚠️ AND IT MUST BE STOPPABLE. `cancel()` takes effect between blocks and inside the block
+// in flight, and the `0x37` still goes out afterwards: an abandoned upload is a micro left
+// holding state that may make it refuse the next request. `0x37` transfers nothing and
+// stores nothing, so sending it on the way out of a failure is not a write.
 //
-// ── Not starving the OBD poller, which is the operational risk ──────────────
-// A sibling PR already made this mistake: a Mode 04 leg that ate the poller's
-// replies. Four things stop it here.
-//
-//  1. **A bus lease** (./bus-lease.ts). One thing at a time on this bus, and a
-//     second caller is told who has it rather than queued behind a seven-minute
-//     transfer.
-//  2. **Every wait is a timer.** Nothing loops, nothing blocks; the event loop
-//     runs between every block, which is what keeps the WebSocket, the CAN RX
-//     handler and the poller alive.
-//  3. **Pacing.** See `DEFAULT_PACE_MS`.
-//  4. **`handleFrame` hands back everything that is not ours** — including frames
-//     on 0x7E0–0x7EF that belong to the poller — so a transfer in flight costs the
-//     poller a null check, not a reply.
-//
-// ── ⚠️ AND IT MUST BE STOPPABLE ────────────────────────────────────────────
-// `cancel()` takes effect between blocks and inside the block in flight, and the
-// `0x37` still goes out afterwards. An abandoned upload is a micro left holding
-// state that may make it refuse the next request, and closing it is the one
-// courtesy this read owes. `0x37` transfers nothing and stores nothing, so
-// sending it on the way out of a failure is not a write.
+// What is established and what is not: docs/vcu-parameters.md §11.
 
 /** Which micro. A8, and not a parameter — the same argument ../diagnostics/freeze-frame.ts makes for `0x17`. */
 const VCU_SAFETY_MICRO: VcuTarget = "A8";

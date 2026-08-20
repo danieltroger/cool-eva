@@ -6,78 +6,26 @@ import type { ParameterWritePlan } from "./write-targets.ts";
 // Pure codec for the three services that CHANGE something in a VCU micro:
 // SecurityAccess, WriteDataByCommonIdentifier and StartRoutineByLocalIdentifier.
 // Requests in, bytes out; bytes in, outcomes out. No socket, no clock, no state —
-// so every branch is exercisable from a laptop, which is the only way any of this
-// could be reviewed at all with the bike a week away. ./write-session.ts is the
-// only part that touches a bus.
+// ./write-session.ts is the only part that touches a bus. ./param-codec.ts's read-only
+// guarantee is deliberately untouched by this file existing: its union still has three
+// members and there is still nowhere in it to put a value.
 //
-// ── ⚠️ Why this is a NEW FILE and not a widened ./param-codec.ts ─────────────
-// param-codec.ts opens with "READ-ONLY BY CONSTRUCTION, not by convention" and
-// earns it: a closed three-member union, an allowlist of emittable service bytes,
-// and nowhere to put a value. PR #50's author was right that "writes don't widen
-// the read-only guarantee, they delete it" — so that guarantee is not touched.
-// That file still cannot express a write, its union still has three members, and
-// its READ_ONLY_SERVICES set is unchanged. Reads keep the property they had.
+// Four things a caller cannot do. Each is enforced by the closed union AND re-checked on
+// the way out, and each is argued in full in docs/vcu-parameters.md §6:
 //
-// The writes live here instead, behind a guarantee of the same SHAPE rather than a
-// relaxed version of that one:
+//  • ⚠️ Name an IDENTIFIER. `write-parameter` takes a plan; only ./write-targets.ts's
+//    allowlist makes one, and `assertPlanIsAllowed` re-derives it here, last thing
+//    before the bus.
+//  • ⚠️ Name a ROUTINE ID. `start-routine` takes a NAME, so `0xFB` — one digit from the
+//    service point, and the routine that WIPES BATTERY STATISTICS — is unreachable
+//    because nothing in this repo gives it a name. Do not give it one.
+//  • ⚠️ Write before the BIKE has named its parameter table. An index only MEANS a
+//    parameter relative to a table; see `assertTableTypeConfirmed`.
+//  • ⚠️ Emit a service outside WRITE_SERVICES. 0x11 ECUReset, 0x2F InputOutputControl —
+//    the factory tool's actuator-test channel, which drives the pump, fan, horn and
+//    lights directly — 0x3B, 0x3D and 0x34/0x36/0x37 are absent and must stay absent.
 //
-//   1. **The request union is closed**, exactly as the read codec's is. Four
-//      members, no raw-bytes alternative, no caller-supplied service byte.
-//   2. **A caller cannot name an identifier.** `write-parameter` takes a
-//      `ParameterWritePlan`, and the ONLY way to obtain one is
-//      ./write-targets.ts's `planWrite`, which refuses anything not on the
-//      allowlist. There is no constructor for a plan here and no field a caller
-//      could fill in by hand that this file would honour — `encodeWrite` re-checks
-//      the plan against the allowlist on the way out (see `assertPlanIsAllowed`).
-//   3. **A caller cannot name a routine id.** `start-routine` takes a NAME from a
-//      three-member union, not a number. `0xFB`, one digit from the service point
-//      and the routine that wipes battery statistics, is unreachable because
-//      nothing in this repo gives it a name. That is deliberate and is the single
-//      most important line in this file.
-//   2b. **A caller cannot write without the bike having named its parameter table.**
-//      `write-parameter` additionally carries the table-type report the write is
-//      being made on the strength of, and `encodeWrite` re-judges it here through
-//      ./table-gate.ts — from the raw `TABLE_TYPE` words the bike sent, not from any
-//      `confirmed` boolean in the report. An index only MEANS a parameter relative to
-//      a table (see `assertTableTypeConfirmed`), so this is the same class of check as
-//      the allowlist and it is enforced in the same place, for the same reason: the
-//      UI is not the only thing that can reach this function.
-//   4. **The emitted service byte is checked**, the same belt-and-braces
-//      param-codec.ts keeps: `WRITE_SERVICES` is the whole set, and 0x11 ECUReset,
-//      0x2F InputOutputControl, 0x3B, 0x3D and 0x34/0x36/0x37 are absent and must
-//      stay absent. `0x2F` in particular is the factory tool's actuator-test
-//      channel (DIAG_ADDRESSES.md §9.6) — it drives the pump, the fan, the horn and
-//      the lights directly, and nothing in this project has any business doing that.
-//
-// ── The framing, proven on the wire ──────────────────────────────────────────
-// Same extended-addressed KWP as the read codec: `[target] [PCI] [service] …` on
-// 0x7C0, `[0xF1] [PCI] [service+0x40] …` back on 0x7E0. What follows is quoted from
-// obd-garage/DIAG_ADDRESSES.md §9.2/§9.3, which is passive analysis of a candump
-// taken while ENERGICA'S OWN diagnostic software was connected on 2026-08-08 —
-// i.e. the factory tool's real bytes, not a reconstruction:
-//
-//   seed request   7C0: A8 02 27 01               → 7E0: F1 06 67 01 <4-byte seed>
-//   key send       7C0: A8 06 27 02 <4-byte key>  → 7E0: F1 03 67 02 34
-//   bad key                                       → 7E0: F1 03 7F 27 35   (invalidKey)
-//   write (WORD)   7C0: A8 05 2E 13 EE 93 80      → 7E0: F1 03 6E 13 EE   (no value echoed)
-//   write refused                                 → 7E0: F1 03 7F 2E 33   (securityAccessDenied)
-//
-// A BYTE write is the same with `len = 04` and one value byte. The routine is from
-// obd-garage/SERVICE_RESET.md §3, decompiled from the service tool's shared library
-// rather than captured: `7C0: A8 02 31 FC` → `7E0: F1 02 71 FC`.
-//
-// ── ⚠️ What is proven and what is not, as of 2026-08-16 ──────────────────────
-//  • ✅ The seed→key algorithm. Four real A8 seed/key pairs off this bike's bus
-//    (DIAG_ADDRESSES.md §9.3) all satisfy it, and scripts/check-vcu-params.ts §13
-//    asserts all four. This is the one part of this file with live ground truth.
-//  • ✅ The `2E` write framing and its auth rule, from the same capture, and
-//    additionally exercised against THIS bike by obd-garage/vcu_param.py on
-//    2026-08-09 (VCU_PARAM_CHANGES.md: "Write procedure — fully proven").
-//  • 🟡 The `31 FC` request bytes are derived from Energica's own frame builder;
-//    the POSITIVE RESPONSE bytes `71 FC` are INFERRED, not logged
-//    (SERVICE_RESET.md §3). So `decodeRoutineReply` accepts the echo it expects and
-//    reports anything else as `unrecognised` rather than assuming success.
-//  • ❌ Nothing in this file has ever been transmitted by this repo. Not one frame.
+// ❌ Nothing in this file has ever been transmitted by this repo. Not one frame.
 
 /** Everything this codebase is permitted to ask a VCU micro to DO. Closed on purpose — see the header. */
 export type VcuWriteRequest =
@@ -179,28 +127,19 @@ const POSITIVE_RESPONSE_OFFSET = 0x40;
 const MAX_SINGLE_FRAME_PAYLOAD = 6;
 
 /**
- * Turns a seed into its key.
+ * Turns a seed into its key: swap each adjacent bit pair of the 32-bit seed, then add
+ * `0xC1A0BABE` mod 2^32. Both seed and key travel big-endian. ✅ Four real captured
+ * seed/key pairs satisfy it; provenance in docs/vcu-parameters.md §6.
  *
- * Swap each adjacent bit pair of the 32-bit seed, then add `0xC1A0BABE` mod 2^32.
- * Both seed and key travel big-endian.
- *
- * ✅ This is the one thing in this file with live ground truth: four real A8
- * seed/key pairs captured off this bike's own bus on 2026-08-08 all satisfy it
- * (DIAG_ADDRESSES.md §9.3), and scripts/check-vcu-params.ts §13 asserts every one.
- *
- * `>>> 0` rather than `>> 0` throughout, and the addition done in double precision
+ * ⚠️ `>>> 0` rather than `>> 0` throughout, and the addition done in double precision
  * before the modulo, because JavaScript's bitwise operators work on SIGNED 32-bit
- * integers: a seed with bit 30 set makes `(seed & 0x55555555) << 1` come out
- * negative, and `+` would then be subtracting. That is a wrong key, which costs one
- * of the ~3 attempts before the micro locks out until a power cycle (§8) — the most
- * expensive silent bug this file could contain.
+ * integers: a seed with bit 30 set makes `(seed & 0x55555555) << 1` come out negative,
+ * and `+` would then be subtracting. That is a wrong key, and a wrong key costs one of
+ * the ~3 attempts before the micro locks out until a power cycle.
  *
- * ⚠️ THIS IS THE VCU FAMILY'S ALGORITHM AND ONLY THE VCU FAMILY'S. It covers A8 and
- * A9, which is everything this repo addresses. It does NOT cover the rest of the
- * bike, and the differences are not subtle: the dashboard uses a four-round
- * multiply/xor/rotate then `^0xFFFFFFFF`, and the charge manager uses a CRC-16/CCITT
- * level-9 scheme. Pointing this function at either would produce a wrong key and
- * spend an attempt on an ECU whose lockout nobody here has ever cleared.
+ * ⚠️ THIS IS THE VCU FAMILY'S ALGORITHM AND ONLY THE VCU FAMILY'S — A8 and A9. The
+ * dashboard and the charge manager each use a different one, so pointing this function at
+ * either produces a wrong key and spends an attempt on an ECU nobody here has unlocked.
  */
 export function securityKeyForSeed(seed: number): number {
   const value = seed >>> 0;
@@ -463,30 +402,17 @@ function assertPlanIsAllowed(plan: ParameterWritePlan): void {
 /**
  * The other last gate: has this bike said which parameter table it runs?
  *
- * ⚠️ Why an identifier is not enough on its own. `2E 11 02 50` is a well-formed write
- * of 80 to CommonIdentifier 0x1102 whatever table the VCU is running — the micro takes
- * it, echoes `6E 11 02`, and a read-back of the same identifier returns 80. What
- * changes with the table is which PARAMETER 0x1102 is. Routing and record width are
- * invariant across all 28 of Energica's tables, so there is no malformed frame, no
- * NRC and no read-back anywhere in that sequence to notice it: the write succeeds and
- * is wrong. 151 of 278 ids carry a different name in at least one other table — id 249
- * (`LM_TYPE` in 16406, `R_BRAKE_POPUP` in 16407) is a one-name example that was found
- * rather than imagined, and ids 70–94 are the case that matters: a 25-point regen fade
- * curve on 20 of the 28 tables and the battery cell block on the other 8.
+ * ⚠️ `2E 11 02 50` is a well-formed write of 80 to CommonIdentifier 0x1102 whatever table
+ * the VCU runs — the micro takes it, echoes `6E 11 02`, and a read-back returns 80. What
+ * changes with the table is which PARAMETER 0x1102 IS, and routing and record width are
+ * invariant across all 28 of Energica's tables: no malformed frame, no NRC and no
+ * read-back in that sequence can notice. The write succeeds and is wrong.
  *
- * So the gate is enforced HERE, in the pure layer, and not only where the UI can see
- * it — for exactly the reason `assertPlanIsAllowed` sits next to it. `curl` can reach
- * /vcu-write, so can a script written before this existed, and a `TableTypeReport` is
- * a plain object that could be posted, cast or reconstructed. ./table-gate.ts
- * therefore re-derives the verdict from the raw words the bike sent rather than
- * reading the report's own `confirmed` flag, which is what makes forging one useless:
- * to get past this you would have to claim the bike answered with a table this software
- * carries, and if it did then the write was checked against that table.
- *
- * Throws, like every other refusal in this file, because by the time anything reaches
- * here the runner has already declined the request with a sentence a person can act
- * on (./write-runner.ts). Reaching this line means that check was bypassed, which is a
- * bug, and a bug on this path must be loud rather than a frame.
+ * Enforced HERE and not only where the UI can see it: `curl` can reach /vcu-write, and a
+ * `TableTypeReport` is a plain object that could be forged — so ./table-gate.ts re-derives
+ * the verdict from the raw words the bike sent. It throws because ./write-runner.ts has
+ * already declined with a sentence a person can act on, so reaching this line is a bug.
+ * Which ids differ, and why reads are NOT gated: docs/vcu-parameters.md §4.
  */
 function assertTableTypeConfirmed(report: TableTypeReport | null): void {
   const verdict = evaluateTableGate(report);

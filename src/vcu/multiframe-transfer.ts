@@ -11,50 +11,25 @@ import type { VcuTarget } from "./param-codec.ts";
 
 // One multi-frame request/reply window on the VCU micros' custom-KWP channel.
 //
-// This is the transport half of ./multiframe-codec.ts: it owns the socket, the
-// clock and the timers, and nothing else. It holds no session — ./kwp-client.ts
-// does that, and drives one of these per request — and it decodes nothing.
+// The transport half of ./multiframe-codec.ts: it owns the socket, the clock and the
+// timers, and nothing else. It holds no session — ./kwp-client.ts does that, and drives one
+// of these per request — and it decodes nothing.
 //
-// ── What this exists to do that ./kwp-client.ts' `exchange` cannot ──────────
-// That function is one frame out, one frame back. Everything here is one of the
-// two halves being longer than that:
+// ⚠️ THE FLOW CONTROL WE SEND KEEPS THE READ-ONLY PROPERTY INTACT. ./param-codec.ts claims
+// "no transmit address is ever derived from something the bus said"; that survives, because
+// `buildFlowControlFrame` addresses the target the CALLER named and this module never reads
+// an address out of a received frame.
 //
-//   RECEIVE  A `0x17` freeze frame is at minimum a 5-byte header plus fields,
-//            and an extended-addressed Single Frame holds 6 bytes — so every
-//            freeze frame is multi-frame. Assembling it means ANSWERING the First
-//            Frame with a flow-control frame, which ./param-codec.ts' header
-//            says that path deliberately never does.
-//   TRANSMIT `0x35 12` + a 10-byte operand is 12 payload bytes, which is a First
-//            Frame plus two Consecutive Frames. It is the only request in this
-//            repo that does not fit one frame.
+// ⚠️ NOTHING MAY SIT BETWEEN A FIRST FRAME AND ITS ANSWER. Measured on this bike's OBD
+// channel 2026-08-04: delaying the flow control on purpose gave 4/12 completed transfers at
+// 0 ms, 5/12 at 10 ms, 3/12 at 20 ms and 1/12 at 40 ms. So it goes out synchronously from
+// the frame handler, before the frame is even decoded — and `handleFrame` below must stay
+// callable straight off the CAN listener.
 //
-// ── ⚠️ THE FLOW CONTROL WE SEND KEEPS THE READ-ONLY PROPERTY INTACT ────────
-// ./param-codec.ts claims "no transmit address is ever derived from something the
-// bus said". That survives: `buildFlowControlFrame` addresses the target the
-// CALLER named, and this module never reads an address out of a received frame.
-// Compare src/can/obd-dtc.ts, which DOES derive its flow-control id from the
-// reply's id and therefore needs a range guard so a stray First Frame cannot make
-// it transmit on the functional broadcast address. There is nothing to guard here
-// because there is nothing derived.
-//
-// ── ⚠️ NOTHING MAY SIT BETWEEN A FIRST FRAME AND ITS ANSWER ────────────────
-// Measured on this bike's OBD channel 2026-08-04 (src/can/obd-dtc.ts' header):
-// delaying the flow control on purpose gave 4/12 completed transfers at 0 ms,
-// 5/12 at 10 ms, 3/12 at 20 ms and 1/12 at 40 ms. So the flow control goes out
-// synchronously from the frame handler, before the frame is even decoded — and
-// `handleFrame` below must stay callable straight off the CAN listener.
-//
-// ── ⚠️ AND IT MUST NOT STARVE THE OBD POLLER ───────────────────────────────
-// `handleFrame` returns false for every frame that is not part of this transfer,
-// so the caller hands it on. That matters more here than usual: the micros answer
-// on 0x7E0, which is inside the 0x7E0–0x7EF range the 2 Hz mode-01 poller reads,
-// and a transport that swallowed frames would stall that poller for a whole
-// timeout each time. Consecutive Frames are accepted only while a transfer is
-// actually open, and every reply is checked for the tester's address first.
-//
-// The other half of not starving it is time: a 1198-block log read takes minutes,
-// so ./freeze-frame-log.ts paces itself and yields between blocks. Nothing here
-// loops or blocks — every wait is a timer.
+// ⚠️ AND IT MUST NOT STARVE THE OBD POLLER. The micros answer on 0x7E0, inside the range
+// the 2 Hz mode-01 poller reads, so `handleFrame` returns false for every frame that is not
+// part of this transfer and the caller hands it on. Nothing here loops or blocks; every
+// wait is a timer. docs/vcu-parameters.md §10.
 
 /** How one multi-frame exchange ended. Resolves; nothing here rejects. */
 export type MultiFrameResult =
@@ -141,23 +116,17 @@ export interface RunningMultiFrameTransfer {
 const FLOW_CONTROL_FRAME_ALLOWANCE = 16;
 
 /**
- * Ceiling on frames handled in one exchange, over and above the reassembler's own
- * cap.
+ * Ceiling on frames handled in one exchange, over and above the reassembler's own cap.
  *
- * The reassembler bounds frames that CONTRIBUTE to a payload. This bounds the
- * ones that do not: a micro repeating flow-control frames — which the reassembler
- * deliberately ignores, so nothing there counts them — would otherwise keep this
- * alive doing nothing until the timer saved us. The timer would save us; this is
- * the cheaper guard, and it makes the loop terminate on its own terms rather than
- * on the clock's.
+ * The reassembler bounds frames that CONTRIBUTE to a payload. This bounds the ones that do
+ * not: a micro repeating flow-control frames — which the reassembler deliberately ignores,
+ * so nothing there counts them — would otherwise keep this alive doing nothing until the
+ * timer saved us. This is the cheaper guard.
  *
- * ⚠️ DERIVED from the payload cap rather than fixed, and for the same reason
- * `maxFramesFor` itself is. As a constant the two caps only stayed ordered while
- * the payload cap was small: a caller that raised it past ~380 bytes would have
- * seen a legitimate long reply abandoned as "more than 64 frames in one exchange"
- * — a true statement about the wrong number, and a guard firing where it was
- * never meant to. Being strictly above the reassembler's cap is what keeps the
- * accurate message the one a caller sees.
+ * ⚠️ DERIVED from the payload cap rather than fixed. As a constant the two caps only stayed
+ * ordered while the payload cap was small, and a caller that raised it past ~380 bytes
+ * would have seen a legitimate long reply abandoned as "more than 64 frames in one
+ * exchange" — a true statement about the wrong number. docs/vcu-parameters.md §10.
  */
 function maxFramesPerExchange(maxPayloadBytes: number): number {
   return maxFramesFor(maxPayloadBytes) + FLOW_CONTROL_FRAME_ALLOWANCE;
@@ -377,26 +346,15 @@ function handleFlowControlFromMicro(context: TransferContext, flowControl: VcuFl
 /**
  * What to do when the micro never answers our request's First Frame.
  *
- * ⚠️ This is a judgement call and it deserves to be read before it is trusted. NO
- * flow-control frame has ever been captured on this channel in either direction
- * (obd-garage/DIAG_ADDRESSES.md and CAN_MAP.md state the tester's as a prose
- * template, not a capture), so whether A8 emits one before the `0x35` Consecutive
- * Frames is genuinely unknown.
+ * ⚠️ A judgement call, and it deserves to be read before it is trusted: NO flow-control
+ * frame has ever been captured on this channel in either direction, so whether A8 emits one
+ * before the `0x35` Consecutive Frames is genuinely unknown.
  *
- * What IS known is that the factory tool's 12-byte `0x35` request was ANSWERED —
- * `75 12 E9` came back — so its Consecutive Frames certainly reached A8. Either
- * A8 sent a flow control the census discarded, or the tool sent them unprompted.
- *
- * So on a timeout the remaining frames go out anyway, loudly. Refusing instead
- * would make the whole bulk read untestable on the guess that turns out wrong,
- * and the frames themselves are close to inert: a Consecutive Frame carries PCI
- * `0x2N` and no service byte at all, so a micro not in a receive state either
- * discards it as ISO-TP noise or reads `0x21` as a length and `0xFF` as a
- * service, which is not a service and draws a refusal. Neither outcome writes
- * anything.
- *
- * `sawFlowControlFromMicro` rides out on the result either way, so the first live
- * run settles the question that the capture could have.
+ * So on a timeout the remaining frames go out anyway, loudly. The frames themselves are
+ * close to inert — a Consecutive Frame carries PCI `0x2N` and no service byte at all, so a
+ * micro not in a receive state either discards it as ISO-TP noise or draws a refusal.
+ * Neither outcome writes anything, and `sawFlowControlFromMicro` rides out on the result so
+ * the first live run settles it. The full argument: docs/vcu-parameters.md §10.
  */
 function onRequestFlowControlTimeout(context: TransferContext): void {
   console.warn(

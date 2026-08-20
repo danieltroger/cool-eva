@@ -24,56 +24,29 @@ import {
 } from "./multiframe-codec.ts";
 import { startMultiFrameTransfer, type RunningMultiFrameTransfer, type TransferStage } from "./multiframe-transfer.ts";
 
-// The transport half of reading VCU calibration parameters: put a frame on the
-// bus, wait for the reply, keep the diagnostic session alive, give up on time.
-// Every byte it sends is built by ./param-codec.ts and every byte it receives is
-// interpreted there — this file holds only the socket, the clock and the session
-// state, so the protocol itself stays replayable without a bike.
+// The transport half of reading VCU calibration parameters: put a frame on the bus, wait
+// for the reply, keep the diagnostic session alive, give up on time. Every byte it sends is
+// built by ./param-codec.ts or ./multiframe-codec.ts and every byte it receives is
+// interpreted there — this file holds only the socket, the clock and the session state.
 //
-// ⚠️ READ-ONLY, structurally. It cannot express a write. Since 2026-08-16 there
-// are TWO ways a byte reaches `channel.send`, and both are closed unions with a
-// throwing default and an allowlist re-check on the emitted service byte:
+// ⚠️ READ-ONLY, structurally. It cannot express a write. Both routes to `channel.send` are
+// closed unions with a throwing default and an allowlist re-check on the emitted service
+// byte; a caller names an operation and a target, never a service byte, and there is
+// nowhere to put a value. `0x31`, `0x2E`, `0x3B`, `0x14`, `0x11`, `0x27`, `0x2F` and `0x34`
+// are unreachable from this client.
 //
-//   • `buildRequestFrame` (./param-codec.ts) — start session / tester present /
-//     read one parameter. Three members, three permitted service bytes.
-//   • `encodeMultiFrameRequestPayload` (./multiframe-codec.ts) — the five reads
-//     whose request or reply does not fit one frame: `0x17`, `0x18`, `0x35`,
-//     `0x36`, `0x37`. Five members, five permitted service bytes.
+// ⚠️ It SENDS FLOW-CONTROL FRAMES, and the property that mattered is preserved rather than
+// spent: **no transmit address is ever derived from something the bus said.**
 //
-// There is no raw-bytes entry point to either. A caller names an operation and a
-// target; it can never name a service byte and there is nowhere to put a value,
-// which is what makes a write unexpressible rather than merely absent. `0x31`,
-// `0x2E`, `0x3B`, `0x14`, `0x11`, `0x27`, `0x2F` and `0x34` are unreachable from
-// this client and each of those two headers says why its own must stay that way.
+// ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which kills every
+// other raw-CAN socket on the Pi including the running cool-eva service's. This client only
+// ever opens a channel on an interface that is already up, so it cannot rescue a listen-only
+// bus — which is why ./read-runner.ts refuses to start a sweep when OBD_ENABLED=0.
 //
-// ⚠️ The client now SENDS FLOW-CONTROL FRAMES, which it used not to, and the
-// property that mattered is preserved rather than spent: **no transmit address is
-// ever derived from something the bus said.** A flow-control frame is addressed
-// to the target the CALLER named, exactly like every request. Contrast
-// src/can/obd-dtc.ts, which derives its flow-control id from the reply's id and
-// therefore needs a range guard so a stray First Frame cannot make it transmit on
-// the functional broadcast address; there is nothing to guard here because there
-// is nothing derived. ./multiframe-transfer.ts is where that happens.
-//
-// ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which
-// kills every other raw-CAN socket on the Pi including the running cool-eva
-// service's (CLAUDE.md). This client only ever opens a channel on an interface
-// that is already up — in practice the service's own, since the sweep moved
-// in-process (../vcu/sweep.ts). The cost is that it cannot rescue a listen-only
-// bus: it would just see nothing, which is why ./read-runner.ts refuses to start a
-// sweep when OBD_ENABLED=0 rather than leaving it as a mystery.
-//
-// ── What the bus does, per obd-garage/DIAG_ADDRESSES.md §3 (live 2026-08-08) ──
-// The micros answer NOTHING until a session is open — `A9 01 3E` alone is silence,
-// which is why a conventional sweep misses them entirely. `10 81` first, then reads
-// work. The session then auto-closes after ~2.5 s idle, so a long sweep either
-// keeps moving or re-opens; this client does the latter whenever it has been quiet
-// for longer than SESSION_IDLE_LIMIT_MS, which also makes it correct when the
-// caller pauses (a flaky ssh link, a Ctrl-Z, a slow write to the SD card).
-//
-// A8 and A9 hold SEPARATE sessions, so the state below is per-micro. Switching
-// between them mid-sweep is what makes that matter: whichever one you left goes
-// idle and expires while you work on the other.
+// ⚠️ The micros answer NOTHING until a session is open, `10 81`, and it auto-closes after
+// ~2.5 s idle — hence SESSION_IDLE_LIMIT_MS. A8 and A9 hold SEPARATE sessions, so the state
+// below is per-micro: whichever one you left expires while you work on the other.
+// docs/vcu-parameters.md §9.
 
 /** Which micro, which parameter — carried on every outcome so a result is never ambiguous. */
 export interface VcuReadTarget {

@@ -7,48 +7,27 @@ import { startProbe, type RunningProbe, type VcuProbeReading, type VcuProbeReque
 import { parameterTable, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
 
-// Service mode's engine: decide whether the bike may be serviced, run one parameter
-// sweep in this process while that stays true, and put service mode straight back
-// out the moment it does not.
+// Service mode's engine: decide whether the bike may be serviced, run one parameter sweep
+// in this process while that stays true, and put service mode straight back out the moment
+// it does not. Reading is still read-only by construction — nothing in this file or in the
+// HTTP layer can name a service, an identifier or a value.
 //
-// ── What changed, and why the old rule no longer applies ─────────────────────
-// This used to `spawn` scripts/read-vcu-params.ts and watch the files it left
-// behind, so that the always-on service could truthfully say it never asked the
-// micros anything. That rule bought one thing — a bright line nobody could cross by
-// accident — and cost three: a second copy of the resume/partial/baseline rules, a
-// progress feed parsed back off disk, and a cross-process clock comparison to work
-// out which archive belonged to which run.
+// ⚠️ THE EXIT PATH IS THE PART THAT MATTERS. Two independent things stop a sweep, and both
+// end in the same `abort`:
 //
-// The bright line is now drawn somewhere better. Service mode is entered only with
-// the bike PROVED stationary and out of drive (./service-gate.ts), and it is left
-// automatically the instant that stops being true — so "the service does not touch
-// the micros" becomes "the service touches the micros only when the motorcycle
-// cannot move", which is the property that was actually wanted. Reading is still
-// read-only by construction: ./param-codec.ts's request union has three members and
-// its encoder throws on anything else, and nothing in this file or in the HTTP layer
-// can name a service, an identifier or a value.
+//  1. The sweep asks the gate before EVERY request (./sweep.ts, `mayContinue`), so the
+//     check precedes the socket rather than racing it.
+//  2. A watchdog here re-checks the gate every GATE_WATCH_INTERVAL_MS and calls `abort`
+//     from outside the loop. That is what bounds the worst case: one `readParameter` can
+//     spend ~1.2 s inside itself, and without the watchdog a bike that started moving
+//     during one would keep four more frames on the bus until the loop came back round.
 //
-// ── The exit path, which is the part that matters ────────────────────────────
-// Two independent things stop a sweep, and both end in the same `abort`:
+// `abort` calls `client.stop()`, which refuses every subsequent transmit, so the sweep
+// cannot emit one more frame on its way out. The session it opened is left to expire by
+// itself after ~2.5 s of silence, which is why there is no closing frame to send.
 //
-//  1. The sweep asks the gate before EVERY request (./sweep.ts, `mayContinue`), so
-//     the check precedes the socket rather than racing it.
-//  2. A watchdog here re-checks the gate every GATE_WATCH_INTERVAL_MS and calls
-//     `abort` from outside the loop. That is what bounds the worst case: one
-//     `readParameter` can spend ~1.2 s inside itself (a reply window, a session
-//     re-open, a second reply window), and without the watchdog a bike that started
-//     moving during one would keep four more frames on the bus until the loop came
-//     back round.
-//
-// `abort` calls `client.stop()`, which clears the pending request and refuses every
-// subsequent transmit, so the sweep cannot emit one more frame on its way out. The
-// diagnostic session it opened is left to expire by itself after ~2.5 s of silence,
-// which is the documented behaviour and is why there is no closing frame to send —
-// see the note on `abort` in ./sweep.ts.
-//
-// Nothing read is lost on the way out: every row was appended to the resume file as
-// it arrived, the partial snapshot is written and labelled `complete: false`, and
-// starting again resumes from where it stopped.
+// Nothing read is lost on the way out. Why this stopped being a spawned script, and why
+// that traded a bright line for a better one: docs/vcu-parameters.md §9.
 
 /** How the last (or current) sweep is going. A closed union so the page cannot render a state we did not mean. */
 export type VcuReadState =

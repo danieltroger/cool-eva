@@ -1,35 +1,23 @@
 import { mkdir, open, readFile } from "fs/promises";
 import { join } from "path";
 
-// Every attempt to change something on this motorcycle, appended to one file, for
-// ever. What was asked for, what the bike held before, what it held after, and how it
-// went — including the attempts that were refused, and especially those.
+// Every attempt to change something on this motorcycle, appended to one file, for ever.
+// What was asked for, what the bike held before, what it held after, and how it went —
+// including the attempts that were refused, and especially those.
 //
-// ── Why this exists at all ───────────────────────────────────────────────────
-// obd-garage/VCU_PARAM_CHANGES.md is the current record of what has been changed on
-// this bike, and it is a hand-maintained markdown file in a folder that is not even
-// in this repository. It has already proved its worth twice — it is what made
-// "neither MAX_DC_CHG_CURRENT nor FCHG_CURRENT_GAIN was ever touched" a checkable
-// claim, which is what killed a whole hypothesis about the charge ceiling. But a
-// hand-maintained file records the changes someone remembered to write down.
-//
-// A parameter sweep is the other half: src/vcu/snapshot-store.ts diffs every snapshot
-// against the last and shouts when a value moved. That catches the FACT of a change
-// and not its author — "something reconfigured the bike" is exactly as far as a diff
-// can go. This journal is what turns that into "service mode wrote 80 into
+// A snapshot diff catches the FACT of a change and not its author; this journal is what
+// turns "something reconfigured the bike" into "service mode wrote 80 into
 // MAX_DC_CHG_CURRENT at 14:02 on 2026-08-23, over a 75 that it read first".
 //
-// ── Append-only, one JSON object per line ────────────────────────────────────
-// The same shape as `sweep.partial.jsonl` and for the same reasons: a torn write
-// costs the last line and nothing else, it survives a service restart mid-write, and
-// it can be read with `tail`. Never rewritten, never compacted, never pruned — this
-// is a file that should be boring and enormous rather than clever and short.
+// Append-only, one JSON object per line, the same shape as `sweep.partial.jsonl` and for
+// the same reasons: a torn write costs the last line and nothing else, it survives a
+// service restart mid-write, and it can be read with `tail`. Never rewritten, never
+// compacted, never pruned — this file should be boring and enormous rather than clever and
+// short.
 //
-// ⚠️ A REFUSED attempt is recorded exactly as carefully as a successful one. "The
-// micro refused this three times" is the record that matters when someone is trying
-// to work out why a parameter will not take, and a journal that only holds successes
-// is a journal that answers no interesting question. It is also the only place the
-// SecurityAccess attempts get counted, and those are the resource that runs out.
+// ⚠️ A REFUSED attempt is recorded exactly as carefully as a successful one. It is the only
+// place SecurityAccess attempts get counted, and those are the resource that runs out.
+// Why the hand-maintained record was not enough: docs/vcu-parameters.md §16.
 
 const AUDIT_FILE = "service-writes.jsonl";
 

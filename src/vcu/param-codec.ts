@@ -1,77 +1,36 @@
 import { describeNegativeResponseCode } from "../diagnostics/obd-dtc.ts";
 import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } from "./param-table.ts";
 
-// Pure codec for the VCU micros' custom KWP framing: requests in, bytes out; bytes
-// in, values out. No socket, no clock, no state — so the whole protocol can be
-// exercised from a laptop against records captured off the bike, which is what
-// scripts/check-vcu-params.ts does. src/vcu/kwp-client.ts is the only part that
-// touches a bus. Same split as iso-tp.ts / obd-dtc.ts.
+// Pure codec for the VCU micros' custom KWP framing: requests in, bytes out; bytes in,
+// values out. No socket, no clock, no state — so the whole protocol can be exercised from
+// a laptop against records captured off the bike. src/vcu/kwp-client.ts is the only part
+// that touches a bus. Same split as iso-tp.ts / obd-dtc.ts.
 //
-// ── ⚠️ READ-ONLY BY CONSTRUCTION, not by convention ──────────────────────────
-// The public entry point takes a `VcuRequest`, which is a closed union of three
-// alternatives — start a session, say hello, read one parameter. There is no
-// overload, option or escape hatch that accepts caller-supplied service bytes, so
-// there is no code path in this repo that can put a write on this bus. Adding one
-// would mean adding a variant to that union and a branch to the switch, in a file
-// that says this, which is the point.
+// ⚠️ READ-ONLY BY CONSTRUCTION, NOT BY CONVENTION. The public entry point takes a
+// `VcuRequest`: a closed union of three alternatives — start a session, say hello, read
+// one parameter — with no overload, option or escape hatch that accepts caller-supplied
+// service bytes. Adding a write would mean adding a variant to that union and a branch to
+// the switch, in a file that says this, which is the point. It stays true even though
+// ./write-codec.ts now exists: the two guarantees are deliberately separate, so that
+// whether a READ can change something is answerable from this file alone.
 //
-// ⚠️ What a caller CAN choose, since 2026-08-16: the target ECU, the bank and the
-// index — i.e. WHICH thing is read, so that service mode can probe an identifier the
-// name table does not describe. What a caller still cannot choose is the SERVICE and
-// the VALUE, and those are the two that make a write. Keep that line where it is:
-// widening "which" is recoverable, widening "what to do to it" is not.
+// ⚠️ A caller CAN choose the target, the bank and the index — WHICH thing is read. A caller
+// still cannot choose the SERVICE or the VALUE, and those are the two that make a write.
+// Keep that line where it is: widening "which" is recoverable, widening "what to do to it"
+// is not. Never implement IN THIS FILE: 0x2E, 0x3B, 0x27, 0x31, 0x11, 0x2F, or OBD Mode 04.
 //
-// Never implement IN THIS FILE: 0x2E WriteDataByCommonIdentifier, 0x3B
-// WriteDataByLocalIdentifier, 0x27 SecurityAccess, 0x31 StartRoutineByLocalId,
-// 0x11 ECUReset, 0x2F InputOutputControl, or OBD Mode 04. This is the bike's
-// calibration EEPROM: one wrong word in it is a throttle map, a cell limit or a
-// charge current, and nothing here is worth that. Reading needs none of them —
-// A8 and A9 serve banks 1 and 2 with no authentication at all, so there is not
-// even an argument for 0x27 (and per DIAG_ADDRESSES.md §3 the bank-0 refusal is
-// NRC 0x12 subFunctionNotSupported, not 0x33, so 0x27 would not open it anyway).
+// ⚠️ The framing is extended-addressed ISO-TP on 0x7C0/0x7E0, and it is NOT compatible with
+// src/can/iso-tp.ts: a First Frame carries five data bytes there, not six, and that
+// reassembler rejects it outright. Reusing it would silently drop every multi-frame reply.
 //
-// ⚠️ That paragraph used to say "here or anywhere", and since 2026-08-16 that is no
-// longer true of the repository — so it no longer says it. Three of those services
-// (0x27, 0x2E, 0x31) and OBD Mode 04 now exist in ./write-codec.ts, behind their own
-// closed union, their own allowlist of five parameters, their own enable switch
-// (SERVICE_WRITE_ENABLED, off by default) and a read-back after every write.
+// ⚠️ No parameter read in this table can produce a multi-frame reply, so none is assembled
+// here and — the property three other modules cite by name — **no transmit address is ever
+// derived from something the bus said**: it only ever addresses a micro the caller named.
 //
-// This file is unchanged by that and must stay unchanged: its union still has three
-// members, READ_ONLY_SERVICES still holds three bytes, and there is still nowhere in
-// it to put a value. The two guarantees are deliberately separate rather than merged
-// — a reader who wants to know whether a READ can change something should be able to
-// answer it from this file alone, without reasoning about a flag somewhere else.
-// 0x11 ECUReset, 0x2F InputOutputControl, 0x3B and 0x3D are implemented NOWHERE, and
-// ./write-codec.ts's own header says why each must stay that way.
+// ⚠️⚠️ There used to be a third target — the charge manager, as 0xA4 on 0x7C3/0x7E3. **It
+// has been removed and that pair must not come back**; see the note above VcuTarget.
 //
-// ── The framing, from obd-garage/CAN_MAP.md and DIAG_ADDRESSES.md §3 ─────────
-// Request  0x7C0: [target] [PCI] [service] …      target = 0xA9 / 0xA8  (VCU micros)
-// Response 0x7E0: [0xF1]   [PCI] [service+0x40] … 0xF1 is the tester's address
-//
-// ⚠️⚠️ There used to be a third target here — the charge manager, as 0xA4 on request
-// 0x7C3 / response 0x7E3. **It has been removed, and that pair must not come back.**
-// See the note above VcuTarget below for the addresses that are actually right.
-//
-// That is ISO-TP with EXTENDED addressing — byte 0 is the address of whoever the
-// frame is for, and everything else shifts one along. Byte 1 is an ordinary ISO-TP
-// PCI: `0x0N` single frame, `0x1N` first frame, `0x2N` consecutive, `0x3N` flow
-// control (the documented `[target] 30 FF 00`).
-//
-// ⚠️ It is NOT compatible with src/can/iso-tp.ts, which assumes normal addressing.
-// Under extended addressing a First Frame carries five data bytes, not six, and
-// arrives as seven bytes after the address is stripped — which that reassembler
-// rejects outright. Reusing it would silently drop every multi-frame reply.
-//
-// ── Why single-frame only, and why that is not a gap ─────────────────────────
-// A bank-1 record is 1 or 2 bytes (the TYPE column), so the longest possible reply
-// is `62 <hi> <lo> <b0> <b1>` = 5 payload bytes, and extended addressing leaves
-// room for 6 in a single frame. **No parameter read in this table can produce a
-// multi-frame reply.** So none is assembled, and — the part that actually matters
-// — no flow-control frame is ever sent: this module derives no transmit address
-// from anything the bus said, it only ever addresses a micro the caller named.
-// A First Frame is reported as its own outcome rather than being decoded from its
-// first fragment, because a truthful "this did not fit the shape I understand"
-// beats a plausible-looking value assembled from half a record.
+// Why single frame only is not a gap: docs/vcu-parameters.md §9.
 
 /** Everything this codebase is permitted to ask a VCU micro. Closed on purpose — see the header. */
 export type VcuRequest =
@@ -88,24 +47,14 @@ export type VcuRequest =
   | { kind: "tester-present" }
   /**
    * `22 [hi] [lo]` ReadDataByCommonIdentifier, where the identifier is
-   * `(bank << 12) | index`.
+   * `(bank << 12) | index`. Bank 1 is the EEPROM calibration the parameter table
+   * describes; bank 2 is live data. Both are read the same way.
    *
-   * ⚠️ The BANK is a parameter now, and the identifier is therefore something a
-   * caller can choose. That is a real widening and it is worth naming precisely,
-   * because the read-only argument in this file's header rests on what a caller can
-   * and cannot express:
-   *
-   *   • A caller CAN now name any identifier in the 16-bit space. Every one of them
-   *     is still a READ — `22` has no write semantics in KWP, whatever you point it
-   *     at, and the bank an ECU does not serve answers with a negative response
-   *     (DIAG_ADDRESSES.md §3 records bank 0 refusing with NRC 0x12).
-   *   • A caller still CANNOT name a service. The union has the same three members
-   *     it always had, and `READ_ONLY_SERVICES` still checks the emitted byte.
-   *   • A caller still CANNOT name a value. There is nowhere in this union to put
-   *     one, which is what makes a write unexpressible rather than merely absent.
-   *
-   * Bank 1 is the EEPROM calibration the parameter table describes. Bank 2 is live
-   * data. Both are read the same way; the difference is only which numbers come back.
+   * ⚠️ The BANK is a parameter, so a caller can name any identifier in the 16-bit space.
+   * Every one of them is still a READ — `22` has no write semantics in KWP whatever you
+   * point it at — and a caller still cannot name a SERVICE or a VALUE, which is what makes
+   * a write unexpressible rather than merely absent. Precisely what this widened and what
+   * it did not: docs/vcu-parameters.md §9.
    */
   | { kind: "read-parameter"; bank: number; index: number };
 
@@ -130,51 +79,19 @@ const READ_ONLY_SERVICES: ReadonlySet<number> = new Set([
 export const TESTER_ADDRESS = 0xf1;
 
 /**
- * Everything on this bus that anything here may address.
+ * Everything on this bus that anything here may address: `A8` and `A9`, the two VCU micros
+ * the parameter table describes. A7 is deliberately absent — it answers no read on any bank.
  *
- * `A8` and `A9`, the two VCU micros the parameter table describes. Nothing else.
- * A7 is deliberately absent: it answers no read on any bank.
+ * ⚠️⚠️ THE CHARGE MANAGER WAS HERE AS A THIRD TARGET, ON 0x7C3/0x7E3, AND IT WAS WRONG.
+ * Removed 2026-08-16, and that pair must not come back: **`0x7E3` is DashboardV2's REQUEST
+ * id**, so a probe on it, believing it was asking the charge manager, could have been
+ * talking to the DASHBOARD — the exact failure the rest of this file is built to avoid.
  *
- * ── ⚠️⚠️ The charge manager was here, and it was WRONG. Removed 2026-08-16. ──
- * A third target `A4` was added earlier the same day, on request 0x7C3 / response
- * 0x7E3, described as the charge manager. Decompiling the service tool's shared
- * library showed two things:
- *
- *  • **`0x7E3` is DashboardV2's REQUEST id.** So a probe on that pair, believing it
- *    was asking the charge manager, could have been talking to the DASHBOARD. That is
- *    not the harmless "silence from an id nothing listens on" the old comment here
- *    claimed as the safe direction — it is a wrong ECU answering a question meant for
- *    another one, which is the exact failure the rest of this file is built to avoid.
- *  • `RequestFrameIDs.CHM = 0x7C3` exists in the manufacturer's code as a **dead enum
- *    referenced nowhere**. There is no charge-manager case in any session, read,
- *    write or SecurityAccess switch, and the tool's own charge-manager install action
- *    is a stub returning `Skipped`. The 11-bit path was designed and never built.
- *
- * Node `0xA4` really is the charge manager's 11-bit identity — that part was right.
- * The ID PAIRING was not, and the pairing is what goes on the wire.
- *
- * ── Where it actually lives, for whoever adds it properly ────────────────────
- * **29-bit ISO-TP on the VDB bus**: request `0x18DA09F1`, response `0x18DAF109`,
- * device byte `0x09`, tester `0xF1`. Verified three ways in the decompile — the
- * hard-coded ids 416942577/417001737, the `SendExt` addressing math
- * (`reqID | (target << 8) | source`), and consistency with the BMS/PSU 29-bit family.
- * It is on the VDB manager, so it is reachable from the existing OBD tap with no
- * second bus.
- *
- * That is a real feature and not a constant: 29-bit ids need `ext: true` on transmit,
- * their own RX filter, and their own addressing math. It does not belong bolted onto
- * this 11-bit table, which is why the target is REMOVED rather than re-pointed.
- *
- * Three things to carry into that work:
- *  • ⚠️ **The charge manager is off-bus when parked.** It answers only during a live
- *    charging session, so `no-session` from an unplugged bike is expected, not a fault.
- *  • Identification reads (`0x22` on F191/F181/F180/F18C) need no SecurityAccess.
- *  • ⚠️ Deeper access uses a **CRC-16/CCITT level-9 algorithm that is NOT the VCU's
- *    bit-swap**. Do not reuse ./write-codec.ts's `securityKeyForSeed` for it.
- *  • ❓ The code proves it answers at `0x18DA09F1` in bootloader/programming mode.
- *    Whether the RUNNING APPLICATION answers there without a reset is unproven — the
- *    BMS and PSU precedent (same node for app and boot) makes it likely, and a live
- *    probe is what would settle it.
+ * ⚠️ Node `0xA4` really is the charge manager's 11-bit identity; the PAIRING was not, and
+ * the pairing is what goes on the wire. It answers on 29-bit ISO-TP instead, which needs
+ * its own transmit flag, RX filter and addressing math — a feature, not a constant, which
+ * is why the target is REMOVED rather than re-pointed. Those addresses, and the rest of the
+ * handover note (its SecurityAccess is NOT `securityKeyForSeed`): docs/vcu-parameters.md §9.
  */
 export type VcuTarget = VcuMicro;
 

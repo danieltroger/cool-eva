@@ -21,44 +21,29 @@ import {
 } from "./write-session.ts";
 import { planBitWrite, planWrite, WRITE_TARGETS, type WriteTarget } from "./write-targets.ts";
 
-// Service mode's WRITE engine: decide whether the bike may be changed, do exactly one
-// thing to it, read the result back, and write down what happened.
+// Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
+// to it, read the result back, and write down what happened. The read engine is
+// ./read-runner.ts and this deliberately mirrors it, but it is a separate file and a
+// separate switch, because the two are not the same risk and must not share an off button.
 //
-// The read engine is ./read-runner.ts and this deliberately mirrors it — same gate,
-// same watchdog, same "answers with a reason rather than throwing" contract — but it
-// is a separate file and a separate switch, because the two are not the same risk and
-// must not share an off button.
+// The five locks on this door, in the order they are checked — each argued in
+// docs/vcu-parameters.md §8:
+//  1. SERVICE_WRITE_ENABLED, its own switch, and ⚠️ the only one here that defaults to OFF.
+//  2. The bus lease (./bus-lease.ts). One thing at a time — a sweep's read answered by a
+//     write's security seed would file four random bytes as a calibration value.
+//  3. The safety gate (./service-gate.ts), shared with the read path. ⚠️ It permits
+//     STATIONARY-AND-CHARGING deliberately; every other check still applies.
+//  4. The table-type gate (./table-gate.ts). ⚠️ It gates the two PARAMETER actions and
+//     nothing else — see `tableGateAppliesTo` for why the service actions are left alone.
+//  5. The allowlist and the ranges (./write-targets.ts), in the pure layer.
 //
-// ── The five locks on this door, in the order they are checked ──────────────
-//  1. **SERVICE_WRITE_ENABLED.** Its own switch, separate from SERVICE_MODE_ENABLED.
-//     A Pi with reads on and writes off is the normal configuration; a Pi that has
-//     never been told otherwise is that Pi, because this one defaults to OFF while
-//     SERVICE_MODE_ENABLED defaults to ON. That asymmetry is the point.
-//  2. **The bus lease** (./bus-lease.ts). One thing at a time — a sweep's read
-//     answered by a write's security seed would file four random bytes as a
-//     calibration value, and nothing would throw.
-//  3. **The safety gate** (./service-gate.ts), unchanged and shared with the read
-//     path. ⚠️ Note it now permits STATIONARY-AND-CHARGING, deliberately: the DC
-//     charge parameters cannot be tested on a bike that is not plugged in, and a
-//     tethered bike cannot be ridden away without someone unplugging it first. Every
-//     other check still applies — zero speed, zero motor rpm, `moving`, `go`,
-//     `go_request` and `throttle_on` all clear.
-//  4. **The table-type gate** (./table-gate.ts), and it is the newest of the five.
-//     A parameter is addressed BY INDEX, so every name on the allowlist is a claim
-//     about which of Energica's 28 parameter tables this bike runs — and a write under
-//     the wrong table is accepted, reads back cleanly, and has changed something else.
-//     ⚠️ It gates the two PARAMETER actions and nothing else; see
-//     `tableGateAppliesTo` for why the service actions are deliberately left alone.
-//  5. **The allowlist and the ranges** (./write-targets.ts), in the pure layer.
+// And behind all five, per action: a read of the current value, a compare-and-swap against
+// what the caller thought it was, and a read-back afterwards.
 //
-// And behind all five, per action: a read of the current value, a compare-and-swap
-// against what the caller thought it was, and a read-back afterwards.
-//
-// ── ⚠️ What is NOT here, and must not be added ──────────────────────────────
-// No "write these five parameters". No "restore from a snapshot". No "revert". Each
-// is a reasonable thing to want and each turns one confirmed change into a batch
-// nobody reads. If a batch is ever genuinely needed, the right shape is a list the
-// owner confirms one row at a time — not a loop over this function.
+// ⚠️ What is NOT here, and must not be added: no "write these five parameters", no "restore
+// from a snapshot", no "revert". Each turns one confirmed change into a batch nobody reads.
+// If a batch is ever genuinely needed, the right shape is a list the owner confirms one row
+// at a time — not a loop over this function.
 
 /** What the write runner can be asked to do. Closed, and every member is one action. */
 export type ServiceWriteRequest =
@@ -301,23 +286,11 @@ function summariseTarget(target: WriteTarget, sweep: VcuParameterSnapshot | null
 /**
  * What the last sweep found for one allowlisted parameter, or null.
  *
- * ⚠️ Four conditions, and every one of them is a way this could otherwise put a number
- * on screen that is not this parameter's:
- *
- *  1. **Matched BY INDEX**, never by name. The index is what gets addressed on the wire
- *     and what the allowlist is keyed on; a name is a claim about a table.
- *  2. **And the name has to agree anyway.** The snapshot's rows are named from the table
- *     the BIKE reported (`retableSnapshot`), so a disagreement here means that index is
- *     a different parameter on this bike than the allowlist believes — the same finding
- *     ./table-gate.ts refuses `unwritable` for. It shows nothing rather than the value
- *     of whatever that index turned out to be. A stripped name (an unrecognised table)
- *     lands here too, which is the same answer for the same reason.
- *  3. **`status === "read"` and a typed `value`**, never `unsigned` — the same rule
- *     `readCurrent` in public/views/vcu-write.js follows, and for the same reason: this
- *     number becomes the compare-and-swap precondition, and comparing a signed parameter
- *     against an unsigned reading of itself is how a write goes to the wrong number.
- *  4. **Not a width mismatch.** A record whose length contradicts the table means the
- *     framing is in question, not merely the value.
+ * ⚠️ Four conditions, and every one of them is a way this could otherwise put a number on
+ * screen that is not this parameter's — and that number becomes the compare-and-swap
+ * precondition of a write. Matched BY INDEX and never by name; the name has to agree
+ * anyway; `status === "read"` with a typed `value`, never `unsigned`; and not a width
+ * mismatch. Why each is load-bearing: docs/vcu-parameters.md §8.
  */
 export function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | null): SweptValue | null {
   if (!sweep) {
@@ -337,42 +310,18 @@ export function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | 
 }
 
 /**
- * ⚠️ Which actions the table-type gate applies to — and, more usefully, why the
- * others are deliberately exempt.
+ * ⚠️ Which actions the table-type gate applies to — and, more usefully, why the others are
+ * deliberately exempt.
  *
- * The gate exists for ONE failure: a parameter is addressed by index, what an index
- * means comes from the parameter table, and a write under the wrong table is accepted,
- * reads back cleanly and has changed something else. That argument is about
- * index-addressed writes and does not survive being generalised:
+ * The gate exists for ONE failure: a parameter is addressed by index, what an index means
+ * comes from the parameter table, and a write under the wrong table is accepted, reads back
+ * cleanly and has changed something else. `31 FC`, Mode 04, the 0x120 clock broadcast and
+ * read-service-stamp carry no bank-1 parameter index at all, so `TABLE_TYPE` says nothing
+ * about any of them and gating them would be superstition — a refusal resting on evidence
+ * with no bearing on the action, which is how a gate stops being believed.
  *
- *  • `31 FC` **Set Service Point** takes a routine LOCAL identifier, not a bank-1
- *    parameter index. Routine ids are not in params.ecf at all — they come from
- *    the service tool's shared library (obd-garage/SERVICE_RESET.md §3) — and none of the 28
- *    parameter tables says anything about them. `TABLE_TYPE` therefore carries no
- *    information about what `31 FC` does. (It IS ambiguous: SERVICE_RESET.md §7 records
- *    `0xFC` also meaning `VCUCheckSum` in the FLASHING enum. But that ambiguity is per
- *    ECU and session, which ./write-codec.ts pins with ROUTINE_MICROS — reading 277
- *    would not resolve it by a single bit.)
- *  • **Mode 04 clear-DTCs** is standard OBD-II with no identifier of any kind. Trouble
- *    codes are reconciled against src/diagnostics/dtc-table.ts, not against params.ecf.
- *  • The **0x120 clock broadcast** is a raw frame with a fixed layout and no
- *    identifier, addressed to nothing.
- *  • **read-service-stamp** is read-only, and reads ids 1000-1003 — outside the name
- *    table's 1…277 entirely, from SERVICE_RESET.md §2 rather than from any table.
- *
- * So gating them would be superstition: a refusal resting on evidence with no bearing
- * on the action. It would also cost something real. The remedy for the state this bike
- * is in TODAY is a read, reads share this page and this gate's vocabulary, and a
- * precondition that blocks harmless actions for a reason nobody can connect to them is
- * how a gate stops being believed — which is expensive precisely where it IS load-
- * bearing. The fail-closed instinct is right about parameter writes and proves too much
- * about everything else; taken to its end it would gate the reads too, and the reads
- * are the way out.
- *
- * The honest counter-argument, recorded rather than hidden: an unconfirmed table means
- * this software may not understand this bike as well as it thinks, and Set Service
- * Point is irreversible. It does not carry, because `31 FC` is `31 FC` on all 28
- * tables — the uncertainty is real and simply does not touch that frame.
+ * The four exemptions one by one, and the honest counter-argument about Set Service Point
+ * being irreversible: docs/vcu-parameters.md §4.
  */
 function tableGateAppliesTo(request: ServiceWriteRequest): boolean {
   return request.kind === "parameter" || request.kind === "bit";

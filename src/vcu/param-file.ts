@@ -2,101 +2,23 @@
 // parser that turns it into rows. Pure data plus a parser; nothing here touches a bus,
 // and nothing here knows which of Energica's 28 tables a given bike runs.
 //
-// ── Why this file exists apart from ./param-table.ts ─────────────────────────
-// Three things used to live in one module: this text, the 28-table catalogue, and the
-// question "which table is this bike on". They are separate now because the catalogue
-// (./table-catalog.ts) is BUILT from this text — every one of the 28 tables is stored
-// as a delta against these 277 rows — so the text has to be importable without pulling
-// in the catalogue that depends on it. ./param-table.ts is still the module everything
-// else imports; it re-exports what is here.
+// ⚠️ This text is table **16406**, one revision older than the bike this repo was built
+// for (16407). It is the CATALOGUE'S BASE, not anybody's answer: ./table-catalog.ts
+// carries all 28 of Energica's tables as deltas against it, each checked against a
+// fingerprint taken from Energica's own bundle.
 //
-// ── Provenance ───────────────────────────────────────────────────────────────
-// PARAMETER_FILE_TEXT below is `VCU/params.ecf` from Energica's own tooling, copied in
-// verbatim on 2026-08-09 apart from stripped trailing whitespace. It is COPIED rather
-// than read from disk at runtime on purpose: the original lives in one owner's iCloud
-// folder, that path exists on exactly one laptop, and this repo is meant to be usable
-// by other Energica owners. Keeping it as the literal file text (rather than 277
-// hand-typed object literals) means it can still be diffed against the original, and a
-// name stays greppable.
-//
-// ── ⚠️ WHICH TABLE THIS TEXT IS: 16406 ───────────────────────────────────────
-// `params.ecf` came off a bike running table **16406** (`0x4016`), which is one
-// revision older than the bike this repo was built for — that one reports **16407**.
-// The file says so itself: its own ids 276/277 (`TABLE_TYPE_uC`/`_uS`) both read 16406.
-// Established offline 2026-08-16 by matching all 277 names against Energica's shipped
-// bundles; obd-garage/PARAM_TABLES.md is the working.
-//
-// So this text is the CATALOGUE'S BASE, not anybody's answer. ./table-catalog.ts
-// carries all 28 of Energica's tables as deltas against it and checks each
-// reconstruction against a fingerprint taken from Energica's own bundle — including
-// 16406's, which is therefore a load-time proof that this text really is 16406 rather
-// than a claim in a comment.
-//
-// ⚠️⚠️ THE VALUES IN IT ARE NOT ANY PARTICULAR BIKE'S. ⚠️⚠️
-// The file came off ONE Energica — `MODEL` 8452 where the Ribelle this repo runs on
-// reads 358, `CELL_COUNT` 80 where that bike reads 81. Of the 233 parameters the A9
-// serves, **21 read differently on the Ribelle**, including `MAX_DC_CHG_CURRENT` (60
-// in the file, 75 there). That is why the field is called `otherBikeValue` and not
-// `value`, `defaultValue` or anything else a caller could render as a reading. The
-// only honest use for it is as a comparison column explicitly labelled as another
-// bike's, which is how obd-garage/DIAG_ADDRESSES.md presents it. Use the table for
+// ⚠️⚠️ THE VALUES IN IT ARE NOT ANY PARTICULAR BIKE'S. 21 of the 233 parameters the A9
+// serves read differently on this Ribelle, `MAX_DC_CHG_CURRENT` among them — which is why
+// the field is `otherBikeValue` and must never be rendered as a reading. Use the table for
 // names, widths and routing; get values from the bike.
 //
-// ⚠️ And it is a comparison against a 16406 bike specifically. ./table-catalog.ts
-// therefore drops `otherBikeValue` and `section` for any id whose NAME differs in the
-// table being built — on a `RegenFade` table, id 70's "other bike says 80" is a fact
-// about `CELL_COUNT`, and `RegenFade_0` is not `CELL_COUNT`. See dropWhereRenamed().
+// ⚠️ Routing comes from the `micro` column and NEVER from an index range: 274 and 276 are
+// A9 entries sitting inside the A8 block, and a parameter asked of the wrong micro simply
+// does not answer.
 //
-// ── Why the index column is an address ───────────────────────────────────────
-// `CommonIdentifier = (bank << 12) | id`, and bank 1 is EEPROM Calibration
-// Parameters, so parameter *n* is read with `22 [0x10|hi] [lo]`. Established in
-// obd-garage/DIAG_ADDRESSES.md §4 and confirmed live on both micros 2026-08-08:
-// 23 parameters read in `10 81` sessions, all 23 echoing the identifier back with
-// a correctly-sized record.
-//
-// Re-checked in full on 2026-08-09 against the stored 2026-06-14 A9 dump
-// (obd-garage/kwp_scan_raw.txt), which is what scripts/check-vcu-params.ts
-// reproduces:
-//   • the file assigns exactly 233 indices to the A9, and the dump holds exactly
-//     233 bank-1 records — the two index SETS are identical, with no id in one
-//     that is missing from the other;
-//   • the TYPE column predicted the record length for all 233 (BYTE/BOOL → 1,
-//     WORD → 2), zero mismatches;
-//   • 212 of 233 values are byte-identical to the file and the 21 that differ all
-//     differ as variant tuning, never as an off-by-one — an off-by-one index would
-//     scramble the magic numbers (40000, 3600, 3300), and none of them moved.
-//   • the S/U column is real: signed parameters holding negative values in the
-//     file (e.g. `TH_LOW_B_L_TEMP` −25) match the bike's two's-complement bytes.
-//
-// ── ⚠️ Routing: trust the µC column, not a range ─────────────────────────────
-// A parameter must be requested from the micro that owns it or it simply does not
-// answer. DIAG_ADDRESSES.md §4 summarises the split as "223–256 and 266–277 on the
-// A8, the rest on A9". The first range is right and the SECOND ONE IS NOT:
-// **274 `EEPROM_VERSION_uC` and 276 `TABLE_TYPE_uC` are A9**, sitting between A8
-// entries. The A8 set is 223–256, 266–273, 275 and 277 — 44 indices, which is the
-// count that section's own consistency check quotes. The `_uC`/`_uS` suffixes are
-// the giveaway: the control micro's copy of a pair lives on the control micro.
-// Hence: never derive routing from an index range, always read `micro`.
-//
-// ✅ And that holds for EVERY table, not just this one: `id → ecu` and
-// `id → datatype` are byte-identical across all 28 of Energica's bundles (measured,
-// PARAM_TABLES.md §2). Names and signedness are what vary. That is exactly why a
-// wrong table is dangerous rather than obvious — see ./table-gate.ts.
-//
-// (CAN_MAP.md logs 45 records for A8 bank 1 against these 44. The 45th is
-// unidentified — this variant's file may simply not name it. A sweep reads the
-// whole table and nothing beyond it, so going looking would mean adding the index
-// here; an identifier with no table entry reads back as raw bytes rather than
-// failing, which is what makes that safe to try.)
-//
-// ── ⚠️ Names are NOT unique ──────────────────────────────────────────────────
-// Four names appear twice — `VSM_DUMMY_WORD8`/`9`/`10`/`11` at indices 11-14 and
-// again at 22-25 — and two of those pairs disagree about their own width (13 is a
-// signed BYTE, 24 a WORD). So "read the parameter called X" can be an ambiguous
-// question, and ./param-table.ts's parametersNamed() returns an ARRAY rather than
-// picking one. A caller that silently took the first match would answer a question it
-// was never asked. All four are `_DUMMY_` placeholders, so this is unlikely to matter
-// in practice; it is handled anyway because the failure would be silent.
+// Provenance, why the index column is an address, the 2026-08-09 re-check against the
+// stored A9 dump, the full A8/A9 split, and the four duplicate names that make
+// parametersNamed() return an array: docs/vcu-parameters.md §2.
 
 /** How the parameter is stored, which is also how many bytes its record is. */
 export type ParameterStorageType = "BYTE" | "WORD" | "BOOL";
@@ -149,18 +71,16 @@ export function recordLengthFor(type: ParameterStorageType): number {
  * Parses `params.ecf` text. Exported so scripts/check-vcu-params.ts can point it at a
  * fresh copy of the original file and prove the two still agree.
  *
- * ⚠️ Returns the file AS WRITTEN — table 16406 — which is nobody's answer on its own.
- * ./table-catalog.ts is what turns it into one of Energica's 28 tables.
- *
  * Format, one parameter per line, whitespace-separated:
  *   <index> <NAME> <BYTE|WORD|BOOL> <S|U> <A8|A9> <value>
  * `[SECTION]` headings group them and carry no data. Blank lines are skipped.
- * Anything else throws, naming the line.
  *
- * The parser is strict and throws on anything it does not fully understand, so a bad
- * edit to the embedded text fails immediately and visibly rather than silently
- * dropping a row — which would turn a named parameter into an "unknown identifier"
- * much later and much quieter.
+ * ⚠️ Strict, and throws on anything it does not fully understand, naming the line: a bad
+ * edit to the embedded text must fail immediately rather than silently drop a row, which
+ * would turn a named parameter into an "unknown identifier" much later and much quieter.
+ *
+ * ⚠️ Returns the file AS WRITTEN — table 16406 — which is nobody's answer on its own.
+ * ./table-catalog.ts is what turns it into one of Energica's 28 tables.
  */
 export function parseParameterFile(text: string): VcuParameter[] {
   const parameters: VcuParameter[] = [];

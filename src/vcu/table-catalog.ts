@@ -12,65 +12,23 @@ import { PARAMETER_TABLE_DELTAS } from "./table-catalog.data.ts";
 // Pure data plus a rebuilder; nothing here touches a bus and nothing here decides which
 // table a given bike is on — that is ./param-table.ts.
 //
-// ── ⚠️ Why a repo that runs on one motorcycle carries 28 name tables ─────────
-// A VCU calibration parameter is addressed BY INDEX. What index 258 IS depends on which
-// table the VCU runs, and Energica has shipped many: the 2024 service-tool build selects 28,
-// and `id → name` differs at 151 of 278 ids somewhere among them. Routing (`id → micro`)
-// and record width (`id → datatype`) are IDENTICAL in all 28 — measured, PARAM_TABLES.md
-// §2 — which is precisely what makes the wrong table dangerous instead of obvious: a
-// write under a wrong name goes to the right micro with the right number of bytes, gets
-// a positive response, and reads back exactly as sent.
+// ⚠️ Why a repo that runs on one motorcycle carries 28 name tables: `id → name` differs at
+// 151 of 278 ids somewhere among them, while routing and record width are IDENTICAL in all
+// 28 — which is precisely what makes the wrong table dangerous instead of obvious. On 20 of
+// them ids 70–94 are a regen-shaping curve and on the other 8 they are the BATTERY CELL
+// BLOCK, and another owner's tool has a live bug of exactly that shape.
 //
-// The worst instance is not hypothetical and is the reason this file exists. On 20 of
-// the 28 tables, ids 70–94 are `RegenFade_0` … `RegenFade_24`, a regen-shaping curve. On
-// the other 8 the same ids are the BATTERY CELL BLOCK — `CELL_COUNT`, `CELL_OVERVOLTAGE`,
-// `CELL_TARGET_AC`, `CELLV_KA`. Another owner's tool has a live bug of exactly that
-// shape: it writes a regen curve into the cell configuration. Carrying one hardcoded
-// table and hoping is how you ship that bug; carrying all of them and refusing when the
-// bike names one we do not have is how you do not. See ./table-gate.ts.
+// They are stored as DELTAS against ./param-file.ts's `params.ecf` text (itself table
+// 16406), and built LAZILY — ~32 KB rather than ~1.1 MB, on a Pi Zero.
 //
-// ── How they are stored: deltas against params.ecf ───────────────────────────
-// ./table-catalog.data.ts holds one entry per TABLE_TYPE, each a list of the ids whose
-// NAME or S/U column differs from ./param-file.ts's `params.ecf` text (which is itself
-// table 16406). ~32 KB for all 28, against ~1.1 MB for 28 standalone JSON tables — this
-// runs on a Pi Zero, and 27 of those copies would be re-saying the same 277 rows.
+// ⚠️ Each entry carries a fingerprint of the whole table, taken from Energica's own bundle
+// before any delta arithmetic, and buildTable() throws when a reconstruction disagrees with
+// it. A delta is only as good as the base it was computed against, and that base is a text
+// file one owner copied off one bike. ⚠️ It proves the delta rebuilds the bundle it came
+// from; it cannot prove the bundle was labelled correctly.
 //
-// It is also the more reviewable artefact. A contributed table's diff is exactly the
-// list of ids it renames, which is the thing a reviewer needs to look at.
-//
-// ── Measured, 2026-08-18 (laptop; a Pi Zero 2 W is several times slower) ─────
-//   46 KB of source for all 28 tables, ~1.1 MB if they were standalone JSON
-//   6.5 ms   importing ./param-table.ts: parse params.ecf, build the default table, fingerprint it
-//   0.26 ms  building one further table on demand
-//   3.8 ms   building all 28, for +1.87 MiB of heap
-// So they are built LAZILY: a Pi bolted to one motorcycle builds one table and keeps
-// ~1.9 MiB it would otherwise spend saying the same 277 rows 27 more times. Verifying
-// all 28 belongs in scripts/check-vcu-params.ts §1e, which runs in CI on every change
-// to this data and is where a corrupt delta gets caught before it reaches a garage.
-//
-// ── ⚠️ The self-check: a fingerprint per table, taken from Energica's bundle ─
-// A delta is only as good as the base it was computed against, and the base is a text
-// file one owner copied off one bike. If that text is ever re-copied, re-ordered or
-// edited, all 28 reconstructions move together and nothing about them looks wrong.
-//
-// So each entry carries a fingerprint of the WHOLE table, computed by
-// scripts/extract-vcu-tables.ts from the bundle's own records before any delta
-// arithmetic, and buildTable() recomputes it from the reconstruction and throws if they
-// disagree. That is the generalisation of the check this module replaced, which threw at
-// module load when `params.ecf` stopped saying what a hardcoded one-id correction
-// expected. 16406's own entry has an empty delta, so its fingerprint check is a load-time
-// proof that the embedded text really is table 16406 — a claim that used to live only in
-// a comment.
-//
-// ⚠️ A fingerprint proves the delta rebuilds the bundle it was taken from. It cannot
-// prove the bundle was labelled correctly in the first place; that comes from the
-// resource NAME inside the service-tool executable, which is the one thing binding a
-// table to a TABLE_TYPE. scripts/extract-vcu-tables.ts explains why a byte-scan loses it.
-//
-// ── ⚠️ What is NOT in Energica's bundles ─────────────────────────────────────
-// No values (`vehicleValue` is null in all 28) and no `[SECTION]` grouping. Both come
-// from `params.ecf` and therefore describe a 16406 bike. dropWhereRenamed() below is the
-// rule that keeps that honest.
+// The measurements behind "lazily", and what is NOT in Energica's bundles (no values, no
+// sections — hence dropWhereRenamed below): docs/vcu-parameters.md §3.
 
 /** One table as ./table-catalog.data.ts stores it. Written by scripts/extract-vcu-tables.ts, not by hand. */
 export interface ParameterTableDelta {
@@ -111,20 +69,17 @@ export const KNOWN_TABLE_TYPES: readonly number[] = PARAMETER_TABLE_DELTAS.map(d
 );
 
 /**
- * The table a VCU reporting `tableType` is running, or **null when this software does
- * not carry it**.
+ * The table a VCU reporting `tableType` is running, or **null when this software does not
+ * carry it**.
  *
- * ⚠️ Null is the important case and must never be softened into "here is our best
- * guess". A bike on a table we do not have is a bike whose parameter names we do not
- * know, and ./table-gate.ts turns that null into a refusal to write plus an instruction
- * for adding the table. Returning the default table instead would produce a plausible,
- * confident, wrong set of names — which on a `RegenFade` bike means calling id 70
- * `CELL_COUNT`.
+ * ⚠️ Null is the important case and must never be softened into "here is our best guess".
+ * ./table-gate.ts turns that null into a refusal to write plus an instruction for adding
+ * the table; returning the default instead would produce a plausible, confident, wrong set
+ * of names — which on a `RegenFade` bike means calling id 70 `CELL_COUNT`.
  *
- * Built on first use and cached, so a Pi that only ever sees one bike only ever pays for
- * one table. Throws if the rebuild does not match the recorded fingerprint: that is a
- * fault in this repo's own data, and a name table that disagrees with itself is worse
- * than one that is merely narrow.
+ * Built on first use and cached. Throws if the rebuild does not match the recorded
+ * fingerprint: that is a fault in this repo's own data, and a name table that disagrees
+ * with itself is worse than one that is merely narrow.
  */
 export function parameterTableFor(tableType: number): VcuParameterTable | null {
   const cached = builtTables.get(tableType);

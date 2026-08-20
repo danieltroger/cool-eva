@@ -12,40 +12,22 @@ import {
 import { selectParameterTable } from "./param-table.ts";
 import type { FileHandle } from "fs/promises";
 
-// Where a parameter sweep's results live on disk, and the four rules about them
-// that are worth more than the code that implements them:
+// Where a parameter sweep's results live on disk, and the rules about them that are worth
+// more than the code implementing them. Each is argued in docs/vcu-parameters.md §14; all
+// of them came from scripts/read-vcu-params.ts, where this sweep used to live as a separate
+// process, and they are why it was worth moving rather than reimplementing.
 //
-//  1. **Every row is written the moment it arrives**, to `sweep.partial.jsonl`. The
-//     link to the bike drops as routine — on 2026-08-08 it cost a whole result set
-//     mid-read (obd-garage/DIAG_ADDRESSES.md §6) — and a sweep that has to survive
-//     one connection is a sweep that loses everything to a service restart.
-//  2. **A resumed sweep does not re-ask what already answered.** Rows that came back
-//     as a value are carried forward; rows that failed are retried, because on this
-//     link most failures are transient and the alternative is a resume that carries
-//     yesterday's timeout forward for ever.
-//  3. **A partial snapshot is kept and labelled, never discarded.** Half the
-//     parameters off a real bike is half a set of facts. `complete: false` is what
-//     stops anything downstream reading it as all of them.
-//  4b. **A finished sweep names its own parameters.** A row is named when it arrives,
-//     from whatever table was active then — and on a first sweep of an unfamiliar bike
-//     that is a default, because `TABLE_TYPE_uC` is only read partway through the A9
-//     pass. So before anything is written, the whole snapshot is re-named from the table
-//     the snapshot ITSELF reports (`retableSnapshot`). Otherwise the first sweep of
-//     another owner's bike is stored, served, exported and diffed under this bike's
-//     names — which on the 20 tables where ids 70–94 are `RegenFade_0…24` means writing
-//     `CELL_COUNT` and `CELL_OVERVOLTAGE` to disk for a bike that has neither.
-//  4. **A worse run never clobbers `latest.json`.** That file is the diff baseline
-//     and what GET /vcu-params and /vcu-backup.csv serve. A run where the bike was
-//     asleep, or one the safety gate cut short after three parameters, is a fact
-//     about the run — the timestamped archive records it — and must not replace a
-//     file full of real values with one that is nearly empty. Otherwise the export
-//     button offers three parameters as this bike's calibration, and the next run
-//     diffs against them and reports 274 disappearances with any genuine
-//     value-changed buried underneath.
-//
-// All four came from scripts/read-vcu-params.ts, which is where this sweep used to
-// live as a separate process. They are the reason the sweep was worth moving rather
-// than reimplementing.
+//  1. Every row is written the moment it arrives, to `sweep.partial.jsonl`. The link to
+//     the bike drops as routine, and on 2026-08-08 it cost a whole result set mid-read.
+//  2. A resumed sweep does not re-ask what already answered; rows that FAILED are retried.
+//  3. A partial snapshot is kept and labelled, never discarded. `complete: false` is what
+//     stops anything downstream reading half a set of facts as all of them.
+//  4. A finished sweep names its own parameters, from the table the snapshot ITSELF
+//     reports (`retableSnapshot`) — otherwise another owner's bike is stored, served,
+//     exported and diffed under this bike's names.
+//  5. ⚠️ A worse run never clobbers `latest.json`. That file is the diff baseline and what
+//     GET /vcu-params and /vcu-backup.csv serve; a three-parameter run must not replace a
+//     file full of real values. See `replacesLatest` below for why it is a comparison.
 
 const PARTIAL_FILE = "sweep.partial.jsonl";
 const LATEST_FILE = "latest.json";
@@ -165,21 +147,17 @@ export async function loadLatestTableType(directory: string): Promise<TableTypeR
 }
 
 /**
- * The last sweep's snapshot and its table-type report, or null when there is no usable
- * one.
+ * The last sweep's snapshot and its table-type report, or null when there is no usable one.
  *
  * ⚠️ Null on every failure — missing file, unreadable file, valid JSON that is not a
- * snapshot — and never an empty report. ./table-gate.ts reads a null report as "nothing
- * has confirmed either micro", which blocks, so every one of those failures fails
- * closed. They are logged rather than swallowed because "no sweep has run" and "the
- * snapshot is damaged" are different problems and only one of them is fixed by reading
- * the bike.
+ * snapshot — and never an empty report. ./table-gate.ts reads a null report as "nothing has
+ * confirmed either micro", which blocks, so every one of those failures fails closed. They
+ * are logged rather than swallowed because "no sweep has run" and "the snapshot is damaged"
+ * are different problems and only one is fixed by reading the bike.
  *
  * ⚠️ The rows are re-named from the table the snapshot itself reports, exactly as
- * src/http/vcu-params.ts serves them. A stored snapshot's names are a DERIVED view: a
- * file written before the catalogue existed carries whichever table that build
- * hardcoded, and anything matching a row to a parameter BY NAME has to be looking at
- * the bike's own names rather than that build's.
+ * src/http/vcu-params.ts serves them: a stored snapshot's names are a DERIVED view.
+ * docs/vcu-parameters.md §14.
  */
 export async function loadLatestSweep(directory: string): Promise<LatestSweep | null> {
   const stored = await loadSnapshotFile(join(directory, LATEST_FILE));
@@ -202,11 +180,11 @@ export async function loadLatestSweep(directory: string): Promise<LatestSweep | 
  *
  * The archive is written on EVERY run — complete or not, read-something or not — so
  * that "the bike was asleep, 277 no-session" stays legible as its own result rather
- * than leaving no trace at all. `latest.json` follows rule 4.
+ * than leaving no trace at all. `latest.json` follows rule 5.
  */
 export async function writeSnapshot(directory: string, swept: VcuParameterSnapshot): Promise<void> {
   await mkdir(directory, { recursive: true });
-  // Rule 4b, and it happens before EVERYTHING else in this function: the archive, the
+  // Rule 4, and it happens before EVERYTHING else in this function: the archive, the
   // latest file, the diff and the log lines all describe the same rows, so they all have
   // to describe them under the same names.
   const report = reportTableType(swept);
@@ -224,23 +202,17 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
 
   const read = snapshot.rows.filter(row => row.status === "read").length;
   const baselineRead = baseline?.rows.filter(row => row.status === "read").length ?? 0;
-  // Rule 4, and it is a comparison rather than `read > 0`.
+  // Rule 5, and ⚠️ it is a comparison rather than `read > 0`.
   //
-  // `read > 0` only catches the fully-empty run. The failure the rule is actually
-  // about is A BAD RUN REPLACING A GOOD FILE, and the service gate has made a new
-  // way for that to happen routine: a complete sweep deletes the resume file, so
-  // the next one starts from nothing — and if the owner rolls the bike three
-  // parameters in, the auto-exit is working exactly as designed and `read === 3`
-  // is still greater than zero. That three-row snapshot would become what
-  // /vcu-params serves, what /vcu-backup.csv exports as this bike's calibration,
-  // and the baseline the next run diffs against (reporting 274 disappearances).
-  // The 277-row archive would still be on disk, and nothing in the dashboard can
-  // reach an archive.
+  // `read > 0` only catches the fully-empty run. The failure the rule is actually about is
+  // A BAD RUN REPLACING A GOOD FILE, and the service gate made that routine: if the owner
+  // rolls the bike three parameters in, the auto-exit is working exactly as designed and
+  // `read === 3` is still greater than zero.
   //
-  // So a snapshot has to be at least as good as the one it replaces: complete, or
-  // carrying at least as many real values. A complete sweep wins even with fewer
-  // rows — a bike that answered 200 of 277 today is a true reading of the bike,
-  // and the diff saying so is the point.
+  // So a snapshot has to be at least as good as the one it replaces: complete, or carrying
+  // at least as many real values. A complete sweep wins even with fewer rows — a bike that
+  // answered 200 of 277 today is a true reading of the bike, and the diff saying so is the
+  // point. docs/vcu-parameters.md §14.
   const replacesLatest = read > 0 && (snapshot.complete || read >= baselineRead);
   if (replacesLatest) {
     await writeFile(join(directory, LATEST_FILE), serialised, "utf-8");

@@ -19,22 +19,14 @@ import type { VcuReadOutcome } from "./kwp-client.ts";
 // What a parameter read looks like once it has been written down: one flat row per
 // parameter, a snapshot of many of them, and the diff between two snapshots.
 //
-// Pure — no I/O, no clock beyond the caller-supplied timestamp. Which is the point:
-// the diff is the part that decides whether the bike has been reconfigured, and it
-// can be exercised against two files on a laptop.
+// Pure — no I/O, no clock beyond the caller-supplied timestamp. Which is the point: the
+// diff is the part that decides whether the bike has been reconfigured, and it can be
+// exercised against two files on a laptop.
 //
-// ── Why a snapshot and not a signal ──────────────────────────────────────────
-// These are configuration, not telemetry. They do not move while riding, so
-// logging 277 of them as time series at any rate is storage spent on re-recording
-// a constant — the deadband reasoning in src/can/registry.ts counts rows/day onto
-// a Pi Zero's SD card for signals that genuinely change, and these do not.
-// Neither do they belong in `liveState`, which src/ws.ts re-broadcasts WHOLE every
-// five seconds; src/diagnostics/stored-codes.ts already declined to put 39 trouble
-// codes there for exactly that reason, and this would be seven times worse.
-//
-// What IS worth knowing is that one of them CHANGED, because that means something
-// reconfigured the bike. That is a diff between two snapshots, not a sample rate —
-// hence this file.
+// These are configuration, not telemetry: they do not move while riding, so they are a
+// snapshot and a diff rather than 277 time series or 277 more keys in `liveState`. What is
+// worth knowing is that one of them CHANGED, because that means something reconfigured the
+// bike. The storage arithmetic behind that: docs/vcu-parameters.md §14.
 
 /** One parameter, as read (or as failed to be read). Flat on purpose: this is a wire and file shape. */
 export interface VcuParameterRow {
@@ -43,20 +35,13 @@ export interface VcuParameterRow {
   identifier: number;
   micro: VcuMicro;
   /**
-   * From the table this bike named, or null. Null is NOT an error, and it now means one
-   * of three things:
+   * From the table this bike named, or null.
    *
-   *   • an index outside what that table describes — most run 1…277 with no gaps, but
-   *     61451/61452 carry a 278th (id 300 `MOTORING_MAP`), so an id one table has and
-   *     another does not is an ordinary outcome;
-   *   • a bike with more parameters than any table here knows, which shows up the same
-   *     way, with its raw value intact;
-   *   • ⚠️ the owning micro named a parameter table this software does not carry, so
-   *     nothing can say what this index is called. retableSnapshot() strips the name
-   *     rather than borrowing the other micro's, and `note` says so.
-   *
-   * (260/262/263/265 are named EVSE placeholders that read 0 on this bike, not unnamed
-   * slots.)
+   * ⚠️ Null is NOT an error. It means an index that table does not describe, a bike with
+   * more parameters than any table here knows, or — the case that matters — the owning
+   * micro named a table this software does not carry, so nothing can say what this index is
+   * called. retableSnapshot() strips the name rather than borrowing the other micro's, and
+   * `note` says so. The three cases in full: docs/vcu-parameters.md §3.
    */
   name: string | null;
   section: string | null;
@@ -206,22 +191,16 @@ export interface TableTypeReport {
 /**
  * Reads a snapshot's own answer to "which parameter table is this bike running".
  *
- * This is the check that stops the 2026-08-16 correction from being a one-off. The
- * embedded name table was 16406 for a week while the bike had been reporting 16407
- * since 2026-06-14 — in a dump that had already been taken, in a parameter that had
- * already been read. Nobody looked. Every name in the UI was therefore a claim about
- * a table nobody had checked, and it happened to be wrong at exactly one id.
+ * Every sweep reads its own table type back out and says whether the names it just printed
+ * describe the bike that answered — the check that stops the 2026-08-16 correction from
+ * being a one-off, when the embedded table was 16406 for a week while the bike had been
+ * reporting 16407 in an already-taken dump that nobody had looked at.
  *
- * So: every sweep now reads its own table type back out and says whether the names it
- * just printed describe the bike that answered. Pure, like everything else here — the
- * caller decides whether that becomes a log line, a banner, or both.
- *
- * ⚠️ The two micros are asked SEPARATELY and can disagree. 276 `TABLE_TYPE_uC` is the
- * A9's, 277 `TABLE_TYPE_uS` is the A8's, and they sit in separate EEPROMs. On the bike
- * this repo runs on, only the A9's has ever been read (2026-06-14); id 249 — the one id
- * where 16406 and 16407 disagree — is an A8 parameter, so the A8's answer is the one
- * still outstanding. A per-micro verdict is what makes "they disagree" expressible at
- * all, and `split` is what stops a disagreement being averaged away.
+ * ⚠️ The two micros are asked SEPARATELY and can disagree: 276 `TABLE_TYPE_uC` is the A9's,
+ * 277 `TABLE_TYPE_uS` is the A8's, and they sit in separate EEPROMs. A per-micro verdict is
+ * what makes "they disagree" expressible at all, and `split` is what stops a disagreement
+ * being averaged away. Which of the two this bike has actually answered:
+ * docs/vcu-parameters.md §3.
  */
 export function reportTableType(snapshot: VcuParameterSnapshot): TableTypeReport {
   const readRows = new Map(snapshot.rows.filter(row => row.status === "read").map(row => [row.index, row]));
@@ -369,40 +348,19 @@ function describeUnreadTableType(index: number): string {
 }
 
 /**
- * Re-derives every row's NAME, section, width, signedness and typed value from the table
- * the snapshot itself named.
+ * Re-derives every row's name, section, width, sign and value from the table the snapshot itself named.
  *
- * ⚠️ This is what makes a sweep of somebody else's bike come out right. A row is named
- * when it arrives, from whatever table was active at that moment — and on a first sweep of
- * an unfamiliar bike that is a default, because `TABLE_TYPE_uC` is read partway through the
- * A9 pass and `TABLE_TYPE_uS` at the very end of the A8's. Without this, the first
- * snapshot off a `RegenFade` bike would be stored, served, exported and diffed with ids
- * 70–94 labelled `CELL_COUNT`, `CELL_OVERVOLTAGE`, `CELLV_KA` — the exact confusion the
- * catalogue exists to prevent, written to disk.
+ * ⚠️ This is what makes a sweep of somebody else's bike come out right. A row is named when
+ * it arrives, from whatever table was active then — a default on a first sweep. Without it
+ * the first snapshot off a `RegenFade` bike would be stored, served, exported and diffed
+ * with ids 70–94 labelled `CELL_COUNT` and `CELL_OVERVOLTAGE`.
  *
- * ⚠️ PER MICRO, because the two micros answer separately and can disagree. Each row is
- * named from the table ITS OWN micro reported:
+ * ⚠️ PER MICRO, because the two answer separately and can disagree; a micro naming a table
+ * we do NOT carry loses its rows' names rather than borrowing the other's. All three cases:
+ * docs/vcu-parameters.md §3.
  *
- *   • the micro named a table we carry → its rows come from that table. Under a `split`
- *     this means the A9's 233 rows are named from one table and the A8's 44 from the
- *     other, which is the only honest reading of a bike that says it is like that.
- *   • ⚠️ the micro named a table we do NOT carry → its rows lose their name, section,
- *     width, sign and comparison value. It has told us it is running something else, and
- *     borrowing the other micro's table for them would be a confident wrong label on
- *     exactly the half that disagreed. The raw bytes are kept, because they are real.
- *   • the micro was never asked, or answered unusably → the table the rest of the report
- *     agrees on, if there is one. Unread is not the same as contradicted: a micro that
- *     has never spoken gets the benefit of the doubt, and today that is the A8 on this
- *     repo's own bike.
- *
- * Pure, and takes the report the caller already computed from this snapshot rather than
- * re-deriving it — which is also what makes the dependency visible: the names in a stored
- * snapshot are a view derived from that snapshot's own `TABLE_TYPE` rows.
- *
- * ⚠️ The typed `value` is recomputed from `rawHex`, not carried across. Signedness varies
- * at 30 ids between Energica's tables, so the same two bytes are −350 under one and 65186
- * under another. Carrying the number forward would keep a value that the new name's own
- * S/U column contradicts.
+ * ⚠️ The typed `value` is recomputed from `rawHex`: signedness varies at 30 ids, so the same
+ * two bytes are −350 under one table and 65186 under another.
  */
 export function retableSnapshot(snapshot: VcuParameterSnapshot, report: TableTypeReport): VcuParameterSnapshot {
   const byMicro = new Map<VcuMicro, VcuParameterTable | null>();

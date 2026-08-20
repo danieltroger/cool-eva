@@ -3,55 +3,25 @@ import { createVcuKwpClient, type VcuProbeOutcome } from "./kwp-client.ts";
 import { identifierFor, interpretRecord, type VcuTarget } from "./param-codec.ts";
 import { CALIBRATION_BANK, parameterAtIndex } from "./param-table.ts";
 
-// Read ONE identifier off ONE target, on demand, from the dashboard.
+// Read ONE identifier off ONE target, on demand, from the dashboard. It exists for what the
+// 277-parameter sweep cannot reach: the identifier is `(bank << 12) | index`, and **bank 2
+// is live data** — the running values, not the stored settings — which nothing here has
+// ever read.
 //
-// ── Why this exists ──────────────────────────────────────────────────────────
-// The sweep reads the 277 parameters src/vcu/param-table.ts describes, on the two
-// VCU micros, in bank 1. That is the right default and it is also the whole of what
-// this project could reach until 2026-08-16. What lives outside it, and is what this
-// exists for:
+// ⚠️ WHAT THIS WIDENS, PRECISELY. Before it, no HTTP input named a service, an identifier
+// or a value; now an identifier and a target are caller-supplied. The request union in
+// ./param-codec.ts still has THREE members and still throws on any service byte outside the
+// read-only set, and there is still nowhere in it to put a VALUE. The line held is "which
+// thing is read" versus "what is done to it": widening the first is recoverable, widening
+// the second is not. docs/vcu-parameters.md §9.
 //
-//  • **Other banks.** The identifier is `(bank << 12) | index`. Bank 1 is the EEPROM
-//    calibration. **Bank 2 is live data** — the running values, not the stored
-//    settings — and nothing here has ever read one.
+// ⚠️ The charge-manager target `A4` on 0x7C3/0x7E3 was offered here for part of 2026-08-16
+// and removed: `0x7E3` is DashboardV2's request id, so a probe on that pair could have been
+// questioning the DASHBOARD while the page said "charge manager". See the note above
+// `VcuTarget` in ./param-codec.ts for where it actually lives.
 //
-// ── ⚠️ The charge-manager target was removed, 2026-08-16 ────────────────────
-// This file shipped earlier the same day offering a third target, `A4`, on request
-// 0x7C3 / response 0x7E3, described as the charge manager. It was wrong, and wrong in
-// the one direction that matters: **`0x7E3` is DashboardV2's request id**, so a probe
-// on that pair could have been questioning the DASHBOARD while the page said "charge
-// manager". `CM_ERROR` and friends really are the charge manager's, but they are not
-// at that address.
-//
-// The real one is 29-bit ISO-TP — request `0x18DA09F1`, response `0x18DAF109` — which
-// needs `ext: true` on transmit, its own RX filter and its own addressing math. That
-// is a feature, not a constant, so the target is gone rather than re-pointed. The full
-// note, including what it needs and why its SecurityAccess is a different algorithm,
-// is above `VcuTarget` in ./param-codec.ts.
-//
-// ── ⚠️ What this widens, precisely ───────────────────────────────────────────
-// Before this, no HTTP input named a service, an identifier or a value. Now an
-// identifier and a target are caller-supplied. That is a real change and it should
-// be read exactly as far as it goes:
-//
-//  • The request union in ./param-codec.ts still has THREE members, and its encoder
-//    still throws on any service byte outside the read-only set. A caller cannot
-//    name a service.
-//  • There is still nowhere in that union to put a VALUE. A write remains
-//    unexpressible rather than merely unwritten.
-//  • `22` ReadDataByCommonIdentifier has no write semantics in KWP whatever it is
-//    pointed at, and a bank an ECU does not serve answers with a negative response
-//    (DIAG_ADDRESSES.md §3 records bank 0 refusing with NRC 0x12).
-//
-// The line held is "which thing is read" versus "what is done to it". Widening the
-// first is recoverable; widening the second is not.
-//
-// ── One read, not a session ──────────────────────────────────────────────────
-// A probe opens a session, asks once and stops. It does not hold the session open —
-// it expires by itself after ~2.5 s of silence — and it does not retry beyond the
-// one re-open the client already does when a read times out. The whole thing is
-// bounded by two reply windows, so the safety gate's 200 ms watchdog can end it
-// mid-flight the same way it ends a sweep.
+// One read, not a session: a probe opens a session, asks once and stops, bounded by two
+// reply windows — so the safety gate's 200 ms watchdog can end it mid-flight.
 
 /** What to ask for. Every field is caller-supplied, which is the point and also the risk. */
 export interface VcuProbeRequest {

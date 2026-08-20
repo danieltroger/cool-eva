@@ -37,21 +37,10 @@ import {
 import type { TableTypeReport } from "./snapshot.ts";
 import type { ParameterWritePlan } from "./write-targets.ts";
 
-// The transport half of writing: put the frames on the bus in the right order, at
-// the right speed, and stop the moment anything is not as expected. Every byte it
-// sends is built by ./param-codec.ts (the read legs) or ./write-codec.ts (the
-// write legs); every byte it receives is interpreted there. This file holds only
-// the socket, the clock and the sequencing.
-//
-// ── ⚠️ NOTHING HERE HAS EVER RUN AGAINST THE BIKE (2026-08-16) ───────────────
-// The bike is a week away. The SERVICES and their framing are proven — from a
-// passive capture of Energica's own software writing to this bike's A8
-// (obd-garage/DIAG_ADDRESSES.md §9) and from five parameters written to this bike
-// with obd-garage/vcu_param.py on 2026-08-09 — but not one frame in this file has
-// been transmitted by this repo. The SEQUENCING below is the part with no live
-// evidence at all, and it is the part most likely to be wrong.
-//
-// ── The sequence, and why each step is where it is ──────────────────────────
+// The transport half of writing: put the frames on the bus in the right order, at the right
+// speed, and stop the moment anything is not as expected. Every byte it sends is built by
+// ./param-codec.ts (the read legs) or ./write-codec.ts (the write legs). This file holds
+// only the socket, the clock and the sequencing.
 //
 //     10 81        open a session on the micro that owns the parameter
 //     22 CID       read what it holds RIGHT NOW
@@ -62,35 +51,18 @@ import type { ParameterWritePlan } from "./write-targets.ts";
 //     22 CID       READ IT BACK
 //     ── compare against what was written; a mismatch is reported, loudly
 //
-// The two reads are the point. `2E`'s positive reply is `6E <hi> <lo>` and carries
-// NO VALUE (DIAG_ADDRESSES.md §9.2), so "the micro accepted it" is not the same
-// claim as "the cell now holds that number" — and another owner's tool has a
-// failure message for exactly the gap between them: "the ECU accepted the write but
-// the value reverted. That usually means the parameter is recomputed from something
-// else." Nothing here reports success without having read the value back.
+// ⚠️ NOTHING HERE HAS EVER RUN AGAINST THE BIKE. The services and their framing are proven;
+// the SEQUENCING above is the part with no live evidence at all, and the part most likely
+// to be wrong.
 //
-// The read BEFORE is a compare-and-swap and matters just as much. A dashboard left
-// open since yesterday would otherwise write 80 over whatever the parameter has
-// since become.
+// ⚠️ The two reads are the point: `2E`'s positive reply carries NO VALUE, so "the micro
+// accepted it" is not the same claim as "the cell now holds that number", and the read
+// BEFORE is a compare-and-swap against a dashboard left open since yesterday.
 //
-// ── ⚠️ The SecurityAccess rules, which are the sharp edges ──────────────────
-//
-//  1. **The unlock decays in about two seconds.** Measured across six writes by the
-//     factory software (DIAG_ADDRESSES.md §9.3): 2 ms and 167 ms after the unlock
-//     succeeded; 2.32 s and 4.44 s were refused with NRC 0x33. So the write follows
-//     the unlock immediately, with nothing in between — no read, no logging, no
-//     `await` that could be scheduled behind something else.
-//  2. **A bad key costs one of about three attempts, and the lockout clears only on
-//     a VCU power cycle.** That is why ./write-codec.ts's key function is asserted
-//     against four real captured seed/key pairs rather than trusted.
-//  3. **Running `27` against an ALREADY-UNLOCKED micro returns NRC 0x35 invalidKey
-//     and burns an attempt.** obd-garage/VCU_PARAM_CHANGES.md records one being
-//     burned this way. Two writes in quick succession would do it — the second one's
-//     `27 01` would land while the first one's unlock was still live — so
-//     SECURITY_COOLDOWN_MS below refuses to start a second authenticated operation
-//     until the unlock has certainly expired. It costs four seconds and it protects
-//     the one resource here that cannot be replenished without walking to the bike
-//     and turning it off.
+// ⚠️ The SecurityAccess sharp edges — the unlock decays in ~2 s, a bad key costs one of
+// about three attempts, and running `27` against an ALREADY-UNLOCKED micro burns one too
+// (hence SECURITY_COOLDOWN_MS): docs/vcu-parameters.md §7. That is the one resource here
+// that cannot be replenished without walking to the bike and turning it off.
 
 /** How one authenticated operation came out. Resolves; nothing here rejects. */
 export type ServiceWriteOutcome =

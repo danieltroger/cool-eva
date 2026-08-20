@@ -228,35 +228,19 @@ export function checkPiClock(evidence: PiClockEvidence): PiClockVerdict {
 
 // ── Setting the bike's own clock ────────────────────────────────────────────
 //
-// ✅ THE MECHANISM EXISTS, and it is not a diagnostic service at all. Energica's
-// "Sync RTC" is `KWP2000Moto.UpdateRTC()` in the service tool's shared library, and all
-// it does is put ONE raw broadcast on CAN `0x120`: a `94 FF` header followed by five
-// bit-packed bytes of **UTC**, zero-padded to eight. No session, no SecurityAccess, no
-// reply — the method takes a host-side bus mutex, sends, sleeps 100 ms and returns true
-// unconditionally. The tool fires it automatically on every connect, after both
-// diagnostic sessions have been stopped, so the VCU accepts it with nothing open.
+// ✅ The mechanism exists, and it is not a diagnostic service at all: Energica's "Sync RTC"
+// puts ONE raw broadcast on CAN `0x120` — a `94 FF` header plus five bit-packed bytes of
+// **UTC**, zero-padded to eight. No session, no SecurityAccess, no reply. There is NO
+// diagnostic route to the clock; that was searched exhaustively.
 //
-// There is NO diagnostic route to the clock. Searched exhaustively: `SendFrame(288,…)`
-// occurs exactly once in the whole of that library, the `RoutinesID` enum has no clock
-// routine, and no parameter named for a clock exists in params.ecf, in any of the 28
-// firmware bundles' parameter tables, or in the VCU telemetry dictionary.
+// ⚠️ It is `DateTime.UtcNow`, not local. Sending local time sets the bike's clock wrong by
+// the timezone offset, and the service stamp with it.
 //
-// ── ⚠️ And the bike's current time cannot be read back ──────────────────────
-// There is no parameter, no service and no broadcast frame carrying the VCU's current
-// date and time. So this action is WRITE-ONLY and unverifiable: unlike a parameter
-// write, there is nothing to read back. The nearest indirect readback is a freeze
-// frame's timestamp (same 2000-01-01 epoch), which needs a DTC to exist first. That
-// asymmetry is why the confirmation below asks the owner to confirm the time rather
-// than reporting success afterwards — the Pi is the only thing that can vouch for it.
-//
-// ── ⚠️ Corrections to obd-garage/SERVICE_RESET.md §5, 2026-08-16 ────────────
-//  • It says "`0x120` is a write/command frame — out of scope to send". That is now
-//    stale: the frame has been sent, twice, on 2026-08-16, by another owner's tool.
-//  • It does not say the time is UTC. It is `DateTime.UtcNow`, not local. Sending
-//    local time would set the bike's clock wrong by the timezone offset, and the
-//    service stamp with it.
-//  • The field-to-bit map is not in that file at all. It is below, from the
-//    decompiled method and cross-checked against two frames captured on the wire.
+// ⚠️ AND THE BIKE'S CURRENT TIME CANNOT BE READ BACK — no parameter, no service and no
+// broadcast frame carries it. So this action is WRITE-ONLY and unverifiable, which is why
+// the confirmation below asks the owner to confirm the time rather than reporting success
+// afterwards. Provenance, and the three corrections this makes to
+// obd-garage/SERVICE_RESET.md §5: docs/vcu-parameters.md §13.
 
 /** The 11-bit id the clock sync goes out on. `VCU_COMMAND_REQ` in Energica's own frame database. */
 export const RTC_SYNC_CAN_ID = 0x120;
@@ -265,11 +249,8 @@ export const RTC_SYNC_CAN_ID = 0x120;
 const RTC_SYNC_HEADER = [0x94, 0xff];
 
 /**
- * Packs a UTC instant into the 8-byte `0x120` frame. Pure.
- *
- * The layout, from the decompiled `UpdateRTC()` — every field little-endian WITHIN
- * itself and split across byte boundaries, which is why it is written out rather than
- * expressed as a loop:
+ * Packs a UTC instant into the 8-byte `0x120` frame. Pure. Layout from the decompiled
+ * `UpdateRTC()`; fields are little-endian WITHIN themselves and split across bytes:
  *
  *   byte 2  bits 0-4  hour            bits 5-7  minute, low 3 of 6
  *   byte 3  bits 0-2  minute, high 3  bits 3-7  second, low 5 of 6
@@ -278,13 +259,9 @@ const RTC_SYNC_HEADER = [0x94, 0xff];
  *   byte 6            year − 2000
  *   byte 7            zero padding to DLC 8
  *
- * The weekday is .NET's `DayOfWeek`: **Sunday = 0** through Saturday = 6, which is
- * also what JavaScript's `getUTCDay()` returns — so no conversion, and that
- * coincidence is worth stating rather than relying on silently.
- *
- * ✅ Checked against two frames that really went out: `94 ff 04 02 20 10 1a 00` is
- * 2026-08-16 04:16:00 UTC and `94 ff 66 e8 20 10 1a 00` is 2026-08-16 06:03:29 UTC.
- * scripts/check-vcu-params.ts §15 asserts both, in both directions.
+ * ⚠️ The weekday is .NET's `DayOfWeek`: Sunday = 0, which is what `getUTCDay()` returns
+ * too — no conversion, and worth stating rather than relying on silently. ✅ Checked
+ * against two frames that really went out; docs/vcu-parameters.md §13.
  */
 export function buildRtcSyncFrame(when: Date): Uint8Array {
   const hour = when.getUTCHours();
@@ -347,27 +324,19 @@ export function decodeRtcSyncFrame(frame: Uint8Array): {
 
 // ── OBD Mode 04: clear stored trouble codes ─────────────────────────────────
 //
-// ⚠️ This is the first thing in this project that changes ECU state OUTSIDE the
-// parameter table, and it deserves naming as such. src/can/obd-dtc.ts — the
-// always-on poller — says Mode 04 "is deliberately absent and must stay absent",
-// and it still is: that module reads codes on a timer and nothing about it changed.
-// Mode 04 lives here, on the service-mode path, behind the same gate, the same
-// separate enable switch and the same two-step confirmation as a calibration write.
+// ⚠️ This is the first thing in this project that changes ECU state OUTSIDE the parameter
+// table. src/can/obd-dtc.ts — the always-on poller — says Mode 04 "is deliberately absent
+// and must stay absent", and it still is: Mode 04 lives HERE, on the service-mode path,
+// behind the same gate, the same separate enable switch and the same two-step confirmation
+// as a calibration write.
 //
-// ── Why it is dangerous in a way the DTC READS are not ──────────────────────
-// The stored list on this bike has been accumulating since before anyone started
-// looking — 39 codes as of 2026-08-04 — and it is not recoverable once cleared. The
-// pump code P0A07 in particular took two passes and a reconciliation against a second
-// source to settle (PRs #48 and #54), and every one of those passes read the bike's
-// own stored list. Clearing it throws that away and, worse, throws away the freeze
-// frame with it.
+// ⚠️ IT IS NOT RECOVERABLE. The stored list on this bike has been accumulating since before
+// anyone started looking — 39 codes as of 2026-08-04 — and clearing it throws away the
+// freeze frame with it.
 //
-// ── What it actually does, beyond clearing the list ─────────────────────────
-// 🟡 Mode 04 in the standard also resets readiness monitors and the freeze frame, and
-// on many ECUs it resets fuel trims and adaptive values. What THIS VCU does with it
-// has never been observed. It is not a "clear the dashboard light" button; it is
-// "erase the diagnostic memory", and the honest position is that we do not know the
-// full extent of what is erased.
+// 🟡 And nobody knows the full extent of what it erases: the standard also resets readiness
+// monitors and, on many ECUs, fuel trims and adaptive values. What THIS VCU does has never
+// been observed. Not a "clear the dashboard light" button — docs/vcu-parameters.md §13.
 
 const OBD_CLEAR_DTCS_MODE = 0x04;
 
@@ -392,26 +361,15 @@ export function buildClearDtcsFrame(): Uint8Array {
 /**
  * Could this frame be an answer to OUR Mode 04, rather than somebody else's traffic?
  *
- * ⚠️ This exists because the always-on OBD poller never stops. `startObdPoller(500)`
- * keeps sending mode-01 PID requests — and, every 120th round, a multi-frame mode-03
- * transfer — throughout the 300 ms window a Mode 04 reply is awaited in, and the bus
- * lease does not cover it (it excludes the two service-mode runners from each other,
- * not the poller). So the OBD response range carries other people's frames while we
- * are listening, and "the first frame in 0x7E0-0x7EF" is not our answer.
+ * ⚠️ This exists because the always-on OBD poller never stops: it keeps sending mode-01 PID
+ * requests, and every 120th round a multi-frame mode-03 transfer, throughout the 300 ms
+ * window a Mode 04 reply is awaited in — and the bus lease does not cover it. So "the first
+ * frame in 0x7E0-0x7EF" is not our answer. The KWP legs of a write need no equivalent,
+ * because `parseResponseFrame` requires byte 0 to be the tester's address 0xF1 and no
+ * ISO-TP PCI byte can be 0xF1; Mode 04 has no such discriminator built in.
  *
- * The KWP legs of a write need no equivalent because `parseResponseFrame` requires
- * byte 0 to be the tester's address 0xF1, and no ISO-TP PCI byte can be 0xF1. Mode 04
- * has no such discriminator built in, so it needs this one.
- *
- * Getting it wrong is worse here than elsewhere: a poller reply consumed as ours
- * would be reported as "nothing confirmed" for an action that may well have erased
- * the bike's diagnostic memory — inviting a retry of something irreversible — and the
- * poller would silently lose the frame, which for a Consecutive Frame means losing a
- * whole trouble-code transfer.
- *
- * Deliberately permissive about WHICH ecu answered and strict about WHAT it said: a
- * functional request may be answered from anywhere in the range, but only `44` or a
- * refusal naming service `04` can be an answer to `04`.
+ * Deliberately permissive about WHICH ecu answered and strict about WHAT it said. Why
+ * getting it wrong is worse here than elsewhere: docs/vcu-parameters.md §13.
  */
 export function isClearDtcsReply(frame: Uint8Array): boolean {
   if (frame.length < 2 || frame[0] >> 4 !== 0x0) {
@@ -494,19 +452,11 @@ function describeClearRefusal(code: number): string {
 
 // ── Should the service stamp be a LOGGED SIGNAL? No, and here is why ─────────
 //
-// It was worth asking — the brief did — and the answer is a clear no, for the same
-// reason src/vcu/sweep.ts gives for not sweeping at startup:
+// Same reason src/vcu/sweep.ts gives for not sweeping at startup: reading it costs a KWP
+// session on A8, and the whole safety argument (src/vcu/service-gate.ts) rests on the
+// always-on service not asking the micros anything outside service mode. It also moves
+// about once a year, and the audit journal (src/vcu/write-audit.ts) is already a better
+// record than a signal row — it says who read it and what happened next.
 //
-//  1. **Reading it costs a KWP session on A8.** The always-on service does not ask
-//     the micros anything outside service mode, and the whole safety argument
-//     (src/vcu/service-gate.ts) rests on that. A logged signal means a poll, and a
-//     poll means requests on the bus while the bike is being ridden.
-//  2. **It moves about once a year.** src/can/signals.ts logs on change, so this
-//     would be one row per service and ~230 extra keys' worth of nothing in between.
-//  3. **The snapshot already IS the record.** A stamp read in service mode is
-//     written into the audit journal (src/vcu/write-audit.ts) with its before/after,
-//     which is a better record than a signal row: it says who read it and what
-//     happened next.
-//
-// If it is ever wanted on a Grafana panel, the right shape is a row in the audit
-// journal being exported — not a signal being polled off a motorcycle's bus.
+// If it is ever wanted on a Grafana panel, the right shape is a row in the audit journal
+// being exported, not a signal polled off a motorcycle's bus. docs/vcu-parameters.md §13.

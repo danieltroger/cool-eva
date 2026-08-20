@@ -2,56 +2,29 @@ import { buildFreezeFrameRequestFrame, type FreezeFrameRequest } from "../diagno
 import { describeNegativeResponseCode } from "../diagnostics/obd-dtc.ts";
 import type { VcuTarget } from "./param-codec.ts";
 
-// Pure codec for the VCU micros' MULTI-FRAME custom-KWP exchanges: the services
-// whose request or reply does not fit one CAN frame. Bytes in, bytes out — no
-// socket, no clock, no state. ./multiframe-transfer.ts is the only part that
-// touches a bus, and ./kwp-client.ts is the only part that holds a session.
+// Pure codec for the VCU micros' MULTI-FRAME custom-KWP exchanges: the services whose
+// request or reply does not fit one CAN frame. Bytes in, bytes out — no socket, no clock,
+// no state. ./multiframe-transfer.ts is the only part that touches a bus, and
+// ./kwp-client.ts is the only part that holds a session.
 //
-// Same split, and the same reason, as ./param-codec.ts and
-// ../diagnostics/freeze-frame.ts: it is what lets a transfer be replayed from a
-// capture with no bike attached, which is how everything here was checked.
+// ⚠️ READ-ONLY BY CONSTRUCTION, and separately from ./param-codec.ts.
+// `VcuMultiFrameRequest` below is a closed union of five alternatives, every one of them a
+// read, and `encodeMultiFrameRequestPayload` has a throwing default. There is no raw-bytes
+// entry point, and `READ_ONLY_SERVICES` re-checks the emitted byte on the way out.
 //
-// ── ⚠️ READ-ONLY BY CONSTRUCTION, and separately from ./param-codec.ts ──────
-// `VcuMultiFrameRequest` below is a closed union of five alternatives, every one
-// of them a read, and `encodeMultiFrameRequestPayload` has a throwing default.
-// There is no raw-bytes entry point: a caller names an operation, never a service
-// byte and never a value. `READ_ONLY_SERVICES` then re-checks the emitted byte on
-// the way out, so a future widening of the union that forgets the header still
-// cannot put a write on this bus.
+// **Never implement here: `0x31` StartRoutine, `0x2E` WriteDataByIdentifier, `0x3B`
+// WriteDataByLocalIdentifier, `0x14` ClearDiagnosticInformation, `0x11` ECUReset, `0x27`
+// SecurityAccess, `0x2F` InputOutputControl, `0x34` RequestDownload.** Two of those sit
+// uncomfortably close to what is here:
+//   • `0x34` RequestDownload is `0x35`'s mirror image — one byte away in the switch, and it
+//     points the transfer the other way, tester → ECU. It would make this same segmenter
+//     into a flasher. It must never appear.
+//   • `0x31 FE` is the service tool's freeze-frame ERASE: it destroys exactly what
+//     `0x35`/`0x36`/`0x37` exist to read, and unlike every read here it needs SecurityAccess.
 //
-// **Never implement here: `0x31` StartRoutine, `0x2E` WriteDataByIdentifier,
-// `0x3B` WriteDataByLocalIdentifier, `0x14` ClearDiagnosticInformation, `0x11`
-// ECUReset, `0x27` SecurityAccess, `0x2F` InputOutputControl, `0x34`
-// RequestDownload.** Two of those sit uncomfortably close to what is here and are
-// worth naming individually:
-//
-//   • `0x34` RequestDownload is `0x35`'s mirror image — one byte away in the
-//     switch, and it points the transfer the other way, tester → ECU. `0x35`
-//     RequestUpload is a read because upload means ECU → tester; `0x34` would
-//     make this same segmenter into a flasher. It must never appear.
-//   • `0x31 FE` (`RoutinesID.VCUErase`, operand `01 00 00 00 01 FF FF FF`, then
-//     `33 FE` polled) is the service tool's freeze-frame ERASE, and it is the thing
-//     that destroys exactly what `0x35`/`0x36`/`0x37` exist to read. It also needs
-//     SecurityAccess, where every read here needs none.
-//
-// ../diagnostics/freeze-frame.ts' header lists the same rule for `0x17`'s module,
-// and ./param-codec.ts' for the parameter reads. Three small closed unions, each
-// arguing its own case, beat one wide one — which is why `0x17`/`0x18`/`0x35`/
-// `0x36`/`0x37` are NOT added to ./param-codec.ts. That file's header states as an
-// invariant that its union has three members and its allowlist three bytes, and
-// that invariant is worth more than the handful of lines sharing it would save.
-//
-// ── The framing, per obd-garage/DIAG_ADDRESSES.md §3 and CAN_MAP.md ─────────
-//   request   7C0: [target] [PCI…] [service] …      target = 0xA8 / 0xA9
-//   response  7E0: [0xF1]   [PCI…] [service+0x40] …  0xF1 is the tester
-//   flow ctrl 7C0: [target] 30 FF 00                 ours to send
-//
-// That is ISO-TP with EXTENDED addressing: byte 0 is an address and every length
-// shifts one along from the normal-addressed form in src/can/iso-tp.ts. A Single
-// Frame holds 6 payload bytes, a First Frame 5, a Consecutive Frame 6.
-// ../diagnostics/extended-iso-tp.ts reassembles the receive side and its header
-// argues why it is not src/can/iso-tp.ts; this file is the transmit side of the
-// same framing, plus the service encodings that need it.
+// The framing (extended-addressed ISO-TP — a Single Frame holds 6 payload bytes, a First
+// Frame 5, a Consecutive Frame 6), and why three small closed unions each arguing their own
+// case beat one wide one: docs/vcu-parameters.md §10.
 
 /**
  * Everything this module is permitted to ask a micro. Closed on purpose.
@@ -63,24 +36,15 @@ import type { VcuTarget } from "./param-codec.ts";
  */
 export type VcuMultiFrameRequest =
   /**
-   * `17 <componentHi> <componentLo>` ReadDiagnosticTroubleCodeInformation — one
-   * component's freeze frame. Encoded by ../diagnostics/freeze-frame.ts, which
-   * owns the component-number range check and the decode; this union carries it
-   * so that one transport can run every multi-frame read.
+   * `17 <componentHi> <componentLo>` ReadDiagnosticTroubleCodeInformation — one component's
+   * freeze frame. Encoded by ../diagnostics/freeze-frame.ts, which owns the
+   * component-number range check and the decode; this union carries it so that one
+   * transport can run every multi-frame read.
    *
-   * ✅ The SERVICE and its ROUTING are proven: 29 `0x17` requests went to A8 in
-   * the 2026-08-08 capture and all 29 drew a positive `57`
-   * (obd-garage/DIAG_ADDRESSES.md §9.1), and Energica's own
-   * `KWP2000::ReadDiagnosticTroubleCodeInformation` emits `0x17 <hi> <lo>`
-   * against `MotorbikeECU.VCUSafety` with no SecurityAccess in the path.
-   *
-   * ⚠️ The literal FRAME is a reconstruction, not a quotation. The census counted
-   * service bytes and discarded payloads, so `A8 03 17 <hi> <lo> 00 00 00` has
-   * never been written down off a wire — it is the decompiled three-byte payload
-   * put into this channel's documented framing. The framing rule is independently
-   * established (CAN_MAP.md §"Custom KWP-over-CAN"), so this is a sound
-   * reconstruction rather than a guess, but it is worth not repeating as
-   * "captured".
+   * ✅ The SERVICE and its ROUTING are proven — 29 of 29 `0x17` requests to A8 drew a
+   * positive `57` in the 2026-08-08 capture. ⚠️ The literal FRAME is a reconstruction, not
+   * a quotation: the census counted service bytes and discarded payloads, so this exact
+   * frame has never been written down off a wire. docs/vcu-parameters.md §10.
    */
   | FreezeFrameRequest
   /**
@@ -98,31 +62,15 @@ export type VcuMultiFrameRequest =
    */
   | { kind: "list-stored-dtcs" }
   /**
-   * `35 12 FF FF FF FF FF FF FF FF FF FF` RequestUpload — open the bulk
-   * freeze-frame log read-out. `0x12` is `RoutinesID.ReadFreezeFrame`.
+   * `35 12 FF FF FF FF FF FF FF FF FF FF` RequestUpload — open the bulk freeze-frame log
+   * read-out. `0x12` is `RoutinesID.ReadFreezeFrame`. Upload means ECU → tester, so this is
+   * a read; `0x34` RequestDownload, which is not, must never be added beside it.
    *
-   * ✅ The FIRST FIVE payload bytes are captured verbatim:
-   * `7C0: A8 10 0C 35 12 FF FF FF` (obd-garage/DIAG_ADDRESSES.md §9.6), a First
-   * Frame declaring `0x00C` = 12 payload bytes of which it carries five.
-   *
-   * ⚠️⚠️ **THE OTHER SEVEN OPERAND BYTES WERE NEVER CAPTURED.** They travelled in
-   * the Consecutive Frame that followed, and the census that produced §9.6
-   * filtered by service byte — a Consecutive Frame has none, so it was discarded.
-   * Ten `0xFF` is a GUESS, and it is the single least-supported byte sequence in
-   * this repo. What supports it: the three operand bytes we can see are all
-   * `0xFF`, and every other wildcard operand on this bus is all-`FF` too
-   * (`18 02 FF FF` all-groups, `14 FF FF` all-DTCs). What does not support it:
-   * nothing at all was recovered from `KWP2000Moto.ReadFreezeFrame`'s operand.
-   *
-   * This is settleable OFFLINE and in minutes, without the bike: the passive
-   * capture `capture-20260808-182129-600daf87.log` on the Pi
-   * (`/home/pi/ride-captures/`) contains the whole exchange, and grepping it for
-   * `7C0` frames whose second byte is `0x21` yields the missing seven bytes —
-   * along with the flow-control frame discussed at `buildFlowControlFrame`. Do
-   * that before trusting this constant.
-   *
-   * Upload means ECU → tester. This is a read; `0x34` RequestDownload, which is
-   * not, must never be added beside it.
+   * ✅ The FIRST FIVE payload bytes are captured verbatim.
+   * ⚠️⚠️ **THE OTHER SEVEN OPERAND BYTES WERE NEVER CAPTURED.** Ten `0xFF` is a GUESS, and
+   * the single least-supported byte sequence in this repo. It is settleable OFFLINE and in
+   * minutes from a passive capture already on the Pi — docs/vcu-parameters.md §10 names the
+   * file and the grep. Do that before trusting this constant.
    */
   | { kind: "request-upload-freeze-frame-log" }
   /**
@@ -137,18 +85,14 @@ export type VcuMultiFrameRequest =
   /**
    * `37` RequestTransferExit — closes the upload.
    *
-   * ⚠️ The request bytes were never recorded; only the service number and the
-   * reply, `77 FF`. That reply is itself the puzzle: `0x37` takes no parameters
-   * in both KWP2000 and ISO 14229, so there is nothing for a `FF` to echo. Either
-   * the micro appends a status byte of its own, or the request was `37 FF` and
-   * the reply echoes it. A bare `37` is sent here because that is what both
-   * standards specify; if it is refused with NRC `0x13`
+   * ⚠️ The request bytes were never recorded; only the service number and the reply,
+   * `77 FF`, which is itself a puzzle since `0x37` takes no parameters in either standard.
+   * A bare `37` is sent because that is what both specify; if it draws NRC `0x13`
    * incorrectMessageLengthOrInvalidFormat, `37 FF` is the one thing to try next
-   * and this comment is why.
+   * (docs/vcu-parameters.md §10).
    *
-   * Sent even when the read is abandoned early: an ECU left holding an open
-   * upload may refuse the next one. It is still a read — it transfers nothing and
-   * stores nothing.
+   * Sent even when the read is abandoned early: an ECU left holding an open upload may
+   * refuse the next one. It is still a read — it transfers nothing and stores nothing.
    */
   | { kind: "request-transfer-exit" };
 
@@ -211,20 +155,16 @@ const READ_FREEZE_FRAME_OPERAND_GUESSED = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0
 const LIST_STORED_DTCS_OPERAND = [0x02, 0xff, 0xff];
 
 /**
- * ⚠️ `0x36` carries no block-sequence counter here — documented as a named
- * constant because it is the assumption most likely to be wrong, and the one that
- * would be silently wrong.
+ * ⚠️ `0x36` carries no block-sequence counter here — a named constant because it is the
+ * assumption most likely to be wrong, and the one that would be silently wrong. ISO 14229's
+ * TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, … and wrapping; the
+ * evidence for a bare `36` on this bike is indirect, and neither strand of it is a captured
+ * payload (docs/vcu-parameters.md §10).
  *
- * ISO 14229's TransferData is `36 <blockSequenceCounter> …`, counting 01, 02, …
- * and wrapping. The evidence for a bare `36` on this bike is indirect: the
- * 2026-08-08 census recorded 1198 `0x36` requests as one service with no note of
- * a varying operand, and the service tool's `KWP2000Moto.ReadFreezeFrame` loops sending
- * the service with no counter argument. Neither is a captured payload.
- *
- * If it turns out to need one, the symptom is unambiguous rather than subtle —
- * the first `0x36` is refused, most likely NRC `0x13` incorrectMessageLength or
- * `0x24` requestSequenceError — so this is a wrong assumption that announces
- * itself instead of producing 1198 blocks of shifted bytes.
+ * If it turns out to need one, the symptom is unambiguous rather than subtle — the first
+ * `0x36` is refused, most likely NRC `0x13` incorrectMessageLength or `0x24`
+ * requestSequenceError — so this is a wrong assumption that announces itself instead of
+ * producing 1198 blocks of shifted bytes.
  */
 const TRANSFER_DATA_CARRIES_NO_BLOCK_COUNTER = true;
 
@@ -367,27 +307,16 @@ export function segmentRequestPayload(target: VcuTarget, payload: Uint8Array): U
  * The flow-control frame that tells a micro to send the rest of its reply:
  * `[target] 30 FF 00`.
  *
- * ⚠️ The transmit address is the target the CALLER named. It is never derived
- * from the received frame — which is the property ./param-codec.ts' header claims
- * for the whole client ("no transmit address is ever derived from something the
- * bus said") and the one thing that could quietly be lost by teaching this client
- * to answer a First Frame. src/can/obd-dtc.ts' flow control DOES derive its id
- * from the reply's, and carries a range guard for exactly that reason; here there
- * is nothing to guard because there is nothing derived.
+ * ⚠️ The transmit address is the target the CALLER named. It is never derived from the
+ * received frame — which is the property ./param-codec.ts' header claims for the whole
+ * client ("no transmit address is ever derived from something the bus said") and the one
+ * thing that could quietly be lost by teaching this client to answer a First Frame.
  *
- * `FF 00` is BlockSize 255, SeparationTime 0, taken from
- * obd-garage/DIAG_ADDRESSES.md §3 and CAN_MAP.md rather than from the `30 00 00`
- * src/can/obd-dtc.ts sends on the OBD channel.
- *
- * ⚠️ Both of those notes state it as a PROSE TEMPLATE with `[target]`
- * unresolved — no flow-control frame has ever been captured on this channel, in
- * either direction. So `FF 00` is what the notes say to send, not what anything
- * was observed sending. Under ISO 15765-2 a BlockSize of 255 means the sender
- * pauses for another flow control after 255 Consecutive Frames, where 0 means
- * "send it all"; the difference cannot arise here, because the largest reply this
- * transport will accept is bounded well under 255 frames by
- * ./multiframe-transfer.ts' cap. So the two candidate values are
- * indistinguishable in effect, and following the documented one costs nothing.
+ * ⚠️ `FF 00` is what obd-garage's notes say to send, not what anything was observed
+ * sending: no flow-control frame has ever been captured on this channel, in either
+ * direction. It is indistinguishable in effect from the `30 00 00` src/can/obd-dtc.ts sends
+ * on the OBD channel, because ./multiframe-transfer.ts caps a reply well under 255 frames.
+ * docs/vcu-parameters.md §10.
  */
 export function buildFlowControlFrame(target: VcuTarget): Uint8Array {
   const frame = new Uint8Array(8);
@@ -509,21 +438,14 @@ export function decodeMultiFrameReply(payload: Uint8Array, expectedService: numb
 /**
  * What a `75` RequestUpload reply said, from the body after the service byte.
  *
- * ⚠️ Only ONE such reply has ever been seen — `75 12 E9`, in the 2026-08-08
- * census — and the census kept the bytes without recording what they mean. Two
- * readings fit, and this reports both rather than picking:
+ * ⚠️ Only ONE such reply has ever been seen — `75 12 E9`, in the 2026-08-08 census — and
+ * the census kept the bytes without recording what they mean. Two readings fit, and this
+ * reports both rather than picking; the field names below assume the stronger one. See
+ * docs/vcu-parameters.md §10.
  *
- *   • `12` echoes the routine id `RoutinesID.ReadFreezeFrame` and `E9` is a
- *     maxNumberOfBlockLength of 233. This is the reading the field names below
- *     assume, because the echo makes `12` self-evidently the routine.
- *   • `12` is ISO 14229's lengthFormatIdentifier and `E9` the first byte of a
- *     maxNumberOfBlockLength. Under that reading a `12` would mean one length
- *     byte and two address bytes, which does not fit a 3-byte body — so it is the
- *     weaker of the two, but it is not excluded by three bytes of evidence.
- *
- * Nothing in this repo ACTS on either number: the block length is not used to
- * size anything, and the loop stops on what the micro does rather than on a count
- * derived from `E9`. It is carried so the first live run can settle it.
+ * Nothing in this repo ACTS on either number: the block length is not used to size
+ * anything, and the loop stops on what the micro does rather than on a count derived from
+ * `E9`. It is carried so the first live run can settle it.
  */
 export interface VcuUploadGrant {
   /** Byte 0 of the body. Expected to echo `0x12`; reported whatever it is. */

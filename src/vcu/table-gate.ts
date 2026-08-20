@@ -12,60 +12,21 @@ import {
 import type { TableTypeReport } from "./snapshot.ts";
 
 // Does this Pi know what this bike's parameter indices are CALLED — and may a parameter
-// write go ahead on the strength of it?
+// write go ahead on the strength of it? Pure: a table-type report in, a verdict out, so
+// every branch is exercisable from a laptop (scripts/check-vcu-params.ts §14b) rather than
+// first discovered against a motorcycle's calibration EEPROM.
 //
-// Pure: a table-type report in, a verdict out. No socket, no clock, no file. Same split
-// as ./service-gate.ts and for the same reason — every branch below is exercisable from
-// a laptop (scripts/check-vcu-params.ts §14b) rather than first discovered against a
-// motorcycle's calibration EEPROM.
+// ⚠️ A parameter is addressed BY INDEX, and what an index means comes from the table.
+// Routing and record width are invariant across all 28 of Energica's tables, so a write
+// aimed at a name under the WRONG table still goes to the right micro with the right number
+// of bytes: the micro accepts it, the read-back agrees, the audit journal records a success
+// — and a different parameter has changed. 151 of 278 ids are named differently somewhere.
 //
-// ── ⚠️ The question this gate asks changed, 2026-08-18 ───────────────────────
-// It used to be "is this the bike this repo was written for?" — one hardcoded table,
-// 16407, and every other value refused. That was safe and it was useless to anybody
-// else. It is now **"do we have your table?"**: all 28 tables Energica's 2024 service
-// tool can select are carried (./table-catalog.ts), so a recognised one PASSES whichever
-// of the 28 it is, and an unrecognised one still refuses — with the instruction for
-// adding it, because that is a thing an owner can actually do.
+// ⚠️ READS ARE DELIBERATELY NOT GATED, AND MUST NOT BE. A read under the wrong table prints
+// a name next to a number and nothing on the bike moves — and a read is the only way OUT of
+// here, so a gate that blocked it would be a gate nobody could ever open.
 //
-// ── ⚠️ Why a WRITE needs this and a read does not ───────────────────────────
-// A parameter is addressed BY INDEX, and what an index means comes from the table.
-// Routing (id → micro) and record width (id → datatype) are invariant across all 28 of
-// Energica's tables, so a write aimed at a name under the wrong table still goes to the
-// right micro with the right number of bytes: the micro accepts it, the read-back agrees,
-// the audit journal records a success — and a different parameter has changed. 151 of 278
-// ids carry a different name in at least one other table. There is no NRC, no reply shape
-// and no read-back that can report this, which makes it precisely the silent-wrong-answer
-// failure this repo spends its effort on everywhere else.
-//
-// The sharpest case is real rather than imagined: on 20 of the 28 tables, ids 70–94 are
-// `RegenFade_0` … `RegenFade_24`; on the other 8 the same ids are `CELL_COUNT`,
-// `CELL_OVERVOLTAGE`, `CELL_TARGET_AC`, `CELLV_KA` and the rest of the battery cell
-// block. Another owner's tool writes a regen curve into that block today because it
-// carries one table and does not ask.
-//
-// A READ under the wrong table is wrong in a way that can be survived: it prints a name
-// next to a number and nothing on the bike moves. It is also the only way out of here,
-// because the remedy IS a read. So reads are deliberately not gated, and must not be — a
-// gate that blocked the read that opens it would be a gate nobody could ever open.
-//
-// ── Fail closed, but say WHICH closed ───────────────────────────────────────
-// Five ways to be shut, and they get five sentences because their remedies do not
-// overlap at all:
-//
-//   mismatched → the bike named a table this software does not carry. No read helps.
-//                The fix is scripts/extract-vcu-tables.ts against your own
-//                service-tool install, and the remedy below says so in as many words.
-//   split      → the two micros named DIFFERENT tables. Also no read; the bike really
-//                may be like that, and no single set of names is right for it.
-//   unwritable → the table is carried, and one of the allowlist's own parameters is not
-//                called that on it. The allowlist is what needs the work, not the bike.
-//   unusable   → the micro answered with a record the width column forbids, so it named
-//                no table AND the framing of the whole sweep is in question. Re-reading
-//                is worth doing, but the fault is not "unasked".
-//   unread     → one read clears it, and this module names exactly which one.
-//
-// Collapsing those into a single "writes are blocked" would send someone hunting for a
-// software bug when the answer was one frame, or the other way round.
+// The five refusal states, and why each gets its own sentence: docs/vcu-parameters.md §4.
 
 /** What a table-type report means for writing by index. Fail-closed: only one of these permits. */
 export type TableGateState =
@@ -335,29 +296,17 @@ function describeUnread(index: number): string {
 }
 
 /**
- * The read that clears a micro, spelled out to the frame — and, just as importantly,
- * spelled out to the thing that RECORDS it.
+ * The read that clears a micro, spelled out to the frame — and, just as importantly, to
+ * the thing that RECORDS it. Which micro, which index, what the request is on the wire,
+ * that it changes nothing and needs no SecurityAccess, and where to do it so the answer
+ * survives. A refusal that stopped at "the table type is not confirmed" would be a refusal
+ * nobody could act on, and the honest end of that road is the gate being switched off.
  *
- * ⚠️ This sentence is why the gate is worth having rather than merely being safe. All
- * of it earns its place for somebody standing next to a parked motorcycle: which
- * micro, which index, what the request is on the wire, that it changes nothing and
- * needs no SecurityAccess, and where to do it so the answer survives. A refusal that
- * stopped at "the table type is not confirmed" would be a refusal nobody could act on,
- * and the honest end of that road is the gate being switched off.
- *
- * ⚠️⚠️ SEEING THE ANSWER AND RECORDING IT ARE DIFFERENT ACTS, and an earlier version of
- * this sentence conflated them — which made it worse than saying nothing. This gate is
- * fed from the last SWEEP's snapshot (`latest.json`, written by ./snapshot-store.ts's
- * writeSnapshot, called from exactly one place: the end of a sweep). "Probe one
- * identifier" performs precisely this read and returns it in an HTTP response that
- * nothing persists — so someone who followed the old wording saw `0x4017` on screen,
- * went back, and found the button still amber with the identical message and nothing
- * to explain why. The probe is still named here, because it IS the one-frame way to
- * find out what the bike says; it is now named as what it is.
- *
- * ⚠️ It no longer says what the answer SHOULD be, and that is the point of this pass:
- * any of the tables this software carries is a good answer. Naming one would be telling
- * an owner their bike is wrong.
+ * ⚠️⚠️ SEEING THE ANSWER AND RECORDING IT ARE DIFFERENT ACTS. The gate is fed from the last
+ * SWEEP's snapshot; "probe one identifier" performs precisely this read and returns it in
+ * an HTTP response that nothing persists. An earlier wording conflated the two and sent
+ * someone back to a button still amber with the identical message. The full account, and
+ * why this no longer says what the answer SHOULD be: docs/vcu-parameters.md §4.
  */
 function readInstructionFor(index: number): string {
   const parameter = parameterAtIndex(index);

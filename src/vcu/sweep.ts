@@ -18,46 +18,23 @@ import {
 import { loadPartialRows, openPartialSweepLog, writeSnapshot } from "./snapshot-store.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
 
-// One parameter sweep, in the service's own process, on the service's own CAN
-// socket. Started by hand from service mode and by nothing else.
+// One parameter sweep, in the service's own process, on the service's own CAN socket.
+// Started by hand from service mode and by nothing else.
 //
-// ── ⚠️ Why this is allowed to exist ──────────────────────────────────────────
-// The standing rule this repo grew up with was that the always-on service never
-// asks the micros anything: the sweep lived in a script you ran over ssh, and
-// /vcu-read shelled out to it. The rule was never about the SERVICE being
-// dangerous — it was about cost and about timing:
+// ⚠️ Still read-only, and still structurally. Every byte that reaches the bus is built by
+// ./param-codec.ts, whose request union has three members — start session, tester present,
+// read one parameter — and whose encoder throws on anything else on the way out. There is
+// no raw-bytes entry point here, no service byte derived from anything a caller supplied,
+// and no HTTP parameter anywhere that names a service, an identifier or a value.
 //
-//  1. **Bus contention, measured.** src/can/obd-dtc.ts records a mode-03 transfer
-//     on this bike succeeding somewhere between 25 % and 70 % of the time, with
-//     zero mode-01 replies interleaved on the successful ones and 50+ on the
-//     failures. The bus is the scarce resource, and a ~277-request burst is the
-//     last thing to add to service startup, which is exactly when the OBD poller,
-//     the BLE link and the DTC reads are all coming up.
-//  2. **A restart is routine** (deploy is `git pull` + `systemctl restart`), so
-//     "once at startup" means "every time anyone touches the Pi".
-//  3. **Nothing downstream wants it live**: 277 keys in `liveState`, which
-//     src/ws.ts re-broadcasts whole every five seconds, for values that do not move.
+// ⚠️ It does not configure can0 and does not own the socket. The channel is the service's,
+// already up and already started. Nothing here calls `bringUpCan` (which takes the
+// interface DOWN and would kill every other raw-CAN socket on the Pi), and nothing here
+// calls `channel.start()` or `channel.stop()`. Frames are handed in by the caller rather
+// than subscribed to, so this module owns no listener to leak either.
 //
-// None of those is an argument against a sweep the owner starts, once, standing
-// next to a parked bike — which is what ./service-gate.ts now proves the situation
-// to be before a single frame goes out. So the sweep moved in here and the script
-// went away, because two copies of the four resume/partial/baseline rules in
-// ./snapshot-store.ts was the real cost of keeping them apart.
-//
-// ── ⚠️ Still read-only, and still structurally ───────────────────────────────
-// Every byte that reaches the bus is built by ./param-codec.ts, whose request union
-// has three members — start session, tester present, read one parameter — and whose
-// encoder throws on anything else on the way out. Moving the caller from a child
-// process into this one changes nothing about that: there is no raw-bytes entry
-// point here, no service byte derived from anything a caller supplied, and no HTTP
-// parameter anywhere that names a service, an identifier or a value.
-//
-// ── ⚠️ It does not configure can0 and does not own the socket ────────────────
-// The channel is the service's, already up and already started. Nothing here calls
-// `bringUpCan` (which takes the interface DOWN and would kill every other raw-CAN
-// socket on the Pi), and nothing here calls `channel.start()` or `channel.stop()`.
-// Frames are handed in by the caller rather than subscribed to, so this module owns
-// no listener to leak either.
+// Why a ~277-request burst is allowed to exist inside the always-on service at all, and
+// what the old ssh-script rule was really about: docs/vcu-parameters.md §9.
 
 /** What a sweep needs. Everything is supplied — no globals, no env, no clock of its own. */
 export interface ParameterSweepOptions {
@@ -133,18 +110,15 @@ interface SweepState {
 /**
  * Stops the sweep.
  *
- * `client.stop()` is what makes this immediate rather than advisory: it clears the
- * pending request, settles it as `not-sent` — our own doing, never recorded as the
- * bike refusing to answer — and refuses to transmit again, so `openSession` and
- * `ping` on a micro we had not reached yet cannot put anything on the bus either.
+ * `client.stop()` is what makes this immediate rather than advisory: it clears the pending
+ * request, settles it as `not-sent` — our own doing, never recorded as the bike refusing to
+ * answer — and refuses to transmit again.
  *
  * ⚠️ There is deliberately NO "close the session" request on the way out. `0x20`
- * StopDiagnosticSession is not in ./param-codec.ts's union and must not be added
- * for this: the session the sweep opened expires by itself after ~2.5 s of silence
- * (obd-garage/DIAG_ADDRESSES.md §3, live 2026-08-08), so the clean exit from a
- * half-finished sweep is to stop talking, which is exactly what this does. Sending
- * one more frame to tidy up would be the one case where an abort put traffic on the
- * bus of a bike that had just started moving.
+ * StopDiagnosticSession is not in ./param-codec.ts's union and must not be added for this:
+ * the session expires by itself after ~2.5 s of silence, so the clean exit is to stop
+ * talking. One more frame to tidy up would be the one case where an abort put traffic on
+ * the bus of a bike that had just started moving. docs/vcu-parameters.md §9.
  */
 function abort(state: SweepState, reason: string): void {
   if (state.stoppedBecause === null) {
@@ -199,22 +173,18 @@ async function runSweep(options: ParameterSweepOptions, state: SweepState): Prom
     state.client.stop();
   }
 
-  // "Complete" means every parameter was ASKED ABOUT, not that every one answered.
-  // A slot that refuses or stays silent is a finding in its own right and must not
-  // make a finished sweep look truncated for ever — the same distinction
-  // src/diagnostics/stored-codes.ts draws between "no codes" and "no answer".
+  // "Complete" means every parameter was ASKED ABOUT, not that every one answered. A slot
+  // that refuses or stays silent is a finding in its own right and must not make a finished
+  // sweep look truncated for ever — the same distinction src/diagnostics/stored-codes.ts
+  // draws between "no codes" and "no answer".
   //
-  // ⚠️ `stoppedBecause` is CAPTURED here, on the same line as `complete`, and the
-  // captured copy is what is returned. Re-reading `state.stoppedBecause` after the
-  // `await` below would read it at a different moment: writing two JSON files and
-  // diffing 277 rows takes a few hundred milliseconds on a Pi's SD card, the
-  // watchdog is still armed for the first tick or two of that, and rolling the bike
-  // the instant `277/277 read` scrolls past is the natural thing for an owner to
-  // do. That would have returned `complete: true` in the snapshot and a gate exit
-  // as the reason, and read-runner.ts checks the reason first — so a sweep that
-  // asked about all 277 and deleted its own resume file would have rendered as
-  // "Stopped: the bike stopped being safe to service". Same shape as the
-  // wall-clock bug the first review found, and the same fix: read the fact once.
+  // ⚠️ `stoppedBecause` is CAPTURED here, on the same line as `complete`, and the captured
+  // copy is what is returned. Re-reading `state.stoppedBecause` after the `await` below
+  // would read it at a different moment — the writes take a few hundred milliseconds on a
+  // Pi's SD card and the watchdog is still armed for part of that — and a finished sweep
+  // would then render as "Stopped: the bike stopped being safe to service". Same shape as
+  // the wall-clock bug the first review found, and the same fix: read the fact once.
+  // docs/vcu-parameters.md §9.
   const stoppedBecause = state.stoppedBecause;
   const complete = stoppedBecause === null && targets.every(target => state.rows.has(target.index));
   const snapshot: VcuParameterSnapshot = {
@@ -302,26 +272,17 @@ async function pingMicros(options: ParameterSweepOptions, state: SweepState): Pr
 /**
  * The gate check between the loop and the socket.
  *
- * ⚠️ This is HALF of the auto-exit and it is worth being precise about which half,
- * because "no frame after unsafe" is the sentence someone will quote when deciding
- * whether the other half can be dropped.
+ * ⚠️ This is HALF of the auto-exit, and which half matters: "no frame after unsafe" is the
+ * sentence someone will quote when deciding whether the other half can be dropped. This
+ * call runs once per PARAMETER, and one parameter can put up to three frames on the bus, so
+ * a gate transition landing just after a check here can be followed by another frame up to
+ * a reply window later.
  *
- * What this call guarantees on its own is weaker than it looks: it runs once per
- * PARAMETER, and one parameter can put up to three frames on the bus — the read,
- * then on a timeout a `10 81` to re-open the session and a second read
- * (kwp-client.ts `readParameter`). `pingMicros` below is checked once per micro and
- * `ping` sends two frames. So a gate transition landing just after a check here can
- * be followed by another frame up to a reply window later.
- *
- * What actually bounds it is `stopped` inside kwp-client.ts's `exchange`, which
- * refuses to transmit at all and is set by `abort` — reached from here AND from the
- * 200 ms watchdog in ../vcu/read-runner.ts. Since 200 ms is shorter than the 300 ms
- * reply window, at most one already-in-flight frame gets out.
- *
- * This check is still worth having: it is what makes the sweep correct on its own
- * terms rather than dependent on a caller remembering to watch it, and in the
- * common case (a read that answers in milliseconds) it is what stops the sweep,
- * with the watchdog never firing. But the tight bound is the watchdog's.
+ * What actually bounds it is `stopped` inside kwp-client.ts's `exchange`, set by `abort` —
+ * reached from here AND from the 200 ms watchdog in ../vcu/read-runner.ts, which is shorter
+ * than the 300 ms reply window. This check is still worth having (it is what stops the
+ * sweep in the common case), but the tight bound is the watchdog's.
+ * docs/vcu-parameters.md §9.
  */
 function mayContinue(options: ParameterSweepOptions, state: SweepState): boolean {
   if (state.stoppedBecause !== null) {
