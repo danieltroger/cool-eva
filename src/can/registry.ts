@@ -213,9 +213,14 @@ export const SIGNALS: SignalDef[] = [
   //
   // "selected" is in the name because three different numbers here are all "a DC charge
   // current limit" and only this one is a choice: 0x625 b2 is the configured ceiling the
-  // dial runs up to (75, VCU parameter 258), 0x620 b0 is what the vehicle is advertising
-  // to the station moment to moment, and charger_max_dc_a above is the ON-BOARD AC
-  // charger's own register, which reads 0.0 A throughout a DC session.
+  // dial runs up to (75, VCU parameter 258), 0x620 b0 is what the STATION offers, relayed
+  // inward by the charge manager, and charger_max_dc_a above is the ON-BOARD AC charger's
+  // own register, which reads 0.0 A throughout a DC session.
+  //
+  // ⚠️ RETRACTED 2026-08-20: this said 0x620 b0 was "what the vehicle is advertising to the
+  // station", which is backwards — the frame is CM_EVSE_FDB, CM → VCU, and its own name is
+  // what settled whose limit it carries. Left standing here for a day after the decode was
+  // corrected, and it propagated. docs/charge-manager.md §0x620.
   //
   // ⚠️ An EVENT signal: the frame arrives only when the dial moves, so the tile shows the
   // last setting seen and greys out 8 s later. That is honest, and charge-setpoint.ts

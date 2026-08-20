@@ -19,6 +19,7 @@ import {
 } from "../src/diagnostics/freeze-frame.ts";
 import { INFOKEY_TABLE, lookupInfokey, scaleInfokeyValue } from "../src/diagnostics/infokey-table.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
+import { CAPTURED_FREEZE_FRAMES, capturedFreezeFramePayload } from "./captured-freeze-frames.ts";
 import {
   FREEZE_FRAME_P0514_COMPONENT,
   FREEZE_FRAME_P0514_EXPECTED,
@@ -45,9 +46,13 @@ import {
 // they check the manufacturer's own data against this repo's independently
 // sourced DTC table, and a disagreement there would be real.
 //
-// The one number to watch when the bike is back is `trailingHex`. It is empty in
-// every fixture below by construction; if it is non-empty on a real reply, the
-// layout is wrong and the bytes are still in hand to work out how.
+// `trailingHex` was written down as the number to watch, on the rule that a
+// non-empty value on a real reply would mean the layout was wrong. The bike is back,
+// §8 replays 29 real replies, and it is non-empty on ALL of them — so the rule as
+// stated would condemn a layout that the same 29 replies confirm. What the rule
+// actually caught is that the reply is one byte longer than the fields account for;
+// the fields themselves decode correctly, which is a different fault to the one it
+// predicted. The trailing byte is FREEZE_FRAME_TRAILING_BYTES, and still undecoded.
 
 const failures: string[] = [];
 
@@ -268,9 +273,10 @@ if (lampFrame) {
   }
 }
 
-// The layout's own prediction: a reply is the header plus the shortlist's bytes,
-// and nothing else. If this ever disagrees with a real capture, the header
-// comment in src/diagnostics/freeze-frame.ts is what needs correcting.
+// The layout's own prediction: header, the shortlist's bytes, and one trailing byte.
+// It DID disagree with a real capture — it said 17 where all 29 replies carry a byte
+// the fields do not account for — and the correction is the trailing byte, now part
+// of expectedFreezeFramePayloadBytes rather than a surprise at the call site.
 // Symptom 0, matching the fixture and dtc-table.ts' (44,0) = P0A07. All three of
 // component 44's symptoms carry the same shortlist, so picking the wrong one
 // would still pass — which is exactly why it is worth being explicit here, on the
@@ -278,8 +284,8 @@ if (lampFrame) {
 const pumpShortlist = infokeysFor(FREEZE_FRAME_P0A07_COMPONENT, 0);
 if (pumpShortlist) {
   check(
-    expectedFreezeFramePayloadBytes(pumpShortlist) === 17,
-    `a P0A07 reply should be 17 payload bytes, the model says ${expectedFreezeFramePayloadBytes(pumpShortlist)}`
+    expectedFreezeFramePayloadBytes(pumpShortlist) === 18,
+    `a P0A07 reply should be 18 payload bytes, the model says ${expectedFreezeFramePayloadBytes(pumpShortlist)}`
   );
   check(freezeFrameFieldBytes(pumpShortlist) === 12, "P0A07's seven fields are 12 bytes");
 }
@@ -447,6 +453,110 @@ if (unknownPair.kind === "frame") {
   check(unknownPair.frame.values.length === 0, "no shortlist means no fields could be named");
 }
 
+// ── §8 The 29 replies the bike actually sent ───────────────────────────────
+//
+// Everything above this line proves the decoder is consistent with its own
+// tables. This section is the only part that can be wrong in the bike's favour:
+// the payloads are the VCU's, from capture-20260808-182129.
+
+check(CAPTURED_FREEZE_FRAMES.length === 29, `expected 29 captured 0x17 replies, got ${CAPTURED_FREEZE_FRAMES.length}`);
+
+const singleFrameCaptures = CAPTURED_FREEZE_FRAMES.filter(entry => entry.frames.length === 1);
+check(
+  singleFrameCaptures.length === 1 && singleFrameCaptures[0].component === 60,
+  `component 60 has an empty shortlist, so it should be the one and only Single Frame; got ${singleFrameCaptures.map(entry => entry.component).join(", ")}`
+);
+
+for (const entry of CAPTURED_FREEZE_FRAMES) {
+  const label = `captured component ${entry.component}`;
+  const payload = capturedFreezeFramePayload(entry);
+  const response = decodeFreezeFrameResponse(payload, entry.component);
+  if (response.kind !== "frame") {
+    failures.push(`${label}: a real reply decoded as ${response.kind}, not a frame`);
+    continue;
+  }
+  const frame = response.frame;
+  check(frame.component === entry.component, `${label}: decoded component ${frame.component}`);
+  check(frame.symptom === entry.symptom, `${label}: decoded symptom ${frame.symptom}, expected ${entry.symptom}`);
+  check(frame.shortlistKnown, `${label}: no shortlist for a fault the bike actually reported`);
+
+  // The layout claim, tested 29 times: 5-byte header, the shortlist's fields, then
+  // exactly one byte over. Every reply is one longer than the shortlist accounts for
+  // — not one component, all of them — so the surplus is structural, not a bad row.
+  const shortlist = infokeysFor(entry.component, entry.symptom);
+  if (shortlist) {
+    check(
+      frame.values.length === shortlist.infokeys.length,
+      `${label}: decoded ${frame.values.length} fields for a ${shortlist.infokeys.length}-infokey shortlist`
+    );
+    // expectedFreezeFramePayloadBytes, not the arithmetic spelled out again: this is
+    // the most important use of the layout model, and open-coding the `+ 1` here is
+    // how the 17-vs-18 contradiction got in — one site followed the constant and the
+    // other silently didn't.
+    const expected = expectedFreezeFramePayloadBytes(shortlist);
+    check(payload.length === expected, `${label}: ${payload.length} bytes, layout predicts ${expected}`);
+  }
+  check(
+    /^[0-9A-F]{2}$/.test(frame.trailingHex),
+    `${label}: expected exactly one unexplained trailing byte, got "${frame.trailingHex}"`
+  );
+
+  // Header bytes 1 and 2. Every reply in the capture answers about exactly one DTC
+  // and every component fits in a byte, so the count is 1 and the high byte is zero
+  // — 29 times. Without these two the whole `57 01 00` header goes unwatched.
+  check(frame.recordCount === 1, `${label}: recordCount ${frame.recordCount}, every captured reply carries 1`);
+  check(payload[2] === 0x00, `${label}: DTC high byte 0x${payload[2].toString(16)}, expected 0x00`);
+
+  // The status LOW nibble, which the symptom check above cannot see. It is 5 on 28 of
+  // the 29 and 7 on component 44 alone — the bike's one permanently-present fault.
+  //
+  // This guards FIXTURE INTEGRITY, not the bike. CAPTURED_FREEZE_FRAMES is frozen
+  // committed data, so no future read can flow into this assertion; only editing the
+  // file can break it, which is exactly what it should catch. (An earlier version of
+  // this comment claimed a later read disagreeing would be "a finding rather than a
+  // broken check" — a later read cannot reach here at all.)
+  //
+  // ⚠️ Those two values are not cosmetic: 5 decodes to activity 2, 7 to activity 3,
+  // and `hasFreezeFrame` is true only for 2 — so it reads FALSE for component 44, the
+  // one reply proven to carry a freeze frame. See issue for the two-independent-bits
+  // hypothesis (#102); do not "fix" the fixture to make the flag agree.
+  const lowNibble = payload[4] & 0x0f;
+  check(
+    lowNibble === (entry.component === 44 ? 0x7 : 0x5),
+    `${label}: status low nibble 0x${lowNibble.toString(16)} — expected 0x7 for component 44, 0x5 otherwise`
+  );
+}
+
+// The one assertion here that is a claim about the motorcycle rather than about
+// the code. The coolant pump on this bike is wired to the heated-grip output, so
+// its driver sits open — and the VCU's own freeze frame for P0A07 says 0 mA
+// against an open-circuit threshold of 400 mA. A constructed fixture could assert
+// this only by having been told the answer first.
+const capturedPump = CAPTURED_FREEZE_FRAMES.find(entry => entry.component === 44);
+if (!capturedPump) {
+  failures.push("the capture should contain component 44");
+} else {
+  const response = decodeFreezeFrameResponse(capturedFreezeFramePayload(capturedPump), 44);
+  if (response.kind !== "frame") {
+    failures.push(`the pump's real reply decoded as ${response.kind}`);
+  } else {
+    const byName = new Map(response.frame.values.map(value => [value.name, value]));
+    check(response.frame.obdCode === "P0A07", `the pump reply should be P0A07, got ${response.frame.obdCode}`);
+    check(
+      byName.get("ai_WaterPumpCurrent_In")?.raw === 0,
+      `the open pump driver must read 0 mA, got ${byName.get("ai_WaterPumpCurrent_In")?.raw}`
+    );
+    // Three legs of one inverter, sampled in the same instant. Equal values are
+    // what physics requires and what a one-byte misalignment destroys — this is
+    // the assertion that would have caught reading the header as 4 or 6 bytes.
+    const legs = ["D_IGBTA_T", "D_IGBTB_T", "D_IGBTC_T"].map(name => byName.get(name)?.value);
+    check(
+      legs.every(leg => closeEnough(leg, 34.9)),
+      `the three IGBT legs should agree at 34.9 °C, got ${legs.join(", ")}`
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error("\nFAILED:");
   for (const failure of failures) {
@@ -459,7 +569,10 @@ console.log(
     " both constructed transfers reassemble and decode; refusals, wrong components, gapped," +
     " short, oversized, truncated, surplus and foreign replies all rejected, with their bytes kept"
 );
-console.log("⚠️  the transfers are CONSTRUCTED — no 0x17 payload has ever been captured. See the PR.");
+console.log(
+  "✓ 29 CAPTURED 0x17 replies decode, every infokey resolves, and the layout predicts" +
+    " all 29 lengths to the byte — with one trailing byte per reply still unexplained"
+);
 
 /** Reassembles and decodes one transfer, printing every step. Returns null on failure. */
 function replay(frames: readonly string[], component: number, label: string): FreezeFrame | null {

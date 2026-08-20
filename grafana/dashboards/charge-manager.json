@@ -1,0 +1,1577 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "DC current started",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'DC current started' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'dc_charging' AND r.ts < 2000000000000\n)\nWHERE value <> 0 AND (previous IS NULL OR previous = 0)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "blue",
+        "name": "AC current started",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'AC current started' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'ac_charging' AND r.ts < 2000000000000\n)\nWHERE value <> 0 AND (previous IS NULL OR previous = 0)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      },
+      {
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cool-eva-sqlite"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "red",
+        "name": "Charge-manager fault",
+        "target": {
+          "queryType": "table",
+          "rawQueryText": "SELECT time, text FROM (\n  SELECT r.ts/1000.0 AS time, r.value AS value,\n         LAG(r.value) OVER (ORDER BY r.ts) AS previous,\n         'Charge-manager fault' AS text\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_manager_error_code' AND r.ts < 2000000000000\n)\nWHERE value <> 0 AND (previous IS NULL OR previous = 0)\n  AND time BETWEEN $__from/1000.0 AND $__to/1000.0\nORDER BY time",
+          "refId": "Anno",
+          "timeColumns": ["time"]
+        }
+      }
+    ]
+  },
+  "description": "The charge manager (CAN 0x605/0x610/0x615/0x620/0x625): the DC current the vehicle requests, the three limits that bound it, the state machine, and the fault source and code. The only signals on this bus that see a DC fast charge — the onboard charger's frames are silent through one.",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "description": "",
+      "gridPos": {
+        "h": 19,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "The charge manager, CAN `0x605` / `0x610` / `0x615` / `0x620` / `0x625`, decoded in\n`src/can/charge-manager.ts`. The evidence for every byte — factory DBC names, match rates over 29\ncharge sessions, and the hypotheses that were refuted — is in `docs/charge-manager.md`. This tab\nexists because **these are the only signals on this bus that see a DC fast charge at all**: the\nonboard charger's frames (`0x305`/`0x306`, the *Charging* tab) go completely silent during one, so\n`mains_a`, `dc_a` and `dc_v` all read \"nothing happening\" while 20 kW goes into the pack. Measured,\nnot assumed: across the 18-minute DC session of 2026-08-04 19:58-20:16 those four keys logged **zero\nrows between them**, while `fast_dc_target_a` logged 93 and peaked at 66 A against a measured `pack_a`\nof 66.3 A.\n\n**Three names that look alike and are not.** Read the qualifier, not the prefix:\n\n| what | key | frame |\n| --- | --- | --- |\n| what the RIDER picked on the bike's screen | `dc_charge_limit_selected_a` | `0x121` b2 |\n| the bike's own configured ceiling, `MAX_DC_CHG_CURRENT` (VCU parameter 258, a static 75 A) | `fast_dc_limit_max_a` | `0x625` b2 |\n| what the STATION offers, i.e. the limit in force this second | `fast_dc_limit_a` | `0x620` b0 |\n\n`0x625` b2 is **the vehicle's own configuration** and has nothing to do with the station — it reads\n75 in 100.000 % of 1 571 614 frames, parked and unplugged included. `0x620` b0 points the other way:\n`CM_EVSE_FDB` is **CM → VCU**, so b0 is **what the station offers**, relayed inward by the charge\nmanager — which is why it reacts to a derate rather than commanding one. `0x615` b2 is the current\nthe vehicle **asks for**, not one it measures: it leads the first amp of every captured ramp by\n0.03-2.40 s, which a readback cannot do. The delivered current on these\npanels is `pack_a` off `0x200`, which is a measurement.\n\n**Why a flat line can mean \"the sender left\".** Four of the five frames are on the bus only while a\ncharge cable is live, and the log stores a row only when a value changes. So when the cable comes\nout, **eleven of the fifteen keys simply stop** — every one except `0x625`'s four — and every\nstep-held panel carries their last value onwards for as long as you ask it to. In the 2026-08-04\ncapture `charge_type`'s last row is 18 minutes before the session ends and it still reads DC ten\nminutes after that. A tile reading \"DC\" days after a charge is this, not a live session.\n\n**`0x625` is the exception and is what closes the picture.** It broadcasts at 10 Hz whenever the\nbike is awake, so `dc_charging` and `ac_charging` really do write a 0 when the current stops — read\nthem *with* the charge-path tile, not instead of it. Both are worded \"current is FLOWING\", not \"a\nsession exists\": through the 155 s aborted DC attempt of 2026-08-09 14:42 they stay 0 while\n`0x605` and `0x610` both report an established DC session.\n\n**Row cost.** All fifteen keys together wrote **176 rows** across that entire 18-minute DC session,\n93 of them `fast_dc_target_a`, against 267 890 rows from every signal in the same 47-minute capture.\nNothing here carries a deadband and nothing needs one.\n\n**2060 rows.** Every query on this tab carries `AND r.ts < 2000000000000`. The Pi has no RTC and\nlogs with a bad clock until `gps/clock.ts` steps it from satellite time, which put 49 772 real\nreadings — including 1 740 of `pack_a` and 33 of `odometer_can_km` — in the year 2060. Without the\nguard, any absolute range ending past 2033 stretches every axis here to 2060 and turns a charge\nsession into a sliver, and the held-value tiles would report a 2060 row as \"now\". ⚠️ **No other\ndashboard in this folder carries that guard**; they are safe only for as long as their default\n`to: now` range is left alone.\n",
+        "mode": "markdown"
+      },
+      "title": "About this dashboard",
+      "transparent": false,
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "id": 2,
+      "panels": [],
+      "title": "Session at a glance",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`charge_type`, 0x605 b2: 1 = AC, 2 = DC. A property of the SESSION, not of current flowing — it reads 2 for the whole 155 s of the aborted DC attempt of 2026-08-09 14:42 while not one amp moves. Held rather than range-bounded: the frame behind it is on the bus only while a cable is live, so a window with no session contains no row and a bounded tile would read \"No data\" — indistinguishable from the logger being down (grafana/README.md). ⚠️ 0x605 stops when the cable comes out, so this tile holds the last path indefinitely; read it next to the two flowing tiles, which come off 0x625 and do close themselves.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "text",
+                  "index": 0,
+                  "text": "none"
+                },
+                "1": {
+                  "color": "blue",
+                  "index": 1,
+                  "text": "AC"
+                },
+                "2": {
+                  "color": "green",
+                  "index": 2,
+                  "text": "DC"
+                }
+              }
+            }
+          ],
+          "noValue": "no charge-manager rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 20
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Charge path\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_type' AND r.ts <= $__to AND r.ts < 2000000000000\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge path",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`dc_charging`, 0x625 b4 bit 5 INVERTED — the bit is asserted when NOT DC charging, so a frame that never arrives cannot be mistaken for a charge. Agrees with DC current flowing in 99.713 % of 151 621 frames. 0x625 broadcasts at 10 Hz whenever the bike is awake, so this genuinely writes a 0 when the current stops; it holds only while the bike is asleep. Held rather than range-bounded: the frame behind it is on the bus only while a cable is live, so a window with no session contains no row and a bounded tile would read \"No data\" — indistinguishable from the logger being down (grafana/README.md).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "dark-blue",
+                  "index": 0,
+                  "text": "no"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "yes"
+                }
+              }
+            }
+          ],
+          "noValue": "no 0x625 rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 20
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"DC current flowing\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'dc_charging' AND r.ts <= $__to AND r.ts < 2000000000000\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "DC current flowing",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`ac_charging`, 0x625 b4 bit 2. Set while AC mains current flows in 99.356 % of 381 060 frames above 2 A. Same self-closing property as the DC tile beside it. Held rather than range-bounded: the frame behind it is on the bus only while a cable is live, so a window with no session contains no row and a bounded tile would read \"No data\" — indistinguishable from the logger being down (grafana/README.md).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "dark-blue",
+                  "index": 0,
+                  "text": "no"
+                },
+                "1": {
+                  "color": "blue",
+                  "index": 1,
+                  "text": "yes"
+                }
+              }
+            }
+          ],
+          "noValue": "no 0x625 rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 20
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"AC current flowing\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'ac_charging' AND r.ts <= $__to AND r.ts < 2000000000000\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "AC current flowing",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "MAX of `fast_dc_target_a` (0x615 b2) over the range — what the vehicle ASKED the station for, not what arrived. Range-bounded on purpose: a peak is a statement about this window. The corpus high is 73 A (2026-08-08 17:49, at 17 % SOC); 66 A is the peak of the 2026-08-04 session. ⚠️ It has never once read 74 or 75 although the configured ceiling is 75.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "no DC request in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 20
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, MAX(r.value) AS \"Peak requested DC current\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'fast_dc_target_a' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\nHAVING COUNT(*) > 0",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Peak requested DC current",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`charge_manager_error_code`, 0x610 b2-3 as a signed 16-bit little-endian value, with `charge_manager_error_src` in the table below. Zero in 968 129 of 968 629 captured frames; the only codes ever seen are 853 and 1101, from sources 7 and 8, and neither field determines the other. What they map to is unknown — `docs/charge-manager.md` §b1-3 has the three episodes and why the obvious DTC mapping is not it. Held rather than range-bounded: the frame behind it is on the bus only while a cable is live, so a window with no session contains no row and a bounded tile would read \"No data\" — indistinguishable from the logger being down (grafana/README.md).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "none"
+                }
+              }
+            }
+          ],
+          "noValue": "no 0x610 rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 20
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Last fault code\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'charge_manager_error_code' AND r.ts <= $__to AND r.ts < 2000000000000\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Last fault code",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`odometer_can_km`, for telling one charge from another. Held at the last row on or before the end of the range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "no odometer rows",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:km"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 20
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Odometer\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'odometer_can_km' AND r.ts <= $__to AND r.ts < 2000000000000\nORDER BY r.ts DESC LIMIT 1",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Odometer",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The four session-level flags, each seeded from the last row before the range so a session that started off-screen still draws (grafana/README.md). ⚠️ The two flowing lanes come off 0x625, which broadcasts whenever the bike is awake, so they close themselves. The charge-path and isolation lanes come off 0x605, which stops with the cable — their last region runs to the right edge whether the cable is still in or not. `bms_leak_detect_inhibit` is the VCU COMMANDING the insulation monitor off (V_IMD_DISABLE); the monitor cannot run against a station-driven DC bus, so it is inhibited for exactly the duration of a DC session, 99.933 % of 156 931 frames.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "flowing": {
+                  "color": "green",
+                  "index": 0
+                },
+                "no": {
+                  "color": "dark-blue",
+                  "index": 1
+                },
+                "DC": {
+                  "color": "green",
+                  "index": 2
+                },
+                "AC": {
+                  "color": "blue",
+                  "index": 3
+                },
+                "none": {
+                  "color": "text",
+                  "index": 4
+                },
+                "inhibited": {
+                  "color": "orange",
+                  "index": 5
+                },
+                "running": {
+                  "color": "text",
+                  "index": 6
+                }
+              }
+            }
+          ],
+          "noValue": "no charge-manager rows in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 9,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT time, \"DC current (0x625 b4 bit 5)\" FROM (\n  SELECT r.ts/1000.0 AS time, CASE WHEN r.value <> 0 THEN 'flowing' ELSE 'no' END AS \"DC current (0x625 b4 bit 5)\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'dc_charging' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT $__from/1000.0, CASE WHEN r.value <> 0 THEN 'flowing' ELSE 'no' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dc_charging' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT time, \"AC current (0x625 b4 bit 2)\" FROM (\n  SELECT r.ts/1000.0 AS time, CASE WHEN r.value <> 0 THEN 'flowing' ELSE 'no' END AS \"AC current (0x625 b4 bit 2)\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'ac_charging' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT $__from/1000.0, CASE WHEN r.value <> 0 THEN 'flowing' ELSE 'no' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'ac_charging' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT time, \"Charge path (0x605 b2)\" FROM (\n  SELECT r.ts/1000.0 AS time, CASE CAST(r.value AS INTEGER) WHEN 1 THEN 'AC' WHEN 2 THEN 'DC' ELSE 'none' END AS \"Charge path (0x605 b2)\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_type' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT $__from/1000.0, CASE CAST(r.value AS INTEGER) WHEN 1 THEN 'AC' WHEN 2 THEN 'DC' ELSE 'none' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_type' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "C",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT time, \"Isolation monitor (0x605 b7)\" FROM (\n  SELECT r.ts/1000.0 AS time, CASE WHEN r.value <> 0 THEN 'inhibited' ELSE 'running' END AS \"Isolation monitor (0x605 b7)\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'bms_leak_detect_inhibit' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT $__from/1000.0, CASE WHEN r.value <> 0 THEN 'inhibited' ELSE 'running' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'bms_leak_detect_inhibit' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "D",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Session lanes",
+      "type": "state-timeline"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 10,
+      "panels": [],
+      "title": "DC current — what was asked for, what bounded it, what arrived",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The whole DC current story on one axis, because all five really are the same quantity. **requested** is what the vehicle asks the station for and leads the first amp by 0.03-2.40 s. **delivered** is `pack_a` off the BMS, positive while charging — against the request r = +0.9951 with the pack drawing a median 0.30 A less. **limit in force** is what the STATION offers, relayed inward on `CM_EVSE_FDB` (CM → VCU) — which is why it reacts rather than commands: on 2026-08-04 it fell 75 → 64 eleven seconds AFTER the delivered current had already dropped to 55.6 A. ⚠️ \"In force\" is not \"binding\": it equals the request in only 0.005 % of 151 202 aligned samples, so the corpus holds essentially no observation of this ceiling ever constraining the delivery. **bike ceiling** is this vehicle's own configured 75 A and is not an offer from the station. **rider's selection** is the dial on the bike's screen and only writes a row when the dial MOVES — re-picking the value you already had writes nothing.\n\n⚠️ `pack_a` is the pack's current in both directions, so a ride inside the range squashes the charge: across the 199 368 non-2060 `pack_a` rows in `rides.db` the 1st percentile is −172.3 A and the minimum −405.2 A, against a charge that never reaches +75. Zoom to the session; the annotations mark where they start. ⚠️ And both series are logged on change, so they step at different instants: pairing the 2026-08-04 session's 23 post-ramp request samples with the last `pack_a` before each gives a mean gap of +0.5 A but individual pairs from −5.4 to +6.2 A. Read a several-amp difference at a step as alignment, not as the station missing the request.\n\nSeeded at both ends so the ceiling and the rider's dial — which log roughly once per boot — still draw in a window that contains no boot. A flat line therefore means \"unchanged\", except at the far right, where for the four cable-only signals it can also mean the sender left with the cable.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "A",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "displayName": "${__field.labels.metric}",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "requested (0x615 b2)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delivered — pack current (0x200)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limit in force (0x620 b0)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bike ceiling, MAX_DC_CHG_CURRENT (0x625 b2)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rider selection (0x121)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "-- Amps from five different places. See the panel description for which is which;\n-- 0x625 b2 is the BIKE's configured ceiling and not anything the station offered.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time,\n         CASE s.key\n                WHEN 'fast_dc_target_a' THEN 'requested (0x615 b2)'\n                WHEN 'pack_a' THEN 'delivered — pack current (0x200)'\n                WHEN 'fast_dc_limit_a' THEN 'limit in force (0x620 b0)'\n                WHEN 'fast_dc_limit_max_a' THEN 'bike ceiling, MAX_DC_CHG_CURRENT (0x625 b2)'\n                WHEN 'dc_charge_limit_selected_a' THEN 'rider selection (0x121)'\n         END AS metric,\n         r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('fast_dc_target_a', 'pack_a', 'fast_dc_limit_a', 'fast_dc_limit_max_a', 'dc_charge_limit_selected_a') AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'requested (0x615 b2)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_target_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'delivered — pack current (0x200)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'limit in force (0x620 b0)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_limit_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'bike ceiling, MAX_DC_CHG_CURRENT (0x625 b2)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_limit_max_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'rider selection (0x121)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dc_charge_limit_selected_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'requested (0x615 b2)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_target_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'delivered — pack current (0x200)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'limit in force (0x620 b0)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_limit_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'bike ceiling, MAX_DC_CHG_CURRENT (0x625 b2)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_limit_max_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'rider selection (0x121)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'dc_charge_limit_selected_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "DC current: requested, in force, delivered",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 12,
+      "panels": [],
+      "title": "DC voltage and the SOC the station is told",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`fast_dc_target_v` (0x615 b0-1, 16-bit LE) is the voltage the vehicle REQUESTS, and it tracks the pack at slope 1.0 with a median gap of +13.40 V (p5 12.70, p95 14.60) in every mode including AC and idle. `fast_dc_limit_max_v` (0x625 b0-1) is the configured ceiling — a static 363 V that moved once, to 371 V, 91 s into a DC session on 2026-08-09 and never moved back. ⚠️ `fast_dc_target_v` REPLACED `charge_manager_pack_v` on 2026-08-20 and is 13.5 V higher for the same bytes; rows logged under the old key are a different quantity and are deliberately not unioned in here.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "V",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "displayName": "${__field.labels.metric}",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:V"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "target (0x615 b0-1)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pack (0x200)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "configured V limit (0x625 b0-1)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "-- The request, the measurement it sits above, and the configured ceiling.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time,\n         CASE s.key\n                WHEN 'fast_dc_target_v' THEN 'target (0x615 b0-1)'\n                WHEN 'pack_v' THEN 'pack (0x200)'\n                WHEN 'fast_dc_limit_max_v' THEN 'configured V limit (0x625 b0-1)'\n         END AS metric,\n         r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('fast_dc_target_v', 'pack_v', 'fast_dc_limit_max_v') AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'target (0x615 b0-1)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_target_v' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'pack (0x200)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_v' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'configured V limit (0x625 b0-1)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_limit_max_v' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'target (0x615 b0-1)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_target_v' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'pack (0x200)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'pack_v' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'configured V limit (0x625 b0-1)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'fast_dc_limit_max_v' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "DC voltage: target vs pack",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`charge_manager_soc` (0x615 b3) is the SOC the VCU reports OUTWARD for the station's ramp planning, and it is free to disagree with the BMS — it equals `soc` in 99.008 % of the 847 644 frames from 2026-08-02 20:48 onwards, and before that ran 2-4 % low for every frame of five sessions. Kept under its own key for exactly that reason; where the two lines separate is the interesting part.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "%",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.metric}",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reported to station (0x615 b3)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "BMS SOC (0x200)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "-- Two SOCs that are allowed to disagree.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time,\n         CASE s.key\n                WHEN 'charge_manager_soc' THEN 'reported to station (0x615 b3)'\n                WHEN 'soc' THEN 'BMS SOC (0x200)'\n         END AS metric,\n         r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('charge_manager_soc', 'soc') AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'reported to station (0x615 b3)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_manager_soc' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'BMS SOC (0x200)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'soc' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'reported to station (0x615 b3)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_manager_soc' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'BMS SOC (0x200)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'soc' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "SOC: reported to the station vs the BMS's own",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 15,
+      "panels": [],
+      "title": "State machine",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "One raw byte, five factory fields. The DC setup of 2026-08-04 walks 0x10 → 0x08 → 0x0A → 0x2A → 0x4A → 0x5A → 0x5E over **26.1 s** (19:58:19.252 → 19:58:45.346 — ten seconds only gets as far as 0x5A), which reads on these lanes as inlet detected → mode DC → authorisation → inlet locked → relay closed. ⚠️ Teardown is NOT that in reverse: 0x5E → 0x5A → 0x4A → 0x48 in 1.5 s at 20:16:03-04, mirroring two steps and then ending on 0x48, a value that never appeared during setup — and the lanes are what make that legible, since 0x48 is inlet still present with WAIT_AUTH still at 2, mode and lock already dropped. 0x5E is the settled DC value and 0x19 the settled AC one. ⚠️ Ours was read as \"bit 0 = AC, bit 1 = DC\" until 2026-08-20; the corpus says otherwise — the pair is never 3 in 968 629 frames, which is what an enum looks like and not what two flags look like.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "DC": {
+                  "color": "green",
+                  "index": 0
+                },
+                "AC": {
+                  "color": "blue",
+                  "index": 1
+                },
+                "none": {
+                  "color": "text",
+                  "index": 2
+                },
+                "no": {
+                  "color": "dark-blue",
+                  "index": 3
+                },
+                "requested": {
+                  "color": "green",
+                  "index": 4
+                },
+                "present": {
+                  "color": "blue",
+                  "index": 5
+                },
+                "locked": {
+                  "color": "green",
+                  "index": 6
+                },
+                "auth 1": {
+                  "color": "yellow",
+                  "index": 7
+                },
+                "auth 2": {
+                  "color": "green",
+                  "index": 8
+                },
+                "reserved 3": {
+                  "color": "red",
+                  "index": 9
+                }
+              }
+            }
+          ],
+          "noValue": "no 0x610 rows in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 16,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.85,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "-- 0x610 b0 is logged whole, because a raw byte survives a bit-position error and split\n-- fields do not. The split back out happens here instead. Layout and match rates:\n-- docs/charge-manager.md §0x610. Each of the three 2-bit fields is an ENUM and none of\n-- them ever reaches 3 in 968 629 frames, which is how they were told apart from flags.\nSELECT time, \"Mode request (CM_CHGMODE_REQ)\", \"Relay request (CM_RELAY_REQ)\", \"Inlet present (CM_INL_STS)\", \"Inlet locked (CM_INL_LKSTS)\", \"Authorisation (WAIT_AUTH)\" FROM (\n  SELECT r.ts/1000.0 AS time,\n         CASE CAST(r.value AS INTEGER) & 3 WHEN 0 THEN 'none' WHEN 1 THEN 'AC' WHEN 2 THEN 'DC' ELSE 'reserved 3' END AS \"Mode request (CM_CHGMODE_REQ)\",\n         CASE WHEN (CAST(r.value AS INTEGER) >> 2) & 1 THEN 'requested' ELSE 'no' END AS \"Relay request (CM_RELAY_REQ)\",\n         CASE WHEN (CAST(r.value AS INTEGER) >> 3) & 1 THEN 'present' ELSE 'no' END AS \"Inlet present (CM_INL_STS)\",\n         CASE WHEN (CAST(r.value AS INTEGER) >> 4) & 1 THEN 'locked' ELSE 'no' END AS \"Inlet locked (CM_INL_LKSTS)\",\n         CASE (CAST(r.value AS INTEGER) >> 5) & 3 WHEN 0 THEN 'none' WHEN 1 THEN 'auth 1' WHEN 2 THEN 'auth 2' ELSE 'reserved 3' END AS \"Authorisation (WAIT_AUTH)\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_manager_status' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT $__from/1000.0,\n                        CASE CAST(r.value AS INTEGER) & 3 WHEN 0 THEN 'none' WHEN 1 THEN 'AC' WHEN 2 THEN 'DC' ELSE 'reserved 3' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 2) & 1 THEN 'requested' ELSE 'no' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 3) & 1 THEN 'present' ELSE 'no' END,\n                        CASE WHEN (CAST(r.value AS INTEGER) >> 4) & 1 THEN 'locked' ELSE 'no' END,\n                        CASE (CAST(r.value AS INTEGER) >> 5) & 3 WHEN 0 THEN 'none' WHEN 1 THEN 'auth 1' WHEN 2 THEN 'auth 2' ELSE 'reserved 3' END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_manager_status' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge-manager status (0x610 b0), split into its factory fields",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The cleanest AC/DC discriminator on this bus: 0x23 while DC current flows (99.974 % of 151 096 frames) and 0x02 while AC mains flows (99.999 % of 784 599). Only those two are named; everything between renders as raw hex, and the log is why: **the handshake is not one fixed sequence**. Out of 0x02, 2026-08-04 19:58 goes 0x14 → 0x04 → 0x07 → 0x0D → 0x11 → 0x12 → 0x11 → 0x23 over 4.70 s, with 0x11 on both sides of 0x12; the aborted attempt of 2026-08-09 14:41 goes 0x14 → 0x04 → 0x07 → 0x09 → 0x23 in 3.70 s, through an 0x09 neither other session shows; its retry 66 s later goes 0x14 → 0x04 → 0x23 in 2.10 s. Three sessions, three paths, so no state table is inferred here — and the factory DBC does not name this byte at all. ⚠️ These are 10 Hz samples off the log, so a step held for under ~100 ms would not appear at all. Zoom to a few seconds around a session start to read them.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": true
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "DC (0x23)": {
+                  "color": "green",
+                  "index": 0
+                },
+                "AC (0x02)": {
+                  "color": "blue",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "no 0x610 rows in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "id": 17,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT time, \"Substate (0x610 b7)\" FROM (\n  SELECT r.ts/1000.0 AS time, CASE CAST(r.value AS INTEGER) WHEN 2 THEN 'AC (0x02)' WHEN 35 THEN 'DC (0x23)' ELSE printf('0x%02X', CAST(r.value AS INTEGER)) END AS \"Substate (0x610 b7)\"\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'charge_manager_state' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT $__from/1000.0, CASE CAST(r.value AS INTEGER) WHEN 2 THEN 'AC (0x02)' WHEN 35 THEN 'DC (0x23)' ELSE printf('0x%02X', CAST(r.value AS INTEGER)) END\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_manager_state' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge-manager substate (0x610 b7)",
+      "type": "state-timeline"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "id": 18,
+      "panels": [],
+      "title": "Faults",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`charge_manager_error_src` (0x610 b1) and `charge_manager_error_code` (0x610 b2-3, signed 16 LE). Three episodes exist in the whole 29-session corpus: (7, 1101) on 2026-08-02, (8, 1101) on 2026-08-08, and (7, 853) on 2026-08-09 14:41:46 — the aborted DC attempt, which ran 43.7 s and ended 47.4 s before the first amp of the session that followed. ⚠️ `vcu_err_charge_manager` (0x100 b7 bit 1), the VCU's rollup bit, stayed 0 through all three, so it is not a substitute for watching this. Byte order matters: 853 is 0x0355 little-endian; read big-endian it would be 21 763.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "noValue": "no fault-code rows in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "id": 19,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "-- Every row of either fault field in the range, not only the non-zero ones, so the\n-- moment an episode CLEARS is visible too. Both are logged raw: two sources and two\n-- codes across 29 sessions is not a table anyone can name yet.\nSELECT r.ts/1000.0 AS time,\n       CASE s.key WHEN 'charge_manager_error_src' THEN 'CM_ERROR_SRC (b1)'\n                  ELSE 'CM_ERROR_CODE (b2-3)' END AS \"Field\",\n       r.value AS \"Value\",\n       CASE WHEN r.value <> 0 THEN 'fault' ELSE 'clear' END AS \"State\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('charge_manager_error_src', 'charge_manager_error_code')\n  AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Charge-manager fault episodes",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 78
+      },
+      "id": 20,
+      "panels": [],
+      "title": "AC side of the same frames",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "`ac_supply_limit_a` (0x620 b1, `CM_AC_MAX_CURR`) is the supply-side ceiling — 8, 10 and 13 A here, all standard cable/pilot ratings — and it BOUNDS the setpoint rather than reporting it: `charge_limit_a` (0x10A b7 ÷ 7) never once exceeds it across the 784 508 frames where it is non-zero, and the ceiling LEADS, stepping 10 → 13 on 2026-08-08 19:40:13.9 with the setpoint following 120 ms later. 🟡 It is not the mains current: it matches floor(`mains_a`) in only 12 % of frames and sat at 13 through a 6.8 h session drawing 1.4 A. Included here because the same five frames carry the AC session too — `fast_dc_target_a` is 0 in 100.000 % of the 783 310 AC frames, so the DC panels above go flat and this is where an AC charge shows up.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "A",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1.5,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "decimals": 1,
+          "displayName": "${__field.labels.metric}",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:A"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "supply ceiling (0x620 b1)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "setpoint (0x10A b7)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mains current (0x305)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": ["min", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "-- The AC ceiling, the setpoint it bounds, and the current actually drawn.\nSELECT time, metric, value FROM (\n  SELECT r.ts/1000.0 AS time,\n         CASE s.key\n                WHEN 'ac_supply_limit_a' THEN 'supply ceiling (0x620 b1)'\n                WHEN 'charge_limit_a' THEN 'setpoint (0x10A b7)'\n                WHEN 'mains_a' THEN 'mains current (0x305)'\n         END AS metric,\n         r.value AS value\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('ac_supply_limit_a', 'charge_limit_a', 'mains_a') AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'supply ceiling (0x620 b1)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'ac_supply_limit_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'setpoint (0x10A b7)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_limit_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT r.ts/1000.0, 'mains current (0x305)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'mains_a' AND r.ts < $__from AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'supply ceiling (0x620 b1)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'ac_supply_limit_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'setpoint (0x10A b7)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'charge_limit_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n  UNION ALL\n  SELECT * FROM (SELECT $__to/1000.0, 'mains current (0x305)', r.value\n                 FROM reading r JOIN signal s ON s.id = r.signal_id\n                 WHERE s.key = 'mains_a' AND r.ts <= $__to AND r.ts < 2000000000000\n                 ORDER BY r.ts DESC LIMIT 1)\n)\nORDER BY time",
+          "refId": "A",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "AC supply ceiling vs setpoint vs mains",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "motorcycle", "charging", "charge-manager"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cool Eva — Charge manager",
+  "uid": "cool-eva-charge-manager",
+  "version": 1,
+  "weekStart": ""
+}

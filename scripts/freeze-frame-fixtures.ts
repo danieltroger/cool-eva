@@ -6,8 +6,22 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 // ── ⚠️ THESE ARE CONSTRUCTED, NOT CAPTURED. THE NAME OF THE FILE SAYS SO. ───
 // scripts/captured-dtc-transfer.ts holds a REAL 2026-08-04 candump, byte for byte, and
 // that is why the checks built on it prove something about the bike. This file cannot
-// make that claim: no `0x17` payload has ever been recorded — the 2026-08-08 capture
-// counted 29 of them and 29 positive `57` replies but kept only the service bytes.
+// make that claim. The REAL `0x17` payloads are now in scripts/captured-freeze-frames.ts
+// — all 29 of them — and the note that used to stand here, saying none had ever been
+// recorded, was wrong: it searched `7C0`, which carries only requests. Replies are on
+// `7E0`. What survives here is two complete transfers whose values are INVENTED to reach
+// decode paths no capture does — a zero-current open circuit, a negative int16 and int8,
+// the ×0.1 scaling, the `(X/2)-40` air temperature — plus the malformed shapes the bike
+// never sent: a refusal, a wrong-component answer, a short CF mid-transfer. The second
+// group is checked frame by frame rather than replayed as transfers.
+//
+// The two invented frames below also DISAGREE with the real ones, which is worth knowing
+// before trusting them for anything else: component 44 really answered 18 bytes with
+// status 0x07, not 17 with 0x05, and component 4 answered status 0x25, not 0x2D.
+// Both are also a byte SHORT — 17 and 16 against the real 18 and 17 — because they were
+// built with no trailing byte, the one part of the layout no constructed fixture could
+// have guessed. That is the concrete form of the warning above: these frames satisfy
+// every assertion about a layout that turned out to be missing a field.
 //
 // So what the check verifies is INTERNAL CONSISTENCY: that the decoder reproduces the
 // layout src/diagnostics/freeze-frame.ts documents, applies Energica's own scalings to

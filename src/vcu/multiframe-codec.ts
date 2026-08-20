@@ -482,13 +482,16 @@ export function isUploadFinished(body: Uint8Array): boolean {
 /**
  * One `58` ReadDTCByStatus reply, split into its records.
  *
- * ⚠️ The LAYOUT is decompiled from the service tool's decoder, not captured:
- * `58 <count>` then three-byte `<codeHi> <codeLo> <status>` records, which is the
- * shape ../diagnostics/freeze-frame.ts' header argues for from the same source, and
- * which the second owner's tool documents identically (the service tool
- * "unconditionally skips payload[0]", then walks 3-byte records). `declaredCount` and
- * `trailingHex` are both reported so the first live reply settles it instead of
- * being smoothed over — the same tell `headerBytesThatFit` gives for `0x17`.
+ * ✅ The LAYOUT was decompiled from the service tool's decoder rather than captured,
+ * and has since been captured and confirmed: `58 <count>` then three-byte
+ * `<codeHi> <codeLo> <status>` records, which is the shape
+ * ../diagnostics/freeze-frame.ts' header argues for from the same source, and which the
+ * second owner's tool documents identically (the service tool "unconditionally skips
+ * payload[0]", then walks 3-byte records). The 2026-08-08 session holds an 89-byte
+ * `0x58` reply — count byte `0x1D` = 29, then 29 records whose `(component, status)`
+ * pairs match the 29 freeze-frame replies exactly, in order. The decompiled reading was
+ * right. `declaredCount` and `trailingHex` are still both reported rather than smoothed
+ * over — the same tell `headerBytesThatFit` gives for `0x17`.
  */
 export interface VcuStoredDtcList {
   /** Byte 0 of the body: how many records the micro says follow. */

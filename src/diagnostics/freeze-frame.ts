@@ -47,12 +47,26 @@ const VCU_SAFETY_ADDRESS = 0xa8;
 export const FREEZE_FRAME_HEADER_BYTES = 5;
 
 /**
+ * One byte after the fields, on every reply the bike has ever sent, meaning unknown.
+ *
+ * ⚠️ Length arithmetic CANNOT tell this apart from a 6-byte header — `5 + fields + 1`
+ * and `6 + fields` are the same number, all 29 times. What settles it is the decode:
+ * apply physical bounds to all 29 captured replies and a 5-byte header leaves 0 of 29
+ * impossible, where 4 leaves 11 and 6 leaves 14. See docs §11.3.1.
+ */
+export const FREEZE_FRAME_TRAILING_BYTES = 1;
+
+/**
  * The header lengths that are still on the table, longest first.
  *
  * 5 is what this module decodes with; 4 is the same layout without the record-count
  * byte. ⚠️ NEITHER IS PROVEN — docs/diagnostics-and-checks.md §5.1 has why 5 is
  * preferred. A reply's LENGTH picks between them, because the two predict payloads
  * exactly one byte apart; `headerBytesThatFit` does that arithmetic on every decode.
+ * ⚠️ On all 29 captured replies the length picks NEITHER, because of the trailing
+ * byte — so this tie-breaker cannot perform the role it was written for, and the
+ * header split was settled by decoding instead. It is kept because an empty result
+ * is itself the signal that the length is not header-plus-fields.
  */
 const CANDIDATE_HEADER_BYTES: readonly number[] = [FREEZE_FRAME_HEADER_BYTES, 4];
 
@@ -220,10 +234,10 @@ export interface FreezeFrame {
    * Every byte of the body that no field consumed, as hex — surplus after the
    * last field, or the fragment of a field that did not fit when `truncated`.
    *
-   * MUST be empty if the inferred layout (docs/diagnostics-and-checks.md §5.1) is
-   * right, which makes it the single most informative field in the whole structure on
-   * the first live read. Never dropped: on a real reply these are the bytes that would
-   * explain what the layout actually is.
+   * Written as "MUST be empty if the layout is right". It is non-empty on all 29
+   * captured replies and the layout IS right — the reply simply carries one byte the
+   * fields do not account for (FREEZE_FRAME_TRAILING_BYTES), still undecoded. Never
+   * dropped, because those are the bytes that would explain what it is.
    */
   trailingHex: string;
   /**
@@ -234,8 +248,13 @@ export interface FreezeFrame {
    *   [5]     the implemented reading is right
    *   [4]     🚨 the header has no record-count byte; every field here is shifted
    *           one byte and the numbers are wrong. Change FREEZE_FRAME_HEADER_BYTES.
-   *   []      neither fits — the layout is something else again, and `rawHex` is
-   *           the evidence
+   *   []      No candidate explains the length. This is what the bike ACTUALLY
+   *           sends on all 29 captured replies, and it is not an error: the reply
+   *           is one byte longer than the header plus the shortlist accounts for,
+   *           and that byte lands in `trailingHex`. The fields ahead of it decode
+   *           correctly — verified against P0A07, where the open pump driver reads
+   *           0 mA and the three IGBT legs agree. Do NOT "fix" this by growing the
+   *           header to 6; that shifts every field and the legs stop agreeing.
    *   [5, 4]  impossible unless the shortlist is empty, since the two differ by one
    *
    * Empty when the shortlist is unknown, because then there is nothing to
@@ -433,13 +452,15 @@ function readField(field: InfokeyField, bytes: Uint8Array): FreezeFrameValue {
 }
 
 /**
- * How many payload bytes a fault's freeze frame should be, header included.
+ * How many payload bytes a fault's freeze frame should be, header and trailer included.
  *
- * The prediction the first live read gets to falsify: if the layout in this
- * file's header is right, a reply is exactly this long.
+ * This USED to be "the prediction the first live read gets to falsify". The live read
+ * has happened — 29 of them — and it did falsify the version that stopped at the
+ * fields: every real reply is one byte longer. The trailing byte is now part of the
+ * prediction rather than a surprise, and all 29 match exactly.
  */
 export function expectedFreezeFramePayloadBytes(shortlist: FaultInfokeys): number {
-  return FREEZE_FRAME_HEADER_BYTES + freezeFrameFieldBytes(shortlist);
+  return FREEZE_FRAME_HEADER_BYTES + freezeFrameFieldBytes(shortlist) + FREEZE_FRAME_TRAILING_BYTES;
 }
 
 /** One field as a log line: "B_PACK_V = 345.2 V (raw 3452)". */

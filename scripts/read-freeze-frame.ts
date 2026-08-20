@@ -151,8 +151,8 @@ async function runFreezeFrame(component: number): Promise<void> {
   for (const value of frame.values) {
     console.log(`    ${formatFreezeFrameValue(value)}`);
   }
-  // ⚠️ THE THREE NUMBERS THIS WHOLE RUN EXISTS FOR. The reply layout was never
-  // captured, and these are what settle it — see src/diagnostics/freeze-frame.ts.
+  // These three settled the layout in 2026-08, off 29 captured replies. They are kept
+  // because a reply that disagrees with them now is the interesting one — see §11.3.1.
   console.log("\n  ── the layout tells ──");
   console.log(
     `  headerBytesThatFit: [${frame.headerBytesThatFit.join(", ")}]  ` +
@@ -160,10 +160,21 @@ async function runFreezeFrame(component: number): Promise<void> {
         ? "✅ 5 — the implemented reading is right"
         : frame.headerBytesThatFit.includes(4)
           ? "⚠️ 4 — shift everything by one, change FREEZE_FRAME_HEADER_BYTES"
-          : "🚨 neither — the layout is something else again")
+          : frame.shortlistKnown
+            ? "✅ neither — expected, and what every captured reply returns: one trailing byte"
+            : "— nothing to compare: this fault has no shortlist, so no length was checked")
   );
-  console.log(`  trailingHex: "${frame.trailingHex}"  ${frame.trailingHex === "" ? "✅ nothing left over" : "⚠️"}`);
-  console.log(`  recordCount: ${frame.recordCount} (expected 1)   truncated: ${frame.truncated}`);
+  // One trailing byte is normal here; ZERO would be the surprise, and more than one
+  // would mean a field is missing from the shortlist.
+  const trailingBytes = frame.trailingHex === "" ? 0 : frame.trailingHex.split(" ").length;
+  console.log(
+    `  trailingHex: "${frame.trailingHex}"  ` +
+      (trailingBytes === 1 ? "✅ the expected single undecoded byte" : `⚠️ ${trailingBytes} bytes, expected 1`)
+  );
+  console.log(
+    `  recordCount: ${frame.recordCount} (expected 1)   truncated: ${frame.truncated}   ` +
+      `shortlistKnown: ${frame.shortlistKnown}`
+  );
 }
 
 /** `0x35`/`0x36`/`0x37` — the whole stored log. Minutes. */

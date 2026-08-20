@@ -186,5 +186,14 @@ ride-logs
 # would be a fine thing to do; it just should not happen by accident on every run.
 vcu-params
 
+<<<<<<< HEAD
 # Built by scripts/build-service-preview.ts — regenerate rather than commit
 service-sheet-preview.html
+=======
+# Local ride database and scratch probes — never commit (large, and full of VIN/GPS)
+rides.db
+rides.db-shm
+rides.db-wal
+rides.db.bak-*
+energica_probe.py
+>>>>>>> origin/main
