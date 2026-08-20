@@ -7,12 +7,16 @@
 // is handled the same way this repo already handles those: log the raw words so no flag
 // can ever be lost, then break out only the ones worth an alert.
 //
-// The reason it is worth having at all is `ERR_ChargeCM_Out`, byte 7 bit 1. The charge
-// manager has never been read on this bike — its own `CM_ERROR` / `CM_ERROR_SOURCE` /
-// `CM_ERROR_CODE_*` telemetry is not broadcast anywhere and needs a diagnostic session
-// with an ECU that was only recently located. This summary bit IS broadcast, so a
-// charge-manager fault becomes visible passively, which matters directly to the open
-// question of why DC fast charging caps below the bike's advertised 75 A.
+// The reason it is worth having at all is `ERR_ChargeCM_Out`, byte 7 bit 1 — a rollup of
+// charge-manager faults, which matters directly to the open question of why DC fast
+// charging caps below the bike's advertised 75 A.
+//
+// ⚠️ This block used to say the charge manager's own `CM_ERROR_SOURCE` / `CM_ERROR_CODE`
+// "is not broadcast anywhere and needs a diagnostic session". That was wrong: it is on
+// 0x610 b1 and b2-3 at 10 Hz, decoded since 2026-08-20 (src/can/charge-manager.ts). The
+// two are worth keeping side by side rather than one replacing the other — through all
+// three fault episodes in the archive, 0x610 carried a source and a code while THIS bit
+// stayed 0, so the rollup is not simply a summary of them.
 
 import { type DecodedValue, bit } from "./frame.ts";
 

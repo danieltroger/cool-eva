@@ -32,7 +32,9 @@ The factory naming convention is `V_*` for signals the VCU transmits and `CM_*` 
 
 ## How AC and DC are told apart here
 
-Not by `0x201`: the BMS reports Idle (`0x10`) through most of a DC charge because the DC path bypasses it, and it reports Charge (`0x02`) through parts of session 27, a DC session at 99 % SOC. So "`0x201` = `0x02` means AC" is false in both directions. Ground truth throughout is `0x615` b2 > 0 for DC (the DC request current, below) and `0x305` mains current > 0.5 A for AC, both unambiguous.
+Not by `0x201`: the BMS reports Idle (`0x10`) through most of a DC charge because the DC path bypasses it, and it reports Charge (`0x02`) through parts of session 27, a DC session at 99 % SOC. So "`0x201` = `0x02` means AC" is false in both directions. Ground truth throughout is `0x615` b2 > 0 for DC and `0x305` mains current > 0.5 A for AC.
+
+⚠️ **Both are imperfect in the same place, and it matters for every rate below.** `0x615` b2 is — on this PR's own thesis — what the vehicle _asks for_, not what flows, so "DC ground truth" is really "the VCU is requesting DC current". The two diverge by 0.5-2.4 s at the start of a session and again through a taper, which is exactly where every exception in this document lives. And the AC threshold of 0.5 A is below the floor of "charging" (see `0x625` b4). Rates are also sensitive to the alignment window used to pair two frames of different rates: the `dc_charging` exception count moves from 435 to 457 between a 50 ms and a 200 ms window. Where a percentage is close to 100, read the exceptions rather than the percentage.
 
 ---
 
@@ -109,15 +111,17 @@ The DC value `0x5E` decodes as mode 2 + relay + inlet + locked + `WAIT_AUTH` = 2
 
 The 2026-08-19 pass recorded these as "00 in every frame of every completed session… non-zero in exactly one place in the whole corpus". **The second half is wrong.** At full rate they are non-zero in 500 frames across **three** episodes:
 
-| window                                 | n   | `CM_ERROR_SRC` | `CM_ERROR_CODE` | b0            | b7     |
-| -------------------------------------- | --- | -------------- | --------------- | ------------- | ------ |
-| 2026-08-02 18:55:15.848 → 16.548       | 8   | 7              | 853             | `0x08`/`0x0A` | `0x23` |
-| 2026-08-08 17:41:32.250 → 37.550       | 54  | 8              | 1101            | `0x2A`/`0x28` | `0x23` |
-| 2026-08-09 14:41:46.078 → 14:42:29.781 | 438 | 7              | 853             | `0x0A`/`0x08` | `0x23` |
+| window | n | raw payload | `CM_ERROR_SRC` | `CM_ERROR_CODE` | b7 |
+| --- | --- | --- | --- | --- | --- |
+| 2026-08-02 18:55:15.848 → 16.548 | 8 | `0x?? 07 4D 04 F1 05 01 23` | 7 | 1101 | `0x23` |
+| 2026-08-08 17:41:32.250 → 37.550 | 54 | `0x?? 08 4D 04 F1 05 01 23` | 8 | 1101 | `0x23` |
+| 2026-08-09 14:41:46.078 → 14:42:29.781 | 438 | `0x?? 07 55 03 F1 05 01 23` | 7 | 853 | `0x23` |
 
-⚠️ The first episode's code is what the 2026-08-19 note read as the raw bytes `07 55 03` (`0x0355` = 853 little-endian over b2-3). The 2026-08-08 episode is 44 minutes before that day's DC session and was never noticed. All three sit at b7 = `0x23`, the DC substate.
+b0 is `0x08` or `0x0A` in the first and third and `0x28` or `0x2A` in the second; all three sit at b7 = `0x23`, the DC substate. The raw bytes `07 55 03` that the 2026-08-19 note recorded belong to the **third** episode, the aborted DC attempt — which is also the frame the replay fixture in `scripts/check-can-decoders.ts` carries. The 2026-08-08 episode is 44 minutes before that day's DC session and was never noticed at all.
 
-Both fields are now decoded, because the DBC supplies exactly the evidence that was missing before — the reason they were left alone was "one aborted session is not enough to decode a fault code", and a factory name is not a second session but it does settle _what the bytes are_. Two source values (7, 8) and two codes (853, 1101) is not a table anyone can name yet; the values are logged raw so a future fault can be matched against them.
+✅ **The contingency is what makes this two fields rather than one 24-bit number.** Source 7 emits both codes, and sources 7 and 8 both emit 1101: the three observed pairs are (7, 853), (7, 1101) and (8, 1101), so neither field determines the other. Decoding them separately is not just the DBC's word for it — the data cannot be read any other way.
+
+Both fields are now decoded, because the DBC supplies exactly the evidence that was missing before: the reason they were left alone was "one aborted session is not enough to decode a fault code", and a factory name is not a second session but it does settle _what the bytes are_. Two sources and two codes is not a table anyone can name yet; the values are logged raw so a future fault can be matched against them.
 
 🟡 This also corrects `src/can/vcu-flags.ts`, whose header says the charge manager's "own `CM_ERROR` / `CM_ERROR_SOURCE` / `CM_ERROR_CODE_*` telemetry is not broadcast anywhere and needs a diagnostic session". It is broadcast, on this frame, at 10 Hz. `vcu_err_charge_manager` (`0x100` b7 bit 1) remains the rollup and remains 0 in every captured frame — including all three windows above, which is itself worth knowing: these codes did not raise the VCU's summary bit.
 
@@ -176,7 +180,9 @@ Against `0x200`'s pack current on DC frames: r = **+0.9951**, median difference 
 
 ⚠️ At raw frame rate without smoothing the same test is nearly flat (peak r = 0.157 at +5 frames) because both signals are quantised — 1 A here, 0.1 A on `0x200`. Do not quote the raw version as the evidence; it is the smoothed one that separates the hypotheses.
 
-A third measurement from a separate corpus pass agrees: over every step in the request, the pack current reaches the requested value a **median 0.30 s later**. 🟡 That pass reported the delivery as never reaching it first; a looser replication here (3 589 steps against their 2 271) finds 1 678 that appear to arrive early, all of them tapers where the delivery was already crossing the threshold when the request moved. The median is the robust figure; the eight ramp-ins above are the claim that does not depend on how a step is defined.
+A third measurement agrees, and **nothing arrives early.** Over the 2 636 steps in the request where the delivery actually had to move, the pack current reaches the new value a **median 0.60 s later** (p5 0.20 s, p95 2.50 s), and not one reaches it before the step. A further 860 steps (23.0 %) were already at the new value when it arrived — the request catching up to the delivery in a taper, not the delivery anticipating the request — and 237 never got there within 5 s.
+
+⚠️ An earlier draft of this section reported 1 678 steps "arriving early". That was an artefact of searching a window that began **3 s before** the step, so any taper frame already past the threshold counted as an early arrival. Searching forward from the step instant, as above, the effect disappears entirely. Recorded because the mistake is invisible in the summary statistic and only shows in the window definition.
 
 ### 🔍 Where the request comes from — open, and the sharpest lead here
 
@@ -314,6 +320,14 @@ This was carried as "the strongest relation in the corpus" and an open question.
 
 What produces the identity at the other sites is that **b0 is derived from b3, not the other way round.** Where the station's available power is what binds, its current offer necessarily is that power divided by the present voltage — so `b0 ≈ b3 × 1000 / pack_v`, and inverting it recovers b3 by construction. The sites where the identity scores highest are exactly the power-limited ones; the `4B 00 00 1E` window is where b0 is clamped at the vehicle's 75 A instead, and there the identity has room to fail and does.
 
+#### 🟡 The forward fit, and the warning that has to travel with it
+
+The 2026-08-19 file recorded that forward relation and hedged it carefully. Both the fit and the hedge are restored here, with corrected numbers — an earlier draft of this document dropped them while promoting the mechanism above to a conclusion, which is exactly the trap the hedge exists to describe.
+
+Over the **56 321** frames where b3-as-kW would ask for less than 75 A, `|b0 − b3 × 1000 / pack_v| ≤ 2 A` holds in **83.209 %**. ⚠️ Against a chance baseline of **25.3 % ± 0.1** (b0 shuffled within the same subset over 20 trials, which keeps both marginals and destroys only the pairing) — not the "roughly 7 %" the old file estimated, and the fit itself is 83 %, not the 98.4 % it claimed. Tightening to ±1 A drops it to 25.5 %; widening to ±3 A gives 100.000 %, which is the tell that the residual is one count of an integer-kW b3 (1 kW is ~3.3 A at these voltages) rather than a fitted error.
+
+⚠️ **And it is a conditional fit, not a test of the model over the data, because the subset is selected on the model's own predictor.** b0 never exceeds 75, so wherever b3-as-kW implies more than 75 A the model degenerates to "b0 = 75" and cannot be wrong; excluding that region excludes precisely where a refutation could come from. The other **94 684** samples are duly consistent and prove nothing — b0 is 75 in 57.3 % of them and lower in the rest, and "lower" is what a pack-side taper produces too. Both b3 = 30 sessions (2026-08-08 17:44 and 18:02) are entirely in that region: 30 kW is ~102 A at their pack voltage, so they never enter the testable subset at all — which is why the counter-example above had to come from the untestable side, and why finding it there is evidence rather than an escape.
+
 ✅ That reconciles the factory name with the nameplate refutation: **b3 is the power presently available to this outlet, in whole kW** — which is what `CM_EVSE_FDB` / `CM_DC_MAX_PWR` says, and which need not be the cabinet's rating (the 400 kW site reads 22, the 225 kW site 20, the 320 kW site 80). Nothing is emitted for it, because "presently available power" is still an inference from behaviour rather than a measured scaling, and the kW unit is bounded from below rather than pinned.
 
 Per-session b3, for whoever picks this up:
@@ -383,7 +397,20 @@ The byte takes `0x32` parked or idle, `0x12` while DC flows, `0x2C` while AC flo
 
 For bit 2 the ground truth moved, not the bit. At the original ">0.5 A of mains current" threshold the rate is 97.632 % over 802 311 frames — but a plugged-in bike sits at a steady 1.4-1.5 A mains without charging anything (the `0x10A` setpoint reads 0 in 20 530 such frames, and mains is 1.5 A at both p25 and the median with bit 2 clear). 0.5 A is below the floor of "charging". Above 2 A the rate is 99.356 % and stops moving with the threshold, which is what says the bit is fine and the threshold was not.
 
-For bit 5 there are 435 real exceptions, all `b4 = 0x32` — the idle value — while 5-6 A of DC still flows, in three windows of about 16 s each on 2026-08-09: **17:42:22.752, 17:53:05.861 and 18:18:42.795**. 🔍 The middle one is the same instant to the millisecond as the `V_CM_V_LIMIT` change on b0-1 above. Two independent fields of this frame going strange together for a dozen seconds mid-session, while current keeps flowing, reads as the charge manager being re-initialised or reconfigured — which is a lead worth having and not something either field shows alone.
+For bit 5 there are real exceptions, all `b4 = 0x32` — the idle value — while DC current still flows. **457 frames in eight clusters** at a 200 ms alignment window (435 in three at 50 ms, which is what an earlier draft of this section reported; the count is a property of the pairing window as much as of the bike):
+
+    2026-08-08 13:46:29.306    0.1 s    2 frames    1 A requested
+    2026-08-08 15:45:59.972    0.1 s    2 frames    1 A
+    2026-08-08 18:03:18.307    0.1 s    2 frames    1 A
+    2026-08-09 15:06:36.025    0.1 s    2 frames    1 A
+    2026-08-09 16:09:39.345    0.1 s    2 frames    2 A
+    2026-08-09 17:42:22.752   15.6 s  157 frames    5 A
+    2026-08-09 17:53:05.861   12.7 s  128 frames    5 A
+    2026-08-09 18:18:42.795   16.1 s  162 frames    5-6 A
+
+The five two-frame clusters are frame skew at the very end of a taper and carry nothing. 🔍 The middle long one begins at the same instant to the millisecond as the `V_CM_V_LIMIT` change on b0-1 above, which is a genuine coincidence between two independent fields of this frame.
+
+⚠️ **But the re-initialisation reading is weaker than that coincidence makes it sound, and the full list is why.** All three long clusters fall inside a single 36-minute stretch of one charging stop on 2026-08-09, all at 5-6 A, all at the flat end of a taper. Three isolated events across the corpus would be evidence of a repeatable state; three events in one session at one current are as easily one station's behaviour, or one taper's. Whatever the middle cluster coincides with, the other two do not coincide with anything. Recorded as an observation, not a mechanism.
 
 ⚠️ Those three are the COMMON values, not the whole set, and the difference decides how this frame is gated. Over all 1 571 614 frames b4 takes nine values:
 

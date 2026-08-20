@@ -769,7 +769,7 @@ const REPLAY: ReplayCase[] = [
   {
     id: 0x610,
     frame: "0A 07 55 03 F1 05 01 23",
-    why: "2026-08-09 14:41:46 — the charge manager reporting a fault, which nothing in this project could read until the DBC named b1 as CM_ERROR_SRC and b2-3 as a signed-16 CM_ERROR_CODE. 0x0355 little-endian is 853, and the byte order matters: read big-endian it would be 0x5503 = 21 763. This is the aborted DC attempt, 91 s before the session gave up",
+    why: "2026-08-09 14:41:46 — the charge manager reporting a fault, which nothing in this project could read until the DBC named b1 as CM_ERROR_SRC and b2-3 as a signed-16 CM_ERROR_CODE. 0x0355 little-endian is 853, and the byte order matters: read big-endian it would be 0x5503 = 21 763. This is the aborted DC attempt; the episode runs 43.7 s and ends 47.4 s before the first amp of the session that followed at 14:43:17.185. Note the OTHER two episodes both carry code 1101, one of them from this same source 7 — neither field determines the other, which is what makes them two fields",
     expect: {
       charge_manager_status: 0x0a,
       charge_manager_state: 0x23,
