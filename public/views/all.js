@@ -105,33 +105,16 @@ function RawTile(key) {
 /**
  * One handlebar control. Same card as RawTile, but built to be watched rather than read.
  *
- * Three readouts, in decreasing order of how much you should trust them:
+ * Three readouts, in decreasing order of how much you should trust them: the press
+ * COUNT, how long ago the last press was, and the lit state. ⚠️ Never trust the light
+ * alone — a bit never seen high but whose count climbs is a working button whose flash
+ * the browser dropped — and never trust a LIT tile alone either, which is the newer
+ * trap: once the bit has been down longer than press.js's threshold the second line
+ * reports the hold rather than the count, so a squeezed brake lever and a stuck bit look
+ * identical until you read the duration under it.
  *
- *   • the press COUNT, which cannot be missed by looking away, by a backgrounded tab
- *     or by a reconnect;
- *   • how long ago the last press was, so a count that moved while you were looking at
- *     the bars is still attributable to the button you just pressed;
- *   • the lit state, which is the fastest to read and the easiest to miss.
- *
- * Never trust the light alone: a bit that is never seen high but whose count climbs is
- * a working button whose flash the browser dropped.
- *
- * …with one substitution, for the members of this group that are not momentary. The
- * brake, and the high beam on a dark road, stay down for seconds or minutes, and "3
- * presses · 2 min ago" is a true sentence that answers the wrong question about a lever
- * that is being pulled RIGHT NOW. So once the bit has been down longer than the
- * threshold in press.js, the second line reports the hold instead of the count — see
- * the note there for why that is a clock reading rather than a hand-written list of
- * which keys are held states, and ../lib/flasher.js for why the two blinkers are
- * nonetheless a named exception to it.
- *
- * ⚠️ That substitution retired a diagnostic this comment used to carry, and the old
- * wording is worth knowing about because it is now a trap. It said "a bit stuck high
- * with a count of 1 is a wiring fault, not a press" — which was true when every signal
- * here was momentary, and is exactly what a squeezed brake lever looks like today. The
- * hold line is what tells them apart: a lever reads "held 4 s" and climbs while you
- * watch, and a stuck bit reads "held 20 min" on a bike nobody is sitting on. So the
- * lit tile is no longer evidence of anything by itself; the duration under it is.
+ * See docs/dashboard-decisions.md §"The button tile's three readouts", and
+ * ../lib/flasher.js for why the two blinkers are a named exception.
  * @param {string} key
  */
 function ButtonTile(key) {

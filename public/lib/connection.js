@@ -8,49 +8,18 @@
 // below against a stand-in socket and a fake clock. The `connection` state the header's
 // dot binds to lives in ./store.js; this file is what moves it.
 //
-// ## The behaviour this exists for
+// ⚠️ THE RULE: do not hold a socket while the page is hidden. iOS suspends this page's
+// JavaScript with the socket still OPEN, so the Pi goes on queueing patches into it and
+// the rider unlocks the phone to roughly thirty seconds of the last few minutes replayed
+// at speed, on tiles that look exactly like live telemetry. Closed on the way out,
+// opened again on the way back in, and the Pi answers a new connection with one full
+// snapshot (ws.ts): the rider gets now, in one round trip.
 //
-// The dashboard is handlebar-mounted, so the phone spends much of a ride with the
-// screen off or with another app in front of it. iOS suspends this page's JavaScript
-// for all of that. What was actually observed on this bike is that the socket SURVIVES
-// the suspension — nothing closes — and the messages the Pi sent meanwhile are
-// delivered in a burst when the page comes back. The rider unlocks the phone and
-// watches roughly thirty seconds of the last few minutes replayed at speed, on tiles
-// that look exactly like live telemetry.
-//
-// The bike's own ride log says why it takes that long. Across its 6.2 M readings a
-// patch is 152 bytes and riding produces 120–170 of them per second (p90–p99), so
-// 19–27 kB/s; five minutes in a pocket is ~45 000 messages and ~6.8 MB. Each one
-// arrives as its own event and re-renders whatever it touches, so the catch-up is
-// paced by rendering rather than by how long 6.8 MB takes over wifi — which is what
-// makes it tens of seconds rather than one.
-//
-// So the rule is: **do not hold a socket while the page is hidden.** Closed on the way
-// out, opened again on the way back in, and the Pi answers a new connection with one
-// full snapshot of current values (ws.ts). The rider gets now, in one round trip,
-// instead of a recording of the last five minutes.
-//
-// ## Why `close` is treated as news rather than as the trigger
-//
-// Nothing here waits for a close event to decide anything. Two independent things drive
-// reconnection — the page becoming visible, and silence past SILENCE_LIMIT_MS — and
-// either alone is enough. That is deliberate: a socket can stop carrying data without
-// ever firing `close` (a hotspot dropping out mid-ride is the case to have in mind, and
-// iOS Safari is documented as reaching the same state with `readyState` still reading
-// OPEN), and a reconnect path that only runs from `onclose` would sit there for ever.
-// `closed()` below is still honoured — it just makes recovery faster, never possible.
-//
-// The same rule is applied to `visibilitychange` itself, in both directions, because a
-// trigger with no second is a trigger that can be missed:
-//
-//   hidden   `pagehide` as well, and tick() drops any socket it finds on a hidden page.
-//            This is the direction that matters most: a socket nobody told us about is
-//            not silent, it is filling up, so the silence watchdog is no help and the
-//            header goes on saying "live" over a page that is not reading anything.
-//   visible  tick() opens one when it finds a visible page with no socket and no retry
-//            queued.
-//
-// Both are one branch each and the poll they ride on is running anyway.
+// Nothing here waits for a `close` event to decide anything — a socket can stop carrying
+// data without ever firing one — and `visibilitychange` has a second trigger in both
+// directions for the same reason. The measurements behind "thirty seconds", and why each
+// path has two triggers: docs/dashboard-decisions.md §"The link, staleness and charge
+// mode".
 
 /** How long to wait after a socket dies before opening the next one. */
 export const RECONNECT_DELAY_MS = 2000;

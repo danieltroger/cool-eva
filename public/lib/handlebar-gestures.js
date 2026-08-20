@@ -8,37 +8,19 @@ import { showToast } from "./toast.js";
 
 // Handlebar buttons as app controls: the impure half of ./gestures.js.
 //
-// This is what the dashboard has instead of a touchscreen while riding. The high-beam
-// flash in app.js was the first of these and is still the only one that works with a
-// full-face helmet and winter gloves without moving a hand; these two put the same
-// idea on buttons the thumb already rests near.
-//
 //   • double-click `btn_cruise_set`      → next tab
 //   • long-press `btn_indicator_cancel`  → save a waypoint, and say so
 //
-// ## Which bit, and why it is not the obvious one
+// ⚠️ `btn_cruise_set` is the SET SPEED button, NOT `btn_cruise_enable` next to it —
+// that one is cruise ON/OFF, and both of its presses in the corpus armed cruise control
+// 0.53 s later. The one honest caveat belongs to the button rather than the gesture:
+// with cruise armed, tapping SET re-sets the setpoint to the current speed, so changing
+// tabs while decelerating under cruise would lower it.
 //
-// `btn_cruise_enable` is the wrong button and its name is the reason to check. It is
-// the cruise ON/OFF switch, and `src/can/decode.ts` records that BOTH of its presses in
-// the corpus armed cruise control 0.53 s later — it is not side-effect-free, and the
-// owner's manual claim that activation needs a 3-second hold is contradicted by the bus
-// (both presses were under a second). `btn_cruise_set` is the SET SPEED button next to
-// it, and setting a cruise speed does nothing at all unless cruise is already armed.
-//
-// That leaves one honest caveat, which belongs to the button rather than to the
-// gesture: double-tapping SET while cruise IS armed re-sets the cruise speed to the
-// current speed. So does tapping it once, so nothing here made that worse — but a
-// rider changing tabs while decelerating under cruise would be lowering the setpoint,
-// and that is worth knowing rather than discovering.
-//
-// ## Why neither gesture can degrade the button it listens to
-//
-// It cannot, structurally. See the long argument at the top of ./gestures.js: the
-// phone is a passive listener on a broadcast the bike sends *after* it has acted on
-// the switch itself. Nothing here transmits, nothing here is consulted, and nothing
-// here delays a press — the indicator has already cancelled and cruise has already
-// been set by the time the frame carrying the bit is decoded, let alone by the time a
-// gesture completes 1.2 s later.
+// Neither gesture can degrade the button it listens to, structurally — the phone is a
+// passive listener on a broadcast the bike sends after it has already acted. That
+// argument, and the measurements behind the thresholds: docs/dashboard-decisions.md
+// §"Handlebar gestures".
 
 /**
  * @typedef {object} HandlebarGestureActions

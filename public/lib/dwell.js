@@ -5,21 +5,14 @@ import { peek } from "./store.js";
 // The under-voltage dwell timer.
 //
 // The BMS does not cut discharge the moment a cell dips below the cut-off — its
-// `DischargeModeUnderVoltageCutOffTimer` is 60 s, and the minimum cell has to stay
-// under for that whole minute before the contactors open. That single fact is the
-// difference between a useful display and one that panics: a hard pull drags the
-// weakest cell under the floor routinely, and a naive alarm would fire on every
-// overtake.
-//
-// So instead of a threshold light, this tracks the timer itself — filling while
-// under, draining while above — and the view shows how much of the minute is used.
-// "You have 40 seconds of this left" is something a rider can act on.
+// `DischargeModeUnderVoltageCutOffTimer` is 60 s — and a hard pull drags the weakest
+// cell under the floor routinely, so a threshold light would fire on every overtake.
+// This tracks the timer itself instead, filling while under and draining while above,
+// so the view can say "you have 40 seconds of this left".
 //
 // The drain is symmetric with the fill because the BMS's own reset behaviour is not
-// documented in the config and has never been observed on this bike (no capture has
-// ever come near the floor). Symmetric is the middle assumption: an instant reset
-// would understate a cell bouncing in and out of the cut-off, and no drain at all
-// would leave the bar stuck full after a single dip.
+// documented and has never been observed on this bike. Why symmetric is the middle
+// assumption: docs/dashboard-decisions.md §"The under-voltage dwell".
 
 /** Seconds the minimum cell must stay below cut-off before discharge is cut. */
 export const CUTOFF_TIMER_S = 60;

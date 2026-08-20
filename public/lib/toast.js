@@ -4,22 +4,14 @@ import van from "../vendor/van-1.6.1.js";
 
 // A banner that says what just happened, for things the rider started without looking.
 //
-// Everything else on this dashboard answers a question you went looking for. This
-// answers one you cannot go looking for: a handlebar gesture gives no feedback of its
-// own, so without this a long press on the bars is indistinguishable from a long press
-// that did nothing, and the rider's only recourse is to stop and check.
+// A handlebar gesture gives no feedback of its own, so without this a long press on the
+// bars is indistinguishable from one that did nothing and the rider's only recourse is
+// to stop and check. It therefore NEVER waits to be dismissed — both hands are on the
+// bars — says which way it went in colour as well as words, and takes the full width at
+// the top over the header.
 //
-// The constraints are the ones style.css opens with — read at speed, through a visor,
-// in daylight — plus one more that follows from where the input came from:
-//
-//   • NEVER waits to be dismissed. A gesture is made with both hands on the bars, so a
-//     banner needing a tap would be a banner that sits there until the next stop. It
-//     times itself out, and `pointer-events: none` in style.css means it cannot
-//     swallow a tap meant for whatever is underneath it either.
-//   • Says WHICH way it went in colour as well as words, so the outcome is readable
-//     before the sentence is.
-//   • Full width at the top, over the header. Sunlight legibility is mostly area and
-//     contrast, and the header carries nothing that cannot wait a few seconds.
+// Those three, and the style.css constraints they follow from:
+// docs/dashboard-decisions.md §"The toast banner".
 
 const { div } = van.tags;
 

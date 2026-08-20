@@ -114,23 +114,12 @@ function TabBar() {
 /**
  * What the rules in lib/view-rules.js remember between calls.
  *
- * `honourUrlTab` is the one thing decided here rather than there: a URL that named a
- * tab gets the first word, and the bike gets every word after it.
- *
- * The rules are edge-triggered — "the moment charging starts" — but a page load has no
- * previous moment, and seeding from `false` makes the first reading that says
- * "charging" look like charging having just *started*. On the bare entry URL that is
- * worth keeping: it is why opening the dashboard at a charger lands on Charge.
- *
- * It is not worth keeping when a link, a bookmark or an iOS reload asked for a screen
- * by name. The bike would move you off it a second later and — now that the tab is in
- * the URL — rewrite the address with it, so reloading the link would no longer reach
- * the screen the link names. A shared link that quietly overwrites its own address is
- * worse than one the bike is allowed to overrule.
- *
- * So a URL that named a tab buys exactly one pass: the first readings are taken as the
- * state the bike was already in rather than as a change into it. Every edge after that
- * is a real change and moves the view as it always did.
+ * `honourUrlTab` is the one thing decided here rather than there: a URL that named a tab
+ * gets the first word, and the bike gets every word after it. The rules are
+ * edge-triggered, and seeding from `false` makes the first "charging" reading look like
+ * charging having just STARTED — which is why the bare entry URL lands on Charge at a
+ * charger, and why a link that named a screen must not be overruled a second after it
+ * opened. See docs/dashboard-decisions.md §"A deep link buys exactly one pass".
  */
 const viewRuleMemory = { honourUrlTab: arrivedByDeepLink, wasCharging: false, wasCritical: false };
 

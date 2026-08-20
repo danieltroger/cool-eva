@@ -2,81 +2,20 @@
 
 import van from "../vendor/van-1.6.1.js";
 
-// The tab bar, in the URL.
+// The tab bar, in the URL, so the phone's Back button has something to walk back
+// through instead of leaving the dashboard from whichever screen you were on.
 //
-// Until this existed the tab lived in a module-level state and nowhere else, so the
-// phone's Back button had nothing to walk back through: it left the dashboard from
-// whichever screen you were on, which on a bike is the one moment you are least able
-// to find your way back.
+// `/#charge`, not `/charge`: the hash never leaves the browser, so a deep link, a
+// bookmark and a reload all work against the Pi exactly as deployed. A path would need
+// a server fallback with eleven exceptions, one per real endpoint at the root.
 //
-// ## Why the hash rather than a path
+// Every tab change is a pushState — including the ones the bike makes for you, which
+// is the decision most likely to look wrong: replaceState would OVERWRITE the entry the
+// rider made rather than decline to add one. The sheet behind ☰ is deliberately not
+// routed.
 //
-// `/#charge`, not `/charge`. The server answers from a Map keyed by URL path
-// (src/http/static.ts) and src/index.ts replies 404 to anything that is not a file in
-// it, so `/charge` would be `not found` in plain text — a deep link, a bookmark and a
-// reload would all miss the dashboard entirely. Path routing therefore needs a
-// fallback route added to the server, and that is not free here: `/dl`, `/status`,
-// `/waypoint`, `/dtc-table`, `/fault-infokeys`, `/stored-dtcs`, `/vcu-params`,
-// `/vcu-read`, `/vcu-probe`, `/vcu-write` and `/vcu-backup.csv` are all real endpoints
-// at the root, so the fallback would be a rule with eleven exceptions that a future
-// tab name could silently collide with.
-//
-// The hash costs the server nothing. `/#charge` *is* a request for `/` — the fragment
-// never leaves the browser — so deep links, bookmarks and reloads work against the Pi
-// exactly as it is deployed today, with no service restart and no way for a tab to
-// shadow an endpoint.
-//
-// ## What Back does
-//
-// Every tab change is a pushState, so Back returns to the tab you were looking at
-// before. Note what that means when you flip between two screens: ride → charge →
-// ride leaves two entries behind and Back walks back through both, rather than
-// collapsing the repeat visit onto its earlier entry. That is deliberate. Collapsing
-// would make Back skip screens you really did look at — you glance at Charge from
-// Ride, glance back, press Back and land somewhere you have not been in ten minutes —
-// and that is the version that feels broken. The depth of the stack costs nothing to
-// escape either: leaving a web app on a phone is the app switcher or closing the tab,
-// one gesture however deep it goes.
-//
-// The one thing that is not a navigation is re-tapping the tab you are already on, and
-// showTab() drops that rather than stacking an entry that Back cannot tell from a real
-// one.
-//
-// ## A switch the rider did not ask for pushes too
-//
-// The view rules (lib/view-rules.js, spent by autoFocus() in app.js) move the tab when
-// the bike's state changes — plugging in, the pack going critical. Note that a dropout
-// is deliberately NOT such a change, which is the same distinction in a different
-// place: it would otherwise push two entries the rider never made, every screen lock.
-// It would be reasonable to think those should replaceState
-// rather than pushState, on the grounds that the rider did not choose them. They push,
-// and the reason is what replaceState would actually do.
-//
-// You are reading Faults, having gone ride → faults. The bike starts charging.
-//
-//   push:     ride, faults, charge   →  Back returns you to Faults, then Ride.
-//   replace:  ride, charge           →  Back returns you to Ride. Faults is GONE.
-//
-// replaceState does not decline to add an entry; it OVERWRITES the entry the rider
-// made. So the "the rider did not choose this" instinct, followed honestly, argues
-// for pushing: an action the rider did not choose should be undoable, and must not
-// destroy one they did. Pushing gives both, replacing gives neither.
-//
-// It also keeps Back meaning one thing. Push for a tap and replace for the bike would
-// make Back sometimes step back a screen and sometimes skip one, with the difference
-// turning on something the rider cannot see.
-//
-// This matters more since #72 than it did before it: autoFocus now fires on a DC fast
-// charge, which it never used to, because the BMS reports Idle throughout one. A rapid
-// charger is exactly where the rider is most likely to be part-way through reading
-// something else when the screen is taken away from them.
-//
-// ## What is deliberately not routed
-//
-// The sheet behind the ☰ button is not a tab and does not get a URL. It is a control
-// panel over whatever screen you were on, half of it fetches when it opens, and a
-// shared link that reopened it would show one section's stale numbers next to
-// another's. If Back should close it, that is its own change, in views/sheet.js.
+// The full argument for each of those, and for what Back does across a repeat visit:
+// docs/dashboard-decisions.md §Routing.
 
 /**
  * The bottom tab bar, in order — and, since this module exists, the routing table
@@ -227,24 +166,14 @@ function showTabFromUrl() {
 /**
  * What to do about a fragment: the tab it lands on, what the URL should be rewritten
  * to — null when it already says the right thing — and whether the fragment named that
- * tab or merely fell back to it.
- *
- * The three are independent. `#Charge` names a tab *and* wants rewriting; `#ride` names
- * one and does not; `#nope` names none and wants rewriting; `#ride` after a Back press
- * is all three settled already.
+ * tab or merely fell back to it. The three are independent.
  *
  * Pure, so the rule can be checked without a browser; the same split as
  * headroomMvWith() in lib/derive.js, and for the same reason.
  *
- * Rewriting is what stops `/` from being a link nobody can share and stops a fragment
- * naming a tab this app does not have from going on claiming to be a screen it is not.
- * Rewriting only when it would change something matters as much: showTabFromUrl() runs
- * on every popstate, and Back through ten tabs must not spend ten replaceState calls
- * out of Safari's bucket restating what the URL already said.
- *
- * Note there is no pushState here or anywhere it is called from. Arriving is not
- * navigating away from somewhere, and on a popstate the browser has already moved the
- * cursor — pushing would strand it and turn one Back press into two.
+ * Rewriting only when it would CHANGE something is the part worth not undoing: Back
+ * through ten tabs must not spend ten replaceState calls out of Safari's bucket. Why
+ * rewrite at all, and why no caller pushes: docs/dashboard-decisions.md §Routing.
  *
  * @param {string} hash
  * @returns {{ tab: TabName, rewriteTo: string | null, named: boolean }}

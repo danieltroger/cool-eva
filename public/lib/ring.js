@@ -124,18 +124,12 @@ export class Ring {
  * Differences two windows sample-by-sample, pairing by *timestamp* rather than by
  * array index.
  *
- * Index pairing looks right and is not: two signals only line up by index if they
- * were sampled together, and nothing here guarantees that. coolant_in and
- * coolant_out are read from separate awaited calls and each is gated by its own
- * 0.05 °C deadband before it is pushed, so the two rings hold different numbers of
- * samples taken at different moments — on this bike coolant_in has roughly ten
- * times the rows of coolant_out. Subtracting by index would drift further into the
- * past the further along the window you look, and produce a plausible-looking
- * trace of the rate mismatch rather than of the quantity being measured.
- *
- * For each sample of `primary`, this takes the newest `reference` sample at or
- * before it — a zero-order hold, which is the correct reading of "what was the
- * inlet doing when the outlet was measured".
+ * Index pairing looks right and is not: two signals only line up by index if they were
+ * sampled together, and nothing here guarantees that — coolant_in has roughly ten times
+ * the rows of coolant_out on this bike. So for each sample of `primary` this takes the
+ * newest `reference` sample at or before it, a zero-order hold, which is the correct
+ * reading of "what was the inlet doing when the outlet was measured".
+ * See docs/dashboard-decisions.md §"Pairing two rings by time".
  *
  * @param {{ times: number[], values: number[] }} primary
  * @param {{ times: number[], values: number[] }} reference

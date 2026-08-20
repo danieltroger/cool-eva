@@ -210,36 +210,15 @@ export function remainingWh() {
 }
 
 /**
- * Wh/km over the last few minutes: pack power integrated over time, against
- * distance actually covered.
+ * Wh/km over the last few minutes: pack power integrated over time, against distance
+ * actually covered.
  *
- * The energy term is integrated from `pack_kw` rather than differenced from a
- * remaining-energy counter, which is what the first version did and why the
- * readout kept going blank mid-ride. Measured across the seven rides of
- * 2026-08-04: `residual_energy_wh` moves in ~158 Wh steps — roughly one step per
- * kilometre — so a five-minute window often held fewer than the two samples a
- * difference needs, and the tile showed nothing between 23% and 100% of the time
- * depending on the ride. `bms_remaining_energy_wh`, which has the 1 Wh resolution
- * this wants, reads a constant 0 on this pack.
- *
- * `pack_kw` has no such problem: it is pushed to the ring at up to 2 Hz, so the
- * window is never short of samples while the bike is moving. Cross-checked against
- * an independent source on the same rides — Δ`remaining_ah` × pack voltage — the
- * integral agrees to within ~5% on every one of them.
- *
- * Differencing `residual_energy_wh` lands 25-35% below both, but that is not
- * evidence of a bad decode: it is validated against the bike's own menu (see
- * decode.ts 0x10a) and is an estimate of energy *available to the cut-off*, which
- * is legitimately less than the charge the pack still holds. It is simply the wrong
- * quantity for "what did the last five minutes cost", which is energy drawn.
- *
- * Still preferred over the bike's own average because the horizon is known and
- * stated on screen; a single averaged number with no stated window invites false
- * precision.
- *
- * Returns a state rather than a bare number, because "nothing to show yet" and
- * "you are net regenerating" are different things and the tile should not report
- * a descent as though it were waiting for you to start moving.
+ * The energy term is INTEGRATED from `pack_kw` rather than differenced from a
+ * remaining-energy counter, which is what the first version did and why the readout kept
+ * going blank mid-ride. Returns a state rather than a bare number, because "nothing to
+ * show yet" and "you are net regenerating" are different things and a descent must not
+ * be reported as waiting for you to start moving. Measurements, and why the bike's own
+ * average is not used: docs/dashboard-decisions.md §"Wh/km".
  * @param {number} now monotonic, from lib/clock.js — the rings are keyed on it
  * @returns {{ state: "measured", whPerKm: number, km: number }
  *          | { state: "regenerating", km: number }
@@ -256,20 +235,11 @@ export function rollingConsumption(now) {
     return { state: "waiting" };
   }
 
-  // Both terms are measured over the DISTANCE window, not the power window.
-  //
-  // They are not the same stretch of time. pack_kw keeps arriving while the bike
-  // stands still; the odometer does not tick, so it contributes no ring samples at
-  // all. Integrating the full power window against a distance window that covers
-  // only the moving part charges four minutes of DC-DC and coolant pump at a red
-  // light to the 500 m you actually rode — the tile would read ~100 Wh/km over a
-  // stretch that cost ~60, under a label that says "over the last 0.5 km".
-  //
-  // Clipping to the distance window is the deliberate choice here: it makes the
-  // number mean "what a kilometre of riding costs", which is what the label claims
-  // and what riding style is judged by. The cost is that standing-still draw is
-  // excluded, so rollingRangeKm() is slightly optimistic in traffic — the honest
-  // trade, since the alternative misreports the thing the screen exists for.
+  // Both terms are measured over the DISTANCE window, not the power window: pack_kw
+  // keeps arriving while the bike stands still and the odometer does not, so the wider
+  // window would charge four minutes at a red light to the 500 m actually ridden. The
+  // cost is that standing-still draw is excluded, which makes rollingRangeKm() slightly
+  // optimistic in traffic — docs/dashboard-decisions.md §"Wh/km".
   const from = distance.times[0];
   const to = distance.times[distance.times.length - 1];
   const travelledKm = distance.values[distance.values.length - 1] - distance.values[0];
@@ -294,24 +264,12 @@ export function rollingConsumption(now) {
 /**
  * Watt-hours drawn from the pack between `from` and `to`.
  *
- * Zero-order hold: each sample stands until the next one. That is right for a
- * signal pushed on change — pack_kw carries a 0.05 kW deadband, so a value that
- * has not been re-sent has not moved — but only while samples are actually
- * arriving. A gap in the ring has two indistinguishable causes: the value genuinely
- * held, or nothing arrived at all (WebSocket drop, `systemctl restart cool-eva`,
- * wifi fading at the edge of the garage, iOS suspending a backgrounded tab while
- * the monotonic clock keeps running).
- *
- * Holding across the second case invents energy, and does it worst exactly when it
- * hurts: a 30 s dropout beginning during a −60 kW overtake would credit 500 Wh to a
- * five-minute window that really spent ~300, so the tile reads ~160 Wh/km instead of
- * ~60 and the range estimate divides by it. So an interval longer than a sample can
- * plausibly stand for is dropped rather than held, and the caller checks how much of
- * the stretch survived before trusting the total.
- *
- * Discharge is negative on this bike (see the sign note at the top of this file), so
- * the sum is negated to make consumption positive. Regen keeps its own sign and
- * correctly reduces the total.
+ * Zero-order hold, which is right for a signal pushed on change — but a gap in the ring
+ * has two indistinguishable causes, the value genuinely holding and nothing arriving at
+ * all. Holding across the second invents energy, so an interval longer than MAX_HOLD_MS
+ * is dropped and the caller checks MIN_COVERAGE before trusting the total. Discharge is
+ * negative on this bike (see the sign note at the top of this file), so the sum is
+ * negated; regen keeps its own sign. See docs/dashboard-decisions.md §"Zero-order hold".
  * @param {number[]} times monotonic, oldest first
  * @param {number[]} kilowatts
  * @param {number} from
@@ -342,19 +300,12 @@ function integrateWh(times, kilowatts, from, to) {
  * The bike's own consumption figure over the same window, in Wh/km — a cross-check
  * on the integral from a completely different path.
  *
- * Source is `kwh_per_100km` off the Bluetooth hub. Of the three consumption fields
- * the hub sends it is the only usable one: `avg_consumption_wh_km` reads a constant
- * 0 (bytes 4-5 of sub-frame 0x01 are never populated on this bike), and
- * `km_per_kwh` is quantised to whole km/kWh, so inverting it gives Wh/km that jump
- * 125 → 250 → 500 — the two disagree with each other by a median 1.69x.
- *
- * Median rather than mean, and windowed rather than instantaneous, because the raw
- * signal is violently noisy: it swung between 1 and 495 Wh/km inside a single
- * 20-minute ride on 2026-08-04. A median over the window sits within ~15 Wh/km of
- * the integral on every ride that day, which is the agreement worth showing.
- *
- * Not used as the primary reading: it arrives at ~5/min against pack_kw's 2 Hz, and
- * it stops entirely whenever the Bluetooth link is down, which CAN never is.
+ * `kwh_per_100km` off the Bluetooth hub is the only usable one of the three consumption
+ * fields the hub sends. Median rather than mean, and windowed rather than
+ * instantaneous, because the raw signal swings between 1 and 495 Wh/km inside one ride.
+ * Not the primary reading: it arrives at ~5/min against pack_kw's 2 Hz and stops
+ * whenever the Bluetooth link is down, which CAN never is.
+ * See docs/dashboard-decisions.md §"The cross-check from the hub".
  * @param {number} now monotonic, from lib/clock.js
  * @returns {number | null}
  */
@@ -406,18 +357,13 @@ export function limitFraction(key, ceiling) {
 /**
  * Rated delivery of the coolant pump, in litres per hour.
  *
- * Bosch PAD 12 V, part 0 392 023 004: 850 dm³/h at 0.1 bar and 13 V. There is no
- * flow sensor on this bike, so this is the one number here that is specified rather
- * than measured, and it is an UPPER bound — the datasheet's characteristic curve
- * falls away as back-pressure rises, and a cold plate plus hoses plus a radiator is
- * more restrictive than 0.1 bar. Glycol is also thicker than the water it is rated
- * with.
+ * Bosch PAD 12 V, part 0 392 023 004: 850 dm³/h at 0.1 bar and 13 V. ⚠️ There is no flow
+ * sensor on this bike, so this is the one number here that is SPECIFIED rather than
+ * measured, and it is an UPPER bound — everything derived from it inherits that.
  *
- * Independently supported, which is why it is worth showing at all: an energy
- * balance over the 40-minute DC charge of 2026-08-09 — I²R heat in against the
- * integral of coolant ΔT — implies ~15.4 L/min if the loop were removing all of it,
- * against the datasheet's 14.2. Two unrelated routes agreeing to 8% is about as
- * good as this gets without a flow meter.
+ * Independently supported to within 8% by an energy balance over the 40-minute DC charge
+ * of 2026-08-09, which is why it is worth showing at all:
+ * docs/dashboard-decisions.md §"Coolant flow is specified, not measured".
  */
 export const COOLANT_FLOW_LPH = 850;
 

@@ -39,14 +39,11 @@ function hasEverArrived(key) {
 /**
  * A tick-paced trace of one signal's recent history.
  *
- * Bound to the tick, not to the signal: redrawing a polyline on every frame of a
- * 20 Hz signal is pure battery drain for motion no eye can use. The colour is
- * sampled off the ring rather than read from the signal state for the same reason
- * — reading `.val` here would re-subscribe this binding to the signal and cancel
- * the throttle entirely.
- *
- * Shared by SignalTile and PairTile so the pacing rule has one home; it is exactly
- * the kind of thing that gets fixed in one copy and not the other.
+ * Bound to the tick, not to the signal: redrawing a polyline on every frame of a 20 Hz
+ * signal is pure battery drain for motion no eye can use. The colour is sampled off the
+ * ring for the same reason — reading `.val` here would re-subscribe this binding to the
+ * signal and cancel the throttle. Shared by SignalTile and PairTile so the pacing rule
+ * has one home.
  * @param {string} key
  * @param {((value: number | null) => string) | undefined} color
  * @param {number} chartWindowMs
@@ -87,10 +84,8 @@ export function Tile({ label, value, unit = "", sub, color, className = "", extr
 }
 
 /**
- * A tile bound to one signal, with the staleness and fault handling every
- * signal-backed readout needs. This is where the plausibility gate becomes
- * visible: a rejected reading shows as "sensor fault" instead of silently
- * freezing, because on this bike that means a probe worth going and wiggling.
+ * A tile bound to one signal, with staleness and fault handling. Where the plausibility
+ * gate becomes visible: a rejected reading shows as "sensor fault", not a frozen number.
  * @param {object} options
  * @param {string} options.key
  * @param {string} options.label
@@ -165,9 +160,8 @@ export function SignalTile({
 }
 
 /**
- * Two related numbers in one tile — "28 / 29", min over max. Used wherever the
- * pair means more together than either does alone: pack temperature extremes,
- * coolant in and out.
+ * Two related numbers in one tile — "28 / 29", min over max. Used wherever the pair
+ * means more together than either does alone: pack temperatures, coolant in and out.
  * @param {object} options
  * @param {string} options.label
  * @param {[string, string]} options.keys

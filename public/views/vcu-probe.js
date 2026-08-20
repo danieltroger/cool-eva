@@ -7,31 +7,19 @@ const { button, div, input, option, select, span } = van.tags;
 
 // "Probe index N" — read ONE identifier off ONE ECU, from the phone.
 //
-// This is the replacement for `scripts/read-vcu-params.ts --index N`, which went
-// away when the sweep moved into the service. It reaches further than that flag did:
+// The identifier is `(bank << 12) | index`, so unlike the sweep — which reads bank 1,
+// the calibration EEPROM — this reaches bank 2, the running values, which nothing in
+// this project had ever read.
 //
-//  • **Any bank.** The identifier is `(bank << 12) | index`. The sweep reads bank 1,
-//    the calibration EEPROM. **Bank 2 is live data** — the running values rather
-//    than the stored settings — and nothing in this project had ever read one.
-//
-// ⚠️ It offered a CHARGE MANAGER target for part of 2026-08-16 and no longer does.
-// The id pair it was given, 0x7C3/0x7E3, is not the charge manager's: **0x7E3 is the
+// ⚠️ It offered a CHARGE MANAGER target for part of 2026-08-16 and no longer does. The
+// id pair it was given, 0x7C3/0x7E3, is not the charge manager's: **0x7E3 is the
 // dashboard's request id**, so that option could have questioned the dashboard while
 // this page said otherwise. The real charge manager is 29-bit ISO-TP and needs
 // transport work this form cannot fake. See src/vcu/param-codec.ts above `VcuTarget`.
 //
-// ── Why it is a form and not a link ─────────────────────────────────────────
-// Because you do not know what you want until you are standing there. The whole use
-// is "the manual mentions an address, what does this bike say about it", and that is
-// three fields and a button — not a route, not a saved list, and not something to
-// design a schema for before anyone has read a single bank-2 value.
-//
-// ── Why the result shows two numbers ────────────────────────────────────────
-// Outside bank 1 nothing here knows a record's width or whether it is signed. So the
-// raw bytes lead, and BOTH the unsigned and the signed reading are shown, neither
-// called "the value". Picking one would be inventing the half of the answer that was
-// not read off the bus. Where the name table does have an opinion — a bank-1 index
-// it describes — the typed value is shown as well, with its name.
+// Why it is a form and not a link, and why the result shows both the unsigned and the
+// signed reading with neither called "the value": docs/dashboard-decisions.md
+// §"The probe form".
 
 /** @typedef {import("../../src/http/vcu-probe.ts").VcuProbeResponse} VcuProbeResponse */
 

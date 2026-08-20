@@ -12,38 +12,18 @@ const { a, button, div, h3 } = van.tags;
 // Service mode: read the VCU's calibration parameters off the bike on demand, and
 // hand the result over as the file another owner's energica_tool.py reads.
 //
-// It lives in the menu sheet rather than the tab bar for the same reason
-// /params.html does (see the header of ../lib/params-page.js): every tab is
-// something you look at while riding, and this is something you do standing next
-// to a parked bike. The sheet is already where the actions that are worth having
-// when you stop live — the waypoint, the ride-log download.
+// The page LEADS with what the read gate currently says (src/vcu/service-gate.ts),
+// because a button disabled with no reason given is indistinguishable from one that is
+// broken. The server is still the authority: this page only reports what the Pi said.
 //
-// ── The gate is shown, not just enforced ─────────────────────────────────────
-// The read only starts with the bike stationary and out of drive, and it stops by
-// itself the moment that changes (src/vcu/service-gate.ts). The page therefore
-// leads with what the gate currently says, because a button that is disabled with
-// no reason given is indistinguishable from one that is broken — and the reason is
-// specific enough to act on ("the bike is not in drive — it reads 1" tells you to
-// switch the bike off, not to reload the page). The server is still the authority:
-// this page never decides that a read may start, it only reports what the Pi said.
+// Nothing here blocks. A sweep is ~277 reads over a link that drops as routine, so the
+// button starts it and returns; progress comes from polling /vcu-read once a second
+// while the sheet is open AND there is something to watch. The sweep runs on the Pi.
 //
-// ── Nothing here blocks ──────────────────────────────────────────────────────
-// A sweep is ~277 reads over a link that drops as routine, so the button starts it
-// and returns. Progress comes from polling /vcu-read once a second while the sheet
-// is open AND there is something to watch — a sweep running, or a gate that is
-// refusing and might stop refusing. Idle and safe, it does not poll at all: a
-// dashboard left open on a workbench must not poll the Pi for the rest of the day.
-// Closing the sheet, locking the phone or walking out of wifi range does not stop
-// a sweep; it runs on the Pi, and re-opening the sheet picks the story back up.
-//
-// ── Why the button arms first ────────────────────────────────────────────────
-// This is the only control in the dashboard that causes traffic on the bike's
-// bus. It cannot write anything — the read-only argument is in
-// src/vcu/param-codec.ts and nothing on this page could widen it — but ~277
-// requests do compete with the OBD poller for a bus that is already the scarce
-// resource, so it should not be reachable by a thumb landing in the wrong place
-// while the sheet scrolls. Two taps, no modal: `confirm()` is a browser dialog
-// this dashboard uses nowhere, and on a phone it lands in the wrong place anyway.
+// ⚠️ The button ARMS first: this is the only control in the dashboard that causes
+// traffic on the bike's bus, and ~277 requests compete with the OBD poller for the
+// scarce resource. Why two taps and no modal, and why this is not a tab:
+// docs/dashboard-decisions.md §"Service mode: reading the VCU".
 
 /** @typedef {import("../../src/http/vcu-read.ts").VcuReadResponse} VcuReadResponse */
 /** @typedef {import("../../src/vcu/read-runner.ts").VcuReadState} VcuReadState */

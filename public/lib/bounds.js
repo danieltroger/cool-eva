@@ -94,44 +94,19 @@ const BY_KEY = {
   "charge_manager_status": [0, 255],
   "charge_manager_state": [0, 255],
   // The charge manager's NUMERIC signals, added 2026-08-20. Same miss as
-  // `dc_charge_limit_selected_a` above, arrived at from the other direction: these do reach a
-  // rule, but the rule is BY_UNIT's "A" fallback of [-1000, 1000], and every one of them is a
-  // plain u8. No value a byte can hold is rejectable, so the gate was decorative.
+  // `dc_charge_limit_selected_a` above from the other direction: these DO reach a rule,
+  // but it is BY_UNIT's "A" fallback of [-1000, 1000] and every one of them is a plain
+  // u8, so no value a byte can hold was rejectable and the gate was decorative.
   //
-  // Each bound below is derived from something, not guessed:
+  // ⚠️ 127 is `MAX_DC_CHG_CURRENT`'s FIELD range, NOT the 80 this project's write policy
+  // stops at: a plausibility gate is about what the field can legitimately carry, and
+  // bounding at 80 would draw a dealer write or a differently-optioned bike as a dead
+  // SENSOR. 150 on `fast_dc_a` covers a measured 12 A step-edge skew; 80 on
+  // `ac_supply_limit_a` is IEC 61851's control-pilot ceiling, not this bike's.
   //
-  // • 127 is `MAX_DC_CHG_CURRENT`'s FIELD range. Parameter 258 is a BYTE S that Energica's own
-  //   option data masks with 0x7F (`src/vcu/write-targets.ts`), so the value field is 0…127
-  //   whatever the sign column says, and `fast_dc_limit_max_a` is that parameter read back off
-  //   0x625. This bike holds 75.
-  //
-  //   ⚠️ NOT 80. 80 is this project's WRITE POLICY — the highest value Energica ever shipped a
-  //   variant at, which is why `scripts/check-vcu-params.ts` refuses to write 81 and annotates
-  //   127 as "the datatype's own ceiling is NOT the policy's". A plausibility gate is about what
-  //   the field can legitimately carry, not about what we are willing to write into it. Bounding
-  //   at 80 would render a dealer write, or a differently-optioned bike, as a dead SENSOR rather
-  //   than as the new value — defeating the one reason this key is logged, which is to notice
-  //   the day the parameter changes. It would also have this key disagree with
-  //   `dc_charge_limit_selected_a` above about what counts as a fault for the same underlying
-  //   parameter, which is the mistake `charge_manager_pack_v` below is named to avoid.
-  // • `fast_dc_limit_a` is 0x620 b0, bounded by that configured max, so it inherits the 127.
-  // • `fast_dc_a` is the current actually delivered, bounded in turn by the live limit — but the
-  //   two frames run at 10 Hz and 20 Hz, so across a step edge the delivery reads up to 12 A
-  //   above the limit for a frame or two (50 such frames in the corpus, all within 1 s of a
-  //   step). 150 covers 127 plus that skew and still rejects the 255 an all-ones payload
-  //   decodes to, which is what these entries were added for.
-  // • `ac_supply_limit_a` is SUPPLY-side — a cable or EVSE rating, not the bike's. It has only
-  //   ever read 8, 10 and 13 A here and the bike's own AC charger stops at ~14.3 A, but a bound
-  //   drawn round either of those would reject a legitimate reading at a bigger outlet. The
-  //   ceiling comes from the STANDARD rather than from this bike: IEC 61851's control pilot
-  //   cannot encode more than 80 A, so above that it is not a supply rating at all.
-  //
-  // These are the second line of defence, not the first. `src/can/charge-manager.ts` now checks
-  // frame invariants on 0x610, 0x615, 0x620 and 0x625, so an all-ones payload still REACHES those
-  // decoders and they refuse it — the value never gets as far as this file. Both layers are
-  // wanted, because they fail differently: the invariant catches a sender that has stopped
-  // talking, and these catch a decode that is wrong in a way no invariant can see, since a byte
-  // read at the wrong offset still arrives in a frame with a perfectly good b1 = 0x01.
+  // These are the second line of defence — src/can/charge-manager.ts checks frame
+  // invariants first — and the two layers fail differently. Each bound's derivation:
+  // docs/dashboard-decisions.md §"The charge manager's numeric bounds".
   "fast_dc_a": [0, 150],
   "fast_dc_limit_a": [0, 127],
   "fast_dc_limit_max_a": [0, 127],

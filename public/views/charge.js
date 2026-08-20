@@ -327,23 +327,14 @@ function BalanceTile() {
 }
 
 /**
- * How close the pack is to the temperature where DC charging is throttled.
+ * How close the pack is to the temperature where DC charging is throttled — the number
+ * that decides how long you stand at the charger.
  *
- * This is the number that decides how long you stand at the charger, and it was
- * invisible on this screen.
- *
- * The knee is exact rather than fitted, because it is what the BMS config does: the
- * pack reports a flat 35 °C to the VCU and only starts telling the truth once a cell
- * reaches 55 °C, at which point the VCU sees the real number and throttles. Visible
- * in the log — across every sample where the true batt_temp_hi read 50, 51, 52, 53
- * or 54 °C, batt_temp_hi_vcu was exactly 35.0; at 55 °C it jumps to the real value.
- *
- * The DC session of 2026-08-09 shows the consequence: 18.5-18.9 kW steady from
- * 50-53 °C, dipping at 54, and 8.7 kW average at 55 — less than half.
- *
- * So the tile counts down against the TRUE temperature (batt_temp_hi, sourced from
- * 0x660), not the clamped one the VCU reads, which is flat at 35 and would show no
- * approach at all.
+ * The knee is exact rather than fitted: the pack reports a flat 35 °C to the VCU and
+ * only starts telling the truth at 55 °C, at which point the VCU throttles. ⚠️ Which is
+ * why the tile counts down against the TRUE temperature (batt_temp_hi, off 0x660) and
+ * not the clamped one, which would show no approach at all.
+ * See docs/dashboard-decisions.md §"The derate knee".
  */
 const DERATE_KNEE_C = 55;
 

@@ -168,27 +168,12 @@ export function isStaleSampled(key, maxAgeMs) {
  * Parameterised on how it read, so the subscribing and sampling variants above
  * cannot drift apart — the same reason headroomMvWith() in derive.js exists.
  *
- * ## Why the link's own state is part of freshness
- *
- * `now` is the server clock from the LAST MESSAGE, and it stops when the messages do.
- * So on its own the age comparison below freezes the instant the link goes away: a
- * pack current sampled 200 ms before the phone was pocketed keeps reading 200 ms old
- * for the whole five minutes it is in there, and the tile it sits in stays at full
- * brightness. That is the one lie this dashboard must not tell — a rider glancing down
- * at a number presented as current is entitled to have it be current.
- *
- * There is no honest arithmetic available for the gap: the phone's clock and the Pi's
- * are different clocks and must never be subtracted from one another (lib/clock.js),
- * and the Pi has no RTC. But there is an honest answer, and it is simpler than
- * arithmetic — while the link is not live, nothing on the page is being refreshed, so
- * nothing on it is current. Whatever is on screen is at least as old as the dropout.
- *
- * That makes ./connection.js's status the pacing too, which is the other half of the
- * problem: a binding that reads only the signal and `serverTime` cannot re-run while
- * both are frozen, so it could not grey itself out however clever the sum was. The
- * status is a state, it changes the moment the link does, and the bindings are already
- * subscribed to it through this function.
- *
+ * ⚠️ `linkIsLive` is part of freshness, not a shortcut: `now` is the server clock from
+ * the LAST MESSAGE and it stops when the messages do, so the age comparison alone
+ * freezes when the link goes away and leaves every tile at full brightness over values
+ * from before the dropout. While the link is not live nothing on the page is current,
+ * and the status is also what PACES the bindings — docs/dashboard-decisions.md
+ * §"The link, staleness and charge mode".
  * @param {{ ts: number } | null} reading
  * @param {number} now server clock, so both sides of the comparison are the Pi's
  * @param {number} maxAgeMs
@@ -297,27 +282,15 @@ function apply(message) {
       continue;
     }
     signalState(key).val = reading;
-    // Monotonic base, but placed at the moment the reading was actually taken
-    // rather than at the moment it arrived.
+    // Monotonic base, placed at the moment the reading was TAKEN rather than at the
+    // moment it arrived. `message.ts - reading.ts` is server-vs-server arithmetic, so
+    // no cross-clock comparison is involved.
     //
-    // `message.ts - reading.ts` is the reading's age *on the server*, so it is
-    // server-vs-server arithmetic and involves no cross-clock comparison; applying
-    // it to the local monotonic clock lands the sample where it belongs on the axis.
-    //
-    // This also restores a dedupe that stamping on arrival silently lost. ws.ts
-    // heartbeats a FULL snapshot every 5 s and liveState never drops a key, so
-    // every heartbeat re-delivers all ~230 signals whether or not they changed.
-    // Stamped on arrival, each of those is a fresh sample, and a signal that has
-    // stopped arriving — hub down, poller stalled, probe unplugged on a plausible
-    // last value — draws a flat line forever on a tile isStale() is greying out.
-    // Here a repeated reading gets the same sample time every heartbeat (its age
-    // grows exactly as fast as the clock advances), so MIN_INTERVAL_MS drops it and
-    // the trace ends where the data ended.
-    //
-    // Clamped at 0 only for a backwards server clock step, which would otherwise
-    // place a sample in the future and pin it to the newest end of the window. A
-    // large positive age is left alone: that IS an old reading, and it falling out
-    // of the chart window is the correct outcome.
+    // This also restores a dedupe that stamping on arrival silently lost, because ws.ts
+    // heartbeats a FULL snapshot every 5 s: a repeated reading gets the same sample time
+    // every heartbeat, so MIN_INTERVAL_MS drops it and a signal that has stopped
+    // arriving ends its trace instead of drawing a flat line forever. The clamp at 0 is
+    // only for a backwards clock step. See docs/dashboard-decisions.md §`seenKeys`.
     const serverAgeMs = Math.max(0, message.ts - reading.ts);
     ringFor(key).push(monotonicNow() - serverAgeMs, reading.value);
   }

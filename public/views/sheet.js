@@ -53,25 +53,15 @@ export function Sheet() {
         onclick: (/** @type {Event} */ event) => event.stopPropagation(),
       },
       // `sheet-heading` for the sheet's own sections, `sheet-title` for the
-      // subsections inside one of them. Nine headings all rendered as small grey
-      // caps is what "there is zero visual hierarchy in the menu" was mostly
-      // about: "Service actions" announced itself as loudly as "This session"
-      // and nothing said which was inside which. See style.css.
+      // subsections inside one of them. See style.css.
       //
       // ⚠️ h2 and h3, not divs, and that is the whole of what makes the hierarchy
-      // real. Everything else about it — size, weight, colour, the rule above —
-      // is paint, and paint reaches exactly one kind of reader. Until this change
-      // there was not a single heading element anywhere in public/, so VoiceOver's
-      // rotor listed nothing and this sheet was one flat run of text to it: no way
-      // to jump to "Change something on the bike", and no way to hear that
-      // "Service actions" is INSIDE it. A risk hierarchy that only the sighted can
-      // navigate is half a hierarchy.
-      //
-      // The levels are relative, and start at 2 because the sheet is a section of
-      // a page rather than a document of its own. Both classes set font-size,
-      // weight, colour and padding explicitly, and the reset at the top of
-      // style.css zeroes UA margins, so nothing here renders differently — checked
-      // by measuring every heading before and after.
+      // real: everything else about it is paint, and paint reaches exactly one kind
+      // of reader. Until this change there was not a single heading element anywhere
+      // in public/, so VoiceOver's rotor listed nothing and this sheet was one flat
+      // run of text to it. Levels start at 2 because the sheet is a section of a page
+      // rather than a document of its own, and nothing renders differently — see
+      // docs/dashboard-decisions.md §"The menu sheet".
       h2({ class: "sheet-heading" }, "This session"),
       TripStats(),
       // No subtitle here, deliberately. Three sections carrying a one-line "what can
@@ -95,38 +85,16 @@ export function Sheet() {
       ServiceMode(),
       h2({ class: "sheet-heading" }, "Stored codes"),
       TroubleCodes(),
-      // No "Link" section. A per-source liveness readout was here in two shapes
-      // and neither could be read: a grid of sixteen fractions needed the reader
-      // to know sixteen normal denominators (BATTERY 17/46 is a HEALTHY parked
-      // bike), and collapsing it to "what is dark" cried wolf instead.
+      // No "Link" section, deliberately. A per-source liveness readout was here in
+      // two shapes and neither could be read: a grid of sixteen fractions needed the
+      // reader to know sixteen normal denominators (BATTERY 17/46 is a HEALTHY parked
+      // bike), and collapsing it to "what is dark" cried wolf instead — `security`
+      // reads dark for most of the wall clock on measured captures where 0x480 is
+      // present, and three more groups are the same shape. Every exemption is
+      // defensible and the list only grows, which is the tell.
       //
-      // `security` is the case that was actually measured, over the 246 archived
-      // captures (14.4 GB). Its liveness rests entirely on 0x480, the other
-      // signal in the group being the one-shot E-LOCK read at startup — and
-      // 0x480 comes in bursts, so with FRESH_MS at 10 s the group reads dark for
-      // most of the wall clock even in captures where the frame is there. It
-      // reads live for 24.8 % of a 19.5 h capture (173 224 frames, and a 13.6 h
-      // hole in the middle of it), 28.3 % of a 6.7 h one, and 0.04 % of a 69 h
-      // one whose 917 frames arrive in two bursts — 174 in 17 s at the start,
-      // then nothing for 1 h 44 min, then 743 in 74 s — and nothing after. Two more
-      // multi-hour captures have no 0x480 at all. Those spans include parked and
-      // charging time, so this is % of wall clock rather than of riding — the two
-      // cannot be told apart from a candump.
-      //
-      // `obd` under OBD_ENABLED=0, `coolant` on a probe-init failure and `gps`
-      // without a fix are the same shape, unmeasured because none of them reaches
-      // a candump. Every exemption is individually defensible and the list only
-      // grows, which is the tell: a widget that always names something teaches the
-      // rider to skip the name, which is the failure it exists to prevent.
-      //
-      // The per-group numbers stay in /status, and are more correct there than
-      // they were: summariseGroups() is seeded from the registry, so a source
-      // that has never spoken reads [0, n] instead of vanishing. One group did
-      // leave the payload — `waypoint`, excluded by design now (see
-      // onDemandOnlyGroups() in src/http/status.ts), where before it appeared
-      // once a waypoint had been saved this boot. This is a decision about what
-      // belongs on a phone at the handlebars, not a retreat from measuring
-      // liveness.
+      // The per-group numbers stay in /status. Measurements, and what left the
+      // payload: docs/dashboard-decisions.md §"There is no Link section".
       button(
         {
           class: "sheet-close",

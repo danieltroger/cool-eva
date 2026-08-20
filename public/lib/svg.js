@@ -199,19 +199,11 @@ export function barStrip({ bars, low, high, height = 60 }) {
  * A labelled grid of coloured cells — the pack, module by module.
  *
  * Rows are modules and columns are the sensors or cells within one, so the shape on
- * screen is the shape of the pack. That is the whole point over the flat 81-bar
- * strip: a strip shows that something is drifting, a grid shows *which module*, and
- * during a fast charge that is the difference between a curiosity and something you
- * can act on.
- *
- * Cells with no reading are drawn as an empty outline rather than skipped, so the
- * grid keeps its geometry — modules 6 and 8 have no battery sensor, and a hole
- * there should look like a missing sensor, not like a shifted row.
- *
- * Row labels are HTML beside the SVG, not <text> inside it. The grid stretches to
- * the tile width with preserveAspectRatio="none" so the cells stay big enough to
- * read, and that stretch would render glyphs about 1.9x wider than tall — by a
- * different amount in each mode, since the two grids have different viewBox heights.
+ * screen is the shape of the pack: a strip shows that something is drifting, a grid
+ * shows *which module*. Cells with no reading are drawn as an empty outline rather than
+ * skipped, so a hole looks like a missing sensor and not like a shifted row, and row
+ * labels are HTML beside the SVG because preserveAspectRatio="none" would stretch
+ * glyphs ~1.9x wider than tall. See docs/dashboard-decisions.md §"The heatmap".
  *
  * @param {object} options
  * @param {Array<{ label: string, cells: Array<{ value: number | null, color: string }> }>} options.rows

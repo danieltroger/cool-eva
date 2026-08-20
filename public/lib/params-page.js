@@ -71,23 +71,15 @@ function show(payload) {
 /**
  * Which of Energica's parameter tables the names in the table below came from.
  *
- * The whole point of this line: every name on this page comes from the table THE BIKE
- * ITSELF named at 276/277 — the Pi re-names the stored snapshot from it before serving
- * it — or from a default when the bike has named none. This line is the thing that says
- * which, and there is no other way to tell: a wrong table is invisible in every other
- * way, because routing and record widths are identical across all 28 of Energica's
- * tables, so a bike on the wrong one reads and writes perfectly and merely means
- * something else by every name.
- *
- * That is not hypothetical. This bike was asked on 2026-06-14, the answer sat unread in
- * a dump for two months, and the table embedded here was one revision out the whole time
- * — right about 276 of 277 names and silently wrong about the 277th. And on 20 of the 28
- * tables ids 70–94 are a regen fade curve where the other 8 have the battery cell block,
- * so on somebody else's bike the same silence would be worth 25 names rather than one.
+ * ⚠️ This line is the only way to tell. A wrong table is invisible in every other way —
+ * routing and record widths are identical across all 28 of them, so a bike on the wrong
+ * one reads and writes perfectly and merely means something else by every name. Not
+ * hypothetical: the table embedded here was one revision out for two months, silently
+ * wrong about one name in 277, and on somebody else's bike the same silence would be
+ * worth 25. See docs/dashboard-decisions.md §"Which parameter table the names came from".
  *
  * The verdict is computed on the Pi (src/vcu/snapshot.ts, `reportTableType`) so there
- * is exactly one copy of "which table are we" — see the note on the wire shape in
- * src/http/vcu-params.ts.
+ * is exactly one copy of "which table are we".
  *
  * @param {TableTypeReport} report
  */

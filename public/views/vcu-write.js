@@ -9,92 +9,18 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
 // Service mode's WRITE section: change one allowlisted VCU parameter, or run one of
 // the four service actions.
 //
-// ── ⚠️ Nothing on this page decides anything ────────────────────────────────
-// The allowlist, the ranges, the compare-and-swap and the read-back all live on the
-// Pi, in pure modules (src/vcu/write-targets.ts, src/vcu/write-session.ts). This page
-// cannot widen any of them and does not try: it renders what GET /vcu-write says is
-// writable and reports what POST /vcu-write says happened. If it and the server ever
-// disagree, the server wins and the page shows the server's reason.
+// ⚠️ Nothing on this page decides anything. The allowlist, the ranges, the
+// compare-and-swap and the read-back all live on the Pi (src/vcu/write-targets.ts,
+// src/vcu/write-session.ts). This page cannot widen any of them and does not try; where
+// it and the server disagree, the server wins and the page shows the server's reason.
 //
-// ── How an accidental write is made hard ────────────────────────────────────
-// Four things, in the order they are met:
+// Four things make an accidental write hard, in the order they are met: a write is
+// always against a value READ off this bike, the confirmation shows old → new, it takes
+// two taps separated by ARM_DWELL_MS, and the three irreversible actions are behind a
+// fold. A fifth lock is not about care at all — the table-type gate, see `canWrite`.
 //
-//  1. **A write is always against a value that was READ off this bike.** The number on
-//     screen is sent back as `expected=`, the Pi re-reads the parameter and refuses if
-//     it has moved, so a page left open since yesterday cannot write over a value it is
-//     not showing. The button stays disabled while nothing has read it at all.
-//
-//     ⚠️ That reading may come from the last parameter SWEEP rather than from this
-//     page's own read button, and this is the one lock whose shape changed (2026-08-19).
-//     It used to insist on a per-parameter read here, which meant a completed 277/277
-//     sweep — which had just read every one of these — left the form saying "not read
-//     yet" and demanding one of them again. The property that matters was never the
-//     tap: it is the compare-and-swap, and that is enforced on the Pi against a read
-//     taken DURING the write (src/vcu/write-session.ts), not against anything this page
-//     believes. So an older reading is not a weaker precondition — it is a likelier
-//     refusal, which is the safe direction. What the page owes in exchange is honesty
-//     about where its number came from and how old it is, which is the caption under it.
-//  2. **The confirmation shows old → new**, spelled out in the button caption, and
-//     the button changes what it says between the two taps.
-//  3. **Two taps, never one — and never one gesture.** The first arms and the second
-//     sends, and arming is dropped by ANY change to the form — retyping the value,
-//     picking a different parameter, a refreshed reading, or a refreshed status. That
-//     last one matters: it means a value that moved under you disarms the button rather
-//     than being written.
-//
-//     ⚠️ And the second tap is refused for ARM_DWELL_MS after the first, because until
-//     2026-08-19 "two taps" was satisfied by a double-tap: two synchronous clicks on
-//     "Say a service was performed NOW" really did POST `31 FC`. That was the single
-//     most likely accidental gesture on a phone — tap, see nothing change fast enough,
-//     tap again — arriving at the one action with no unset.
-//  4. **The irreversible actions are behind a fold**, below the parameters, each with
-//     its own two taps and its own warning — and, collapsed, not on screen at all. They
-//     are not in a list you can scroll a thumb through, and since 2026-08-19 they are
-//     not in a list at all until somebody asks for one. Toggling the fold disarms, and
-//     the fold re-collapses whenever the sheet is opened.
-//
-// ── The three risk tiers ────────────────────────────────────────────────────
-// The page contains three kinds of thing and is painted so that it looks like it does,
-// because a rider glancing at this on a handlebar-mounted phone should be able to tell
-// them apart BEFORE reading any text. The colours and the left-edge gutter that carries
-// them are defined once in public/style.css; this file only says which control is which.
-//
-//   read (grey)         the probe read, the parameter read, the service-stamp read.
-//                       Cannot change the bike — and it is the DEFAULT, so a control
-//                       acquires risk by being marked, never by being forgotten.
-//   write (amber)       the parameter write. Changes the bike and can be written back,
-//                       which is what makes it a middle tier rather than a red one.
-//   irreversible (red)  31 FC, Mode 04, the clock. Behind the fold, and each carries in
-//                       red the one thing it cannot take back.
-//
-// ── Where each sentence belongs ─────────────────────────────────────────────
-// The allowlist carries three kinds of prose about each entry and they are read at
-// three different moments, so they are shown at three different ones — and the service
-// actions below are split the same three ways (see the `ActionNotes` typedef):
-//
-//   purpose   what this parameter IS. Always visible, in grey: it is how you know you
-//             are on the right one.
-//   warnings  why you might not want to. Amber, behind one tap, because there are up to
-//             four of them per parameter and stacking four amber paragraphs above the
-//             input is how a phone in a garage becomes unusable — and how warnings stop
-//             being read at all. The toggle says how many there are and stays amber
-//             while they are collapsed; nothing is dropped.
-//   verify    how to check the bike afterwards. Shown AFTER the write, next to the
-//             outcome, because that is when it is actionable.
-//
-// The service actions add a fourth kind that no parameter has: what this cannot take
-// back. Red, never more than one short line, and it leads the other three.
-//
-// ── ⚠️ And one lock that is not about care at all ───────────────────────────
-// The table-type gate (src/vcu/table-gate.ts) disables the write button outright until
-// the bike has said which of Energica's 28 parameter tables it runs, because a
-// parameter is written BY INDEX and a name is only a claim about a table. It disables
-// the WRITE button and nothing else: the read button and the service actions stay live,
-// deliberately, because the way out of the blocked state is a READ. See `canWrite`.
-//
-// `confirm()` is deliberately not used, here or anywhere in this dashboard — it is a
-// browser dialog that lands in the wrong place on a phone, and it cannot show a
-// two-line before/after.
+// What each of those cost, what was measured, and the three risk tiers this page is
+// painted in: docs/dashboard-decisions.md §"Service mode: writing".
 
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 /** @typedef {import("../../src/http/vcu-probe.ts").VcuProbeResponse} VcuProbeResponse */
@@ -125,61 +51,30 @@ const wanted = van.state("");
 /** Which control is armed, by a key like `write` or `action:clear-dtcs`. Empty means none. */
 const armed = van.state("");
 /**
- * ⚠️ LOAD-BEARING, and not a debounce. How long an armed control refuses its own
- * second tap — i.e. the minimum separation that makes two taps two taps.
+ * ⚠️ LOAD-BEARING, and not a debounce: the minimum separation that makes two taps two
+ * taps, and the whole of what stops a double-tap running `31 FC`. Measured 2026-08-19 at
+ * 390x844, two synchronous clicks on "Say a service was performed NOW" POSTed it for real.
  *
- * Measured in a browser at 390x844 on 2026-08-19, before this existed: two synchronous
- * clicks on "Say a service was performed NOW" produced a real
- * `POST /vcu-write?action=set-service-point&confirm=set-service-point`, and the same on
- * `clear-dtcs`. One gesture both primed and fired `31 FC`. `armed` was set
- * synchronously, so nothing whatsoever separated the two clicks.
+ * ⚠️ The parameter write and the clock sync passed that same test BY ACCIDENT: armWrite()
+ * and armClockSync() `await fetchStatus()` between arming and firing, which raises `busy`
+ * and disables the button. Making that refresh faster, cached, conditional or optional
+ * would remove the protection from two of the three irreversible controls without touching
+ * a line that looks like a guard. All three now hold this dwell deliberately.
  *
- * ⚠️ The parameter write and the clock sync passed that same test BY ACCIDENT, and that
- * is the part worth writing down. armWrite() and armClockSync() `await fetchStatus()`
- * between arming and firing, which raises `busy` and disables the button, so the second
- * click landed on a disabled control and was swallowed. A refresh was doing safety work
- * as a side effect — so making it faster, cached, conditional or optional would remove
- * the protection from two of the three irreversible controls without touching a line
- * that looks like a guard. All three now hold this deliberately.
- *
- * ⚠️ Why a dwell and not one of the obvious alternatives:
- *
- *   a dblclick / event.detail guard   only a mouse raises `detail` past 1. Two taps
- *                                     from a gloved thumb a few pixels apart are two
- *                                     ordinary clicks, and that is the actual gesture.
- *   disabling the button for a beat   `.action:disabled` is visibly dimmed, so the
- *                                     control would flash "off" in the one moment its
- *                                     caption is asking to be read — and "it went grey
- *                                     and nothing happened" is the very stimulus that
- *                                     produces the extra tap.
- *   press-and-hold                    a gesture to learn, on controls nobody presses
- *                                     often enough to learn it.
- *
- * 400 ms because it must cost the INTENDED flow nothing. The armed caption is ~45
- * characters ("⚠️ Tap again — STAMP A SERVICE NOW. There is no unset") and has to be
- * found, read and acted on; nothing does that in under 400 ms. What 400 ms does cover,
- * with margin, is every platform's own idea of two taps being one gesture — iOS and
- * Android recognise a double-tap inside ~300 ms.
- *
- * ⚠️ A tap inside the dwell is IGNORED, never treated as a disarm. The button stays
- * armed and goes on saying "Tap again", so an impatient double-tapper's next tap does
- * what they meant; silently disarming would put them back at the start without saying
- * so, which is a worse answer to the same gesture and invites a fourth tap.
+ * ⚠️ A tap inside the dwell is IGNORED, never a disarm: the caption still says "Tap again"
+ * and still means it. Why 400 ms, and why a dwell rather than a dblclick guard, a disabled
+ * beat or press-and-hold: docs/dashboard-decisions.md §`ARM_DWELL_MS` = 400 ms.
  */
 const ARM_DWELL_MS = 400;
 /**
  * When the armed control armed itself.
  *
- * `performance.now()`, never `Date.now()`, for the reason CLAUDE.md gives for
- * `monotonicNow()` on the Pi: this page has a button on it that STEPS A CLOCK, and the
- * Pi steps its own from GPS. A wall clock that jumps backwards mid-gesture hands out a
- * dwell that never elapses; one that jumps forwards hands out none at all.
- *
- * Deliberately not a van.state — nothing renders from it, and making it one would
- * re-run every caption binding on each arm to no visible effect.
+ * `performance.now()`, never `Date.now()`: this page has a button on it that STEPS A
+ * CLOCK, and a wall clock that jumps backwards mid-gesture hands out a dwell that never
+ * elapses. Deliberately not a van.state — nothing renders from it.
  */
 let armedAt = 0;
-/** Whether the selected parameter's warnings are unfolded. Collapsed by default; see the header. */
+/** Whether the selected parameter's warnings are unfolded. Collapsed by default — see TargetNote. */
 const warningsOpen = van.state(false);
 /**
  * Whether the three irreversible service actions are unfolded.
@@ -209,33 +104,16 @@ const message = van.state("");
 
 export function VcuWrite() {
   return div(
-    // A level-1 heading, and the only amber one: this is the line the sheet's read
-    // half ends at, and the rule above it is the widest single piece of separation
-    // in the whole panel. ./service-mode.js has carried the boundary as a comment
-    // since it was written; this is the same statement, where a rider can see it.
+    // The only amber heading: the line the sheet's read half ends at.
     //
-    // ⚠️ The amber and the line under it are governed by `hasControls()` — THE SAME
-    // condition that decides whether the controls render at all, three lines below.
-    // That is the point of it being one function: a warning about what is under a
-    // heading must appear and disappear with the thing it is warning about, and it
-    // cannot be made to disagree by any state this page can be in.
-    //
-    // Two states have nothing under the heading and so get no warning: writing off on
-    // this Pi (SERVICE_WRITE_ENABLED=0), and nothing answered yet — which is not a
-    // moment of "we don't know, assume the worst", it is a section that is EMPTY,
-    // and it lasts as long as an unreachable Pi lasts because nothing re-polls
-    // /vcu-write while the sheet is open. An amber warning standing over an empty
-    // section until the sheet is reopened is a wolf cried permanently.
+    // ⚠️ The amber and the rule under it are governed by `hasControls()` — THE SAME
+    // condition that decides whether the controls render at all, three lines below, so
+    // a warning about what is under a heading cannot be made to disagree with what is
+    // actually there. See docs/dashboard-decisions.md §"The section heading and its note".
     h2({ class: () => `sheet-heading${hasControls() ? " writes" : ""}` }, "Change something on the bike"),
-    // ⚠️ "Everything below here can change the motorcycle" was FALSE and had to go:
-    // of the next four controls, the parameter picker reads, the value on the left is
-    // a read-out, "Read it off the bike again" reads, and the service-stamp action is
-    // labelled read-only. A section heading that lies is worse than none.
-    //
-    // What it says instead is the section's risk PROFILE, and it says it here rather
-    // than only at the fold 600 px further down — which is the honest answer to
-    // "a panel must never conceal what it is capable of". The fold hides the buttons
-    // from a wandering thumb; it does not get to hide that they exist.
+    // The section's risk PROFILE, said here rather than only at the fold 600 px down.
+    // It does not say "everything below here can change the motorcycle" — that was
+    // false of four of the controls, and a section heading that lies is worse than none.
     () =>
       hasControls()
         ? div(
@@ -244,19 +122,11 @@ export function VcuWrite() {
           )
         : div(),
     Availability(),
-    // ⚠️ The one thing that MUST render when there are no controls: why there are
-    // none. `message` is where fetchStatus() puts "could not reach /vcu-write", and
-    // its only other home is Outcome(), which lives inside ParameterForm() — i.e.
-    // inside the branch `hasControls()` has just switched off. So the loudest failure
-    // this section has was being written to a node that does not exist whenever it
-    // happened, and an unreachable Pi rendered as a heading, an ellipsis and silence.
-    //
-    // ⚠️ `.failure`, not the bare `.action-note` it first landed in. Rendering it was
-    // only half the fix: at --label / 11.52 px it came out byte-for-byte identical to
-    // "Reads four identifiers on the A8" — this section's own thesis, that prose is
-    // ranked by consequence, not applied to the one sentence saying the section is
-    // dead. Availability() stands its ellipsis down for the same reason: "loading" and
-    // "the fetch failed" are mutually exclusive and only one of them was ever true.
+    // ⚠️ The one thing that MUST render when there are no controls: why there are none.
+    // `message`'s only other home is Outcome(), inside the branch hasControls() has just
+    // switched off, so the loudest failure this section has was being written to a node
+    // that did not exist. `.failure`, not `.action-note`, and Availability() stands its
+    // ellipsis down beside it — docs/dashboard-decisions.md §"The section heading".
     () => (!hasControls() && message.val ? div({ class: "action-note failure" }, message.val) : div()),
     () => (hasControls() ? div(ParameterForm(), ServiceActions(), Journal()) : div())
   );
@@ -304,30 +174,17 @@ function armDwellElapsed() {
  * Refuses a key AUTO-REPEAT, so one sustained keypress cannot arm and then fire.
  *
  * ⚠️ The one hole ARM_DWELL_MS does not close, and it does not close it by arithmetic:
- * macOS repeats a held key at about 500 ms, which is on the far side of the 400 ms
- * dwell, so Enter held down on an armed button would arm on the first event and fire on
- * the repeat. Raising the dwell past 500 ms would be the wrong answer — it would slow
- * the gesture that actually happens (a thumb) to close a hole that only a keyboard has,
- * and the repeat interval is a per-machine setting that can go slower still.
- *
- * `event.repeat` is the browser saying "this is the same press continuing", which is
- * precisely the distinction wanted, so the guard is exact rather than timed. Enter's
- * activation of a `<button>` is the default action of the keydown, so preventing it
- * there is what stops it; Space activates on keyup and so repeats harmlessly already.
- *
- * There is no keyboard on a handlebar-mounted phone. This is here for the same reason
- * `.sheet` gained `visibility: hidden` — the argument for the fold is that an
- * irreversible action must not be reachable by accident, and "the hardware makes it
- * unlikely" is a different claim from "the page does not allow it".
+ * macOS repeats a held key at about 500 ms, on the far side of the 400 ms dwell, so
+ * Enter held down on an armed button would arm on the first event and fire on the
+ * repeat. `event.repeat` is the browser saying "this is the same press continuing", so
+ * the guard is exact where a longer dwell would be a race against a per-machine setting
+ * — docs/dashboard-decisions.md §"Why `event.repeat` rather than a longer dwell".
  *
  * @param {KeyboardEvent} event
  */
 function refuseKeyRepeat(event) {
   // Qualified by key, or this cancels every held key on these five buttons — a held
-  // ArrowDown, PageDown or Tab would stop scrolling dead after one line, which is a
-  // real cost on a phone paid to prevent something only a keyboard can do. The
-  // paragraph above already reasons that Enter is the only key that needs it; this
-  // is that reasoning written into the condition rather than left beside it.
+  // ArrowDown, PageDown or Tab would stop scrolling dead after one line.
   if (event.repeat && event.key === "Enter") {
     event.preventDefault();
   }
@@ -388,31 +245,15 @@ function Availability() {
  * Whether the bike has said which parameter table it runs — and what to do when it
  * has not.
  *
- * ⚠️ The blocked states are rendered DIFFERENTLY on purpose, in colour and in words,
- * because they are not the same problem:
+ * ⚠️ The two blocked states are rendered DIFFERENTLY on purpose, in colour and in
+ * words: red when no read will help (a table this software cannot write against) and
+ * amber when one will (nobody has asked the bike yet). A single "writes are blocked"
+ * would send someone hunting for a software bug when the answer was one frame.
  *
- *   no read will help (red)   the bike named a table this software does not carry, the
- *                             two micros named different tables, or the table is carried
- *                             and an allowlisted parameter is not called that on it.
- *                             Every parameter name on this page may belong to a different
- *                             parameter, and the fix is a table or a change in the Pi's
- *                             source — the server's `remedy` says which.
- *   a read will (amber)       nobody has asked the bike yet, or a reply was malformed.
- *                             One read clears it, and the `remedy` names exactly which —
- *                             parameter, micro and request bytes.
- *
- * ⚠️ The branch is on `noReadWillHelp` rather than on `state`, deliberately. It used to
- * test `state === "mismatched"`, which quietly made every state added later render as
- * amber "nobody has asked yet" with an instruction that leads nowhere — and two such
- * states have since been added (`split`, `unwritable`). The server decides which kind of
- * blocked this is; this file only decides what colour that is.
- *
- * A single "writes are blocked" would send someone hunting for a software bug when the
- * answer was one frame, or the other way round. The sentences come from the Pi
- * (src/vcu/table-gate.ts) rather than being written again here: deciding what a
- * `TABLE_TYPE` reading means needs all 28 parameter tables, and a second copy of that
- * reasoning in a file the checks cannot reach is the exact drift this gate exists to
- * catch — the same argument /vcu-params makes for computing its banner server-side.
+ * ⚠️ The branch is on `noReadWillHelp`, not on `state` — testing `state === "mismatched"`
+ * quietly rendered every later-added state as the amber one. The sentences come from
+ * the Pi (src/vcu/table-gate.ts) rather than being written again here.
+ * See docs/dashboard-decisions.md §"the table-type gate".
  */
 function TableTypeNote() {
   const table = state.val?.status.tableGate;
@@ -455,25 +296,13 @@ function ParameterForm() {
 /**
  * The allowlist as a picker.
  *
- * ⚠️ The whole `<select>` is rebuilt by the binding, and the options are its DIRECT
- * children. That is not a style preference — it is the fix for two real faults, both
- * caused by the options previously being wrapped in a `<div>` because a VanJS binding
- * function may only return ONE node (see van-1.6.1.d.ts's `ValidChildDomValue`):
- *
- *   • A `<div>` is not in `<select>`'s content model. Whether the options inside one
- *     are collected at all is up to the engine — Chrome ≥135 does, older engines and
- *     the phone this dashboard is actually used on showed an EMPTY dropdown with the
- *     five parameters unreachable.
- *   • Even where it renders, `select.value = …` set before that div is appended does
- *     not stick, so any status refresh that rebuilt the list — every write does one —
- *     silently snapped the picker back to the first parameter while the rest of the
- *     form stayed on the one that was chosen. A write UI whose dropdown names a
- *     different parameter from the one being written to is exactly the kind of quiet
- *     mismatch everything else here is built to avoid.
- *
- * Which option is current is therefore set on the OPTION (`selected`), never on the
- * select afterwards: it survives being rebuilt and does not depend on props and
- * children being applied in a particular order.
+ * ⚠️ The whole `<select>` is rebuilt by the binding and the options are its DIRECT
+ * children, never wrapped in a `<div>`. That wrapper is not in `<select>`'s content
+ * model and produced two real faults: an EMPTY dropdown on the phone this dashboard is
+ * used on, and a picker that snapped back to the first parameter on every status
+ * refresh while the rest of the form stayed put. Which option is current is therefore
+ * set on the OPTION (`selected`), never on the select afterwards.
+ * See docs/dashboard-decisions.md §"The `<select>` is rebuilt whole".
  */
 function ParameterSelect() {
   return div(() => {
@@ -499,8 +328,8 @@ function ParameterSelect() {
  * What the selected parameter is, and one tap to what is wrong with changing it.
  *
  * The warnings are collapsed rather than dropped, and the toggle is amber and counts
- * them so a collapsed block still says there is something to read. See the header for
- * why they are not all stacked above the input any more.
+ * them so a collapsed block still says there is something to read. Why they are not all
+ * stacked above the input: docs/dashboard-decisions.md §"Where each sentence belongs".
  */
 function TargetNote() {
   return div({ class: "action-note" }, () => {
@@ -661,8 +490,8 @@ function WantedControl() {
     if (target?.control.kind === "bits") {
       const bits = target.control.bits;
       // `selected` on the option rather than `value` on the select, for the reason
-      // ParameterSelect() sets out at length: this binding re-runs whenever the status
-      // does, and a `value` applied before the options exist is silently dropped —
+      // ParameterSelect() gives above: this binding re-runs whenever the status does,
+      // and a `value` applied before the options exist is silently dropped —
       // which would put the picker back on "choose…" while `wanted` still held a bit.
       return select(
         {
@@ -850,22 +679,15 @@ function Outcome() {
 }
 
 /**
- * The four service actions — one read, three that cannot be undone.
+ * The four service actions — one read, three that cannot be undone. Only the read one
+ * is on screen; the other three are behind a fold, in the red tier.
  *
- * ⚠️ They used to be four identical grey rectangles in a row, so "read the
- * last-service date and odometer" and "clear the stored trouble codes" looked the
- * same until you had read both. Now only the read one is on screen; the other three
- * are behind a fold, in the red tier, with the sentence each of them cannot take
- * back in red under it.
- *
- * Each still arms independently, and arming one disarms the others — so a thumb
- * travelling down the list cannot walk its way through two of them.
+ * Each arms independently, and arming one disarms the others, so a thumb travelling
+ * down the list cannot walk its way through two of them.
  *
  * ⚠️ That is NOT what stops a double-tap, and this comment used to say it was. Arming
- * one control says nothing about the same control being hit twice, and until it was
- * measured (2026-08-19, 390x844) that was exactly what happened: two synchronous clicks
- * on "Say a service was performed NOW" POSTed `31 FC` for real. What stops it is the
- * dwell between arming and firing — see ARM_DWELL_MS.
+ * one control says nothing about the same control being hit twice. What stops it is
+ * the dwell between arming and firing — see ARM_DWELL_MS.
  */
 function ServiceActions() {
   return div(
@@ -886,26 +708,23 @@ function ServiceActions() {
 /**
  * The three actions with no undo, behind one fold.
  *
- * ⚠️ The fold is the safety part of this section, not the decoration. This dashboard
- * is used on a handlebar-mounted phone, and the sheet is a long scroll: styling alone
- * still leaves `31 FC` and Mode 04 as things a thumb can arrive at while trying to
- * reach something else. Collapsed, there is nothing there to arrive at.
+ * ⚠️ The fold is the safety part of this section, not the decoration. The sheet is a
+ * long scroll on a handlebar-mounted phone, and styling alone still leaves `31 FC` and
+ * Mode 04 as things a thumb can arrive at while reaching for something else.
+ * Collapsed, there is nothing there to arrive at.
  *
- * The same idiom as the parameter warnings' toggle — counted, caret-ended, coloured
- * for what is behind it — rather than a second kind of disclosure, and the count is in
- * the label so the fold says what it is hiding without being opened.
+ * ⚠️ Toggling DISARMS. Otherwise collapsing the fold over a half-confirmed action would
+ * leave a primed button waiting off screen for its second tap; re-opening the sheet
+ * already resets both (see refreshVcuWrite), and this closes the same hole for the fold.
  *
- * ⚠️ Toggling DISARMS. Otherwise collapsing the fold over a half-confirmed action
- * would leave a primed button waiting off screen for its second tap; re-opening the
- * sheet already resets both (see refreshVcuWrite), and this closes the same hole for
- * the fold itself.
+ * Why this shape of disclosure, and what each line of it is for:
+ * docs/dashboard-decisions.md §"The fold in front of the irreversible three".
  */
 function IrreversibleActions() {
   return div(
-    // ⚠️ The wrapper carries the closing rule, so it is there whether the fold is open
-    // or shut. On the opened group it existed only while open, which left "Recently
-    // written" hanging under the red panel with no divider in the state the sheet
-    // spends most of its life in — while every other section boundary had one.
+    // The wrapper carries the closing rule, so it is there whether the fold is open or
+    // shut — it used to exist only while open, leaving "Recently written" hanging under
+    // the red panel with no divider in the state the sheet spends most of its life in.
     { class: "risk-group" },
     button(
       {
@@ -919,20 +738,14 @@ function IrreversibleActions() {
           armed.val = "";
         },
       },
-      // ⚠️ The SENTENCE does not change between states — only the caret turns. It
-      // used to grow a "hide the" in front of itself, which changed the width and the
-      // grammar of the one control standing between a thumb and Mode 04, so the eye
-      // had to re-find it after every tap. And no glyph: 🚨 at this size is an
-      // anonymous red blob, and the row is already red and full width.
+      // ⚠️ The SENTENCE does not change between states — only the caret turns, so the
+      // eye does not have to re-find the one control standing between a thumb and
+      // Mode 04 after every tap.
       () =>
         `${IRREVERSIBLE_COUNT} action${IRREVERSIBLE_COUNT === 1 ? "" : "s"} that cannot be undone  ` +
         `${dangerOpen.val ? "▴" : "▾"}`,
-      // The contents, under the caveat rather than instead of it. Somebody at the bike
-      // who came for the clock should not have to open the drawer to learn the clock
-      // is in it — but why it is shut is still the first thing worth reading.
-      //
-      // Only while SHUT: open, the three buttons are spelled out directly underneath,
-      // and a list naming them a few pixels above is the same information twice.
+      // The contents, under the caveat rather than instead of it — and only while SHUT,
+      // since open the three buttons are spelled out directly underneath.
       () =>
         dangerOpen.val
           ? span()
@@ -953,26 +766,14 @@ function IrreversibleActions() {
 /**
  * The irreversible actions — ONE list, not a list and a parallel array beside it.
  *
- * ⚠️ Everything the page says about this drawer is read off here: how many there are
- * (the fold's label and the section's risk line), and what they are called (the fold's
- * contents line). A literal 3, or a hand-written list of names kept alongside, fails in
- * the direction that matters — the drawer goes on promising three things while holding
- * a fourth, or naming the wrong three, and it does it silently.
+ * ⚠️ Everything the page says about this drawer is read off here: how many there are,
+ * and what they are called. The names used to be a parallel array checked FOR LENGTH
+ * and reported by `console.warn`, on a page nobody ever has a console open on; what
+ * cannot be made structural is asserted in scripts/check-irreversible-actions.ts.
  *
- * ⚠️ The names used to be a parallel array checked against this one FOR LENGTH, and
- * reported by `console.warn` — on a page whose deployment target is a handlebar-mounted
- * phone, where nobody has a console open, ever. Reordering the list or swapping an
- * action left the fold confidently naming things it did not hold, with the guard green.
- * Both halves are fixed here: the names cannot drift because they are not stored twice,
- * and what CANNOT be made structural — that these are exactly the actions the Pi
- * refuses without a confirmation, in this order — is asserted in
- * scripts/check-irreversible-actions.ts, under `npm test`, where a red build says it.
- *
- * `render` is a thunk, not a node, for two reasons: the fold rebuilds its contents on
- * every open, and — the safety one — nothing behind the fold is CONSTRUCTED while it is
- * collapsed, so "there is nothing there to arrive at" stays literally true of the DOM.
- * The clock is not an `ActionButton` because its second tap agrees to a fact ("is it
- * 14:03?") rather than to an intention, so it writes its own confirmation.
+ * `render` is a thunk, not a node — the safety half being that nothing behind the fold
+ * is CONSTRUCTED while it is collapsed, so "there is nothing there to arrive at" stays
+ * literally true of the DOM. See docs/dashboard-decisions.md §`IRREVERSIBLE` is ONE list.
  *
  * @type {IrreversibleAction[]}
  */
@@ -1007,33 +808,26 @@ export const IRREVERSIBLE = [
 const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
 
 /**
- * The clock sync, which needs its own button because its confirmation is a question
- * about a fact rather than about an intention.
- *
- * The caption IS the dialog the owner asked for — "Is it <date and time>?" — and the
- * time in it is echoed back to the Pi, which refuses if that minute has passed. So
- * the two taps are not just two taps: the second one asserts that the time shown in
- * the first is still true.
- */
-/**
  * ⚠️ Starts with the same shouted token as the other two, on purpose: the red line is
  * one slot in three cards, and a slot that holds a token on two of them and a sentence
- * on the third is not a slot. What comes AFTER the dash is where this one differs, and
- * it differs in the direction that matters — you can set the clock again, but nothing
- * can tell you what it held before or that this landed at all.
+ * on the third is not a slot. What comes AFTER the dash is where this one differs.
  */
 const CLOCK_NO_UNDO = "The bike's clock cannot be read back, so nothing can confirm this landed.";
 
+/**
+ * The clock sync, which needs its own button because its confirmation is a question
+ * about a fact rather than about an intention: the caption IS the dialog — "Is it
+ * <date and time>?" — and the time in it is echoed back to the Pi, which refuses if
+ * that minute has passed. So the second tap asserts that the time shown in the first
+ * is still true. See docs/dashboard-decisions.md §"The confirm token".
+ */
 function ClockAction() {
   return div(
     { class: "action-block" },
     // Above the button, for the reason ActionButton sets out: on a phone the thumb
     // arrives before the eye does. Shown only when the button can actually do
-    // something — a Pi whose clock is not fit to copy has a disabled button and
-    // nothing that cannot be undone, and its own red line is below instead.
-    // Through NoUndoLine, not hand-rolled: rendering the div here meant this one card
-    // was the only one whose red line had no IRREVERSIBLE badge, which is exactly the
-    // inconsistent-slot problem the badge exists to remove.
+    // something, and through NoUndoLine rather than hand-rolled, so this card is not
+    // the only one whose red line lacks the IRREVERSIBLE badge.
     () => (state.val?.status.clock.trustworthy === true ? NoUndoLine({ noUndo: CLOCK_NO_UNDO, does: "" }) : div()),
     button(
       {
@@ -1302,21 +1096,14 @@ function canWrite() {
 /**
  * What the bike holds for the selected parameter, and where that number came from.
  *
- * ⚠️ TWO sources, ranked, and the ranking is the point:
- *
- *   bus    a value this page read itself — the probe button, or the read-back at the end
- *          of a write. Always wins: it is the newest thing anybody here knows, and after
- *          a write it is the only one that is right, because the sweep's snapshot still
- *          says what the parameter used to be.
- *   sweep  what the last recorded parameter sweep found (server-side, per allowlist
- *          entry). This is what stops the form saying "not read yet" to somebody who
- *          has just read all 277 parameters.
- *
- * Null when neither has it, which is a real state — a Pi that has never swept — and the
- * write button stays disabled saying so.
+ * ⚠️ TWO sources, RANKED: a value this page read itself off the bus always wins over
+ * the last recorded sweep's, because after a write the sweep's snapshot still says what
+ * the parameter used to be. Null when neither has it — a real state, a Pi that has
+ * never swept, and the write button stays disabled saying so.
  *
  * The reading is only handed back when it belongs to the selected parameter, so no
  * ordering of events can show one parameter's value against another's name.
+ * See docs/dashboard-decisions.md §"Where the number on the left comes from".
  * @returns {OnBike | null}
  */
 function onBike() {
@@ -1367,13 +1154,9 @@ function forgetSelection() {
  * ⚠️ PROTOCOL, not prose. `notes.confirm` is the caption tail and may be rewritten
  * freely; this is the string src/http/vcu-write.ts compares against, and getting it
  * wrong does not read wrong — it makes `31 FC` and Mode 04 refuse on every press with
- * a 400 nobody expected.
- *
- * One function rather than the rule living at each `performAction` call site, because
- * scripts/check-irreversible-actions.ts asserts these against the server's own parser
- * and a check holding its own copy of the rule would agree with itself while the page
- * had moved. It is the same parallel-array shape this section removed from the fold's
- * contents list, and it does not get to come back in the check that guards it.
+ * a 400 nobody expected. One function rather than the rule at each call site, so that
+ * scripts/check-irreversible-actions.ts asserts it against the server's own parser and
+ * not against a second copy. See docs/dashboard-decisions.md §"The confirm token".
  *
  * @param {string} action
  * @param {string} displayedIso the Pi's `clock.iso` exactly as the caption showed it
@@ -1460,18 +1243,13 @@ async function readCurrent() {
 
 /**
  * Refreshes, THEN arms — so the number the second tap agrees to is the Pi's answer now.
+ * Nothing polls /vcu-write while the sheet is open, deliberately, and the age of the
+ * reading is the entire basis on which an old one is an acceptable precondition.
  *
- * ⚠️ Exactly what armClockSync() does one section below, for the same reason and it is
- * the same failure: a sheet opened in the kitchen and used at the bike twenty minutes
- * later was showing an age computed when it opened. Nothing polls /vcu-write while the
- * sheet is open — deliberately — so without this the caption "from the parameter sweep
- * just now" could still be on screen long after it stopped being true, and the age is
- * the entire basis on which an old reading is an acceptable precondition.
- *
- * ⚠️ And if the value MOVED across that refresh, this does not arm. The caption now
- * shows a different number from the one that was tapped, and a second tap must agree to
- * what is on screen rather than to what was. (fetchStatus() disarms on its own for the
- * same reason; this function is what re-arms deliberately, and only when nothing moved.)
+ * ⚠️ And if the value MOVED across that refresh, this does not arm: a second tap must
+ * agree to what is on screen rather than to what was. (fetchStatus() disarms on its own
+ * for the same reason; this is what re-arms, and only when nothing moved.)
+ * See docs/dashboard-decisions.md §"Where the number on the left comes from".
  */
 async function armWrite() {
   const before = onBike();
