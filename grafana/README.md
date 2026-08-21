@@ -113,7 +113,13 @@ Measured, 17 panel queries × 5 concurrent rounds:
 
 So roughly **one panel per dashboard load** comes back blank, and a different one each time. Per this file's own argument in §"Every query has to be run" — _"a panel that renders 'No data' is indistinguishable from a broken bike"_ — that is the worst shape a failure can take here: it looks like a finding.
 
-`PRAGMA journal_mode=DELETE` on the database Grafana reads fixes it. ⚠️ Do that on a **copy** rather than on `rides.db` itself if the logger might be running: switching journal mode takes an exclusive lock, and the service writes to this file. The decrypt step that produces the file Grafana reads is the natural place to set it.
+`PRAGMA journal_mode=DELETE` on the database Grafana reads fixes it. The decrypt step that produces the file Grafana reads is the natural place to set it.
+
+⚠️ **Do that on the COPY, never on `rides.db`, and the reason is not the obvious one.** Switching journal mode takes an exclusive lock, which is a nuisance; the real problem is that DELETE serialises every reader against the writer. Measured on the same harness, 5 readers plus one live writer: the WAL copy errored **0 of 85**, the DELETE copy **53 of 85**. WAL exists precisely to prevent that, and `rides.db` has a logger appending to it. DELETE is right only for a static file nothing is writing.
+
+⚠️ **It is the datasource plugin's driver, not SQLite.** The same two databases over the same bind mount, read through CPython's `sqlite3` (SQLite 3.46.1): **0 of 85** at 5 concurrent readers, **0 of 1020** at 20 threads × 3 rounds, and **0 of 85** even with a live writer. This is a `frser-sqlite-datasource` problem, not a "WAL is broken on Docker Desktop" problem — worth stating, because the second conclusion is the tempting one and it is false.
+
+⚠️ **The rate is highly variable.** Six rounds of 17 queries × 5 concurrent gave 1, 32, 6, 1, 6 and 2 errors — 48 of 510 overall. "About one panel per load" is a central estimate, not a ceiling; a bad load can blank a third of the dashboard.
 
 ## Rows already in `rides.db` that this repo now decodes differently
 
