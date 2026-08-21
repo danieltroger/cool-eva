@@ -544,16 +544,16 @@ The three `0x610` error episodes are not the whole set of charge failures, becau
 
 A second archive-wide sweep, for `0x100` byte 7 bit 1 — `vcu_err_charge_manager`, Energica's `ERR_ChargeCM_Out` — finds it set in **3 563 frames, in exactly three capture files, all within four events**:
 
-| #   | when                    | where              | `0x610` code                   | duration of the VCU bit |
-| --- | ----------------------- | ------------------ | ------------------------------ | ----------------------- |
-| E0  | 2026-08-09 14:37:09.720 | 56.50178, 12.95665 | **none — src and code stay 0** | 269.7 s                 |
-| E1  | 2026-08-02 18:55:16.011 | no GPS fix         | (7, 1101)                      | ≥ 17.3 s, capture ends  |
+| # | when | where | `0x610` code | duration of the VCU bit |
+| --- | --- | --- | --- | --- |
+| E0 | 2026-08-09 14:37:09.720 | 56.50178, 12.95665 | **none — src and code stay 0** | 269.7 s |
+| E1 | 2026-08-02 18:55:16.011 | no GPS fix | (7, 1101) | ≥ 17.3 s, capture ends |
+| E2 | 2026-08-08 17:41:32.413 | no fix in either capture † | (8, 1101) | ≥ 6.5 s, capture ends |
+| E3 | 2026-08-09 14:41:46.240 | 56.50178, 12.95665 | (7, 853) | 62.6 s |
 
 ⚠️ **Durations here are the frame span plus one 10 Hz tick**, on the reading that the last frame holds for its own period. So E1's eight error frames span 0.700 s and are reported as 0.80. Defensible, but it must be stated or anyone re-deriving gets a different number: E3 43.70 → 43.80, E0's VCU window 269.62 → 269.7, E3's 62.51 → 62.6.
 
-| E2 | 2026-08-08 17:41:32.413 | no fix in either capture † | (8, 1101) | ≥ 6.5 s, capture ends | | E3 | 2026-08-09 14:41:46.240 | 56.50178, 12.95665 | (7, 853) | 62.6 s |
-
-† E2's own capture carries no `0x410` at all; the position is from the capture two minutes later, at the same stop. E1 has no fix — the hub reports 0, 0 — and so does the capture that follows it.
+† E2 has **no position**. Its own capture carries no `0x410` at all, and the next capture has no fix until 18:03:28 — after its session had ended. An earlier draft filled the gap with 55.72463, 13.14987 "from the capture two minutes later, at the same stop"; that is one sample at 18:05:18 on a moving track, ~24 minutes later and about 1 km away. E1 has no fix either — the hub reports 0, 0 — and nor does the capture that follows it.
 
 ✅ **The two fields corroborate each other, and this is the strongest single result here.** In all three episodes that have a code, the VCU raises its rollup bit **0.162, 0.163 and 0.162 s** after the charge manager's first error frame — one 10 Hz tick plus change, three times, to the millisecond. Two ECUs on two frames agreeing on the same event that precisely is what says `data[1]`/`data[2:3]` really are the fault path and not a coincidence of bytes.
 

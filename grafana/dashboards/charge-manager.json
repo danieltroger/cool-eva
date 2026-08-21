@@ -1352,7 +1352,7 @@
         "type": "frser-sqlite-datasource",
         "uid": "cool-eva-sqlite"
       },
-      "description": "`charge_manager_error_src` (0x610 b1) and `charge_manager_error_code` (0x610 b2-3, signed 16 LE). Three CODED episodes exist in the whole 29-session corpus (a fourth failure carries no code — the VCU's own `vcu_err_charge_manager` bit rises for it, so the two are not equivalent): (7, 1101) on 2026-08-02, (8, 1101) on 2026-08-08, and (7, 853) on 2026-08-09 14:41:46 — the aborted DC attempt, which ran 43.7 s and ended 47.4 s before the first amp of the session that followed. ⚠️ `vcu_err_charge_manager` (0x100 b7 bit 1), the VCU's rollup bit, stayed 0 through all three, so it is not a substitute for watching this. Byte order matters: 853 is 0x0355 little-endian; read big-endian it would be 21 763.",
+      "description": "`charge_manager_error_src` (0x610 b1) and `charge_manager_error_code` (0x610 b2-3, signed 16 LE). Three CODED episodes exist in the whole 29-session corpus (a fourth failure carries no code — the VCU's own `vcu_err_charge_manager` bit rises for it, so the two are not equivalent): (7, 1101) on 2026-08-02, (8, 1101) on 2026-08-08, and (7, 853) on 2026-08-09 14:41:46 — the aborted DC attempt, which ran 43.7 s and ended 47.4 s before the first amp of the session that followed. ⚠️ `vcu_err_charge_manager` (0x100 b7 bit 1), the VCU's rollup bit, is NOT a substitute for watching this — but not for the reason once given here. It rises 0.162 s after each of these three, and in a fourth failure it is set for 269.7 s with no code at all. Watch both. Byte order matters: 853 is 0x0355 little-endian; read big-endian it would be 21 763.",
       "fieldConfig": {
         "defaults": {
           "color": {
