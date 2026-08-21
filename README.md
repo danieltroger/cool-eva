@@ -261,7 +261,7 @@ Not in the unit file — `scripts/setup-service.ts` rewrites that every time it 
 | `RIDE_LOG_DIR` | `./ride-logs` | Where sealed `.celog` segments are written. |
 | `VCU_PARAM_DIR` | `./vcu-params` | Where service mode leaves parameter snapshots for `/vcu-params` and `/vcu-backup.csv` to serve, and where the write audit journal `service-writes.jsonl` is appended. |
 | `SERVICE_MODE_ENABLED` | on | `0` forbids the dashboard from starting a VCU parameter read. That read is the only thing here that puts requests on the bike's bus on purpose; the snapshot is still served and exported either way. The safety gate applies regardless — see [Service mode](#service-mode). |
-| `SERVICE_WRITE_ENABLED` | **off** | `1` lets the dashboard **change** things on the bike: five allowlisted calibration parameters, the service point, the bike's clock, and the stored trouble codes. ⚠️ The only switch here that is opt-**in** — everything else defaults on and takes a `0` to disable — so a Pi nobody has told about it cannot write to a motorcycle's EEPROM. Separate from `SERVICE_MODE_ENABLED` on purpose. See [Changing something on the bike](#changing-something-on-the-bike). |
+| `SERVICE_WRITE_ENABLED` | **off** | `1` lets the dashboard **change** things on the bike: any of 269 calibration parameters, the service point, the bike's clock, and the stored trouble codes. ⚠️ The only switch here that is opt-**in** — everything else defaults on and takes a `0` to disable — so a Pi nobody has told about it cannot write to a motorcycle's EEPROM. Separate from `SERVICE_MODE_ENABLED` on purpose. See [Changing something on the bike](#changing-something-on-the-bike). |
 
 ### Grafana
 

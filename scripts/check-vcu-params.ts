@@ -69,7 +69,7 @@ import {
   writeTargetNames,
 } from "../src/vcu/write-targets.ts";
 import { evaluateTableGate, registerAllowlistTableCheck } from "../src/vcu/table-gate.ts";
-import { sweptValueOf } from "../src/vcu/write-runner.ts";
+import { sweptValueOf, createVcuWriteRunner } from "../src/vcu/write-runner.ts";
 import { fingerprintTable } from "../src/vcu/table-catalog.ts";
 import {
   SERVICE_STAMP_IDENTIFIERS,
@@ -1577,6 +1577,44 @@ if (bike4102) {
     // The same plan on a bike that agrees must still encode, or this proves nothing.
     buildWriteFrame("A9", { kind: "write-parameter", tableType: confirmedTable, plan: planned.plan });
   }
+}
+
+// ⚠️ THE RUNNER LAYER. The block above exercises writeTargetProblemIn directly and the
+// codec through buildWriteFrame — but NOT checkPreconditions, and a review proved it:
+// neutralising the runner's own call left the suite green. The codec is the layer a
+// curl cannot bypass and it is covered, so the bytes were never at risk; what was
+// uncovered is the readable refusal a person standing at the bike actually sees.
+//
+// createVcuWriteRunner takes all three of its dependencies as functions, and the table
+// check refuses BEFORE the bus is acquired, so this never touches a channel.
+{
+  const runner = createVcuWriteRunner({
+    enabled: true,
+    busIsActive: true,
+    directory: "/tmp",
+    // Never dereferenced: the table guard refuses before the bus is acquired, which is
+    // the property being tested. If that ordering ever changes this cast will crash
+    // loudly rather than quietly write to a bus that is not there.
+    channel: () => ({}) as never,
+    gate: () => ({ safe: true, blockers: [], checks: [], charger: null }) as never,
+    latestSweep: async () => ({ snapshot: snapshotOf([]), report: table4102 }) as never,
+  });
+  const refusal = await runner.perform({
+    kind: "parameter",
+    name: "CELL_COUNT",
+    value: 1,
+    expectedCurrent: 0,
+  });
+  expect(!refusal.ok, "the runner must refuse CELL_COUNT on a 4102 bike");
+  expect(
+    !refusal.ok && refusal.reason.includes("RegenFade_0"),
+    `the runner's refusal must name what is really at that index; got ${refusal.ok ? "" : refusal.reason}`
+  );
+  // The "must NOT refuse what both tables agree about" half is asserted against
+  // writeTargetProblemIn directly, above. Driving it through the runner would push
+  // MAX_DC_CHG_CURRENT past the guard and into an actual bus write against a stub
+  // channel — noise, and work this test does not need to do to prove the guard
+  // discriminates rather than vetoing wholesale.
 }
 
 expect(CURATED_WRITE_TARGETS.length === 5, `5 parameters should be RESEARCHED, ${CURATED_WRITE_TARGETS.length} are`);

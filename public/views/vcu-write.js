@@ -296,8 +296,9 @@ function ParameterForm() {
         return "";
       }
       return (
-        `These ${count} are the only parameters this can write, by design. ` +
-        "Every one of the 277 stays readable — the full table is behind “Open the full parameter table”."
+        `These ${count} are the only parameters this can write. ` +
+        "Four names appear twice in the bike's table and so have no unambiguous address, which is why eight rows are missing. " +
+        "All 277 stay READABLE — the full table is behind “Open the full parameter table”."
       );
     }),
     TargetNote(),
