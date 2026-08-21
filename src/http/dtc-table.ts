@@ -55,7 +55,11 @@ export function handleDtcTableEndpoint(req: IncomingMessage, res: ServerResponse
   res.end(SERIALISED);
 }
 
-function buildPayload(): DtcTablePayload {
+// Exported so scripts/build-service-preview.ts can generate the design preview's stub
+// from THIS table rather than a hand-copied one. The header above says why a duplicate
+// is unacceptable — "a wrong description still *looks* like an answer" — and a preview
+// that names a code wrongly is that failure on the one tab whose job is naming codes.
+export function buildPayload(): DtcTablePayload {
   const codes: Record<string, DtcTableRow> = {};
   for (const entry of DTC_TABLE) {
     codes[dtcSignalKey(entry.component, entry.symptom)] = {

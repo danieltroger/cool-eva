@@ -63,7 +63,11 @@ export function infokeyShortlistKey(component: number, symptom: number): string 
   return `${component}/${symptom}`;
 }
 
-function buildPayload(): FaultInfokeysPayload {
+// Exported so scripts/build-service-preview.ts can generate the design preview's stub
+// from THIS table rather than a hand-copied one. The header above says why a duplicate
+// is unacceptable — "a wrong description still *looks* like an answer" — and a preview
+// that names a code wrongly is that failure on the one tab whose job is naming codes.
+export function buildPayload(): FaultInfokeysPayload {
   const fields: Record<string, InfokeyFieldRow> = {};
   for (const field of INFOKEY_TABLE) {
     fields[String(field.id)] = { name: field.name, unit: field.unit, datatype: field.datatype };

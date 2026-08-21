@@ -1,6 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
+import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
+import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
 
 // Builds a single self-contained HTML file showing the service sheet with no Pi on the
 // other end. The point is being able to look at a design change before riding out to the
@@ -163,9 +165,21 @@ if (!template.includes("__CSS__")) {
 if (!/__MODULES__,?/.test(template)) {
   throw new Error("build-service-preview: the template has no __MODULES__ placeholder");
 }
+if (!template.includes("__TABLES__")) {
+  throw new Error("build-service-preview: the template has no __TABLES__ placeholder");
+}
 // Function replacements, not strings: a `$&` or `$1` inside the substituted CSS or JS
 // would otherwise be read as a replacement pattern and silently corrupt the output.
-const html = template.replace("__CSS__", () => css).replace(/__MODULES__,?/, () => modules);
+// The Faults tab fetches these two, and they are TABLES rather than bike state — so the
+// preview serves the real ones, generated here. A hand-written stub would make the
+// preview say "not in Energica's code table" about codes that are in it, which is
+// exactly the failure src/http/dtc-table.ts's own header warns about.
+const tables = JSON.stringify({ "/dtc-table": buildDtcTable(), "/fault-infokeys": buildFaultInfokeys() });
+
+const html = template
+  .replace("__CSS__", () => css)
+  .replace(/__MODULES__,?/, () => modules)
+  .replace("__TABLES__", () => tables);
 
 const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");

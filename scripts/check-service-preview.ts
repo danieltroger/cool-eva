@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const out = join(tmpdir(), "cool-eva-preview-check.html");
 const failures: string[] = [];
+const built = new Map<string, string>();
 
 console.log("\n──── scripts/check-service-preview.ts ──────────────────────────────────────────");
 console.log("     that both generated design previews are syntactically valid JavaScript");
@@ -55,7 +56,32 @@ for (const flags of [[], ["--annotated"]]) {
   if (modules < 20) {
     failures.push(`${label}: only ${modules} modules in the bundle — the registry did not fill`);
   }
-  console.log(`  ${label}: ${blocks.length} script block(s) parse, ${modules} modules`);
+  built.set(label, html);
+  // ⚠️ Logged AFTER the failures are recorded, not before: an earlier version printed
+  // "1 script block(s) parse" directly above "script block 0: Unexpected token ','".
+  if (!failures.some(failure => failure.startsWith(label))) {
+    console.log(`  ${label}: ${blocks.length} script block(s) parse, ${modules} modules`);
+  }
+}
+
+// ⚠️ THE TWO VARIANTS MUST ACTUALLY DIFFER. Without this, setting `annotated` to a
+// constant builds the whole-app template twice, prints both labels and exits 0 — the
+// annotated sheet could rot to nothing and this check would applaud.
+const whole = built.get("whole dashboard") ?? "";
+const annotated = built.get("annotated sheet") ?? "";
+if (whole === annotated) {
+  failures.push("both variants produced identical output — the --annotated flag is not selecting a different template");
+}
+
+// ⚠️ And the whole-app page must actually MOUNT the app. Deleting the one line this
+// variant exists for — `imp("app.js")` — left every other assertion here green: the
+// file parsed, the registry filled, no placeholder survived, and the page rendered
+// nothing. That is verbatim the failure this check was written to catch.
+if (!/__imp\("app\.js"\)|imp\("app\.js"\)/.test(whole)) {
+  failures.push('the whole-app preview never calls imp("app.js"), so it mounts nothing');
+}
+if (!annotated.includes("pv-panels")) {
+  failures.push("the annotated sheet has no panel host, so it renders nothing");
 }
 
 if (failures.length > 0) {
