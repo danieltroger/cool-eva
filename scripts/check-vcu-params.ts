@@ -65,6 +65,7 @@ import {
   planBitWrite,
   planWrite,
   writeTargetNamed,
+  writeTargetProblemIn,
   writeTargetNames,
 } from "../src/vcu/write-targets.ts";
 import { evaluateTableGate, registerAllowlistTableCheck } from "../src/vcu/table-gate.ts";
@@ -634,9 +635,13 @@ expect(
   "…and every table is on one side or the other, so nothing is quietly a third thing"
 );
 
-// ⚠️ THE ALLOWLIST, against every table this software carries. Today all five ids are
+// ⚠️ THE CURATED FIVE, against every table this software carries. All five are
 // identical in name, width, signedness and micro across all 28, so there is nothing to
-// refuse — this is measured rather than assumed, because it is the property that makes
+// refuse. ⚠️ That is exactly why this loop is NOT the property that makes the write path
+// safe any more: it passes on every bike, and it now covers 5 of 269 writable
+// parameters. The other 264 are checked per write by writeTargetProblemIn, because 26
+// of the 28 tables put a different parameter at the index of at least one of them. This
+// loop is measured rather than assumed, because it is what makes
 // the write path safe on a bike this repo has never seen, and the next contributed table
 // is exactly the thing that could break it.
 for (const table of builtTables) {
@@ -1534,6 +1539,46 @@ expect(
 // ALLOWLIST, and a check that cannot tell which guard fired is not checking either.
 const confirmedTable = reportTableType(snapshotOf([reading(276, "40 17"), reading(277, "40 17")]));
 
+// ⚠️ THE PER-PARAMETER TABLE CHECK. This is the guard that replaced the five-name
+// allowlist, and the first version of it was DEFINED AND NEVER CALLED — the suite stayed
+// green while a mutation making it refuse every write on every bike changed nothing. So
+// it is exercised here at both layers, against a bike naming a table that disagrees.
+//
+// Table 4102 puts `RegenFade_0` at index 70, where the active table puts `CELL_COUNT`.
+// The gate cannot see that: the curated five are identical in all 28 tables, so it says
+// writesAllowed on every bike. Only this check notices.
+const table4102 = reportTableType(snapshotOf([reading(276, "10 06"), reading(277, "10 06")]));
+const bike4102 = parameterTableFor(4102);
+expect(bike4102 !== null, "table 4102 must be rebuildable for this check to mean anything");
+if (bike4102) {
+  const cellCount = writeTargetNamed("CELL_COUNT");
+  expect(cellCount !== null, "CELL_COUNT should be writable now that every parameter is");
+  if (cellCount) {
+    const problem = writeTargetProblemIn(cellCount, bike4102);
+    expect(
+      problem !== null && problem.includes("RegenFade_0"),
+      `CELL_COUNT must be refused on a 4102 bike, naming what is really there; got ${problem}`
+    );
+    // …and the CURATED five must still pass, or the check is just refusing everything.
+    const dc = writeTargetNamed("MAX_DC_CHG_CURRENT");
+    expect(
+      dc !== null && writeTargetProblemIn(dc, bike4102) === null,
+      "MAX_DC_CHG_CURRENT is identical in all 28 tables and must NOT be refused on 4102"
+    );
+  }
+  // The codec layer, which is the one a curl cannot bypass.
+  const planned = planWrite("CELL_COUNT", 1, 0);
+  expect(planned.ok, "CELL_COUNT should plan against the ACTIVE table");
+  if (planned.ok) {
+    expectThrows(
+      () => buildWriteFrame("A9", { kind: "write-parameter", tableType: table4102, plan: planned.plan }),
+      "the codec must refuse a plan whose index means something else on the bike's own table"
+    );
+    // The same plan on a bike that agrees must still encode, or this proves nothing.
+    buildWriteFrame("A9", { kind: "write-parameter", tableType: confirmedTable, plan: planned.plan });
+  }
+}
+
 expect(CURATED_WRITE_TARGETS.length === 5, `5 parameters should be RESEARCHED, ${CURATED_WRITE_TARGETS.length} are`);
 expect(
   CURATED_WRITE_TARGETS.map(target => target.name).join(",") ===
@@ -1564,6 +1609,39 @@ expect(
   allTargets.every(target => target.name.trim().length > 0) &&
     new Set(allTargets.map(target => target.name.toUpperCase())).size === allTargets.length,
   "every writable name must be unique — an ambiguous name is an unaddressable write"
+);
+
+// ⚠️ THE BOUNDS MUST BE EXACTLY THE ENCODER'S RANGE. Advertising a value the encoder
+// refuses is a UI that offers what it cannot write; advertising one wider than the
+// record is worse. Nothing asserted this until 2026-08-21 — widening every unsigned
+// bound to 2**(bits+1)-1 left the suite green, because encodeRecord refuses later and
+// the failure only shows as a rejected write.
+for (const target of allTargets) {
+  if (target.control.kind !== "number") {
+    continue;
+  }
+  const { min, max } = target.control;
+  expect(planWrite(target.name, min, min === 0 ? 1 : 0).ok, `${target.name}: min ${min} must be writable`);
+  expect(planWrite(target.name, max, max === 0 ? 1 : 0).ok, `${target.name}: max ${max} must be writable`);
+  expect(!planWrite(target.name, min - 1, 0).ok, `${target.name}: ${min - 1} is below the record and must be refused`);
+  expect(!planWrite(target.name, max + 1, 0).ok, `${target.name}: ${max + 1} is above the record and must be refused`);
+}
+
+// ⚠️ THE EXCLUSION IS A PROPERTY OF THIS TABLE, NOT OF THE RULE. On table 20498 the
+// duplicated name is `CELL_COUNT` — a real parameter, silently unwritable there, refused
+// as though it did not exist. The rule itself generalises (it drops every copy of any
+// name seen more than once, multiplicity 3+ included); what does not generalise is the
+// reassurance that the casualties are padding words. Asserted here so the claim in the
+// docs cannot quietly become false for this bike.
+for (const name of writeTargetNames()) {
+  expect(!/^VSM_DUMMY_WORD(8|9|10|11)$/.test(name), `${name} is a duplicated name and must not be writable`);
+}
+const excluded = parameterTable()
+  .map(parameter => parameter.name)
+  .filter(name => !writeTargetNames().includes(name));
+expect(
+  excluded.every(name => /^VSM_DUMMY_WORD/.test(name)),
+  `on THIS table every excluded name should be a padding word; excluded: ${[...new Set(excluded)].join(", ")}`
 );
 
 // A generated target must ANNOUNCE that it is unresearched. This is the whole safety

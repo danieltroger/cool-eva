@@ -9,7 +9,9 @@ import {
 } from "./param-table.ts";
 import { identifierForIndex } from "./param-codec.ts";
 import { registerAllowlistTableCheck } from "./table-gate.ts";
-import { registerWritePlanVerifier } from "./write-codec.ts";
+import { registerWritePlanTableCheck, registerWritePlanVerifier } from "./write-codec.ts";
+import { parameterTableFor } from "./table-catalog.ts";
+import { evaluateTableGate } from "./table-gate.ts";
 
 // THE ALLOWLIST. The only VCU calibration parameters this repo will ever write, the
 // only values it will write into them, and the pure function that turns a request into
@@ -367,6 +369,27 @@ export function writeTargetNamed(name: string): WriteTarget | null {
   return writeTargets().find(target => target.name.toUpperCase() === wanted) ?? null;
 }
 
+/**
+ * Why a name is not writable, and what to do about it.
+ *
+ * ⚠️ Deliberately does NOT list every writable name. That sentence was written when
+ * there were five; with 269 it produced a 5 KiB refusal on a phone, which is not a
+ * message a person reads — it is one they scroll past. The two real cases are named
+ * instead, because they need different actions from the reader.
+ */
+function refusalFor(name: string): string {
+  const wanted = name.trim().toUpperCase();
+  const duplicates = parameterTable().filter(parameter => parameter.name.toUpperCase() === wanted);
+  if (duplicates.length > 1) {
+    return (
+      `“${name}” names ${duplicates.length} different parameters in this table ` +
+      `(indices ${duplicates.map(parameter => parameter.index).join(", ")}), so a write cannot say which. ` +
+      "Nothing here addresses a parameter by index, on purpose."
+    );
+  }
+  return `“${name}” is not a parameter in this bike's table. The full table is at /params.html.`;
+}
+
 /** Every writable name, so a UI's list cannot drift from the codec's. */
 export function writeTargetNames(): string[] {
   return writeTargets().map(target => target.name);
@@ -394,7 +417,7 @@ export function planWrite(name: string, requestedValue: number, previousValue: n
     // guessing identifiers at a motorcycle's EEPROM.
     return {
       ok: false,
-      reason: `${name} is not on the write allowlist. Only these may be written: ${writeTargetNames().join(", ")}`,
+      reason: refusalFor(name),
     };
   }
   if (target.control.kind !== "number") {
@@ -431,7 +454,7 @@ export function planBitWrite(name: string, bitKey: string, on: boolean, currentV
   if (!target) {
     return {
       ok: false,
-      reason: `${name} is not on the write allowlist. Only these may be written: ${writeTargetNames().join(", ")}`,
+      reason: refusalFor(name),
     };
   }
   if (target.control.kind !== "bits") {
@@ -666,4 +689,24 @@ registerWritePlanVerifier(plan => {
   // Byte for byte. The value could match while the bytes did not if a plan were
   // assembled with a hand-written record, and it is the BYTES that reach the bus.
   return expected.record.every((byte, position) => byte === plan.record[position]);
+});
+
+// Registered at load, beside registerWritePlanVerifier. The codec asks this immediately
+// before the 2E bytes are built — the last point at which a misrouted write can still
+// be stopped.
+registerWritePlanTableCheck((plan, report) => {
+  const verdict = evaluateTableGate(report);
+  if (verdict.tableType === null) {
+    // The gate refuses on its own in this case; nothing to add.
+    return null;
+  }
+  const bikeTable = parameterTableFor(verdict.tableType);
+  if (!bikeTable) {
+    return `the bike names table ${verdict.tableType}, which this software cannot rebuild`;
+  }
+  const target = writeTargetNamed(plan.name);
+  if (!target) {
+    return `“${plan.name}” is not a writable parameter`;
+  }
+  return writeTargetProblemIn(target, bikeTable);
 });

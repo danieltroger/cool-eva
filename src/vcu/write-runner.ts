@@ -19,7 +19,15 @@ import {
   type ServicePointOutcome,
   type ServiceWriteOutcome,
 } from "./write-session.ts";
-import { planBitWrite, planWrite, writeTargets, type WriteTarget } from "./write-targets.ts";
+import {
+  planBitWrite,
+  planWrite,
+  writeTargetNamed,
+  writeTargetProblemIn,
+  writeTargets,
+  type WriteTarget,
+} from "./write-targets.ts";
+import { parameterTableFor } from "./table-catalog.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
 // to it, read the result back, and write down what happened. The read engine is
@@ -381,6 +389,29 @@ async function checkPreconditions(
       // a person deciding whether to go and fix software or go and press a button, and
       // the remedy sentence is the one that tells them which.
       return { ok: false, reason: `the VCU's parameter table is ${table.state} — ${table.reason} ${table.remedy}` };
+    }
+    // ⚠️ THE GATE ABOVE ONLY ASKS ABOUT THE CURATED FIVE. Those five are identical in
+    // all 28 carried tables, so it passes on every bike — while 26 of the 28 disagree
+    // about at least one of the other 264. On a table-4102 bike, index 70 is
+    // `CELL_COUNT` here and `RegenFade_0` there, and nothing downstream would notice:
+    // ./write-session.ts re-reads, compares and reads back by plan.index, so a
+    // misrouted write reads the wrong cell, writes it, verifies it and records success.
+    // This asks about the parameter actually being written.
+    const named = "name" in request ? writeTargetNamed(request.name) : null;
+    if (named && table.tableType !== null) {
+      const bikeTable = parameterTableFor(table.tableType);
+      if (!bikeTable) {
+        return { ok: false, reason: `the bike names table ${table.tableType}, which this software cannot rebuild` };
+      }
+      const problem = writeTargetProblemIn(named, bikeTable);
+      if (problem) {
+        return {
+          ok: false,
+          reason:
+            `refusing to write ${named.name} on a bike running table ${table.tableType} — ${problem}. ` +
+            "The parameter is writable; it is this bike's table that puts something else at that index.",
+        };
+      }
     }
   }
   // Taken LAST, so a refusal for any other reason does not hold the bus while it is

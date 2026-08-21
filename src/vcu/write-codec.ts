@@ -206,7 +206,7 @@ function encodeWritePayload(request: VcuWriteRequest): Uint8Array {
       // have produced for this name; it cannot prove the name belongs to this index on
       // this bike, because that is what the parameter table says and the table is an
       // assumption until the bike confirms it.
-      assertTableTypeConfirmed(request.tableType);
+      assertTableTypeConfirmed(request.plan, request.tableType);
       return Uint8Array.from([
         SERVICE_WRITE_BY_COMMON_IDENTIFIER,
         plan.identifier >> 8,
@@ -414,7 +414,7 @@ function assertPlanIsAllowed(plan: ParameterWritePlan): void {
  * already declined with a sentence a person can act on, so reaching this line is a bug.
  * Which ids differ, and why reads are NOT gated: docs/vcu-parameters.md §4.
  */
-function assertTableTypeConfirmed(report: TableTypeReport | null): void {
+function assertTableTypeConfirmed(plan: ParameterWritePlan, report: TableTypeReport | null): void {
   const verdict = evaluateTableGate(report);
   if (!verdict.writesAllowed) {
     throw new Error(
@@ -422,6 +422,31 @@ function assertTableTypeConfirmed(report: TableTypeReport | null): void {
         `${verdict.reason} ${verdict.remedy}`
     );
   }
+  // ⚠️ The gate above only asks whether the CURATED five mean the same thing on this
+  // bike. They are identical in all 28 carried tables, so it passes everywhere — while
+  // 26 of the 28 put a different parameter at the index of at least one of the other
+  // 264. This asks about the plan in hand, and it is here as well as in
+  // ./write-runner.ts because the runner can be bypassed and this cannot: nothing
+  // reaches the bus except through buildWriteFrame.
+  const problem = planTableProblem(plan, report);
+  if (problem) {
+    throw new Error(`vcu-write: refusing to encode a write to ${plan.name} — ${problem}`);
+  }
+}
+
+/**
+ * Set once at module load by ./write-targets.ts, for the same circular-import reason as
+ * `isAllowedPlan` below. ⚠️ The stub REFUSES rather than permits: a build where
+ * write-targets.ts never loaded must write nothing, not everything.
+ */
+let planTableProblem: (plan: ParameterWritePlan, report: TableTypeReport | null) => string | null = () =>
+  "write-targets.ts was never loaded, so no table check could run";
+
+/** Called once, by ./write-targets.ts at module load. Not part of the public surface. */
+export function registerWritePlanTableCheck(
+  check: (plan: ParameterWritePlan, report: TableTypeReport | null) => string | null
+): void {
+  planTableProblem = check;
 }
 
 /**
