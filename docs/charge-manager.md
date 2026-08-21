@@ -532,6 +532,10 @@ Every `.log` in `~/Documents/cool-eva-archive` over 1 024 bytes — **116 files*
 
 🟡 The 500 matches the count already in this document exactly, and the three windows are the same three. Nothing new was found by looking harder, which is the first thing worth saying. ⚠️ But 921 388 raw is **fewer** than the 968 629 "deduplicated" this document records above, and deduplication can only remove frames. One of the two counts is wrong; the fault conclusions do not depend on which, because the sweep here reads every file and the fault frames are 500 either way. Recorded so the next person recounting does not think they have found a new discrepancy.
 
+⚠️ **There is a third number, and the mechanism has a name: `~/Documents/cool-eva-archive/ride-captures3/` is a duplicate directory.** All 59 of its `.log` files share a basename with a file at the archive root, and the ones compared are byte-identical (`capture-20260804-035625-c8fe853f.log`, same SHA at both paths). A RECURSIVE sweep therefore counts them twice: 906 305 raw `0x610` frames instead of 850 361, and 339 intermediate b7 frames instead of 319 — the difference is exactly the duplicate contribution. **No fault conclusion moves**: all 500 fault frames and all 3 563 VCU-flag frames live in three non-duplicated root files. But "that is 100 % of the raw CAN on this disk" is the sentence every coverage claim rests on, so how the file set was enumerated has to be stated with it.
+
+⚠️ **And segmenting by capture file is necessary, not sufficient.** `capture-20260809-144317-edcdcf23.log` carries **62 frames stamped `2060-02-09`** out of roughly 7 million, producing an apparent −3600.8 s jump in the middle of one file. Negligible here, and the same failure family as the cross-file clock skew above: a bad clock inside a single file is not caught by "segment by capture file first".
+
 Every frame of `0x610` in the archive is DLC 8, so no fault frame can have been missed by a length mismatch.
 
 ### There are FOUR failed charge attempts, not three — and the fourth has no code
@@ -540,12 +544,14 @@ The three `0x610` error episodes are not the whole set of charge failures, becau
 
 A second archive-wide sweep, for `0x100` byte 7 bit 1 — `vcu_err_charge_manager`, Energica's `ERR_ChargeCM_Out` — finds it set in **3 563 frames, in exactly three capture files, all within four events**:
 
-| #   | when                    | where                | `0x610` code                   | duration of the VCU bit |
-| --- | ----------------------- | -------------------- | ------------------------------ | ----------------------- |
-| E0  | 2026-08-09 14:37:09.720 | 56.50178, 12.95665   | **none — src and code stay 0** | 269.7 s                 |
-| E1  | 2026-08-02 18:55:16.011 | no GPS fix           | (7, 1101)                      | ≥ 17.3 s, capture ends  |
-| E2  | 2026-08-08 17:41:32.413 | 55.72463, 13.14987 † | (8, 1101)                      | ≥ 6.5 s, capture ends   |
-| E3  | 2026-08-09 14:41:46.240 | 56.50178, 12.95665   | (7, 853)                       | 62.6 s                  |
+| #   | when                    | where              | `0x610` code                   | duration of the VCU bit |
+| --- | ----------------------- | ------------------ | ------------------------------ | ----------------------- |
+| E0  | 2026-08-09 14:37:09.720 | 56.50178, 12.95665 | **none — src and code stay 0** | 269.7 s                 |
+| E1  | 2026-08-02 18:55:16.011 | no GPS fix         | (7, 1101)                      | ≥ 17.3 s, capture ends  |
+
+⚠️ **Durations here are the frame span plus one 10 Hz tick**, on the reading that the last frame holds for its own period. So E1's eight error frames span 0.700 s and are reported as 0.80. Defensible, but it must be stated or anyone re-deriving gets a different number: E3 43.70 → 43.80, E0's VCU window 269.62 → 269.7, E3's 62.51 → 62.6.
+
+| E2 | 2026-08-08 17:41:32.413 | no fix in either capture † | (8, 1101) | ≥ 6.5 s, capture ends | | E3 | 2026-08-09 14:41:46.240 | 56.50178, 12.95665 | (7, 853) | 62.6 s |
 
 † E2's own capture carries no `0x410` at all; the position is from the capture two minutes later, at the same stop. E1 has no fix — the hub reports 0, 0 — and so does the capture that follows it.
 
@@ -591,7 +597,7 @@ The owner describes two failure modes that feel different from the saddle: **Mod
 | E3            | **0**, over 6.2 min at 100 Hz         | Mode A (agrees with the owner's own check) |
 | 15:23 success | 0                                     | —                                          |
 
-So three of the four are unambiguously Mode A: 15 099 (E0), 15 333 (E1) and 36 819 (E3) consecutive frames of `0x101` with no gap over half a second, straight through the fault, the clear and the retry. **The one that is not is E2** — and E2 is also the only one of the four whose capture file ends within 1.4 s of the last error frame, with the next capture carrying a new boot id 9 s later.
+So three of the four look like Mode A on the one test available: 15 099 (E0), 15 333 (E1) and 36 819 (E3) consecutive frames of `0x101` with no gap over half a second, straight through the fault, the clear and the retry. **The one that is not is E2** — and E2 is also the only one of the four whose capture file ends within 1.4 s of the last error frame, with the next capture carrying a new boot id 9 s later.
 
 ⚠️ **This is suggestive and it is not proof, for the reason in §E2 above**: a 92.7 s hole in a single continuous candump is what a dead bus looks like and also what a re-initialised `can0` looks like. What can be said without hedging is that the bus-continuity test **works** and **separates** — it is not a test that says the same thing about every episode.
 
@@ -617,7 +623,9 @@ SOC, pack voltage, both pack temperatures, the BMS state byte, the BMS error and
 
 🧨 **And the station is not it either, which one visit settles on its own.** E0 failed at 56.50178, 12.95665 at 14:37 with no code. E3 failed at the same coordinates at 14:41 with (7, 853). Then, at the same coordinates, in the same visit, the bike charged for **19.9 minutes at up to 60 A** — the session that runs 14:46:47 → 15:06:38 in `capture-20260809-144317-edcdcf23.log`, whose own `0x410` fixes read 56.50178, 12.95665. Same charger, same cable, same pack at 9 % and 35 °C, minutes apart, two failures and then a success. Whatever `(7, 853)` is, it is not "this station does not work with this bike".
 
-**And E2's stop does the same thing independently.** E2 fails at 17:41:32; at 17:43:40, at 55.72463, 13.14987 — the same stop — the bike starts the session that delivers **73 A** for the next 11 minutes. Two stops, two failure-then-success pairs, on two different days at two different chargers.
+⚠️ **E2 has no position, and an earlier draft gave one to five decimals.** It said 55.72463, 13.14987, "from the capture two minutes later, at the same stop". E2's own capture has zero `0x410` frames, and the next capture has no fix at all until 18:03:28 — after its session had ended. That coordinate is a single sample at 18:05:18 on a continuous MOVING track (~100 m every 4 s, ≈ 90 km/h), roughly 24 minutes later and about **1 km** from where the bike actually stood; the last stationary fixes are near 55.7158-55.7169, 13.1560. The substance is unaffected and was re-derived: E2 fails, and the same stop delivers 73 A two minutes later.
+
+**And E2's stop does the same thing independently.** E2 fails at 17:41:32; at 17:43:40 — the same stop — the bike starts the session that delivers **73 A** for the next 11 minutes. Two stops, two failure-then-success pairs, on two different days at two different chargers.
 
 ❌ **"The station never offered anything" is NOT the discriminator, and this is the trap.** `0x620` reads `00 00 00 FF` for the whole of all three episodes, which looks decisive until it is timed. The successful 15:23 session **also** reads `00 00 00 FF` for its first **25.04 s** — and E1 faults at 2.94 s and E3 at 6.64 s, both well inside that. Across the corpus, in the six sessions captured from the charge manager's first frame, the first real offer arrives at **+9.5, +9.6, +10.6, +10.7, +13.5 and +25.0 s**. (A seventh, 2026-08-08 17:43, reads +64.2 s, but its capture opens mid-session so its zero is the capture start rather than a wake — an upper bound, not a measurement.) At the instant either fault fires, "no offer yet" is the normal state. It is confirmed that no offer ever came in any failed attempt, and that is a description of the failure, not a precondition of it.
 

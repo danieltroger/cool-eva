@@ -14,9 +14,12 @@
 // ⚠️ This block used to say the charge manager's own `CM_ERROR_SOURCE` / `CM_ERROR_CODE`
 // "is not broadcast anywhere and needs a diagnostic session". That was wrong: it is on
 // 0x610 b1 and b2-3 at 10 Hz, decoded since 2026-08-20 (src/can/charge-manager.ts). The
-// two are worth keeping side by side rather than one replacing the other — through all
-// three fault episodes in the archive, 0x610 carried a source and a code while THIS bit
-// stayed 0, so the rollup is not simply a summary of them.
+// two are worth keeping side by side rather than one replacing the other. ⚠️ This used to
+// say the bit "stayed 0" through all three fault episodes; it does not, and the reason to
+// keep both is the opposite of what was written. The bit rises 0.162 s after 0x610
+// publishes a code in three episodes — and in a FOURTH it is set for 269.7 s with 0x610
+// b1-3 at zero throughout. So neither is a summary of the other, and a charge-fault check
+// that watches only one misses that fourth event entirely.
 
 import { type DecodedValue, bit } from "./frame.ts";
 

@@ -515,9 +515,14 @@ const REPLAY: ReplayCase[] = [
   },
   {
     id: 0x100,
-    frame: "00 00 80 00 00 00 00 03",
-    why: "⚠️ SYNTHETIC — the only frame here that is not off the bus. ERR_ChargeCM_Out reads 0 in all 105 736 captured frames of 0x100, including a complete DC fast charge, so the set case has never been seen. This pins the bit position against the byte the 2026-08-09 12:38:35 fault window should show: byte 7 stepping 0x01 → 0x03",
-    expect: { vcu_err_charge_manager: 1, vcu_12v_power_good: 1, vcu_flags_high: 0x03000000 },
+    frame: "02 00 80 00 00 00 00 03",
+    why: "✅ Off the bus, 2026-08-02 18:55:16.010972, capture-20260802-184638-1c8fc1e2.log — the instant ERR_ChargeCM_Out rose, 0.162 s after 0x610 published a charge-manager error. This fixture was SYNTHETIC until 2026-08-21, on the stated grounds that the set case had never been seen; it is set in 3 563 archive frames across four windows, and the 105 736-frame sample that said otherwise was too small",
+    expect: {
+      vcu_err_charge_manager: 1,
+      vcu_12v_power_good: 1,
+      vcu_flags_low: 0x00800002,
+      vcu_flags_high: 0x03000000,
+    },
   },
   // 0x121 — the rider's charge-current dial. Every frame below is off the bus. The three
   // positive cases are the ones that carry the argument: the current settled on the
