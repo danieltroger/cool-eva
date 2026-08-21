@@ -519,7 +519,30 @@ All eight bytes are `00` in 100.000 % of 157 441 frames, so only its presence ca
 
 ---
 
-## The fault corpus — every charge failure in the archive, and what it decodes to
+## The fault corpus
+
+### 🟡 Is `CM_ERROR_SRC` the DTC symptom number? Probably not, and here is the timing
+
+Energica's `dtcodes.emsd` gives component **54 = CM ERROR** fourteen named symptoms, C1003…C1018 — all fourteen already in `src/diagnostics/dtc-table.ts` from an independent source, which is why a stored `C1010` renders as PROTOCOL ERROR on the Faults tab today. All fourteen store the same five info-keys, including **118 `CM_ERROR_SOURCE`, 119 `CM_ERROR_CODE_MSB`, 120 `CM_ERROR_CODE_LSB`** — the same two fields `0x610` carries live.
+
+That invites an obvious identification: our live sources are **7 and 8**, and symptoms 7 and 8 are `PROTOCOL ERROR` and `CM APPLICATION LAYER ERROR`, both layer names, which is the sort of thing a "source" holds. ⚠️ **Do not adopt it.** The corpus argues against it, and the timing is what makes the argument bite:
+
+|                         |                                                              |
+| ----------------------- | ------------------------------------------------------------ |
+| E2 fires `src 8`        | 2026-08-08 **17:41:32**                                      |
+| the stored list is read | 2026-08-08 **18:21**, forty minutes later                    |
+| symptom 8 is `C1011`    | **not in the stored list**                                   |
+| symptom 7 is `C1010`    | **is** in the stored list, matching src-7 episodes E1 and E3 |
+
+So "the DTC had not latched yet" does not explain the miss — C1011 had forty minutes. Stored symptoms are `{0, 3, 5, 7, 9, 11}`; observed sources are `{0, 7, 8}`. One clean match, one clean miss, and four stored symptoms whose number has never appeared as a source.
+
+Two readings survive and this corpus cannot separate them: the source is not the symptom, **or** it is and E2 never latched a DTC at all — E2 ends with the capture, so how it resolved is unknown.
+
+⚠️ **The code is a separate question and is not named by anything.** 853 (`0x0355`) and 1101 (`0x044D`) are not C-numbers, there is no `VAL_` table for `CM_ERROR_CODE` in the factory DBC, no `/e:` enum in the `.sym`, and neither value appears in the manufacturer's service tool's resource bundle. Two values is a list, not a pattern.
+
+**What would settle it**, in order of cost: read a stored component-54 DTC whose `118` is non-zero and compare it against the symptom it was filed under. We have exactly one component-54 freeze frame — `(54, 11)` `C1014` UNCLASSIFIED CM ERROR — and its `118/119/120` triple is **`0, 0, 0`**. 🟡 That is itself a lead: `C1014` UNCLASSIFIED may be precisely the symptom stored _when there is no source and code to store_, in which case the informative freeze frames are the other thirteen and this one never could have helped.
+
+— every charge failure in the archive, and what it decodes to
 
 Written 2026-08-20 from a fresh sweep, to answer one question: **with every fault the archive contains, what can actually be decoded about `charge_manager_error_src` and `charge_manager_error_code`?** The short answer is at the top of §"What the failures share", and it is mostly negative. The useful results are elsewhere: a second, independent frame that agrees with these bytes, a fourth failure the error bytes did not report at all, a step-path split that is clean but tiny, and two things in this document that were wrong.
 
