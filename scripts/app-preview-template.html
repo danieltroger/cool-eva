@@ -597,13 +597,32 @@ __MODULES__
         if (__TABLES[path]) {
           return json(__TABLES[path]);
         }
-        // Bike STATE, not a table. An honest empty answer: the preview has no bike, and
-        // saying so is better than inventing stored codes that would then be "decoded".
+        // Bike STATE, not a table — and these must match their real response CONTRACTS,
+        // not merely be "empty". ⚠️ A first attempt returned {readAt, codes: []}, which
+        // threw ten TypeErrors per load (faults.js reads snapshot.stored.state) and, worse,
+        // `codes: []` is the shape reserved for "the bike answered with zero codes". That is
+        // the invented answer `not-asked` exists to prevent — its own comment in
+        // src/diagnostics/stored-codes.ts says folding it into no-response would be
+        // "exactly the kind of invented answer this file exists to avoid". Rejecting, as the
+        // old stub did, was strictly better than answering in the wrong shape.
         if (path === "/stored-dtcs") {
-          return json({ readAt: null, codes: [], source: "preview — no bike behind this page" });
+          const notAsked = { state: "not-asked", reason: "preview — no bike behind this page" };
+          return json({
+            stored: notAsked,
+            pending: notAsked,
+            permanent: notAsked,
+            freezeFrame: null,
+            readAt: null,
+            ageMs: null,
+          });
         }
         if (path === "/vcu-params") {
-          return json({ snapshot: null, report: null, note: "preview — no sweep has run on this Pi" });
+          // The real union is {state: "never-read" | "snapshot" | "unreadable"}.
+          return json({
+            state: "never-read",
+            directory: "(preview)",
+            hint: "no sweep has run on this Pi — there is no bike behind this page",
+          });
         }
         if (/^https?:/.test(request)) {
           // Deliberately NOT passed to the real fetch. This file is published as a

@@ -83,6 +83,19 @@ if (!/__imp\("app\.js"\)|imp\("app\.js"\)/.test(whole)) {
 if (!annotated.includes("pv-panels")) {
   failures.push("the annotated sheet has no panel host, so it renders nothing");
 }
+// ⚠️ The host EXISTING is not the host being filled. Emptying PANELS renders an
+// annotated sheet with zero panels and every other assertion here stays green — the
+// annotated twin of the imp("app.js") hole above. Counted rather than merely present.
+// Structural, not a text count: a count of `kind:` lines cannot tell which array they
+// are in, so gutting PANELS while leaving the entries elsewhere would pass. This asserts
+// the declaration itself opens onto an object.
+if (!/const PANELS = \[\s*\{/.test(annotated)) {
+  failures.push("the annotated sheet's PANELS array is empty — it would render no panels");
+}
+const panelCount = (annotated.match(/^\s*kind: "(key|sheet|actions)",$/gm) ?? []).length;
+if (panelCount < 5) {
+  failures.push(`the annotated sheet declares only ${panelCount} panels`);
+}
 
 if (failures.length > 0) {
   console.error("\nFAILED:");
