@@ -117,6 +117,8 @@ Measure the rail at the IBT-2's 12 V terminal under load, then set the cap to `1
 
 Two straight lines, both leaving the 30 % floor at 35 °C and differing only in where they reach 100 %. `batt_temp_hi` is the input to both; `src/fan/curve.ts` is the arithmetic and it is pure, so `scripts/check-fan-curve.ts` replays every point of it with no bike.
 
+⚠️ **Every temperature in the table below is a considered choice and none of them is a measurement.** 35, 48 and 54 have never been checked against how much air this radiator needs at a given pack temperature — §8 says so, and this is the table a reader takes the numbers from, so it says so here too. The datum that would settle them is one hot DC session logged with `FAN_ENABLED=1`. The same marker as §1's locked-rotor row, for the same reason.
+
 | Condition | The fan runs when | 30 % at | 100 % at |
 | --- | --- | --- | --- |
 | **DC charging** — `charge_manager_state` = `0x23` | **always.** The floor is unconditional | ≤ 35 °C | 54 °C |
@@ -131,6 +133,8 @@ So 48 °C is **100 % riding and 78 % on DC**: the second curve is not the first 
 **Above 90 km/h the fan stops.** The airstream through the duct is already doing the work, and a fan motor driven backwards by ram air is not something to add current to. The gate is on speed alone: a hot pack at 120 km/h is a hot pack that is being cooled anyway.
 
 ### Hysteresis: 35/33 °C and 90/93 km/h
+
+⚠️ **The two gaps are chosen, not measured, and so is the speed gate itself.** What follows the table is a solid argument for _why there is hysteresis at all_ — both bare thresholds provably chatter. It is not an argument for 2 °C and 3 km/h rather than 1 and 5, and no measurement has been made that would be. Same §8 caveat as the curve above.
 
 | Threshold        | Starts the fan    | Keeps it running  |
 | ---------------- | ----------------- | ----------------- |
@@ -174,7 +178,10 @@ Three signals, each one keystroke away from a near-miss that would be wrong only
 
 Two consequences worth stating plainly:
 
-- **A bike whose BMS config never emits `batt_temp_hi` runs the fan at 30 % for ever**, one minute after boot, with the fault on screen. That is the same rule seen from its worst angle, and the fix is the dashboard fault, not a quieter default.
+- **A bike whose BMS config never emits `batt_temp_hi` runs the fan at 30 % for ever**, one minute after boot. That is the same rule seen from its worst angle, and it is still the right answer: a floor is survivable and "off" on no evidence is not.
+
+  ⚠️ **The fault is _available_, not _shown_.** `fan_auto_reason` is rendered by `public/views/fan.js` and by nothing else, and that section lives behind the menu sheet — there is no fan tile on the main dashboard. So the rider who most needs to see it is the one with no reason to open the sheet, and from the outside a fan at 30 % on a warm day is indistinguishable from a fan at 30 % on the curve. An earlier draft of this section argued for the floor _because_ the fault is on screen; that was doing work the dashboard does not currently do. Surfacing reason 2 on the main view the way a sensor fault is surfaced would make the argument true as written, and is a change to make deliberately rather than a claim this page gets to make today.
+
 - Before the _first_ reading has ever arrived the fan waits rather than running — reason `NO_READING_YET` — because a restart is not a dead sensor. That grace is the same 60 s, so a Pi that never hears from the BMS still ends at the floor.
 
 ### The slider, and why there is no arming any more
@@ -309,6 +316,6 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
   - **a fuse that _does_ clear is equally invisible.** The Pi goes on writing duty cycles into a dead circuit and the dashboard goes on rendering "Running at 60 %", because that is what was commanded. Nothing here can tell a spinning fan from an open fuse — which is why the fuse argument in §4 could never have been self-checking even if the numbers had held.
 - **Manual mode has no shutoff.** In automatic the curve takes the fan back down on its own; a duty set from the slider runs until you set another, until the mode goes back to automatic, or until the service restarts — and a restart is a return to automatic, since the mode is not persisted. A `SIGTERM` (`systemctl restart`, the dashboard's Update button) stops the loop and then idles the bridge, in that order, so a tick cannot re-command a process that is leaving. A `SIGKILL` skips both — but the unit is `Restart=on-failure` with `RestartSec=5` (`scripts/setup-service.ts`), so the process is back about **five seconds** later and `openFanPwm()` drops both enables as its first statement. The `config.txt` `gpio=` lines are the backstop for the case where it does not come back at all.
 - **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, 54, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. What exists is the arithmetic, checked; what does not exist is a ride or a DC session logged against it. The first hot DC charge with `FAN_ENABLED=1` is the datum to go and get.
-- **A pack whose `batt_temp_hi` never arrives runs the fan at 30 % for ever** in automatic, one minute after boot, with the fault on screen. §4 "When the temperature goes away" argues why that is the right answer and not a bug.
+- **A pack whose `batt_temp_hi` never arrives runs the fan at 30 % for ever** in automatic, one minute after boot, with the fault visible only inside the menu sheet and nowhere on the main dashboard. §4 "When the temperature goes away" argues why the floor is the right answer and not a bug, and says plainly what the fault does and does not reach.
 - **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4.
 - **The udev race** described in §5 is unhandled.

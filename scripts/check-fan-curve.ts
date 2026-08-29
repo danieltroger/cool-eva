@@ -8,9 +8,11 @@ import {
 } from "../public/lib/fan-display.js";
 import { SIGNALS } from "../src/can/registry.ts";
 import { defineSignals, latestValue, record } from "../src/can/signals.ts";
+import type { FanCommandResult, FanController, FanState } from "../src/fan/control.ts";
 import { KICK_START_MS, MIN_RUNNING_DUTY_PERCENT, startFanControl } from "../src/fan/control.ts";
+import { monotonicNow, since } from "../src/monotonic.ts";
 import type { FanPwm } from "../src/fan/pwm.ts";
-import { startFanAutomatic } from "../src/fan/auto.ts";
+import { AUTO_TICK_MS, CHARGE_SESSION_MAX_AGE_MS, SPEED_MAX_AGE_MS, startFanAutomatic } from "../src/fan/auto.ts";
 import {
   CHARGE_MANAGER_STATE_DC,
   DC_CURVE_TOP_C,
@@ -153,10 +155,14 @@ check(
   "…and a stopped one at 91 km/h stays stopped, which is the same speed and the other answer",
   dutyAt({ ...hot, speedKmh: 91, previouslyRunning: false }) === 0
 );
-check(
-  `a running fan finally stops at ${SPEED_GATE_OFF_KMH} km/h`,
-  dutyAt({ ...hot, speedKmh: SPEED_GATE_OFF_KMH, previouslyRunning: true }) === 0
-);
+// ⚠️ Literal 92 and 93 for the same reason 89 and 90 above are literals. Written as
+// `speedKmh: SPEED_GATE_OFF_KMH` this passed for EVERY value of the constant, because
+// belowSpeedGate() compares with `<` against that same number — a stop gate moved to
+// 110 km/h left the whole section green, and a fan still running 19 km/h past the gate
+// the doc names went unnoticed. The constant is pinned separately, once.
+check("the stop gate is the 93 km/h the doc says, so the band is 3 km/h", SPEED_GATE_OFF_KMH === 93);
+check("a running fan is still running at 92 km/h", dutyAt({ ...hot, speedKmh: 92, previouslyRunning: true }) === 84);
+check("…and finally stops at 93", dutyAt({ ...hot, speedKmh: 93, previouslyRunning: true }) === 0);
 check("an ABSENT speed opens the gate rather than closing it", dutyAt({ ...hot, speedKmh: null }) === 84);
 check(
   "⚠️  and so does an impossible one — the failure that would hold the fan off over a hot pack",
@@ -182,10 +188,17 @@ check(
   "…and a stopped one at 34 °C stays stopped, which is the same pack and the other answer",
   dutyAt({ packTemperatureC: 34, previouslyRunning: false }) === 0
 );
+// ⚠️ Literals again, and the same defect this had: `packTemperatureC: FAN_OFF_TEMPERATURE
+// _C` is true for every value of it, since warmEnough() compares with `>` against that
+// same constant. A 15 °C hysteresis band instead of the documented 2 °C was green — and
+// the 2 °C is what docs/fan-control.md argues stops a fan chattering on a whole-degree
+// signal, so the band is the thing that has to be held, not just the mechanism.
+check("the stop threshold is the 33 °C the doc says, so the band is 2 °C", FAN_OFF_TEMPERATURE_C === 33);
 check(
-  `a running fan finally stops at ${FAN_OFF_TEMPERATURE_C} °C`,
-  dutyAt({ packTemperatureC: FAN_OFF_TEMPERATURE_C, previouslyRunning: true }) === 0
+  "a running fan is still running at 33.1 °C",
+  dutyAt({ packTemperatureC: 33.1, previouslyRunning: true }) === MIN_RUNNING_DUTY_PERCENT
 );
+check("…and finally stops at 33", dutyAt({ packTemperatureC: 33, previouslyRunning: true }) === 0);
 
 // --- 5. The three staleness tiers, and never-silently-off --------------------
 //
@@ -407,6 +420,22 @@ const TICK_MS = 20;
 // they guard is a bus that has stopped talking, and reproducing one at the real 3 s and
 // 5 s would put eight seconds of sleep into every CI run.
 const STALE_MS = 400;
+
+// ⚠️ …which is exactly what makes the SHIPPED windows invisible below: everything from
+// here on proves the MECHANISM at 400 ms and pins nothing about 3 s. So each one is
+// pinned as a literal here, the way TEMPERATURE_GRACE_MS is in §5. The first is the
+// failure src/fan/auto.ts sets in bold: with a one-hour window a `speed_can_kmh` of 120
+// from ten minutes ago is still "fresh", the gate stays shut, and the fan is held off
+// over a hot pack in a garage — on a bike with no tacho and with a green build.
+check("speed goes stale after the 3 s the doc says, not whenever", SPEED_MAX_AGE_MS === 3_000);
+// The docstring says this is deliberately the same 5 s as src/vcu/write-runner.ts, whose
+// own copy is a module-private const. Pinning both to the literal is what keeps that
+// sentence true across two files that cannot see each other.
+check(
+  "a DC session ends 5 s after 0x610 stops, the same 5 s the charge write uses",
+  CHARGE_SESSION_MAX_AGE_MS === 5_000
+);
+check("and the curve is re-evaluated every 2 s", AUTO_TICK_MS === 2_000);
 const controller = await startFanControl({ enabled: true, openPwm: async () => recording });
 const automatic = startFanAutomatic(controller, {
   tickMs: TICK_MS,
@@ -516,6 +545,9 @@ check(
 );
 
 record("batt_temp_hi", 45);
+// Nothing re-records batt_temp_hi from here to the end of the manual session below, so
+// this mark is when the loop's LAST GOOD READING arrived.
+const hotReadingArrivedAt = monotonicNow();
 await ticks(2);
 check("a hot pack starts it again", controller.state().driverEnabled);
 
@@ -529,6 +561,37 @@ calls.length = 0;
 await ticks(4);
 check("⚠️  and the curve leaves it alone afterwards — otherwise the drag would be undone in 2 s", calls.length === 0);
 
+// ⚠️ The grace is measured from when the READING arrived — sampleTemperature() marks
+// `now − age`, not `now`. With the mark set to `now`, every tick refreshes it while the
+// same old value sits in the store, the age never grows, the grace never expires and the
+// fail-safe §5 asserts can never fire on a bike. Ten ticks have run against one reading
+// by now and the age has to have grown with them.
+const heldAgeMs = automatic.state().temperatureAgeMs;
+const sinceHotReading = since(hotReadingArrivedAt);
+check(
+  "⚠️  the grace clock runs from when the reading ARRIVED, not from the tick that read it",
+  // The first half keeps the second from being vacuous: ten ticks have run against this
+  // one reading, so a mark refreshed per tick would read one tick here rather than ten.
+  // The 1 ms allowance is the reconstruction's own rounding — `now − age` is two clock
+  // reads, so it lands a few microseconds after the arrival it is reconstructing.
+  sinceHotReading > TICK_MS * 4 && heldAgeMs > sinceHotReading - 1
+);
+
+// ⚠️ Sampling sits ABOVE the mode check in runTick's evaluate(), so a reading that
+// arrives during a MANUAL session is still remembered — which is what keeps /fan's
+// temperatureAgeMs honest while the slider drives, and what makes a sensor that dies
+// mid-session read as having died then rather than at the last automatic tick.
+const manualReadingArrivedAt = monotonicNow();
+record("batt_temp_hi", 46);
+await ticks(3);
+const manualAgeMs = automatic.state().temperatureAgeMs;
+check(
+  "⚠️  the loop keeps watching batt_temp_hi through a manual session",
+  // Younger than the reading it held a moment ago, so it really did adopt this one, and
+  // no older than this one is — which is what /fan reports while the slider is driving.
+  automatic.mode() === "manual" && manualAgeMs < heldAgeMs && manualAgeMs < since(manualReadingArrivedAt) + 1
+);
+
 const back = await automatic.setMode("automatic");
 check(`handing it back re-commands at once (${back.message})`, back.ok && controller.state().driverEnabled);
 
@@ -538,6 +601,59 @@ record("batt_temp_hi", 60);
 await ticks(4);
 check("a stopped loop stops ticking, so a shutdown cannot be re-commanded into", calls.length === 0);
 await controller.stop();
+
+// --- 11. A tick that throws does not take the loop with it -------------------
+//
+// ⚠️ The interval discards each tick's promise, so a rejection inside one is unhandled:
+// today Node ends the process — the CAN logging and the WebSocket with it, every 2 s —
+// and with that default relaxed the fan simply holds its last duty in silence instead.
+// Nothing on today's paths rejects, but that is a property of four other files rather
+// than of this one, so the guard is driven with a controller that does.
+
+console.log("\n11. a tick that throws is logged, and the next one still runs");
+
+let commandAttempts = 0;
+const brokenState: FanState = { dutyPercent: 0, targetPercent: 0, driverEnabled: false, phase: "idle" };
+const breakingController: FanController = {
+  configured: true,
+  fault: null,
+  setDutyPercent: async percent => {
+    commandAttempts += 1;
+    if (commandAttempts === 1) {
+      throw new Error("pinctrl vanished mid-tick");
+    }
+    brokenState.targetPercent = percent;
+    brokenState.dutyPercent = percent;
+    brokenState.driverEnabled = percent > 0;
+    brokenState.phase = percent > 0 ? "running" : "idle";
+    return { ok: true, message: `commanded ${percent} %` };
+  },
+  state: () => brokenState,
+  stop: async () => {},
+};
+
+// Listened for rather than left to Node: the default handler ENDS THE PROCESS, so an
+// escaped rejection would read as "the check crashed" rather than as the named assertion
+// below going red, and a red build should say which property broke.
+let unhandled: unknown = null;
+const noteUnhandled = (reason: unknown): void => {
+  unhandled = reason;
+};
+process.on("unhandledRejection", noteUnhandled);
+
+const breakingLoop = startFanAutomatic(breakingController, {
+  tickMs: TICK_MS,
+  speedMaxAgeMs: STALE_MS,
+  chargeSessionMaxAgeMs: STALE_MS,
+});
+record("batt_temp_hi", 45);
+await ticks(4);
+breakingLoop.stop();
+process.off("unhandledRejection", noteUnhandled);
+
+check("a command that throws does not escape the tick as an unhandled rejection", unhandled === null);
+check(`…and the loop is still ticking afterwards (${commandAttempts} attempts)`, commandAttempts >= 2);
+check("so the fan reaches the duty the curve asked for, one tick late", brokenState.targetPercent === 84);
 
 console.log("");
 if (failures > 0) {

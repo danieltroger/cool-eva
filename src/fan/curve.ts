@@ -10,6 +10,8 @@ import { MIN_RUNNING_DUTY_PERCENT } from "./control.ts";
 //
 // Every number here — the two curves, the hysteresis pairs, the 60 s grace — is
 // argued in docs/fan-control.md §"The automatic curve". Read that before changing one.
+// ⚠️ Argued, not measured: none of them has been checked against what this radiator
+// actually needs, and both tables there carry the marker saying so.
 
 /** ⚠️ 0x610 b7 = 0x23 is a DC session. NOT `charge_type`, which flaps 1↔0 mid-session. */
 export const CHARGE_MANAGER_STATE_DC = 0x23;

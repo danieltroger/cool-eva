@@ -143,16 +143,40 @@ export function startFanAutomatic(controller: FanController, options: FanAutomat
   };
 }
 
+/** One evaluation, and the only place a failed one is turned back into a next tick. */
+async function runTick(context: AutoContext): Promise<void> {
+  try {
+    await evaluate(context);
+  } catch (error) {
+    // ⚠️ setInterval() above discards this promise, so a rejection that got out of here
+    // would be unhandled — which today ends the process, taking the CAN logging and the
+    // WebSocket with it, and tomorrow leaves the fan at whatever it last commanded with
+    // nothing on the dashboard saying the loop stopped. Same shape as ../can/link-status
+    // .ts: the catch lives inside the async function, names what failed, and lets the
+    // next tick retry. Nothing on today's paths rejects; that is a property of four
+    // other files staying as they are, not of this one.
+    console.warn("fan: automatic tick failed —", error);
+    // Forgotten for the same reason a refused command is: what the bridge is holding is
+    // now unknown, so the next tick must command rather than believe a match.
+    context.lastCommandedPercent = null;
+  }
+}
+
 /**
- * One evaluation: sample, decide, and command only if the answer moved.
+ * Sample, decide, and command only if the answer moved.
  *
  * ⚠️ The mode check and the setDutyPercent() call are in ONE synchronous run, and that
  * is what keeps a tick from overriding a slider drag. ./control.ts queues commands in
  * call order, so a manual command issued after this line is queued after it and wins;
  * one issued before was already queued before it. There is no window between them for a
  * mode change to land in, so nothing here needs a generation counter to notice one.
+ *
+ * ⚠️ And the sampling is ABOVE the mode check on purpose: the loop keeps watching
+ * `batt_temp_hi` through a manual session, so /fan's `temperatureAgeMs` stays honest
+ * while the slider is driving and a sensor that dies mid-session is remembered as having
+ * died then rather than at the last automatic tick.
  */
-async function runTick(context: AutoContext): Promise<void> {
+async function evaluate(context: AutoContext): Promise<void> {
   sampleTemperature(context);
   if (context.mode !== "automatic") {
     return;

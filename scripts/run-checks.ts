@@ -131,8 +131,26 @@ const CHECKS: SelfCheck[] = [
       "that charge_type's DC value 2 does not select the DC curve, that an absent or impossible speed opens the " +
       "gate rather than holding the fan off over a hot pack, that the Pi's own bounds on batt_temp_hi are the " +
       "dashboard's, that every reason code has both a bound and a sentence, and that no slider stop lands in the " +
-      "dead band under the floor. The last section drives the real controller through a recording FanPwm, which " +
-      "is the only place the running-phase duty change issue #119 reports as unreached is reached",
+      "dead band under the floor. Every threshold is pinned to a LITERAL — an assertion phrased in the constant it " +
+      "is checking passes for every value of that constant, which is how a stop gate at 110 km/h and a one-hour " +
+      "speed-staleness window were both green here. The last two sections drive the real controller through a " +
+      "recording FanPwm — the only place the running-phase duty change issue #119 reports as unreached is reached " +
+      "— and then a controller that THROWS, since the loop discards each tick's promise and an escaped rejection " +
+      "would end the whole service every two seconds",
+  },
+  {
+    script: "scripts/check-fan-endpoint.ts",
+    covers:
+      "both ends of the /fan wire: that the X-Cool-Eva header stands in front of every POST — the only thing " +
+      "between a cross-origin form on any page the rider's phone opens and a spinning blade, since a custom header " +
+      "name is what makes the request non-simple — refusing a missing one, a wrong one, the service-write value, " +
+      "and a duplicated one that joins to `fan, fan`, with each refusal shown to have commanded nothing, while a " +
+      "GET needs no header because it touches no hardware; every branch of parseFanRequest(), including the " +
+      "duty-and-mode-together 400 the endpoint refuses rather than guesses at and the 1e2 / 0x40 notations it does " +
+      "accept; and the page's half, public/lib/fan-command-queue.js, driven with a recording sender: that a " +
+      "five-move drag reaches the Pi as TWO POSTs with the last value intact, that the first move goes at once, " +
+      "that a send slower than the interval never overlaps the next one, and that one that throws does not wedge " +
+      "the slider for the rest of the session",
   },
   {
     script: "scripts/check-fan-ordering.ts",

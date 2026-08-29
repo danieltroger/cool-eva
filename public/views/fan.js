@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { BAD, GOOD, MUTED, WARN } from "../lib/colors.js";
 import { valueOf } from "../lib/store.js";
 import { describeAutoReason, dutyStopIndex, dutyStops } from "../lib/fan-display.js";
+import { createFanCommandQueue } from "../lib/fan-command-queue.js";
 
 const { button, div, h2, input } = van.tags;
 
@@ -25,17 +26,7 @@ const { button, div, h2, input } = van.tags;
 
 /** @typedef {import("../../src/http/fan.ts").FanReply} FanReply */
 /** @typedef {import("../../src/fan/auto.ts").FanMode} FanMode */
-
-/**
- * The shortest gap between two POSTs while a thumb is on the slider.
- *
- * ⚠️ The FEEL is not debounced — `oninput` moves the thumb, the caption and the local
- * duty with no delay at all. This paces only the wire: a drag fires `input` about twenty
- * times a second, and a Pi Zero 2 W does not want twenty POSTs and forty `pinctrl`
- * spawns out of one gesture. The first move goes at once; the rest coalesce to the
- * latest value at this rate, and superseded ones are simply never sent.
- */
-export const FAN_COMMAND_INTERVAL_MS = 150;
+/** @typedef {import("../lib/fan-command-queue.js").FanCommand} FanCommand */
 
 /** Whether this Pi serves /fan at all. Null until the first fetch has answered. */
 const available = van.state(/** @type {boolean | null} */ (null));
@@ -53,7 +44,7 @@ const pendingDuty = van.state(0);
 const mode = van.state(/** @type {FanMode} */ ("automatic"));
 
 /**
- * True while a command is queued or in flight.
+ * True while a command is queued or in flight, raised by ../lib/fan-command-queue.js.
  *
  * ⚠️ Load-bearing, not cosmetic: it is what stops the two derives below dragging the
  * slider and the toggle back to the Pi's *previous* answer during the round trip.
@@ -218,7 +209,7 @@ function ModeToggle() {
       onclick: () => {
         const next = /** @type {FanMode} */ (mode.val === "automatic" ? "manual" : "automatic");
         mode.val = next;
-        queueFanCommand({ mode: next });
+        commandQueue.queue({ mode: next });
       },
     },
     () => (mode.val === "automatic" ? "🌡️  Auto" : "✋  Manual")
@@ -248,7 +239,7 @@ function Slider() {
       // Dragging IS the switch to manual. Without it the next automatic tick — at most
       // AUTO_TICK_MS away — would put the curve's own duty straight back.
       mode.val = "manual";
-      queueFanCommand({ duty });
+      commandQueue.queue({ duty });
     },
   });
 }
@@ -322,53 +313,18 @@ function adoptReply(payload) {
   }
 }
 
-// --- The wire, coalesced -----------------------------------------------------
+// --- The wire ----------------------------------------------------------------
 //
-// One command may be in flight at a time and exactly one may be waiting behind it. A
-// drag that produces twenty values sends the first and the last of each 150 ms window;
-// the eighteen in between are overwritten in `queued` and never reach the network.
-
-/** @typedef {{ duty: number } | { mode: FanMode }} FanCommand */
-
-/** The next command to send, or null. Overwritten rather than queued — that is the point. */
-let queued = /** @type {FanCommand | null} */ (null);
-let flushTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
-let inFlight = false;
-/**
- * ⚠️ performance.now(), never Date.now(): this dashboard has a button on it that STEPS
- * THE CLOCK, and a wall clock that jumps backwards would hold every later command for
- * the size of the step. Same rule as ../lib/arming.js and src/monotonic.ts.
- */
-let lastSentAt = 0;
+// The pacing itself is ../lib/fan-command-queue.js — one command in flight, one waiting,
+// at most one per 150 ms — so all that is left here is what a command DOES: the POST, and
+// what to believe of the reply it comes back with.
 
 /**
  * @param {FanCommand} command
+ * @param {() => boolean} isSuperseded whether the thumb has already moved past this one
+ * @returns {Promise<void>}
  */
-function queueFanCommand(command) {
-  queued = command;
-  settling.val = true;
-  scheduleFlush();
-}
-
-function scheduleFlush() {
-  if (flushTimer !== null || inFlight || queued === null) {
-    return;
-  }
-  const wait = Math.max(0, FAN_COMMAND_INTERVAL_MS - (performance.now() - lastSentAt));
-  flushTimer = setTimeout(() => {
-    flushTimer = null;
-    void flushFanCommand();
-  }, wait);
-}
-
-async function flushFanCommand() {
-  const command = queued;
-  if (inFlight || command === null) {
-    return;
-  }
-  queued = null;
-  inFlight = true;
-  lastSentAt = performance.now();
+async function postFanCommand(command, isSuperseded) {
   const query = "duty" in command ? `duty=${command.duty}` : `mode=${command.mode === "automatic" ? "auto" : "manual"}`;
   try {
     const response = await fetch(`/fan?${query}`, {
@@ -384,10 +340,10 @@ async function flushFanCommand() {
     // ⚠️ Only when nothing newer is waiting. A reply describes the state as of ITS
     // command, so adopting it over a value the thumb has already moved past would drag
     // the slider backwards mid-drag — the exact jitter this whole section exists to avoid.
-    if (queued === null) {
-      adoptReply(payload);
-    } else {
+    if (isSuperseded()) {
       status.val = payload;
+    } else {
+      adoptReply(payload);
     }
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the Pi — the sysfs write
@@ -398,9 +354,12 @@ async function flushFanCommand() {
       "This does NOT guarantee the fan was left alone — watch the line above.";
     lastCommandOk.val = false;
     console.warn("fan: command failed", error);
-  } finally {
-    inFlight = false;
-    settling.val = queued !== null;
   }
-  scheduleFlush();
 }
+
+const commandQueue = createFanCommandQueue({
+  send: postFanCommand,
+  onSettlingChange: pending => {
+    settling.val = pending;
+  },
+});
