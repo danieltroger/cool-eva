@@ -22,8 +22,10 @@ import { fileURLToPath } from "url";
 // Why there is no test framework here: docs/diagnostics-and-checks.md §11.1.
 
 /**
- * Per-check wall-clock limit. The whole suite runs in about a second today, so this is
- * not a performance budget: it is only here to turn a hang into a red build instead of
+ * Per-check wall-clock limit. The whole suite runs in under ten seconds today, most of
+ * which is check-fan-curve.ts sitting still: it replays a 1500 ms kick-start and two
+ * signal-staleness windows in real time, on about a tenth of a second of CPU. So this is
+ * not a performance budget — it is only here to turn a hang into a red build instead of
  * an Actions job that runs until the six-hour ceiling.
  */
 const CHECK_TIMEOUT_MS = 120_000;
@@ -116,6 +118,21 @@ const CHECKS: SelfCheck[] = [
       "and, against real servers on loopback ports, that neither an oversized frame nor a malformed one can end " +
       "the process — which is what a missing `error` listener turns a rejected frame into — while a bind that " +
       "FAILS still does end it, rather than leaving a live process with nothing listening for systemd to call healthy",
+  },
+  {
+    script: "scripts/check-fan-curve.ts",
+    covers:
+      "the automatic cooling-fan curve, which is pure so that three things nobody can stage in a garage are one " +
+      "function call: both curves' endpoints and midpoints (48 °C is 100 % riding and 78 % on DC, so the two are " +
+      "provably not one line), the 30 % floor every DC session gets whatever the pack temperature and the road " +
+      "speed say, the speed gate and BOTH hysteresis pairs asserted at the same input in both directions, and the " +
+      "three staleness tiers — live, held for 60 s, then the floor plus a fault, because a dead batt_temp_hi reads " +
+      "exactly like a cold pack and this fan has no tacho to contradict it. Plus the near-misses each signal has: " +
+      "that charge_type's DC value 2 does not select the DC curve, that an absent or impossible speed opens the " +
+      "gate rather than holding the fan off over a hot pack, that the Pi's own bounds on batt_temp_hi are the " +
+      "dashboard's, that every reason code has both a bound and a sentence, and that no slider stop lands in the " +
+      "dead band under the floor. The last section drives the real controller through a recording FanPwm, which " +
+      "is the only place the running-phase duty change issue #119 reports as unreached is reached",
   },
   {
     script: "scripts/check-fan-ordering.ts",

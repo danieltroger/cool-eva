@@ -26,7 +26,19 @@ export const SIGNALS: SignalDef[] = [
   // fan on a bike with FAN_ENABLED unset writes nothing ever. Their own group, so those
   // two silences cannot drag a real sensor's liveness down with them — see SignalDef.
   { key: "fan_duty_pct", unit: "%", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_target_pct", unit: "%", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_driver_enabled", unit: "", group: "fan", source: "sensor", onDemand: true },
+  // Phase 2's automatic curve (src/fan/auto.ts, src/fan/curve.ts). `fan_auto_mode` is
+  // 1 automatic / 0 manual, and the other two are the enums in src/fan/curve.ts:
+  // FAN_REASON says which rule set the duty and FAN_TEMPERATURE_INPUT whether the
+  // temperature under it was live, held from the last in-bounds reading, or absent.
+  // Codes rather than text because a signal is a number; the words are the dashboard's.
+  // ⚠️ All three have a BLANK unit in a group that is not a BOOLEAN_GROUP, which is the
+  // combination bounds.js renders ungated — so each is named in its BY_KEY, and
+  // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
+  { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true },
 
   // The can0 interface's own up/down state, polled from `ip link` rather than decoded
   // off the bus (src/can/link-status.ts). A 1/0 flag in `diag`, which bounds.js gates to

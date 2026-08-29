@@ -34,7 +34,17 @@ const BY_KEY = {
   // unit is "" in a group that is not a BOOLEAN_GROUP, which is the combination that
   // falls through every rule in this file and renders whatever arrives.
   "fan_duty_pct": [0, 100],
+  "fan_target_pct": [0, 100],
   "fan_driver_enabled": [0, 1],
+  // Phase 2's automatic mode. `fan_auto_reason` and `fan_temp_input` are the
+  // FAN_REASON / FAN_TEMPERATURE_INPUT enums in src/fan/curve.ts, and their bounds are
+  // the size of those enums — deliberately tight, unlike `charge_manager_state` below,
+  // because these codes are OURS rather than the bike's: there is no unseen value to
+  // leave room for, and a code added without widening the bound here would be drawn as
+  // a dead sensor. scripts/check-fan-curve.ts is what notices.
+  "fan_auto_mode": [0, 1],
+  "fan_auto_reason": [0, 7],
+  "fan_temp_input": [0, 2],
   // BMS pack temperatures. The −50 and 120 seen twice each are sentinels.
   "batt_temp_lo": [-30, 90],
   "batt_temp_hi": [-30, 90],

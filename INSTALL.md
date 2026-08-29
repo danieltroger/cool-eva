@@ -125,7 +125,7 @@ The service looks for `ride-log-key.public.pem` in the project dir by default (o
 
 Defaults are correct for a stock bike; skip this section unless you need one. All are read by `src/index.ts`:
 
-- `FAN_ENABLED=1` — drive the IBT-2 cooling fan and serve `/fan`. **Opt IN**, unlike every other flag here: unset means no `/sys/class/pwm`, no `pinctrl`, no endpoint. Needs the §1 `config.txt` lines first. See `docs/fan-control.md`
+- `FAN_ENABLED=1` — drive the IBT-2 cooling fan and serve `/fan`. **Opt IN**, unlike every other flag here: unset means no `/sys/class/pwm`, no `pinctrl`, no endpoint. With it set the fan follows the pack temperature automatically from boot. Needs the §1 `config.txt` lines first. See `docs/fan-control.md`
 - `CAN_ENABLED=0` — skip CAN entirely (coolant only)
 - `OBD_ENABLED=0` — passive/listen-only: decode broadcasts, don't TX OBD polls
 - `ELOCK_ENABLED=0` — skip the one-shot keys-paired read from the E-LOCK ECU
@@ -190,7 +190,7 @@ sudo apt-get install -y avahi-daemon
 
 Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging.
 
-Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (manual fan duty — only with `FAN_ENABLED=1`, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
+Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (cooling-fan duty and mode — only with `FAN_ENABLED=1`, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
 
 ## 9. Deploying updates later
 
@@ -264,4 +264,4 @@ See `README.md` "Encrypted ride log" and "Grafana" for the datasource caveat (te
 
 The CAN bus is read-only here: passive broadcast decode, standard OBD-II READ requests, and KWP 0x22 parameter reads. No writes of any kind. Only touch hardware you own and are authorized to modify.
 
-With `FAN_ENABLED=1` the dashboard can start a fan blade from a phone. It is behind a two-tap arm and the POST needs an `X-Cool-Eva: fan` header, but keep fingers out of the duct while the Pi is powered: a `SIGKILL` leaves the bridge driving until the service restarts itself, which `Restart=on-failure` / `RestartSec=5` makes about **five seconds** later — long enough to matter with a hand in the duct, and only that long because the unit restarts (`docs/fan-control.md` §8).
+With `FAN_ENABLED=1` the fan starts **on its own** whenever the pack is warm, and the dashboard can start it from a phone with one drag — there is no two-tap arm on it (`docs/fan-control.md` §4 "The slider"), only the `X-Cool-Eva: fan` header a POST needs. Keep fingers out of the duct while the Pi is powered: a `SIGKILL` leaves the bridge driving until the service restarts itself, which `Restart=on-failure` / `RestartSec=5` makes about **five seconds** later — long enough to matter with a hand in the duct, and only that long because the unit restarts (`docs/fan-control.md` §8).

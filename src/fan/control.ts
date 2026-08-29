@@ -14,8 +14,9 @@ import { openFanPwm, type FanPwm } from "./pwm.ts";
 //   • idling pulls BOTH enables LOW. Enables HIGH at duty 0 turns both low sides on,
 //     which shorts the motor and brakes it — in a 270 km/h airstream.
 //
-// This is phase 1: manual duty from the dashboard, for debugging in the garage. There is
-// no coolant-temperature curve here and nothing here is waiting for one.
+// Where a duty COMES from is not decided here. The slider posts one and ./auto.ts
+// computes one from the pack temperature; both arrive through setDutyPercent() and this
+// file cannot tell them apart, which is what keeps the orderings above in one place.
 
 /**
  * ⚠️ OPT IN — `=== "1"`, deliberately the opposite of COOLANT_ENABLED and OBD_ENABLED,
@@ -150,7 +151,7 @@ export async function startFanControl(options: FanControlOptions = {}): Promise<
   // touches the slider, rather than a pair of dashes that look like a dead sensor.
   publish(context);
   console.log(
-    `fan: manual control ready — ${MIN_RUNNING_DUTY_PERCENT}…${MAX_DUTY_PERCENT} %, ` +
+    `fan: duty control ready — ${MIN_RUNNING_DUTY_PERCENT}…${MAX_DUTY_PERCENT} %, ` +
       `${KICK_START_MS} ms kick-start from rest, POST /fan?duty=N`
   );
 
@@ -369,11 +370,16 @@ async function forceIdle(context: FanContext): Promise<void> {
 }
 
 /**
- * The two signals the dashboard binds to. Log-on-change in ../can/signals.ts means a
- * steady duty is written once, which is why both are registered `onDemand`.
+ * The three signals the dashboard binds to. Log-on-change in ../can/signals.ts means a
+ * steady duty is written once, which is why all three are registered `onDemand`.
+ *
+ * `fan_target_pct` is what was ASKED for and `fan_duty_pct` what the bridge is being
+ * given: they differ only for the length of a kick-start, which is exactly how the
+ * dashboard tells "kicking" from "settled" without a second endpoint round trip.
  */
 function publish(context: FanContext): void {
   record("fan_duty_pct", context.appliedPercent);
+  record("fan_target_pct", context.targetPercent);
   record("fan_driver_enabled", context.bridgeEnabled ? 1 : 0);
 }
 

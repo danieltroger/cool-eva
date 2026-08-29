@@ -30,6 +30,7 @@ import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
 import { startFanControl } from "./fan/control.ts";
+import { startFanAutomatic } from "./fan/auto.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
@@ -128,9 +129,12 @@ try {
 // The other half of the watercooling loop, and the only thing here that drives a
 // physical output on the Pi rather than reading one. It never throws — a fan that cannot
 // be brought up becomes a `fault` string the endpoint reports — and it does nothing at
-// all unless FAN_ENABLED=1. Phase 1 is manual duty from the dashboard; there is no
-// temperature curve. docs/fan-control.md.
+// all unless FAN_ENABLED=1. The loop starts in AUTOMATIC and follows the pack
+// temperature; the slider takes it over until the bike is switched off, which is what
+// not persisting the mode already means on a Pi with no standby power.
+// docs/fan-control.md.
 const fanController = await startFanControl();
+const fanAutomatic = startFanAutomatic(fanController);
 
 // --- CAN: broadcast decode + OBD-II polling ---
 let channel: RawChannel | undefined;
@@ -407,11 +411,11 @@ const server = createServer(async (req, res) => {
     await handleUpdateEndpoint(req, res, UPDATE_DIR);
     return;
   }
-  // Manual duty for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
+  // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
   // bike's bus. Routed only when FAN_ENABLED=1, so a Pi with no fan 404s here instead of
   // offering a control that could never work.
   if (fanController.configured && url.pathname === "/fan") {
-    await handleFanEndpoint(req, res, url, { controller: fanController });
+    await handleFanEndpoint(req, res, url, { controller: fanController, automatic: fanAutomatic });
     return;
   }
   if (url.pathname === "/dtc-table") {
@@ -521,6 +525,10 @@ async function shutdown(): Promise<void> {
   // unrecoverable; a fan left spinning has the config.txt `gpio=` lines and a five-second
   // `Restart=on-failure` behind it.
   await closeEncryptedLog();
+  // ⚠️ The curve stops FIRST. A tick landing after the bridge has been idled would
+  // re-command a duty into a process that is about to exit, and the enables would then
+  // be left HIGH for the five seconds until systemd restarts it.
+  fanAutomatic.stop();
   // Awaited, and before the process goes: this is the only output this service drives.
   // Deploy is `git pull` + `systemctl restart`, so leaving a fan spinning behind a dead
   // process is a routine path rather than a rare one. A SIGKILL skips this — but the unit

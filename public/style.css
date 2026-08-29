@@ -1058,11 +1058,52 @@ body {
    what a gloved finger has to catch, and the default ~16 px one is under half the 44pt
    target every other control on this sheet clears. The track keeps `.probe-input`'s
    fill and edge so it reads as a field rather than as decoration. */
+/* The mode toggle and the slider sit on one line, because they are one control: the
+   toggle says who is moving the thumb, and moving the thumb changes the toggle. Two
+   stacked rows read as two unrelated settings, which is what they must not be. */
+.fan-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+/* Sized off .action rather than styled like it: same 3.75rem touch height for a gloved
+   thumb, but it must not stretch — the slider takes the rest of the row. */
+.fan-mode {
+  flex: 0 0 auto;
+  min-height: 3.75rem;
+  padding: 0 0.9rem;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+  border-radius: 0.8rem;
+  box-shadow: inset 3px 0 0 var(--dim);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Green rather than the slider's amber, and deliberately so: amber on this sheet means
+   "you are about to move something", and automatic is the resting state nobody has to
+   act on. The thumb stays amber because dragging it IS the act. */
+.fan-mode.automatic {
+  border-color: var(--good);
+  box-shadow: inset 3px 0 0 var(--good);
+}
+
+/* The same measured 0.66 as .action:disabled — see the note above that rule. */
+.fan-mode:disabled {
+  opacity: 0.66;
+  cursor: default;
+}
+
 .fan-slider {
-  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
   box-sizing: border-box;
   height: 2.75rem;
-  margin: 0.5rem 0 0;
   background: transparent;
   -webkit-appearance: none;
   appearance: none;

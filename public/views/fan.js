@@ -2,27 +2,40 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { BAD, GOOD, MUTED, WARN } from "../lib/colors.js";
-import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { valueOf } from "../lib/store.js";
+import { describeAutoReason, dutyStopIndex, dutyStops } from "../lib/fan-display.js";
 
 const { button, div, h2, input } = van.tags;
 
-// Manual duty for the watercooling loop's fan, in the menu sheet — this is a thing you
-// do standing next to the bike in the garage, not at 90 km/h.
+// Duty and mode for the watercooling loop's fan, in the menu sheet.
 //
 // It renders NOTHING unless this Pi answers /fan, which it only does with FAN_ENABLED=1
 // (src/index.ts routes the endpoint behind that flag), so a bike with no fan sees an
-// unchanged sheet. Behind the same two-tap dwell as every other control that actuates
-// something — a brush against a slider on a phone lying on a workbench must not be able
-// to spin a fan blade to full.
+// unchanged sheet.
 //
-// ⚠️ Nothing here decides policy. The 30 % floor, the cap and the kick-start length are
-// the Pi's (src/fan/control.ts) and are read off `limits` in its reply, so this page
-// cannot come to disagree with the thing holding the PWM.
+// ⚠️ There is deliberately NO two-tap arm here, unlike every control on this sheet that
+// touches the motorcycle. This one moves a GPIO on the Pi, the next command takes it
+// straight back, and the fan is a thing you watch while you drag — so the slider is live
+// on `oninput`. What that costs and why it is worth it: docs/fan-control.md §"The slider".
+//
+// ⚠️ Nothing here decides policy. The 30 % floor, the cap, the kick-start length and the
+// curve's own temperatures are the Pi's (src/fan/control.ts, src/fan/curve.ts) and are
+// read off `limits` in its reply, so this page cannot come to disagree with the thing
+// holding the PWM.
 
 /** @typedef {import("../../src/http/fan.ts").FanReply} FanReply */
+/** @typedef {import("../../src/fan/auto.ts").FanMode} FanMode */
 
-export const ARMED_KEY = "fan-duty";
+/**
+ * The shortest gap between two POSTs while a thumb is on the slider.
+ *
+ * ⚠️ The FEEL is not debounced — `oninput` moves the thumb, the caption and the local
+ * duty with no delay at all. This paces only the wire: a drag fires `input` about twenty
+ * times a second, and a Pi Zero 2 W does not want twenty POSTs and forty `pinctrl`
+ * spawns out of one gesture. The first move goes at once; the rest coalesce to the
+ * latest value at this rate, and superseded ones are simply never sent.
+ */
+export const FAN_COMMAND_INTERVAL_MS = 150;
 
 /** Whether this Pi serves /fan at all. Null until the first fetch has answered. */
 const available = van.state(/** @type {boolean | null} */ (null));
@@ -30,12 +43,23 @@ const available = van.state(/** @type {boolean | null} */ (null));
 /** The last reply: the driver's phase, its fault if any, and the limits it enforces. */
 const status = van.state(/** @type {FanReply | null} */ (null));
 
-/** Where the slider is, which is NOT what the fan is doing until the button is tapped. */
+/**
+ * Where the slider is. In manual this is what the rider chose; in automatic it follows
+ * `fan_target_pct` through the derive below, so the thumb tracks the curve live.
+ */
 const pendingDuty = van.state(0);
 
-const busy = van.state(false);
-/** True only while a command's own POST is in flight, so a status refresh cannot say "Sending…". */
-const sending = van.state(false);
+/** Automatic or manual, optimistically ahead of the Pi so a tap looks instant. */
+const mode = van.state(/** @type {FanMode} */ ("automatic"));
+
+/**
+ * True while a command is queued or in flight.
+ *
+ * ⚠️ Load-bearing, not cosmetic: it is what stops the two derives below dragging the
+ * slider and the toggle back to the Pi's *previous* answer during the round trip.
+ */
+const settling = van.state(false);
+
 const message = van.state("");
 /** Whether the last command was accepted, so its message is coloured by its own outcome. */
 const lastCommandOk = van.state(/** @type {boolean | null} */ (null));
@@ -56,8 +80,10 @@ export function FanControl() {
       div({ class: "sheet-heading-note" }, "Drives the loop's fan off the Pi's own GPIO. Never touches the bike."),
       FaultNote(),
       Situation(),
-      Slider(),
-      SetButton(),
+      Reason(),
+      div({ class: "fan-row" }, ModeToggle(), Slider()),
+      div({ class: "action-note", style: `color:${MUTED}` }, () => describeCommand(pendingDuty.val)),
+      KickNote(),
       Outcome()
     );
   });
@@ -78,20 +104,7 @@ export async function refreshFanStatus() {
       status.val = null;
       return;
     }
-    const payload = /** @type {FanReply} */ (await response.json());
-    // Disarmed before the new status lands: a driver that has since faulted must not
-    // leave a primed button behind. Only this control's own key, because the refresh is
-    // about the fan and says nothing about whatever else the page had armed.
-    if (armed.val === ARMED_KEY) {
-      armed.val = "";
-    }
-    status.val = payload;
-    // The thumb follows a cap that came down: the slider's `max` alone would clamp what
-    // the element SHOWS while this state kept the old number, and that number is what
-    // the button POSTs.
-    if (pendingDuty.val > maxPercent()) {
-      pendingDuty.val = maxPercent();
-    }
+    adoptReply(/** @type {FanReply} */ (await response.json()));
     available.val = true;
   } catch (error) {
     // Loud, but not fatal to the rest of the sheet: a failed fetch simply leaves the
@@ -100,6 +113,28 @@ export async function refreshFanStatus() {
     available.val = false;
   }
 }
+
+// The mode the Pi reports, mirrored into the toggle — but never while this page has a
+// command of its own outstanding, or a reply describing the state BEFORE that command
+// would flip the toggle back under the rider's thumb.
+van.derive(() => {
+  const live = valueOf("fan_auto_mode");
+  if (live === null || settling.val) {
+    return;
+  }
+  mode.val = live === 1 ? "automatic" : "manual";
+});
+
+// In automatic the thumb follows what the curve is commanding. `fan_target_pct` and not
+// `fan_duty_pct`: the two differ only during a kick-start, and a thumb that slammed to
+// 100 % and back for 1500 ms would look like the page had lost the plot.
+van.derive(() => {
+  const target = valueOf("fan_target_pct");
+  if (target === null || mode.val !== "automatic" || settling.val) {
+    return;
+  }
+  pendingDuty.val = target;
+});
 
 /** The loudest thing this section has: a driver that is configured and cannot be used. */
 function FaultNote() {
@@ -115,11 +150,11 @@ function FaultNote() {
 /**
  * What the fan is doing right now, from the live signals rather than from the last reply
  * — the reply is only as fresh as the fetch, and the signals arrive on the WebSocket.
- * A duty of 100 with a lower target on the button is a kick-start in progress.
  */
 function Situation() {
   return div({ class: "action-note" }, () => {
     const duty = valueOf("fan_duty_pct");
+    const target = valueOf("fan_target_pct");
     const driverEnabled = valueOf("fan_driver_enabled");
     if (duty == null || driverEnabled == null) {
       return div({ style: `color:${MUTED}` }, "The fan driver has not reported yet.");
@@ -137,85 +172,94 @@ function Situation() {
         "⚠️  Enables HIGH at 0 % — the bridge is BRAKING the rotor, not idling it. Cut power to the IBT-2."
       );
     }
+    // ⚠️ Enabled and driving with nothing asked for. src/fan/control.ts sets the target
+    // before it touches the bridge, so this is not a transient — it is a STOP that got
+    // as far as failing to drop the enables and correctly refused to zero the duty
+    // underneath them (which would have braked the rotor). The fan is still spinning.
+    if (target === 0) {
+      return div(
+        { style: `color:${BAD}` },
+        `⚠️  Still driving at ${duty} % after a stop that failed. The PWM was left alone on purpose — dropping it ` +
+          "with the enables HIGH would brake the rotor. Cut power to the IBT-2."
+      );
+    }
+    // The kick-start, which is the only other time the applied duty runs ahead of the target.
+    if (target != null && duty > target) {
+      return div({ style: `color:${WARN}` }, `Kick-starting at ${duty} % — it settles at ${target} % in a moment.`);
+    }
     return div({ style: `color:${GOOD}` }, `Running at ${duty} %.`);
   });
+}
+
+/** Why the curve chose what it chose, live off `fan_auto_reason` / `fan_temp_input`. */
+function Reason() {
+  return div({ class: "action-note" }, () => {
+    if (valueOf("fan_auto_mode") !== 1) {
+      return div();
+    }
+    const sentence = describeAutoReason(valueOf("fan_auto_reason"), valueOf("fan_temp_input"));
+    if (sentence === "") {
+      return div();
+    }
+    // Reason 2 is the fail-safe firing: no usable pack temperature for a minute. It is a
+    // fault, not a note, and it is the one state this section must not render quietly.
+    const failing = valueOf("fan_auto_reason") === 2;
+    return div({ style: `color:${failing ? BAD : MUTED}` }, sentence);
+  });
+}
+
+function ModeToggle() {
+  return button(
+    {
+      class: () => `fan-mode${mode.val === "automatic" ? " automatic" : ""}`,
+      // Not gated on a command being in flight: they coalesce, and a toggle that
+      // flickered disabled through a drag would be the drag's own POSTs doing it.
+      disabled: () => !commandable(),
+      onclick: () => {
+        const next = /** @type {FanMode} */ (mode.val === "automatic" ? "manual" : "automatic");
+        mode.val = next;
+        queueFanCommand({ mode: next });
+      },
+    },
+    () => (mode.val === "automatic" ? "🌡️  Auto" : "✋  Manual")
+  );
 }
 
 function Slider() {
   // ⚠️ The <input> is created ONCE, not inside a binding. A binding that re-ran on a live
   // signal would replace the element mid-drag and take the gesture with it — so only the
-  // `disabled` ATTRIBUTE is reactive (a thunk), which VanJS updates in place.
-  return div(
-    { class: "probe-field" },
-    input({
-      class: "fan-slider",
-      type: "range",
-      min: "0",
-      // The Pi's cap, not a literal 100 — so a cap lowered to hold the fan's average
-      // voltage (docs/fan-control.md §4) stops this page offering duties the endpoint
-      // would answer 400 to. A thunk, like `disabled`, for the reason above.
-      max: () => String(maxPercent()),
-      // 5 % steps. Finer is not a duty this fan resolves, and it costs precision the
-      // thumb does not have on a phone.
-      step: "5",
-      disabled: () => !commandable(),
-      value: pendingDuty,
-      oninput: (/** @type {Event} */ event) => {
-        pendingDuty.val = Number(/** @type {HTMLInputElement} */ (event.target).value);
-        // Dragging disarms: the second tap must command the duty now on screen, not the
-        // one the first tap agreed to.
-        if (armed.val === ARMED_KEY) {
-          armed.val = "";
-        }
-      },
-    }),
-    div({ class: "action-note", style: `color:${MUTED}` }, () => describeCommand(pendingDuty.val))
-  );
+  // ATTRIBUTES are reactive (thunks), which VanJS updates in place.
+  //
+  // ⚠️ And the slider's value is an INDEX into the stop list, not a percentage. That is
+  // what removes the dead zone: every position is a duty the Pi will take. See
+  // ../lib/fan-display.js.
+  return input({
+    class: "fan-slider",
+    type: "range",
+    min: "0",
+    max: () => String(stops().length - 1),
+    step: "1",
+    disabled: () => !commandable(),
+    value: () => String(dutyStopIndex(stops(), pendingDuty.val)),
+    oninput: (/** @type {Event} */ event) => {
+      const index = Number(/** @type {HTMLInputElement} */ (event.target).value);
+      const duty = stops()[index] ?? 0;
+      pendingDuty.val = duty;
+      // Dragging IS the switch to manual. Without it the next automatic tick — at most
+      // AUTO_TICK_MS away — would put the curve's own duty straight back.
+      mode.val = "manual";
+      queueFanCommand({ duty });
+    },
+  });
 }
 
-function SetButton() {
-  return div(
-    button(
-      {
-        // The reversible/amber tier, like the charge-current write: it moves a real motor
-        // and the next command takes it straight back. Nothing here is irreversible, so
-        // it is on-screen rather than behind the red fold.
-        class: "action writes",
-        // One held Enter must not arm and then fire. See ../lib/arming.js.
-        onkeydown: refuseKeyRepeat,
-        disabled: () => busy.val || !commandable(),
-        onclick: () => {
-          if (armed.val !== ARMED_KEY) {
-            void armFan();
-            return;
-          }
-          // The same dwell as every other second tap on this dashboard — the whole of
-          // what stops a double-tap spinning the fan up. Ignored inside the dwell, not
-          // disarmed. See ../lib/arming.js.
-          if (!armDwellElapsed()) {
-            return;
-          }
-          armed.val = "";
-          void performFanCommand();
-        },
-      },
-      () => {
-        if (sending.val) {
-          return "⏳  Sending…";
-        }
-        if (busy.val) {
-          return "⏳  Checking the fan driver…";
-        }
-        const action = describeCommand(pendingDuty.val);
-        return armed.val === ARMED_KEY ? `⚠️  Tap again to ${action}` : `🌀  ${action}`;
-      }
-    ),
-    div({ class: "action-note", style: `color:${MUTED}` }, () =>
-      pendingDuty.val >= minRunningPercent() && valueOf("fan_driver_enabled") !== 1
-        ? `From rest the fan is held at 100 % for ${kickStartMs()} ms first, so a stiff rotor gets full ` +
-          `torque to break away with rather than a duty it can sit and hum at.`
-        : ""
-    )
+/** The kick-start caption, shown only when the next command would start the fan from rest. */
+function KickNote() {
+  return div({ class: "action-note", style: `color:${MUTED}` }, () =>
+    pendingDuty.val >= minRunningPercent() && valueOf("fan_driver_enabled") !== 1
+      ? `From rest the fan is held at 100 % for ${kickStartMs()} ms first, so a stiff rotor gets full ` +
+        `torque to break away with rather than a duty it can sit and hum at.`
+      : ""
   );
 }
 
@@ -227,21 +271,26 @@ function Outcome() {
 }
 
 /**
- * What tapping the button now would do — one sentence, shared by the button and the
- * caption under the slider so the two can never describe different commands.
+ * What the slider is asking for now — one sentence under it, so the number on the thumb
+ * is never the only thing saying what will happen.
  * @param {number} duty
  */
 function describeCommand(duty) {
   if (duty < minRunningPercent()) {
-    return duty === 0 ? "stop the fan" : `stop the fan (${duty} % is under the Pi's ${minRunningPercent()} % minimum)`;
+    return "Stopped — both enables LOW.";
   }
-  return `run the fan at ${duty} %`;
+  return mode.val === "automatic" ? `The curve is commanding ${duty} %.` : `Running at ${duty} %.`;
 }
 
 /** Whether a command could be sent at all. The Pi enforces every part of this again. */
 function commandable() {
   const current = status.val;
   return current !== null && current.fault === null;
+}
+
+/** The duties this slider may select, from the Pi's own floor and cap. */
+function stops() {
+  return dutyStops(minRunningPercent(), maxPercent());
 }
 
 /** The Pi's floor, so this page cannot disagree with the thing holding the PWM. */
@@ -259,28 +308,70 @@ function kickStartMs() {
 }
 
 /**
- * Refreshes the status, THEN arms — so whether the driver is still usable is the Pi's
- * answer now rather than its answer when the sheet was opened.
+ * Adopts a reply as the truth, including the mode and — in automatic — the thumb.
+ * @param {FanReply} payload
  */
-async function armFan() {
-  busy.val = true;
-  try {
-    await refreshFanStatus();
-  } finally {
-    busy.val = false;
-  }
-  if (commandable()) {
-    arm(ARMED_KEY);
+function adoptReply(payload) {
+  status.val = payload;
+  mode.val = payload.mode;
+  // The thumb follows a cap that came down, and follows the curve while it is driving.
+  // The slider's `max` alone would clamp what the element SHOWS while this state kept
+  // the old number, and that number is what the next command carries.
+  if (payload.mode === "automatic" || pendingDuty.val > maxPercent()) {
+    pendingDuty.val = Math.min(payload.targetPercent, maxPercent());
   }
 }
 
-async function performFanCommand() {
-  const duty = pendingDuty.val;
-  message.val = "";
-  sending.val = true;
-  busy.val = true;
+// --- The wire, coalesced -----------------------------------------------------
+//
+// One command may be in flight at a time and exactly one may be waiting behind it. A
+// drag that produces twenty values sends the first and the last of each 150 ms window;
+// the eighteen in between are overwritten in `queued` and never reach the network.
+
+/** @typedef {{ duty: number } | { mode: FanMode }} FanCommand */
+
+/** The next command to send, or null. Overwritten rather than queued — that is the point. */
+let queued = /** @type {FanCommand | null} */ (null);
+let flushTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+let inFlight = false;
+/**
+ * ⚠️ performance.now(), never Date.now(): this dashboard has a button on it that STEPS
+ * THE CLOCK, and a wall clock that jumps backwards would hold every later command for
+ * the size of the step. Same rule as ../lib/arming.js and src/monotonic.ts.
+ */
+let lastSentAt = 0;
+
+/**
+ * @param {FanCommand} command
+ */
+function queueFanCommand(command) {
+  queued = command;
+  settling.val = true;
+  scheduleFlush();
+}
+
+function scheduleFlush() {
+  if (flushTimer !== null || inFlight || queued === null) {
+    return;
+  }
+  const wait = Math.max(0, FAN_COMMAND_INTERVAL_MS - (performance.now() - lastSentAt));
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushFanCommand();
+  }, wait);
+}
+
+async function flushFanCommand() {
+  const command = queued;
+  if (inFlight || command === null) {
+    return;
+  }
+  queued = null;
+  inFlight = true;
+  lastSentAt = performance.now();
+  const query = "duty" in command ? `duty=${command.duty}` : `mode=${command.mode === "automatic" ? "auto" : "manual"}`;
   try {
-    const response = await fetch(`/fan?duty=${duty}`, {
+    const response = await fetch(`/fan?${query}`, {
       method: "POST",
       cache: "no-store",
       // Not decoration: a custom header is what makes this NOT a simple request, so a
@@ -288,9 +379,16 @@ async function performFanCommand() {
       headers: { "X-Cool-Eva": "fan" },
     });
     const payload = /** @type {FanReply} */ (await response.json());
-    status.val = payload;
     message.val = payload.message ?? "";
     lastCommandOk.val = response.ok;
+    // ⚠️ Only when nothing newer is waiting. A reply describes the state as of ITS
+    // command, so adopting it over a value the thumb has already moved past would drag
+    // the slider backwards mid-drag — the exact jitter this whole section exists to avoid.
+    if (queued === null) {
+      adoptReply(payload);
+    } else {
+      status.val = payload;
+    }
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the Pi — the sysfs write
     // happens before the response — so this is NOT "nothing happened". Say so, and let
@@ -301,8 +399,8 @@ async function performFanCommand() {
     lastCommandOk.val = false;
     console.warn("fan: command failed", error);
   } finally {
-    sending.val = false;
-    busy.val = false;
+    inFlight = false;
+    settling.val = queued !== null;
   }
-  armed.val = "";
+  scheduleFlush();
 }
