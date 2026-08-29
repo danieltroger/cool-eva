@@ -327,13 +327,15 @@ export const SIGNALS: SignalDef[] = [
   // 0x102 — handlebar/lights (decoded live on the bike)
   //
   // `high_beam` and the two blinkers moved to group "buttons" on 2026-08-19; the block
-  // down there says why, and `brake` deliberately did not go with them.
+  // down there says why. `brake` (front OR rear) was here until 2026-08-30 and is gone —
+  // a value computed from `front_brake` | `rear_brake`, which the log has stored
+  // separately since 2026-08-19. docs/can-decode-findings.md §"Why `brake` was removed"
+  // has the argument, the Grafana lane that replaced it and the rows it leaves behind.
+  //
+  // `horn` stays in `controls` — the group is where a key's history lives, not what picks
+  // its tile. A horn blast is as brief as a button press, so public/lib/latched.js names
+  // it and the All page gives it the latched tile instead of an unwatchable 1/0.
   { key: "horn", unit: "", group: "controls", source: "stream" }, // b2 0x10
-  // Front OR rear. Kept here, and kept whole, on purpose: it has logged under this key
-  // since June and grafana/dashboards/ride-summary.json selects it by name, so it is the
-  // continuous history. The split pair the dashboard shows is `front_brake`/`rear_brake`
-  // in the buttons group — same two bits, told apart.
-  { key: "brake", unit: "", group: "controls", source: "stream" }, // b2 0x20 | 0x40
 
   // OBD-II diagnostics/counters, polled with the rest — all slow-moving, so
   // log-on-change keeps them to a handful of rows per ride.
@@ -490,6 +492,10 @@ export const SIGNALS: SignalDef[] = [
   { key: "go", unit: "", group: "controls", source: "stream" }, // b1 bit3
   { key: "key_on", unit: "", group: "controls", source: "stream" }, // b1 bit4
   { key: "stand_up", unit: "", group: "controls", source: "stream" }, // b1 bit5, sidestand retracted
+  // The odd one out of this block: every other bit here is a STATE the bike holds, but
+  // this one is a thumb on a button, so public/lib/latched.js names it and the All page
+  // latches it. It stays in `controls` all the same — the group is where the history
+  // lives, and moving it would only relabel rides.db's rows going forward.
   { key: "ignition_button", unit: "", group: "controls", source: "stream" }, // b1 bit6, red button, right bar
   { key: "throttle_on", unit: "", group: "controls", source: "stream" }, // b1 bit7
   // 0x102 b2 bits 0-1 — the beam LAMPS, renamed 2026-08-16.
@@ -568,12 +574,15 @@ export const SIGNALS: SignalDef[] = [
   // Asked for by the owner: "the buttons section should also get indicator and highbeam
   // IMO, maybe also brake since that's technically a button?".
   //
-  // Nothing but the `group` field does this. views/all.js picks the buttons section by
-  // `groupOf(key) === "buttons"` and nothing else, and `controls` and `buttons` are both
-  // BOOLEAN_GROUPS in bounds.js — so the 0/1 gate the moved keys already had is unchanged.
-  // None of these five is momentary, which the tile had to learn: see public/lib/press.js
-  // for the measured hold durations, the 1.46 Hz flasher, and why the answer is a clock
-  // reading rather than a list of held-state keys.
+  // Nothing but the `group` field does this. views/all.js still sections the page by
+  // `groupOf(key)` and nothing else, and `controls` and `buttons` are both BOOLEAN_GROUPS
+  // in bounds.js — so the 0/1 gate the moved keys already had is unchanged. Since
+  // 2026-08-30 the group is no longer what picks the TILE: public/lib/latched.js does
+  // that, per key, so a signal can be latched without being moved between groups. This
+  // whole group is latched; the set there is only for keys outside it.
+  // Not one of these five is reliably a tap, which the tile had to learn: see
+  // public/lib/press.js for the measured hold durations, the 1.46 Hz flasher, and why the
+  // answer is a clock reading rather than a list of held-state keys.
 
   // `high_beam` is 0x102 b0 bit 6, the SWITCH — not `high_beam_lamp`, which is b2 bit 0 and
   // stays in `controls`. They agreed in all 1 103 000 frames ever captured, so measurement
@@ -662,10 +671,9 @@ export const SIGNALS: SignalDef[] = [
   // what catches a decoder returning the vendor's mask (16 or 128) instead of the bit.
 
   // The two `*SENS_FAIL` bits go in `diag` beside the warning lamp they would light. The event
-  // and the two channel-active bits go in `controls`, next to front_brake_pressure_bar and the
-  // combined `brake` switch, because that is where you look when watching the brakes rather
-  // than hunting a fault — and `diag` is 170 signals deep with the generated dtc_* flags, which
-  // would bury them. `abs_event` sits with `abs_rear_control_active` deliberately: they fire in
+  // and the two channel-active bits go in `controls`, next to front_brake_pressure_bar, because
+  // that is where you look when watching the brakes rather than hunting a fault — and `diag` is
+  // 170 signals deep with the generated dtc_* flags, which would bury them. `abs_event` sits with `abs_rear_control_active` deliberately: they fire in
   // the same frame, always, and splitting them across two sections of the All tab would hide that.
   //
   // ⚠️ `abs_rear_control_active` is NOT `rear_brake`, and now that both are on the All tab the
@@ -684,12 +692,12 @@ export const SIGNALS: SignalDef[] = [
 
   // ⚠️ These two are LOG-FIRST, and the All tab's flash should not be relied on to catch one: a
   // typical intervention is 1-2 frames, 100-200 ms, which is at the edge of what a person
-  // notices, and `controls` gets the plain RawTile with no latch. The RIDE LOG is unaffected —
-  // no deadband, so both edges are sealed, and that is where an intervention is meant to be
-  // read from. Deliberately not fixed here rather than overlooked, and the shape of the fix is
-  // known: generalise views/all.js's `groupOf(key) === BUTTON_GROUP` latch switch to a per-key
-  // momentary SET. Moving them into `buttons` instead would be WRONG — nothing presses an ABS
-  // intervention, and that tile's vocabulary is "PRESSED", "3 presses", "held for".
+  // notices, and they get the plain RawTile with no latch. The RIDE LOG is unaffected — no
+  // deadband, so both edges are sealed, and that is where an intervention is meant to be read
+  // from. The MECHANISM for fixing it now exists: since 2026-08-30 public/lib/latched.js picks
+  // the tile per key, so naming `abs_event` in LATCHED_KEYS is a one-line change and no group
+  // has to move. What is left is a wording decision, not a missing switch — nothing presses an
+  // ABS intervention, and that tile says "PRESSED", "3 presses" and "held for".
   { key: "abs_front_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x10 A_FSENS_FAIL
   { key: "abs_rear_sensor_fault", unit: "", group: "diag", source: "stream" }, // b4 0x20 A_RSENS_FAIL
   { key: "abs_event", unit: "", group: "controls", source: "stream" }, // b4 0x80 A_EVENT

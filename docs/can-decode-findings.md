@@ -383,9 +383,21 @@ So byte 0 is the switch byte and byte 2 the output byte, which is the same split
 
 **b2 now accounts for exactly, with no bit claimed twice:** 0/1 beam lamps (measured here, 2026-08-16), 2/3 blinkers (measured), 4 horn (measured), 5/6 brake (measured), 7 moving (`.xdbc`).
 
-**`front_brake` and `rear_brake` are NOT redundant with each other** and must not be folded back together. Measured over all 14 650 573 frames of 0x102 in the archive: the front bit accounts for **491 applications** (median 2.24 s, longest 47.2 s) and the rear **18** (median 0.46 s, longest 43.5 s) — and **1 899 frames carry both at once**, so neither implies the other in either direction. The combined `brake` key (front OR rear) stays exactly as it is: it has logged since June and `grafana/dashboards/ride-summary.json` selects it by name.
+**`front_brake` and `rear_brake` are NOT redundant with each other** and must not be folded back together. Measured over all 14 650 573 frames of 0x102 in the archive: the front bit accounts for **491 applications** (median 2.24 s, longest 47.2 s) and the rear **18** (median 0.46 s, longest 43.5 s) — and **1 899 frames carry both at once**, so neither implies the other in either direction.
 
 That 18 is also what closed 0x0A0's open question about `A_F_PRESSURE` — see [`A_F_PRESSURE`](#a_f_pressure-b5--the-front-circuit-by-measurement).
+
+### Why `brake` was removed, 2026-08-30
+
+There was a third brake key. `brake` = `front_brake | rear_brake`, emitted by the decoder from June and logged as its own signal, with the two halves added beside it on 2026-08-19. It is now gone from `src/can/decode.ts`, `src/can/registry.ts` and the dashboard.
+
+**The rule it broke, which is worth stating on its own: the log stores the bits that were measured, not combinations computed from them.** A derived signal costs rows, a registry entry, a bounds entry and a tile for a value any reader can recompute from what is already there — and it can go wrong in ways the measured bits cannot, because there are now two things to keep in step. The owner's phrasing when he asked for this: _"we don't want to save computed signals if that makes sense? The viewer can compute it themselves."_
+
+**It was the only one.** Every stream decoder was swept for it: each `STREAM_IDS` frame was decoded over 18 432 payloads (every value of every byte, at every DLC from 1 to 8, against both an all-zero and an all-`0xFF` background) plus 2 000 pseudo-random full frames, and every 0/1 signal was tested against every identity, negation, OR and AND of every other pair of signals on the same frame. `brake == front_brake | rear_brake` was the single hit, on 0x102, with no false positives anywhere in the set. `scripts/check-derived-signals.ts` runs that sweep on every build, so the next one fails rather than ships.
+
+⚠️ **What the removal costs, and what it does not.** The rows already in `rides.db` are still correct readings of the two bits OR-ed together — nothing about them became wrong — so they are kept and read. What is lost is the CONVENIENCE of the key: the Grafana lane that selected `brake` by name now has to compute the OR, and that is harder than it looks. Both halves are log-on-change, so a row exists only where one of them moved, and the OR must be taken over each series' carried-forward last value rather than over the rows. The obvious spelling — a running `MAX()` over `ROWS UNBOUNDED PRECEDING` — latches to `yes` on the first application and never comes back down. The shipped query uses the grouped-carry-forward idiom (a running `COUNT()` of non-nulls as a partition key, then `FIRST_VALUE()` inside the partition), and reads the old `brake` rows for everything before the first half-row, which is the same treatment the 2026-08-16 beam-lamp rename got.
+
+✅ **Verified against the archive rather than argued.** Every 0x102 frame on disk — 14 638 105 of them, all 246 captures plus `ride-1.log` and `buttons-2026-08-19.log` — was decoded, sorted by time and passed through the log-on-change rule `src/can/signals.ts` applies, giving 1 000 `brake` transitions, 974 `front_brake` and 43 `rear_brake`. Loading those into a database with the real schema and a cutover placed in the middle of the corpus (502 legacy `brake` rows before it, 512 half rows after) the rewritten lane reproduces the old one **segment for segment, 1 000 of 1 000**. The same corpus through the naive `MAX()` version collapses to a single `yes` segment. `scripts/check-brake-lane.ts` holds both properties against a built database on every run; the archive itself is not in the repo, so that check builds its series rather than replaying one.
 
 ### Byte 1: vehicle state
 
@@ -999,6 +1011,12 @@ Somewhere between **25 % and 70 % per attempt**, run to run, with no input of ou
 `src/can/registry.ts`. Every row-rate figure here is **MEASURED**, by replaying the 2026-08-02 garage lap (409 s, 545 882 frames) through the same log-on-change rule `signals.ts` applies and counting what came out. Two caveats on reading them: that lap is mostly at a standstill, so a real ride writes more; and each frame's own rate is the hard ceiling (10 Hz = 36 000 rows/h).
 
 **The 2026-08-16 batch cost 3820 rows over that lap — 33 700 rows/h of bike-on time**, against 64 100/h for the 224 signals already logged from the same capture. So that was a **~53 % increase** in the ride log's row rate while riding, for the 31 signals it added, and the three biggest contributors are the torque pair and the 12 V load current: between them they are more than half of it, and 0x100's fourteen flags are 14 rows in total. (0x0A0's six flags joined on 2026-08-19 and are NOT in that measurement; they cost ~52 rows a ride.) **That is the number to argue with if the SD card starts complaining**, and every deadband was chosen off a measured curve rather than a round number.
+
+### The log stores measured bits, not combinations of them
+
+A signal earns a registry entry by being something the bus said, not something arithmetic can produce from what the bus said. A derived key costs rows on the SD card, a bounds entry and a tile, and buys a value any reader can recompute — while adding a second thing that has to stay in step with the first. The one that existed, `brake` = `front_brake | rear_brake`, was removed on 2026-08-30; the argument, what it cost to unpick and how the whole decoder set was swept for others are in [Why `brake` was removed](#why-brake-was-removed-2026-08-30). `scripts/check-derived-signals.ts` re-runs that sweep on every build.
+
+This is about the LOG. Derived numbers on screen are a different question and are wanted — `public/lib/derive.js` computes Wh/km, resistive loss and the rest, and none of it is logged.
 
 ### ⚠️ The rule that makes a deadband on a 0/1 signal a silent bug
 

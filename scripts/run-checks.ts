@@ -98,6 +98,33 @@ const CHECKS: SelfCheck[] = [
       "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
   },
   {
+    script: "scripts/check-all-view-tiles.ts",
+    covers:
+      "which tile each signal gets on the dashboard's ALL page: that every key public/lib/latched.js names is a real " +
+      "signal, is not already in the buttons group, carries no deadband and is gated to 0…1 by bounds.js, that the " +
+      "two momentary signals outside that group (`horn` and `ignition_button`) and every member of the group do get " +
+      "the latched tile — a raw 1/0 readout of a 30 ms press cannot be watched at all — and that the beam lamps, the " +
+      'vehicle states and the brake-pressure measurement do NOT, since that tile says "PRESSED" and "3 presses"',
+  },
+  {
+    script: "scripts/check-brake-lane.ts",
+    covers:
+      "the ride-summary dashboard's Brake lane, run out of the dashboard JSON against a database built by the real " +
+      "src/db.ts writer: that the retired `brake` rows still feed it up to the day front_brake/rear_brake started, " +
+      "that the eleven-day overlap where both exist is read once rather than twice, that a release under a " +
+      "still-held second circuit stays yes — the carry-forward the OR needs, since both halves are log-on-change — " +
+      "that the lane comes back down at all, which the obvious running-MAX spelling never does, and that every " +
+      "signal key the query names still exists",
+  },
+  {
+    script: "scripts/check-derived-signals.ts",
+    covers:
+      "that no broadcast decoder emits a flag computed from other flags on the same frame — the rule `brake` = " +
+      "front_brake | rear_brake broke from June until 2026-08-30. Every stream id is decoded over every value of " +
+      "every byte at every DLC, against both a 0x00 and a 0xFF background, plus 2000 seeded random frames, and each " +
+      "moving 0/1 signal is tested against every identity, inverse, OR and AND of the others on its frame",
+  },
+  {
     script: "scripts/check-handlebar-gestures.ts",
     covers:
       "the two handlebar gestures — double-click cruise-set for the next tab, long-press indicator-cancel to save a waypoint — replayed through the recognisers the phone runs, including the deadline wakeup without which a hold could only ever fire on release. Most cases are real durations that must fire NOTHING: the 140 ms median press, the 30 ms shortest, the 920 ms longest ordinary press on any handlebar button, and the only 1794 ms cruise-set press in the corpus. Plus the threshold margins and the binding itself — registered, deadband-free, and not the cruise-arm switch, whose every recorded press armed cruise control",

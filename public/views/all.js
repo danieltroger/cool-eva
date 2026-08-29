@@ -4,13 +4,12 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, faultState, groupOf, knownKeys, isStale, signalState } from "../lib/store.js";
 import { STALE_MS } from "../lib/tiles.js";
 import { MUTED } from "../lib/colors.js";
-// The handlebar buttons are momentary — a 30 ms press is one frame of a 60 Hz display
-// — so a raw 1/0 readout cannot be watched, and BUTTON_GROUP is the switch that picks
-// the tile below. Everything else about the group, including that it exists and where
-// it sorts, falls out of the registry's `group` field exactly as every other group
-// here does — including the section's own count, which is why adding the indicators,
-// the high beam and the brake to it needed no change here beyond the wording.
-import { BUTTON_GROUP, isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
+// A 30 ms press is one frame of a 60 Hz display, so a signal whose edges are the event
+// cannot be watched as a raw 1/0. getsLatchedTile() picks the tile below, per KEY rather
+// than per group. The sections themselves — that they exist, where they sort, what they
+// count — still fall out of the registry's `group` field, as every other group here does.
+import { getsLatchedTile } from "../lib/latched.js";
+import { isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
 
 const { div, input, span } = van.tags;
 
@@ -65,7 +64,10 @@ export function AllView() {
           .map(([group, groupKeys]) =>
             div(
               div({ class: "section" }, `${group} · ${groupKeys.length}`),
-              div({ class: "raw-grid" }, ...groupKeys.map(group === BUTTON_GROUP ? ButtonTile : RawTile))
+              div(
+                { class: "raw-grid" },
+                ...groupKeys.map(key => (getsLatchedTile(key, group) ? ButtonTile(key) : RawTile(key)))
+              )
             )
           )
       );
@@ -103,7 +105,8 @@ function RawTile(key) {
 }
 
 /**
- * One handlebar control. Same card as RawTile, but built to be watched rather than read.
+ * One control a person presses — the whole `buttons` group, plus the per-key exceptions in
+ * ../lib/latched.js. Same card as RawTile, but built to be watched rather than read.
  *
  * Three readouts, in decreasing order of how much you should trust them: the press
  * COUNT, how long ago the last press was, and the lit state. ⚠️ Never trust the light

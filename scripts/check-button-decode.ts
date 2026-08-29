@@ -163,7 +163,6 @@ const CASES: FrameCase[] = [
       blinker_left: 0,
       front_brake: 0,
       rear_brake: 0,
-      brake: 0,
       moving: 1,
       high_beam: 0,
     },
@@ -188,10 +187,10 @@ const CASES: FrameCase[] = [
     id: 0x102,
     hex: "80 3E A2 44 EF FF C1 FF",
     // b2 = 0xA2 — moving (0x80) + FRONT brake (0x20) + low-beam lamp (0x02), and no
-    // 0x40. The three brake keys together are the point of this case and the two below:
-    // `brake` is the historical front-OR-rear key Grafana selects by name, and
-    // front_brake/rear_brake are the halves the buttons section shows separately.
-    expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 0, brake: 1, moving: 1 },
+    // 0x40. Telling the two circuits apart is the point of this case and the two below;
+    // a third key `brake` = front OR rear was expected here too until it was deleted on
+    // 2026-08-30 for being computed rather than measured (scripts/check-derived-signals.ts).
+    expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 0, moving: 1 },
   },
   {
     what: "0x102 REAR brake alone, the case abs.ts could not find — 2026-08-03 18:23:21.381629",
@@ -203,16 +202,16 @@ const CASES: FrameCase[] = [
     // the full archive it fires on its own 18 times, and this is one of them. Fold
     // front and rear into one key again and this frame becomes indistinguishable from
     // the one above.
-    expect: { ...NONE_PRESSED_102, rear_brake: 1, front_brake: 0, brake: 1, moving: 0 },
+    expect: { ...NONE_PRESSED_102, rear_brake: 1, front_brake: 0, moving: 0 },
   },
   {
     what: "0x102 both brakes at once — 2026-08-08 12:59:30.564375",
     id: 0x102,
     hex: "80 10 62 44 88 FF D8 FF",
     // b2 = 0x62 — front (0x20) AND rear (0x40) together, which 1 899 captured frames do.
-    // So neither bit implies the other in either direction, and the merged `brake` key
-    // cannot be inverted back into the pair.
-    expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 1, brake: 1 },
+    // So neither bit implies the other in either direction, and an OR of the two cannot
+    // be inverted back into the pair — which is why the halves are what gets logged.
+    expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 1 },
   },
   {
     what: "0x102 the instant the fast-charge contactor closed — 2026-08-04 19:58:45.488",
@@ -312,29 +311,22 @@ for (const [hex, description] of [
   }
 }
 
-// `brake` is the front-OR-rear key Grafana still selects by name, and front_brake /
-// rear_brake are the halves the dashboard shows. Three keys off two bits, so the way
-// this goes wrong is one of them drifting: a mask edited to 0x30, a bit() index off by
-// one, someone "simplifying" brake to just the front. Checked over every one of the 256
-// values byte 2 can take rather than on the sampled frames above, because the failure is
-// a single value nobody thought to capture.
+// The two brake circuits are two keys off two adjacent bits, so the way this goes wrong
+// is one of them drifting: a mask edited to 0x30, a bit() index off by one, someone
+// folding the pair back into one key. Checked over every one of the 256 values byte 2 can
+// take rather than on the sampled frames above, because the failure is a single value
+// nobody thought to capture. (Their OR was a third key, `brake`, until 2026-08-30 — see
+// scripts/check-derived-signals.ts for the rule that retired it.)
 for (let byte2 = 0; byte2 < 256; byte2++) {
   const values = new Map(decodeFrame(0x102, Buffer.from([0, 0, byte2])).map(value => [value.key, value.value]));
   const front = values.get("front_brake");
   const rear = values.get("rear_brake");
-  const either = values.get("brake");
   const wantFront = byte2 & 0x20 ? 1 : 0;
   const wantRear = byte2 & 0x40 ? 1 : 0;
   if (front !== wantFront || rear !== wantRear) {
     failures.push(
       `0x102 b2=0x${byte2.toString(16).padStart(2, "0")}: front_brake=${front}/rear_brake=${rear}, ` +
         `want ${wantFront}/${wantRear} (0x20 is front, 0x40 is rear — see obd-garage/CAN_MAP.md)`
-    );
-    break;
-  }
-  if (either !== (wantFront || wantRear ? 1 : 0)) {
-    failures.push(
-      `0x102 b2=0x${byte2.toString(16).padStart(2, "0")}: brake=${either} but front|rear says ${wantFront || wantRear}`
     );
     break;
   }
@@ -433,7 +425,7 @@ for (const key of BUTTONS_GROUP_KEYS) {
 // real measurements and needs its own BY_KEY entry. Raised in review, where it turned
 // out to be the one flag added here that had fallen through both routes and was
 // rendering unbounded.
-for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp", "brake"]) {
+for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp", "horn"]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
@@ -457,8 +449,8 @@ if (failures.length > 0) {
 }
 console.log(
   `✓ ${CASES.length} captured frames decode as recorded; 0x400 is filtered in, short frames stay honest, ` +
-    `the beam lamps did not revert to charging/charge_port_unlocked, brake still equals front|rear over all ` +
-    `256 values of byte 2, flasher.js's ${FLASHER_KEYS.size} coalesced keys are real and are not buttons, ` +
+    `the beam lamps did not revert to charging/charge_port_unlocked, the two brake bits stay on 0x20 and 0x40 ` +
+    `over all 256 values of byte 2, flasher.js's ${FLASHER_KEYS.size} coalesced keys are real and are not buttons, ` +
     `and all ${BUTTONS_GROUP_KEYS.length} signals in the buttons section are registered, deadband-free and ` +
     `gated to 0…1`
 );

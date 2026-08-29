@@ -277,12 +277,14 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       const lampsAndState = data[2];
       const values: DecodedValue[] = [
         { key: "high_beam", value: handlebar & 0x40 ? 1 : 0 },
-        // `brake` is front OR rear, and stays exactly that. It has logged since June,
-        // grafana/dashboards/ride-summary.json selects it by name, and nothing is gained
-        // by breaking either for a value the two keys below can be OR-ed back into.
-        { key: "brake", value: lampsAndState & 0x60 ? 1 : 0 },
-        // …and the two halves separately, added 2026-08-19 for the dashboard's buttons
-        // section. They are NOT redundant with each other and must not be folded back
+        // The two brake circuits, separately, added 2026-08-19 for the dashboard's buttons
+        // section. A third key `brake` = front OR rear was emitted here from June until
+        // 2026-08-30 and is GONE: it was computed from these two bits, and this log stores
+        // measured bits rather than derived combinations, which a reader can recompute.
+        // The Grafana lane that selected it by name now ORs the halves — see
+        // docs/can-decode-findings.md §"Why `brake` was removed".
+        //
+        // The halves are NOT redundant with each other and must not be folded back
         // together: over all 14 650 573 frames of 0x102 in the archive the front bit
         // accounts for 491 applications and the rear 18, and 1 899 frames carry both at
         // once, so neither implies the other in either direction.

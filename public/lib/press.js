@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { groupOf, knownKeys, signalState } from "./store.js";
 import { monotonicNow } from "./clock.js";
 import { FLASHER_GAP_MS, FLASHER_KEYS } from "./flasher.js";
+import { getsLatchedTile } from "./latched.js";
 
 export { isFlasher } from "./flasher.js";
 
@@ -22,9 +23,8 @@ export { isFlasher } from "./flasher.js";
 // stayed at 0 for FLASHER_GAP_MS, because the blinkers are lamp outputs of a 1.46 Hz
 // relay rather than a finger. See ./flasher.js, and docs/dashboard-decisions.md
 // §"Momentary buttons on a phone screen" for the corpus behind every number here.
-
-/** The registry group whose signals get this treatment. Set in src/can/registry.ts. */
-export const BUTTON_GROUP = "buttons";
+//
+// WHICH signals get this treatment is ./latched.js's question, not this file's.
 
 /**
  * How long a press stays lit after the bit drops.
@@ -233,7 +233,7 @@ function release(key, tracker, at) {
 // for installHandlebarGestures().
 van.derive(() => {
   for (const key of knownKeys.val) {
-    if (groupOf(key) !== BUTTON_GROUP) {
+    if (!getsLatchedTile(key, groupOf(key))) {
       continue;
     }
     const reading = signalState(key).val;

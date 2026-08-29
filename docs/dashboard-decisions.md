@@ -144,7 +144,7 @@ How the two derives are paced — signal-bound for the double click, `serverTime
 
 ---
 
-## Momentary buttons on a phone screen — `lib/press.js`, `lib/flasher.js`, `views/all.js`
+## Momentary buttons on a phone screen — `lib/press.js`, `lib/latched.js`, `lib/flasher.js`, `views/all.js`
 
 The handlebar buttons are momentary and short: measured across 14 candump captures the median press is ~140 ms and the shortest is 30 ms. The logging path handles that fine — `0x102` arrives every 10 ms, the signals carry no deadband, so both edges of even the shortest press are decoded and sealed. Nothing in `lib/press.js` changes that, and nothing there is logged: it is display state only, computed on the phone, the same rule `lib/derive.js` follows.
 
@@ -157,6 +157,20 @@ So each button gets three things the raw value doesn't give you:
 - a **held-since** stamp, for the group's other half.
 
 `LATCH_MS` is 600 ms: comfortably above the ~200 ms it takes to notice a change and well under the ~1 s gap between deliberate presses of the same button, so two taps still read as two.
+
+### Which signals get the tile — `lib/latched.js`
+
+Two ways in, and until 2026-08-30 there was only one.
+
+The registry group `buttons` is the first: everything in it gets the latched tile, and the ALL page's sections still come from `groupOf(key)` and nothing else, so a group is a group and needs no code here. The second is `LATCHED_KEYS`, a set of keys **outside** that group, and it exists because a signal's group is not free to change. `db.ts` writes the `signal` table with `ON CONFLICT(key) DO NOTHING`, so `rides.db` keeps whatever group a key was FIRST seen under, for ever, and `grafana/dashboards/explore.json` reads `signal.grp`. The repo already spent that on 2026-08-19 for `high_beam` and four others and wrote down that it did; there is no reason to spend it again to change a tile.
+
+`horn` (`0x102` b2 0x10) and `ignition_button` (b1 bit6, the red button on the right bar) are what is in the set. Both are worked by a thumb, both are in `controls` with the vehicle-state bits, and both were rendering as a raw 1/0 — which for a ~30 ms event is not a readout at all, it is a tile that never visibly changes. That was the owner's report: _"once super simple 0 or 1 and once with a nice UI"_.
+
+**⚠️ "Latched" is a claim about the tile, not about the signal.** It is deliberately not called "momentary", because that word already means the opposite of _held_ everywhere else in this file, and `high_beam` is in the group and has been held for 67.9 s. What the set asserts is only that this signal's EDGES are the event worth seeing.
+
+What may not go in it is anything nobody operates. The tile's vocabulary is "PRESSED", "3 presses", "held for", and those words have to stay true: the beam lamps are outputs and `high_beam` is the switch that drives them (the pair is kept precisely so a failed bulb shows up as a disagreement); `cruise_active` is a vehicle state the registry argues about at its entry. The interesting boundary case is an ABS intervention — 1-2 frames, as invisible as a press and for the same reason — which `src/can/registry.ts` had recorded as "deliberately not fixed, and the shape of the fix is known: a per-key momentary set". That mechanism now exists, so `abs_event` is one line away; what stops it is the wording, since nothing presses an ABS intervention. That is a decision about nouns, not a missing switch, and the note there now says so.
+
+`scripts/check-all-view-tiles.ts` is the guard. It cannot import `views/all.js` or `lib/press.js` (both pull in `van`, which needs a DOM), which is exactly why the rule lives in a file of its own that imports nothing — the same split, for the same reason, as `lib/flasher.js`.
 
 ### The group stopped being all momentary on 2026-08-19
 
@@ -236,7 +250,7 @@ Reading `signalState(key).val` inside that derive subscribes it to each button. 
 
 ### The button tile's three readouts — `views/all.js`
 
-`ButtonTile` is the same card as `RawTile`, but built to be watched rather than read. Three readouts, in decreasing order of how much you should trust them:
+`ButtonTile` is the same card as `RawTile`, but built to be watched rather than read. Which signals reach it is `lib/latched.js`'s question — the whole `buttons` group plus the keys named there — and `views/all.js` asks it per KEY, not per group. Three readouts, in decreasing order of how much you should trust them:
 
 - the press COUNT, which cannot be missed by looking away, by a backgrounded tab or by a reconnect;
 - how long ago the last press was, so a count that moved while you were looking at the bars is still attributable to the button you just pressed;
