@@ -3,7 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { BAD, GOOD, MUTED, WARN } from "../lib/colors.js";
 import { valueOf } from "../lib/store.js";
-import { describeAutoReason, dutyStopIndex, dutyStops } from "../lib/fan-display.js";
+import { TEMPERATURE_FAULT_REASON, describeAutoReason, dutyStopIndex, dutyStops } from "../lib/fan-display.js";
 import { createFanCommandQueue } from "../lib/fan-command-queue.js";
 
 const { button, div, h2, input } = van.tags;
@@ -192,9 +192,9 @@ function Reason() {
     if (sentence === "") {
       return div();
     }
-    // Reason 2 is the fail-safe firing: no usable pack temperature for a minute. It is a
-    // fault, not a note, and it is the one state this section must not render quietly.
-    const failing = valueOf("fan_auto_reason") === 2;
+    // This one reason is the fail-safe firing: no usable pack temperature for a minute.
+    // It is a fault, not a note, and the one state this section must not render quietly.
+    const failing = valueOf("fan_auto_reason") === TEMPERATURE_FAULT_REASON;
     return div({ style: `color:${failing ? BAD : MUTED}` }, sentence);
   });
 }

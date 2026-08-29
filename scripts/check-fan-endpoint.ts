@@ -102,6 +102,14 @@ check(
   fanValue !== serviceWriteValue
 );
 check("…while the header NAME is shared, so both are the same non-simple request", FAN_HEADER === SERVICE_WRITE_HEADER);
+// ⚠️ The name is held by the literal "X-COOL-EVA" below; the VALUE was held by nothing,
+// because every request this file builds takes it from the server's own constant and so
+// stays green for whatever that constant says. The other end does not: public/views/fan.js
+// hard-codes `"X-Cool-Eva": "fan"` in its fetch and cannot see this file, so an edit here
+// alone turns every POST the dashboard makes into a 403 — and the slider's failure path
+// ("a request that did not come back may still have reached the Pi") tells the rider
+// nothing about why. Both ends pinned to the literal is what keeps them agreeing.
+check("the value is the literal `fan` public/views/fan.js hard-codes in its fetch", FAN_HEADER_VALUE === "fan");
 
 /** What reached the automatic loop, so a refused request can be shown to have reached nothing. */
 const commanded: string[] = [];

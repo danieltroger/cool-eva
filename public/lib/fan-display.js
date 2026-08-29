@@ -81,6 +81,18 @@ export const FAN_REASON_TEXT = {
 };
 
 /**
+ * The one reason code the sheet paints as a FAULT rather than a note: no usable pack
+ * temperature for a minute, so the fan is at the floor and a sensor is dead.
+ *
+ * ⚠️ A second copy of src/fan/curve.ts's FAN_REASON.TEMPERATURE_FAULT, because the
+ * browser cannot import a .ts module and the code is the wire format. §8 of
+ * scripts/check-fan-curve.ts asserts the two still agree. Written as a bare `2` in
+ * public/views/fan.js it survived swapping TEMPERATURE_FAULT with BELOW_THRESHOLD —
+ * which raises that banner for a merely cold pack and never for the dead sensor.
+ */
+export const TEMPERATURE_FAULT_REASON = 2;
+
+/**
  * One clause per FAN_TEMPERATURE_INPUT in src/fan/curve.ts. Empty where there is nothing
  * to add: a live reading needs no comment, and code 2 is already spelled out by reason 1
  * or 2, whichever applies.

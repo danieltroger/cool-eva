@@ -2,6 +2,7 @@ import { boundsFor } from "../public/lib/bounds.js";
 import {
   FAN_REASON_TEXT,
   FAN_TEMPERATURE_NOTE,
+  TEMPERATURE_FAULT_REASON,
   describeAutoReason,
   dutyStopIndex,
   dutyStops,
@@ -23,6 +24,7 @@ import {
   PACK_TEMPERATURE_MAX_C,
   PACK_TEMPERATURE_MIN_C,
   RIDING_CURVE_TOP_C,
+  ROAD_SPEED_MAX_KMH,
   SPEED_GATE_OFF_KMH,
   SPEED_GATE_ON_KMH,
   TEMPERATURE_GRACE_MS,
@@ -168,6 +170,17 @@ check(
   "⚠️  and so does an impossible one — the failure that would hold the fan off over a hot pack",
   dutyAt({ ...hot, speedKmh: 4000 }) === 84 && dutyAt({ ...hot, speedKmh: -5 }) === 84
 );
+// ⚠️ 4000 km/h is far past anything the bus can hand this, so the line above holds the
+// ceiling nowhere near where it matters: `speed_can_kmh` is a 13-bit field ÷ 10, topping
+// out at 819.1 km/h, and every value in (300, 819] left the whole file green. A ceiling
+// anywhere in that band turns a garbage reading into a VALID road speed, closes the gate
+// and holds the fan off over a hot pack — the dangerous direction the docstring on the
+// constant names. So: the constant as a literal, and a probe at the top of the field.
+check("the road-speed ceiling is the 300 km/h the doc says", ROAD_SPEED_MAX_KMH === 300);
+check(
+  "⚠️  819 km/h — the top of the 13-bit field — is read as NO speed, not as a road speed",
+  dutyAt({ ...hot, speedKmh: 819 }) === 84
+);
 
 // --- 4. The temperature hysteresis -------------------------------------------
 
@@ -264,6 +277,16 @@ check(
 
 console.log("\n6. the three signals this rests on, and the wrong ones next to them");
 
+// ⚠️ The literal first, for the reason 89 and 90 are literals in §3 — and this is the
+// consequential one. Every DC assertion in this file spreads `dc`, which is built FROM
+// this constant, so all of them stayed green for every value it could take. A wrong byte
+// leaves `charging` false for a whole session: no DC curve AND no 30 % floor, which is
+// the case docs/fan-control.md §"The automatic curve" says the fan is most for, on a fan
+// with no tacho and with a green build. src/vcu/write-runner.ts keeps its own
+// module-private copy of the same byte, so pinning both to the literal is what keeps them
+// agreeing across two files that cannot see each other — the argument
+// CHARGE_SESSION_MAX_AGE_MS is pinned twice under, in §10 below.
+check("a DC session is 0x610 b7 = 0x23, the byte the capture archive measured", CHARGE_MANAGER_STATE_DC === 0x23);
 check(
   `⚠️  charge_type's DC value (2) does NOT select the DC curve — only 0x${CHARGE_MANAGER_STATE_DC.toString(16)} does`,
   dutyAt({ chargeManagerState: 2, packTemperatureC: 5 }) === 0 && dutyAt({ ...dc, packTemperatureC: 5 }) === 30
@@ -334,6 +357,15 @@ for (const [name, code] of Object.entries(FAN_REASON)) {
       FAN_REASON_TEXT[code].length > 0
   );
 }
+// ⚠️ …and one code's MEANING, not just its bound. public/views/fan.js paints exactly one
+// reason red and cannot import a .ts module, so it keeps its own copy of the number.
+// Swapping TEMPERATURE_FAULT with BELOW_THRESHOLD left every assertion above true — both
+// codes still in bounds, both still with a sentence — while the sheet raised the fan's
+// fault banner for a merely cold pack and never for the dead sensor it exists for.
+check(
+  "the code the dashboard paints as a fault is still FAN_REASON.TEMPERATURE_FAULT",
+  TEMPERATURE_FAULT_REASON === FAN_REASON.TEMPERATURE_FAULT
+);
 for (const [name, code] of Object.entries(FAN_TEMPERATURE_INPUT)) {
   check(
     `FAN_TEMPERATURE_INPUT.${name} = ${code} is inside its bound and has an entry`,

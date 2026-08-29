@@ -1,6 +1,6 @@
 # Cooling-fan control (IBT-2 / BTS7960 + SPAL VA69A)
 
-The watercooling loop's radiator fan, driven from the Pi over hardware PWM. This is the write-up the code points at: `src/fan/pwm.ts` (sysfs and `pinctrl` I/O), `src/fan/control.ts` (bring-up order and the duty rules), `src/fan/curve.ts` (the automatic curve, pure), `src/fan/auto.ts` (the loop that feeds it), `src/http/fan.ts` (the endpoint) and `public/views/fan.js` (the slider and the mode toggle in the menu sheet).
+The watercooling loop's radiator fan, driven from the Pi over hardware PWM. This is the write-up the code points at: `src/fan/pwm.ts` (sysfs and `pinctrl` I/O), `src/fan/control.ts` (bring-up order and the duty rules), `src/fan/curve.ts` (the automatic curve, pure), `src/fan/auto.ts` (the loop that feeds it), `src/http/fan.ts` (the endpoint), `public/views/fan.js` (the slider and the mode toggle in the menu sheet) and `public/lib/fan-command-queue.js` (the coalescer that turns a drag into one POST in flight and one queued).
 
 **Phase 2: the fan follows the pack temperature, and the slider takes it over.** The Pi starts in AUTOMATIC and drives the fan off `batt_temp_hi`; dragging the slider hands it to you until the bike is switched off. The curve is `src/fan/curve.ts` (pure arithmetic), the loop that feeds it is `src/fan/auto.ts`, and both are argued in §5.
 
