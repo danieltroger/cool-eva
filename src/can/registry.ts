@@ -19,6 +19,15 @@ export const SIGNALS: SignalDef[] = [
   { key: "coolant_in", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
   { key: "coolant_out", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
 
+  // The loop's fan (src/fan/control.ts, docs/fan-control.md). These are what the Pi
+  // COMMANDED, not what it measured — there is no tacho on this fan — so they are
+  // written only when the command changes, exactly like the waypoints further down.
+  // onDemand for that reason: a fan sitting at 60 % writes nothing for an hour, and a
+  // fan on a bike with FAN_ENABLED unset writes nothing ever. Their own group, so those
+  // two silences cannot drag a real sensor's liveness down with them — see SignalDef.
+  { key: "fan_duty_pct", unit: "%", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_driver_enabled", unit: "", group: "fan", source: "sensor", onDemand: true },
+
   // The can0 interface's own up/down state, polled from `ip link` rather than decoded
   // off the bus (src/can/link-status.ts). A 1/0 flag in `diag`, which bounds.js gates to
   // [0, 1] as a BOOLEAN_GROUP — so no per-key bound is needed.

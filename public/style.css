@@ -1052,6 +1052,66 @@ body {
   padding-left: 0.15rem;
 }
 
+/* The cooling fan's duty slider. The only range input on the dashboard, and the only
+   control here whose value you set by dragging rather than by typing.
+   ⚠️ 2.75rem of height, which is mostly padding around a 0.35rem track: the thumb is
+   what a gloved finger has to catch, and the default ~16 px one is under half the 44pt
+   target every other control on this sheet clears. The track keeps `.probe-input`'s
+   fill and edge so it reads as a field rather than as decoration. */
+.fan-slider {
+  width: 100%;
+  box-sizing: border-box;
+  height: 2.75rem;
+  margin: 0.5rem 0 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+/* ⚠️ The vendor pseudo-elements get one rule EACH and are never grouped in a selector
+   list: a browser that does not know one of the selectors throws the whole rule away, so
+   a combined `::-webkit-… , ::-moz-…` block styles the track in neither engine. */
+.fan-slider::-webkit-slider-runnable-track {
+  height: 0.35rem;
+  border-radius: 0.2rem;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+}
+
+.fan-slider::-moz-range-track {
+  height: 0.35rem;
+  border-radius: 0.2rem;
+  background: var(--tile);
+  border: 1px solid var(--tile-edge);
+}
+
+/* Amber, matching `.action.writes` directly under it: this is the same tier — it moves
+   something on the bike and can be moved straight back. */
+.fan-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  margin-top: -0.85rem;
+  border-radius: 50%;
+  border: 1px solid var(--warn-edge);
+  background: var(--warn);
+}
+
+.fan-slider::-moz-range-thumb {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  border: 1px solid var(--warn-edge);
+  background: var(--warn);
+}
+
+.fan-slider:disabled {
+  opacity: 0.66;
+  cursor: default;
+}
+
 /* ---------- toast ---------- */
 
 /* The banner a handlebar gesture answers with. Sized and coloured for the worst case

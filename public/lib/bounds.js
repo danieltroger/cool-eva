@@ -28,6 +28,13 @@ const BY_KEY = {
   // anywhere near −40; both observed faults land far outside this.
   "coolant_in": [-20, 120],
   "coolant_out": [-20, 120],
+  // The loop's fan, as commanded by src/fan/control.ts. `fan_duty_pct` would reach
+  // BY_UNIT's "%" rule anyway; it is named here so the pair stays together and so a
+  // future duty cap cannot silently widen it. `fan_driver_enabled` MUST be named: its
+  // unit is "" in a group that is not a BOOLEAN_GROUP, which is the combination that
+  // falls through every rule in this file and renders whatever arrives.
+  "fan_duty_pct": [0, 100],
+  "fan_driver_enabled": [0, 1],
   // BMS pack temperatures. The −50 and 120 seen twice each are sentinels.
   "batt_temp_lo": [-30, 90],
   "batt_temp_hi": [-30, 90],

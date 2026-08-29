@@ -25,9 +25,11 @@ import {
   describeTableType,
   selectParameterTable,
 } from "./vcu/param-table.ts";
+import { handleFanEndpoint } from "./http/fan.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
+import { startFanControl } from "./fan/control.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
@@ -56,6 +58,9 @@ const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
 
 // Config (env overrides). README's Configuration section is the full table; this indexes it:
 //   COOLANT_ENABLED=0 → skip the MAX31865 probes (a bike with no watercooling loop)
+//   FAN_ENABLED=1 → drive the IBT-2 cooling fan. ⚠️ OPT IN, unlike the two either side
+//     of it: almost no Eva has the fan, so unset means no sysfs and no pinctrl at all,
+//     and /fan is not routed. src/fan/control.ts, docs/fan-control.md
 //   CAN_ENABLED=0 → skip CAN entirely (coolant only)
 //   OBD_ENABLED=0 → passive/listen-only: decode broadcasts but don't TX OBD polls
 //   ELOCK_ENABLED=0 → skip the one-shot keys-paired read from the E-LOCK ECU
@@ -121,6 +126,14 @@ try {
 } catch (err) {
   console.error("coolant: init failed — continuing without coolant probes:", err);
 }
+
+// --- Cooling fan (IBT-2 half-bridge on hardware PWM) ---
+// The other half of the watercooling loop, and the only thing here that drives a
+// physical output on the Pi rather than reading one. It never throws — a fan that cannot
+// be brought up becomes a `fault` string the endpoint reports — and it does nothing at
+// all unless FAN_ENABLED=1. Phase 1 is manual duty from the dashboard; there is no
+// temperature curve. docs/fan-control.md.
+const fanController = await startFanControl();
 
 // --- CAN: broadcast decode + OBD-II polling ---
 let channel: RawChannel | undefined;
@@ -397,6 +410,13 @@ const server = createServer(async (req, res) => {
     await handleUpdateEndpoint(req, res, UPDATE_DIR);
     return;
   }
+  // Manual duty for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
+  // bike's bus. Routed only when FAN_ENABLED=1, so a Pi with no fan 404s here instead of
+  // offering a control that could never work.
+  if (fanController.configured && url.pathname === "/fan") {
+    await handleFanEndpoint(req, res, url, { controller: fanController });
+    return;
+  }
   if (url.pathname === "/dtc-table") {
     handleDtcTableEndpoint(req, res);
     return;
@@ -495,6 +515,11 @@ async function shutdown(): Promise<void> {
   // an action stopped mid-flight has already recorded whatever it got to.
   vcuWriteRunner.stop();
   await vcuReadRunner.stop();
+  // Awaited, and before the process goes: this is the only output this service drives.
+  // Deploy is `git pull` + `systemctl restart`, so leaving a fan spinning behind a dead
+  // process is a routine path rather than a rare one. A SIGKILL still skips it — the
+  // config.txt `gpio=17,op,dl` lines are what put the enables back at the next boot.
+  await fanController.stop();
   // Awaited, not fire-and-forget: sealing the last segment is async, and
   // process.exit() below would otherwise kill it and lose the final buffer.
   await closeEncryptedLog();

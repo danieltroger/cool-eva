@@ -11,6 +11,7 @@ Everything below runs **ON THE PI** unless a step says "on the laptop".
   - `coolant_in` -> `/dev/spidev0.0` (CE0, inlet)
   - `coolant_out` -> `/dev/spidev0.1` (CE1, outlet)
   - Board reference resistor is 430 ohm (Adafruit); PT100 nominal 100 ohm.
+- (Optional) Radiator fan: SPAL VA69A-A101-87S on an IBT-2 / BTS7960 half-bridge, driven from hardware PWM0. Off unless `FAN_ENABLED=1`. Pin map, the `config.txt` lines and the udev rule are in §1 below; the wiring reasoning (why VCC is 3.3 V and not 5 V, why idling pulls both enables low) is in `docs/fan-control.md`.
 - 8devices Korlan USB2CAN into the bike's OBD port. Uses the in-kernel `usb_8dev` driver — no driver install. 500 kbit, 11-bit. It presents as can0.
 - (Optional) Energica Connectivity Hub reached over BLE for torque/power, odometer, vehicle state. The Pi's onboard Bluetooth is fine.
 
@@ -33,6 +34,26 @@ dmesg | grep -i usb_8dev
 ```
 
 The app itself brings can0 up (down -> set bitrate 500000 + active -> up) at startup, because it runs as root. You do NOT need to configure can0 in `/etc/network` or systemd-networkd.
+
+**Cooling fan (skip unless you wired the IBT-2 — §0).** Unlike SPI, this needs `/boot/firmware/config.txt` edited by hand:
+
+```sh
+sudo tee -a /boot/firmware/config.txt <<'EOF'
+dtoverlay=pwm,pin=18,func=2
+gpio=17,op,dl
+gpio=27,op,dl
+EOF
+sudo apt-get install -y raspi-utils   # provides `pinctrl`, which drives the two enables
+sudo reboot                           # an overlay is not applied at runtime
+
+# After the reboot — a PWM chip should exist. The NUMBER varies by kernel; the app
+# discovers it and logs which it picked, so do not hardcode 0 anywhere.
+ls /sys/class/pwm
+```
+
+The two `gpio=` lines pull the IBT-2's enables low at boot, so a Pi that is booting or has crashed leaves the bridge in standby rather than driving the fan. They are not optional.
+
+`/sys/class/pwm` is root-only and the service runs as root, so nothing more is needed for it. To drive the fan as `pi` (or if you ever run the service unprivileged) add the udev rule in `docs/fan-control.md` §5 — including its second stanza, without which the exported channel's own files stay owned by root.
 
 ## 2. Node.js 24
 
@@ -102,6 +123,7 @@ The service looks for `ride-log-key.public.pem` in the project dir by default (o
 
 Defaults are correct for a stock bike; skip this section unless you need one. All are read by `src/index.ts`:
 
+- `FAN_ENABLED=1` — drive the IBT-2 cooling fan and serve `/fan`. **Opt IN**, unlike every other flag here: unset means no `/sys/class/pwm`, no `pinctrl`, no endpoint. Needs the §1 `config.txt` lines first. See `docs/fan-control.md`
 - `CAN_ENABLED=0` — skip CAN entirely (coolant only)
 - `OBD_ENABLED=0` — passive/listen-only: decode broadcasts, don't TX OBD polls
 - `ELOCK_ENABLED=0` — skip the one-shot keys-paired read from the E-LOCK ECU
@@ -166,7 +188,7 @@ sudo apt-get install -y avahi-daemon
 
 Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging.
 
-Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus).
+Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (manual fan duty — only with `FAN_ENABLED=1`, otherwise a 404).
 
 ## 9. Deploying updates later
 
@@ -239,3 +261,5 @@ See `README.md` "Encrypted ride log" and "Grafana" for the datasource caveat (te
 ## Safety
 
 The CAN bus is read-only here: passive broadcast decode, standard OBD-II READ requests, and KWP 0x22 parameter reads. No writes of any kind. Only touch hardware you own and are authorized to modify.
+
+With `FAN_ENABLED=1` the dashboard can start a fan blade from a phone. It is behind a two-tap arm, but keep fingers out of the duct while the Pi is powered, and remember that a `SIGKILL` leaves the bridge driving until the next boot (`docs/fan-control.md` §8).

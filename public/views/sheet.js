@@ -7,6 +7,7 @@ import { bytes, compass, duration } from "../lib/format.js";
 import * as units from "../lib/units.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
+import { FanControl, refreshFanStatus } from "./fan.js";
 
 const { button, div, h2 } = van.tags;
 
@@ -34,6 +35,7 @@ export const sheetOpen = van.state(false);
 export function openSheet() {
   sheetOpen.val = true;
   void refreshStatus();
+  void refreshFanStatus();
   refreshServiceMode(() => sheetOpen.val);
 }
 
@@ -84,6 +86,12 @@ export function Sheet() {
       DownloadButton(),
       CanRestartButton(),
       UpdateButton(),
+      // The cooling fan brings its own heading, so it disappears completely on a Pi
+      // without FAN_ENABLED rather than leaving a heading over nothing. It sits between
+      // the grey Actions and Service mode because that is what it is: the only control
+      // on this sheet that actuates something, and the only one that actuates something
+      // which is NOT the motorcycle.
+      FanControl(),
       // Last of the doing-things sections and first of the reading-things ones,
       // because it is the only control here that causes traffic on the bike's bus
       // — worth a heading of its own rather than a third entry under "Actions".
