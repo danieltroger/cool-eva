@@ -5,10 +5,11 @@ import { openFanPwm, type FanPwm } from "./pwm.ts";
 // Cooling-fan policy: what duty the IBT-2 is actually given, and in what order the
 // bridge is brought up. Every sysfs and pinctrl write is in ./pwm.ts.
 //
-// Three rules, all safety rather than taste, all argued in docs/fan-control.md:
+// Three rules, all argued in docs/fan-control.md:
 //   • from rest the fan gets KICK_START_MS at 100 % before it drops to the target, so a
-//     blocked rotor draws locked-rotor current and blows the bike's 10 A fuse — which is
-//     what SPAL's usage recommendations (clause f) require of the supply;
+//     stiff rotor breaks away at full torque. ⚠️ This was introduced as fuse protection
+//     and that claim is RETRACTED — docs/fan-control.md §4 has the fuse curve and the
+//     measurement that would settle it. Do not build anything on it as protection;
 //   • anything under MIN_RUNNING_DUTY_PERCENT is a stop, not a crawl the fan may stall at;
 //   • idling pulls BOTH enables LOW. Enables HIGH at duty 0 turns both low sides on,
 //     which shorts the motor and brakes it — in a 270 km/h airstream.
@@ -19,16 +20,20 @@ import { openFanPwm, type FanPwm } from "./pwm.ts";
 /**
  * ⚠️ OPT IN — `=== "1"`, deliberately the opposite of COOLANT_ENABLED and OBD_ENABLED,
  * which are opt-out. Almost no Eva has this fan, so the default has to be a Pi that never
- * opens /sys/class/pwm and never spawns `pinctrl`.
+ * opens /sys/class/pwm and never spawns `pinctrl`. One of exactly two opt-in switches in
+ * this repo; SERVICE_WRITE_ENABLED is the other, and README's Configuration table says so
+ * on both rows.
  */
 const FAN_ENABLED = process.env.FAN_ENABLED === "1";
 
 /**
  * How long the fan is held at full duty from rest before it drops to the target.
  *
- * ⚠️ Load-bearing, not a nicety. A stalled rotor at 30 % duty averages ~6 A, which never
- * blows the bike's 10 A fuse and leaves a jammed fan cooking; at full duty it pulls the
- * 15–25 A locked-rotor current and the fuse goes. docs/fan-control.md §"SPAL clause f".
+ * Anti-stiction: a rotor that is stiff gets full torque to break away with rather than a
+ * duty it can sit and hum at. ⚠️ It is NOT fuse protection — a 10 A blade fuse needs
+ * about 27 A to open inside 1500 ms, above the top of the estimated stall current, and
+ * that current was never measured. The retraction, the fuse curve and the one measurement
+ * that would settle it: docs/fan-control.md §4.
  */
 export const KICK_START_MS = 1500;
 
@@ -45,8 +50,8 @@ export const MIN_RUNNING_DUTY_PERCENT = 30;
 export const MAX_DUTY_PERCENT = 100;
 
 /**
- * ⚠️ Deliberately NOT MAX_DUTY_PERCENT. The kick exists for the current a blocked rotor
- * draws at FULL duty, so capping it to hold an average voltage would defeat the whole
+ * ⚠️ Deliberately NOT MAX_DUTY_PERCENT. Whatever a stiff rotor needs to break away, it
+ * needs at full torque, so capping this to hold an average voltage would defeat the
  * reason it is there. It lasts KICK_START_MS, which no fan winding minds.
  */
 const KICK_DUTY_PERCENT = 100;
@@ -80,6 +85,21 @@ export interface FanController {
   stop: () => Promise<void>;
 }
 
+/**
+ * The seam a check drives this through. Both fields default to the real thing, so the
+ * service's own call is `startFanControl()` with no arguments.
+ */
+export interface FanControlOptions {
+  /**
+   * How the hardware is opened. scripts/check-fan-ordering.ts passes a fake FanPwm that
+   * records its call sequence, which is the only way the two orderings below — the whole
+   * safety property of this file — can be asserted with no Pi and no bike.
+   */
+  openPwm?: () => Promise<FanPwm>;
+  /** Overrides FAN_ENABLED, so a check needs no environment variable to reach the driver. */
+  enabled?: boolean;
+}
+
 /** Everything one running driver remembers, passed explicitly to the helpers below. */
 interface FanContext {
   pwm: FanPwm;
@@ -101,15 +121,15 @@ interface FanContext {
  * process exists for, so a failure here becomes a `fault` string the endpoint and the
  * dashboard show.
  */
-export async function startFanControl(): Promise<FanController> {
-  if (!FAN_ENABLED) {
+export async function startFanControl(options: FanControlOptions = {}): Promise<FanController> {
+  if (!(options.enabled ?? FAN_ENABLED)) {
     console.log("fan: disabled (set FAN_ENABLED=1 on a bike with the IBT-2 fan driver wired up)");
     return inertController(false, null);
   }
 
   let pwm: FanPwm;
   try {
-    pwm = await openFanPwm();
+    pwm = await (options.openPwm ?? openFanPwm)();
   } catch (error) {
     const detail = (error as Error).message;
     console.error("fan: bring-up failed — the fan cannot be driven this boot:", detail);
@@ -208,17 +228,18 @@ async function commandDuty(context: FanContext, requested: number): Promise<FanC
     return { ok: false, message: `could not command ${capped} %: ${(error as Error).message}` };
   }
 
-  const capNote = capped < requested ? ` (asked for ${requested} %, capped at ${MAX_DUTY_PERCENT} %)` : "";
+  // No "asked for N, capped at M" note: src/http/fan.ts rejects anything above the cap
+  // with a 400 before this is reached, for every value of the cap since both read the
+  // same constant. A message describing a capping that cannot happen would be a guard
+  // that cannot fire. The clamp above stays as the last line of defence for a caller
+  // that is not the endpoint.
   if (fromRest) {
-    return {
-      ok: true,
-      message: `Kick-starting at ${KICK_DUTY_PERCENT} % for ${KICK_START_MS} ms, then ${capped} %${capNote}.`,
-    };
+    return { ok: true, message: `Kick-starting at ${KICK_DUTY_PERCENT} % for ${KICK_START_MS} ms, then ${capped} %.` };
   }
   if (context.phase === "kick-start") {
-    return { ok: true, message: `Still kick-starting — it will settle at ${capped} % when the kick ends${capNote}.` };
+    return { ok: true, message: `Still kick-starting — it will settle at ${capped} % when the kick ends.` };
   }
-  return { ok: true, message: `Fan at ${capped} %${capNote}.` };
+  return { ok: true, message: `Fan at ${capped} %.` };
 }
 
 /**
@@ -295,11 +316,10 @@ async function applyDuty(context: FanContext, percent: number): Promise<void> {
  */
 async function goIdle(context: FanContext): Promise<void> {
   clearKickTimer(context);
-  // ⚠️ The second step runs even if the first failed. This is the one place where
-  // pressing on after an error is right: stopping is the safe direction, so every
-  // remaining lever gets pulled, and the caller is told about the failures afterwards.
-  // The context fields are only updated by whatever actually succeeded, so a bridge we
-  // could not switch off keeps reporting itself as enabled.
+  // A failure in one step does not abort the rest, and every failure is reported to the
+  // caller rather than thrown at the first one. The context fields are only updated by
+  // whatever actually succeeded, so a bridge we could not switch off keeps reporting
+  // itself as enabled — which is what the dashboard renders as a fault.
   const failures: string[] = [];
   try {
     await context.pwm.setBridgeEnabled(false);
@@ -307,12 +327,23 @@ async function goIdle(context: FanContext): Promise<void> {
   } catch (error) {
     failures.push(`enables: ${(error as Error).message}`);
   }
-  try {
-    await context.pwm.setOutputEnabled(false);
-    await context.pwm.setDutyPercent(0);
-    context.appliedPercent = 0;
-  } catch (error) {
-    failures.push(`pwm: ${(error as Error).message}`);
+  // ⚠️ Only once the enables are genuinely LOW. Dropping the output while they are still
+  // HIGH IS the brake — both low sides on across the winding — so a failed enable-drop
+  // must leave the duty exactly where it is. A fan still running is strictly safer than
+  // a fan braked in a 270 km/h airstream, and the failure is reported either way.
+  if (context.bridgeEnabled) {
+    failures.push(
+      "left the PWM driving on purpose: with the enables still HIGH, a duty of 0 would brake the rotor rather " +
+        "than release it. Cut power to the IBT-2."
+    );
+  } else {
+    try {
+      await context.pwm.setOutputEnabled(false);
+      await context.pwm.setDutyPercent(0);
+      context.appliedPercent = 0;
+    } catch (error) {
+      failures.push(`pwm: ${(error as Error).message}`);
+    }
   }
   context.targetPercent = 0;
   // Idle whatever happened, so the next command re-drives the whole bring-up sequence

@@ -44,24 +44,39 @@ export interface FanPwm {
 }
 
 /**
- * Finds the PWM chip, exports channel 0 and leaves it at 20 kHz, duty 0, output off,
- * both enables LOW — i.e. a bridge in standby that has not been asked to do anything.
+ * Drops both enables, finds the PWM chip, exports channel 0 and leaves it at 20 kHz,
+ * duty 0, output off — i.e. a bridge in standby that has not been asked to do anything.
  *
  * Throws with a message that names the missing config.txt line or udev rule, because
  * every failure here is a setup step nobody did rather than a hardware fault.
  */
 export async function openFanPwm(): Promise<FanPwm> {
+  // ⚠️ FIRST, ahead of everything else here. A SIGKILL skips the shutdown handler, and
+  // `Restart=on-failure` / `RestartSec=5` (scripts/setup-service.ts) bring this process
+  // back about five seconds later — so bring-up can begin with both enables still HIGH
+  // and the channel still driving. Dropping the duty under a live bridge would pass
+  // through "enabled at 0 %", which shorts the motor. Same mirror rule as goIdle().
+  await setEnablePins(false);
+
   const chipPath = await findPwmChip();
   const channelPath = `${chipPath}/pwm${PWM_CHANNEL}`;
-  await exportChannel(chipPath, channelPath);
+  const existingPeriodNs = await exportChannel(chipPath, channelPath);
 
-  // Duty before period, always. The kernel rejects a duty longer than the period it is
-  // written against, and a channel a previous run left exported still holds whatever it
-  // was given then — so writing a shorter period first can fail with EINVAL.
-  await writeAttribute(channelPath, "duty_cycle", "0");
-  await writeAttribute(channelPath, "period", String(PWM_PERIOD_NS));
+  // Period FIRST on a freshly exported channel, where it reads 0: __pwm_apply() rejects
+  // every duty_cycle write against a zero period with EINVAL, ahead of its "nothing
+  // changed, return 0" early return — so even writing 0 fails. pwm-bcm2835 defines no
+  // .get_state, so nothing ever refreshes that zero from the hardware, and the export
+  // survives a restart, which makes the failure permanent rather than first-boot only.
+  // Duty first is right only when the period SHRINKS under a live duty, which cannot
+  // happen here: PWM_PERIOD_NS is a constant, so an already-exported channel holds it.
+  if (existingPeriodNs === 0) {
+    await writeAttribute(channelPath, "period", String(PWM_PERIOD_NS));
+    await writeAttribute(channelPath, "duty_cycle", "0");
+  } else {
+    await writeAttribute(channelPath, "duty_cycle", "0");
+    await writeAttribute(channelPath, "period", String(PWM_PERIOD_NS));
+  }
   await writeAttribute(channelPath, "enable", "0");
-  await setEnablePins(false);
 
   console.log(`fan: PWM ready on ${channelPath} at ${PWM_PERIOD_NS} ns, bridge in standby`);
   return {
@@ -165,8 +180,12 @@ async function deviceLinkOf(chipPath: string): Promise<string> {
   }
 }
 
-/** Exports channel 0, tolerating a channel an earlier run of this service left behind. */
-async function exportChannel(chipPath: string, channelPath: string): Promise<void> {
+/**
+ * Exports channel 0, tolerating a channel an earlier run of this service left behind,
+ * and answers with the period that channel currently holds in nanoseconds — 0 on a fresh
+ * export, which is what decides the write order back in openFanPwm().
+ */
+async function exportChannel(chipPath: string, channelPath: string): Promise<number> {
   try {
     await writeFile(`${chipPath}/export`, String(PWM_CHANNEL));
   } catch (error) {
@@ -180,9 +199,12 @@ async function exportChannel(chipPath: string, channelPath: string): Promise<voi
 
   // Confirm the directory is really there and readable before anything is written into
   // it. udev creates and chowns it a moment after the export, so this is also where the
-  // "files exist but belong to root" case surfaces, with the rule to fix it named.
+  // "files exist but belong to root" case surfaces, with the rule to fix it named. The
+  // value read here is not thrown away: it is the zero-period case openFanPwm() orders
+  // its writes around, so no extra syscall pays for that.
   try {
-    await readFile(`${channelPath}/period`, "utf-8");
+    const period = await readFile(`${channelPath}/period`, "utf-8");
+    return Number.parseInt(period.trim(), 10) || 0;
   } catch (error) {
     throw new Error(
       `${channelPath} is not usable after exporting (${(error as Error).message}). Either the export did not take, ` +

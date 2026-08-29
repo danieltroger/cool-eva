@@ -9,13 +9,23 @@ import type { FanController, FanPhase } from "../fan/control.ts";
 //
 // POST rather than GET for the same reason /can-restart is a POST: this one spins a fan
 // blade, and a prefetch or a crawler must not be able to do that by following a link.
-// Deliberately no confirmation header — that belongs to the endpoint that changes the
-// MOTORCYCLE (src/http/vcu-write.ts). This drives an accessory of ours off the Pi's own
-// GPIO and cannot reach the bike's bus at all. The two-tap arming is on the dashboard
-// side, in public/views/fan.js.
+//
+// ⚠️ POST alone is not enough, and the two-tap arming in public/views/fan.js protects
+// nothing here: this server sends no Access-Control-* headers and has no auth, so
+// `<form method=POST action="http://cool-eva.local/fan?duty=100">` on ANY page the
+// rider's phone opens on the hotspot is a SIMPLE request — no preflight, no header, and
+// the fan spins. CORS would only stop the attacker READING the reply. So a POST wants
+// FAN_HEADER, whose custom name is exactly what forces a preflight this server never
+// answers. Its value is not vcu-write.ts's: a caller built for that cannot reach this,
+// and this one drives an accessory off the Pi's own GPIO and never touches the bus.
 //
 // Served only when FAN_ENABLED=1: index.ts routes it behind the controller's `configured`
 // flag, so a Pi with no fan wired up answers 404 here rather than "not enabled".
+
+/** The header a POST must carry, and a value that is neither of vcu-write.ts's. */
+export const FAN_HEADER = "x-cool-eva";
+
+export const FAN_HEADER_VALUE = "fan";
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -55,6 +65,14 @@ export async function handleFanEndpoint(
   if (req.method !== "POST") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "GET, POST" });
     res.end("use GET to see what the fan is doing, POST ?duty=N to command it\n");
+    return;
+  }
+
+  if (req.headers[FAN_HEADER] !== FAN_HEADER_VALUE) {
+    // 403 and a plain-text reason, like /vcu-write: the caller that hits this is either
+    // `curl` without the header or a cross-origin form, and neither reads JSON.
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(`commanding the fan needs the ${FAN_HEADER}: ${FAN_HEADER_VALUE} header\n`);
     return;
   }
 

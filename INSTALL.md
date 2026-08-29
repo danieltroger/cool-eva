@@ -53,6 +53,8 @@ ls /sys/class/pwm
 
 The two `gpio=` lines pull the IBT-2's enables low at boot, so a Pi that is booting or has crashed leaves the bridge in standby rather than driving the fan. They are not optional.
 
+**No `dtparam=audio=off` is needed on a Zero 2 W**, whose device tree declares `audio_pins` empty — `dtparam=audio` there toggles HDMI audio only. §0 invites any Pi with SPI and USB, though, and on a Pi with an analogue audio jack (3, 4) `audio_pins` is `<40 41>` at Alt0, which _is_ PWM0/PWM1: on those, add `dtparam=audio=off` to the block above. `docs/fan-control.md` §5.
+
 `/sys/class/pwm` is root-only and the service runs as root, so nothing more is needed for it. To drive the fan as `pi` (or if you ever run the service unprivileged) add the udev rule in `docs/fan-control.md` §5 — including its second stanza, without which the exported channel's own files stay owned by root.
 
 ## 2. Node.js 24
@@ -188,7 +190,7 @@ sudo apt-get install -y avahi-daemon
 
 Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging.
 
-Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (manual fan duty — only with `FAN_ENABLED=1`, otherwise a 404).
+Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (manual fan duty — only with `FAN_ENABLED=1`, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
 
 ## 9. Deploying updates later
 
@@ -262,4 +264,4 @@ See `README.md` "Encrypted ride log" and "Grafana" for the datasource caveat (te
 
 The CAN bus is read-only here: passive broadcast decode, standard OBD-II READ requests, and KWP 0x22 parameter reads. No writes of any kind. Only touch hardware you own and are authorized to modify.
 
-With `FAN_ENABLED=1` the dashboard can start a fan blade from a phone. It is behind a two-tap arm, but keep fingers out of the duct while the Pi is powered, and remember that a `SIGKILL` leaves the bridge driving until the next boot (`docs/fan-control.md` §8).
+With `FAN_ENABLED=1` the dashboard can start a fan blade from a phone. It is behind a two-tap arm and the POST needs an `X-Cool-Eva: fan` header, but keep fingers out of the duct while the Pi is powered: a `SIGKILL` leaves the bridge driving until the service restarts itself, which `Restart=on-failure` / `RestartSec=5` makes about **five seconds** later — long enough to matter with a hand in the duct, and only that long because the unit restarts (`docs/fan-control.md` §8).

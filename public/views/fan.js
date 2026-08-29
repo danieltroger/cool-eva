@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { GOOD, MUTED, WARN } from "../lib/colors.js";
+import { BAD, GOOD, MUTED, WARN } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { valueOf } from "../lib/store.js";
 
@@ -86,6 +86,12 @@ export async function refreshFanStatus() {
       armed.val = "";
     }
     status.val = payload;
+    // The thumb follows a cap that came down: the slider's `max` alone would clamp what
+    // the element SHOWS while this state kept the old number, and that number is what
+    // the button POSTs.
+    if (pendingDuty.val > maxPercent()) {
+      pendingDuty.val = maxPercent();
+    }
     available.val = true;
   } catch (error) {
     // Loud, but not fatal to the rest of the sheet: a failed fetch simply leaves the
@@ -121,6 +127,16 @@ function Situation() {
     if (driverEnabled !== 1) {
       return div({ style: `color:${MUTED}` }, "Standby — both enables LOW, so the rotor freewheels.");
     }
+    // ⚠️ Enabled at 0 % is NOT a stopped fan: with the high side never switching the
+    // BTS7960 leaves both low sides on, which shorts the winding and brakes the rotor.
+    // src/fan/control.ts refuses to reach this state on purpose, so seeing it means a
+    // stop failed halfway. It is the loudest thing this tile can say, not a green one.
+    if (duty === 0) {
+      return div(
+        { style: `color:${BAD}` },
+        "⚠️  Enables HIGH at 0 % — the bridge is BRAKING the rotor, not idling it. Cut power to the IBT-2."
+      );
+    }
     return div({ style: `color:${GOOD}` }, `Running at ${duty} %.`);
   });
 }
@@ -135,7 +151,10 @@ function Slider() {
       class: "fan-slider",
       type: "range",
       min: "0",
-      max: "100",
+      // The Pi's cap, not a literal 100 — so a cap lowered to hold the fan's average
+      // voltage (docs/fan-control.md §4) stops this page offering duties the endpoint
+      // would answer 400 to. A thunk, like `disabled`, for the reason above.
+      max: () => String(maxPercent()),
       // 5 % steps. Finer is not a duty this fan resolves, and it costs precision the
       // thumb does not have on a phone.
       step: "5",
@@ -193,8 +212,8 @@ function SetButton() {
     ),
     div({ class: "action-note", style: `color:${MUTED}` }, () =>
       pendingDuty.val >= minRunningPercent() && valueOf("fan_driver_enabled") !== 1
-        ? `From rest the fan is held at 100 % for ${kickStartMs()} ms first, so a jammed rotor blows the ` +
-          `bike's fuse instead of sitting there drawing a few amps.`
+        ? `From rest the fan is held at 100 % for ${kickStartMs()} ms first, so a stiff rotor gets full ` +
+          `torque to break away with rather than a duty it can sit and hum at.`
         : ""
     )
   );
@@ -230,6 +249,11 @@ function minRunningPercent() {
   return status.val?.limits.minRunningPercent ?? 0;
 }
 
+/** The Pi's cap. 0 without a reply, which leaves the slider inert rather than guessing 100. */
+function maxPercent() {
+  return status.val?.limits.maxPercent ?? 0;
+}
+
 function kickStartMs() {
   return status.val?.limits.kickStartMs ?? 0;
 }
@@ -256,7 +280,13 @@ async function performFanCommand() {
   sending.val = true;
   busy.val = true;
   try {
-    const response = await fetch(`/fan?duty=${duty}`, { method: "POST", cache: "no-store" });
+    const response = await fetch(`/fan?duty=${duty}`, {
+      method: "POST",
+      cache: "no-store",
+      // Not decoration: a custom header is what makes this NOT a simple request, so a
+      // cross-origin form cannot reach the endpoint. See src/http/fan.ts.
+      headers: { "X-Cool-Eva": "fan" },
+    });
     const payload = /** @type {FanReply} */ (await response.json());
     status.val = payload;
     message.val = payload.message ?? "";

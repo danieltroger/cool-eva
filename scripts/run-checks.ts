@@ -118,6 +118,17 @@ const CHECKS: SelfCheck[] = [
       "FAILS still does end it, rather than leaving a live process with nothing listening for systemd to call healthy",
   },
   {
+    script: "scripts/check-fan-ordering.ts",
+    covers:
+      "the two orderings docs/fan-control.md §3 calls the whole safety property of src/fan/control.ts, driven " +
+      "through startFanControl() with a fake FanPwm that records its call sequence: that a start from rest writes " +
+      "the duty and enables the PWM output BEFORE the IBT-2's enables go HIGH, that a stop and the shutdown path " +
+      "both drop the enables BEFORE the output and the duty, and — the case that produced the check — that an " +
+      "enable-drop which FAILS leaves the PWM driving rather than zeroing it under a live bridge, since enables " +
+      "HIGH at 0 % turns both low sides on and brakes a rotor in a 270 km/h airstream. Nothing here needs a Pi: " +
+      "the fan has no tacho, so every one of these is invisible on the bike",
+  },
+  {
     script: "scripts/check-service-preview.ts",
     covers:
       "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output",
