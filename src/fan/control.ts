@@ -280,7 +280,8 @@ function clearKickTimer(context: FanContext): void {
  *
  * ⚠️ Measured with since() rather than trusted from the timer, and never against a
  * Date.now() difference: this process steps its own wall clock (../monotonic.ts), and a
- * kick cut short is a blocked rotor that keeps drawing 6 A instead of blowing the fuse.
+ * kick cut short may leave a rotor that never broke free sitting at low duty — which
+ * nothing here can observe, because the fan has no tacho. docs/fan-control.md §4.
  */
 async function finishKickStart(context: FanContext): Promise<void> {
   context.kickTimer = null;
