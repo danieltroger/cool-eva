@@ -630,7 +630,25 @@ check(
   bridgeAt >= 0 && outputAt > bridgeAt && !controller.state().driverEnabled
 );
 
+// ⚠️ THE BEAT'S INTERVAL, not merely that a beat exists. enterFun() re-arms the timer at
+// FUN_WATCHDOG_MS; leave it on the curve's own tickMs and everything above stays green,
+// because this loop ticks at 20 ms and a mutant beating FASTER than 250 ms ends a session
+// sooner rather than later. Only a loop SLOWER than the watchdog can tell them apart, so
+// this one ticks at 3 s: on the bike that is AUTO_TICK_MS = 2 s, and a silent bus would
+// hold the fan on a wrist's last duty for up to 2.5 s instead of 0.75 s.
+const slowLoop = startFanAutomatic(controller, { tickMs: 3_000 });
+const slowEntered = await slowLoop.setMode("fun");
+check(
+  `a loop whose own tick is slower than the watchdog still enters fun mode (3000 ms tick, ${FUN_WATCHDOG_MS} ms beat)`,
+  slowEntered.ok && slowLoop.mode() === "fun"
+);
 clearInterval(parkedBus);
+await settle(FUN_GATE_MAX_AGE_MS + FUN_WATCHDOG_MS * 2);
+check(
+  "⚠️  …and a bus that goes silent ends it on the WATCHDOG's 250 ms, not on the loop's own 3 s tick",
+  slowLoop.mode() === "automatic"
+);
+slowLoop.stop();
 
 // --- 7. A pass that throws, and a write that never settles --------------------
 //
@@ -690,6 +708,23 @@ const throwingLoop = startFanAutomatic(throwingController, {
 });
 await settle(TICK_MS * 4);
 
+// ⚠️ THE JOURNAL IS THE OTHER HALF OF THE GUARD, and this path is not runTick. That one
+// warns off a 2 s tick; this one is driven by `throttle_pct` events at ~100 Hz, so a bridge
+// that starts refusing would write a hundred lines a second onto a Pi that is also writing
+// a ride log, and the message you went looking for is the one that scrolled past. Captured
+// from here to the end of the throwing section so both halves are asserted: the FIRST
+// failure is still named and still loud, and a burst is still ONE line rather than one each.
+const funWarnings: string[] = [];
+const realWarn = console.warn;
+console.warn = (...args: any[]): void => {
+  const line = args.map(part => (part instanceof Error ? part.message : String(part))).join(" ");
+  if (line.startsWith("fan: a fun-mode pass failed")) {
+    funWarnings.push(line);
+    return;
+  }
+  realWarn(...args);
+};
+
 // The ENTRY path. Caught here rather than left to reject, because an escaped rejection at
 // a top-level await reads as "the check crashed" rather than as a named assertion.
 let entryError: unknown = null;
@@ -710,6 +745,10 @@ check(
   enteredBroken?.ok === false && (enteredBroken?.message ?? "").includes("pinctrl vanished")
 );
 check("…and the mode the gate granted is kept, so the next pass retries", throwingLoop.mode() === "fun");
+check(
+  `…and the very first failure is in the journal at once, naming the call (${funWarnings.length} line)`,
+  funWarnings.length === 1 && funWarnings[0].includes("pinctrl vanished")
+);
 
 // The EVENT path, which is the one that runs at ~100 Hz with its promise discarded.
 let escaped: unknown = null;
@@ -732,13 +771,44 @@ check(
   `…and the session is still driving the fan afterwards (${brokenAttempts} writes, ${brokenFailures} of them thrown)`,
   brokenFailures >= 2 && brokenState.targetPercent === funDutyPercent(44.4)
 );
+
+// A wrist sweeping the throttle while the bridge is refusing — the flood this rate limit
+// exists for. Forty distinct readings, so forty change events and forty failed passes,
+// inside a fraction of the interval.
+const warningsBeforeBurst = funWarnings.length;
+const failuresBeforeBurst = brokenFailures;
+throwNext = true;
+for (let step = 0; step < 40; step += 1) {
+  funThrottle = 20 + step * 0.7;
+  record("throttle_pct", funThrottle);
+  await settle(1);
+}
+throwNext = false;
+const burstFailures = brokenFailures - failuresBeforeBurst;
+const burstWarnings = funWarnings.length - warningsBeforeBurst;
+check(
+  `⚠️  ${burstFailures} failing passes inside one interval write ${burstWarnings} journal line(s), not one each`,
+  burstFailures >= 20 && burstWarnings <= 1
+);
+check(
+  "…and coalesced rather than dropped — every line says how many failures it stands for",
+  funWarnings.length > 0 && funWarnings.every(line => /\(\d+ since the last line\)/.test(line))
+);
+console.warn = realWarn;
 throwingLoop.stop();
 
 // The HANG. ⚠️ A write that never settles used to wedge the session: `funCommandInFlight`
 // stayed true for ever and every gate re-check returned at driveFun's first line — the
 // throttle events and the watchdog beat alike, since the beat is also just driveFun. The
-// gate is read ABOVE the in-flight check for exactly this, because handing the fan back
-// does not need the bridge to be free. Swap the two and these two go red.
+// gate is therefore read INSIDE the in-flight branch, below the early return's own
+// condition, because handing the fan back does not need the bridge to be free. Delete that
+// read and these two go red (2 ✗).
+//
+// ⚠️ HOISTING IT ABOVE THE IN-FLIGHT CHECK INSTEAD — the tidy-up this looks like it wants
+// — is measured at 0 ✗ here, and it costs the file its best mutation: one read covering
+// the whole pass makes the in-loop re-check invisible, taking that deletion from 12 ✗ to
+// 0. One read per command is the shape, and docs/fan-control.md §"Dropping out is
+// immediate, not at the next tick" is the argument for it.
 const hangingState: FanState = { dutyPercent: 0, targetPercent: 0, driverEnabled: false, phase: "idle" };
 let hangingWrites = 0;
 let hangNext = false;

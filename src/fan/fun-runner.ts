@@ -1,4 +1,5 @@
 import { latestValue, record, type LiveValue } from "../can/signals.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 import type { FanController } from "./control.ts";
 import type { FanMode } from "./auto.ts";
 import { FUN_GATE_MAX_AGE_MS, funDutyPercent, funGate, funGateAllows, type FunGate } from "./fun.ts";
@@ -38,6 +39,20 @@ export interface FunRunnerContext {
 const FUN_KEYS = ["throttle_pct", "go", "speed_can_kmh"];
 
 /**
+ * How often a repeating fun-mode failure may put a line in the journal.
+ *
+ * ⚠️ ./auto.ts's runTick() warns off a 2 s tick; this path is driven by `throttle_pct`
+ * change events at ~100 Hz, so a bridge that starts refusing would write a hundred lines a
+ * second onto a Pi that is also writing a ride log, and the messages worth having would be
+ * the ones that scrolled past. COALESCED, NOT DROPPED: the first failure warns at once and
+ * every line carries how many it stands for — see warnFunPassFailed() below.
+ */
+const FUN_FAILURE_LOG_INTERVAL_MS = 1_000;
+
+let funFailuresSinceWarning = 0;
+let lastFunFailureWarnedAt: number | null = null;
+
+/**
  * driveFun() with the guard ./auto.ts's runTick() puts around evaluate(), and the only
  * form the two callers outside this file use. Returns what failed, or null.
  *
@@ -54,7 +69,7 @@ export async function runFunPass(context: FunRunnerContext): Promise<Error | nul
     await driveFun(context);
     return null;
   } catch (error) {
-    console.warn("fan: a fun-mode pass failed —", error);
+    warnFunPassFailed(error);
     // Forgotten for the reason a refused command is: what the bridge is holding is now
     // unknown, so the next throttle movement or watchdog beat must command rather than
     // believe a match.
@@ -163,4 +178,25 @@ export function onSignalsChanged(context: FunRunnerContext, changed: Record<stri
     return;
   }
   void runFunPass(context);
+}
+
+/**
+ * The journal line for a failed pass, at most one per FUN_FAILURE_LOG_INTERVAL_MS.
+ *
+ * ⚠️ Rate-limited, never silenced: the first failure is written the moment it happens, and
+ * every line names both the failing call and how many failures it stands for, so a bridge
+ * that has started refusing is still loud without being a hundred lines a second. The
+ * counter is cleared only by a line that reports it, so a burst that stops before the next
+ * line rides on the one after rather than being lost. Paced on the monotonic clock rather
+ * than Date.now(), because ../gps/clock.ts steps the wall one out from under it.
+ */
+function warnFunPassFailed(error: unknown): void {
+  funFailuresSinceWarning += 1;
+  if (lastFunFailureWarnedAt !== null && since(lastFunFailureWarnedAt) < FUN_FAILURE_LOG_INTERVAL_MS) {
+    return;
+  }
+  const coalesced = funFailuresSinceWarning;
+  funFailuresSinceWarning = 0;
+  lastFunFailureWarnedAt = monotonicNow();
+  console.warn(`fan: a fun-mode pass failed (${coalesced} since the last line) —`, error);
 }

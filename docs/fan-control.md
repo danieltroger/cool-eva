@@ -238,7 +238,7 @@ Three files, split the way the temperature curve already is:
 
 The whole point is playing with it while plugged in, which is typically key-off, and `0x109` is a drive frame. The owner says it is always there and that he has tested it. The archive agrees, and it settles the two things his answer does not: whether `go` is live at the same time (a gate is worthless if the signal it reads is absent exactly when the mode is wanted) and whether the throttle actually varies while parked.
 
-**`~/Documents/cool-eva-archive/capture-20260808-182129-600daf87.log`**, the 2026-08-08 AC session. The window is every frame from the first `0x610` b7 = `0x02` onwards — 13 410 frames of `0x610`, 4 600.1 s end to end:
+**`~/Documents/cool-eva-archive/capture-20260808-182129-600daf87.log`**, the 2026-08-08 AC session. The window **opens** on the first `0x610` carrying the AC substate b7 = `0x02` — which in this file is simply the first `0x610`, since b7 reads `0x02` in all 13 410 of them — and the table below **holds it to end of capture**: 4 600.1 s. ⚠️ That is a looser end than the DC scan below uses, and the same file under the DC rule is in "The same rule at both ends". Every figure in the next two tables is the held window:
 
 |                                           |                                                                 |
 | ----------------------------------------- | --------------------------------------------------------------- |
@@ -260,7 +260,7 @@ What the bits read across all 317 785 frames of `0x102` in that window:
 | `moving`        | 1 in 0 frames                                   |                                             |
 | `stand_up`      | 1 in 0 frames                                   | on the side stand throughout                |
 | `speed_can_kmh` | **exactly 0 in 317 780 of 317 780 (100.000 %)** |                                             |
-| `key_on`        | 1 in 234 885 (**73.9 %**)                       | ⚠️ **not** reliably set — see below         |
+| `key_on`        | 1 in 234 885 (**73.9 %**)                       | ⚠️ **not** reliably set — 38.2 % bounded    |
 | `energized`     | 1 in 132 739 (41.8 %)                           |                                             |
 | `throttle_on`   | 1 in 744 (0.234 %)                              | ~7.4 s of somebody twisting it              |
 
@@ -288,9 +288,28 @@ Re-scanned with the window opened on the first `0x610` b7 = `0x23` — the DC su
 
 **So every conclusion above holds on a second and independent session type.** Identical per-second coverage of all three frames, `go` never set, the speed exactly 0 in every frame, and no silence longer than a second in the whole 1 061 s — DC does not sleep mid-charge the way this AC session did. The throttle varies here too: 50 distinct raw values, 61 frames above zero, peaking at raw 404 = **40.4 %**.
 
-And `key_on` is unreliable on **both**: 73.9 % on AC, 70.2 % on DC. That is two sessions killing plan B rather than one.
+#### The same rule at both ends
 
-⚠️ The AC file is the clean datum **as captured**; the DC file agrees once the window is bounded by a fresh `0x610` rather than a held one. Neither is a bike that was ridden between the two figures — the bounded window is a strict subset of the held one, and the numbers that differ are exactly the frames outside the session.
+The correction above fixed how the DC window **opens**. The two scans still closed differently — DC on the last `0x610`, AC on end of capture — and a rule that is strict at one end and loose at the other is how the DC scan got contaminated in the first place. The last `0x610` in the AC file is at 19:07:55.025, and the capture runs on for a further **1 837.0 s**: half an hour of bike after the charge manager left the bus. Bounded the way the DC window now is:
+
+|                                             | AC, held to end of capture  | AC, bounded by the last `0x610`   |
+| ------------------------------------------- | --------------------------- | --------------------------------- |
+| span                                        | 4 600.1 s                   | **2 763.1 s**                     |
+| `0x102` / `0x104` / `0x109` frames          | 317 785 / 317 780 / 317 785 | **134 090 / 134 088 / 134 090**   |
+| wall-seconds containing ≥ 1 frame of each   | 3 181 / 3 181 / 3 181       | **1 344 / 1 344 / 1 344**         |
+| `go` / `go_request` / `moving` / `stand_up` | 0 / 0 / 0 / 0               | **0 / 0 / 0 / 0**                 |
+| `speed_can_kmh` exactly 0                   | 317 780 / 317 780           | **134 088 / 134 088 (100.000 %)** |
+| `key_on`                                    | 234 885 — 73.9 %            | 51 190 — **38.2 %**               |
+| `energized`                                 | 132 739 — 41.8 %            | 132 739 — **99.0 %**              |
+| longest `0x102` silence                     | 1 422.1 s                   | **1 422.1 s**                     |
+
+**Everything the gate rests on is unchanged, and the one figure that matters moves the helpful way.** All four state bits are still 0 in every frame, the speed is still exactly 0 in every frame, and the 1 422.1 s silence is inside the bounded window too — so "the bus sleeps mid-charge, and the gate closes with it" survives untouched. `key_on` is **38.2 %** of the session it was supposed to identify, rather than 73.9 % of a window that outlasts it by half an hour: bounded honestly, plan B is _deader_ than the held figure said, not less dead.
+
+⚠️ `energized` moves the other way, and that is why this correction was worth making rather than a technicality. Its 41.8 % was diluted by the tail — all 132 739 energized frames are inside the bounded window, so it is **99.0 %** of the actual session and **97.8 %** of the DC one. Availability was never the ground for rejecting it and cannot be: see "The alternatives, and why each is not in the gate" below, where it is rejected on what it means.
+
+Both bounded windows are strict subsets of their held ones, so nothing here is a bike that was ridden between two figures — every frame that differs is a frame outside the session.
+
+So, under one rule at both ends of both files: `key_on` is unreliable on **both**, **38.2 %** on AC and **70.2 %** on DC. Two sessions killing plan B rather than one.
 
 #### The gate: what "cannot move" means
 
@@ -305,10 +324,10 @@ No tolerance band on the speed. `speed_can_kmh` is `motor_rpm_can / 42.0`, so a 
 
 **The alternatives, and why each is not in the gate:**
 
-- **`key_on`** — measured at **73.9 %** through the AC session above, dropping to 0 for whole stretches (vehicle-state byte `0x02`, energized only, appears in 82 900 frames). A gate on `key_on` would make the mode unavailable for a quarter of exactly the situation it exists for. It is also not a safety property: key on with `go` clear still cannot move.
-- **`stand_up`** — 0 for the entire AC session (**all 317 785** frames) and for the whole bounded DC one (**all 106 100**), and it is tempting, because a deployed side stand is a _physical_ interlock the Energica will not enter Go against. Rejected **for the hazard of the fan running while the bike moves**, which `go` covers completely and in milliseconds. ⚠️ That is not the only hazard this mode creates, and the other one is the reason `stand_up` stays on the table: the mode trains a rider to sit twisting the throttle of a parked motorcycle for minutes at a time, and `go` is a **lagging** indicator of that — it reads 1 only once the bike already can move, by which time the wrist is on the grip. `stand_up` is the only signal on this bus that speaks to whether the bike can be _put into_ that state while a session runs. Two independent charges say it costs nothing in availability, unlike `key_on` (73.9 % / 70.2 %) or `energized` (41.8 %). **What stops it being added today** is that `stand_up` has never been observed as 1 anywhere in this archive, so nothing distinguishes "the bit means the stand is up" from "the bit is stuck at 0" — and adding a never-1 signal to a fail-closed gate either works or makes fun mode permanently unavailable, silently. The measurement to take: put the bike on the stand, lift it upright, watch the bit. Then decide.
+- **`key_on`** — measured at **38.2 %** through the AC session above once the window is bounded to it (73.9 % of the window held to end of capture), dropping to 0 for whole stretches: all 82 900 frames of the vehicle-state byte `0x02`, energized only, fall inside the bounded window. A gate on `key_on` would make the mode unavailable for well over half of exactly the situation it exists for. It is also not a safety property: key on with `go` clear still cannot move.
+- **`stand_up`** — 0 for the entire AC session (**all 317 785** frames) and for the whole bounded DC one (**all 106 100**), and it is tempting, because a deployed side stand is a _physical_ interlock the Energica will not enter Go against. Rejected **for the hazard of the fan running while the bike moves**, which `go` covers completely and in milliseconds. ⚠️ That is not the only hazard this mode creates, and the other one is the reason `stand_up` stays on the table: the mode trains a rider to sit twisting the throttle of a parked motorcycle for minutes at a time, and `go` is a **lagging** indicator of that — it reads 1 only once the bike already can move, by which time the wrist is on the grip. `stand_up` is the only signal on this bus that speaks to whether the bike can be _put into_ that state while a session runs. Two independent charges say it costs nothing in availability, unlike `key_on` (**38.2 %** AC / 70.2 % DC, both bounded). **What stops it being added today** is that `stand_up` has never been observed as 1 anywhere in this archive, so nothing distinguishes "the bit means the stand is up" from "the bit is stuck at 0" — and adding a never-1 signal to a fail-closed gate either works or makes fun mode permanently unavailable, silently. The measurement to take: put the bike on the stand, lift it upright, watch the bit. Then decide.
 - **`moving`** (`0x102` b2 bit 7) — derived by the VCU from road speed, from the same frame as `go`, and decoded from a third party's `.xdbc` rather than measured here. It duplicates the speed condition without adding an independent witness, and every extra condition is another way for the mode to be silently unavailable.
-- **`energized`** — 41.8 %, and it says the HV system is up, not that the bike can move.
+- **`energized`** — **99.0 %** of the bounded AC session and 97.8 % of the DC one, so availability is not the objection (the 41.8 % of the held AC window was the half-hour tail diluting it). It says the HV system is up, not that the bike can move, and that is the objection.
 
 ⚠️ **The failure this gate is against is not subtle.** It maps the throttle of a 145 hp motorcycle onto something that is not the motor. If it is wrong in the permissive direction, somebody twists a throttle expecting a fan.
 
@@ -511,7 +530,7 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
 - **The udev race** described in §5 is unhandled.
 - **Fun mode's second gate condition is the same frame's neighbour, not an independent sensor.** `go` and `speed_can_kmh` come off different CAN ids (`0x102` and `0x104`), which is real independence at the frame level, but both originate in the VCU. Nothing here cross-checks the VCU against anything, and an all-zero `0x102` payload would read as "everything off" and pass the `go` half. The freshness window is what stands against that — a stuck frame stops being refreshed — and it is the weakest joint in the gate.
 
-  **There is measurably no better third witness, and that is now a measurement rather than an absence of ideas.** Per-second coverage of every non-VCU frame inside the AC charge window of `capture-20260808-182129-600daf87.log`, against `0x102`'s own 3 181 seconds:
+  **There is measurably no better third witness, and that is now a measurement rather than an absence of ideas.** Per-second coverage of every non-VCU frame inside the AC charge window of `capture-20260808-182129-600daf87.log`, **held to end of capture** — §4 "The same rule at both ends" has both windows — against `0x102`'s own 3 181 seconds:
 
   | frame | frames | seconds | coverage |
   | --- | --- | --- | --- |
@@ -522,4 +541,4 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
 
   The one genuinely independent speed measurement on this bus — `wheel_speed_front_kmh` / `_rear_kmh` off the ABS module — is **completely absent during a charge**. That is not a gap in the tap or in the decoder, and the same file settles it: in the DC capture `0x0A0` is 0 frames inside the bounded charge window and **6 371 frames across 638 wall-seconds** of the ride that follows it in the same file, at 9.99 Hz — the 10 Hz `src/can/abs.ts` documents. Present when riding, absent when charging, same tap and same decoder. Consistent with `abs.ts`'s note that the module is on DTB and reaches us only because the VCU gateways it across: no ride, no gateway.
 
-  The charge manager is present for less than half the window, which makes it a worse `key_on`; the BMS is live throughout and has nothing to say about mobility. So **the 500 ms freshness window standing alone against a stuck VCU frame is the right conclusion**, not a compromise — there is nothing else on this bus to add.
+  The charge manager is present for less than half the held window, which makes it a worse `key_on`. ⚠️ The held window is the one that can answer this question at all: bound it by the last `0x610` and the charge manager covers 1 344 of 1 344 seconds **by construction**, which measures the window's own definition rather than the frame's availability. `0x0A0` is 0 under either window, and that is the load-bearing row. The BMS is live throughout and has nothing to say about mobility. So **the 500 ms freshness window standing alone against a stuck VCU frame is the right conclusion**, not a compromise — there is nothing else on this bus to add.
