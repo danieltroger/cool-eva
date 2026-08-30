@@ -601,6 +601,14 @@ It is the only control in the dashboard that causes traffic on the bike's bus. I
 
 `confirm()` is deliberately not used anywhere in this dashboard: it is a browser dialog that lands in the wrong place on a phone, and it cannot show a two-line before/after.
 
+### The other `armed` — and what the sweep's two taps do not have
+
+⚠️ **This button does not use `public/lib/arming.js`.** `views/service-mode.js` declares an `armed` of its own — `van.state(false)`, a boolean rather than a key — and its `onclick` is the arm/fire pattern as it stood before 2026-08-19: `if (!armed.val) { armed.val = true; return; }` and then straight into the request. So the sweep has **no `ARM_DWELL_MS`** (two synchronous clicks arm it and fire it, which is exactly the gesture measured against `31 FC`), **no `refuseKeyRepeat`** on the button, and no shared key — arming it disarms nothing else, and arming anything else does not disarm it.
+
+Found 2026-08-30 while writing `scripts/check-arming.ts`, which is why that check scopes its "every `armed.val =` disarms" scan to the modules that import the shared gate: unscoped, it reads two different states as one.
+
+It is recorded here rather than fixed in the same breath because the consequence is not the same. This control cannot write: the worst an unmeant double-tap buys is ~277 read requests competing with the OBD poller, on a bike the server-side gate has already established is parked and out of drive, and stopping it is one tap. The claim it does falsify is the one in `arming.js` — that there is "one rule for every second tap on this dashboard" — which was never true of this button. Moving it onto the shared gate is a behaviour change to a control and belongs in its own PR; what it costs is the boolean, since the shared state is keyed.
+
 ### Which parameter table the names came from — `lib/params-page.js`
 
 Every name on `/params.html` comes from the table THE BIKE ITSELF named at 276/277 — the Pi re-names the stored snapshot from it before serving it — or from a default when the bike has named none. The table-type line is the thing that says which, and there is no other way to tell: a wrong table is invisible in every other way, because routing and record widths are identical across all 28 of Energica's tables, so a bike on the wrong one reads and writes perfectly and merely means something else by every name.
@@ -669,9 +677,11 @@ Why a dwell and not one of the obvious alternatives:
 
 `armedAt` is `performance.now()`, never `Date.now()`, for the reason CLAUDE.md gives for `monotonicNow()` on the Pi: this page has a button on it that STEPS A CLOCK, and the Pi steps its own from GPS. A wall clock that jumps backwards mid-gesture hands out a dwell that never elapses; one that jumps forwards hands out none at all. It is deliberately not a `van.state` — nothing renders from it, and making it one would re-run every caption binding on each arm to no visible effect.
 
-`arm()` is the ONLY way `armed` is set to a non-empty key. Every arming site goes through it — `ActionButton`'s own `onclick`, `armWrite()`, `armClockSync()`, and `armChargeCurrent()` in the charge tab — so no control can be armed without also being subject to the dwell. Disarming stays a plain `armed.val = ""` and needs no stamp: every firing site tests `armed.val` first, and an empty key matches none of them.
+`arm()` is the ONLY way `armed` is set to a non-empty key. Every arming site goes through it — `ActionButton`'s own `onclick`, `armWrite()`, `armClockSync()`, and `armChargeCurrent()` and `armChargeStop()` in the charge tab — so no control can be armed without also being subject to the dwell. Disarming stays a plain `armed.val = ""` and needs no stamp: every firing site tests `armed.val` first, and an empty key matches none of them. `scripts/check-arming.ts` §6 asserts it by reading every `armed.val =` assignment in `public/`: a control armed without a stamp inherits whatever the last one left behind, and fires on the tap after it.
 
-`arm()`, `armDwellElapsed()`, `refuseKeyRepeat()`, `ARM_DWELL_MS` and the `armed` state moved to `public/lib/arming.js` on 2026-08-24, when the charge tab grew a bus-writing control of its own. They are shared so there is ONE dwell rule for the whole dashboard rather than a second copy that could drift; both surfaces are only ever visible one at a time, so a single shared `armed` key across them is right — arming anything disarms everything.
+`arm()`, `armDwellElapsed()`, `refuseKeyRepeat()`, `ARM_DWELL_MS` and the `armed` state moved to `public/lib/arming.js` on 2026-08-24, when the charge tab grew a bus-writing control of its own. They are shared so there is ONE dwell rule for the whole dashboard rather than a second copy that could drift.
+
+⚠️ **That move was argued on the grounds that the surfaces are only ever visible one at a time, and that is no longer true.** The charge tab gained a second armed control the next day (`charge-stop`, 2026-08-25), so set-current and stop are on screen together for the whole of a live charge — and the sentence claiming otherwise stood in both this file and `public/lib/arming.js` until 2026-08-30. One shared key is still the right shape: every firing site tests its own key before it acts, so a tap on either of those two cannot fire the other however the arming went. What co-visibility costs is a UX detail rather than a safety one, and it is now the honest reason to keep the key distinct per control: arming one of the pair silently disarms the other, whose caption drops back from "Tap again" with nothing said. Both halves — the key test and the single shared state — are pinned by `scripts/check-arming.ts`.
 
 ### Why `event.repeat` rather than a longer dwell — `refuseKeyRepeat()`
 

@@ -212,6 +212,22 @@ const CHECKS: SelfCheck[] = [
       "the GPS clock gate against the four corrupt frames in rides.db and two real cold boots, replayed again ten years on to prove the rule has no expiry date, plus the recoverable cooldown, the week-rollover floor, the two's-complement altitude and the blended-fix guard",
   },
   {
+    script: "scripts/check-arming.ts",
+    covers:
+      "the two-tap arm/dwell in front of every control that writes to the bike — public/lib/arming.js, which had no " +
+      "coverage at all until 2026-08-30 and is the whole of what stands between a double-tap and a write to a " +
+      "calibration EEPROM. On a clock the check hands in: that one tap arms and cannot also fire, that a second at " +
+      "399 ms is refused and one at exactly 400 ms is not, that a refused tap is IGNORED rather than disarming — " +
+      "the distinction the caption depends on — that arming a second control re-stamps rather than inheriting a " +
+      "dwell that elapsed ten seconds ago, that a clock which jumped backwards hands out no dwell, and that a held " +
+      "Enter is cancelled while a held ArrowDown is not. Then the parts no single module holds: that the charge " +
+      "tab's two now CO-VISIBLE controls do not share a key, that a status refresh landing under an armed button " +
+      "disarms it (run for real against a stubbed fetch), that all five firing sites still test their own key, then " +
+      "the dwell, then clear, then act — in that order, with the refused branch doing nothing but return — and " +
+      "that no module outside arming.js ever sets `armed` to a non-empty key, which is what makes the dwell " +
+      "unskippable. Plus the production defaults nothing else exercises: the same gate on the real performance.now()",
+  },
+  {
     script: "scripts/check-irreversible-actions.ts",
     covers:
       "what is behind the menu sheet's red fold — that the collapsed row's count and its three names are read off " +

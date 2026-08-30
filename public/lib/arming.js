@@ -4,10 +4,18 @@ import van from "../vendor/van-1.6.1.js";
 
 // The two-tap arm/dwell that stands between a thumb and anything that touches the bus.
 //
-// Extracted from views/vcu-write.js so the charge-current control in the charge tab reuses
-// the SAME dwell rather than growing a second copy of it: one rule for every second tap on
-// this dashboard, asserted in one place. Both surfaces are only ever visible one at a time,
-// so a single shared `armed` key across them is right — arming anything disarms everything.
+// Extracted from views/vcu-write.js so the charge tab's controls reuse the SAME dwell rather
+// than growing a second copy of it: one rule for every second tap that can reach the bus,
+// asserted in one place — scripts/check-arming.ts. ⚠️ Not every second tap on the dashboard:
+// views/service-mode.js still has an arm/fire of its own, with no dwell, in front of the
+// read-only parameter sweep. docs/dashboard-decisions.md §"The other `armed`".
+//
+// ⚠️ `armed` is ONE key for the whole dashboard, and the surfaces are NOT mutually exclusive:
+// the charge tab shows set-current and stop side by side for the whole of a live charge. The
+// single key is still right — arming anything disarms everything, and every firing site tests
+// its OWN key before it acts, so no tap can fire another control. What it costs is that arming
+// one of two co-visible controls silently disarms the other, whose caption drops back from
+// "Tap again" without saying why. docs/dashboard-decisions.md §`ARM_DWELL_MS`.
 
 /** Which control is armed, by a key like `write`, `action:clear-dtcs` or `charge-current`. Empty means none. */
 export const armed = van.state("");
@@ -41,10 +49,13 @@ let armedAt = 0;
  * an empty key matches none of them.
  *
  * @param {string} key
+ * @param {number} [nowMs] the stamp. Every site on the dashboard passes nothing and gets
+ *   `performance.now()`; scripts/check-arming.ts hands one in so the dwell can be asserted
+ *   at 399 ms and at 400 ms rather than slept through.
  */
-export function arm(key) {
+export function arm(key, nowMs = performance.now()) {
   armed.val = key;
-  armedAt = performance.now();
+  armedAt = nowMs;
 }
 
 /**
@@ -53,9 +64,12 @@ export function arm(key) {
  *
  * ⚠️ Checked at every site that acts on a second tap, and it is the whole of what stops
  * a double-tap running an irreversible action. See ARM_DWELL_MS for what was measured.
+ *
+ * @param {number} [nowMs] the reading to test the stamp against, injected by the check for
+ *   the same reason `arm()` takes one.
  */
-export function armDwellElapsed() {
-  return performance.now() - armedAt >= ARM_DWELL_MS;
+export function armDwellElapsed(nowMs = performance.now()) {
+  return nowMs - armedAt >= ARM_DWELL_MS;
 }
 
 /**
