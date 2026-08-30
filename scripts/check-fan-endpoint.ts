@@ -8,6 +8,7 @@ import type { FanCommandResult, FanController, FanState } from "../src/fan/contr
 import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT } from "../src/fan/control.ts";
 import type { FanReply } from "../src/http/fan.ts";
 import { FAN_HEADER, FAN_HEADER_VALUE, handleFanEndpoint, parseFanRequest } from "../src/http/fan.ts";
+import { FUN_GATE } from "../src/fan/fun.ts";
 import { SERVICE_WRITE_HEADER, SERVICE_WRITE_HEADER_VALUE } from "../src/http/vcu-write.ts";
 import { createVirtualClock } from "./virtual-clock.ts";
 import type { VirtualClock } from "./virtual-clock.ts";
@@ -82,6 +83,10 @@ check(
 );
 check("surrounding whitespace is trimmed rather than refused", parse("mode=%20auto%20").ok);
 check("an unknown mode is refused rather than guessed at", !parse("mode=off").ok);
+const fun = parse("mode=fun");
+check("mode=fun is fun mode", fun.ok && fun.kind === "mode" && fun.mode === "fun");
+const play = parse("mode=PLAY");
+check("…and so is mode=play, the other name it has been given", play.ok && play.kind === "mode" && play.mode === "fun");
 
 check("⚠️  duty and mode together is a 400, not a guess about which was meant", !parse("mode=auto&duty=60").ok);
 check("an empty query asks how much", !parse("").ok);
@@ -130,7 +135,7 @@ const controller: FanController = {
 };
 
 let currentMode: FanMode = "automatic";
-const autoState: FanAutoState = { mode: currentMode, decision: null, temperatureAgeMs: 0 };
+const autoState: FanAutoState = { mode: currentMode, decision: null, temperatureAgeMs: 0, funGate: FUN_GATE.READY };
 const automaticLoop: FanAutomatic = {
   mode: () => currentMode,
   setMode: async (next: FanMode): Promise<FanCommandResult> => {

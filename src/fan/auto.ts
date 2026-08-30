@@ -1,6 +1,6 @@
-import { ageMs, latestValue, record } from "../can/signals.ts";
+import { ageMs, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
-import type { FanCommandResult, FanController } from "./control.ts";
+import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT, type FanCommandResult, type FanController } from "./control.ts";
 import {
   CHARGE_MANAGER_STATE_DC,
   FAN_REASON,
@@ -9,6 +9,8 @@ import {
   isPackTemperaturePlausible,
   type FanCurveDecision,
 } from "./curve.ts";
+import { driveFun, onSignalsChanged, refreshGate, type FunRunnerContext } from "./fun-runner.ts";
+import { FUN_GATE, FUN_GATE_REFUSAL, FUN_WATCHDOG_MS, funGateAllows, type FunGate } from "./fun.ts";
 
 // The half of automatic fan control that touches the world: it reads three signals off
 // the bus, hands them to the pure curve in ./curve.ts, and drives ./control.ts with the
@@ -16,12 +18,25 @@ import {
 //
 // ⚠️ AUTOMATIC IS THE DEFAULT ON EVERY START, and the mode is in memory only. It is
 // never written to disk on purpose: the Pi loses power with the bike's 12 V rail, so
-// "manual until the bike is switched off" is what not persisting it already means.
+// "manual until the bike is switched off" is what not persisting it already means. Fun
+// mode is held the same way and for a stronger reason — a mode that put the throttle on
+// the fan and survived a reboot would be waiting for a rider who did not ask for it.
 //
-// Which three signals, and why not the near-miss alternatives that would each be wrong
-// in a way nothing on the bike would show: docs/fan-control.md §"What the curve reads".
+// Which three signals the curve reads, and why not the near-miss alternatives that would
+// each be wrong in a way nothing on the bike would show: docs/fan-control.md §"What the
+// curve reads". Fun mode's own three, and its gate, are §"Fun mode" in the same file.
 
-export type FanMode = "automatic" | "manual";
+export type FanMode = "automatic" | "manual" | "fun";
+
+/**
+ * The mode as `fan_auto_mode` carries it. 0 and 1 are what they have always been, so
+ * every row already in a ride log keeps its meaning; 2 is new.
+ *
+ * ⚠️ public/lib/fan-display.js holds the browser's copy, because a browser cannot import
+ * a .ts module and the code is the wire format. scripts/check-fan-fun.ts asserts the two
+ * agree — written as a bare `2` on the page it would survive swapping fun with manual.
+ */
+export const FAN_MODE_CODE: Record<FanMode, number> = { manual: 0, automatic: 1, fun: 2 };
 
 /**
  * How often the curve is re-evaluated.
@@ -54,6 +69,8 @@ export interface FanAutoState {
   decision: FanCurveDecision | null;
   /** Milliseconds since the last in-bounds `batt_temp_hi`, or since this loop started. */
   temperatureAgeMs: number;
+  /** Whether the bike is provably parked, and if not, which condition said otherwise. */
+  funGate: FunGate;
 }
 
 /**
@@ -87,8 +104,13 @@ export interface FanAutomatic {
   stop: () => void;
 }
 
-/** Everything one running loop remembers, passed explicitly to the helpers below. */
-interface AutoContext {
+/**
+ * Everything one running loop remembers, passed explicitly to the helpers below.
+ *
+ * Extends FunRunnerContext structurally rather than by declaration, so ./fun-runner.ts
+ * can be handed this object without either file importing the other's state.
+ */
+interface AutoContext extends FunRunnerContext {
   controller: FanController;
   mode: FanMode;
   /** The last IN-BOUNDS `batt_temp_hi`. Sentinels never land here. */
@@ -100,7 +122,11 @@ interface AutoContext {
   lastCommandedPercent: number | null;
   speedMaxAgeMs: number;
   chargeSessionMaxAgeMs: number;
+  /** The automatic cadence, kept because fun mode re-arms the timer and has to put it back. */
+  tickMs: number;
   timer: ReturnType<typeof setInterval> | null;
+  /** Drops the change subscription. Called from stop(), so a stopped loop reacts to nothing. */
+  unsubscribe: (() => void) | null;
 }
 
 /**
@@ -120,7 +146,16 @@ export function startFanAutomatic(controller: FanController, options: FanAutomat
     lastCommandedPercent: null,
     speedMaxAgeMs: options.speedMaxAgeMs ?? SPEED_MAX_AGE_MS,
     chargeSessionMaxAgeMs: options.chargeSessionMaxAgeMs ?? CHARGE_SESSION_MAX_AGE_MS,
+    tickMs,
     timer: null,
+    // The gate starts CLOSED and stays closed until a tick has read three fresh signals
+    // off the bus, so nothing offers fun mode on the strength of never having looked.
+    funGate: FUN_GATE.GO_UNKNOWN,
+    funCommandInFlight: false,
+    funPending: false,
+    handBackToCurve: gate => handBackToCurve(context, gate),
+    freshValue,
+    unsubscribe: null,
   };
 
   if (!controller.configured || controller.fault !== null) {
@@ -128,6 +163,12 @@ export function startFanAutomatic(controller: FanController, options: FanAutomat
   }
 
   context.timer = setInterval(() => void runTick(context), tickMs);
+  // ⚠️ Subscribed for the whole life of the loop rather than on entering fun mode: a
+  // subscription taken out when the mode changes would have to be dropped again on every
+  // path that leaves it, and one missed path leaves the throttle wired to the fan. The
+  // listener's first line is the mode check, so outside fun mode this costs one string
+  // comparison per batch.
+  context.unsubscribe = onChange(changed => onSignalsChanged(context, changed));
   publishMode(context);
   console.log(
     `fan: automatic on ${tickMs} ms ticks — batt_temp_hi drives the curve, speed_can_kmh gates it, ` +
@@ -178,6 +219,15 @@ async function runTick(context: AutoContext): Promise<void> {
  */
 async function evaluate(context: AutoContext): Promise<void> {
   sampleTemperature(context);
+  // Above the mode check for the same reason sampling is: the page decides whether to
+  // OFFER fun mode off `fan_fun_available`, so the answer has to keep arriving while
+  // automatic or manual is what is driving the fan.
+  refreshGate(context);
+  if (context.mode === "fun") {
+    // The watchdog beat. Events cover a moving throttle; this covers a bus that stopped.
+    await driveFun(context);
+    return;
+  }
   if (context.mode !== "automatic") {
     return;
   }
@@ -232,7 +282,13 @@ function freshValue(key: string, maxAgeMs: number): number | null {
 }
 
 async function switchMode(context: AutoContext, mode: FanMode): Promise<FanCommandResult> {
+  if (mode === "fun") {
+    return await enterFun(context);
+  }
   context.mode = mode;
+  // Back off the watchdog cadence, which only fun mode wants. A no-op unless fun mode is
+  // what is being left.
+  retick(context, context.tickMs);
   publishMode(context);
   if (mode === "manual") {
     context.lastDecision = null;
@@ -252,8 +308,56 @@ async function switchMode(context: AutoContext, mode: FanMode): Promise<FanComma
   return { ok: true, message: `Automatic. The curve is commanding ${context.lastDecision?.dutyPercent ?? 0} %.` };
 }
 
+/**
+ * Puts the throttle on the fan, or says why it will not.
+ *
+ * ⚠️ The gate is read from the bus HERE rather than from `context.funGate`, which the
+ * last tick left behind and which may be up to a tick old. Entering is the one moment
+ * where a stale answer would be acted on rather than merely displayed.
+ */
+async function enterFun(context: AutoContext): Promise<FanCommandResult> {
+  const gate = refreshGate(context);
+  if (!funGateAllows(gate)) {
+    return { ok: false, message: `Not now — ${FUN_GATE_REFUSAL[gate]}.` };
+  }
+  context.mode = "fun";
+  context.lastDecision = null;
+  // Cleared for the reason commandManual() clears it: what the bridge is holding came
+  // from the curve, and the first throttle reading has to command rather than match.
+  context.lastCommandedPercent = null;
+  publishMode(context);
+  publishDecision(null);
+  retick(context, FUN_WATCHDOG_MS);
+  await driveFun(context);
+  return {
+    ok: true,
+    message:
+      `Fun mode. The throttle is the fan's speed control, from ${MIN_RUNNING_DUTY_PERCENT} % closed to ` +
+      `${MAX_DUTY_PERCENT} % wide open. It drops back to the curve the moment the bike can move.`,
+  };
+}
+
+/**
+ * The other way out of fun mode: the gate closed, so ./fun-runner.ts asked to be let go.
+ *
+ * Automatic rather than manual, because manual would leave the fan on whatever duty the
+ * throttle happened to be holding for the rest of the ride, with nothing watching the
+ * pack. The re-evaluation is immediate, so the curve has the fan back before the rider is
+ * out of the bay — and it is what puts the fan on the road-speed gate rather than on a
+ * duty chosen by a hand that has just let go of a throttle to ride away.
+ */
+async function handBackToCurve(context: AutoContext, gate: FunGate): Promise<void> {
+  console.log(`fan: leaving fun mode — ${FUN_GATE_REFUSAL[gate]}. The temperature curve has the fan back.`);
+  context.mode = "automatic";
+  context.lastCommandedPercent = null;
+  publishMode(context);
+  retick(context, context.tickMs);
+  await evaluate(context);
+}
+
 async function commandManual(context: AutoContext, percent: number): Promise<FanCommandResult> {
   context.mode = "manual";
+  retick(context, context.tickMs);
   context.lastDecision = null;
   // Cleared, not set to `percent`: the loop's memory of what it commanded is now wrong
   // whatever this command does, and a stale match would make the first automatic tick
@@ -278,13 +382,28 @@ function publishDecision(decision: FanCurveDecision | null): void {
 }
 
 function publishMode(context: AutoContext): void {
-  record("fan_auto_mode", context.mode === "automatic" ? 1 : 0);
+  record("fan_auto_mode", FAN_MODE_CODE[context.mode]);
+}
+
+/** Re-arms the loop at a new cadence: 2 s for the curve, FUN_WATCHDOG_MS for fun mode. */
+function retick(context: AutoContext, intervalMs: number): void {
+  if (context.timer === null) {
+    // Never started, or already stopped. Re-arming a stopped loop would resurrect it
+    // after index.ts's shutdown has torn the controller down underneath it.
+    return;
+  }
+  clearInterval(context.timer);
+  context.timer = setInterval(() => void runTick(context), intervalMs);
 }
 
 function stopTicking(context: AutoContext): void {
   if (context.timer !== null) {
     clearInterval(context.timer);
     context.timer = null;
+  }
+  if (context.unsubscribe !== null) {
+    context.unsubscribe();
+    context.unsubscribe = null;
   }
 }
 
@@ -293,6 +412,7 @@ function snapshotAutoState(context: AutoContext): FanAutoState {
     mode: context.mode,
     decision: context.lastDecision,
     temperatureAgeMs: since(context.lastGoodAt),
+    funGate: context.funGate,
   };
 }
 
@@ -301,7 +421,12 @@ function inertAutomatic(context: AutoContext): FanAutomatic {
   return {
     mode: () => context.mode,
     setMode: async mode => {
-      context.mode = mode;
+      // ⚠️ Fun mode is refused WITHOUT being adopted, unlike the other two. Nothing here
+      // ever consults the gate, so a loop that reported itself in fun mode would be
+      // claiming the throttle is driving a fan that does not exist.
+      if (mode !== "fun") {
+        context.mode = mode;
+      }
       return { ok: false, message: "there is no fan driver on this Pi to put in that mode" };
     },
     commandManualDuty: percent => context.controller.setDutyPercent(percent),

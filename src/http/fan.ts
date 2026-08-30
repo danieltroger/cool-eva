@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { KICK_START_MS, MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT } from "../fan/control.ts";
 import type { FanController, FanPhase } from "../fan/control.ts";
 import type { FanAutomatic, FanMode } from "../fan/auto.ts";
+import { funGateAllows, type FunGate } from "../fan/fun.ts";
 import {
   DC_CURVE_TOP_C,
   FAN_OFF_TEMPERATURE_C,
@@ -21,6 +22,7 @@ import {
 //                     automatic loop would otherwise undo the command on its next tick.
 //   POST  ?mode=auto  hand the fan back to the temperature curve.
 //   POST  ?mode=manual  keep the duty it has and stop the curve moving it.
+//   POST  ?mode=fun   put the rider's throttle on the fan, if the bike cannot move.
 //
 // POST rather than GET for the same reason /can-restart is a POST: this one spins a fan
 // blade, and a prefetch or a crawler must not be able to do that by following a link.
@@ -65,6 +67,17 @@ export interface FanLimits {
   };
 }
 
+/**
+ * Fun mode's gate as of the last evaluation — whether the throttle may drive the fan.
+ *
+ * Here as well as on the WebSocket (`fan_fun_available`) because the page has to know
+ * whether to offer the control on its FIRST paint, before any signal has arrived.
+ */
+export interface FanFunReply {
+  available: boolean;
+  gate: FunGate;
+}
+
 /** What the automatic loop last decided, or nulls while the slider is driving the fan. */
 export interface FanAutoReply {
   reason: FanReason | null;
@@ -91,6 +104,7 @@ export interface FanReply {
   /** Automatic on every start, and never persisted — see src/fan/auto.ts. */
   mode: FanMode;
   auto: FanAutoReply;
+  fun: FanFunReply;
   /** Why the driver is unusable — a missing overlay, no `pinctrl` — or null. */
   fault: string | null;
   limits: FanLimits;
@@ -115,7 +129,7 @@ export async function handleFanEndpoint(
   }
   if (req.method !== "POST") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "GET, POST" });
-    res.end("use GET to see what the fan is doing, POST ?duty=N or ?mode=auto to command it\n");
+    res.end("use GET to see what the fan is doing, POST ?duty=N or ?mode=auto|manual|fun to command it\n");
     return;
   }
 
@@ -139,7 +153,9 @@ export async function handleFanEndpoint(
       ? await options.automatic.setMode(parsed.mode)
       : await options.automatic.commandManualDuty(parsed.duty);
   // 503 rather than 500 when the driver itself is unusable: the request was fine, the
-  // hardware or its setup is not, and that is the distinction the page reports.
+  // hardware or its setup is not, and that is the distinction the page reports. A fun
+  // mode refused by its gate SHARES it deliberately — "the request was fine, the bike is
+  // in Go, ask again when it is parked" is the same shape of answer and the same advice.
   respond(res, outcome.ok ? 200 : 503, options, outcome.message);
 }
 
@@ -151,8 +167,10 @@ export type FanRequest =
 /**
  * Turns a query string into a command, or into a reason. Pure.
  *
- * Whole percent only. A fractional duty is not wrong so much as meaningless here — one
- * percent of a 50 000 ns period is 500 ns, and nothing about this fan resolves finer.
+ * Whole percent only — for the slider, not for the hardware. The bridge resolves far
+ * finer (a 50 000 ns period is ~2500 counts, and fun mode uses every one of them), but a
+ * duty arriving over HTTP came from a thumb on a range input, and a fractional one there
+ * is a caller that has misunderstood what it is driving rather than a finer request.
  *
  * ⚠️ `duty` and `mode` together is a 400 rather than a guess about which was meant. A
  * duty already implies manual, so the only reading of `?mode=auto&duty=60` is a caller
@@ -165,7 +183,10 @@ export function parseFanRequest(params: URLSearchParams): FanRequest {
   const hasDuty = rawDuty !== null && rawDuty.trim().length > 0;
 
   if (hasMode && hasDuty) {
-    return { ok: false, reason: "pass duty=<percent> OR mode=auto|manual, not both — a duty already means manual" };
+    return {
+      ok: false,
+      reason: "pass duty=<percent> OR mode=auto|manual|fun, not both — a duty already means manual",
+    };
   }
   if (hasMode) {
     const mode = rawMode.trim().toLowerCase();
@@ -175,10 +196,18 @@ export function parseFanRequest(params: URLSearchParams): FanRequest {
     if (mode === "manual") {
       return { ok: true, kind: "mode", mode: "manual" };
     }
-    return { ok: false, reason: `mode must be auto or manual, not ${rawMode}` };
+    // "play" alongside "fun" for the same reason "automatic" sits alongside "auto": the
+    // mode has been called both since it was asked for, and neither spelling is wrong.
+    if (mode === "fun" || mode === "play") {
+      return { ok: true, kind: "mode", mode: "fun" };
+    }
+    return { ok: false, reason: `mode must be auto, manual or fun, not ${rawMode}` };
   }
   if (!hasDuty) {
-    return { ok: false, reason: `how much? pass duty=<0…${MAX_DUTY_PERCENT}> in whole percent, or mode=auto` };
+    return {
+      ok: false,
+      reason: `how much? pass duty=<0…${MAX_DUTY_PERCENT}> in whole percent, or mode=auto|manual|fun`,
+    };
   }
 
   const duty = Number(rawDuty.trim());
@@ -205,6 +234,7 @@ function respond(res: ServerResponse, statusCode: number, options: FanEndpointOp
     driverEnabled: state.driverEnabled,
     phase: state.phase,
     mode: auto.mode,
+    fun: { available: funGateAllows(auto.funGate), gate: auto.funGate },
     auto: {
       reason: auto.decision?.reason ?? null,
       temperatureInput: auto.decision?.temperatureInput ?? null,

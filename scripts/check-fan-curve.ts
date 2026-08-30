@@ -406,16 +406,18 @@ check(
   "the stops ascend and never repeat",
   stops.every((duty, index) => index === 0 || duty > stops[index - 1])
 );
-check("a lowered cap is still the last stop, whether or not it lands on the 5 % grid", dutyStops(30, 87).at(-1) === 87);
+// ⚠️ 87.5 rather than 87: DUTY_STEP_PERCENT went from 5 to 1 with fun mode, so every
+// whole percent is now ON the grid and a whole-number cap could no longer test the
+// off-grid case this assertion exists for.
+check("a lowered cap is still the last stop, whether or not it lands on the grid", dutyStops(30, 87.5).at(-1) === 87.5);
 check(
   "…and nothing above it is offered",
-  dutyStops(30, 87).every(duty => duty <= 87)
+  dutyStops(30, 87.5).every(duty => duty <= 87.5)
 );
 check("before the Pi has answered there is one stop and it is 0", dutyStops(0, 0).length === 1);
-check(
-  "the thumb maps a curve's off-grid duty to the nearest stop",
-  dutyStops(30, 100)[dutyStopIndex(stops, 63)] === 65
-);
+// Fractional for the same reason, and it is the duty fun mode actually produces: the
+// throttle resolves 0.1 %, so the thumb has to land somewhere honest for 63.4 % too.
+check("the thumb maps an off-grid duty to the nearest stop", dutyStops(30, 100)[dutyStopIndex(stops, 63.4)] === 63);
 check("and 0 % maps to the stop position, not to the floor", stops[dutyStopIndex(stops, 0)] === 0);
 
 // --- 10. End to end: curve → auto → control → the bridge ---------------------

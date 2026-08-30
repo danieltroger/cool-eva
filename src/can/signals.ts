@@ -60,26 +60,44 @@ const lastLogged = new Map<string, number>();
 // origins are per-process and mean nothing in the browser.
 const lastSeenMonotonic = new Map<string, number>();
 
-// Event-driven push: the WS layer registers a listener and we hand it the signals
-// that changed (already rate-limited by the per-signal deadbands). Changes that
-// happen synchronously (e.g. the several values in one 0x200 frame) are coalesced
-// into one notification via a microtask — no time-based throttle, no added latency.
+// Event-driven push: a listener is handed the signals that changed (already
+// rate-limited by the per-signal deadbands). Changes that happen synchronously (e.g.
+// the several values in one 0x200 frame) are coalesced into one notification via a
+// microtask — no time-based throttle, no added latency.
+//
+// ⚠️ A LIST, not one slot. It held a single listener that each call REPLACED until
+// 2026-08-30, when src/fan/auto.ts became the second subscriber: with one slot,
+// whichever of the two registered last would have silently switched the other off —
+// either a dashboard that never updates, or a fan mode that never sees the throttle.
 type ChangeListener = (changed: Record<string, LiveValue>) => void;
-let changeListener: ChangeListener | null = null;
+const changeListeners: ChangeListener[] = [];
 let pending: Record<string, LiveValue> | null = null;
 
-export function onChange(listener: ChangeListener): void {
-  changeListener = listener;
+/** Subscribes to changes. The returned function unsubscribes; call it when you stop. */
+export function onChange(listener: ChangeListener): () => void {
+  changeListeners.push(listener);
+  return () => {
+    const at = changeListeners.indexOf(listener);
+    if (at >= 0) {
+      changeListeners.splice(at, 1);
+    }
+  };
 }
 
 function notifyChange(key: string, v: LiveValue): void {
-  if (!changeListener) return;
+  if (changeListeners.length === 0) return;
   if (!pending) {
     pending = {};
     queueMicrotask(() => {
       const batch = pending;
       pending = null;
-      if (batch && changeListener) changeListener(batch);
+      if (!batch) return;
+      // Copied first: a listener may subscribe or unsubscribe from inside its own call
+      // — src/fan/auto.ts unsubscribes on shutdown — and splicing the array being
+      // iterated would skip the listener after it.
+      for (const listener of [...changeListeners]) {
+        listener(batch);
+      }
     });
   }
   pending[key] = v;

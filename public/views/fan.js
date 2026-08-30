@@ -3,7 +3,15 @@
 import van from "../vendor/van-1.6.1.js";
 import { BAD, GOOD, MUTED, WARN } from "../lib/colors.js";
 import { valueOf } from "../lib/store.js";
-import { TEMPERATURE_FAULT_REASON, describeAutoReason, dutyStopIndex, dutyStops } from "../lib/fan-display.js";
+import {
+  FAN_MODE_CODE,
+  FUN_GATE_TEXT,
+  TEMPERATURE_FAULT_REASON,
+  describeAutoReason,
+  dutyStopIndex,
+  dutyStops,
+  formatDuty,
+} from "../lib/fan-display.js";
 import { createFanCommandQueue } from "../lib/fan-command-queue.js";
 
 const { button, div, h2, input } = van.tags;
@@ -22,7 +30,9 @@ const { button, div, h2, input } = van.tags;
 // ⚠️ Nothing here decides policy. The 30 % floor, the cap, the kick-start length and the
 // curve's own temperatures are the Pi's (src/fan/control.ts, src/fan/curve.ts) and are
 // read off `limits` in its reply, so this page cannot come to disagree with the thing
-// holding the PWM.
+// holding the PWM. Fun mode goes further: this page cannot ENTER it, only ask, and the
+// Pi re-reads the gate off the bus before it agrees. The button below appearing is a
+// display of `fan_fun_available`, never the permission itself.
 
 /** @typedef {import("../../src/http/fan.ts").FanReply} FanReply */
 /** @typedef {import("../../src/fan/auto.ts").FanMode} FanMode */
@@ -35,12 +45,13 @@ const available = van.state(/** @type {boolean | null} */ (null));
 const status = van.state(/** @type {FanReply | null} */ (null));
 
 /**
- * Where the slider is. In manual this is what the rider chose; in automatic it follows
- * `fan_target_pct` through the derive below, so the thumb tracks the curve live.
+ * Where the slider is. In manual this is what the rider chose; in automatic and in fun
+ * mode it follows `fan_target_pct` through the derive below, so the thumb tracks the
+ * curve — or the rider's own wrist — live.
  */
 const pendingDuty = van.state(0);
 
-/** Automatic or manual, optimistically ahead of the Pi so a tap looks instant. */
+/** Automatic, manual or fun, optimistically ahead of the Pi so a tap looks instant. */
 const mode = van.state(/** @type {FanMode} */ ("automatic"));
 
 /**
@@ -72,7 +83,7 @@ export function FanControl() {
       FaultNote(),
       Situation(),
       Reason(),
-      div({ class: "fan-row" }, ModeToggle(), Slider()),
+      div({ class: "fan-row" }, ModeToggle(), FunToggle(), Slider()),
       div({ class: "action-note", style: `color:${MUTED}` }, () => describeCommand(pendingDuty.val)),
       KickNote(),
       Outcome()
@@ -113,15 +124,20 @@ van.derive(() => {
   if (live === null || settling.val) {
     return;
   }
-  mode.val = live === 1 ? "automatic" : "manual";
+  // ⚠️ Through FAN_MODE_CODE rather than a bare 1 and 2. This is also the line that
+  // shows the rider fun mode ENDING on its own: the Pi hands the fan back the instant
+  // the bike can move, and this is where the sheet finds out.
+  mode.val = live === FAN_MODE_CODE.AUTOMATIC ? "automatic" : live === FAN_MODE_CODE.FUN ? "fun" : "manual";
 });
 
-// In automatic the thumb follows what the curve is commanding. `fan_target_pct` and not
-// `fan_duty_pct`: the two differ only during a kick-start, and a thumb that slammed to
-// 100 % and back for 1500 ms would look like the page had lost the plot.
+// In automatic the thumb follows what the curve is commanding, and in fun mode what the
+// throttle is — watching the slider track your own wrist is most of the fun. Only manual
+// pins it, because there the thumb is the source. `fan_target_pct` and not `fan_duty_pct`:
+// the two differ only during a kick-start, and a thumb that slammed to 100 % and back for
+// 1500 ms would look like the page had lost the plot.
 van.derive(() => {
   const target = valueOf("fan_target_pct");
-  if (target === null || mode.val !== "automatic" || settling.val) {
+  if (target === null || mode.val === "manual" || settling.val) {
     return;
   }
   pendingDuty.val = target;
@@ -170,22 +186,33 @@ function Situation() {
     if (target === 0) {
       return div(
         { style: `color:${BAD}` },
-        `⚠️  Still driving at ${duty} % after a stop that failed. The PWM was left alone on purpose — dropping it ` +
+        `⚠️  Still driving at ${formatDuty(duty)} % after a stop that failed. The PWM was left alone on purpose — ` +
+          `dropping it ` +
           "with the enables HIGH would brake the rotor. Cut power to the IBT-2."
       );
     }
     // The kick-start, which is the only other time the applied duty runs ahead of the target.
     if (target != null && duty > target) {
-      return div({ style: `color:${WARN}` }, `Kick-starting at ${duty} % — it settles at ${target} % in a moment.`);
+      return div(
+        { style: `color:${WARN}` },
+        `Kick-starting at ${formatDuty(duty)} % — it settles at ${formatDuty(target)} % in a moment.`
+      );
     }
-    return div({ style: `color:${GOOD}` }, `Running at ${duty} %.`);
+    return div({ style: `color:${GOOD}` }, `Running at ${formatDuty(duty)} %.`);
   });
 }
 
 /** Why the curve chose what it chose, live off `fan_auto_reason` / `fan_temp_input`. */
 function Reason() {
   return div({ class: "action-note" }, () => {
-    if (valueOf("fan_auto_mode") !== 1) {
+    // In fun mode the interesting sentence is the GATE's, not the curve's: it says what
+    // is letting the throttle drive the fan, which is also what will end the session
+    // when it stops being true.
+    if (valueOf("fan_auto_mode") === FAN_MODE_CODE.FUN) {
+      const gate = valueOf("fan_fun_gate");
+      return div({ style: `color:${MUTED}` }, gate === null ? "" : (FUN_GATE_TEXT[gate] ?? ""));
+    }
+    if (valueOf("fan_auto_mode") !== FAN_MODE_CODE.AUTOMATIC) {
       return div();
     }
     const sentence = describeAutoReason(valueOf("fan_auto_reason"), valueOf("fan_temp_input"));
@@ -199,6 +226,11 @@ function Reason() {
   });
 }
 
+/**
+ * The mode, as a label that always tells the truth and a tap that only ever goes between
+ * the two ordinary modes. Fun mode is entered from its own button below and leaves here,
+ * so the tap target does not grow a third state that appears and vanishes under a thumb.
+ */
 function ModeToggle() {
   return button(
     {
@@ -207,13 +239,39 @@ function ModeToggle() {
       // flickered disabled through a drag would be the drag's own POSTs doing it.
       disabled: () => !commandable(),
       onclick: () => {
-        const next = /** @type {FanMode} */ (mode.val === "automatic" ? "manual" : "automatic");
+        const next = /** @type {FanMode} */ (mode.val === "manual" ? "automatic" : "manual");
         mode.val = next;
         commandQueue.queue({ mode: next });
       },
     },
-    () => (mode.val === "automatic" ? "🌡️  Auto" : "✋  Manual")
+    () => (mode.val === "automatic" ? "🌡️  Auto" : mode.val === "fun" ? "🎢  Fun" : "✋  Manual")
   );
+}
+
+/**
+ * The fun-mode button — and the whole of "only shows up with the bike in park".
+ *
+ * ⚠️ It is bound to `fan_fun_available`, the LIVE signal, not to the last `/fan` reply:
+ * the reply is as old as the fetch, and this control has to disappear the moment the bike
+ * can move rather than at the next time somebody happens to reload. Hidden while fun mode
+ * is running too — the mode toggle already reads "Fun" and is how you leave.
+ */
+function FunToggle() {
+  return div(() => {
+    if (mode.val === "fun" || valueOf("fan_fun_available") !== 1 || !commandable()) {
+      return div();
+    }
+    return button(
+      {
+        class: "fan-mode",
+        onclick: () => {
+          mode.val = "fun";
+          commandQueue.queue({ mode: "fun" });
+        },
+      },
+      "🎢  Fun"
+    );
+  });
 }
 
 function Slider() {
@@ -270,7 +328,15 @@ function describeCommand(duty) {
   if (duty < minRunningPercent()) {
     return "Stopped — both enables LOW.";
   }
-  return mode.val === "automatic" ? `The curve is commanding ${duty} %.` : `Running at ${duty} %.`;
+  if (mode.val === "fun") {
+    return (
+      `The throttle is commanding ${formatDuty(duty)} %. It never goes below ${minRunningPercent()} %, so the fan ` +
+      "runs until you leave the mode — and it leaves by itself the moment the bike can move."
+    );
+  }
+  return mode.val === "automatic"
+    ? `The curve is commanding ${formatDuty(duty)} %.`
+    : `Running at ${formatDuty(duty)} %.`;
 }
 
 /** Whether a command could be sent at all. The Pi enforces every part of this again. */
@@ -305,10 +371,11 @@ function kickStartMs() {
 function adoptReply(payload) {
   status.val = payload;
   mode.val = payload.mode;
-  // The thumb follows a cap that came down, and follows the curve while it is driving.
-  // The slider's `max` alone would clamp what the element SHOWS while this state kept
-  // the old number, and that number is what the next command carries.
-  if (payload.mode === "automatic" || pendingDuty.val > maxPercent()) {
+  // The thumb follows a cap that came down, and follows whatever is driving the fan
+  // while it is not the thumb. The slider's `max` alone would clamp what the element
+  // SHOWS while this state kept the old number, and that number is what the next command
+  // carries.
+  if (payload.mode !== "manual" || pendingDuty.val > maxPercent()) {
     pendingDuty.val = Math.min(payload.targetPercent, maxPercent());
   }
 }
@@ -320,12 +387,19 @@ function adoptReply(payload) {
 // what to believe of the reply it comes back with.
 
 /**
+ * What each mode is called in `/fan`'s query string. `Record<FanMode, string>` so a mode
+ * added to the server without a spelling here does not typecheck.
+ * @type {Record<FanMode, string>}
+ */
+const MODE_QUERY = { automatic: "auto", manual: "manual", fun: "fun" };
+
+/**
  * @param {FanCommand} command
  * @param {() => boolean} isSuperseded whether the thumb has already moved past this one
  * @returns {Promise<void>}
  */
 async function postFanCommand(command, isSuperseded) {
-  const query = "duty" in command ? `duty=${command.duty}` : `mode=${command.mode === "automatic" ? "auto" : "manual"}`;
+  const query = "duty" in command ? `duty=${command.duty}` : `mode=${MODE_QUERY[command.mode]}`;
   try {
     const response = await fetch(`/fan?${query}`, {
       method: "POST",

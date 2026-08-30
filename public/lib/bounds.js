@@ -42,9 +42,17 @@ const BY_KEY = {
   // because these codes are OURS rather than the bike's: there is no unseen value to
   // leave room for, and a code added without widening the bound here would be drawn as
   // a dead sensor. scripts/check-fan-curve.ts is what notices.
-  "fan_auto_mode": [0, 1],
+  //
+  // ⚠️ `fan_auto_mode` went to [0, 2] with fun mode (src/fan/auto.ts FAN_MODE_CODE). At
+  // [0, 1] the new code 2 was rejected as a sentinel and the page held the PREVIOUS mode
+  // on screen — the fan taking its orders from a throttle while the sheet said "Manual".
+  "fan_auto_mode": [0, 2],
   "fan_auto_reason": [0, 7],
   "fan_temp_input": [0, 2],
+  // Fun mode's gate (src/fan/fun.ts). `fan_fun_available` MUST be named for the reason
+  // `fan_driver_enabled` above is: blank unit, non-boolean group, no rule would catch it.
+  "fan_fun_available": [0, 1],
+  "fan_fun_gate": [0, 5],
   // BMS pack temperatures. The −50 and 120 seen twice each are sentinels.
   "batt_temp_lo": [-30, 90],
   "batt_temp_hi": [-30, 90],

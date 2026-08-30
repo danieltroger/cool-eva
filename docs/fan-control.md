@@ -1,8 +1,10 @@
 # Cooling-fan control (IBT-2 / BTS7960 + SPAL VA69A)
 
-The watercooling loop's radiator fan, driven from the Pi over hardware PWM. This is the write-up the code points at: `src/fan/pwm.ts` (sysfs and `pinctrl` I/O), `src/fan/control.ts` (bring-up order and the duty rules), `src/fan/curve.ts` (the automatic curve, pure), `src/fan/auto.ts` (the loop that feeds it), `src/http/fan.ts` (the endpoint), `public/views/fan.js` (the slider and the mode toggle in the menu sheet) and `public/lib/fan-command-queue.js` (the coalescer that turns a drag into one POST in flight and one queued).
+The watercooling loop's radiator fan, driven from the Pi over hardware PWM. This is the write-up the code points at: `src/fan/pwm.ts` (sysfs and `pinctrl` I/O), `src/fan/control.ts` (bring-up order and the duty rules), `src/fan/curve.ts` (the automatic curve, pure), `src/fan/auto.ts` (the loop that feeds it and owns the mode), `src/fan/fun.ts` and `src/fan/fun-runner.ts` (fun mode's gate and mapping, and the half that reads the bus), `src/http/fan.ts` (the endpoint), `public/views/fan.js` (the slider and the mode toggle in the menu sheet) and `public/lib/fan-command-queue.js` (the coalescer that turns a drag into one POST in flight and one queued).
 
-**Phase 2: the fan follows the pack temperature, and the slider takes it over.** The Pi starts in AUTOMATIC and drives the fan off `batt_temp_hi`; dragging the slider hands it to you until the bike is switched off. The curve is `src/fan/curve.ts` (pure arithmetic), the loop that feeds it is `src/fan/auto.ts`, and both are argued in §5.
+**Phase 2: the fan follows the pack temperature, and the slider takes it over.** The Pi starts in AUTOMATIC and drives the fan off `batt_temp_hi`; dragging the slider hands it to you until the bike is switched off. The curve is `src/fan/curve.ts` (pure arithmetic), the loop that feeds it is `src/fan/auto.ts`, and both are argued in §4.
+
+**Phase 3: with the bike parked, the throttle can drive the fan.** A third mode, offered only while `go` is clear and the bike is stationary, and dropped the instant either stops being true. §4 "Fun mode" is the gate, the mapping and the measurements behind both.
 
 Off by default: nothing here happens unless `FAN_ENABLED=1`. See §7.
 
@@ -190,7 +192,7 @@ Phase 1 put the slider behind the same two-tap arm/dwell as every control that w
 
 - **`oninput`, live.** Dragging changes the fan as you drag. Watching the duct while you move the thumb is the whole reason the control exists.
 - **Dragging switches to manual**, because otherwise the next automatic tick — at most 2 s away — would put the curve's own duty back and the drag would look broken.
-- **The stops are 0, then 30…100 in 5 % steps**, and the slider's value is an _index into that list_ rather than a percentage. Phase 1 ran 0…100 in 5 % steps against a 30 % floor, so 5/10/15/20/25 — a quarter of the travel — all silently meant "stop". Every position now is a duty the Pi will take. A cap lowered below 100 is simply the last stop.
+- **The stops are 0, then every whole percent from 30 to 100**, and the slider's value is an _index into that list_ rather than a percentage. (It was 5 % steps until fun mode; §4 "The mapping" has why the finer grid, and why the old justification for the coarse one was false.) Phase 1 ran 0…100 in 5 % steps against a 30 % floor, so 5/10/15/20/25 — a quarter of the travel — all silently meant "stop". Every position now is a duty the Pi will take. A cap lowered below 100 is simply the last stop.
 - **The wire is coalesced, the feel is not.** `oninput` fires about twenty times a second; the thumb, the caption and the local duty move on every one of them, while the POSTs are held to one in flight and one queued, at most one per 150 ms. Superseded values are overwritten in the queue and never sent. A Pi Zero 2 W does not want twenty POSTs and forty `pinctrl` spawns out of one gesture.
 
 A command arriving mid-kick still only moves the target, exactly as before — the kick runs its full length or it is not a kick.
@@ -215,6 +217,138 @@ Replaying the drag 200 times on an idle machine put the minimum at **59.112 ms a
 That was unreachable by a human thumb while the clock was hard-wired. The injection seam made it reachable by any caller who hands the queue a clock relative to its own creation — the most natural clock anyone writes — so the seed is `Number.NEGATIVE_INFINITY`, which makes `Math.max(0, intervalMs - (now() - lastSentAt))` zero from every origin. The check drives the same drag from an origin of 0 as well as from 10 s; with `0` back in the seed, the zero-origin drag is what goes red.
 
 How narrow the old margin really was is worth recording. Instrumenting `main`, `performance.now()` at the top of §3 read **63.4–76.0 ms** across three runs — against the 60 ms interval the check uses. `main` cleared its own precondition by about three milliseconds, and on a faster machine would not have. The same measurement explains a claim this PR originally got wrong: doubling the interval on `main` went red not because any interval assertion caught it, but because 120 ms is more than 76, so the _first_ send was held and three assertions about coalescing collapsed. `public/lib/arming.js:41` carries the same `armedAt = 0` idiom, where it is safe only because every firing site gates on `armed.val` first.
+
+### Fun mode: the throttle drives the fan
+
+> _"a 'fun' mode that only shows up with the bike in park where the throttle controls fan speed — super funny to play around with when bored at charging."_
+
+A third mode beside automatic and manual. While it runs, `throttle_pct` off `0x109` **is** the fan's speed control: closed throttle is the 30 % floor, wide open is the cap, and the fan runs for the whole session. It is entered from the dashboard and it is offered there **only while the bike provably cannot move**.
+
+It is server-side, and that is not an implementation detail. `throttle_pct` arrives at ~100 Hz with `deadband: 0`; routing it out over the WebSocket and back in as HTTP POSTs would be a hundred round trips a second to move a GPIO the Pi is already holding. The dashboard selects the mode; the Pi maps the throttle.
+
+Three files, split the way the temperature curve already is:
+
+| File | What |
+| --- | --- |
+| `src/fan/fun.ts` | the gate and the mapping, **pure** — values in, an answer out, no I/O and no clock |
+| `src/fan/fun-runner.ts` | the half that reads the bus and drives the bridge |
+| `src/fan/auto.ts` | owns the mode and **every transition between the three**, so "what can take the fan out of fun mode" is one function in one file |
+
+#### Is the throttle even on the bus while charging?
+
+The whole point is playing with it while plugged in, which is typically key-off, and `0x109` is a drive frame. The owner says it is always there and that he has tested it. The archive agrees, and it settles the two things his answer does not: whether `go` is live at the same time (a gate is worthless if the signal it reads is absent exactly when the mode is wanted) and whether the throttle actually varies while parked.
+
+**`~/Documents/cool-eva-archive/capture-20260808-182129-600daf87.log`**, the 2026-08-08 AC session. The window is every frame from the first `0x610` b7 = `0x02` onwards — 13 410 frames of `0x610`, 4 600.1 s end to end:
+
+|                                           |                                                                 |
+| ----------------------------------------- | --------------------------------------------------------------- |
+| `0x109` frames                            | **317 785**                                                     |
+| `0x102` frames                            | **317 785**                                                     |
+| `0x104` frames                            | **317 780**                                                     |
+| wall-seconds containing ≥ 1 frame of each | **3 181, 3 181, 3 181**                                         |
+| awake stretches                           | 23.5 s, then 3 154.6 s, split by **1 422.1 s** of total silence |
+| rate inside the awake stretches           | **~100.0 Hz** for all three                                     |
+
+The identical per-second coverage is the load-bearing number. **`go` is exactly as live as the throttle is**: the three frames arrive together and go quiet together, so there is no state in which the throttle can be read and the gate cannot. When the bus sleeps mid-charge — 23.7 minutes of it here — all three vanish, the gate closes, and fun mode is unavailable. That is the correct answer, because a sleeping bus is also a throttle that produces nothing.
+
+What the bits read across all 317 785 frames of `0x102` in that window:
+
+| Signal          | Reading                                         |                                             |
+| --------------- | ----------------------------------------------- | ------------------------------------------- |
+| `go`            | **1 in 0 frames**                               | the drive is disabled for the whole session |
+| `go_request`    | 1 in 0 frames                                   |                                             |
+| `moving`        | 1 in 0 frames                                   |                                             |
+| `stand_up`      | 1 in 0 frames                                   | on the side stand throughout                |
+| `speed_can_kmh` | **exactly 0 in 317 780 of 317 780 (100.000 %)** |                                             |
+| `key_on`        | 1 in 234 885 (**73.9 %**)                       | ⚠️ **not** reliably set — see below         |
+| `energized`     | 1 in 132 739 (41.8 %)                           |                                             |
+| `throttle_on`   | 1 in 744 (0.234 %)                              | ~7.4 s of somebody twisting it              |
+
+And the throttle itself: **329 distinct raw values**, 734 frames above zero, peaking at raw 743 = **74.3 %**. It is live and it moves. A closed throttle does not read 0 — it reads raw 22–29, i.e. **2.2–2.9 %** — which is why fun mode's floor is a range endpoint rather than a special case.
+
+⚠️ **The DC cross-check is contaminated and is recorded here rather than quoted.** The same scan over `capture-20260804-193952-4b4cdd2b.log` puts all three frames at 99.9 Hz, but reports `go` = 1 in 31.5 % of the window, because the scanner holds the last-seen `0x610` b7 and that byte persists after the charge manager leaves the bus — so the "session" runs on into the ride that followed. The frame-presence figures survive that; the bit statistics do not. The AC file is the clean datum, and the same artefact is the one `docs/charge-manager.md` §"segmenting by capture file" already warns about.
+
+#### The gate: what "cannot move" means
+
+Two conditions, both of which must hold, both of which must be **fresh**:
+
+1. **`go` (`0x102` b1 bit 3) is 0.** This is the VCU's own "the drive is enabled" bit. It is the condition, not a proxy for one.
+2. **`speed_can_kmh` (`0x104`) is exactly 0.** A second, independently-framed witness, so one frame stalling cannot manufacture a pass on its own.
+
+Plus one that is not about safety but about function: **`throttle_pct` (`0x109`) is fresh**, because a stale throttle would leave the fan on the last duty a wrist happened to be holding.
+
+No tolerance band on the speed. `speed_can_kmh` is `motor_rpm_can / 42.0`, so a wheel that is turning is a non-zero reading, and it read exactly 0 in all 317 780 frames above. A bike being rolled by hand therefore drops fun mode — which is right, it is moving.
+
+**The alternatives, and why each is not in the gate:**
+
+- **`key_on`** — measured at **73.9 %** through the AC session above, dropping to 0 for whole stretches (vehicle-state byte `0x02`, energized only, appears in 82 900 frames). A gate on `key_on` would make the mode unavailable for a quarter of exactly the situation it exists for. It is also not a safety property: key on with `go` clear still cannot move.
+- **`stand_up`** — 0 for the entire session, and it is tempting, because a deployed side stand is a _physical_ interlock the Energica will not enter Go against. Rejected because it constrains **where the bike is parked** rather than whether it can move, and `go` already covers the case it would cover. It is a good candidate to add if the gate is ever wanted stricter.
+- **`moving`** (`0x102` b2 bit 7) — derived by the VCU from road speed, from the same frame as `go`, and decoded from a third party's `.xdbc` rather than measured here. It duplicates the speed condition without adding an independent witness, and every extra condition is another way for the mode to be silently unavailable.
+- **`energized`** — 41.8 %, and it says the HV system is up, not that the bike can move.
+
+⚠️ **The failure this gate is against is not subtle.** It maps the throttle of a 145 hp motorcycle onto something that is not the motor. If it is wrong in the permissive direction, somebody twists a throttle expecting a fan.
+
+#### Fail-closed, and why its polarity is the opposite of the speed gate next door
+
+`src/fan/fun.ts`'s `funGate()` returns a refusal from every branch except its last line. Absent, stale, `NaN`, negative, or a value nobody anticipated — all refusals. The only route to `READY` is three signals present, fresh, and reading the specific values that mean a stationary bike with the drive disabled.
+
+⚠️ **This is the exact opposite of `src/fan/curve.ts`'s speed gate, and the two must not be tidied to match.** There, a missing `speed_can_kmh` **opens** the gate, because a parked bike stops broadcasting `0x104` and a hot pack in a garage is the case the fan exists for; holding the fan off on a stale 120 km/h reading is the dangerous direction. Here, a missing anything **closes** the gate, because this one has to _prove_ the bike cannot move and a signal nobody is refreshing proves nothing. Same signal, opposite default, both correct — `scripts/check-fan-fun.ts` §3 asserts both so that flattening one into the other goes red.
+
+Freshness is **500 ms** (`FUN_GATE_MAX_AGE_MS`), which at the measured ~100 Hz is 50 consecutive missed frames. Deliberately far tighter than the curve's 3 s, because this is an interlock in front of a throttle rather than a hint about airflow.
+
+#### Dropping out is immediate, not at the next tick
+
+`go` going true is a **change event**. `src/can/signals.ts` already batches changed signals into a microtask for the WebSocket, and fun mode subscribes to the same stream, so the drop-out runs on the same event that carries the bit — single-digit milliseconds after the frame decodes, not at a poll boundary. The fan is handed back to the temperature curve, which re-evaluates at once.
+
+⚠️ That subscription is why `onChange()` became a **list** rather than one slot. It held a single listener that each call replaced; with a second subscriber, whichever registered last would have silently switched the other off — either a dashboard that never updates, or a fun mode that never sees the throttle.
+
+Events cannot cover everything: **a bus that goes silent raises no event**, so the fan would otherwise sit on the throttle's last duty for ever. `FUN_WATCHDOG_MS` is 250 ms, and while fun mode runs the loop's own timer is re-armed at that instead of the curve's 2 s. So:
+
+- the **duty** follows the throttle on events — as fast as the frames arrive, and no work at all while the throttle is still;
+- the **gate** is re-checked on those same events _and_ four times a second regardless.
+
+Hand-back goes to **automatic**, never to manual. Manual would leave the fan on whatever duty the throttle was holding for the rest of the ride with nothing watching the pack; automatic puts it back on the curve — including the road-speed gate — before the rider is out of the bay.
+
+And like manual, the mode is **in memory only**. Nothing is written to disk, so every start is automatic. A mode that put the throttle on the fan and survived a reboot would be waiting for a rider who did not ask for it.
+
+#### The mapping, and the resolution you can hear
+
+Throttle 0…100 % onto duty **30…100 %** — `MIN_RUNNING_DUTY_PERCENT` to `MAX_DUTY_PERCENT`, linear, nothing else. Closed throttle is the floor, not a stop.
+
+**That the bottom of the range is the floor and not 0 is the design, not a rounding.** No duty the throttle can produce crosses `src/fan/control.ts`'s stop threshold, which means:
+
+- the bridge enables are set **once on entry and cleared once on exit**. A throttle sweep never spawns `pinctrl`, so there is no enable-thrash to defend against and **no hysteresis and no hold-at-the-bottom** — neither exists here, deliberately;
+- every throttle movement is one `duty_cycle` write to sysfs and nothing else;
+- there is no "fun mode but the fan is off" state to reason about. You leave the mode to stop the fan.
+
+Entry still **kick-starts** — 100 % for 1500 ms — because the fan is starting from rest like any other start, and it is not special-cased. A throttle moved during the kick moves the target only; the kick runs its full length or it is not a kick. Exit still stops the fan properly: enables LOW first, then the output, then the duty, which is §3's mirror rule and the reason a stop is never a duty of 0 under a live bridge.
+
+**The duty is a fractional percent, end to end, and rounding it would destroy the thing the mode is for.** The arithmetic:
+
+|  |  |
+| --- | --- |
+| `throttle_pct` | `u16le(b0, b1) / 10` off `0x109` — **0.1 % resolution**, confirmed on the wire by consecutive raw values (22, 23, 24, 25, 26, 27, 28, 29) |
+| one throttle step through the mapping | 0.1 % × 0.70 = **0.07 % of duty** |
+| …as nanoseconds of the 50 000 ns period | **35 ns** |
+| the full sweep | 1 000 steps → **35 000 ns**, 70 % of the period |
+| …in PWM counts, at a 50 MHz clock (2 500 counts of 20 ns) | **~1.75 counts per throttle step**, ~1 750 across the travel |
+
+🟡 The 50 MHz figure is the clock the overlay is understood to leave in place; it has **not** been measured on this Pi. The conclusion does not depend on it: one throttle step is 35 ns, so any PWM clock at or above **28.6 MHz** resolves every step. Rounding the duty to whole percent would collapse roughly fourteen steps in fifteen — `scripts/check-fan-fun.ts` §2 asserts that all 1 000 raw steps reach the bridge as different `duty_cycle` values, and a `Math.round` anywhere on the path goes red.
+
+The slider's grid moved from 5 % to **1 %** in the same change, and the old constant's stated reason — _"finer is not a duty this fan resolves"_ — was simply false: the bridge resolves ~0.04 %. The real reason for a coarse grid was thumb precision on a phone, and that has now been traded away on purpose. Nobody cares whether it is 47 or 48 %; sliding it and hearing the fan change immediately is worth more.
+
+#### What it costs the log and the socket
+
+`fan_duty_pct` has **no deadband**, and does not get one. In fun mode it therefore tracks `throttle_pct` at the full frame rate, and that is the point: comparing how fast the throttle moves against how fast the fan responds is a measurement the log can only make if the output half is not filtered. `throttle_pct` is already `deadband: 0` at ~100 Hz and contributed 1 038 747 rows over seven days, so this is not a new class of load — roughly one more signal of the same size, on a card with ~108 GB free and a compressed log.
+
+⚠️ One consequence to know about rather than to fix: `MAX_CLIENT_BACKLOG_BYTES` (`src/ws.ts`) is 256 kB, described there as "ten seconds of riding". A second ~100 Hz signal roughly halves that in wall time — **while fun mode is running**. It does not touch the riding figure, because fun mode cannot run while the bike can move. A suspended phone hitting the cap is existing, understood behaviour: it is dropped and resynchronises from the next 5 s snapshot.
+
+#### What is not verified
+
+- **The gate has never run against a real bike.** Every assertion is against the archive and against replayed values.
+- **No fun-mode session has ever driven the real bridge.** The end-to-end check drives a recording `FanPwm`, not a Pi.
+- **The 50 MHz PWM clock is assumed, not measured** — see above for why nothing rests on it.
+- **`stand_up` is decoded but unused here**, and the one measurement above (0 for a whole charge) is consistent with the reading but does not establish it as an interlock.
 
 ## 5. Kernel setup on the Pi
 
@@ -283,24 +417,28 @@ If `pinctrl` is missing the driver says so by name (`sudo apt install raspi-util
 
 `GET /fan` reports the driver's state, its `fault` if it has one, and the limits it enforces. It touches no hardware.
 
-`POST /fan?duty=N` commands a duty in whole percent **and switches the fan to manual**; `POST /fan?mode=auto` hands it back to the curve, and `POST /fan?mode=manual` freezes it where it is. Passing both `duty` and `mode` is a 400 rather than a guess about which was meant. Every POST must carry **`X-Cool-Eva: fan`**. POST rather than GET for the reason `/can-restart` is a POST: this one spins a fan blade, and a prefetch or a crawler must not be able to do that by following a link. The header is there because POST alone is not enough — this server sends no `Access-Control-*` headers and has no auth, so a plain cross-origin `<form method="POST" action="http://cool-eva.local/fan?duty=100">` on any page the rider's phone opens is a _simple_ request that reaches the endpoint. CORS would only stop the attacker reading the reply. A custom header name is what forces a preflight this server never answers. Its value is `fan`, not `/vcu-write`'s `service-write`, so a caller built for that endpoint cannot reach this one.
+`POST /fan?duty=N` commands a duty in whole percent **and switches the fan to manual**; `POST /fan?mode=auto` hands it back to the curve, `POST /fan?mode=manual` freezes it where it is, and `POST /fan?mode=fun` (or `mode=play`) puts the rider's throttle on it. Passing both `duty` and `mode` is a 400 rather than a guess about which was meant. A fun-mode request the gate refuses answers **503** with the reason in `message` — the same status an unusable driver gets, and deliberately so: "the request was fine, the bike is in Go, ask again when it is parked" is the same shape of answer. Every POST must carry **`X-Cool-Eva: fan`**. POST rather than GET for the reason `/can-restart` is a POST: this one spins a fan blade, and a prefetch or a crawler must not be able to do that by following a link. The header is there because POST alone is not enough — this server sends no `Access-Control-*` headers and has no auth, so a plain cross-origin `<form method="POST" action="http://cool-eva.local/fan?duty=100">` on any page the rider's phone opens is a _simple_ request that reaches the endpoint. CORS would only stop the attacker reading the reply. A custom header name is what forces a preflight this server never answers. Its value is `fan`, not `/vcu-write`'s `service-write`, so a caller built for that endpoint cannot reach this one.
 
 Both are routed only when `FAN_ENABLED=1`. On any other Pi `/fan` is a 404, which is what `public/views/fan.js` reads to hide the whole section.
 
-The slider and the Auto/Manual toggle live in the menu sheet, on one row because they are one control: the toggle says who is moving the thumb, and moving the thumb changes the toggle. ⚠️ There is **no arming** in front of either, unlike every other actuating control on this dashboard — §4 "The slider" is the argument. The mode is **in memory only and automatic on every start**; it is deliberately never written to disk, because the Pi loses power with the bike's 12 V rail, so "manual until the bike is switched off" is what not persisting it already means.
+The slider and the Auto/Manual toggle live in the menu sheet, on one row because they are one control: the toggle says who is moving the thumb, and moving the thumb changes the toggle. **The Fun button is a third control on that row and it is bound to `fan_fun_available` — the live signal, not the last `/fan` reply — so it appears and vanishes with the gate rather than at the next time somebody reloads.** It is hidden while fun mode is running, because the mode toggle then reads "🎢 Fun" and is how you leave. The page cannot _enter_ the mode, only ask: the Pi re-reads the gate off the bus before it agrees, so the button appearing is a display of permission and never the permission itself. ⚠️ There is **no arming** in front of either, unlike every other actuating control on this dashboard — §4 "The slider" is the argument. The mode is **in memory only and automatic on every start**; it is deliberately never written to disk, because the Pi loses power with the bike's 12 V rail, so "manual until the bike is switched off" is what not persisting it already means.
 
-Six signals reach the dashboard and the ride log. Every one is what the Pi **commanded or decided**, never what it measured: this fan has no tacho, so nothing here can tell you the rotor is turning. All six are registered `onDemand` in `src/can/registry.ts` — a fan sitting at 60 % writes nothing for an hour, and silence is its resting state.
+Eight signals reach the dashboard and the ride log. Every one is what the Pi **commanded or decided**, never what it measured: this fan has no tacho, so nothing here can tell you the rotor is turning. All six are registered `onDemand` in `src/can/registry.ts` — a fan sitting at 60 % writes nothing for an hour, and silence is its resting state.
 
 | Signal | Meaning |
 | --- | --- |
 | `fan_duty_pct` | what the bridge is being given. 100 for the length of a kick-start |
 | `fan_target_pct` | what was **asked** for. It differs from the above only during a kick, which is exactly how the dashboard tells "kicking" from "settled" without a second round trip |
 | `fan_driver_enabled` | 1 = both IBT-2 enables HIGH. 0 = standby, every FET off |
-| `fan_auto_mode` | 1 automatic, 0 manual |
+| `fan_auto_mode` | `FAN_MODE_CODE` in `src/fan/auto.ts` — 0 manual, 1 automatic, **2 fun**. 0 and 1 keep the meaning every row already in a ride log has |
 | `fan_auto_reason` | which rule set the duty — the `FAN_REASON` enum in `src/fan/curve.ts` |
 | `fan_temp_input` | whether the temperature under that decision was live, held, or absent — `FAN_TEMPERATURE_INPUT` |
+| `fan_fun_available` | 1 while the gate is satisfied. This is what the sheet shows and hides the Fun button on |
+| `fan_fun_gate` | which condition failed — the `FUN_GATE` enum in `src/fan/fun.ts`, so "why did the button not appear" is answerable from the ride log rather than from a guess |
 
-The last two are **codes, not text**, because a signal is a number; the sentences live in `public/lib/fan-display.js` and `scripts/check-fan-curve.ts` asserts that every code has both a sentence there and a bound in `public/lib/bounds.js`. Adding a reason without doing either goes red rather than rendering a bare integer or being drawn as a dead sensor.
+The last four are **codes, not text**, because a signal is a number; the sentences live in `public/lib/fan-display.js` and `scripts/check-fan-curve.ts` and `scripts/check-fan-fun.ts` assert that every code has both a sentence there and a bound in `public/lib/bounds.js`. Adding a reason without doing either goes red rather than rendering a bare integer or being drawn as a dead sensor.
+
+⚠️ Widening `fan_auto_mode`'s bound to `[0, 2]` was **not** bookkeeping. At `[0, 1]` the new code 2 is rejected as a sentinel, `public/lib/store.js` keeps the previous value, and the sheet reads "Manual" over a fan taking its orders from a throttle.
 
 ## 7. Running it
 
@@ -335,8 +473,10 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
 - **No feedback of any kind.** No tacho, no current sense (`R_IS`/`L_IS` are unconnected), so "commanded 60 %" is the only claim this software can make. That cuts both ways, and the second way is the easier one to miss:
   - a stalled rotor after a successful kick is invisible until the coolant temperature says so;
   - **a fuse that _does_ clear is equally invisible.** The Pi goes on writing duty cycles into a dead circuit and the dashboard goes on rendering "Running at 60 %", because that is what was commanded. Nothing here can tell a spinning fan from an open fuse — which is why the fuse argument in §4 could never have been self-checking even if the numbers had held.
+- **Fun mode has never run on the bike.** The gate, the mapping and the drop-out are asserted against the capture archive and against a recording `FanPwm`; no session has driven the real bridge. §4 "What is not verified" lists what that leaves open.
 - **Manual mode has no shutoff.** In automatic the curve takes the fan back down on its own; a duty set from the slider runs until you set another, until the mode goes back to automatic, or until the service restarts — and a restart is a return to automatic, since the mode is not persisted. A `SIGTERM` (`systemctl restart`, the dashboard's Update button) stops the loop and then idles the bridge, in that order, so a tick cannot re-command a process that is leaving. A `SIGKILL` skips both — but the unit is `Restart=on-failure` with `RestartSec=5` (`scripts/setup-service.ts`), so the process is back about **five seconds** later and `openFanPwm()` drops both enables as its first statement. The `config.txt` `gpio=` lines are the backstop for the case where it does not come back at all.
 - **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, 54, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. What exists is the arithmetic, checked; what does not exist is a ride or a DC session logged against it. The first hot DC charge with `FAN_ENABLED=1` is the datum to go and get.
 - **A pack whose `batt_temp_hi` never arrives runs the fan at 30 % for ever** in automatic, one minute after boot, with the fault visible only inside the menu sheet and nowhere on the main dashboard. §4 "When the temperature goes away" argues why the floor is the right answer and not a bug, and says plainly what the fault does and does not reach.
 - **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4.
 - **The udev race** described in §5 is unhandled.
+- **Fun mode's second gate condition is the same frame's neighbour, not an independent sensor.** `go` and `speed_can_kmh` come off different CAN ids (`0x102` and `0x104`), which is real independence at the frame level, but both originate in the VCU. Nothing here cross-checks the VCU against anything, and an all-zero `0x102` payload would read as "everything off" and pass the `go` half. The freshness window is what stands against that — a stuck frame stops being refreshed — and it is the weakest joint in the gate.

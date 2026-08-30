@@ -29,16 +29,26 @@ export const SIGNALS: SignalDef[] = [
   { key: "fan_target_pct", unit: "%", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_driver_enabled", unit: "", group: "fan", source: "sensor", onDemand: true },
   // Phase 2's automatic curve (src/fan/auto.ts, src/fan/curve.ts). `fan_auto_mode` is
-  // 1 automatic / 0 manual, and the other two are the enums in src/fan/curve.ts:
-  // FAN_REASON says which rule set the duty and FAN_TEMPERATURE_INPUT whether the
-  // temperature under it was live, held from the last in-bounds reading, or absent.
+  // FAN_MODE_CODE in src/fan/auto.ts — 0 manual, 1 automatic, 2 fun — and the other two
+  // are the enums in src/fan/curve.ts: FAN_REASON says which rule set the duty and
+  // FAN_TEMPERATURE_INPUT whether the temperature under it was live, held from the last
+  // in-bounds reading, or absent.
   // Codes rather than text because a signal is a number; the words are the dashboard's.
-  // ⚠️ All three have a BLANK unit in a group that is not a BOOLEAN_GROUP, which is the
+  // ⚠️ All five have a BLANK unit in a group that is not a BOOLEAN_GROUP, which is the
   // combination bounds.js renders ungated — so each is named in its BY_KEY, and
   // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
   { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true },
+  // Fun mode's gate (src/fan/fun.ts, docs/fan-control.md §"Fun mode"). `fan_fun_available`
+  // is what the dashboard shows or hides the control on; `fan_fun_gate` is the FUN_GATE
+  // code saying which condition failed, so "why did the button not appear" is answerable
+  // from the ride log rather than from a guess. ⚠️ No deadband on either, nor on
+  // `fan_duty_pct` above: in fun mode the duty tracks `throttle_pct` at ~100 Hz and
+  // logging it at that rate is the POINT — it is how the throttle's movement and the
+  // fan's response are compared afterwards, which any deadband on the output would wreck.
+  { key: "fan_fun_available", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_fun_gate", unit: "", group: "fan", source: "sensor", onDemand: true },
 
   // The can0 interface's own up/down state, polled from `ip link` rather than decoded
   // off the bus (src/can/link-status.ts). A 1/0 flag in `diag`, which bounds.js gates to

@@ -170,6 +170,26 @@ const CHECKS: SelfCheck[] = [
       "would end the whole service every two seconds",
   },
   {
+    script: "scripts/check-fan-fun.ts",
+    covers:
+      "fun mode — the rider's throttle driving the radiator fan — and above all the gate in front of it, which is " +
+      "the one place in this repo where the throttle of a 145 hp motorcycle is wired to something that is not the " +
+      "motor. That the gate FAILS CLOSED: a bike in Go is refused, a bike moving at 0.1 km/h is refused, and an " +
+      "absent, stale or non-finite `go` or `speed_can_kmh` is refused rather than read as the parked bike it " +
+      "resembles — the exact opposite polarity to src/fan/curve.ts's speed gate, where a missing speed OPENS the " +
+      "gate, and both are asserted here so the contrast cannot be flattened by someone tidying the two to match. " +
+      "That the 500 ms staleness window is the SHIPPED one, waited out for real rather than injected, because two " +
+      "earlier PRs added a seam and moved production's default out of coverage. That `go` going true takes the " +
+      "throttle off the fan inside 50 ms — a fifth of the watchdog, so deleting the change subscription and " +
+      "leaving the poll is caught — that leaving goes to AUTOMATIC rather than to manual holding a wrist's duty, " +
+      "and that nothing survives a restart. Then the mapping: 0 % throttle is the 30 % floor and 100 % is the cap, " +
+      "as literals; no input anywhere in 0…100 lands below the floor, which is what makes the bridge enables a " +
+      "once-on-entry / once-on-exit affair and keeps `pinctrl` out of a throttle sweep; and every one of " +
+      "`throttle_pct`'s 1000 raw steps reaches the bridge as a DIFFERENT duty_cycle in nanoseconds, since hearing " +
+      "where the resolution runs out is the whole point of the mode and a duty rounded to whole percent would " +
+      "throw away fourteen steps in fifteen",
+  },
+  {
     script: "scripts/check-fan-endpoint.ts",
     covers:
       "both ends of the /fan wire: that the X-Cool-Eva header stands in front of every POST — the only thing " +

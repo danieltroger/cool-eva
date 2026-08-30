@@ -1,8 +1,9 @@
 // @ts-check
 
 // The pure half of the cooling-fan section: which duties the slider may select, and the
-// sentence each code out of src/fan/curve.ts gets. No van, no fetch, no DOM — so
-// scripts/check-fan-curve.ts can assert both without standing up a page.
+// sentence each code out of src/fan/curve.ts and src/fan/fun.ts gets. No van, no fetch,
+// no DOM — so scripts/check-fan-curve.ts and scripts/check-fan-fun.ts can assert all of
+// it without standing up a page.
 //
 // ⚠️ Nothing here decides policy. The floor and the cap arrive in `/fan`'s `limits`, so
 // a cap lowered on the Pi to hold the fan's average voltage moves the slider's stops
@@ -11,10 +12,15 @@
 /**
  * The gap between running stops, in percent.
  *
- * Finer is not a duty this fan resolves, and it costs precision the thumb does not have
- * on a phone. The cap is always the LAST stop whether or not it lands on the grid.
+ * ⚠️ This was 5, and its reason was that "finer is not a duty this fan resolves". That is
+ * FALSE — a 50 000 ns period is about 2500 counts, so the bridge resolves ~0.04 %, and
+ * fun mode drives it at that resolution. The real reason for a coarse grid was thumb
+ * precision on a phone, and that has now been traded away on purpose: nobody cares
+ * whether it is 47 or 48 %, and sliding it and hearing the fan change immediately is
+ * worth more than landing on an exact number. The cap is always the LAST stop whether or
+ * not it lands on the grid.
  */
-export const DUTY_STEP_PERCENT = 5;
+export const DUTY_STEP_PERCENT = 1;
 
 /**
  * The duties the slider offers: stop, then the running band.
@@ -103,6 +109,45 @@ export const FAN_TEMPERATURE_NOTE = {
   1: " Steering by the last in-bounds batt_temp_hi — the signal has stopped arriving.",
   2: "",
 };
+
+/**
+ * The mode as `fan_auto_mode` carries it.
+ *
+ * ⚠️ A second copy of FAN_MODE_CODE in src/fan/auto.ts, because the browser cannot import
+ * a .ts module and the code is the wire format. scripts/check-fan-fun.ts asserts the two
+ * agree. Written as a bare `2` in public/views/fan.js it would survive swapping fun with
+ * manual — which shows "Manual" over a fan taking its orders from the throttle.
+ */
+export const FAN_MODE_CODE = { MANUAL: 0, AUTOMATIC: 1, FUN: 2 };
+
+/**
+ * One sentence per FUN_GATE in src/fan/fun.ts, keyed by its code — why fun mode is or is
+ * not on offer. Same arrangement as FAN_REASON_TEXT above and asserted the same way.
+ * @type {Record<number, string>}
+ */
+export const FUN_GATE_TEXT = {
+  0: "The bike cannot move, so the throttle can drive the fan.",
+  1: "The bike is in Go — the throttle belongs to the motor.",
+  2: "The bike is moving.",
+  3: "No fresh `go` off 0x102, so nothing says the bike cannot move.",
+  4: "No fresh `speed_can_kmh` off 0x104, so nothing says the bike is stopped.",
+  5: "No fresh `throttle_pct` off 0x109, so there is nothing to drive the fan with.",
+};
+
+/**
+ * A duty as a rider should read it. Fun mode carries a FRACTIONAL percent — the whole
+ * point is a throttle finer than whole percent — and `43.51724137931034 %` is not a thing
+ * to put on a phone. One decimal, and no trailing `.0` on the duties every other mode
+ * produces.
+ * @param {number | null | undefined} percent
+ * @returns {string}
+ */
+export function formatDuty(percent) {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) {
+    return "—";
+  }
+  return Number.isInteger(percent) ? String(percent) : percent.toFixed(1);
+}
 
 /**
  * What the automatic mode is doing right now, as one line.
