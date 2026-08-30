@@ -8,6 +8,8 @@ import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT } from "../src/fan/control.t
 import type { FanReply } from "../src/http/fan.ts";
 import { FAN_HEADER, FAN_HEADER_VALUE, handleFanEndpoint, parseFanRequest } from "../src/http/fan.ts";
 import { SERVICE_WRITE_HEADER, SERVICE_WRITE_HEADER_VALUE } from "../src/http/vcu-write.ts";
+import { createVirtualClock } from "./virtual-clock.ts";
+import type { VirtualClock } from "./virtual-clock.ts";
 
 // The /fan wire, both ends of it, with no Pi and no phone.
 //
@@ -219,10 +221,22 @@ server.close();
 // public/lib/fan-command-queue.js, driven with a recording sender. A drag fires `input`
 // about twenty times a second and every one of them calls queue(); what must reach the Pi
 // is the first and then the latest per window, never one POST per event.
+//
+// ⚠️ On a clock this file steps, never the machine's. The queue takes `now` and `setTimer`
+// for exactly this: the interval assertion below used to compare two performance.now()
+// reads against a 1 ms tolerance and went red under load — scripts/virtual-clock.ts has
+// the measurements. Nothing in this section may go back to sleeping for real.
 
 console.log("\n3. the slider's POSTs, coalesced");
 
 const QUEUE_INTERVAL_MS = 60;
+
+/**
+ * Where the fake clock starts. Anything past one interval will do, and zero will NOT: the
+ * queue's `lastSentAt` starts at 0 and being an interval behind it is what lets the first
+ * move go without waiting. A real page is seconds in by the time a thumb finds the slider.
+ */
+const CLOCK_START_MS = 10_000;
 
 interface SenderLog {
   sent: FanCommand[];
@@ -232,17 +246,29 @@ interface SenderLog {
   supersededAt: boolean[];
 }
 
-/** A sender that records what it was given, how many were in flight, and when. */
-function recordingQueue(log: SenderLog, latencyMs: number, settling: boolean[], failFirst = false) {
+/**
+ * A sender that records what it was given, how many were in flight, and when — `at` read
+ * off the same clock the queue schedules on, so it is what the queue decided and not what
+ * the machine managed to deliver.
+ */
+function recordingQueue(
+  clock: VirtualClock,
+  log: SenderLog,
+  latencyMs: number,
+  settling: boolean[],
+  failFirst = false
+) {
   return createFanCommandQueue({
     intervalMs: QUEUE_INTERVAL_MS,
+    now: () => clock.now(),
+    setTimer: (callback, delayMs) => clock.setTimer(callback, delayMs),
     onSettlingChange: pending => settling.push(pending),
     send: async (command, isSuperseded) => {
       log.sent.push(command);
-      log.at.push(performance.now());
+      log.at.push(clock.now());
       log.concurrent += 1;
       log.maxConcurrent = Math.max(log.maxConcurrent, log.concurrent);
-      await new Promise(resolve => setTimeout(resolve, latencyMs));
+      await clock.sleep(latencyMs);
       log.supersededAt.push(isSuperseded());
       log.concurrent -= 1;
       if (failFirst && log.sent.length === 1) {
@@ -257,33 +283,34 @@ function emptyLog(): SenderLog {
 }
 
 /** Long enough for every timer this queue can still have armed to have fired. */
-async function settle(): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, QUEUE_INTERVAL_MS * 4));
+async function settle(clock: VirtualClock): Promise<void> {
+  await clock.advance(QUEUE_INTERVAL_MS * 4);
 }
 
 /** One `input` event's worth of thumb movement. A real drag fires about every 50 ms. */
-async function dragEvent(): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, 12));
+async function dragEvent(clock: VirtualClock): Promise<void> {
+  await clock.advance(12);
 }
 
+const dragClock = createVirtualClock(CLOCK_START_MS);
 const dragLog = emptyLog();
 const dragSettling: boolean[] = [];
-const dragQueue = recordingQueue(dragLog, 5, dragSettling);
-const startedAt = performance.now();
+const dragQueue = recordingQueue(dragClock, dragLog, 5, dragSettling);
+const startedAt = dragClock.now();
 dragQueue.queue({ duty: 30 });
 check("a move raises settling at once, before anything is on the wire", dragSettling[0] === true);
-await dragEvent();
+await dragEvent(dragClock);
 check(
   "⚠️  the FIRST move goes at once — a slider that waited would feel broken",
   dragLog.sent.length === 1 && "duty" in dragLog.sent[0] && dragLog.sent[0].duty === 30
 );
-check("…and it went immediately, not one interval later", dragLog.at[0] - startedAt < QUEUE_INTERVAL_MS);
+check("…and it went in the same instant, not one interval later", dragLog.at[0] === startedAt);
 
 for (const duty of [40, 50, 60, 70]) {
   dragQueue.queue({ duty });
-  await dragEvent();
+  await dragEvent(dragClock);
 }
-await settle();
+await settle(dragClock);
 check(
   "⚠️  five moves are TWO POSTs, not five — the superseded ones never reach the network at all",
   dragLog.sent.length === 2
@@ -292,20 +319,24 @@ check(
   "⚠️  and the second is the LAST value, so the fan ends where the thumb left it",
   "duty" in dragLog.sent[1] && dragLog.sent[1].duty === 70
 );
-check("the two are at least one interval apart", dragLog.at[1] - dragLog.at[0] >= QUEUE_INTERVAL_MS - 1);
+check(
+  "the two are EXACTLY one interval apart — measured on the queue's own clock, so no machine can move it",
+  dragLog.at[1] - dragLog.at[0] === QUEUE_INTERVAL_MS
+);
 check("never more than one in flight", dragLog.maxConcurrent === 1);
 check("settling is lowered again once nothing is queued or in flight", dragSettling.at(-1) === false);
 check("…and the queue agrees it has gone quiet", !dragQueue.isSettling());
 
 // A slow Pi: the send outlasts the interval, so a timer must NOT fire underneath it.
+const slowClock = createVirtualClock(CLOCK_START_MS);
 const slowLog = emptyLog();
-const slowQueue = recordingQueue(slowLog, QUEUE_INTERVAL_MS * 2, []);
+const slowQueue = recordingQueue(slowClock, slowLog, QUEUE_INTERVAL_MS * 2, []);
 slowQueue.queue({ duty: 35 });
-await new Promise(resolve => setTimeout(resolve, QUEUE_INTERVAL_MS / 2));
+await slowClock.advance(QUEUE_INTERVAL_MS / 2);
 slowQueue.queue({ duty: 45 });
 slowQueue.queue({ mode: "automatic" });
-await settle();
-await settle();
+await settle(slowClock);
+await settle(slowClock);
 check("⚠️  a send slower than the interval still never overlaps the next one", slowLog.maxConcurrent === 1);
 check(
   "⚠️  a mode tap inside a drag REPLACES the queued duty rather than merging with it — the queue holds one command of either kind",
@@ -317,13 +348,14 @@ check(
 );
 
 // The failure the `finally` exists for: one POST that throws must not wedge the slider.
+const brokenClock = createVirtualClock(CLOCK_START_MS);
 const brokenLog = emptyLog();
 const brokenSettling: boolean[] = [];
-const brokenQueue = recordingQueue(brokenLog, 5, brokenSettling, true);
+const brokenQueue = recordingQueue(brokenClock, brokenLog, 5, brokenSettling, true);
 brokenQueue.queue({ duty: 50 });
-await settle();
+await settle(brokenClock);
 brokenQueue.queue({ duty: 55 });
-await settle();
+await settle(brokenClock);
 check("⚠️  a send that THROWS does not wedge the queue — the next command still goes", brokenLog.sent.length === 2);
 check(
   "…and settling is lowered rather than left raised for ever",
