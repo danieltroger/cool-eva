@@ -21,7 +21,7 @@ import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT } from "./control.ts";
  * and a signal nobody is refreshing proves nothing.
  *
  * 500 ms is 50 consecutive missed frames of 0x102 and 0x104, both of which broadcast at
- * ~100 Hz whenever the bus is awake at all — measured at 99.9 Hz through a DC session
+ * ~100 Hz whenever the bus is awake at all — measured at 99.98 Hz through a DC session
  * and 100 Hz through the awake stretches of an AC one.
  */
 export const FUN_GATE_MAX_AGE_MS = 500;

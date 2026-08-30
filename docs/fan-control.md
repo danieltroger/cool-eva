@@ -266,23 +266,47 @@ What the bits read across all 317 785 frames of `0x102` in that window:
 
 And the throttle itself: **329 distinct raw values**, 734 frames above zero, peaking at raw 743 = **74.3 %**. It is live and it moves. A closed throttle does not read 0 — it reads raw 22–29, i.e. **2.2–2.9 %** — which is why fun mode's floor is a range endpoint rather than a special case.
 
-⚠️ **The DC cross-check is contaminated and is recorded here rather than quoted.** The same scan over `capture-20260804-193952-4b4cdd2b.log` puts all three frames at 99.9 Hz, but reports `go` = 1 in 31.5 % of the window, because the scanner holds the last-seen `0x610` b7 and that byte persists after the charge manager leaves the bus — so the "session" runs on into the ride that followed. The frame-presence figures survive that; the bit statistics do not. The AC file is the clean datum, and the same artefact is the one `docs/charge-manager.md` §"segmenting by capture file" already warns about.
+#### The DC session says the same thing, once the window is bounded properly
+
+The first scan of `capture-20260804-193952-4b4cdd2b.log` reported `go` = 1 in 31.5 % of the window and was **contaminated**, for the reason `docs/charge-manager.md` §"segmenting by capture file" warns about: it held the last-seen `0x610` b7, and that byte persists after the charge manager leaves the bus, so the "session" ran on into the ride that followed.
+
+**The fix is the freshness discipline the gate itself uses — bound the window by the last _fresh_ `0x610`, not by the last-seen byte.** The last `0x610` frame of any kind is at 20:16:05.139; the first `go` = 1 frame in the file is at 20:17:02.756, **57.6 s later**. Every `go` = 1 frame in the window was outside the session, and that is the whole 31.5 %.
+
+Re-scanned with the window opened on the first `0x610` b7 = `0x23` — the DC substate, `CHARGE_MANAGER_STATE_DC` in `src/fan/curve.ts` — and closed on the last `0x610` frame:
+
+|  | held window (the contaminated scan) | bounded by the last `0x610` |
+| --- | --- | --- |
+| span | 1 698.6 s | **1 061.2 s** |
+| `0x102` / `0x104` / `0x109` frames | 169 846 / 169 844 / 169 845 | **106 100 / 106 098 / 106 099** at 99.98 Hz |
+| wall-seconds containing ≥ 1 frame of each | 1 700 / 1 700 / 1 700 | **1 063 / 1 063 / 1 063** |
+| `go` | 53 657 (31.6 %) | **0** |
+| `go_request` / `moving` / `stand_up` | 53 657 / 45 786 / 54 462 | **0 / 0 / 0** |
+| `speed_can_kmh` exactly 0 | 123 125 / 169 844 (72.5 %) | **106 098 / 106 098 (100.000 %)** |
+| `key_on` | 138 193 (81.4 %) | 74 447 — **70.2 %** |
+| `energized` | — | 103 789 (97.8 %) |
+| `throttle_on` | — | 63 (0.059 %) |
+
+**So every conclusion above holds on a second and independent session type.** Identical per-second coverage of all three frames, `go` never set, the speed exactly 0 in every frame, and no silence longer than a second in the whole 1 061 s — DC does not sleep mid-charge the way this AC session did. The throttle varies here too: 50 distinct raw values, 61 frames above zero, peaking at raw 404 = **40.4 %**.
+
+And `key_on` is unreliable on **both**: 73.9 % on AC, 70.2 % on DC. That is two sessions killing plan B rather than one.
+
+⚠️ The AC file is the clean datum **as captured**; the DC file agrees once the window is bounded by a fresh `0x610` rather than a held one. Neither is a bike that was ridden between the two figures — the bounded window is a strict subset of the held one, and the numbers that differ are exactly the frames outside the session.
 
 #### The gate: what "cannot move" means
 
 Two conditions, both of which must hold, both of which must be **fresh**:
 
 1. **`go` (`0x102` b1 bit 3) is 0.** This is the VCU's own "the drive is enabled" bit. It is the condition, not a proxy for one.
-2. **`speed_can_kmh` (`0x104`) is exactly 0.** A second, independently-framed witness, so one frame stalling cannot manufacture a pass on its own.
+2. **`speed_can_kmh` (`0x104`) is exactly 0.** A second, independently-framed witness, so one frame stalling cannot manufacture a pass on its own. Both witnesses still originate in the VCU — §8 records the count that says there is nothing better on this bus to add, and `scripts/check-fan-fun.ts` §6 is what asserts that `refreshGate()` really hands the gate this signal rather than a constant.
 
 Plus one that is not about safety but about function: **`throttle_pct` (`0x109`) is fresh**, because a stale throttle would leave the fan on the last duty a wrist happened to be holding.
 
-No tolerance band on the speed. `speed_can_kmh` is `motor_rpm_can / 42.0`, so a wheel that is turning is a non-zero reading, and it read exactly 0 in all 317 780 frames above. A bike being rolled by hand therefore drops fun mode — which is right, it is moving.
+No tolerance band on the speed. `speed_can_kmh` is `motor_rpm_can / 42.0`, so a wheel that is turning is a non-zero reading, and it read exactly 0 in all 317 780 frames above. A bike being rolled by hand therefore drops fun mode — which is right, it is moving. ⚠️ Note that a slow roll raises **no change event**: `speed_can_kmh` carries `deadband: 0.5` in `src/can/registry.ts`, so a reading of 0.4 km/h updates the live value and is never logged, and it is the 250 ms watchdog beat rather than the event path that applies the gate to it. Both are asserted.
 
 **The alternatives, and why each is not in the gate:**
 
 - **`key_on`** — measured at **73.9 %** through the AC session above, dropping to 0 for whole stretches (vehicle-state byte `0x02`, energized only, appears in 82 900 frames). A gate on `key_on` would make the mode unavailable for a quarter of exactly the situation it exists for. It is also not a safety property: key on with `go` clear still cannot move.
-- **`stand_up`** — 0 for the entire session, and it is tempting, because a deployed side stand is a _physical_ interlock the Energica will not enter Go against. Rejected because it constrains **where the bike is parked** rather than whether it can move, and `go` already covers the case it would cover. It is a good candidate to add if the gate is ever wanted stricter.
+- **`stand_up`** — 0 for the entire AC session (**all 317 785** frames) and for the whole bounded DC one (**all 106 100**), and it is tempting, because a deployed side stand is a _physical_ interlock the Energica will not enter Go against. Rejected **for the hazard of the fan running while the bike moves**, which `go` covers completely and in milliseconds. ⚠️ That is not the only hazard this mode creates, and the other one is the reason `stand_up` stays on the table: the mode trains a rider to sit twisting the throttle of a parked motorcycle for minutes at a time, and `go` is a **lagging** indicator of that — it reads 1 only once the bike already can move, by which time the wrist is on the grip. `stand_up` is the only signal on this bus that speaks to whether the bike can be _put into_ that state while a session runs. Two independent charges say it costs nothing in availability, unlike `key_on` (73.9 % / 70.2 %) or `energized` (41.8 %). **What stops it being added today** is that `stand_up` has never been observed as 1 anywhere in this archive, so nothing distinguishes "the bit means the stand is up" from "the bit is stuck at 0" — and adding a never-1 signal to a fail-closed gate either works or makes fun mode permanently unavailable, silently. The measurement to take: put the bike on the stand, lift it upright, watch the bit. Then decide.
 - **`moving`** (`0x102` b2 bit 7) — derived by the VCU from road speed, from the same frame as `go`, and decoded from a third party's `.xdbc` rather than measured here. It duplicates the speed condition without adding an independent witness, and every extra condition is another way for the mode to be silently unavailable.
 - **`energized`** — 41.8 %, and it says the HV system is up, not that the bike can move.
 
@@ -301,6 +325,12 @@ Freshness is **500 ms** (`FUN_GATE_MAX_AGE_MS`), which at the measured ~100 Hz i
 `go` going true is a **change event**. `src/can/signals.ts` already batches changed signals into a microtask for the WebSocket, and fun mode subscribes to the same stream, so the drop-out runs on the same event that carries the bit — single-digit milliseconds after the frame decodes, not at a poll boundary. The fan is handed back to the temperature curve, which re-evaluates at once.
 
 ⚠️ That subscription is why `onChange()` became a **list** rather than one slot. It held a single listener that each call replaced; with a second subscriber, whichever registered last would have silently switched the other off — either a dashboard that never updates, or a fun mode that never sees the throttle.
+
+⚠️ And widening it is why each listener now runs inside its own `try`/`catch`. With one slot a listener that threw was a self-inflicted wound; with two, `src/ws.ts` and `src/fan/auto.ts` could take each other down — the loop runs inside a `queueMicrotask` callback, so an escaped throw is an `uncaughtException` with no handler registered anywhere in `src/index.ts`, and the process ends with the CAN logging and the WebSocket inside it. A toy fan mode must not be able to do that to the dashboard's feed.
+
+**Both of fun mode's own entry points are guarded the same way, through `runFunPass()`.** They are the two paths in `src/fan/` that the timer's `runTick()` does not cover: the change listener **discards** its promise at ~100 Hz, and `enterFun`'s travels out through `switchMode` → `setMode` → `src/http/fan.ts` into `src/index.ts`'s `createServer(async …)`, which Node does not await either. A rejection on either would be unhandled. Nothing in `src/fan/control.ts` rejects today — which is exactly the argument `scripts/check-fan-curve.ts` §11 already declined to accept for the timer, since it is a property of another file. A failed pass is logged, the commanded duty is forgotten so the next pass commands rather than matches, and entry answers `/fan` with a refusal that names the call that failed rather than crashing the request.
+
+⚠️ **The in-flight flag reads the gate before it returns.** `funCommandInFlight` is what keeps ~100 Hz of throttle events from queueing writes without bound, and its early return sits _below_ a gate read on purpose. Above one, a `setDutyPercent()` that **hangs** rather than rejects would leave the flag true for ever and every route out of the session would end at `driveFun`'s first line — the throttle events, and the 250 ms watchdog beat too, since that beat is also just `driveFun`. The one mechanism meant to end the session when the bus goes quiet could not run, while `fan_fun_gate` went on publishing `GO_SET` to the dashboard. Handing the fan back does not need the bridge to be free. Nothing in `control.ts` can wedge it today — `runExclusively` chains on settlement — so this is the same class of guard as the two above.
 
 Events cannot cover everything: **a bus that goes silent raises no event**, so the fan would otherwise sit on the throttle's last duty for ever. `FUN_WATCHDOG_MS` is 250 ms, and while fun mode runs the loop's own timer is re-armed at that instead of the curve's 2 s. So:
 
@@ -348,7 +378,7 @@ The slider's grid moved from 5 % to **1 %** in the same change, and the old cons
 - **The gate has never run against a real bike.** Every assertion is against the archive and against replayed values.
 - **No fun-mode session has ever driven the real bridge.** The end-to-end check drives a recording `FanPwm`, not a Pi.
 - **The 50 MHz PWM clock is assumed, not measured** — see above for why nothing rests on it.
-- **`stand_up` is decoded but unused here**, and the one measurement above (0 for a whole charge) is consistent with the reading but does not establish it as an interlock.
+- **`stand_up` is decoded but unused here.** It reads 0 through both charges, which is consistent with the decode and does not establish it as an interlock — the bit has never been seen as 1 anywhere in this archive, so "the stand is down" and "the bit is stuck" are indistinguishable from the data. That is a measurement to go and take rather than a reason to leave it out for ever; §4's rejected-alternatives list says what it would buy and what it would cost.
 
 ## 5. Kernel setup on the Pi
 
@@ -480,3 +510,16 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
 - **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4.
 - **The udev race** described in §5 is unhandled.
 - **Fun mode's second gate condition is the same frame's neighbour, not an independent sensor.** `go` and `speed_can_kmh` come off different CAN ids (`0x102` and `0x104`), which is real independence at the frame level, but both originate in the VCU. Nothing here cross-checks the VCU against anything, and an all-zero `0x102` payload would read as "everything off" and pass the `go` half. The freshness window is what stands against that — a stuck frame stops being refreshed — and it is the weakest joint in the gate.
+
+  **There is measurably no better third witness, and that is now a measurement rather than an absence of ideas.** Per-second coverage of every non-VCU frame inside the AC charge window of `capture-20260808-182129-600daf87.log`, against `0x102`'s own 3 181 seconds:
+
+  | frame | frames | seconds | coverage |
+  | --- | --- | --- | --- |
+  | `0x0A0` ABS — wheel speeds, a genuine second speed sensor | **0** | **0** | **0 %** |
+  | `0x610` / `0x605` / `0x615` charge manager | 13 410 / 13 402 / 13 391 | 1 344 / 1 343 / 1 341 | **~42 %** |
+  | `0x645` | 0 | 0 | 0 % |
+  | `0x200` BMS | 63 472 | 3 181 | **100 %** |
+
+  The one genuinely independent speed measurement on this bus — `wheel_speed_front_kmh` / `_rear_kmh` off the ABS module — is **completely absent during a charge**. That is not a gap in the tap or in the decoder, and the same file settles it: in the DC capture `0x0A0` is 0 frames inside the bounded charge window and **6 371 frames across 638 wall-seconds** of the ride that follows it in the same file, at 9.99 Hz — the 10 Hz `src/can/abs.ts` documents. Present when riding, absent when charging, same tap and same decoder. Consistent with `abs.ts`'s note that the module is on DTB and reaches us only because the VCU gateways it across: no ride, no gateway.
+
+  The charge manager is present for less than half the window, which makes it a worse `key_on`; the BMS is live throughout and has nothing to say about mobility. So **the 500 ms freshness window standing alone against a stuck VCU frame is the right conclusion**, not a compromise — there is nothing else on this bus to add.

@@ -416,8 +416,14 @@ check(
 );
 check("before the Pi has answered there is one stop and it is 0", dutyStops(0, 0).length === 1);
 // Fractional for the same reason, and it is the duty fun mode actually produces: the
-// throttle resolves 0.1 %, so the thumb has to land somewhere honest for 63.4 % too.
-check("the thumb maps an off-grid duty to the nearest stop", dutyStops(30, 100)[dutyStopIndex(stops, 63.4)] === 63);
+// throttle resolves 0.1 %, so the thumb has to land somewhere honest for 63.6 % too.
+//
+// ⚠️ 63.6 and not 63.4, which was this assertion's first repair and was half of one.
+// `dutyStopIndex` is NEAREST, and the degenerate implementation of "nearest" is "the last
+// stop at or below" — a floor. 63.4 rounds DOWN to 63, so a floor passed it; on the old
+// 5 % grid the original `63 → 65` had been a round-UP case and a floor went red. 63.6
+// rounds up to 64 where a floor gives 63, so both properties are pinned by one literal.
+check("the thumb maps an off-grid duty to the nearest stop", dutyStops(30, 100)[dutyStopIndex(stops, 63.6)] === 64);
 check("and 0 % maps to the stop position, not to the floor", stops[dutyStopIndex(stops, 0)] === 0);
 
 // --- 10. End to end: curve → auto → control → the bridge ---------------------

@@ -96,7 +96,17 @@ function notifyChange(key: string, v: LiveValue): void {
       // — src/fan/auto.ts unsubscribes on shutdown — and splicing the array being
       // iterated would skip the listener after it.
       for (const listener of [...changeListeners]) {
-        listener(batch);
+        try {
+          listener(batch);
+        } catch (error) {
+          // ⚠️ One subscriber must not cost the others their batch. This runs inside a
+          // queueMicrotask callback, so an escaped throw is an uncaughtException with no
+          // handler anywhere in src/index.ts: it would end the process, taking the CAN
+          // logging and the WebSocket with it. Since 2026-08-30 this list has had two
+          // owners — src/ws.ts and src/fan/auto.ts — and a toy fan mode must not be able
+          // to take the dashboard's feed down.
+          console.warn("signals: a change listener threw, the rest still got the batch —", error);
+        }
       }
     });
   }

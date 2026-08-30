@@ -38,6 +38,32 @@ export interface FunRunnerContext {
 const FUN_KEYS = ["throttle_pct", "go", "speed_can_kmh"];
 
 /**
+ * driveFun() with the guard ./auto.ts's runTick() puts around evaluate(), and the only
+ * form the two callers outside this file use. Returns what failed, or null.
+ *
+ * ⚠️ Both of fun mode's entry points discard or forward a promise that nothing else
+ * catches — the change listener's is discarded at ~100 Hz, and enterFun's travels through
+ * setMode into src/index.ts's `createServer(async …)`, which Node does not await either.
+ * An escaped rejection on either ends the process, taking the CAN logging and the
+ * WebSocket with it. Nothing on today's paths rejects; that is a property of ./control.ts
+ * rather than of this file, which is the argument scripts/check-fan-curve.ts §11 already
+ * makes for the timer path and declines to accept.
+ */
+export async function runFunPass(context: FunRunnerContext): Promise<Error | null> {
+  try {
+    await driveFun(context);
+    return null;
+  } catch (error) {
+    console.warn("fan: a fun-mode pass failed —", error);
+    // Forgotten for the reason a refused command is: what the bridge is holding is now
+    // unknown, so the next throttle movement or watchdog beat must command rather than
+    // believe a match.
+    context.lastCommandedPercent = null;
+    return error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+/**
  * One pass of fun mode: check the gate, map the throttle, command the fan.
  *
  * ⚠️ The gate is re-checked HERE, on the same pass that computes the duty, so there is no
@@ -53,7 +79,24 @@ const FUN_KEYS = ["throttle_pct", "go", "speed_can_kmh"];
  * fan on a duty the rider has already moved past.
  */
 export async function driveFun(context: FunRunnerContext): Promise<void> {
+  // ⚠️ No mode check of its own, deliberately: both callers make one — onSignalsChanged
+  // below and ./auto.ts's evaluate() — and ./auto.ts's handBackToCurve() adopts the new
+  // mode SYNCHRONOUSLY, before its first await. So a pass arriving during a hand-back
+  // already sees "automatic" at its caller and never gets here, which is what stops two
+  // hand-backs overlapping. A third check here would be one nothing could ever trip.
   if (context.funCommandInFlight) {
+    // ⚠️ EVEN THIS BRANCH READS THE GATE, which is what stops the in-flight flag wedging
+    // the session. A setDutyPercent() that HANGS — not rejects — leaves the flag true for
+    // ever, and if this early return came before a gate read then every route out of fun
+    // mode would end here at line 1: the throttle events, and the 250 ms watchdog beat
+    // too, since that beat is also just this function. The one mechanism meant to end the
+    // session when the bus goes quiet could not run. Handing the fan back does not need
+    // the bridge to be free, so a closed gate is answered here and not deferred.
+    const gate = refreshGate(context);
+    if (!funGateAllows(gate)) {
+      await context.handBackToCurve(gate);
+      return;
+    }
     context.funPending = true;
     return;
   }
@@ -108,6 +151,9 @@ export function refreshGate(context: FunRunnerContext): FunGate {
  * being swept produces ~100 evaluations a second and a throttle at rest produces none.
  * ⚠️ What it CANNOT do is notice a bus that went silent, since silence raises no event.
  * That is what ./auto.ts keeps a watchdog tick for.
+ *
+ * ⚠️ The promise is DISCARDED, at ~100 Hz, which is why it goes through runFunPass: this
+ * is a change-listener callback and there is nothing above it to catch a rejection.
  */
 export function onSignalsChanged(context: FunRunnerContext, changed: Record<string, LiveValue>): void {
   if (context.mode !== "fun") {
@@ -116,5 +162,5 @@ export function onSignalsChanged(context: FunRunnerContext, changed: Record<stri
   if (!FUN_KEYS.some(key => key in changed)) {
     return;
   }
-  void driveFun(context);
+  void runFunPass(context);
 }

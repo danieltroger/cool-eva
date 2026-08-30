@@ -9,7 +9,7 @@ import {
   isPackTemperaturePlausible,
   type FanCurveDecision,
 } from "./curve.ts";
-import { driveFun, onSignalsChanged, refreshGate, type FunRunnerContext } from "./fun-runner.ts";
+import { onSignalsChanged, refreshGate, runFunPass, type FunRunnerContext } from "./fun-runner.ts";
 import { FUN_GATE, FUN_GATE_REFUSAL, FUN_WATCHDOG_MS, funGateAllows, type FunGate } from "./fun.ts";
 
 // The half of automatic fan control that touches the world: it reads three signals off
@@ -225,7 +225,7 @@ async function evaluate(context: AutoContext): Promise<void> {
   refreshGate(context);
   if (context.mode === "fun") {
     // The watchdog beat. Events cover a moving throttle; this covers a bus that stopped.
-    await driveFun(context);
+    await runFunPass(context);
     return;
   }
   if (context.mode !== "automatic") {
@@ -328,7 +328,21 @@ async function enterFun(context: AutoContext): Promise<FanCommandResult> {
   publishMode(context);
   publishDecision(null);
   retick(context, FUN_WATCHDOG_MS);
-  await driveFun(context);
+  // ⚠️ Guarded, because this promise has a clear run all the way out of the process. It
+  // is returned by switchMode() to setMode(), which src/http/fan.ts awaits inside
+  // src/index.ts's `createServer(async …)` — and Node does not await a request listener,
+  // so a rejection here would be unhandled and end the service. The sibling branches
+  // cannot do this: "automatic" goes through runTick(), which catches, and commandManual
+  // reaches setDutyPercent(), which by construction resolves.
+  const failure = await runFunPass(context);
+  if (failure !== null) {
+    // The mode is kept rather than rolled back. The gate said the bike is parked, so fun
+    // mode is what the rider asked for and may have; what failed is the bridge, and the
+    // curve would only meet the same failure through the same controller. The watchdog
+    // beat and the next throttle movement both retry, and runFunPass has already
+    // forgotten the commanded duty so the retry commands rather than matches.
+    return { ok: false, message: `Fun mode is on, but the fan did not take the first duty: ${failure.message}` };
+  }
   return {
     ok: true,
     message:

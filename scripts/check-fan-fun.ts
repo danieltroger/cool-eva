@@ -8,6 +8,7 @@ import {
 import { SIGNALS } from "../src/can/registry.ts";
 import { defineSignals, latestValue, onChange, record } from "../src/can/signals.ts";
 import { FAN_MODE_CODE, startFanAutomatic } from "../src/fan/auto.ts";
+import type { FanCommandResult, FanController, FanState } from "../src/fan/control.ts";
 import { KICK_START_MS, MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT, startFanControl } from "../src/fan/control.ts";
 import {
   FUN_GATE,
@@ -279,6 +280,32 @@ await new Promise(resolve => setTimeout(resolve, 5));
 check("…and unsubscribing drops exactly the one that unsubscribed", heard.length === 1 && heard[0] === "first");
 dropFirst();
 
+// ⚠️ …AND ONE OF THE TWO MUST NOT BE ABLE TO STARVE THE OTHER. Widening the slot to a list
+// is what created this: with one subscriber a throw was a self-inflicted wound, with two
+// it is src/ws.ts and src/fan/auto.ts able to take each other down. The loop runs inside a
+// queueMicrotask callback, so an escaped throw is an uncaughtException with no handler
+// registered anywhere in src/index.ts — the process ends, and the CAN logging and the
+// WebSocket go with it. Listened for rather than left to Node for the reason
+// scripts/check-fan-curve.ts §11 gives: a dead process reads as "the check crashed"
+// rather than as the named assertion below going red.
+let uncaught: unknown = null;
+const noteUncaught = (error: unknown): void => {
+  uncaught = error;
+};
+process.on("uncaughtException", noteUncaught);
+const survived: string[] = [];
+const dropThrower = onChange(() => {
+  throw new Error("a change listener that throws");
+});
+const dropSurvivor = onChange(() => survived.push("survivor"));
+record("fan_fun_gate", 3);
+await new Promise(resolve => setTimeout(resolve, 5));
+process.off("uncaughtException", noteUncaught);
+dropThrower();
+dropSurvivor();
+check("⚠️  a change listener that throws does not end the process", uncaught === null);
+check("…and the subscriber after it still gets the batch", survived.length === 1);
+
 interface PwmCall {
   method: "duty" | "output" | "bridge";
   value: number | boolean;
@@ -315,6 +342,17 @@ const busTimer = setInterval(() => {
 
 async function settle(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** The parked bus, restartable, and with the throttle leg switchable on its own. */
+function startParkedBus(): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    record("go", bus.go);
+    record("speed_can_kmh", bus.speedKmh);
+    if (throttleOnBus) {
+      record("throttle_pct", bus.throttlePercent);
+    }
+  }, TICK_MS);
 }
 
 const controller = await startFanControl({ enabled: true, openPwm: async () => recording });
@@ -356,13 +394,15 @@ check(
 check("and the reason says so rather than blaming the bike", latestValue("fan_fun_gate") === FUN_GATE.GO_UNKNOWN);
 
 // The bike parked, which is what the mode is for.
+//
+// ⚠️ `throttleOnBus` exists so ONE of the three gate signals can be taken off the bus
+// while the other two keep arriving, and the whole bus can be stopped and started again.
+// Both are what the wiring assertions further down need: a gate leg that goes stale on
+// its own, and a bus that goes silent with nothing else changing.
 bus.go = 0;
 bus.throttlePercent = 0;
-const parkedBus = setInterval(() => {
-  record("go", bus.go);
-  record("speed_can_kmh", bus.speedKmh);
-  record("throttle_pct", bus.throttlePercent);
-}, TICK_MS);
+let throttleOnBus = true;
+let parkedBus = startParkedBus();
 await settle(TICK_MS * 4);
 check("with the bike parked the page is told to offer it", latestValue("fan_fun_available") === 1);
 
@@ -457,11 +497,112 @@ check(
   controller.state().driverEnabled && controller.state().targetPercent === 84
 );
 
-// Re-entering, so the two tests below start from fun mode rather than from the curve.
+// ⚠️ AND ONCE IT IS HANDED BACK THE THROTTLE IS INERT, even with the bike parked again and
+// the gate reopened. Fun mode is a mode, not a standing subscription: src/fan/fun-runner
+// .ts's listener checks the mode before it does anything, and the subscription itself is
+// held for the whole life of the loop precisely so no path out of the mode can forget to
+// drop it. Delete that check and a wrist moves the fan while the curve believes it owns it.
 bus.go = 0;
 await settle(TICK_MS * 4);
+check("the gate reopens with the bike parked again", latestValue("fan_fun_available") === 1);
+// Asserted on the BRIDGE WRITES rather than on the duty that survives: without the mode
+// check the throttle's duty is commanded and the very next curve tick takes it back, so a
+// reading taken a moment later shows 84 % either way. What differs is that a write happened
+// at all — and on the bike it happens at ~100 Hz for as long as a wrist keeps moving.
+calls.length = 0;
+bus.throttlePercent = 5.5;
+record("throttle_pct", bus.throttlePercent);
+await settle(60);
+check(
+  `⚠️  …but the throttle does not touch the fan outside fun mode — the curve still owns it (${calls.length} writes)`,
+  calls.length === 0 && automatic.mode() === "automatic" && controller.state().targetPercent === 84
+);
+
+// Re-entering, so the tests below start from fun mode rather than from the curve.
+bus.throttlePercent = 88.8;
+record("throttle_pct", bus.throttlePercent);
 const reentered = await automatic.setMode("fun");
 check("it can be entered again once the bike is parked again", reentered.ok && automatic.mode() === "fun");
+
+// ⚠️ THE GATE'S SECOND WITNESS, ON THE WIRE. §3 proves funGate() refuses a moving bike.
+// It does NOT prove refreshGate() hands it the bike's actual speed — replace that argument
+// with a hard-coded `speedKmh: 0` in src/fan/fun-runner.ts and every assertion in §3 still
+// passes. The whole of "an independently-framed second witness, so one stalled frame
+// cannot manufacture a pass" rests on these two lines and on nothing else in the file.
+bus.speedKmh = 3;
+record("speed_can_kmh", 3);
+await settle(60);
+check(
+  "⚠️  a bike that STARTS MOVING drops fun mode — the second witness is read off the bus, not assumed",
+  automatic.mode() === "automatic"
+);
+check("…and the gate names the speed as what ended it", latestValue("fan_fun_gate") === FUN_GATE.MOVING);
+
+// The same witness UNDER THE LOG'S OWN DEADBAND. `speed_can_kmh` carries `deadband: 0.5`
+// in src/can/registry.ts, so a bike being pushed at 0.4 km/h changes the live value and
+// raises no change event at all — src/can/signals.ts notifies only on a reading that moved
+// far enough to log. The gate has no tolerance band, and this is the case where the
+// watchdog beat rather than an event is what applies it.
+bus.speedKmh = 0;
+record("speed_can_kmh", 0);
+await settle(TICK_MS * 4);
+const forRolling = await automatic.setMode("fun");
+check("fun mode is available again once the bike is stopped", forRolling.ok && automatic.mode() === "fun");
+bus.speedKmh = 0.4;
+record("speed_can_kmh", 0.4);
+await settle(FUN_WATCHDOG_MS * 2);
+check(
+  "⚠️  a bike ROLLED BY HAND at 0.4 km/h — under the signal's own 0.5 km/h deadband — drops it too",
+  automatic.mode() === "automatic"
+);
+check(
+  "…and it is reported as MOVING rather than as a signal nobody could read",
+  latestValue("fan_fun_gate") === FUN_GATE.MOVING
+);
+
+// ⚠️ THE THROTTLE LEG, ON THE WIRE — the same hole in the same shape. Hard-code
+// `throttlePercent: 1` in refreshGate() and THROTTLE_UNKNOWN becomes unreachable with §3
+// none the wiser. `go` and the speed keep arriving throughout, so the throttle is the only
+// thing that goes stale; and because neither of the other two is CHANGING, no event fires
+// either, so the watchdog beat is what notices.
+bus.speedKmh = 0;
+record("speed_can_kmh", 0);
+await settle(TICK_MS * 4);
+const forThrottle = await automatic.setMode("fun");
+check("fun mode is entered again for the throttle leg", forThrottle.ok && automatic.mode() === "fun");
+throttleOnBus = false;
+await settle(FUN_GATE_MAX_AGE_MS + FUN_WATCHDOG_MS * 2);
+check(
+  "⚠️  a throttle that goes stale under a live `go` and a live speed drops fun mode",
+  automatic.mode() === "automatic"
+);
+check("…and the gate blames the THROTTLE, not the bike", latestValue("fan_fun_gate") === FUN_GATE.THROTTLE_UNKNOWN);
+throttleOnBus = true;
+
+// ⚠️ THE WATCHDOG BEAT ITSELF, which until now had only the literal in §4 behind it.
+// Delete the `context.mode === "fun"` branch from evaluate() in src/fan/auto.ts and every
+// other assertion in this file stays green — while on the bike a bus that drops mid-session
+// leaves the mode "fun" for ever, the fan on whatever duty a wrist last asked for, and
+// `fan_fun_gate` publishing GO_UNKNOWN beside it, because refreshGate() above the mode
+// check still runs. Nothing else can end this session: a SILENT bus raises no event, which
+// is the whole reason the beat exists. Waited out at the shipped constants, ~750 ms.
+await settle(TICK_MS * 4);
+const forWatchdog = await automatic.setMode("fun");
+check("fun mode is entered again for the watchdog", forWatchdog.ok && automatic.mode() === "fun");
+clearInterval(parkedBus);
+await settle(FUN_GATE_MAX_AGE_MS + FUN_WATCHDOG_MS * 2);
+check(
+  "⚠️  a bus that goes SILENT ends the session — silence raises no event, so the beat is what ends it",
+  automatic.mode() === "automatic"
+);
+check("…and it hands the fan to the CURVE, never to manual", latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic);
+check("…and the page is told to stop offering it", latestValue("fan_fun_available") === 0);
+
+// Back in fun mode for the two tests below, which need it running.
+parkedBus = startParkedBus();
+await settle(TICK_MS * 4);
+const backInFun = await automatic.setMode("fun");
+check("and once the bus comes back it can be entered again", backInFun.ok && automatic.mode() === "fun");
 
 // ⚠️ A STOPPED LOOP IS DEAF. index.ts's shutdown calls automatic.stop() and only then
 // idles the controller, so a change subscription that outlived stop() would re-command a
@@ -491,13 +632,179 @@ check(
 
 clearInterval(parkedBus);
 
-// --- 7. It does not survive a restart -----------------------------------------
+// --- 7. A pass that throws, and a write that never settles --------------------
+//
+// ⚠️ Fun mode has TWO entry points that the timer path does not, and neither of them has
+// anything above it to catch a rejection: the change listener DISCARDS its promise at
+// ~100 Hz, and enterFun's travels out through switchMode → setMode → src/http/fan.ts into
+// src/index.ts's `createServer(async …)`, which Node does not await either. An escaped
+// rejection on either ends the service. The argument is scripts/check-fan-curve.ts §11's,
+// word for word: nothing on today's paths rejects, but that is a property of src/fan/
+// control.ts rather than of these two files.
+//
+// The hang is the other half. `funCommandInFlight` keeps ~100 Hz of throttle events from
+// queueing writes without bound, and a setDutyPercent() that HANGS rather than rejects
+// would — with that flag checked before the gate is read — wedge every route out of the
+// session, the 250 ms watchdog included.
+
+console.log("\n7. a fun-mode pass that throws, and a bridge write that never settles");
+
+const brokenState: FanState = { dutyPercent: 0, targetPercent: 0, driverEnabled: false, phase: "idle" };
+let brokenAttempts = 0;
+let brokenFailures = 0;
+let throwNext = false;
+const throwingController: FanController = {
+  configured: true,
+  fault: null,
+  setDutyPercent: async percent => {
+    brokenAttempts += 1;
+    if (throwNext) {
+      brokenFailures += 1;
+      throw new Error("pinctrl vanished mid-throttle-sweep");
+    }
+    brokenState.targetPercent = percent;
+    brokenState.dutyPercent = percent;
+    brokenState.driverEnabled = percent > 0;
+    brokenState.phase = percent > 0 ? "running" : "idle";
+    return { ok: true, message: `commanded ${percent} %` };
+  },
+  state: () => brokenState,
+  stop: async () => {},
+};
+
+// A bus that holds the gate open for the whole section. `go` and the throttle come from
+// variables rather than literals, so a change made below is not undone 20 ms later.
+let funThrottle = 12;
+let funGoBit = 0;
+const funBus = setInterval(() => {
+  record("go", funGoBit);
+  record("speed_can_kmh", 0);
+  record("throttle_pct", funThrottle);
+  record("batt_temp_hi", 45);
+}, TICK_MS);
+
+const throwingLoop = startFanAutomatic(throwingController, {
+  tickMs: TICK_MS,
+  speedMaxAgeMs: STALE_MS,
+  chargeSessionMaxAgeMs: STALE_MS,
+});
+await settle(TICK_MS * 4);
+
+// The ENTRY path. Caught here rather than left to reject, because an escaped rejection at
+// a top-level await reads as "the check crashed" rather than as a named assertion.
+let entryError: unknown = null;
+let enteredBroken: FanCommandResult | null = null;
+throwNext = true;
+try {
+  enteredBroken = await throwingLoop.setMode("fun");
+} catch (error) {
+  entryError = error;
+}
+throwNext = false;
+check(
+  "⚠️  entering fun mode against a throwing bridge REPLIES rather than rejecting into the request listener",
+  entryError === null && enteredBroken !== null
+);
+check(
+  "…and the reply is a refusal that names the call that failed",
+  enteredBroken?.ok === false && (enteredBroken?.message ?? "").includes("pinctrl vanished")
+);
+check("…and the mode the gate granted is kept, so the next pass retries", throwingLoop.mode() === "fun");
+
+// The EVENT path, which is the one that runs at ~100 Hz with its promise discarded.
+let escaped: unknown = null;
+const noteRejection = (reason: unknown): void => {
+  escaped = reason;
+};
+process.on("unhandledRejection", noteRejection);
+throwNext = true;
+funThrottle = 33.3;
+record("throttle_pct", funThrottle);
+await settle(80);
+throwNext = false;
+check("⚠️  a throttle event whose duty THROWS does not escape as an unhandled rejection", escaped === null);
+
+funThrottle = 44.4;
+record("throttle_pct", funThrottle);
+await settle(120);
+process.off("unhandledRejection", noteRejection);
+check(
+  `…and the session is still driving the fan afterwards (${brokenAttempts} writes, ${brokenFailures} of them thrown)`,
+  brokenFailures >= 2 && brokenState.targetPercent === funDutyPercent(44.4)
+);
+throwingLoop.stop();
+
+// The HANG. ⚠️ A write that never settles used to wedge the session: `funCommandInFlight`
+// stayed true for ever and every gate re-check returned at driveFun's first line — the
+// throttle events and the watchdog beat alike, since the beat is also just driveFun. The
+// gate is read ABOVE the in-flight check for exactly this, because handing the fan back
+// does not need the bridge to be free. Swap the two and these two go red.
+const hangingState: FanState = { dutyPercent: 0, targetPercent: 0, driverEnabled: false, phase: "idle" };
+let hangingWrites = 0;
+let hangNext = false;
+let releaseHang: (() => void) | undefined;
+const hangingController: FanController = {
+  configured: true,
+  fault: null,
+  setDutyPercent: async percent => {
+    if (hangNext) {
+      hangNext = false;
+      hangingWrites += 1;
+      await new Promise<void>(resolve => {
+        releaseHang = resolve;
+      });
+      hangingWrites -= 1;
+    }
+    hangingState.targetPercent = percent;
+    hangingState.dutyPercent = percent;
+    hangingState.driverEnabled = percent > 0;
+    hangingState.phase = percent > 0 ? "running" : "idle";
+    return { ok: true, message: `commanded ${percent} %` };
+  },
+  state: () => hangingState,
+  stop: async () => {},
+};
+
+const hangingLoop = startFanAutomatic(hangingController, {
+  tickMs: TICK_MS,
+  speedMaxAgeMs: STALE_MS,
+  chargeSessionMaxAgeMs: STALE_MS,
+});
+await settle(TICK_MS * 4);
+// Not awaited: the entry's own write is the one that hangs, so setMode() never settles.
+// enterFun adopts the mode synchronously before it, which is what makes this observable.
+hangNext = true;
+void hangingLoop.setMode("fun");
+await settle(TICK_MS * 4);
+check("fun mode is entered with a bridge write still in the air", hangingLoop.mode() === "fun" && hangingWrites === 1);
+
+funGoBit = 1;
+record("go", funGoBit);
+await settle(FUN_WATCHDOG_MS * 2);
+check(
+  "⚠️  a write that NEVER SETTLES does not wedge the session — `go` still takes the fan back",
+  hangingLoop.mode() === "automatic"
+);
+// ⚠️ NOT asserted on `fan_fun_gate`, and not on the duty either. refreshGate() runs in
+// evaluate() ABOVE the mode check, so a wedged session publishes GO_SET to the dashboard
+// perfectly well while the fan goes on taking orders from a throttle; and the curve was
+// already holding 84 % before the session started, so the duty is unchanged either way.
+// `fan_auto_mode` is the one of the three that moves only when the mode really does.
+check(
+  "…and the dashboard is told the fan is back on the curve",
+  latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic
+);
+releaseHang?.();
+hangingLoop.stop();
+clearInterval(funBus);
+
+// --- 8. It does not survive a restart -----------------------------------------
 //
 // ⚠️ In memory only, like manual, and for a stronger reason: a mode that put the throttle
 // on the fan and came back after a reboot would be waiting for a rider who did not ask
 // for it. Persist it and this goes red.
 
-console.log("\n7. fun mode does not survive a restart");
+console.log("\n8. fun mode does not survive a restart");
 
 const restarted = startFanAutomatic(controller, { tickMs: TICK_MS });
 check("a loop started after a fun-mode session is in AUTOMATIC", restarted.mode() === "automatic");
@@ -510,7 +817,9 @@ if (failures > 0) {
   console.error(`FAILED — ${failures} assertion${failures === 1 ? "" : "s"}`);
   process.exitCode = 1;
 } else {
-  console.log("✓ the gate refuses a bike in Go and a bike whose bus has gone quiet, `go` going true takes the");
-  console.log("  throttle off the fan inside 50 ms, the mapping never leaves the running band, and every one of");
-  console.log("  the throttle's 1000 steps reaches the bridge as a different duty");
+  console.log("✓ the gate refuses a bike in Go and a bike whose bus has gone quiet, all three of its legs are");
+  console.log("  wired to the bus and not to constants, `go` going true takes the throttle off the fan inside");
+  console.log("  50 ms, a silent bus ends the session on the watchdog beat, a throw on either of fun mode's two");
+  console.log("  promise paths is logged rather than fatal, and every one of the throttle's 1000 steps reaches");
+  console.log("  the bridge as a different duty");
 }
