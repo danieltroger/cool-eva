@@ -51,7 +51,9 @@ let armedAt = 0;
  * @param {string} key
  * @param {number} [nowMs] the stamp. Every site on the dashboard passes nothing and gets
  *   `performance.now()`; scripts/check-arming.ts hands one in so the dwell can be asserted
- *   at 399 ms and at 400 ms rather than slept through.
+ *   at 399 ms and at 400 ms rather than slept through. ⚠️ It is a BYPASS as well as a seam —
+ *   `arm(key, performance.now() - 10_000)` arms a control whose dwell has already elapsed —
+ *   so §7 of that check asserts that no call site here passes a second argument at all.
  */
 export function arm(key, nowMs = performance.now()) {
   armed.val = key;
