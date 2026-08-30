@@ -179,9 +179,11 @@ const CHECKS: SelfCheck[] = [
       "GET needs no header because it touches no hardware; every branch of parseFanRequest(), including the " +
       "duty-and-mode-together 400 the endpoint refuses rather than guesses at and the 1e2 / 0x40 notations it does " +
       "accept; and the page's half, public/lib/fan-command-queue.js, driven with a recording sender: that a " +
-      "five-move drag reaches the Pi as TWO POSTs with the last value intact, that the first move goes at once, " +
-      "that a send slower than the interval never overlaps the next one, and that one that throws does not wedge " +
-      "the slider for the rest of the session",
+      "five-move drag reaches the Pi as TWO POSTs with the last value intact, that the first move goes at once " +
+      "from a clock of any origin including zero, that a send slower than the interval never overlaps the next " +
+      "one, and that one that throws does not wedge the slider for the rest of the session — plus §4, the queue " +
+      "run with NO clock and NO timer injected, since the two `??` defaults are what actually ships and " +
+      "everything above replaces them",
   },
   {
     script: "scripts/check-fan-ordering.ts",
@@ -227,6 +229,16 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-tab-routing.ts",
     covers:
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",
+  },
+  {
+    script: "scripts/check-virtual-clock.ts",
+    covers:
+      "scripts/virtual-clock.ts itself, against real setTimeout as the oracle: that same-instant timers fire in " +
+      "arm order, that a promise chain resumed by one timer runs before the next fires, and that a nested or " +
+      "async callback orders the same way — the properties check-fan-endpoint.ts §3 rests on and which could all " +
+      "be deleted while it stayed green. Plus the divergence that is deliberate (a callback reads its OWN " +
+      "deadline, not the end of the step) and the three inputs that would silently corrupt the clock: a NaN " +
+      "delay, a self-rearming zero-delay timer, and two advance() calls in flight at once",
   },
   {
     script: "scripts/check-vendor-names.ts",

@@ -195,6 +195,27 @@ Phase 1 put the slider behind the same two-tap arm/dwell as every control that w
 
 A command arriving mid-kick still only moves the target, exactly as before — the kick runs its full length or it is not a kick.
 
+#### Why the queue takes `now` and `setTimer` as a pair
+
+`createFanCommandQueue()` accepts both or neither. That is not symmetry for its own sake: injecting the clock alone still leaves the gap between it and the real timer for a loaded machine to widen, and the assertion the seam exists for is an assertion about an _interval_.
+
+The history is worth keeping, because it argues against the fix that looks obvious. `scripts/check-fan-endpoint.ts` §3 used to assert that two coalesced POSTs landed at least `interval - 1` ms apart, with both marks read off `performance.now()`. That millisecond of tolerance was already spent before any load arrived:
+
+- **libuv rounds loop time down.** Loop time is whole milliseconds and `performance.now()` is not, so a `setTimeout` answers its deadline up to ~1 ms _early_ against that clock. Measured on an idle laptop, a `setTimeout(_, 48)` came back **0.835 ms** before its nominal deadline, 2 runs in 400 earlier than the deadline at all.
+- **The two marks were not taken symmetrically.** `flush()` stamps `lastSentAt` and the sender reads the clock one async call later, so a deschedule between those two statements came off the first mark only.
+
+Replaying the drag 200 times on an idle machine put the minimum at **59.112 ms against a threshold of 59** — 0.2 % of the interval. It was not flaky by bad luck; it was arithmetically doomed, and it went red on `main` in [run 33280494693](https://github.com/danieltroger/cool-eva/actions/runs/33280494693). Widening the tolerance would have hidden the next real regression along with the noise. Stepping a clock the check owns takes the machine out of the measurement instead, and lets the assertion be an exact equality. `scripts/virtual-clock.ts` is that clock; `scripts/check-virtual-clock.ts` is what keeps it honest, differentially against real `setTimeout`.
+
+`public/views/fan.js` passes neither and keeps `performance.now()` and `setTimeout`. Those two `??` defaults are the only lines in the module that ship, so §4 of the check runs the queue with nothing injected — a seam that leaves production's own path unexercised has traded one blind spot for another.
+
+#### `lastSentAt` starts at −∞, not at 0
+
+"The first move goes at once" is a property of the queue, and with `lastSentAt = 0` it was only a property of the _page_: it held because `performance.now()` is already past one interval by the time a thumb reaches the slider. A drag begun within 150 ms of page load had its first move held.
+
+That was unreachable by a human thumb while the clock was hard-wired. The injection seam made it reachable by any caller who hands the queue a clock relative to its own creation — the most natural clock anyone writes — so the seed is `Number.NEGATIVE_INFINITY`, which makes `Math.max(0, intervalMs - (now() - lastSentAt))` zero from every origin. The check drives the same drag from an origin of 0 as well as from 10 s; with `0` back in the seed, the zero-origin drag is what goes red.
+
+How narrow the old margin really was is worth recording. Instrumenting `main`, `performance.now()` at the top of §3 read **63.4–76.0 ms** across three runs — against the 60 ms interval the check uses. `main` cleared its own precondition by about three milliseconds, and on a faster machine would not have. The same measurement explains a claim this PR originally got wrong: doubling the interval on `main` went red not because any interval assertion caught it, but because 120 ms is more than 76, so the _first_ send was held and three assertions about coalescing collapsed. `public/lib/arming.js:33` carries the same `armedAt = 0` idiom, where it is safe only because every firing site gates on `armed.val` first.
+
 ## 5. Kernel setup on the Pi
 
 ### `/boot/firmware/config.txt`

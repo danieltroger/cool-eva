@@ -19,10 +19,9 @@
 /**
  * The shortest gap between two sends.
  *
- * The first move goes at once — `lastSentAt` starts at 0, which is more than an interval
- * behind any clock a page that has been open long enough to be touched reads, so the first
- * wait is 0 — and the rest coalesce to the latest value at this rate. Superseded ones are
- * never sent at all.
+ * The first move goes at once — `lastSentAt` starts a whole interval behind whatever the
+ * clock reads — and the rest coalesce to the latest value at this rate. Superseded ones
+ * are never sent at all.
  */
 export const FAN_COMMAND_INTERVAL_MS = 150;
 
@@ -37,10 +36,8 @@ export const FAN_COMMAND_INTERVAL_MS = 150;
  * @property {number} [intervalMs]
  * @property {() => number} [now] the clock the interval is measured on.
  * @property {(callback: () => void, delayMs: number) => void} [setTimer] arms the one-shot
- *   timer that flushes the queue. It comes as a pair with `now` because injecting either
- *   alone still leaves the gap between them for real time to widen: with both,
- *   scripts/check-fan-endpoint.ts steps a clock of its own and asserts the exact interval
- *   this file decided on, rather than whatever a loaded machine managed to deliver.
+ *   flush timer. Injected as a PAIR with `now`, never one alone, and both may start
+ *   anywhere: docs/fan-control.md §"The slider".
  */
 
 /**
@@ -65,7 +62,10 @@ export function createFanCommandQueue(options) {
     queued: null,
     flushTimerArmed: false,
     inFlight: false,
-    lastSentAt: 0,
+    // ⚠️ Not 0. An injected clock may read anything, including 0, and one that starts
+    // there would have its first command held for a whole interval — a slider that
+    // waited. docs/fan-control.md §"The slider".
+    lastSentAt: Number.NEGATIVE_INFINITY,
   };
   return {
     queue: command => queueCommand(state, command),
@@ -84,10 +84,9 @@ export function createFanCommandQueue(options) {
  * @property {boolean} flushTimerArmed a flush is already waiting to fire. A flag and not
  *   the handle, because nothing here ever cancels one.
  * @property {boolean} inFlight
- * @property {number} lastSentAt read off state.now(), whose default is ⚠️ performance.now()
- *   and never Date.now(): this dashboard has a button on it that STEPS THE CLOCK, and a
- *   wall clock that jumps backwards would hold every later command for the size of the
- *   step. Same rule as ./arming.js and src/monotonic.ts.
+ * @property {number} lastSentAt read off state.now(), ⚠️ never Date.now(): this dashboard
+ *   has a button that STEPS THE CLOCK, and a wall clock jumping back would hold every
+ *   later command for the size of the step. Same rule as ./arming.js, src/monotonic.ts.
  */
 
 /**

@@ -1,3 +1,4 @@
+import { readFile } from "fs/promises";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 import { createFanCommandQueue } from "../public/lib/fan-command-queue.js";
@@ -232,9 +233,9 @@ console.log("\n3. the slider's POSTs, coalesced");
 const QUEUE_INTERVAL_MS = 60;
 
 /**
- * Where the fake clock starts. Anything past one interval will do, and zero will NOT: the
- * queue's `lastSentAt` starts at 0 and being an interval behind it is what lets the first
- * move go without waiting. A real page is seconds in by the time a thumb finds the slider.
+ * Where the fake clock starts. A real page is seconds in by the time a thumb finds the
+ * slider, so this is the honest origin — but it is no longer load-bearing, and the drag at
+ * the end of this section runs the same queue from an origin of 0 to keep it that way.
  */
 const CLOCK_START_MS = 10_000;
 
@@ -362,13 +363,117 @@ check(
   brokenSettling.at(-1) === false && !brokenQueue.isSettling()
 );
 
+// A clock whose origin is 0, which is the most natural clock anyone injecting one writes.
+// `lastSentAt` seeds to NEGATIVE_INFINITY rather than 0 so that the assertion above about
+// the FIRST move holds from any origin; with 0 there this is the drag that goes red.
+const zeroOriginClock = createVirtualClock(0);
+const zeroOriginLog = emptyLog();
+const zeroOriginQueue = recordingQueue(zeroOriginClock, zeroOriginLog, 5, []);
+zeroOriginQueue.queue({ duty: 30 });
+await zeroOriginClock.advance(0);
+check(
+  "⚠️  the first move goes at once from a clock that starts at ZERO too — the queue holds no hidden requirement on its clock's origin",
+  zeroOriginLog.sent.length === 1 && zeroOriginLog.at[0] === 0
+);
+zeroOriginQueue.queue({ duty: 70 });
+await settle(zeroOriginClock);
+check("…and the interval is the same one from there", zeroOriginLog.at[1] - zeroOriginLog.at[0] === QUEUE_INTERVAL_MS);
+
+// --- 4. the same queue with PRODUCTION's clock and timer ---------------------
+//
+// ⚠️ Everything above injects both, which leaves the two `??` defaults in
+// public/lib/fan-command-queue.js as the only lines in the file nothing runs — and they are
+// the lines that ship. Both of the mutations this section exists for were caught before the
+// seam existed and went green after it: swapping the default clock for Date.now(), and a
+// default timer that calls straight through so there is no pacing at all.
+//
+// Nothing here waits out a margin. The pacing assertions are COUNTS taken after a single
+// macrotask hop, which a 30 ms interval cannot lose; the one real-clock reading has half an
+// interval of slack and can only be pushed the safe way by load.
+
+console.log("\n4. the defaults nothing else exercises: the real performance.now() and the real setTimeout");
+
+const DEFAULT_INTERVAL_MS = 30;
+
+/** One turn of the event loop. Armed after the queue's own flush timer, so it lands after it. */
+function macrotaskHop(): Promise<void> {
+  return new Promise(resolve => void setTimeout(resolve, 0));
+}
+
+const defaultSent: FanCommand[] = [];
+const defaultSentAt: number[] = [];
+const defaultQueue = createFanCommandQueue({
+  intervalMs: DEFAULT_INTERVAL_MS,
+  send: async command => {
+    defaultSent.push(command);
+    defaultSentAt.push(performance.now());
+  },
+});
+
+defaultQueue.queue({ duty: 30 });
+await macrotaskHop();
+check(
+  "⚠️  with no clock and no timer injected, the first move still goes on the very next turn of the loop",
+  defaultSent.length === 1 && "duty" in defaultSent[0] && defaultSent[0].duty === 30
+);
+
+for (const duty of [40, 50, 60, 70]) {
+  defaultQueue.queue({ duty });
+}
+await macrotaskHop();
+check(
+  "⚠️  and the four behind it are HELD — one macrotask later nothing more has gone, which is the pacing itself",
+  defaultSent.length === 1
+);
+
+await new Promise(resolve => setTimeout(resolve, DEFAULT_INTERVAL_MS * 5));
+check(
+  "…then exactly one more goes, carrying the last value",
+  defaultSent.length === 2 && "duty" in defaultSent[1] && defaultSent[1].duty === 70
+);
+check(
+  "…at least half an interval after the first, on the machine's own clock — a wide bound on purpose, and load can only widen it",
+  defaultSentAt[1] - defaultSentAt[0] >= DEFAULT_INTERVAL_MS / 2
+);
+
+// The clock's OTHER requirement cannot be asserted by running it: Date.now() and
+// performance.now() behave identically until something steps the wall clock, and no check
+// can step the machine's. So it is read off the source, the way check-irreversible-actions.ts
+// reads the `switch` in src/http/vcu-write.ts rather than trusting a sentence about it.
+const QUEUE_SOURCE = await readFile(new URL("../public/lib/fan-command-queue.js", import.meta.url), "utf8");
+const clockDefault = defaultExpression(QUEUE_SOURCE, "now");
+const timerDefault = defaultExpression(QUEUE_SOURCE, "setTimer");
+check(
+  "both default expressions were found at all — a pattern that matched nothing would pass the two below in silence",
+  clockDefault !== null && timerDefault !== null
+);
+check(
+  "⚠️  the default clock is performance.now() and NOT Date.now() — this dashboard has a button on it that STEPS THE CLOCK",
+  clockDefault !== null && clockDefault.includes("performance.now()") && !clockDefault.includes("Date.now")
+);
+check(
+  "⚠️  the default timer really is setTimeout, so a drag on a phone is paced rather than called straight through",
+  timerDefault !== null && timerDefault.includes("setTimeout(")
+);
+
 console.log("");
 if (failures > 0) {
   console.error(`FAILED — ${failures} assertion${failures === 1 ? "s" : ""}`);
   process.exitCode = 1;
 } else {
-  console.log("✓ the header stands in front of every POST, the query string is parsed the way the docs say, and a");
-  console.log("  twenty-event drag reaches the Pi as two commands with the last value intact");
+  console.log("✓ the header stands in front of every POST, the query string is parsed the way the docs say, a");
+  console.log("  twenty-event drag reaches the Pi as two commands with the last value intact from any clock origin,");
+  console.log("  and the defaults the phone actually runs on are paced by a real setTimeout off a monotonic clock");
+}
+
+/**
+ * The right-hand side of one `??` default in the queue's state initialiser, as source text.
+ * Scoped to that one line so a match cannot wander into the typedef above it, and null
+ * rather than "" when nothing matched, so the caller has to say which it got.
+ */
+function defaultExpression(source: string, property: string): string | null {
+  const match = source.match(new RegExp(`^\\s*${property}: options\\.${property} \\?\\? (.*)$`, "m"));
+  return match === null ? null : match[1];
 }
 
 /**

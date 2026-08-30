@@ -29,12 +29,12 @@ export interface VirtualClock {
 
 /**
  * @param startMs where the clock reads before anything happens. No default on purpose:
- *   code under test may well care how far the clock is from zero — the fan queue's first
- *   command goes without waiting precisely because its `lastSentAt` starts a whole
- *   interval behind any clock a real page reads.
+ *   code under test may well care how far the clock is from zero, and 0 is the origin
+ *   most likely to catch it out — check-fan-endpoint.ts §3 drives the fan queue from both
+ *   0 and 10 s for that reason.
  */
 export function createVirtualClock(startMs: number): VirtualClock {
-  const state: ClockState = { nowMs: startMs, armed: [], nextSequence: 0 };
+  const state: ClockState = { nowMs: startMs, armed: [], nextSequence: 0, advancing: false };
   return {
     now: () => state.nowMs,
     setTimer: (callback, delayMs) => armTimer(state, callback, delayMs),
@@ -42,6 +42,19 @@ export function createVirtualClock(startMs: number): VirtualClock {
     advance: byMs => advance(state, byMs),
   };
 }
+
+/**
+ * How many timers one advance() may fire before it is treated as a runaway.
+ *
+ * ⚠️ Virtual time does not move while same-instant timers keep arming each other, so a
+ * self-rearming zero-delay timer never reaches `until` and spins for ever — measured at
+ * 182 951 fires in 2.5 s with now() never leaving its start value. This is the one place
+ * the model is WEAKER than what it stands in for: real setTimeout clamps to 1 ms, so the
+ * same code makes progress against a real clock. run-checks.ts would eventually call it a
+ * 120 s timeout, which is a far worse diagnosis than naming the callback that would not
+ * stop re-arming.
+ */
+const MAX_TIMERS_PER_ADVANCE = 10_000;
 
 interface ArmedTimer {
   dueAt: number;
@@ -54,26 +67,55 @@ interface ClockState {
   nowMs: number;
   armed: ArmedTimer[];
   nextSequence: number;
+  /** An advance() is in flight. Two at once would step on each other — see advance(). */
+  advancing: boolean;
 }
 
 function armTimer(state: ClockState, callback: () => void, delayMs: number): void {
-  state.armed.push({ dueAt: state.nowMs + Math.max(0, delayMs), sequence: state.nextSequence, run: callback });
+  // Math.max alone lets NaN through — Math.max(0, NaN) is NaN — and a NaN dueAt is never
+  // greater than `until`, so the timer gets SELECTED and sets now() to NaN. Real
+  // setTimeout coerces a non-finite delay to 0, so this does too rather than inventing
+  // behaviour the oracle in check-virtual-clock.ts does not have.
+  const delay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : 0;
+  state.armed.push({ dueAt: state.nowMs + delay, sequence: state.nextSequence, run: callback });
   state.nextSequence += 1;
 }
 
 async function advance(state: ClockState, byMs: number): Promise<void> {
-  const until = state.nowMs + byMs;
-  await drainMicrotasks();
-  for (let due = takeNextDue(state, until); due !== null; due = takeNextDue(state, until)) {
-    // The clock reads the timer's own deadline while it runs, never the caller's target:
-    // a callback that asks what time it is must be told when it was due, not when the
-    // step it happened to fall inside will end.
-    state.nowMs = due.dueAt;
-    due.run();
-    await drainMicrotasks();
+  // `nowMs` and `armed` are shared while `until` is captured per call, so two advances in
+  // flight together corrupt each other's window: measured, an advance(20) fired a timer
+  // due 50 ms out because an advance(500) was still running. Every caller today awaits
+  // one before starting the next; this is what keeps that a requirement rather than a
+  // habit.
+  if (state.advancing) {
+    throw new Error("virtual clock: advance() called while another advance() is still running — await the first");
   }
-  state.nowMs = until;
-  await drainMicrotasks();
+  state.advancing = true;
+  try {
+    const until = state.nowMs + byMs;
+    await drainMicrotasks();
+    let fired = 0;
+    for (let due = takeNextDue(state, until); due !== null; due = takeNextDue(state, until)) {
+      fired += 1;
+      if (fired > MAX_TIMERS_PER_ADVANCE) {
+        const culprit = String(due.run).replace(/\s+/g, " ").slice(0, 120);
+        throw new Error(
+          `virtual clock: ${MAX_TIMERS_PER_ADVANCE} timers in one advance(${byMs}) with the clock stuck at ` +
+            `${state.nowMs} — a timer is re-arming itself with no delay: ${culprit}`
+        );
+      }
+      // The clock reads the timer's own deadline while it runs, never the caller's target:
+      // a callback that asks what time it is must be told when it was due, not when the
+      // step it happened to fall inside will end.
+      state.nowMs = due.dueAt;
+      due.run();
+      await drainMicrotasks();
+    }
+    state.nowMs = until;
+    await drainMicrotasks();
+  } finally {
+    state.advancing = false;
+  }
 }
 
 function takeNextDue(state: ClockState, until: number): ArmedTimer | null {
