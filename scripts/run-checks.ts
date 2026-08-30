@@ -110,11 +110,13 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-brake-lane.ts",
     covers:
       "the ride-summary dashboard's Brake lane, run out of the dashboard JSON against a database built by the real " +
-      "src/db.ts writer: that the retired `brake` rows still feed it up to the day front_brake/rear_brake started, " +
-      "that the eleven-day overlap where both exist is read once rather than twice, that a release under a " +
-      "still-held second circuit stays yes — the carry-forward the OR needs, since both halves are log-on-change — " +
-      "that the lane comes back down at all, which the obvious running-MAX spelling never does, and that every " +
-      "signal key the query names still exists",
+      "src/db.ts writer, over three windows: that the retired `brake` rows still feed it up to the day " +
+      "front_brake/rear_brake started, that the eleven-day overlap where both exist is read once rather than twice, " +
+      "that a release under a still-held second circuit stays yes — the carry-forward the OR needs, since both " +
+      "halves are log-on-change — that the lane comes back down at all, which the obvious running-MAX spelling " +
+      "never does, that a window OPENING MID-APPLICATION opens at yes rather than drawing `no` over a squeezed " +
+      "lever, that a half nobody ever logged does not read as a held brake, and that every signal key the query " +
+      "names still exists",
   },
   {
     script: "scripts/check-derived-signals.ts",
@@ -122,7 +124,9 @@ const CHECKS: SelfCheck[] = [
       "that no broadcast decoder emits a flag computed from other flags on the same frame — the rule `brake` = " +
       "front_brake | rear_brake broke from June until 2026-08-30. Every stream id is decoded over every value of " +
       "every byte at every DLC, against both a 0x00 and a 0xFF background, plus 2000 seeded random frames, and each " +
-      "moving 0/1 signal is tested against every identity, inverse, OR and AND of the others on its frame",
+      "moving 0/1 signal is tested against every identity, inverse, OR and AND of the others on its frame. The " +
+      "payload count, the number of flags that moved and the number of combinations tried each have to clear a " +
+      "floor, so a sweep that reaches nothing fails instead of reporting zero hits out of zero tries",
   },
   {
     script: "scripts/check-handlebar-gestures.ts",

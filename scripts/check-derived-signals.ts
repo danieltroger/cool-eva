@@ -27,6 +27,22 @@ import { resetGpsCanDecoder } from "../src/can/gps.ts";
 /** Marks a payload where a key was not emitted at all — a short frame, or a gated decoder. */
 const ABSENT = -1;
 
+/**
+ * What a run that actually reached the decoders looks like, as literals.
+ *
+ * Without a floor this check passes having tested nothing: narrow `STREAM_IDS` to nothing,
+ * or let a decoder gain an early `return []` on a shape the sweep generates, and it prints
+ * "0 flags that actually move, 0 combinations tried" and still exits ✓ — the failure mode
+ * the whole file exists to prevent, turned on itself.
+ *
+ * ⚠️ Literals rather than the measured values, because an assertion phrased in the thing
+ * it is checking passes for every value of that thing. Today: 20 432 payloads, 62 moving
+ * flags, 14 282 combinations.
+ */
+const LEAST_PAYLOADS = 20_000;
+const LEAST_MOVING_FLAGS = 60;
+const LEAST_COMBINATIONS = 14_000;
+
 const failures: string[] = [];
 const payloads = sweepPayloads();
 
@@ -90,6 +106,29 @@ console.log(
   `swept ${STREAM_IDS.length} broadcast ids × ${payloads.length} payloads; ` +
     `${booleanKeys} flags that actually move, ${comparisons} combinations tried`
 );
+
+// A sweep that swept nothing agrees with every claim below it, so each of the three
+// numbers on that line has to clear a floor before the ✓ means anything.
+if (payloads.length < LEAST_PAYLOADS) {
+  failures.push(
+    `the payload sweep produced ${payloads.length} payloads, under the ${LEAST_PAYLOADS} a per-byte sweep of every ` +
+      `DLC over both backgrounds gives (20 432 today) — it is no longer exhaustive per byte, so a derived flag can ` +
+      `hide in the values it stopped generating`
+  );
+}
+if (booleanKeys < LEAST_MOVING_FLAGS) {
+  failures.push(
+    `only ${booleanKeys} moving 0/1 signals were found across ${STREAM_IDS.length} ids, under the ` +
+      `${LEAST_MOVING_FLAGS} this decoder set has (62 today) — the sweep has stopped reaching the decoders, and a ` +
+      `flag it never saw move is a flag it never tested`
+  );
+}
+if (comparisons < LEAST_COMBINATIONS) {
+  failures.push(
+    `only ${comparisons} combinations were tried, under the ${LEAST_COMBINATIONS} these flags produce (14 282 ` +
+      `today) — the ✓ below would be reporting that nothing was compared`
+  );
+}
 
 if (failures.length > 0) {
   console.error("FAILED:");

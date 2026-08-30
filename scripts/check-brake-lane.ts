@@ -15,23 +15,30 @@ import { decodeFrame } from "../src/can/decode.ts";
 // lane that selected it by name now has to do the OR itself, and that is the part of the
 // removal that can go quietly wrong: BOTH halves are log-on-change, so a row exists only
 // where one of them moved, and the OR has to be taken over each series' carried-forward
-// last value rather than over the rows. The obvious spelling — a running MAX() over ROWS
-// UNBOUNDED PRECEDING — latches to `yes` on the first application and never comes back
-// down, which on a state timeline looks like a plausible lane and is not one.
+// last value rather than over the rows. Two spellings are wrong in opposite directions.
+// A running MAX() over ROWS UNBOUNDED PRECEDING latches to `yes` on the first application
+// and never comes back down. A carry-forward that starts at $__from reads a lever held
+// from before the window as released, and draws `no` over a squeeze — which is worse than
+// the omission it replaces, because the retired query could only leave points out.
 //
 // So this runs the SHIPPED query, pulled out of the dashboard JSON rather than restated
-// here, against a database built by the real src/db.ts writer, over a series with the
-// cases that separate a correct carry-forward from a wrong one.
+// here, against a database built by the real src/db.ts writer, over three windows: the
+// whole series, one that OPENS IN THE MIDDLE of an application, and one over a log in
+// which only one of the two circuits was ever written.
 
 const DASHBOARD = new URL("../grafana/dashboards/ride-summary.json", import.meta.url);
-
-/** Grafana's own macro substitution: the panel's time window, as epoch ms. */
-const WINDOW_FROM = 500;
-const WINDOW_TO = 50_000;
 
 interface LanePoint {
   time: number;
   state: string;
+}
+
+/** A panel time range, as Grafana substitutes it, and the lane it must produce. */
+interface LaneWindow {
+  name: string;
+  from: number;
+  to: number;
+  expected: LanePoint[];
 }
 
 /**
@@ -39,7 +46,7 @@ interface LanePoint {
  *
  * Written out rather than computed from the halves: a check that carried the values
  * forward with its own copy of the rule would agree with any rule at all, including the
- * latching one. Every timestamp below is inside the window except where it says otherwise.
+ * latching one. Every timestamp below is inside the first window except where it says so.
  */
 const LEGACY_BRAKE_ROWS: [number, number][] = [
   [100, 1], // BEFORE the window — must not reach the lane
@@ -47,17 +54,24 @@ const LEGACY_BRAKE_ROWS: [number, number][] = [
   [2000, 0],
   [3000, 1],
   [4000, 0],
+  // Shares its timestamp with the first half row, which is not a contrivance: on
+  // 2026-08-19 `brake` and the two halves came out of the same decodeFrame call on the
+  // same frame, so they share a `ts` exactly. The cutover bound is `<`, and `<=` would
+  // read this row on top of the half that replaced it.
+  [4500, 1],
   // Two rows from the overlap: front_brake / rear_brake started logging on 2026-08-19 and
   // `brake` kept logging until 2026-08-30, so eleven days of rides.db carry both. The
   // legacy arm has to stop at the first half-row or these are read twice — and this pair
-  // says "no" while both halves are down, so a double read is visibly wrong, not merely
-  // redundant.
+  // says "no" while both halves are down, so a double read is visibly wrong.
   [6500, 0],
   [6600, 0],
 ];
 
 const HALF_ROWS: [number, "front_brake" | "rear_brake", number][] = [
-  [5000, "front_brake", 1], // the split: everything from here is computed
+  // The split. `rear_brake` moves first and reads 0 while `front_brake` has never been
+  // written at all, so this row is the one that pins what a never-seen half means.
+  [4500, "rear_brake", 0],
+  [5000, "front_brake", 1],
   [6000, "rear_brake", 1], // both down
   [7000, "front_brake", 0], // front released, rear still down — the case that needs the carry-forward
   [8000, "rear_brake", 0],
@@ -65,24 +79,72 @@ const HALF_ROWS: [number, "front_brake" | "rear_brake", number][] = [
   [10_000, "rear_brake", 0],
   [11_000, "front_brake", 1], // both halves change in the SAME millisecond
   [11_000, "rear_brake", 1],
-  [12_000, "front_brake", 0],
   [12_000, "rear_brake", 0],
+  // The two circuits swapping in one millisecond, once in each direction. The brake is
+  // held throughout both, so neither adds a segment — they are here because a pivot that
+  // did not aggregate per timestamp would apply the halves one at a time and invent a
+  // momentary release between them, and which of the two it invents depends on the order
+  // SQLite happens to return the rows in. Both directions are present so either order
+  // produces a lane that is visibly not this one.
+  [13_000, "front_brake", 0],
+  [13_000, "rear_brake", 1],
+  [14_000, "front_brake", 1],
+  [14_000, "rear_brake", 0],
+  [15_000, "front_brake", 0],
   [99_000, "front_brake", 1], // AFTER the window — must not reach the lane
 ];
 
-/** What the lane must read, once repeated values are merged as the panel merges them. */
-const EXPECTED_LANE: LanePoint[] = [
-  { time: 1, state: "yes" },
-  { time: 2, state: "no" },
-  { time: 3, state: "yes" },
-  { time: 4, state: "no" },
-  { time: 5, state: "yes" },
-  { time: 8, state: "no" },
-  { time: 9, state: "yes" },
-  { time: 10, state: "no" },
-  { time: 11, state: "yes" },
-  { time: 12, state: "no" },
+/**
+ * The windows, and what the lane must read in each once repeated values are merged as the
+ * panel merges them.
+ *
+ * ⚠️ The second one is the whole reason there is more than one. A single window spanning
+ * the data cannot exercise its own left edge: both halves always have a row inside it, so
+ * a lane that guesses at the state it opens on looks perfect. This one opens between the
+ * rear circuit engaging at 6.0 s and the front releasing at 7.0 s, with both levers down
+ * and their rows outside the window, which is the shape that drew `no` over a held brake.
+ */
+const WINDOWS: LaneWindow[] = [
+  {
+    name: "the whole series",
+    from: 500,
+    to: 50_000,
+    expected: points(
+      [1, "yes"],
+      [2, "no"],
+      [3, "yes"],
+      [4, "no"],
+      [5, "yes"],
+      [8, "no"],
+      [9, "yes"],
+      [10, "no"],
+      [11, "yes"],
+      [15, "no"]
+    ),
+  },
+  {
+    name: "opening mid-application",
+    from: 6500,
+    to: 50_000,
+    expected: points([6.5, "yes"], [8, "no"], [9, "yes"], [10, "no"], [11, "yes"], [15, "no"]),
+  },
 ];
+
+/**
+ * …and the lane over a log in which only `front_brake` was ever written.
+ *
+ * `decode.ts` cannot produce that — both bits come out of the same frame, so the two
+ * halves are logged together or not at all — which is exactly why the OR's treatment of a
+ * never-seen half has to be pinned here instead of being trusted to the data. If a
+ * missing half ever defaulted to 1 it would read as a permanently held brake, and the
+ * only warning would be a lane that never says `no`.
+ */
+const FRONT_ONLY_WINDOW: LaneWindow = {
+  name: "only one circuit ever written",
+  from: 500,
+  to: 50_000,
+  expected: points([5, "yes"], [7, "no"], [11, "yes"], [13, "no"], [14, "yes"], [15, "no"]),
+};
 
 const failures: string[] = [];
 const dashboard = JSON.parse(await readFile(DASHBOARD, "utf8"));
@@ -121,7 +183,21 @@ if (!namedKeys.includes("brake")) {
   );
 }
 
-// 2. …and `brake` really is retired, in both places. A registry entry would put the rows
+// 2. The rows must come out globally sorted by time. This is a property of the query TEXT
+//    and not of the rows, because the two arms cannot interleave: the legacy arm is
+//    bounded below the cutover and the half arm never starts before it, so SQLite returns
+//    them in order whether the clause is there or not and no fixture can tell. Grafana
+//    can — `frser-sqlite-datasource` rejects the WHOLE query with "not sorted in ascending
+//    order by time" (grafana/README.md §"The datasource"), so the panel goes blank rather
+//    than out of order.
+if (!/\bORDER BY\s+(?:1|time)\s*$/i.test(query.trim())) {
+  failures.push(
+    "the Brake lane's query does not end in an ORDER BY over its time column — frser-sqlite-datasource fails the " +
+      "whole query with `not sorted in ascending order by time`, so the panel shows an error rather than a lane"
+  );
+}
+
+// 3. …and `brake` really is retired, in both places. A registry entry would put the rows
 //    back and make the legacy arm double-count; a decoder that still emits it would keep
 //    writing a value computed from two signals already on disk.
 if (registered.has("brake")) {
@@ -135,10 +211,10 @@ if (brakeFrame.some(value => value.key === "brake")) {
   failures.push("src/can/decode.ts emits `brake` again — it is computed from the two bits beside it");
 }
 
-// 3. The lane itself, against a database the real writer built.
+// 4. The lane itself, against a database the real writer built.
 const directory = await mkdtemp(join(tmpdir(), "brake-lane-"));
 const databasePath = join(directory, "rides.db");
-let lane: LanePoint[] = [];
+const lanes = new Map<string, LanePoint[]>();
 let sqliteVersion = "unknown";
 try {
   initDb(databasePath);
@@ -153,43 +229,49 @@ try {
 
   const database = new Database(databasePath, { readonly: true });
   sqliteVersion = String((database.prepare("SELECT sqlite_version() AS version").get() as { version: string }).version);
-  const rows = database
-    .prepare(query.replaceAll("$__from", String(WINDOW_FROM)).replaceAll("$__to", String(WINDOW_TO)))
-    .all() as { time: number; Brake: string }[];
-  database.close();
-  lane = mergeValues(rows.map(row => ({ time: row.time, state: row.Brake })));
-
-  for (let index = 0; index < Math.max(lane.length, EXPECTED_LANE.length); index++) {
-    const want = EXPECTED_LANE[index];
-    const got = lane[index];
-    if (!want || !got || want.time !== got.time || want.state !== got.state) {
+  for (const panelWindow of WINDOWS) {
+    const lane = runLane(database, query, panelWindow);
+    lanes.set(panelWindow.name, lane);
+    compareLane(panelWindow, lane, failures);
+    // The latching failure, named rather than left as "a segment is missing". Scoped to
+    // the segments the OR computes: the retired rows before the split supply `no` of
+    // their own, and so does the pivot row at the split itself, so a guard over the whole
+    // lane would go quiet exactly where the OR is.
+    const computed = lane.filter(point => point.time >= Math.max(HALF_ROWS[0][0], panelWindow.from) / 1000);
+    const firstApplication = computed.findIndex(point => point.state === "yes");
+    if (firstApplication >= 0 && !computed.slice(firstApplication + 1).some(point => point.state === "no")) {
       failures.push(
-        `segment ${index} of the Brake lane is ${describe(got)}, expected ${describe(want)} — ` +
-          `the whole lane came out as ${lane.map(describe).join(" ")}`
+        `over ${panelWindow.name} the Brake lane never reads \`no\` again after its first application — a running MAX() ` +
+          `over the window latches like this, and every release carried forward from a half is lost`
       );
-      break;
     }
   }
-  // The latching failure, named rather than left as "segment 5 is missing". Scoped to the
-  // computed half on purpose: the retired rows before the split supply `no` segments of
-  // their own, so a guard over the whole lane would go quiet exactly where the OR is.
-  const splitSecond = HALF_ROWS[0][0] / 1000;
-  const computed = lane.filter(point => point.time >= splitSecond);
-  if (computed.length > 0 && !computed.some(point => point.state === "no")) {
-    failures.push(
-      "the Brake lane never reads `no` again after the split — a running MAX() over the window latches like this, " +
-        "and every release carried forward from a half is lost"
-    );
-  }
+  database.close();
+
+  // The last window needs a log the fixture above cannot be: one where a half was never
+  // written at all. Taking the rear circuit's rows back out of the finished database is
+  // how that is built, so the schema, the signal table and the index still come from
+  // src/db.ts rather than from a hand-written CREATE TABLE.
+  const editable = new Database(databasePath);
+  editable.prepare("DELETE FROM reading WHERE signal_id <> (SELECT id FROM signal WHERE key = 'front_brake')").run();
+  editable.close();
+
+  const frontOnly = new Database(databasePath, { readonly: true });
+  const frontOnlyLane = runLane(frontOnly, query, FRONT_ONLY_WINDOW);
+  lanes.set(FRONT_ONLY_WINDOW.name, frontOnlyLane);
+  compareLane(FRONT_ONLY_WINDOW, frontOnlyLane, failures);
+  frontOnly.close();
 } finally {
   await rm(directory, { recursive: true, force: true });
 }
 
-console.log(`SQLite ${sqliteVersion}; the lane the shipped query produced, merged:`);
-console.log(`  ${lane.map(describe).join(" ")}`);
+console.log(`SQLite ${sqliteVersion}; the lanes the shipped query produced, merged:`);
+for (const [name, lane] of lanes) {
+  console.log(`  ${name}: ${lane.map(describe).join(" ")}`);
+}
 console.log(
   `${LEGACY_BRAKE_ROWS.length} retired \`brake\` rows and ${HALF_ROWS.length} half rows in, ` +
-    `${EXPECTED_LANE.length} segments expected out`
+    `${WINDOWS.length + 1} windows out`
 );
 
 if (failures.length > 0) {
@@ -201,9 +283,31 @@ if (failures.length > 0) {
 }
 console.log(
   "✓ the Brake lane reproduces the retired key: the pre-split rows read, the overlap read once, a release under a " +
-    "still-held second circuit stays yes, both circuits moving in one millisecond give one segment, and the window " +
-    "bounds hold at both ends"
+    "still-held second circuit stays yes, both circuits moving in one millisecond give one segment, a window that " +
+    "opens mid-application opens at yes, and a half nobody ever logged does not read as a held brake"
 );
+
+/** Runs the lane over one window and merges it the way the panel does. */
+function runLane(database: Database.Database, sql: string, panelWindow: LaneWindow): LanePoint[] {
+  const rows = database
+    .prepare(sql.replaceAll("$__from", String(panelWindow.from)).replaceAll("$__to", String(panelWindow.to)))
+    .all() as { time: number; Brake: string }[];
+  return mergeValues(rows.map(row => ({ time: row.time, state: row.Brake })));
+}
+
+function compareLane(panelWindow: LaneWindow, lane: LanePoint[], into: string[]): void {
+  for (let index = 0; index < Math.max(lane.length, panelWindow.expected.length); index++) {
+    const want = panelWindow.expected[index];
+    const got = lane[index];
+    if (!want || !got || want.time !== got.time || want.state !== got.state) {
+      into.push(
+        `over ${panelWindow.name} ($__from ${panelWindow.from}, $__to ${panelWindow.to}) segment ${index} of the Brake lane is ` +
+          `${describe(got)}, expected ${describe(want)} — the whole lane came out as ${lane.map(describe).join(" ")}`
+      );
+      return;
+    }
+  }
+}
 
 /** The panel target that draws the Brake lane, found by what it is rather than by index. */
 function brakeQuery(dashboardJson: unknown): string {
@@ -242,14 +346,18 @@ function collectQueries(node: unknown, into: string[]): void {
  * equal states into one segment, so the check compares what a reader sees rather than
  * how many rows the query happened to emit.
  */
-function mergeValues(points: LanePoint[]): LanePoint[] {
+function mergeValues(lane: LanePoint[]): LanePoint[] {
   const merged: LanePoint[] = [];
-  for (const point of points) {
+  for (const point of lane) {
     if (merged.length === 0 || merged[merged.length - 1].state !== point.state) {
       merged.push(point);
     }
   }
   return merged;
+}
+
+function points(...pairs: [number, string][]): LanePoint[] {
+  return pairs.map(([time, state]) => ({ time, state }));
 }
 
 function describe(point: LanePoint | undefined): string {
