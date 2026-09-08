@@ -147,7 +147,15 @@ function WaypointButton() {
           saving.val = true;
           waypointMessage.val = "saving…";
           try {
-            waypointMessage.val = (await saveWaypoint()).message;
+            const reply = await saveWaypoint();
+            waypointMessage.val = reply.message;
+            if (reply.saved) {
+              // The Waypoints tile above this button asks /status whether any waypoint
+              // belongs to THIS boot, and nothing else refreshes that after a save — so
+              // without this the note here says "Waypoint 1 saved." while the tile two
+              // rows up still reads "none since restart" until the sheet is reopened.
+              void refreshStatus();
+            }
           } finally {
             // saveWaypoint() reports its own failures and never throws, so this is
             // only here to guarantee the button re-enables.

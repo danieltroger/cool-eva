@@ -62,21 +62,34 @@ export function TripStats(status) {
     Stat(
       "Waypoints",
       () => {
-        if (status.val && status.val.waypoints === 0) {
+        // Read before deciding, always. VanJS re-collects a binding's dependencies from
+        // the reads its last run made, so a run that returns above these two leaves the
+        // tile subscribed to `status` alone — measured against the vendored van: the
+        // guarded shape runs once and never again while the guard holds, however often
+        // the signals change, while this shape re-runs on each. It does recover when
+        // /status next changes, which the save path now forces, but a tile that is only
+        // correct because something else refreshes is a trap for the next editor.
+        const latitude = valueOf("waypoint_lat");
+        const longitude = valueOf("waypoint_lon");
+        if (noneSinceRestart(status) || latitude == null || longitude == null) {
           return "–";
         }
-        const latitude = signalState("waypoint_lat").val;
-        const longitude = signalState("waypoint_lon").val;
         // Four decimals is 11 m, which is enough to know which lay-by; the ALL tab has
         // the full six if you are reading one out to somebody.
-        return latitude && longitude ? `${latitude.value.toFixed(4)}, ${longitude.value.toFixed(4)}` : "–";
+        return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
       },
       () => {
-        if (status.val && status.val.waypoints === 0) {
-          return "none since restart";
-        }
+        // signalState rather than valueOf: this line needs the reading's timestamp, which
+        // valueOf drops. Read first, for the reason above.
         const saved = signalState("waypoint_seq").val;
-        return saved ? `#${Math.round(saved.value)} · ${clockTime(saved.ts)}` : "none since restart";
+        const countedThisBoot = status.val ? status.val.waypoints : null;
+        if (saved && !noneSinceRestart(status)) {
+          return `#${Math.round(saved.value)} · ${clockTime(saved.ts)}`;
+        }
+        // /status has counted one that the page has not been sent yet — the gap between
+        // the endpoint's reply and the next WebSocket patch. Say the count and stop:
+        // "none since restart" under a count of 1 is a tile arguing with itself.
+        return countedThisBoot ? `#${countedThisBoot}` : "none since restart";
       }
     ),
     Stat("Satellites", () => {
@@ -84,6 +97,21 @@ export function TripStats(status) {
       return satellites == null ? "–" : String(Math.round(satellites));
     })
   );
+}
+
+/**
+ * True when nothing in the page's `waypoint_*` signals belongs to the running service.
+ *
+ * Stated once because the tile's two lines have to agree: one showing a position while
+ * the other says "none since restart" is exactly the incoherent tile the note above is
+ * about. Fails OPEN — an unanswered /status shows what the store holds rather than
+ * hiding it — because the sheet refreshes /status every time it opens, so the state
+ * this guards against is short-lived and blanking the tile on a failed fetch would be
+ * the more misleading of the two.
+ * @param {import("../vendor/van-1.6.1.js").State<StatusPayload | null>} status
+ */
+function noneSinceRestart(status) {
+  return status.val?.waypoints === 0;
 }
 
 /**

@@ -503,6 +503,15 @@ __MODULES__
         }
         if (path === "/waypoint") {
           STATUS.waypoints += 1;
+          // The three signals go out too, because that is what the bike does: record()
+          // writes them and ws.ts patches them to every client. Without this the preview
+          // shows a permanently half-saved waypoint — the button's note claiming a save
+          // the Waypoints tile above it has never been told about.
+          pushPatch({
+            waypoint_seq: { value: STATUS.waypoints, unit: "", group: "waypoint", ts: Date.now() },
+            waypoint_lat: { value: 51.4779, unit: "°", group: "waypoint", ts: Date.now() },
+            waypoint_lon: { value: -0.0015, unit: "°", group: "waypoint", ts: Date.now() },
+          });
           return json({
             saved: true,
             message: `Waypoint ${STATUS.waypoints} saved — 57.0000, 12.0000, 11 satellites.`,
@@ -653,11 +662,22 @@ __MODULES__
         return Promise.reject(new Error(`preview: nothing serves ${path}`));
       };
 
+      /** The socket the page is holding, so a stubbed action can patch it as the Pi would. */
+      let liveSocket = null;
+
+      /** One patch to the page, in the shape src/ws.ts broadcasts. */
+      function pushPatch(signals) {
+        if (liveSocket && liveSocket.onmessage) {
+          liveSocket.onmessage({ data: JSON.stringify({ type: "patch", ts: Date.now(), signals }) });
+        }
+      }
+
       /** Delivers one snapshot and then goes quiet — the bike is parked. */
       window.WebSocket = class PreviewWebSocket {
         constructor(url) {
           this.url = url;
           this.readyState = 1;
+          liveSocket = this;
           queueMicrotask(() => {
             if (this.onopen) {
               this.onopen();

@@ -22,6 +22,8 @@ The position is **copied** rather than left implicit in whatever `gps_lat`/`gps_
 
 ⚠️ That lookup has **no lower time bound**, and it cannot have one — a suppressed coordinate matches a save that may be hours earlier in the same boot. In a complete log it can only ever reach the suppressed row's twin, because the first `record()` of any key after a restart always logs (`lastLogged` starts empty). In an **incomplete** one — a partial decrypt, a truncated download — it can reach across that boundary and pair a sequence with an older boot's position. The `no position logged` verdict is therefore effectively unreachable and exists as a guard rather than as a state anyone has seen.
 
+**The deeper fix, not taken here.** All of the above — the carry-back rule, its cross-boot hazard, and the fact that every future reader of waypoints has to reimplement it — exists because `record()` suppresses an equal value for a signal whose repeats are the point. `SignalDef` already carries `onDemand`; not suppressing for those signals, or an explicit `alwaysLog`, would make every waypoint self-contained in the log and delete the rule from this query and from anything else that ever reads them back. It is a change to the logging path for every on-demand signal, so it wants its own issue rather than a corner of a dashboard PR.
+
 ## The 2026-08-09 waypoint, and why nothing on the bike could tell
 
 Of the six waypoints in the archive, one sits about 7 000 km from where the bike stood. The chain:

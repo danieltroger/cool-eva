@@ -2,6 +2,7 @@ import { createServer } from "http";
 import type { AddressInfo } from "net";
 import { boundsFor } from "../public/lib/bounds.js";
 import { SIGNALS } from "../src/can/registry.ts";
+import { REQUIRED_CONSISTENT_READINGS } from "../src/gps/clock-gate.ts";
 import { defineSignals, latestValue, record, snapshot } from "../src/can/signals.ts";
 import { systemClockTrust, syncSystemClockFromGps } from "../src/gps/clock.ts";
 import type { WaypointReply } from "../src/http/waypoint.ts";
@@ -23,6 +24,9 @@ import { LATITUDE_RANGE, LONGITUDE_RANGE, handleWaypointEndpoint } from "../src/
 // assert — the clock is corroborated the way the bike corroborates it, with readings.
 // Cache-busting the import instead (`waypoint.ts?x`) does not work: the copy re-resolves
 // its own static import of gps/clock.ts without the query and shares the loaded one.
+
+/** Something else owns the clock, so two of the assertions below cannot mean anything. */
+const clockClaimedElsewhere = process.env.GPS_TIME_SYNC === "0";
 
 let failures = 0;
 
@@ -63,20 +67,27 @@ function stageFix(latitude: number, longitude: number) {
 
 console.log("\n1. the server's limits and the dashboard's are the same limits");
 
-for (const key of ["gps_lat", "waypoint_lat"]) {
-  const group = key.startsWith("waypoint") ? "waypoint" : "gps";
-  const bounds = boundsFor(key, "°", group);
+// Unit and group come from the registry rather than from the key's spelling, the way
+// check-all-view-tiles.ts reads them: boundsFor() consults BY_KEY first, so a hand-written
+// "°"/"gps" would keep passing after a signal moved group while the dashboard — which
+// passes the registry's own values — had started down a different path.
+const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
+
+for (const [key, range] of [
+  ["gps_lat", LATITUDE_RANGE],
+  ["waypoint_lat", LATITUDE_RANGE],
+  ["gps_lon", LONGITUDE_RANGE],
+  ["waypoint_lon", LONGITUDE_RANGE],
+] as const) {
+  const signal = defined.get(key);
+  if (!signal) {
+    check(`${key} is still a declared signal`, false);
+    continue;
+  }
+  const bounds = boundsFor(key, signal.unit, signal.group);
   check(
-    `${key} is gated to ${LATITUDE_RANGE[0]}…${LATITUDE_RANGE[1]} on both sides`,
-    bounds !== null && bounds[0] === LATITUDE_RANGE[0] && bounds[1] === LATITUDE_RANGE[1]
-  );
-}
-for (const key of ["gps_lon", "waypoint_lon"]) {
-  const group = key.startsWith("waypoint") ? "waypoint" : "gps";
-  const bounds = boundsFor(key, "°", group);
-  check(
-    `${key} is gated to ${LONGITUDE_RANGE[0]}…${LONGITUDE_RANGE[1]} on both sides`,
-    bounds !== null && bounds[0] === LONGITUDE_RANGE[0] && bounds[1] === LONGITUDE_RANGE[1]
+    `${key} is gated to ${range[0]}…${range[1]} on both sides`,
+    bounds !== null && bounds[0] === range[0] && bounds[1] === range[1]
   );
 }
 
@@ -92,7 +103,7 @@ stageFix(45.374038, 14.321478);
 
 // The clock branch. Skipped rather than failed if the operator has claimed the clock,
 // because GPS_TIME_SYNC=0 makes this refusal structurally unreachable — see the header.
-if (process.env.GPS_TIME_SYNC === "0") {
+if (clockClaimedElsewhere) {
   console.log("  – clock refusal not checked: GPS_TIME_SYNC=0 says something else owns the clock");
 } else {
   const untrusted = await ask();
@@ -110,15 +121,21 @@ if (process.env.GPS_TIME_SYNC === "0") {
 
 console.log("\n3. a corroborated clock, and then a waypoint");
 
-for (let reading = 0; reading < 6; reading += 1) {
+// Its own constant plus one, not a hardcoded 6: raise REQUIRED_CONSISTENT_READINGS and
+// this check should keep testing the endpoint rather than failing three sections later
+// with "a fresh, plausible fix under a trusted clock saves".
+for (let reading = 0; reading < REQUIRED_CONSISTENT_READINGS + 1; reading += 1) {
   await syncSystemClockFromGps(Date.now() / 1000);
 }
-if (process.env.GPS_TIME_SYNC === "0") {
+if (clockClaimedElsewhere) {
   // Asserting it here would pass without the readings having done anything, since the
   // env makes systemClockTrust() answer "satellite-backed" before it looks at the gate.
   console.log("  – the clock was already trusted by GPS_TIME_SYNC=0, so the corroboration proves nothing here");
 } else {
-  check("six corroborating readings make the clock satellite-backed", systemClockTrust() === "satellite-backed");
+  check(
+    `${REQUIRED_CONSISTENT_READINGS + 1} corroborating readings make the clock satellite-backed`,
+    systemClockTrust() === "satellite-backed"
+  );
 }
 
 const saved = await ask();
