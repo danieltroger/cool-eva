@@ -437,14 +437,14 @@ Tested against a 147 km/h road capture (`capture-20260802-210358-346ecdd5.log`) 
 
 **The shape rules out a physical quantity.** Across **324 970 aligned ride samples** b0 takes **13 distinct values** — `41 42 43 46 47 51 52 53 59 62 63 143 150` — and is overwhelmingly concentrated on two of them:
 
-| b0                                   | when                            | samples                      |
-| ------------------------------------ | ------------------------------- | ---------------------------- |
-| **43**                               | riding                          | ~110 000                     |
-| **62**                               | riding                          | ~31 000                      |
-| 52 / 53                              | riding                          | ~5 000 each                  |
-| **101**                              | parked / charging               | dominant for a whole capture |
-| **83**                               | during the blocking fault above | —                            |
-| 41, 42, 46, 47, 51, 59, 63, 143, 150 | transient                       | 2 to a few hundred each      |
+| b0                                   | when                              | samples                      |
+| ------------------------------------ | --------------------------------- | ---------------------------- |
+| **43**                               | riding                            | ~110 000                     |
+| **62**                               | riding **and parked** (see below) | ~31 000                      |
+| 52 / 53                              | riding                            | ~5 000 each                  |
+| **101**                              | parked / charging                 | dominant for a whole capture |
+| **83**                               | during the blocking fault above   | —                            |
+| 41, 42, 46, 47, 51, 59, 63, 143, 150 | transient                         | 2 to a few hundred each      |
 
 A temperature, a range estimate or a state of charge moves continuously. This sits on a value, jumps, and sits again — with a gap from 63 straight to 143.
 
@@ -456,6 +456,23 @@ A temperature, a range estimate or a state of charge moves continuously. This si
 | b0 is **motor temperature** | same capture | ❌ correlation **−0.15**, while motor temperature only spanned 26.0-42.8 °C |
 
 ⚠️ **And a correlation that must not be over-read.** b0 correlates **−0.57 with both speed and rpm**, and −0.38 with throttle. That looks like a measurement of something that falls as the bike speeds up. It is almost certainly not: with only 13 discrete values, a negative correlation is what you get when one state happens to hold while moving and another while stopped. **Do not decode b0 as a speed-derived quantity on the strength of that number** — the discreteness is the stronger evidence and it points the other way.
+
+#### The 2026-09-08 VCU reset: what it did and did not establish
+
+A VCU reset (`ECUReset 11 02`) was triggered from the Pi at 15:19:31.109. The Pi shares the rail and died with it 0.85 s later, so the boot sequence itself is unrecorded — but the first minute of frames after it came back was pulled, plus the last 40 before the cut. **1 072 frames, checked here rather than taken on report.**
+
+Every one of them is byte-identical:
+
+```
+3E 3C 04 00 4B 00 00 00      1 072 / 1 072 frames, 2026-09-08 post-reset
+3E 3C 04 04 64 00 00 00      8 999 / 8 999 frames, obd-garage/captures/2026-08-02_bms_90s.log
+```
+
+❌ **This falsifies the "riding" label on b0 = 62 above.** Both captures are a stationary bike — one just-rebooted in the garage, one a parked BMS survey five weeks earlier — and both sit on 62 for every frame. 62 is not a riding value that also occurs parked; it is simply common to both. The label in the table is corrected accordingly, and the same caution applies to every other "when" in it: those are the conditions the value was _seen_ in, not conditions it is _specific to_.
+
+⚠️ **And this is a much weaker test of `b1 = floor(b0/20)*20` than the frame count suggests.** It was requested precisely as out-of-sample data — a power-on nobody selected for the formula. It holds (62 → 60). But 1 072 frames carrying **one** value pair is **n = 1**, not n = 1072, and a formula that survives one value has barely been tested. The frame count is not the sample size. Whoever next has a capture spanning a b0 _transition_ should re-check it there; that is where a derived byte would lag if the relationship is anything softer than arithmetic.
+
+🔎 **New, and unexamined: b3 and b4 are not constant.** Between those two captures b3 goes 4 → 0 and **b4 goes 100 → 75**, while b2 stays 4 and b5-7 stay 0. Two observations is not a decode, but 100 and 75 are suggestive of a percentage, and there is a cheap test that has not been run: **b4 against SOC across the ride captures**, where SOC spanned 34-40. If b4 tracks it, the frame carries an SOC field and this whole section is looking at the wrong byte.
 
 **Where that leaves it:** a small state vocabulary, no name in any source, distinct values for riding / parked / faulted, and one value (83) so far seen only when the VCU raised a blocking fault. That is a sharper target than "an unknown byte", and the fault value is the thread worth pulling — but three observations of it is not a decode.
 
