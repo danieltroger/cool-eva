@@ -45,25 +45,41 @@ export function resolve(palette: Record<string, string>, token: string): string 
   return palette[token.replace(/^var\(--|\)$/g, "")];
 }
 
+/** `#rrggbb` to linear-light r, g, b — the sRGB transfer curve, undone once for both users. */
+function linearChannels(hex: string): [number, number, number] {
+  const [red, green, blue] = [1, 3, 5].map(offset => {
+    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return [red, green, blue];
+}
+
 /** WCAG 2.x relative luminance. */
 export function luminance(hex: string): number {
-  const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
-  const linear = channels.map(value => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  const [red, green, blue] = linearChannels(hex);
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
 
 /** Contrast between two `#rrggbb` strings. Symmetric — the order of the arguments is free. */
 export function contrast(first: string, second: string): number {
-  const [high, low] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return contrastOf(luminance(first), luminance(second));
+}
+
+/**
+ * The same ratio from two luminances already in hand.
+ *
+ * For the blends check-theme-contrast.ts measures: a dashed run averages to a LUMINANCE,
+ * and going back to a hex grey to ask for its contrast quantises it to 8 bits before
+ * measuring — a rounding step in the middle of the one number the check exists to report.
+ */
+export function contrastOf(first: number, second: number): number {
+  const [high, low] = [first, second].sort((a, b) => b - a);
   return (high + 0.05) / (low + 0.05);
 }
 
 /** CIELAB, D65. Only the two chroma axes are used — see separation(). */
 function lab(hex: string): [number, number] {
-  const [red, green, blue] = [1, 3, 5].map(offset => {
-    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
+  const [red, green, blue] = linearChannels(hex);
   const x = (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047;
   // The same quantity luminance() measures, so it is taken from there rather than
   // written a second time — two copies of the sRGB coefficients can drift apart.

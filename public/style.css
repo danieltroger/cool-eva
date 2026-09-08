@@ -344,7 +344,7 @@ body {
 /* The speed hero is a row: the power meter down the left edge, everything else beside
    it. The strip is the height of the block rather than a band under it, which is where
    the row the old bar needed has gone. */
-.hero.speed-hero {
+.speed-hero {
   flex-direction: row;
   align-items: stretch;
   gap: 0.75rem;
@@ -436,7 +436,6 @@ body {
      a column-direction flex container, which is how it renders as a 7 px stub. */
   width: 7px;
   flex: none;
-  align-self: stretch;
   display: block;
   border-radius: 3.5px;
 }

@@ -1,5 +1,5 @@
 import { DASH_DUTY } from "../public/lib/power-bar.js";
-import { contrast, luminance, parsePalette, separation } from "./palette.ts";
+import { contrast, contrastOf, luminance, readPalettes, separation } from "./palette.ts";
 
 // Measures both palettes in public/style.css against the floors that file commits to,
 // so "if you darken any of these, measure it first" is enforced rather than hoped for.
@@ -21,9 +21,6 @@ import { contrast, luminance, parsePalette, separation } from "./palette.ts";
 /** Every ink colors.js exports or draws with, and the ground each one lands on. */
 const INK_TOKENS = ["fg", "label", "sub", "good", "watch", "warn", "bad", "cold", "cool", "flow"];
 
-/** Marks sized by visibility rather than readability — see the note in lib/power-bar.js. */
-const MARK_TOKENS = ["track"];
-
 /**
  * …and what --track has to clear against the tile it is drawn on.
  *
@@ -41,6 +38,9 @@ const MARK_TOKENS = ["track"];
  */
 const MARK_FLOORS: Record<string, number> = { "track": 1.5 };
 
+/** Marks sized by visibility rather than readability — see the note in lib/power-bar.js. */
+const MARK_TOKENS = Object.keys(MARK_FLOORS);
+
 /**
  * …and the two the DASHED stretch has to clear, which are not the same question.
  *
@@ -51,10 +51,16 @@ const MARK_FLOORS: Record<string, number> = { "track": 1.5 };
  * are that average: against the ground the meter sits on, which is how visible a derate
  * is at all, and against the solid track, which is what says the stretch is gone.
  *
- * RATCHETS under the shipped worst cases, both of which are the light theme: 1.290 and
- * 1.285. They are small numbers and that is the honest picture — this design carries the
- * derate as a texture rather than as a step in tone, which is a trade
- * docs/dashboard-decisions.md §"The power meter" states in full.
+ * RATCHETS under the shipped worst cases: 1.290 against the ground, which is the LIGHT
+ * theme, and 1.177 against the solid track, which is the DARK one — the two worsts are not
+ * in the same palette, which is why both floors are measured in both. They are small
+ * numbers and that is the honest picture: this design carries the derate as a texture
+ * rather than as a step in tone, a trade docs/dashboard-decisions.md §"The power meter"
+ * states in full.
+ *
+ * ⚠️ What they guard is DASH_DUTY as much as the palette — the duty cycle is imported from
+ * the module that draws it, so shortening the dashes or widening the gaps moves both of
+ * these numbers and has to clear them here.
  */
 const DASHED_ON_GROUND_FLOOR = 1.25;
 const DASHED_VS_SOLID_FLOOR = 1.15;
@@ -92,16 +98,7 @@ const EXEMPT = new Set(["dark:bad on tile"]);
 
 const RAMP = ["good", "watch", "warn", "bad"];
 
-const source = await (
-  await import("node:fs/promises")
-).readFile(new URL("../public/style.css", import.meta.url), "utf8");
-const dark = parsePalette(source, ":root {");
-const light = parsePalette(source, ':root[data-theme="light"] {');
-
-const palettes = [
-  ["dark", dark],
-  ["light", light],
-] as const;
+const palettes = await readPalettes();
 
 // Completeness first, for BOTH palettes, and nothing else runs until it holds.
 //
@@ -116,7 +113,8 @@ const incomplete = palettes.flatMap(([themeName, palette]) =>
     .filter(token => !palette[token])
     .map(
       token =>
-        `${themeName} palette has no --${token}, or it is not a plain hex value; colors.js or svg.js draws with it`
+        `${themeName} palette has no --${token}, or it is not a plain hex value; ` +
+        `colors.js hands it to the dashboard and this check cannot measure what is not there`
     )
 );
 if (incomplete.length > 0) {
@@ -128,27 +126,20 @@ if (incomplete.length > 0) {
 }
 
 /**
- * Two colours averaged in LINEAR light by a coverage fraction — what a dashed run of one
- * over the other averages to at a glance. Linear rather than sRGB because that is what the
- * eye integrates and what luminance() already works in.
+ * The LUMINANCE two colours average to at a coverage fraction — what a dashed run of one
+ * over the other looks like at a glance. Linear rather than sRGB because that is what the
+ * eye integrates, and returned as a luminance rather than as a hex grey so contrastOf()
+ * can measure it without an 8-bit rounding step in between.
  */
-function mix(ink: string, ground: string, coverage: number): string {
-  const blended = coverage * luminance(ink) + (1 - coverage) * luminance(ground);
-  // Back to a channel value so contrast() can take it: the inverse of the sRGB transfer
-  // curve, applied to the grey of that luminance.
-  const channel = blended <= 0.0031308 ? blended * 12.92 : 1.055 * blended ** (1 / 2.4) - 0.055;
-  const byte = Math.round(Math.max(0, Math.min(1, channel)) * 255)
-    .toString(16)
-    .padStart(2, "0");
-  return `#${byte}${byte}${byte}`;
+function mix(ink: string, ground: string, coverage: number): number {
+  return coverage * luminance(ink) + (1 - coverage) * luminance(ground);
 }
 
-/** The ink --flow sits closest to in the a*b* plane, named — the pair a ratchet protects. */
-function nearestToFlow(palette: Record<string, string>): string {
-  const [closest] = INK_TOKENS.filter(token => token !== "flow")
+/** Every ink --flow has to stay away from, nearest first. */
+function flowSeparations(palette: Record<string, string>): Array<{ token: string; apart: number }> {
+  return INK_TOKENS.filter(token => token !== "flow")
     .map(token => ({ token, apart: separation(palette["flow"], palette[token]) }))
     .sort((first, second) => first.apart - second.apart);
-  return `${closest.token} ${closest.apart.toFixed(1)}`;
 }
 
 const failures: string[] = [];
@@ -175,10 +166,10 @@ for (const [themeName, palette] of palettes) {
   // The dashed stretch, duty-weighted — see DASHED_ON_GROUND_FLOOR.
   const dashed = mix(palette["track"], palette["tile"], DASH_DUTY);
   for (const against of [
-    { what: "the tile it is drawn on", hex: palette["tile"], floor: DASHED_ON_GROUND_FLOOR },
-    { what: "the solid track beside it", hex: palette["track"], floor: DASHED_VS_SOLID_FLOOR },
+    { what: "the tile it is drawn on", token: "tile", floor: DASHED_ON_GROUND_FLOOR },
+    { what: "the solid track beside it", token: "track", floor: DASHED_VS_SOLID_FLOOR },
   ]) {
-    const measured = contrast(dashed, against.hex);
+    const measured = contrastOf(dashed, luminance(palette[against.token]));
     if (measured < against.floor) {
       failures.push(
         `${themeName}: a dashed stretch averages ${measured.toFixed(3)}:1 against ${against.what}, under ` +
@@ -186,11 +177,7 @@ for (const [themeName, palette] of palettes) {
       );
     }
   }
-  for (const token of INK_TOKENS) {
-    if (token === "flow") {
-      continue;
-    }
-    const apart = separation(palette["flow"], palette[token]);
+  for (const { token, apart } of flowSeparations(palette)) {
     if (apart < FLOW_SEPARATION_FLOOR) {
       failures.push(
         `${themeName}: --flow and --${token} are ${apart.toFixed(1)} apart in a*b*, under ` +
@@ -216,12 +203,14 @@ for (const [themeName, palette] of palettes) {
     const row = INK_TOKENS.map(token => `${token} ${contrast(palette[token], palette[ground]).toFixed(1)}`).join("  ");
     console.log(`  on --${ground.padEnd(4)} ${row}`);
   }
+  const dashed = mix(palette["track"], palette["tile"], DASH_DUTY);
+  const [nearest] = flowSeparations(palette);
   console.log(
     `  marks on --tile   ` +
       MARK_TOKENS.map(token => `${token} ${contrast(palette[token], palette["tile"]).toFixed(2)}`).join("  ") +
-      `  dashed ${contrast(mix(palette["track"], palette["tile"], DASH_DUTY), palette["tile"]).toFixed(3)} on tile` +
-      ` / ${contrast(mix(palette["track"], palette["tile"], DASH_DUTY), palette["track"]).toFixed(3)} vs solid` +
-      `   --flow's nearest ink ${nearestToFlow(palette)}`
+      `  dashed ${contrastOf(dashed, luminance(palette["tile"])).toFixed(3)} on tile` +
+      ` / ${contrastOf(dashed, luminance(palette["track"])).toFixed(3)} vs solid` +
+      `   --flow's nearest ink ${nearest.token} ${nearest.apart.toFixed(1)}`
   );
   const steps = RAMP.slice(0, -1)
     .map(

@@ -1,7 +1,6 @@
 import { contrast, readPalettes, resolve, separation } from "./palette.ts";
-import { power } from "../public/lib/colors.js";
-import { FLOW, GOOD, MUTED } from "../public/lib/colors.js";
-import { TRACK, barLayers, ceilingMark, originY, reachable } from "../public/lib/power-bar.js";
+import { FLOW, GOOD, MUTED, TRACK, power } from "../public/lib/colors.js";
+import { CEILING_TICK, POWER_SCALE_KW, barLayers, ceilingMark, originY, reachable } from "../public/lib/power-bar.js";
 import { powerLimitsKw } from "../public/lib/power-limits.js";
 
 // The riding screen's power bar, checked from Node.
@@ -39,11 +38,23 @@ const DRIVE_KW = -100;
 const REGEN_KW = 20;
 
 /**
- * ride.js's POWER_SCALE_KW. Copied, not imported: ride.js pulls in van, which needs a
- * DOM. Asymmetric on purpose — the regen half is a third the size of the drive half,
- * because that is the shape of the machine.
+ * The shipped scale, WRITTEN OUT rather than only imported — and then checked against the
+ * import below.
+ *
+ * Asymmetric on purpose: the regen half is a bit over a quarter of the drive half, because
+ * that is the shape of the machine. Everything downstream is a ratio of these two, so a
+ * check that imported them would keep passing with the halves swapped — the exact failure
+ * §6 exists for, one level up. The literals are what a person can check against the bike;
+ * the equality below is what stops them going stale.
  */
 const FULL_SCALE_KW = { drive: 130, regen: 36 };
+if (FULL_SCALE_KW.drive !== POWER_SCALE_KW.drive || FULL_SCALE_KW.regen !== POWER_SCALE_KW.regen) {
+  throw new Error(
+    `power-bar.js now ships ${POWER_SCALE_KW.drive}/${POWER_SCALE_KW.regen} kW, not the ` +
+      `${FULL_SCALE_KW.drive}/${FULL_SCALE_KW.regen} this file checks against. Verify the new scale against the ` +
+      `bike and update the literals — do not delete them.`
+  );
+}
 /** The strip is drawn in a 0…100 viewBox down its length. */
 const LENGTH = 100;
 const ORIGIN = originY({ fullScale: FULL_SCALE_KW });
@@ -56,21 +67,17 @@ if (power(REGEN_KW) !== GOOD) {
     `${REGEN_KW} kW is REGEN on this bike (pack_kw is positive on regen) and must be ${GOOD}, got ${power(REGEN_KW)}`
   );
 }
-if (power(DRIVE_KW) === GOOD) {
-  failures.push(
-    `${DRIVE_KW} kW is a hard PULL (pack_kw is negative under discharge) and must not be the green ${GOOD} — ` +
-      `that is the inversion that shipped for five weeks`
-  );
-}
 if (power(null) !== MUTED) {
   failures.push(`no reading must be ${MUTED}, got ${power(null)}`);
 }
 // Drive is one colour at every load — the ramp by magnitude is gone. A drive reading that
 // comes back anything but FLOW is either the ramp returning or the sign convention
 // inverted again, and both are silent on screen.
-for (const kilowatts of [-0.4, -1, -5, -20, -60, -120]) {
+for (const kilowatts of [-0.4, -1, -5, -20, -60, DRIVE_KW, -120]) {
   if (power(kilowatts) !== FLOW) {
-    failures.push(`${kilowatts} kW is drive and must read ${FLOW} at any load, got ${power(kilowatts)}`);
+    const inverted =
+      power(kilowatts) === GOOD ? ` — the green ${GOOD} here is the inversion that shipped for five weeks` : "";
+    failures.push(`${kilowatts} kW is drive and must read ${FLOW} at any load, got ${power(kilowatts)}${inverted}`);
   }
 }
 // …and the marks the bar is made of have to stay apart, over both palettes.
@@ -100,9 +107,6 @@ for (const [themeName, palette] of palettes) {
     { what: `the regen fill (${REGEN_KW} kW)`, hex: resolve(palette, power(REGEN_KW)) },
   ];
   for (const fill of fills) {
-    // ⚠️ The FILL edge is the primary reading and is held highest: a draft that
-    // strengthened the derate edge instead cost the fill 17.9:1 → 2.5:1.
-    // docs/dashboard-decisions.md §"The power meter" has that failure in full.
     const ratio = contrast(fill.hex, track);
     if (ratio < MIN_FILL_CONTRAST) {
       failures.push(
@@ -189,7 +193,11 @@ if (ORIGIN <= LENGTH / 2) {
 // The strip is origin-out and drive draws UP, so the drive ceiling must shorten the TOP
 // — smaller y. Crossing the two sides would read as the BMS allowing 96 kW of regen and 38 kW
 // of drive, which is a plausible-looking lie.
-const reach = reachable({ limits: { drive: 96, regen: 27 }, fullScale: FULL_SCALE_KW, origin: ORIGIN });
+// ⚠️ 27 of 36, deliberately NOT half a scale. It was 22.5 of 45, and half is the one ratio
+// where measuring the REACHABLE part and the LOST part give the same answer — so these held
+// under that mutation and only the drive half was really carrying them. 96 of 130 is not
+// half either.
+const reach = reachable({ limits: { drive: 96, regen: 27 }, fullScale: FULL_SCALE_KW });
 const expectedFrom = ORIGIN - (96 / FULL_SCALE_KW.drive) * ORIGIN;
 const expectedTo = ORIGIN + (27 / FULL_SCALE_KW.regen) * (LENGTH - ORIGIN);
 if (Math.abs(reach.from - expectedFrom) > 1e-9) {
@@ -201,21 +209,12 @@ if (Math.abs(reach.to - expectedTo) > 1e-9) {
 if (reach.to <= ORIGIN || reach.from >= ORIGIN) {
   failures.push(`each side must reach outwards from the origin, got ${reach.from}…${reach.to} around ${ORIGIN}`);
 }
-// ⚠️ Deliberately NOT a ceiling that is half its scale. It was 22.5 of 45, and half is
-// the one ratio where measuring the REACHABLE part and the LOST part give the same
-// answer — so the assertion held under that mutation and only the drive half was really
-// carrying it. 27 of 36 is three quarters; 96 of 130 is not.
-if (Math.abs((ORIGIN - reach.from) / ORIGIN - 96 / FULL_SCALE_KW.drive) > 1e-9) {
-  failures.push("each half must be measured against its OWN scale, not against a shared one");
-}
-
 // 4. The two ends, which used to be special cases. A ceiling past full scale had to be
 //    dropped (indistinguishable from "0x202 has not arrived") or pinned (from a ceiling
 //    AT full scale); a ceiling of zero sat on the old centre divider. Neither survives.
 const roomToSpare = reachable({
   limits: { drive: 400, regen: null },
   fullScale: FULL_SCALE_KW,
-  origin: ORIGIN,
 });
 if (roomToSpare.to !== LENGTH || roomToSpare.from !== 0) {
   failures.push(`a ceiling past full scale takes nothing away, got ${roomToSpare.from}…${roomToSpare.to}`);
@@ -223,7 +222,6 @@ if (roomToSpare.to !== LENGTH || roomToSpare.from !== 0) {
 const exactlyFull = reachable({
   limits: { drive: FULL_SCALE_KW.drive, regen: FULL_SCALE_KW.regen },
   fullScale: FULL_SCALE_KW,
-  origin: ORIGIN,
 });
 if (Math.abs(exactlyFull.to - LENGTH) > 1e-9 || Math.abs(exactlyFull.from) > 1e-9) {
   failures.push(`a ceiling AT full scale takes nothing away either, got ${exactlyFull.from}…${exactlyFull.to}`);
@@ -231,7 +229,6 @@ if (Math.abs(exactlyFull.to - LENGTH) > 1e-9 || Math.abs(exactlyFull.from) > 1e-
 const shutDown = reachable({
   limits: { drive: 0, regen: 0 },
   fullScale: FULL_SCALE_KW,
-  origin: ORIGIN,
 });
 if (shutDown.from !== ORIGIN || shutDown.to !== ORIGIN) {
   failures.push(
@@ -247,7 +244,7 @@ for (const half of [
   { name: "drive", limits: { drive: FULL_SCALE_KW.drive - 1, regen: null }, read: (r: Reach) => r.from },
   { name: "regen", limits: { drive: null, regen: FULL_SCALE_KW.regen - 1 }, read: (r: Reach) => LENGTH - r.to },
 ]) {
-  const tiny = reachable({ limits: half.limits, fullScale: FULL_SCALE_KW, origin: ORIGIN });
+  const tiny = reachable({ limits: half.limits, fullScale: FULL_SCALE_KW });
   if (half.read(tiny) <= 0) {
     failures.push(`1 kW off the ${half.name} ceiling is a real derate and must take a real width`);
   }
@@ -255,12 +252,11 @@ for (const half of [
 const noLimits = reachable({
   limits: { drive: null, regen: null },
   fullScale: FULL_SCALE_KW,
-  origin: ORIGIN,
 });
 if (noLimits.from !== 0 || noLimits.to !== LENGTH) {
   failures.push(`a bike that has not sent 0x202 yet reaches the whole bar, got ${noLimits.from}…${noLimits.to}`);
 }
-const noObject = reachable({ limits: null, fullScale: FULL_SCALE_KW, origin: ORIGIN });
+const noObject = reachable({ limits: null, fullScale: FULL_SCALE_KW });
 if (noObject.from !== 0 || noObject.to !== LENGTH) {
   failures.push("a bar handed no limits at all must draw its whole scale as reachable");
 }
@@ -297,7 +293,6 @@ const CROSS_SAFE_REGEN_KW = 19.2;
 const endToEnd = reachable({
   limits: powerLimitsKw(reading({ "allowed_discharge_a": 100, "allowed_regen_a": 60, "pack_v": 320 }), fresh),
   fullScale: FULL_SCALE_KW,
-  origin: ORIGIN,
 });
 const wantFrom = ORIGIN - (CROSS_SAFE_DRIVE_KW / FULL_SCALE_KW.drive) * ORIGIN;
 const wantTo = ORIGIN + (CROSS_SAFE_REGEN_KW / FULL_SCALE_KW.regen) * (LENGTH - ORIGIN);
@@ -356,19 +351,19 @@ if (throughRegen === null || throughRegen <= ORIGIN || throughRegen > reach.to) 
 // derate power-limits.js calls the most important thing this bar can say. An unclamped
 // mark lands on the far side of the origin here, on the other half's track.
 for (const ceiling of [0, 1, 1.65]) {
-  const tight = reachable({ limits: { drive: ceiling, regen: 0 }, fullScale: FULL_SCALE_KW, origin: ORIGIN });
+  const tight = reachable({ limits: { drive: ceiling, regen: 0 }, fullScale: FULL_SCALE_KW });
   const filled = { from: ORIGIN - 10, to: ORIGIN };
   const mark = ceilingMark({ filled, reach: tight });
-  if (mark === null || mark < filled.from || mark + 2 > ORIGIN) {
+  if (mark === null || mark < filled.from || mark + CEILING_TICK > ORIGIN) {
     failures.push(
       `a ${ceiling} kW drive ceiling must still mark the wall, inside the fill and above the origin ` +
         `(${ORIGIN.toFixed(2)}) — got ${mark}`
     );
   }
-  const regenTight = reachable({ limits: { drive: 0, regen: ceiling }, fullScale: FULL_SCALE_KW, origin: ORIGIN });
+  const regenTight = reachable({ limits: { drive: 0, regen: ceiling }, fullScale: FULL_SCALE_KW });
   const regenFilled = { from: ORIGIN, to: ORIGIN + 10 };
   const regenMark = ceilingMark({ filled: regenFilled, reach: regenTight });
-  if (regenMark === null || regenMark < ORIGIN || regenMark + 2 > regenFilled.to) {
+  if (regenMark === null || regenMark < ORIGIN || regenMark + CEILING_TICK > regenFilled.to) {
     failures.push(
       `a ${ceiling} kW regen ceiling must mark the wall inside the fill and below the origin — got ${regenMark}`
     );

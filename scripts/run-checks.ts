@@ -169,10 +169,15 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-theme-contrast.ts",
     covers:
-      "both of style.css's palettes, parsed out of the file itself rather than restated: every ink colors.js and " +
-      "svg.js draw with exists in both, values clear 11:1 and text and status inks 6:1 against both the page and " +
-      "the tile they land on, and no two steps of the good→watch→warn→bad ramp are closer than 15 in the a*b* " +
-      "plane — the light theme buys its contrast by compressing that ramp, so the trade is pinned at both ends",
+      "both of style.css's palettes, parsed out of the file itself rather than restated: every ink colors.js " +
+      "hands the dashboard exists in both, values clear 11:1 and text and status inks 6:1 against both the page " +
+      "and the tile they land on, and no two steps of the good→watch→warn→bad ramp are closer than 15 in the a*b* " +
+      "plane — the light theme buys its contrast by compressing that ramp, so the trade is pinned at both ends. " +
+      "Plus the power meter's own marks, which are sized by visibility rather than readability and so were named " +
+      "here and measured nowhere until 2026-09-08: the solid track against the card it is drawn on, and the " +
+      "DASHED stretch that says the BMS has taken that scale away — averaged at the dash pattern's own duty " +
+      "cycle, imported from the module that draws it, against both the card and the solid track beside it. And " +
+      "--flow, the meter's fill, against every other ink rather than one named partner",
   },
   {
     script: "scripts/check-all-view-tiles.ts",
@@ -386,17 +391,21 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-power-bar.ts",
     covers:
-      "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +
+      "the riding screen's power meter, every part of which is a direction that looks deliberate when it is " +
       "backwards: that regen reads green and a pull never does — inverted from 2026-08-03 until 2026-09-08, under " +
-      "a doc comment that said the right thing throughout — that drive is WHITE at every load, the ramp by " +
-      "magnitude having been retired, and that the dashed derate rule keeps a 3:1 contrast floor over that fill, " +
-      "computed rather than restated, since it is drawn on top of it. That both BMS ceilings convert to kW through the MEASURED pack " +
+      "a doc comment that said the right thing throughout — that drive is one colour at every load, the ramp by " +
+      "magnitude having been retired, and that both fills clear 4:1 over the track they are drawn on and stay 90 " +
+      "apart in a*b* from each other, over both palettes, since the strip grows up for one and down for the other " +
+      "and colour is all that says which. That both BMS ceilings convert to kW through the MEASURED pack " +
       "voltage with a 0 A derate surviving as a real limit and a 0 V reading rejected as a missing one, that both " +
-      "go quiet while a charge is up — the BMS zeroes them there, and believing them would hatch the whole bar " +
-      "away under a fill showing 24 kW of charge — and that each ceiling hatches its own side's far end against " +
-      "its OWN scale, hatches nothing at or past full scale, hatches the whole half at zero, and still draws for " +
+      "go quiet while a charge is up — the BMS zeroes them there, and believing them would dash the whole strip " +
+      "away under a fill showing 24 kW of charge — and that each ceiling takes its own side's far end against " +
+      "its OWN scale, takes nothing at or past full scale, takes the whole half at zero, and still draws for " +
       "a derate of 1 kW, since a minimum width that swallowed small ones made a blank end mean two things. " +
-      "Walked end to end as well as at each end, because covering both ends left a crossed pair between them green",
+      "Walked end to end as well as at each end, because covering both ends left a crossed pair between them " +
+      "green. Then the paint order, since a ceiling mark drawn under the fill is erased by the very state it " +
+      "exists to show, and which way each direction grows, which a one-character flip inverted with every other " +
+      "assertion still passing",
   },
   {
     script: "scripts/check-power-cut-durability.ts",

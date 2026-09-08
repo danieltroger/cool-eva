@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { TRACK } from "./colors.js";
 
 // The riding screen's power meter: a thin vertical strip down the left edge of the speed
 // hero, copied from the Model 3/Y's own (the owner's photos are in the design notes).
@@ -16,23 +17,29 @@ import van from "../vendor/van-1.6.1.js";
 
 const svgTags = van.tags("http://www.w3.org/2000/svg");
 
-/** The scale is drawn in a 0…100 viewBox down the strip; this is how wide it is. */
+/** The strip's viewBox. Only the long axis carries meaning; CSS gives it its real width. */
 const WIDTH = 10;
+const LENGTH = 100;
+const VIEW_BOX = `0 0 ${WIDTH} ${LENGTH}`;
 
 /**
- * What each half shows at its end. Fixed, and asymmetric on this bike: the two
- * directions are not remotely the same size, so one number for both would spend most of
- * the regen half on power the machine cannot produce.
+ * What each half shows at its end, in kilowatts.
+ *
+ * Fixed — it is the ceiling that moves, not the scale — and asymmetric, because the two
+ * directions are not the same size on this machine and pretending they are wastes most of
+ * one half. 130 = 400 A at 325 V, 36 = 120 A at 300 V: each direction's configured current
+ * limit at a representative pack voltage. ⚠️ Sized against the CEILING each half must be
+ * able to clear, not against the power recorded in it — docs/dashboard-decisions.md
+ * §"The power meter" has why 45 was wrong and the archive statistics behind both numbers.
+ */
+export const POWER_SCALE_KW = { drive: 130, regen: 36 };
+
+/**
+ * The shape POWER_SCALE_KW has, taken as a parameter so the geometry below is pure.
  * @typedef {object} SplitBarScale
  * @property {number} drive largest magnitude the upper half can show
  * @property {number} regen largest magnitude the lower half can show
  */
-
-/**
- * The stretch of scale the pack has taken away, drawn in the track's own grey with
- * transparent gaps — the owner's spec, and Tesla's language for the same thing.
- */
-export const TRACK = "var(--track)";
 
 /** Dash geometry down the strip, in viewBox y. */
 const DASH = 3.4;
@@ -48,9 +55,17 @@ const DASH_GAP = 2.6;
  */
 export const DASH_DUTY = DASH / (DASH + DASH_GAP);
 
-/** The notch that marks zero, and the mark for a ceiling the fill has gone past. */
+/** Constant, so it is not rebuilt per dashed layer per redraw. */
+const DASH_PATTERN = `${DASH} ${DASH_GAP}`;
+
+/** The gap that marks zero. */
 const ORIGIN_NOTCH = 1.6;
-const CEILING_TICK = 2;
+
+/**
+ * The mark for a ceiling the fill has gone past. Exported for DASH_DUTY's reason: it is
+ * what ceilingMark() clamps against, and check-power-bar.ts must not restate it.
+ */
+export const CEILING_TICK = 2;
 
 /**
  * The power meter. Drive grows UP from the origin, regen DOWN.
@@ -67,7 +82,8 @@ const CEILING_TICK = 2;
  */
 export function powerBar({ value, fullScale, color, limits = null }) {
   const children = barLayers({ value, fullScale, color, limits }).map(layer =>
-    layer.dashed
+    // A taken stretch is the only one drawn as a dash pattern; everything else is solid.
+    layer.name === "taken"
       ? svgTags.line({
           x1: WIDTH / 2,
           y1: layer.from.toFixed(2),
@@ -75,7 +91,7 @@ export function powerBar({ value, fullScale, color, limits = null }) {
           y2: layer.to.toFixed(2),
           style: `stroke:${layer.fill}`,
           "stroke-width": WIDTH,
-          "stroke-dasharray": `${DASH} ${DASH_GAP}`,
+          "stroke-dasharray": DASH_PATTERN,
           // Anchored to the STRIP, not to this span's start: without it the pattern is
           // placed from a ceiling that moves at 2 Hz, so the dashes slide while the bike
           // is doing nothing. Same trap the hatching this replaces had to fix.
@@ -89,7 +105,7 @@ export function powerBar({ value, fullScale, color, limits = null }) {
           style: `fill:${layer.fill}`,
         })
   );
-  return svgTags.svg({ viewBox: `0 0 ${WIDTH} 100`, preserveAspectRatio: "none", class: "power-strip" }, ...children);
+  return svgTags.svg({ viewBox: VIEW_BOX, preserveAspectRatio: "none", class: "power-strip" }, ...children);
 }
 
 /**
@@ -103,7 +119,7 @@ export function powerBar({ value, fullScale, color, limits = null }) {
  * @param {SplitBarScale} options.fullScale
  * @param {string} options.color
  * @param {import("./power-limits.js").PowerLimitsKw | null} options.limits
- * @returns {Array<{ name: string, from: number, to: number, fill: string, dashed?: boolean }>}
+ * @returns {Array<{ name: string, from: number, to: number, fill: string }>}
  */
 export function barLayers({ value, fullScale, color, limits }) {
   const origin = originY({ fullScale });
@@ -111,21 +127,16 @@ export function barLayers({ value, fullScale, color, limits }) {
   // it draws upwards. See the sign note in derive.js.
   const isDrive = (value ?? 0) < 0;
   const scale = isDrive ? fullScale.drive : fullScale.regen;
-  const travel = isDrive ? origin : 100 - origin;
+  const travel = isDrive ? origin : LENGTH - origin;
   const magnitude = value == null || scale <= 0 ? 0 : Math.min(Math.abs(value) / scale, 1) * travel;
-  const reach = reachable({ limits, fullScale, origin });
+  const reach = reachable({ limits, fullScale });
   const filled = { from: isDrive ? origin - magnitude : origin, to: isDrive ? origin : origin + magnitude };
 
-  const layers = [];
-  if (reach.from > 0) {
-    layers.push({ name: "taken", from: 0, to: reach.from, fill: TRACK, dashed: true });
-  }
-  if (reach.to < 100) {
-    layers.push({ name: "taken", from: reach.to, to: 100, fill: TRACK, dashed: true });
-  }
-  for (const segment of trackSegments({ reach, origin })) {
-    layers.push({ name: "track", from: segment.from, to: segment.to, fill: TRACK });
-  }
+  const layers = spans([
+    { name: "taken", from: 0, to: reach.from },
+    { name: "taken", from: reach.to, to: LENGTH },
+    ...trackSegments({ reach, origin }).map(segment => ({ name: "track", ...segment })),
+  ]).map(span => ({ ...span, fill: TRACK }));
   if (magnitude > 0) {
     layers.push({ name: "fill", from: filled.from, to: filled.to, fill: color });
   }
@@ -148,7 +159,7 @@ export function barLayers({ value, fullScale, color, limits }) {
  */
 export function originY({ fullScale }) {
   const span = fullScale.drive + fullScale.regen;
-  return span <= 0 ? 50 : (fullScale.drive / span) * 100;
+  return span <= 0 ? LENGTH / 2 : (fullScale.drive / span) * LENGTH;
 }
 
 /**
@@ -160,16 +171,20 @@ export function originY({ fullScale }) {
  * @param {object} options
  * @param {import("./power-limits.js").PowerLimitsKw | null} options.limits
  * @param {SplitBarScale} options.fullScale
- * @param {number} options.origin
  * @returns {{ from: number, to: number }}
  */
-export function reachable({ limits, fullScale, origin }) {
+export function reachable({ limits, fullScale }) {
   if (limits == null) {
-    return { from: 0, to: 100 };
+    return { from: 0, to: LENGTH };
   }
+  // ⚠️ The origin is DERIVED here rather than passed in. It was a parameter, and a
+  // caller could hand a fullScale and an origin computed from a different one — the same
+  // "pair a caller can cross" hazard the two option objects exist to make unspellable,
+  // reintroduced as two arguments that must agree.
+  const origin = originY({ fullScale });
   return {
     from: origin - side(limits.drive, fullScale.drive, origin),
-    to: origin + side(limits.regen, fullScale.regen, 100 - origin),
+    to: origin + side(limits.regen, fullScale.regen, LENGTH - origin),
   };
 }
 
@@ -207,7 +222,18 @@ function trackSegments({ reach, origin }) {
   return [
     { from: reach.from, to: Math.min(reach.to, origin - half) },
     { from: Math.max(reach.from, origin + half), to: reach.to },
-  ].filter(segment => segment.to > segment.from);
+  ];
+}
+
+/**
+ * The spans with something in them. One rule for "skip an empty stretch", used by both
+ * the taken runs and the track runs, which had a guard each and a filter respectively.
+ * @template {{ from: number, to: number }} T
+ * @param {T[]} candidates
+ * @returns {T[]}
+ */
+function spans(candidates) {
+  return candidates.filter(span => span.to > span.from);
 }
 
 /**

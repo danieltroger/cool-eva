@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { CALM, MUTED } from "./colors.js";
+import { CALM, MUTED, TRACK } from "./colors.js";
 
 // Inline-SVG drawing primitives: sparkline, meter, ring, bar strip, heatmap.
 // The power meter is not here — it is lib/power-bar.js, which has opinions these do not.
@@ -18,15 +18,11 @@ import { CALM, MUTED } from "./colors.js";
 
 const svgTags = van.tags("http://www.w3.org/2000/svg");
 
-// Unfilled part of any bar or ring. Must not be the tile background — that was the
-// first version, and it made every bar invisible until it was more than half full,
-// which is exactly when you no longer need to look at it.
-//
-// ⚠️ Every colour here goes into `style`, never into a bare `fill=`/`stroke=`
-// presentation attribute, because these are var() tokens now. Chrome does resolve
-// var() in a presentation attribute; WebKit is untested and this page is only ever
-// read on a phone, so the form that is plain CSS everywhere is the one to use.
-export const TRACK = "var(--track)";
+// ⚠️ Every colour below goes into `style`, never into a bare `fill=`/`stroke=`
+// presentation attribute, because these are var() tokens. Chrome does resolve var() in a
+// presentation attribute; WebKit is untested and this page is only ever read on a phone,
+// so the form that is plain CSS everywhere is the one to use. TRACK itself lives in
+// colors.js with the other token names.
 
 /**
  * A bare trace with no axes. Autoscales to its own window, with a floor on the

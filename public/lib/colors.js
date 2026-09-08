@@ -18,6 +18,14 @@ export const CALM = "var(--fg)";
    loudest things on the hero were drawn in one colour. Regen stays GOOD: one green on
    this dashboard, not two. */
 export const FLOW = "var(--flow)";
+/* The unfilled part of any bar, ring or meter. Here rather than beside the drawing code
+   because two modules draw with it — svg.js and power-bar.js — and it was exported from
+   both for a while, with the two docblocks already disagreeing about what it was for. A
+   palette-token name belongs with the palette-token names. ⚠️ Must NOT be --tile: that
+   was the first version, and it made every bar invisible until more than half full, which
+   is exactly when you stop needing to look at it. check-theme-contrast.ts's MARK_FLOORS
+   is what holds it away from the tile now. */
+export const TRACK = "var(--track)";
 export const GOOD = "var(--good)";
 export const WATCH = "var(--watch)";
 export const WARN = "var(--warn)";

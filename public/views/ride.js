@@ -10,7 +10,7 @@ import { packResistance } from "../lib/pack-resistance-live.js";
 import { powerLimitsKw } from "../lib/power-limits.js";
 import { PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
 import { sparkline } from "../lib/svg.js";
-import { powerBar } from "../lib/power-bar.js";
+import { POWER_SCALE_KW, powerBar } from "../lib/power-bar.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 import { power, whole } from "../lib/format.js";
@@ -23,30 +23,6 @@ const { div, span } = van.tags;
 // how hard you are pushing, how hot the pack is getting, how much is left. Speed
 // comes from GPS rather than the bike, per the request — the wheel-derived figure
 // is kept underneath it, because the gap between them is your speedometer error.
-
-/**
- * What each half of the power bar shows at its end. Fixed — it is the derate that
- * moves, not the scale — and asymmetric, because the two directions are not the same
- * size on this machine and pretending they are wastes most of one half.
- *
- * ⚠️ Sized against the CEILING each half has to be able to clear, not against the power
- * recorded in it. That distinction is the whole of why `regen` is not 45: the regen
- * ceiling is `allowed_regen_a × pack_v` and cannot pass 120 A × 341.2 V = 40.9 kW, so a
- * 45 kW half could never be un-hatched — 0.00% of moving time in the archive, a
- * permanent 15% floor of dashes on a healthy pack. Which is the exact fault the hatching
- * exists to remove, at a fifth of the size.
- *
- * 130 = 400 A at 325 V; 36 = 120 A at 300 V — each direction's configured current limit
- * at a representative pack voltage. Measured over 1054 minutes of moving time, that
- * clears the drive half for 20.1% of the time the BMS is allowing its full 400 A and the
- * regen half for 23.0% of the time it is allowing its full 120 A, so neither half is
- * systematically noisier than the other. 130 also contains the archive's deepest sample
- * (−117.3 kW) and the Ribelle's ~126 kW peak. 36 does not contain regen's largest ever
- * (40.9 kW) and is not meant to: 4 of 57 443 positive samples exceed 38 kW, and clamping
- * that tail costs far less than a half that can never come clean.
- * docs/dashboard-decisions.md §"The power meter" has the measurements.
- */
-const POWER_SCALE_KW = { drive: 130, regen: 36 };
 
 export function RideView() {
   return div(
@@ -175,10 +151,10 @@ function SpeedHero() {
           const sign = error >= 0 ? "+" : "−";
           return `GPS · wheel reads ${Math.round(units.speed(wheel))} (${sign}${Math.abs(error).toFixed(0)})`;
         }),
-        div({ class: "hero-charge", style: () => `color:${colors.stateOfCharge(valueOf("soc"))}` }, () => {
-          const soc = valueOf("soc");
-          return soc == null ? "– %" : `${whole(soc)} %`;
-        })
+        div(
+          { class: "hero-charge", style: () => `color:${colors.stateOfCharge(valueOf("soc"))}` },
+          () => `${whole(valueOf("soc"))} %`
+        )
       )
     )
   );
