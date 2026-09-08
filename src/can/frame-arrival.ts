@@ -43,9 +43,7 @@ export function frameArrival(message: { ts_sec?: number; ts_usec?: number }): Fr
 }
 
 /** How late we were, or why that cannot be said. Never a number this module does not believe. */
-export type ArrivalLatency =
-  | { known: true; ms: number }
-  | { known: false; reason: string; arrival: FrameArrival | null };
+export type ArrivalLatency = { known: true; ms: number } | { known: false; reason: string };
 
 /**
  * Milliseconds from the kernel's arrival stamp to `nowMs`, a `Date.now()` sample taken
@@ -53,19 +51,27 @@ export type ArrivalLatency =
  *
  * Refuses rather than returns for the two answers a stepped clock produces: a negative
  * gap (the clock jumped forward between arrival and now) and an implausibly large one
- * (it jumped back). Both are recorded with the raw stamp so the reading is still
- * evidence, and neither is stored as a duration.
+ * (it jumped back). ⚠️ The raw stamp goes into the REASON rather than into a field of
+ * its own: an earlier version carried it structurally, nothing ever read it, and the
+ * docstring promising preserved evidence was not true. The reason is what reaches a
+ * human, so that is where the number belongs.
  */
 export function arrivalLatencyMs(arrival: FrameArrival | null, nowMs: number): ArrivalLatency {
   if (arrival === null) {
-    return { known: false, reason: "the kernel supplied no arrival timestamp for this frame", arrival };
+    return { known: false, reason: "the kernel supplied no arrival timestamp for this frame" };
   }
   const ms = nowMs - (arrival.seconds * 1000 + arrival.microseconds / 1000);
   if (ms < 0) {
-    return { known: false, reason: `arrived ${(-ms).toFixed(1)} ms in the future — the clock stepped`, arrival };
+    return {
+      known: false,
+      reason: `arrived ${(-ms).toFixed(1)} ms in the future (kernel ${arrival.seconds}.${String(arrival.microseconds).padStart(6, "0")}) — the clock stepped`,
+    };
   }
   if (ms > MAX_PLAUSIBLE_LATENCY_MS) {
-    return { known: false, reason: `${(ms / 1000).toFixed(1)} s is not a dispatch delay — the clock stepped`, arrival };
+    return {
+      known: false,
+      reason: `${(ms / 1000).toFixed(1)} s is not a dispatch delay (kernel ${arrival.seconds}.${String(arrival.microseconds).padStart(6, "0")}) — the clock stepped`,
+    };
   }
   return { known: true, ms };
 }

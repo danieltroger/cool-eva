@@ -1,5 +1,6 @@
 import { holdObdPoller, obdPollerHeldBy, startObdPoller } from "../src/can/obd.ts";
 import { troubleCodeTransferInFlight } from "../src/can/obd-dtc.ts";
+import { monotonicNow, since } from "../src/monotonic.ts";
 
 // The OBD poller's hold — the thing an in-service multi-frame read needs, and the
 // riskiest new mechanism in that feature. Run by `npm test` via scripts/run-checks.ts.
@@ -45,7 +46,7 @@ console.log("  granted, named, and nothing in flight at the park point");
 // ── §2 One at a time, and releasing is idempotent ───────────────────────────
 console.log("\n── §2 a second holder is refused ─────────────────────────────────");
 
-const second = await holdObdPoller("a second read", 200);
+const second = await holdObdPoller("a second read", { waitMs: 200 });
 check(second === null, "a second hold must be refused while the first stands");
 check(obdPollerHeldBy() === "a lifetime-statistics read", "…and must not steal the name");
 first?.release();
@@ -76,7 +77,7 @@ console.log("\n── §3 a leaked hold is taken back ────────�
 // flag-versus-acknowledgement mistake pointed the other way.
 // A 600 ms cap rather than the real 15 s: this asserts that the LOOP takes it back,
 // which is the property, not how long it waits first.
-const leaked = await holdObdPoller("a read that never releases", undefined, 600);
+const leaked = await holdObdPoller("a read that never releases", { maxHoldMs: 600 });
 check(leaked !== null, "the leaked hold is granted");
 check(obdPollerHeldBy() !== null, "…and is held");
 console.log("  waiting out an injected 600 ms cap with the hold deliberately never released…");
@@ -106,10 +107,12 @@ console.log(
 
 /** How long until the loop takes the poller back, or null if it never does. */
 async function waitForRelease(limitMs: number): Promise<number | null> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < limitMs) {
+  // monotonicNow, not Date.now: the rule exists so nobody has to work out per site that
+  // this particular clock will not step.
+  const startedAt = monotonicNow();
+  while (since(startedAt) < limitMs) {
     if (obdPollerHeldBy() === null) {
-      return Date.now() - startedAt;
+      return Math.round(since(startedAt));
     }
     await sleep(100);
   }

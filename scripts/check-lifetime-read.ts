@@ -1,11 +1,10 @@
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 import { LIFETIME_READ_PAYLOADS } from "./captured-lifetime-reads.ts";
-import { readFile } from "node:fs/promises";
 import { startLifetimeRead, worseOf } from "../src/vcu/lifetime-read.ts";
 import { arrivalLatencyMs, frameArrival } from "../src/can/frame-arrival.ts";
 import { loadLifetimeStatistics, writeLifetimeRead } from "../src/vcu/lifetime-store.ts";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -111,6 +110,15 @@ check(asked.length === 4, `two components at two attempts each should ask four t
 // And the happy path must NOT retry — a component that answered is not asked twice.
 const askedOnce = bus.sentFrames.filter(frame => /^A8 03 17/.test(frame));
 check(askedOnce.length === 2, `a reply first time should be asked once per component, got ${askedOnce.length}`);
+
+// And `attempts` has to MEAN something: one attempt asks once per component even when
+// nothing answers. Without this the option is exported configurability with no behaviour.
+const once = simulateVcuMicros([{ target: "A8", records: new Map(), silentServices: [0x17] }]);
+const onceRead = startLifetimeRead({ channel: once.channel, attempts: 1 });
+once.channel.addListener("onMessage", message => onceRead.handleFrame(message.id, message.data, frameArrival(message)));
+await onceRead.finished;
+const askedTwice = once.sentFrames.filter(frame => /^A8 03 17/.test(frame));
+check(askedTwice.length === 2, `attempts: 1 should ask twice in total, not four times, got ${askedTwice.length}`);
 console.log(
   `  a silent micro gives ${silentResult.replies.map(reply => reply.failure).join(", ")} after ${asked.length}` +
     ` requests; the answering one is asked ${askedOnce.length} times`
@@ -201,7 +209,7 @@ console.log("  the Date.now() sits after the flow control is on the wire, not be
 console.log("\n── §6 the worst latency wins ─────────────────────────────────────");
 
 const known = (ms: number) => ({ known: true as const, ms });
-const unknown = { known: false as const, reason: "no stamp", arrival: null };
+const unknown = { known: false as const, reason: "no stamp" };
 check(worseOf(known(3), known(9))?.known === true, "two known readings still give a known one");
 check((worseOf(known(3), known(9)) as { ms: number }).ms === 9, "…and it is the SLOWER of the two");
 check((worseOf(known(9), known(3)) as { ms: number }).ms === 9, "…whichever order they arrive in");

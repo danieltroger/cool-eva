@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { MUTED } from "../lib/colors.js";
+import { serviceRefusal, serviceRefused } from "../lib/service-gate-caption.js";
 
 // The service sheet's second read: the bike's lifetime battery statistics, off
 // components 51 and 52, in-process.
@@ -44,10 +45,7 @@ export function LifetimeReadButton(readState) {
         class: "action",
         // One held Enter must not arm and then fire. See ../lib/arming.js.
         onkeydown: refuseKeyRepeat,
-        disabled: () => {
-          const state = readState();
-          return busy.val || (state !== null && (!state.enabled || !state.gate.safe));
-        },
+        disabled: () => busy.val || serviceRefused(readState()),
         onclick: () => {
           if (armed.val !== ARMED_KEY) {
             arm(ARMED_KEY);
@@ -63,15 +61,12 @@ export function LifetimeReadButton(readState) {
         },
       },
       () => {
-        const state = readState();
         if (busy.val) {
           return "⏳  Reading components 51 and 52…";
         }
-        if (state !== null && !state.enabled) {
-          return "🔒  Reads are off on this Pi (SERVICE_MODE_ENABLED=0)";
-        }
-        if (state !== null && !state.gate.safe) {
-          return "🚫  The bike is not parked and out of drive";
+        const refusal = serviceRefusal(readState());
+        if (refusal !== null) {
+          return refusal;
         }
         if (armed.val === ARMED_KEY) {
           return "⚠  Tap again — this parks the OBD poller while it reads";
@@ -116,6 +111,7 @@ async function performLifetimeRead() {
     // ⚠️ A request that did not come back may still have reached the bike — the frames
     // go out before the response — and the reading may well be stored. Says so rather
     // than implying nothing happened.
+    console.warn("lifetime-read: request failed", error);
     message.val =
       `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
       "The read may have completed anyway; the All tab shows the age of what is stored.";

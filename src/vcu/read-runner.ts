@@ -5,7 +5,7 @@ import { acquireBus, type BusLease } from "./bus-lease.ts";
 import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
-import { startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
+import { describeMeasurement, startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
 import { holdObdPoller } from "../can/obd.ts";
 import { parameterTable, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
@@ -92,11 +92,12 @@ export interface VcuReadRunner {
    */
   readLifetimeStatistics: () => Promise<LifetimeReadOutcomeOrRefusal>;
   /**
-   * Feed CAN frames here; true when consumed. No-op unless a sweep is running, so
-   * the service's frame router pays one null check per OBD-range frame and nothing
-   * at all the rest of the time.
+   * Feed CAN frames here; true when consumed. A no-op unless a sweep or a one-shot
+   * module is running, so the service's frame router pays two null checks per
+   * OBD-range frame and nothing at all the rest of the time.
+   *
+   * ⚠️ `arrival` is REQUIRED — see `OneShotBusModule.handleFrame`.
    */
-  /** ⚠️ `arrival` is REQUIRED — see `OneShotBusModule.handleFrame`. */
   handleCanFrame: (id: number, data: Buffer, arrival: FrameArrival | null) => boolean;
   /**
    * Stops any running sweep, for shutdown. Resolves once it has written itself
@@ -393,27 +394,14 @@ async function runLifetimeRead(context: RunnerContext): Promise<LifetimeReadOutc
     async () => {
       const hold = await holdObdPoller(what);
       return hold
-        ? { ok: true, release: () => hold.release() }
+        ? { ok: true, release: hold.release }
         : { ok: false, reason: "the OBD poller would not go quiet — a multi-frame read needs the bus to itself" };
     }
   );
   if (outcome.ok) {
-    console.log(
-      `vcu-read: lifetime statistics — ${describeFlowControl(outcome.result)}, ` +
-        `worst event-loop delay ${outcome.result.loopDelayMs?.toFixed(1) ?? "not sampled"} ms`
-    );
+    console.log(`vcu-read: lifetime statistics — ${describeMeasurement(outcome.result)}`);
   }
   return outcome;
-}
-
-/** The measurement, in one line, however it came out. */
-function describeFlowControl(result: LifetimeReadResult): string {
-  if (result.flowControl === null) {
-    return "no flow control was needed";
-  }
-  return result.flowControl.known
-    ? `flow control ${result.flowControl.ms.toFixed(1)} ms after the kernel saw the First Frame`
-    : `flow-control latency unmeasured — ${result.flowControl.reason}`;
 }
 
 /** A probe or a lifetime read: one bounded exchange, driven the same way. */
@@ -436,10 +424,14 @@ export interface OneShotBusModule<T = unknown> {
  * identical, and the gate watchdog, the `finally` that releases everything, and the
  * refusal-rather-than-throw contract are the parts that must not diverge.
  *
- * ⚠️ It did NOT shrink this file — 505 lines to ~600, and an earlier draft of this
+ * ⚠️ It did NOT shrink this file — 505 lines to ~655, and an earlier draft of this
  * comment claimed the opposite. The win is that a second kind of one-shot read cannot
- * inherit the first one's refusal message or forget one of its releases. The file is
- * past the ~400 guideline and splitting it is its own migration, not this one's.
+ * inherit the first one's refusal message or forget one of its releases.
+ *
+ * The file is past the ~400 guideline and splitting it is its own migration. The seam,
+ * so the next person does not have to find it: `OneShotBusModule`,
+ * `runOneShotBusModule`, `PreparedResource`, `startWatchdog` and `startGateWatchdog`
+ * are ~130 self-contained lines that already take the context as a parameter.
  */
 async function runOneShotBusModule<T>(
   context: RunnerContext,

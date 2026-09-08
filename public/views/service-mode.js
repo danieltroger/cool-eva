@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { LifetimeReadButton, refreshLifetimeRead } from "./lifetime-read.js";
+import { serviceRefusal } from "../lib/service-gate-caption.js";
 import { monotonicNow, since } from "../lib/clock.js";
 import { ageInWords, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
@@ -151,13 +152,9 @@ function ReadButton() {
       if (isRunning()) {
         return "⏹  Stop the parameter read";
       }
-      if (state.val !== null && !state.val.enabled) {
-        return "🔒  Reads are off on this Pi (SERVICE_MODE_ENABLED=0)";
-      }
-      if (state.val !== null && !state.val.gate.safe) {
-        // Deliberately not repeating the reasons: they are in full directly above,
-        // and a button caption is the wrong place for four of them.
-        return "🚫  The bike is not parked and out of drive";
+      const refusal = serviceRefusal(state.val);
+      if (refusal !== null) {
+        return refusal;
       }
       if (armed.val === SWEEP_KEY) {
         return "⚠  Tap again — this puts ~277 requests on the bus";
@@ -359,8 +356,8 @@ const POLL_INTERVAL_MS = 1000;
 let sheetIsOpen = () => false;
 
 /** The sweep's firing site. Named so scripts/check-arming.ts can find and scan it. */
-async function performSweep() {
-  await request("POST");
+function performSweep() {
+  return request("POST");
 }
 
 /**

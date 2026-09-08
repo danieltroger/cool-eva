@@ -116,6 +116,24 @@ export async function readOneComponent(
 }
 
 /**
+ * The measurement in one sentence, however it came out.
+ *
+ * ⚠️ ONE formatter. The journal line and the page line are an operator's two views of
+ * the same number, and they were being built separately with three of four branches
+ * identical — which is how they drift by one wording change.
+ */
+export function describeMeasurement(result: LifetimeReadResult): string {
+  const loop =
+    result.loopDelayMs === null ? "loop not sampled" : `worst event-loop delay ${result.loopDelayMs.toFixed(1)} ms`;
+  if (result.flowControl === null) {
+    return `no flow control was needed · ${loop}`;
+  }
+  return result.flowControl.known
+    ? `flow control ${result.flowControl.ms.toFixed(1)} ms after the kernel saw the First Frame · ${loop}`
+    : `flow-control latency unmeasured (${result.flowControl.reason}) · ${loop}`;
+}
+
+/**
  * Whether a second ask is worth making.
  *
  * Only for the outcomes a retry can fix: silence and a discarded reply. A refusal, a
