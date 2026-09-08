@@ -157,7 +157,7 @@ sudo systemctl start cool-eva
 
 ⚠️ **The stop is for socket ownership, not because the bike refuses.** Two testers on one bus are resolved by whichever frame lands first — these micros answer on one id with no request tag — and the script opens its own socket while the service holds one. Whether the _service itself_, as the single tester, can run this read in-process is #156's second half.
 
-⚠️ **If the frames matter, start an independent `candump` first — and do not bounce the link.** That is how the 2026-09-08 frames for components 51 and 52 were lost: the interface went down, the capture unit's `Restart=on-failure` / `RestartSec=5` opened a new file five seconds later, and the two reads fell in the hole. Issues #160 and #171.
+⚠️ **Do not bounce the link if the frames matter.** That is how the 2026-09-08 frames for components 51 and 52 were lost: the interface went down, the capture unit's `Restart=on-failure` / `RestartSec=5` opened a new file five seconds later, and the two reads fell in the hole. Issues #160 and #171. ⚠️ **The "start an independent `candump` first" workaround that used to stand here is retired**: since `candump -D` the capture rides through a bounce in the same file, so a second capture would only duplicate it. What a bounce still costs is the time the interface is actually down — nothing can capture through that — so the advice not to bounce stands on its own. `docs/can-capture.md`.
 
 ## Reading it in-service
 

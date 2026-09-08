@@ -89,6 +89,8 @@ The dashboard's **CAN bus restart** button is unchanged and still there (`src/ht
 
 ⚠️ **Until 2026-09 neither was in this repo.** They existed as one copy on one SD card, with no revert path and no review, while producing the corpus that essentially every decode finding in `docs/` rests on. That is the finding, and it is why they are here now.
 
+**One guard was added that the Pi's copy did not have.** `capture.sh` now checks `command -v candump` before it does anything else. `exec … > "$OUTPUT"` is set up by the shell and truncates the file **before** exec'ing, so on a Pi without `can-utils` — not a default Raspberry Pi OS package, and this PR is the first thing to install the unit automatically — every restart would leave an empty capture in the directory the archive is swept from. `scripts/setup-service.ts` also refuses to enable the unit when candump is missing, and says how to install it.
+
 **`-D` is the whole behavioural change.** `Don't exit if a "detected" can device goes down`: candump keeps the socket, keeps the open file, and keeps writing. The kernel half is `raw_notify()` in `net/can/raw.c` — `NETDEV_DOWN` sets `sk_err = ENETDOWN` and does nothing else, leaving the socket bound with its filters registered, so frames resume by themselves and there is no `NETDEV_UP` case to need. Only `NETDEV_UNREGISTER` (the adapter unplugged) unbinds and reports `ENODEV`, which still exits and still gets a restart — that failure should be loud. `raw_bind()` on a device that is merely down reports `ENETDOWN` the same way, so `-D` also survives _starting_ before `can0` exists; the script's 120×2 s wait loop is still needed for the device to appear at all, and the two overlap without either being redundant.
 
 ### ⚠️ `-D` invalidates a forensic rule that is written down elsewhere
@@ -109,7 +111,9 @@ The script folds candump's stderr into the capture file. That is inherited behav
 
 Only `ExecStart` changes, to run the tracked script through `/bin/sh` (so a lost exec bit cannot fail the unit at boot with `203/EXEC`). `Restart=on-failure`, `RestartSec=5`, `User=root` and the `cool-eva` ordering are what has been running and are deliberately untouched.
 
-⚠️ **If a `StartLimit*` key is ever added here, it belongs in `[Unit]`.** `StartLimitIntervalSec=` and `StartLimitBurst=` have only ever been `[Unit]` keys; in `[Service]` systemd ignores them with one journal line nobody reads, so a rate limit believed to be disabled is still in force. There is none today and `scripts/check-can-capture.ts` keeps it that way. An earlier draft of this change set `RestartSec=1` and disabled the limit to save ~12 s a day at the 8 h rotation; that was dropped, because it also removes the only brake on a fast-fail loop writing empty files into the corpus directory.
+⚠️ **If a `StartLimit*` key is ever added here, it belongs in `[Unit]`.** `StartLimitIntervalSec=` and `StartLimitBurst=` have only ever been `[Unit]` keys; in `[Service]` systemd ignores them with one journal line nobody reads, so a rate limit believed to be disabled is still in force. There is none today and `scripts/check-can-capture.ts` keeps it that way.
+
+⚠️ **And there is no brake, which is worth knowing rather than assuming.** With `RestartSec=5` and systemd's defaults (`StartLimitBurst=5` in `StartLimitIntervalSec=10s`), five restarts span 25 s, so the burst is never reached: a unit that fails every time **restart-loops indefinitely at 0.2 Hz** rather than stopping in `failed`. An earlier draft of this change set `RestartSec=1` and disabled the limit to save ~12 s a day at the 8 h rotation; it was dropped because it quintuples that loop's rate for a saving nobody asked for, not because the default limit would have caught anything. What actually bounds the damage is the `command -v candump` guard in `capture.sh`: the loop then writes no files, because `exec … > "$OUTPUT"` never runs.
 
 ## The residual hole
 

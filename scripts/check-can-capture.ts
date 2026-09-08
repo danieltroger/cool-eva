@@ -22,13 +22,16 @@ const execFileAsync = promisify(execFile);
 const CAPTURE_SCRIPT = new URL("./can-capture/capture.sh", import.meta.url);
 
 const script = await readFile(CAPTURE_SCRIPT, "utf8");
-const unit = canCaptureUnitText("/home/pi/cool-eva");
+const PROJECT_DIR = "/opt/probe-project-dir";
+const unit = canCaptureUnitText(PROJECT_DIR);
 const failures: string[] = [];
 
-// The line that does the work. Everything below is about this one command.
-const candumpLine = script.split("\n").find(line => line.includes("candump") && !line.trimStart().startsWith("#"));
+// The line that does the work. Everything below is about this one command. Matched on
+// `exec` rather than on "candump", which also appears in the guard above it — the loose
+// version silently pointed every assertion below at the wrong line.
+const candumpLine = script.split("\n").find(line => line.trimStart().startsWith("exec ") && line.includes("candump"));
 if (!candumpLine) {
-  failures.push("capture.sh no longer invokes candump at all");
+  failures.push("capture.sh no longer exec's candump");
 }
 
 if (candumpLine && !/\s-D(\s|$)/.test(candumpLine)) {
@@ -50,6 +53,20 @@ if (candumpLine && !candumpLine.includes("2>&1")) {
   );
 }
 
+// -tA is the wire format every reader of these files assumes: scripts/replay-capture.ts
+// parses it, and so does every awk recipe in docs/. -td would parse as garbage silently.
+if (candumpLine && !/\s-tA(\s|$)/.test(candumpLine)) {
+  failures.push(
+    `the candump invocation is not -tA — replay-capture.ts and the awk recipes in docs/ all assume absolute timestamps: ${candumpLine.trim()}`
+  );
+}
+
+// ⚠️ -D promoted this to the ONLY bound on a capture file's size: nothing else now ends
+// one. Without it a single boot writes until the card fills.
+if (candumpLine && !/\btimeout\s+\d+/.test(candumpLine)) {
+  failures.push("the candump invocation has lost its `timeout` — with -D nothing else ever closes a capture file");
+}
+
 if (candumpLine && !/>\s*"\$OUTPUT"/.test(candumpLine)) {
   failures.push(`the candump output no longer goes to "$OUTPUT": ${candumpLine.trim()}`);
 }
@@ -58,13 +75,28 @@ if (candumpLine && !/>\s*"\$OUTPUT"/.test(candumpLine)) {
 // is tmpfs and the Pi loses power with the bike" — and this is not hypothetical drift:
 // scripts/replay-capture.ts carried a stale "/tmp/ride-captures" for months, which is
 // exactly the wrong path waiting to be copied back into the script it describes.
-const directory = /^DIRECTORY=(\S+)/m.exec(script)?.[1];
+// Quotes stripped first: `DIRECTORY="/tmp/…"` would otherwise sail straight past the test.
+const directory = /^DIRECTORY=(\S+)/m.exec(script)?.[1]?.replace(/^["']|["']$/g, "");
 if (!directory) {
   failures.push("capture.sh no longer sets DIRECTORY");
 } else if (/^\/(tmp|run|dev\/shm)\b/.test(directory)) {
   failures.push(
     `capture.sh writes to ${directory}, which is tmpfs — the bike power-cycles the Pi and the whole capture is lost`
   );
+}
+
+// ⚠️ A healthy DIRECTORY is not the same as the file living in it. Repointing OUTPUT alone
+// at /tmp leaves every other assertion here green while a power cut takes the whole boot's
+// capture with it.
+if (!/^OUTPUT="\$DIRECTORY\//m.test(script)) {
+  failures.push('capture.sh no longer builds OUTPUT from "$DIRECTORY" — the file could sit anywhere, tmpfs included');
+}
+
+// can-utils is not a default Raspberry Pi OS package, and `exec … > "$OUTPUT"` truncates the
+// file in the SHELL before exec'ing — so without this guard a missing candump leaves one
+// empty capture per restart in the directory the archive is swept from.
+if (!/if ! command -v candump/.test(script)) {
+  failures.push("capture.sh no longer checks that candump exists before creating the output file");
 }
 
 // The name has to stay unique per boot without trusting the clock: this Pi has no RTC and
@@ -84,8 +116,11 @@ if (waitIndex === -1 || execIndex === -1 || waitIndex > execIndex) {
 
 // `/bin/sh <script>` so a lost exec bit cannot break the unit at boot with 203/EXEC —
 // nothing else tracked in this repo is executable.
-if (!unit.includes("ExecStart=/bin/sh ") || !unit.includes("/scripts/can-capture/capture.sh")) {
-  failures.push(`the unit's ExecStart no longer runs the tracked script through /bin/sh:\n${unit}`);
+if (!unit.includes(`ExecStart=/bin/sh ${PROJECT_DIR}/scripts/can-capture/capture.sh`)) {
+  failures.push(
+    `the unit's ExecStart does not run the tracked script, under the project directory it was given, through ` +
+      `/bin/sh — a hardcoded path would install a unit pointing at someone else's checkout:\n${unit}`
+  );
 }
 
 // ⚠️ StartLimitIntervalSec / StartLimitBurst are [Unit] keys. systemd IGNORES them in
