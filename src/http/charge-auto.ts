@@ -90,9 +90,10 @@ export const CHARGE_AUTO_REASON_TEXT: Record<number, string> = {
   [CHARGE_AUTO_REASON.RIDER]: "You set the current on the bike — stood down for this charge.",
   [CHARGE_AUTO_REASON.NO_HISTORY]: "Watching. Not enough temperature history yet to see a trend.",
   [CHARGE_AUTO_REASON.BLIND_DESCENT]: "Arrived hot with no trend yet — easing the current down.",
-  [CHARGE_AUTO_REASON.HARD_CEILING]: "Close to the limit — holding the current down.",
+  [CHARGE_AUTO_REASON.HARD_CEILING]: "At the temperature limit — reducing the current.",
   [CHARGE_AUTO_REASON.CLOSING]: "Heating towards the limit — reducing the current.",
   [CHARGE_AUTO_REASON.CLEAR]: "Plenty of thermal room — giving current back.",
   [CHARGE_AUTO_REASON.SETTLED]: "Holding — this current keeps the pack where it should be.",
+  [CHARGE_AUTO_REASON.NEAR_CEILING]: "Near the limit — holding this current steady, not raising it.",
   [CHARGE_AUTO_REASON.AT_FLOOR]: `At the ${MIN_COMMAND_A} A floor — going lower would be slower than not acting.`,
 };

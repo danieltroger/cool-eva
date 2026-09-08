@@ -2,7 +2,8 @@ import {
   BLIND_DESCENT_FROM_C,
   CHARGE_AUTO_REASON,
   CLIFF_C,
-  HARD_CEILING_C,
+  NO_RAISE_FROM_C,
+  STEP_DOWN_FROM_C,
   HORIZON_MIN,
   MIN_COMMAND_A,
   decideChargeCurrent,
@@ -11,6 +12,7 @@ import {
 import { estimateHeatingRate, RATE_MIN_SPAN_MS, RATE_WINDOW_MS, type TemperatureSample } from "../src/charge/rate.ts";
 import {
   COLD_PLANTS,
+  CROSSING_GRID,
   PLANTS,
   RECOVERY_PLANT,
   REPLAY_SESSIONS,
@@ -19,6 +21,7 @@ import {
   replayCharge,
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
+import { COOLING_AT_53_MS, COOLING_EPISODE, DRIFTING_AT_53_MS, DRIFTING_EPISODE } from "./charge-auto-episode.ts";
 import { REASON_RIDER, toggleAction } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
 
@@ -320,16 +323,18 @@ if (HORIZON_MIN * 60_000 < RATE_WINDOW_MS / 2) {
       `which is the estimator's own lag — the horizon was sized against it`
   );
 }
-if (HARD_CEILING_C >= CLIFF_C) {
-  failures.push(`§6 HARD_CEILING_C (${HARD_CEILING_C}) must sit below the cliff (${CLIFF_C})`);
+if (STEP_DOWN_FROM_C >= CLIFF_C || NO_RAISE_FROM_C >= STEP_DOWN_FROM_C) {
+  failures.push(
+    `§6 the tiers must read NO_RAISE (${NO_RAISE_FROM_C}) < STEP_DOWN (${STEP_DOWN_FROM_C}) < cliff (${CLIFF_C})`
+  );
 }
 // ⚠️ Asserted rather than left to luck. The hard ceiling is evaluated on temperature ALONE and
 // before the rate branch, but if the blind-descent threshold ever rose above it there would be a
 // band where a pack too hot to see is neither descended nor ceilinged — which is the "54.16 °C and
 // the controller never acted" scenario the plan review caught in an earlier draft.
-if (BLIND_DESCENT_FROM_C > HARD_CEILING_C) {
+if (BLIND_DESCENT_FROM_C > STEP_DOWN_FROM_C) {
   failures.push(
-    `§6 BLIND_DESCENT_FROM_C (${BLIND_DESCENT_FROM_C}) is above HARD_CEILING_C (${HARD_CEILING_C}), leaving a band ` +
+    `§6 BLIND_DESCENT_FROM_C (${BLIND_DESCENT_FROM_C}) is above STEP_DOWN_FROM_C (${STEP_DOWN_FROM_C}), leaving a band ` +
       `where a pack with no usable rate is neither descended nor held down`
   );
 }
@@ -408,6 +413,161 @@ if (!/you set the current/i.test(stoodDown.note)) {
   failures.push(`§9 the stood-down note does not say why the Pi stopped: "${stoodDown.note}"`);
 }
 
+// ── §10 the two tiers, against a REAL thermal episode ──────────────────────
+//
+// ⚠️ The simulated plant cannot reach the state these tiers are for — its packs are always rising or
+// pinned at the floor, never sitting with a fitted slope near zero at a reading of 53. The bike gets
+// there by oscillating across the boundary. So this section is driven by logged `batt_temp_hi`
+// (scripts/charge-auto-episode.ts) and it is the ONLY thing that would notice either tier going
+// away. Behaviour is asserted, never the reason code: two of an earlier draft's three fixtures
+// passed with the tier deleted because only the code changed.
+/** Reasons the real-episode fixtures produce, checked below against the ones §6 could not reach. */
+const exercisedByEpisode: number[] = [];
+
+const coolingAt53 = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 53,
+  commandedAmps: 60,
+  samples: COOLING_EPISODE,
+  nowMs: COOLING_AT_53_MS,
+});
+exercisedByEpisode.push(coolingAt53.reason);
+if (coolingAt53.kind !== "hold") {
+  failures.push(
+    `§10 the pack read 53 °C while FALLING (13:51 on 2026-08-08, on its way to 50) and the controller ` +
+      `moved to ${coolingAt53.kind === "command" ? `${coolingAt53.amps} A` : "act"} — the old single ceiling ` +
+      `throttled this four ticks running, which is the whole reason for the no-raise tier`
+  );
+}
+// ⚠️ STEP_DOWN_FROM_C's remaining unique job. From NO_RAISE_FROM_C upward the time-to-cliff test
+// already targets it, so a RISING pack at 54 steps down with the tier deleted — same amps, only the
+// reason differs. What survives only here is the pack that is flat or COOLING at 54, where the rate
+// says there is all the time in the world and the reading says it may be a hundredth from the cliff.
+const coolingAt54 = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 54,
+  commandedAmps: 60,
+  samples: COOLING_EPISODE,
+  nowMs: COOLING_AT_53_MS,
+});
+if (coolingAt54.kind !== "command" || coolingAt54.amps >= 60) {
+  failures.push(
+    `§10 a pack reading 54 °C while cooling must still be stepped down — the reading says it may be ` +
+      `54.99 and no signal on this bus resolves that. Got ${JSON.stringify(coolingAt54)}`
+  );
+}
+// ⚠️ THE TIER'S HEADLINE JOB, and the one an earlier draft left unasserted: a pack at a reading of
+// 53 drifting slowly UP must not have its current RAISED. Only rates below 0.0833 K/min decide
+// anything here — above that the time-to-cliff test acts anyway — so this is the band, on real
+// logged data. Adding `&& rate.perMinute <= 0` to the hold passes every other assertion.
+const driftingAt53 = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 53,
+  commandedAmps: 60,
+  samples: DRIFTING_EPISODE,
+  nowMs: DRIFTING_AT_53_MS,
+});
+exercisedByEpisode.push(driftingAt53.reason);
+if (driftingAt53.kind !== "hold") {
+  failures.push(
+    `§10 a pack reading 53 °C and drifting slowly UP (2026-09-07 15:26, +0.037 K/min) must not have its ` +
+      `current raised — it may already be at 53.99. Got ${JSON.stringify(driftingAt53)}`
+  );
+}
+
+// The no-raise tier must not become a no-DESCEND tier: a pack at 53 closing fast still steps down.
+const risingAt53 = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 53,
+  commandedAmps: 60,
+  samples: climbing(48, 53),
+  nowMs: 700_000,
+});
+if (risingAt53.kind !== "command" || risingAt53.amps >= 60) {
+  failures.push(`§10 a pack at 53 °C climbing fast must still be reduced, got ${JSON.stringify(risingAt53)}`);
+}
+
+// ⚠️ NEAR_CEILING is produced only by the real-episode fixtures — the plant never reaches it — so
+// it is asserted here rather than in §6, which runs before them. A reason nothing emits is a reason
+// nobody will ever see on the dash.
+if (!exercisedByEpisode.includes(CHARGE_AUTO_REASON.NEAR_CEILING)) {
+  failures.push("§10 no fixture ever produces NEAR_CEILING — the no-raise tier is not being reached");
+}
+
+// ── §11 the crossing set over a frozen grid ────────────────────────────────
+//
+// ⚠️ THE ONE ASSERTION THAT NOTICES A RULE GETTING LESS SAFE WITHOUT GETTING WRONG. Every other
+// section here judges the controller against the do-nothing baseline or against a fixture; none of
+// them can see "this still never crosses where the baseline does, but it now crosses in six places
+// the PREVIOUS rule did not". Measured: measuring time-to-cliff against 55 rather than 54 from a
+// reading of 53 does exactly that, and every other section stays green.
+//
+// A golden count over a FROZEN grid, because the alternative is keeping the old rule alive in the
+// tree forever to diff against. If the grid moves the number is meaningless — see CROSSING_GRID.
+// ⚠️ The SET, not just the count. A count alone blames the rule for anything that moves the grid —
+// a plant refit, a different rate window, a different horizon — and reports it as "less safe" with
+// a confident and wrong diagnosis. Naming which plants cross says whether the change added new ones
+// or merely moved the boundary, which are different findings. The old and shipped rules cross on
+// exactly these, worst margin 0.0145 K for both.
+const EXPECTED_CROSSINGS = [
+  "40/39/0.0044",
+  "44/30/0.0044",
+  "44/35/0.0044",
+  "44/39/0.0044",
+  "48/30/0.0044",
+  "48/35/0.0044",
+  "48/39/0.0044",
+  "51/25/0.0044",
+  "51/30/0.0044",
+  "51/35/0.0044",
+  "51/39/0.0044",
+  "51/39/0.0089",
+  "54/10/0.0044",
+  "54/18/0.0044",
+  "54/25/0.0044",
+  "54/25/0.0089",
+  "54/30/0.0044",
+  "54/30/0.0089",
+  "54/35/0.0044",
+  "54/35/0.0089",
+  "54/35/0.0134",
+  "54/39/0.0044",
+  "54/39/0.0089",
+  "54/39/0.0134",
+];
+const crossed: string[] = [];
+for (const arrivalC of CROSSING_GRID.arrivals) {
+  for (const ambientC of CROSSING_GRID.ambients) {
+    for (const cooling of CROSSING_GRID.coolings) {
+      const run = replayCharge({
+        arrivalC,
+        ambientC,
+        cooling,
+        fromSoc: CROSSING_GRID.fromSoc,
+        toSoc: CROSSING_GRID.toSoc,
+      });
+      if (run.peakC >= CLIFF_C) {
+        crossed.push(`${arrivalC}/${ambientC}/${cooling.toFixed(4)}`);
+      }
+    }
+  }
+}
+const added = crossed.filter(plant => !EXPECTED_CROSSINGS.includes(plant));
+const removed = EXPECTED_CROSSINGS.filter(plant => !crossed.includes(plant));
+if (added.length > 0) {
+  failures.push(
+    `§11 the rule now crosses ${CLIFF_C} °C on ${added.length} plant(s) it did not before ` +
+      `(arrival/ambient/cooling: ${added.join(", ")}) — LESS safe than what it replaced`
+  );
+}
+if (removed.length > 0 && added.length === 0) {
+  failures.push(
+    `§11 ${removed.length} plant(s) no longer cross (${removed.join(", ")}). That may be an improvement — ` +
+      `re-derive the frozen set and say why in the commit, rather than letting it drift silently`
+  );
+}
+const crossings = crossed.length;
+
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);
   for (const failure of failures) {
@@ -423,7 +583,9 @@ console.log(
     `at best ${(-bestSaving).toFixed(1)}; DC2 finishes ${saved.toFixed(1)} min sooner and under the cliff, which ` +
     `neither a controller stuck at the ceiling nor one stuck at the floor can do; the floor stays above the ` +
     `${breakEven.toFixed(1)} A break-even; every branch is exercised, every reason code is inside bounds.js, ` +
-    `and every reason code has wording; and taking the controller back after a manual change is one tap`
+    `and every reason code has wording; and taking the controller back after a manual change is one tap; and against a real 2026-08-08 ` +
+    `thermal episode a pack cooling through 53 °C is left alone while one at 54 °C is still reduced; and ` +
+    `${crossings} of ${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} frozen-grid plants cross the cliff, as many as before and no more`
 );
 
 /** A whole-degree ramp over ten minutes, sampled when the integer changes, as the bike delivers it. */

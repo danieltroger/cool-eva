@@ -145,7 +145,7 @@ const BY_KEY = {
   // §7 asserts every one of them fits, since a code outside it renders as a dead sensor and the
   // page silently holds the previous reason.
   "charge_auto_mode": [0, 1],
-  "charge_auto_reason": [0, 11],
+  "charge_auto_reason": [0, 12],
   "charge_auto_target_a": [0, 127],
   // The charge manager's flags and raw state bytes (src/can/charge-manager.ts), added
   // 2026-08-19. Every one of them needs naming here for the same reason

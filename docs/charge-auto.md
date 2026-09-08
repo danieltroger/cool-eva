@@ -38,20 +38,39 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 
 ⚠️ **And the window is anchored.** The same mistake has a second timescale: a pack holding one whole degree emits nothing at all, so after ten minutes the window simply _empties_ and the answer flips back to `unknown` — firing exactly when the controller **succeeds**, because a current low enough to hold the temperature steady is a current that stops the reading ticking. Measured on the shipped modules before the fix: 74 A → 35 A in eight minutes on a pack whose own history proves it is not heating. So the estimator keeps the newest sample from _before_ the window as an anchor, and `src/charge/auto.ts` keeps one such sample in the ring rather than trimming it away.
 
-⚠️ **`HARD_CEILING_C` is evaluated on temperature alone, and first.** It sat after the `unknown` branch, so whether it applied depended on whether a rate happened to be measurable — the same "gated behind an estimate" bug caught in the plan review, structurally back, and masked only by `BLIND_DESCENT_FROM_C` happening to sit below it. `scripts/check-charge-auto.ts` §6 now asserts that ordering rather than leaving it to luck.
+⚠️ **`STEP_DOWN_FROM_C` is evaluated on temperature alone, and first.** It sat after the `unknown` branch, so whether it applied depended on whether a rate happened to be measurable — the same "gated behind an estimate" bug caught in the plan review, structurally back, and masked only by `BLIND_DESCENT_FROM_C` happening to sit below it. `scripts/check-charge-auto.ts` §6 now asserts that ordering rather than leaving it to luck.
 
 ## The numbers, and where each comes from
 
 |  | value | why |
 | --- | --- | --- |
 | `HORIZON_MIN` | 8 min | **Simulated, not chosen.** At 5 min the closed loop peaks at 54.0–54.3 °C — inside one quantisation step of the cliff on a whole-degree sensor read against a two-anchor model, which is not a margin. At 8 it peaks 51.7–52.7 for 3–11 % of mean current. ⚠️ Coupled to `RATE_WINDOW_MS`: it must cover the estimator's own lag (half the window) plus the descent. |
-| `HARD_CEILING_C` | 53 °C | Where a merely _bounded_ rate stops being worth trusting. Its job is to stop a bound stepping the current back up next to the cliff, and on the two hot replays it is the branch that fires most. |
+| `NO_RAISE_FROM_C` | 53 °C | Stop **raising** the current. A reading of 53 can be a true 53.99, so adding current there can push the pack into the next tier's band before the next tick shows it. ⚠️ This half used to step **down** unconditionally, ratcheting a pack that was sitting perfectly still all the way to the floor. |
+| `STEP_DOWN_FROM_C` | 54 °C | Step down on temperature **alone**, whatever the rate says — the reading cannot resolve the last degree. See the margin argument below. |
 | `BLIND_DESCENT_FROM_C` | 50 °C | Only a pack that is already hot justifies acting with no history. A cool one is minutes of climbing away from mattering, so waiting costs nothing. |
 | **`MIN_COMMAND_A`** | **35 A** | ⚠️ **The one knob that matters.** Capping below this is worse than not acting: the cliff's saw-tooth averages a measured **35.3 A** duty-weighted (1.30 min/SOC-point), so break-even is `0.53 × 72.6 / 1.30 = 29.6 A`, and a 25 A floor would be **18 % slower than doing nothing**. 35 A is 15 % faster than the saw-tooth and on the dial's own grid. |
 | `STEP_A` | 5 A | The dash's dial granularity, so a rider taking over sees the same numbers. |
 | `RATE_WINDOW_MS` | 10 min | ≥3 periods of the longest (1–3 min) saw-tooth, so the slope is bulk drift rather than oscillation. Fitting to the saw-tooth over-predicts the real climb by **3.5×**. |
 | `AUTO_TICK_MS` | 60 s | The input changes every 1.5–2.5 min on a steady charge; updating faster than that adds bus frames and dash flicker for nothing. |
 | `RELEASE_FACTOR` | 1.5 | The hysteresis. Give current back only when the cliff is comfortably far, or the controller chatters around the threshold. |
+
+## Two tiers, and why they are 53 and 54
+
+⚠️ **The time-to-cliff rule cannot see the last degree.** `batt_temp_hi` is whole degrees, so a reading of 54 means the pack is anywhere in **[54, 55)** — and the rule measures from the _reading_, so it over-states the time left by up to a whole degree's worth, `1/R` minutes:
+
+| observed rate | rule says | worst true time left | reduced? |
+| ------------- | --------- | -------------------- | -------- |
+| 0.050 K/min   | 20.0 min  | 0.20 min             | **no**   |
+| 0.100 K/min   | 10.0 min  | 0.10 min             | **no**   |
+| 0.125 K/min   | 8.0 min   | 0.08 min             | yes      |
+
+A pack reading 54 and rising slower than 0.125 K/min is invisible to it, yet can be a hundredth of a degree from the cliff. **Nothing on this bus resolves that**: every pack-temperature signal is integral — `batt_temp_hi`, `batt_temp_lo`, `pack_temp_avg`, both `_vcu` variants and all twelve per-module readings. The only fractional thermal signals are the motor, the inverter and the coolant probes. So `STEP_DOWN_FROM_C` is the correction for a quantisation the time-to-cliff test computes as if it were resolved, and 53/54 is the **maximum safe pair** — holding a reading of 54 would mean accepting a true 54.99.
+
+⚠️ **The same correction applies one degree lower, and leaving it out is a safety regression.** From `NO_RAISE_FROM_C` the time-to-cliff test targets **54**, not 55. Without that, a pack reading 53 holds for any rate below 0.25 K/min while possibly being at 53.99 — and over a frozen 150-plant grid the two tiers then cross the cliff in **six places the previous single-ceiling rule did not**. With it: none, and the worst margin is unchanged. `scripts/check-charge-auto.ts` §11 pins that as a golden count, because it is the one property no other assertion can see — every other section compares against the do-nothing baseline, which cannot notice a rule that got less safe without getting wrong.
+
+**Considered and rejected:** applying the same correction _everywhere_ (targeting `reading + 1` at all temperatures). It is safer on every axis, but it makes the equilibrium **colder** — 52.47 °C against 53.01 — which is the opposite of what this change is for. Gating it at 53 keeps the correction where the margin is thin and leaves the rest of the range alone.
+
+⚠️ **What this does NOT show up in.** The simulated plant cannot produce the state these tiers exist for: its packs are always either rising or pinned at the floor, never sitting with a fitted slope near zero at a reading of 53. The real pack gets there by oscillating across the boundary — a limitation of the model's _shape_, not its constants. The evidence is therefore a **real logged episode** (`scripts/charge-auto-episode.ts`, 2026-08-08): across the logged series there are 71 ticks at a reading of 53, and on **20** of them the old rule steps the current down where this one holds, with none the other way round. The clearest is 13:51, where the pack read 53 while _falling_ to 50 and the old rule throttled it four ticks running.
 
 ## Fail-safe
 
@@ -79,8 +98,8 @@ Three real stops of 2026-09-07 (arrival temperature, ambient and SOC band all me
 
 - **Never peaks above the do-nothing baseline. 12/12.**
 - **Never causes a crossing the baseline did not have. 12/12.**
-- Worst time cost **+3.3 min**; best saving **−9.3 min**.
-- DC2 finishes **9.3 minutes sooner** and stays under the cliff — and neither a controller stuck at the ceiling nor one stuck at the floor can do that, which is the assertion that keeps the rest honest.
+- Worst time cost **+4.0 min**; best saving **−8.0 min**.
+- DC2 finishes **8.0 minutes sooner** and stays under the cliff — and neither a controller stuck at the ceiling nor one stuck at the floor can do that, which is the assertion that keeps the rest honest.
 
 ⚠️ **The limit, and it is not small.** The plant is the two-anchor model from one day, and the controller is designed precisely not to depend on it. So this shows the rule behaves across a 4× spread of cooling — the "works for one day's `b`" failure it exists to avoid — and it shows **nothing about the real bike**. Only a live charge does that.
 
