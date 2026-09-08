@@ -338,6 +338,13 @@ __MODULES__
             "gps_altitude_m": signal(84, "m", "gps"),
             "gps_course_deg": signal(228, "°", "gps"),
             "gps_satellites": signal(11, "", "gps"),
+            // A waypoint, so the Waypoints tile has something to draw in the preview.
+            // Greenwich, deliberately: a coordinate everyone recognises as a fixture, and
+            // one nobody can mistake for where this bike is kept. docs/route-map.md
+            // §"No coordinates anywhere" is why it is not a real one.
+            "waypoint_seq": signal(4, "", "waypoint"),
+            "waypoint_lat": signal(51.4779, "°", "waypoint"),
+            "waypoint_lon": signal(-0.0015, "°", "waypoint"),
             "waypoint_seq": signal(4, "", "waypoint"),
             // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
             // and permanent on this bike, because the coolant pump is wired to the

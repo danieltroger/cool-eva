@@ -1,9 +1,9 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, knownKeys, valueOf } from "../lib/store.js";
+import { chartTick, knownKeys, signalState, valueOf } from "../lib/store.js";
 import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
-import { bytes, compass, duration } from "../lib/format.js";
+import { bytes, clockTime, compass, duration } from "../lib/format.js";
 import * as units from "../lib/units.js";
 import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
@@ -155,10 +155,24 @@ function TripStats() {
       return metres == null ? "–" : `${Math.round(units.altitude(metres))} ${units.altitudeUnit()}`;
     }),
     Stat("Heading", () => compass(valueOf("gps_course_deg"))),
-    Stat("Waypoints", () => {
-      const saved = valueOf("waypoint_seq");
-      return saved == null ? "0" : String(Math.round(saved));
-    }),
+    // Where the last waypoint was and when, rather than a count. The count is still here
+    // as the `#`, but on its own it was a claim about the ride that a restart made false:
+    // waypoint_* live only in the server's liveState, so after a restart with none saved
+    // the old tile said "0" for a ride that may have had a dozen. Now it says so.
+    Stat(
+      "Waypoints",
+      () => {
+        const latitude = signalState("waypoint_lat").val;
+        const longitude = signalState("waypoint_lon").val;
+        // Four decimals is 11 m, which is enough to know which lay-by; the ALL tab has
+        // the full six if you are reading one out to somebody.
+        return latitude && longitude ? `${latitude.value.toFixed(4)}, ${longitude.value.toFixed(4)}` : "–";
+      },
+      () => {
+        const saved = signalState("waypoint_seq").val;
+        return saved ? `#${Math.round(saved.value)} · ${clockTime(saved.ts)}` : "none since restart";
+      }
+    ),
     Stat("Satellites", () => {
       const satellites = valueOf("gps_satellites");
       return satellites == null ? "–" : String(Math.round(satellites));
@@ -378,9 +392,17 @@ function UnitsToggle() {
 /**
  * @param {string} label
  * @param {() => string} value
+ * @param {() => string} [sub] a smaller second line, for a tile whose answer is two facts
  */
-function Stat(label, value) {
-  return div({ class: "stat" }, div({ class: "stat-label" }, label), div({ class: "stat-value" }, value));
+function Stat(label, value, sub) {
+  return div(
+    { class: "stat" },
+    div({ class: "stat-label" }, label),
+    div({ class: "stat-value" }, value),
+    // van skips a null child (`child != _undefined` in van-1.6.1.js:90), so a tile
+    // without a second line gets two divs exactly as it always did.
+    sub ? div({ class: "stat-sub" }, sub) : null
+  );
 }
 
 /** Refreshes /status while the sheet is open, and once at startup for the log size. */

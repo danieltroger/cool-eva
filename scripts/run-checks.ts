@@ -320,6 +320,20 @@ const CHECKS: SelfCheck[] = [
       "the user switch is proved on the argv, which is the only part testable without a second uid",
   },
   {
+    script: "scripts/check-waypoint-endpoint.ts",
+    covers:
+      "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): the " +
+      "four refusal branches a rider actually hears \u2014 no fix, an unsynced or contested clock, and, new here, " +
+      "a fix that is not a position on Earth \u2014 plus that a refusal records NOTHING and does not consume a " +
+      "sequence number, that a save copies the held fix rather than inferring one and stamps all three signals " +
+      "with a single timestamp, and that Siri's contract survives: no Accept header (or any other) gets one line " +
+      "of text/plain with 200, because Siri never speaks a non-2xx body. The clock is corroborated with real " +
+      "readings rather than faked with GPS_TIME_SYNC=0, which would delete the clock refusal instead of testing " +
+      "it; the verdict is in-agreement, so `date` is never spawned. \u26a0 The 30-second stale-fix branch is NOT " +
+      "covered \u2014 its age comes from a monotonic mark taken inside record(), so reaching it means waiting 31 " +
+      "real seconds against a suite that runs in ten",
+  },
+  {
     script: "scripts/check-virtual-clock.ts",
     covers:
       "scripts/virtual-clock.ts itself, against real setTimeout as the oracle: that same-instant timers fire in " +

@@ -91,6 +91,19 @@ export function ageInWords(epochMs) {
 }
 
 /**
+ * A time of day, in whatever timezone the phone is in.
+ *
+ * The bike stamps UTC — it has no RTC and steps its own clock from the satellites — and
+ * a rider asking when they saved something wants their own clock, so the conversion is
+ * the browser's rather than ours. Hours and minutes only: a waypoint's second is not a
+ * thing anyone reads off a tile.
+ * @param {number} epochMs
+ */
+export function clockTime(epochMs) {
+  return new Date(epochMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
  * Degrees to a compass point. A heading of 237° means nothing at speed; "SW" does.
  * @param {number | null} degrees
  */

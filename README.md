@@ -220,7 +220,9 @@ There is no test framework — `scripts/run-checks.ts` runs each check as its ow
 
 `GET /waypoint` stamps the current fix into the ride log and replies with one line of text, which Siri reads back. To set it up: **Shortcuts → new shortcut → Get Contents of URL → `http://cool-eva.local/waypoint`**, then add **Speak Text** with the result. Name it something like "Mark this spot" and it works from the handlebars.
 
-A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`), so it travels the normal path into the encrypted log and needs no change to the log format. It refuses to save on a fix older than 30 seconds, and says so rather than silently recording the wrong place.
+A waypoint is stored as three ordinary signals (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`), so it travels the normal path into the encrypted log and needs no change to the log format. It refuses to save on a fix older than 30 seconds, on an unsynced clock, or on a fix that is not a position on Earth, and says which rather than silently recording the wrong place — though a fix that is wrong while still being a legal coordinate is refused by none of those, only flagged later by the map ([#165](https://github.com/danieltroger/cool-eva/issues/165)).
+
+**Seeing them again:** the route map dashboard draws waypoints as stars, with a table under it listing every one in the window and whether the surrounding track backs its position up; the menu sheet's Waypoints tile shows the last one's position and time. `docs/waypoints.md` covers the gate and what it cannot see.
 
 ## Running it
 
