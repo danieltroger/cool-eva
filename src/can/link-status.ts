@@ -19,6 +19,16 @@ export interface CanLinkMonitor {
 }
 
 // e.g. "can0: <NOARP,ECHO> mtu 16 qdisc noop state DOWN mode DEFAULT group default qlen 10"
+//
+// ⚠ `-details` prints `state` TWICE for a CAN device — the link state on the first line
+// and the controller state (`state ERROR-ACTIVE`) on the `can` line below it. String.match
+// returns the FIRST, which is the one meant here, so this works by output ordering rather
+// than by asking for the field it wants. src/can/link-config.ts parses the same command's
+// `-json` form properly and could serve both; it is deliberately not wired in here yet,
+// because that would make this working dashboard signal newly dependent on a flag this Pi
+// has never been observed to accept. Once a first deploy proves `-json` (docs/can-capture.md
+// §"What the first deploy settles"), unifying them kills this ordering dependency and lets
+// the dot distinguish BUS-OFF from down instead of collapsing both to 0.
 const STATE_PATTERN = /\bstate (\S+)/;
 
 export function startCanLinkMonitor(iface = "can0", intervalMs = 15_000): CanLinkMonitor {

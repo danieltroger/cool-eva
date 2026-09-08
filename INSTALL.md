@@ -33,7 +33,7 @@ ip -details link show can0
 dmesg | grep -i usb_8dev
 ```
 
-The app itself brings can0 up (down -> set bitrate 500000 + active -> up) at startup, because it runs as root. You do NOT need to configure can0 in `/etc/network` or systemd-networkd.
+The app itself brings can0 up (down -> set bitrate 500000 + active -> up) at startup, because it runs as root. You do NOT need to configure can0 in `/etc/network` or systemd-networkd. It **skips** that down/up when the interface is already running at 500 kbit with `restart-ms 100` and the mode it wants, because the down kills every other socket on the bus — see [`docs/can-capture.md`](docs/can-capture.md). The startup log line says which path it took and why; ⚠️ that the skip fires on this hardware is unconfirmed until you have read that line once.
 
 **Cooling fan (skip unless you wired the IBT-2 — §0).** Unlike SPI, this needs `/boot/firmware/config.txt` edited by hand:
 
