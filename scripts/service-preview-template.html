@@ -164,15 +164,9 @@
 
       /* ---------- close-ups ----------
  *
- * Panels 2-6 are about ONE block of the write section. The whole section is rendered
- * and left bound — cutting a node out of a VanJS tree leaves the panel showing a copy
- * nothing updates any more — so the blocks a panel is not about are hidden instead.
- *
- * Both rules are GENERATED at boot, from SHEET_PREAMBLE and PANEL_BLOCK — see
- * installPanelScoping — so the counts and the markers are each written down once, and
- * nothing here can drift from what the runtime asserts. They were hand-written
- * :nth-child selectors against a section that had three blocks; it has had six since
- * 2026-08-27, and every close-up then framed something other than its own caption. */
+ * The rules that hide everything a close-up is not about are GENERATED at boot — see
+ * installPanelScoping. They were hand-written :nth-child selectors here, and what that
+ * cost is docs/diagnostics-and-checks.md §11.6. */
 
       /* ---------- the tier key ---------- */
 
@@ -981,12 +975,14 @@
       }
 
       /**
-       * How many of VcuWrite()'s children come before the block of controls — the heading,
-       * its note, the availability line and the failure line. The .pv-scope rule hides
-       * exactly these, by position, and this is that same count said in JS so a moved shape
-       * fails loudly here rather than quietly reframing every close-up.
+       * The write section's block of controls, named by the view itself.
+       *
+       * ⚠️ The last thing here that counted siblings. It was `SHEET_PREAMBLE = 4` — a fact
+       * owned by another file, restated here — and the growth that broke the close-ups is
+       * exactly the growth that moves it: a seventh child added to VcuWrite() turned every
+       * close-up red while none of them was about the new one.
        */
-      const SHEET_PREAMBLE = 4;
+      const CONTROLS_BLOCK = ".write-controls";
 
       /**
        * What identifies a close-up's block, FROM INSIDE IT — never by position, and never a
@@ -1008,13 +1004,12 @@
       function installPanelScoping() {
         const sheet = document.createElement("style");
         sheet.textContent = [
-          // The sheet's preamble — heading, its note, availability, the failure line — is no
-          // part of any close-up. Generated from the same constant the settle guard counts
-          // against, so the rule and the guard cannot come to say different numbers.
-          `.pv-scope > div > :nth-child(-n + ${SHEET_PREAMBLE}) { display: none; }`,
+          // Everything beside the controls — the heading, its note, availability, the failure
+          // line — is no part of any close-up.
+          `.pv-scope > div > :not(${CONTROLS_BLOCK}) { display: none; }`,
           ...Object.entries(PANEL_BLOCK).map(
             ([kind, marker]) =>
-              `.pv-scope-${kind} > div > :nth-child(${SHEET_PREAMBLE + 1}) > :not(:has(${marker})) { display: none; }`
+              `.pv-scope-${kind} > div > ${CONTROLS_BLOCK} > :not(:has(${marker})) { display: none; }`
           ),
         ].join("\n");
         document.head.appendChild(sheet);
@@ -1031,18 +1026,23 @@
        * with :not(:has(…)) a marker matching NO block hides all six rather than none.
        */
       function assertScopedToOneBlock(blocks, marker) {
-        // getComputedStyle on a DETACHED node answers "" for everything, so a stale reference
-        // would read as six visible blocks and blame the stylesheet. Said as what it is.
+        // Belt and braces. controlsOf() re-queries from a `body` that boot() has already put in
+        // the document, so a connected node is the contract — but getComputedStyle on a
+        // detached one answers "" per block, which would read as six visible and blame the CSS.
         if (!blocks?.isConnected) {
-          throw new Error("preview: the write section's controls are not in the document — a stale node, not a scoping fault");
+          throw new Error("preview: the write section has not rendered its controls into the document");
         }
-        const matched = [...blocks.children].filter(block => block.querySelector(marker) !== null);
-        const visible = [...blocks.children].filter(block => getComputedStyle(block).display !== "none");
+        const children = [...blocks.children];
+        const matched = children.filter(block => block.querySelector(marker) !== null);
+        const visible = children.filter(block => getComputedStyle(block).display !== "none");
         if (matched.length !== 1 || visible.length !== 1 || visible[0] !== matched[0]) {
+          // ⚠️ The INDICES, not just the counts. "matches 1 and 1 is visible", followed by a
+          // failure, reads as self-contradictory — and the number that diagnoses it, which
+          // block is showing instead of which, is the one a bare count leaves out.
+          const at = blocks => blocks.map(block => children.indexOf(block)).join(", ") || "none";
           throw new Error(
-            `preview: ${marker} matches ${matched.length} of the write section's ${blocks.children.length} ` +
-              `blocks and ${visible.length} of them ${visible.length === 1 ? "is" : "are"} visible — ` +
-              "this panel is not showing the block its caption names"
+            `preview: ${marker} matches block ${at(matched)} of ${children.length} but block ${at(visible)} ` +
+              "is what is visible — this panel is not showing the block its caption names"
           );
         }
       }
@@ -1194,10 +1194,12 @@
         // binding, so it can arrive a tick after the block holding it. A marker that never
         // arrives times out saying WHICH marker, which is the whole difference between this
         // failing legibly and failing the way it did.
-        await settle(() => controlsOf(body).querySelector(marker), `${marker} — this panel's block marker`);
+        await settle(() => controlsOf(body)?.querySelector(marker), `${marker} — this panel's block marker`);
         assertScopedToOneBlock(controlsOf(body), marker);
 
         if (panel.open) {
+          // Resolves on its first attempt: only `actions` panels carry `open`, and the fold's
+          // toggle is the very element PANEL_BLOCK.actions names, so the wait above found it.
           (await settle(() => body.querySelector("button.risk-fold"), "the fold's toggle")).click();
           await settle(() => body.querySelector(".danger-zone"), "the fold's contents, opened");
         }
@@ -1244,14 +1246,13 @@
         if (!section) {
           return null;
         }
-        if (section.children.length !== SHEET_PREAMBLE + 1) {
-          // Thrown rather than left to time out: from a 4 s deadline a moved shape and a slow
-          // render look identical, and that is how this went unnoticed for twelve days.
-          throw new Error(
-            `preview: VcuWrite() rendered ${section.children.length} children, not the ${SHEET_PREAMBLE + 1} .pv-scope is written against`
-          );
+        const blocks = section.querySelectorAll(`:scope > ${CONTROLS_BLOCK}`);
+        if (blocks.length > 1) {
+          // Thrown rather than left to time out: from a 4 s deadline an ambiguous shape and a
+          // slow render look identical, and that is how this went unnoticed for twelve days.
+          throw new Error(`preview: VcuWrite() rendered ${blocks.length} ${CONTROLS_BLOCK} blocks, not the one it should`);
         }
-        return section.children[SHEET_PREAMBLE];
+        return blocks[0] ?? null;
       }
 
       async function boot() {
@@ -1282,6 +1283,13 @@
             stage.appendChild(failure);
           }
         }
+        // ⚠️ The COUNT too, not just readiness. boot() catches every panel's failure into a
+        // visible note, so a page full of dead panels still reports ready — which is how five
+        // of seven stayed broken for twelve days. Stamped where a check, or a ctrl-F, can see it.
+        // Scoped to `.pv-stage`: a panel's failure note is appended to its stage, while the
+        // page's own intro note is also a `.pv-note` — counting both reported one failure on a
+        // perfect page, which is how a signal stops being read.
+        document.documentElement.dataset.previewFailed = String(document.querySelectorAll(".pv-stage .pv-note").length);
         document.documentElement.dataset.previewReady = "yes";
       }
 

@@ -721,42 +721,6 @@ __MODULES__
         speed.val = { value: 0, unit: "km/h", group: "gps", ts: NOW };
       }
 
-      // ── waiting on VanJS ─────────────────────────────────────────────────────────
-      //
-      // van schedules DOM updates on a microtask, and several of these steps go through a
-      // stubbed fetch first, so every step waits for the DOM it needs rather than guessing
-      // at a delay.
-
-      function settle(test) {
-        return new Promise((resolve, reject) => {
-          const deadline = Date.now() + 4000;
-          const attempt = () => {
-            let found = null;
-            try {
-              found = test();
-            } catch (error) {
-              reject(error);
-              return;
-            }
-            if (found) {
-              resolve(found);
-              return;
-            }
-            if (Date.now() > deadline) {
-              reject(new Error("preview: timed out waiting for the sheet to settle"));
-              return;
-            }
-            requestAnimationFrame(attempt);
-          };
-          attempt();
-        });
-      }
-
-      /** A button by a distinctive fragment of its caption — never by its glyph. */
-      function buttonSaying(root, fragment) {
-        return [...root.querySelectorAll("button")].find(node => node.textContent.includes(fragment)) ?? null;
-      }
-
 
       // The real entry point. public/app.js mounts itself into document.body on
       // import, exactly as it does behind index.html, so there is nothing to call.

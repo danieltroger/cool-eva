@@ -139,18 +139,26 @@ if (kinds.length < PANELS_DECLARED) {
 // every close-up throwing at render — which nothing here can see, because this check
 // parses the generated page and never runs it. So the markers are read out of the
 // template rather than restated, and each is looked for in the view it points at.
-const failuresBefore = failures.length;
+// ⚠️ Every settle() names what it waits for, asserted HERE rather than only by the runtime
+// throw beside it — that throw fires in a browser, and this check never opens one. One
+// unchanging "timed out waiting for the sheet to settle" is what hid five dead panels for
+// twelve days, so a wait added without a description has to fail where somebody is looking.
+// Call sites only: not the declaration, and not the `settle()` inside its own error message.
+const waits = [...annotated.matchAll(/(?<!function )\bsettle\((?!\))/g)].length;
+const described = [...annotated.matchAll(/(?<!function )\bsettle\((?!\))[^;]*?,\s*(?:`|"|'|[A-Za-z_$])/gs)].length;
+if (waits > 0 && described !== waits) {
+  failures.push(`${waits - described} of the annotated sheet's ${waits} settle() waits do not say what they wait for`);
+}
+
 const declaration = /const PANEL_BLOCK = \{([^}]*)\}/.exec(annotated);
 if (!declaration) {
   failures.push("the annotated sheet declares no PANEL_BLOCK, so nothing tells a close-up which block it is about");
 } else {
+  const failuresBefore = failures.length;
   const entries = [...declaration[1].matchAll(/(\w+): "([^"]+)"/g)].map(match => ({
     kind: match[1],
     marker: match[2],
   }));
-  if (entries.length === 0) {
-    failures.push("PANEL_BLOCK is empty — every close-up would show the whole write section");
-  }
   // ⚠️ Every close-up kind needs an entry, and only the runtime could say so before: a panel
   // of an unlisted kind throws when it is staged, which nothing in this suite ever does.
   // `key` and `sheet` are the two that render no close-up and so need no block.
@@ -163,7 +171,9 @@ if (!declaration) {
   // and it is 2 011 lines against CLAUDE.md's ~400 — so the split that file is owed would
   // turn this red while the preview was perfectly fine. Searching the lot also STRENGTHENS
   // the count: uniqueness now means unique in everything the bundle can render, not in one file.
-  const views = await readdir(new URL("../public/views", import.meta.url));
+  // Sorted: readdir order is the filesystem's, and the ambiguity message below names the
+  // files it found, which should read the same on every machine.
+  const views = (await readdir(new URL("../public/views", import.meta.url))).sort();
   const sources = await Promise.all(
     views
       .filter(name => name.endsWith(".js"))
@@ -177,8 +187,9 @@ if (!declaration) {
     // an <input>). And the count must be ONE, because tag-plus-class is written twice for
     // `select.probe-input` — so renaming just the picker a close-up holds left this green
     // while both form panels died at render. Uniqueness is what makes a rename unmissable.
-    const [tag, className] = marker.split(".");
-    if (!tag || !className || marker.split(".").length !== 2) {
+    const parts = marker.split(".");
+    const [tag, className] = parts;
+    if (parts.length !== 2 || !tag || !className) {
       failures.push(`${marker} is not the tag.class a close-up marker has to be`);
       continue;
     }

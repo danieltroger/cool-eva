@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "generate:grafana-dtc": "node --experimental-strip-types scripts/generate-grafana-dtc.ts",
     "check:grafana-dtc": "node --experimental-strip-types scripts/generate-grafana-dtc.ts --check",
+    "preview": "node --experimental-strip-types scripts/build-service-preview.ts",
     "test": "node --experimental-strip-types scripts/run-checks.ts"
   },
   "keywords": [],

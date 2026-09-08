@@ -229,7 +229,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-service-preview.ts",
     covers:
-      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: each PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE in public/views/vcu-write.js, tag and whole class token — once, because the pair it used to name is written twice, so renaming the one a close-up holds kept a looser version of this green while both form panels died at render. It proves the marker still names something unique and nothing more: it cannot see a dead panel, since it parses the generated page rather than running it. docs/diagnostics-and-checks.md §11.6 says what that costs and what the runtime asserts instead",
+      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",
   },
   {
     script: "scripts/check-freeze-frame.ts",
