@@ -19,6 +19,7 @@ import {
   replayCharge,
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
+import { REASON_RIDER, toggleAction } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
 
 // The automatic DC charge-current controller, driven through the three real stops of 2026-09-07 and
@@ -360,6 +361,41 @@ for (const code of Object.keys(CHARGE_AUTO_REASON_TEXT)) {
   }
 }
 
+// ── §9 taking the controller back is ONE tap ───────────────────────────────
+//
+// ⚠️ While stood down the effective mode is still `automatic`, so a plain on/off toggle reads
+// "Switch off for this charge" — the opposite of what the rider wants — and taking it back means
+// tapping off and then on, two taps through a label that says the wrong thing. All three states are
+// asserted, because the middle one is the whole point and the other two are what it must not break.
+const RETAKE_CASES = [
+  { name: "stood down by the rider", mode: "automatic" as const, reason: REASON_RIDER, posts: "automatic" },
+  { name: "running normally", mode: "automatic" as const, reason: CHARGE_AUTO_REASON.CLOSING, posts: "off" },
+  { name: "switched off", mode: "off" as const, reason: CHARGE_AUTO_REASON.DISABLED, posts: "automatic" },
+];
+const labels = new Set<string>();
+for (const retake of RETAKE_CASES) {
+  const action = toggleAction(retake.mode, retake.reason);
+  labels.add(action.label);
+  if (action.mode !== retake.posts) {
+    failures.push(`§9 ${retake.name}: the button POSTs mode=${action.mode}, expected ${retake.posts}`);
+  }
+  if (action.note.length === 0) {
+    failures.push(`§9 ${retake.name}: no sentence under the button saying what it will do`);
+  }
+}
+if (labels.size !== RETAKE_CASES.length) {
+  failures.push(
+    `§9 the three states share ${RETAKE_CASES.length - labels.size + 1} label(s) — a rider stood down would be ` +
+      `offered the same words as one running normally, which is the two-tap trap this replaced`
+  );
+}
+// ⚠️ And that the stood-down case is not merely the off-state's wording reused: it must say the
+// controller stopped BECAUSE the rider set a current, or the button is honest and the note is not.
+const stoodDown = toggleAction("automatic", REASON_RIDER);
+if (!/you set the current/i.test(stoodDown.note)) {
+  failures.push(`§9 the stood-down note does not say why the Pi stopped: "${stoodDown.note}"`);
+}
+
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);
   for (const failure of failures) {
@@ -375,7 +411,7 @@ console.log(
     `at best ${(-bestSaving).toFixed(1)}; DC2 finishes ${saved.toFixed(1)} min sooner and under the cliff, which ` +
     `neither a controller stuck at the ceiling nor one stuck at the floor can do; the floor stays above the ` +
     `${breakEven.toFixed(1)} A break-even; every branch is exercised, every reason code is inside bounds.js, ` +
-    `and every reason code has wording`
+    `and every reason code has wording; and taking the controller back after a manual change is one tap`
 );
 
 /** A whole-degree ramp over ten minutes, sampled when the integer changes, as the bike delivers it. */

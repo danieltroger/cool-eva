@@ -25,6 +25,7 @@ const { button, div } = van.tags;
 // `response.json()` is a new object each time. That is the churn public/lib/charge-write.js
 // documents and removes; a tile that rebuilds under a thumb is how a tap gets lost.
 const mode = van.state(/** @type {"automatic" | "off"} */ ("off"));
+const reasonCode = van.state(/** @type {number | null} */ (null));
 const reasonSentence = van.state("");
 const commandedAmps = van.state(/** @type {number | null} */ (null));
 const floorAmps = van.state(0);
@@ -84,23 +85,53 @@ function ToggleButton() {
       {
         class: "action",
         disabled: () => busy.val,
-        // Read at click time, not captured: the mode moves under the button between renders.
-        onclick: () => void toggle(mode.val === "automatic" ? "off" : "automatic"),
+        // Read at click time, not captured: the state moves under the button between renders.
+        onclick: () => void toggle(toggleAction(mode.val, reasonCode.val).mode),
       },
-      () => {
-        if (busy.val) {
-          return "⏳  …";
-        }
-        return mode.val === "automatic" ? "Switch off for this charge" : "Let the Pi manage the current";
-      }
+      () => (busy.val ? "⏳  …" : toggleAction(mode.val, reasonCode.val).label)
     ),
-    div(
-      { class: "action-note", style: `color:${MUTED}` },
-      () =>
-        `It only ever lowers the current, never below ${floorAmps.val} A, and setting the current yourself — ` +
-        "on the bike or from here — stands it down for the rest of the charge."
-    )
+    div({ class: "action-note", style: `color:${MUTED}` }, () => toggleAction(mode.val, reasonCode.val).note)
   );
+}
+
+/** `CHARGE_AUTO_REASON.RIDER` — stood down because the rider set a current. Mirrors auto-curve.ts. */
+export const REASON_RIDER = 4;
+
+/**
+ * What the one button says, what it POSTs, and the sentence under it.
+ *
+ * ⚠️ THREE states, not two, and the third is the reason this exists. While stood down the effective
+ * mode is still `automatic`, so a plain on/off toggle read "Switch off for this charge" — the
+ * opposite of what the rider wanted — and taking the controller back meant tapping OFF and then ON,
+ * two taps through a label that says the wrong thing. `mode=automatic` already clears the stand-down
+ * in src/charge/auto.ts, so this is one tap; only the wording was missing.
+ *
+ * Pure, and exported, so scripts/check-charge-auto.ts can assert all three without a browser.
+ * @param {"automatic" | "off"} currentMode
+ * @param {number | null} reason
+ * @returns {{ label: string, mode: "automatic" | "off", note: string }}
+ */
+export function toggleAction(currentMode, reason) {
+  const floor = `It only ever lowers the current, never below ${floorAmps.val} A`;
+  if (reason === REASON_RIDER) {
+    return {
+      label: "↩️  Take the current back",
+      mode: "automatic",
+      note: `You set the current yourself, so the Pi stopped managing it. ${floor}.`,
+    };
+  }
+  if (currentMode === "automatic") {
+    return {
+      label: "Switch off for this charge",
+      mode: "off",
+      note: `${floor}, and setting the current yourself — on the bike or from here — hands it back to you.`,
+    };
+  }
+  return {
+    label: "Let the Pi manage the current",
+    mode: "automatic",
+    note: `${floor}, and it stops the pack reaching the temperature where the bike halves the current.`,
+  };
 }
 
 /**
@@ -132,6 +163,7 @@ async function refresh() {
  */
 function apply(payload) {
   mode.val = payload.state.mode;
+  reasonCode.val = payload.state.reason;
   reasonSentence.val = payload.reasonText;
   commandedAmps.val = payload.state.commandedAmps;
   floorAmps.val = payload.floorAmps;

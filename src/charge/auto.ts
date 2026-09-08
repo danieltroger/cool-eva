@@ -130,6 +130,12 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
         context.riderOverride = false;
       }
       publishMode(context);
+      // ⚠️ Re-decide NOW rather than waiting up to a tick, so the page shows what the controller
+      // will do instead of last minute's reason — otherwise "Take the current back" stays on screen
+      // for a minute after it has been taken back. src/fan/auto.ts re-evaluates on the same edge.
+      // Pure: it reads the bus and returns a decision; nothing is transmitted on a mode change.
+      context.reason = decide(context).reason;
+      record("charge_auto_reason", context.reason);
       console.warn(`charge-auto: mode set to ${mode}`);
     },
     noteManualCommand: () => {
