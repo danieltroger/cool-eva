@@ -38,11 +38,10 @@ import { startMultiFrameTransfer, type RunningMultiFrameTransfer, type TransferS
 // ⚠️ It SENDS FLOW-CONTROL FRAMES, and the property that mattered is preserved rather than
 // spent: **no transmit address is ever derived from something the bus said.**
 //
-// ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN whenever the link
-// is not already configured the way it wants it, which kills every other raw-CAN socket on
-// the Pi including the running cool-eva service's. This client only
-// ever opens a channel on an interface that is already up, so it cannot rescue a listen-only
-// bus — which is why ./read-runner.ts refuses to start a sweep when OBD_ENABLED=0.
+// ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` downs the interface when the link is not
+// already as it wants it, killing every other raw-CAN socket on the Pi including the running
+// service's. This client only opens a channel on one that is already up, so it cannot rescue
+// a listen-only bus — which is why ./read-runner.ts refuses a sweep when OBD_ENABLED=0.
 //
 // ⚠️ The micros answer NOTHING until a session is open, `10 81`, and it auto-closes after
 // ~2.5 s idle — hence SESSION_IDLE_LIMIT_MS. A8 and A9 hold SEPARATE sessions, so the state

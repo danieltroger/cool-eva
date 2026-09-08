@@ -38,13 +38,6 @@ const RUNNING_DEVICE_STATES = new Set(["ERROR-ACTIVE", "ERROR-WARNING", "ERROR-P
 /** The ctrlmode flag this adapter makes sticky, and the only one this decision reads. */
 const LISTEN_ONLY = "LISTEN-ONLY";
 
-/** What `bringUpCan()` would leave the link as, and therefore what counts as "already there". */
-export interface WantedCanLink {
-  bitrateHz: number;
-  restartMs: number;
-  listenOnly: boolean;
-}
-
 export interface BringUpDecision {
   /** True only when every condition matched. Anything else takes the existing down/up. */
   skip: boolean;
@@ -61,8 +54,16 @@ export interface BringUpDecision {
 /** One CAN link as `ip -details -json link show` describes it, narrowed to what we decide on. */
 export interface CanLinkConfig {
   up: boolean;
+  /** IFF_UP without IFF_RUNNING — the driver has dropped carrier. Logged, never gating. */
+  noCarrier: boolean;
   operstate: string;
   deviceState: string;
+  /**
+   * 0 when the link has never been configured: the kernel omits the whole bittiming
+   * object until a bitrate is set (can_bittiming_fill_info), which is a fact about the
+   * LINK, not about `ip`. Every cold boot looks like this, so it must read as an ordinary
+   * mismatch and not as an unreadable link — that warning has to keep meaning something.
+   */
   bitrateHz: number;
   restartMs: number;
   /** Empty is a real answer: iproute2 omits the key entirely when no flags are set. */
@@ -77,13 +78,20 @@ export type CanLinkReading = { kind: "read"; link: CanLinkConfig } | { kind: "un
  * The whole decision: parse `ip -details -json link show <iface>` and say whether the
  * down/up can be skipped. Never throws — malformed input is a verdict, not an exception,
  * because the caller's fallback is the same either way and the REASON is the useful part.
+ *
+ * ⚠️ Takes `active` — the SAME argument `bringUpCan()` was called with — rather than a
+ * pre-computed expectation, so that `active` ↔ `listen-only` is negated in exactly one
+ * place and that place is covered by scripts/check-can-bringup.ts. When the polarity
+ * lived in the caller instead, inverting it passed every check in the repo while leaving
+ * a script that documents itself as transmitting NOTHING running on a TX-enabled bus.
  */
-export function decideCanBringUp(ipOutput: string, wanted: WantedCanLink): BringUpDecision {
+export function decideCanBringUp(ipOutput: string, active: boolean): BringUpDecision {
   const reading = parseCanLinkConfig(ipOutput);
   if (reading.kind === "unreadable") {
     return { skip: false, reason: reading.why, unreadable: true };
   }
   const link = reading.link;
+  const wantListenOnly = !active;
   const listenOnly = link.ctrlmodes.includes(LISTEN_ONLY);
   const mismatches: string[] = [];
   if (!link.up) {
@@ -92,16 +100,16 @@ export function decideCanBringUp(ipOutput: string, wanted: WantedCanLink): Bring
   if (!RUNNING_DEVICE_STATES.has(link.deviceState)) {
     mismatches.push(`controller state is ${link.deviceState}`);
   }
-  if (link.bitrateHz !== wanted.bitrateHz) {
-    mismatches.push(`bitrate is ${link.bitrateHz}, not ${wanted.bitrateHz}`);
+  if (link.bitrateHz !== CAN_BITRATE_HZ) {
+    mismatches.push(`bitrate is ${link.bitrateHz}, not ${CAN_BITRATE_HZ}`);
   }
-  if (link.restartMs !== wanted.restartMs) {
-    mismatches.push(`restart-ms is ${link.restartMs}, not ${wanted.restartMs}`);
+  if (link.restartMs !== CAN_RESTART_MS) {
+    mismatches.push(`restart-ms is ${link.restartMs}, not ${CAN_RESTART_MS}`);
   }
   // ⚠️ Both directions. Two callers ask for listen-only ON, and a bus left ACTIVE is not
   // an acceptable substitute for one they asked to be silent.
-  if (listenOnly !== wanted.listenOnly) {
-    mismatches.push(`listen-only is ${listenOnly ? "ON" : "OFF"}, wanted ${wanted.listenOnly ? "ON" : "OFF"}`);
+  if (listenOnly !== wantListenOnly) {
+    mismatches.push(`listen-only is ${listenOnly ? "ON" : "OFF"}, wanted ${wantListenOnly ? "ON" : "OFF"}`);
   }
   if (mismatches.length > 0) {
     return { skip: false, reason: mismatches.join("; "), unreadable: false };
@@ -117,9 +125,10 @@ export function decideCanBringUp(ipOutput: string, wanted: WantedCanLink): Bring
  * print_ctrlmode() returns early on zero), so a healthy ACTIVE link carries no such key
  * at all — but so would output from an `ip` too old to render CAN details, and reading
  * THAT as "listen-only is off" on an adapter where the flag is sticky is how the bike
- * ends up silently unable to transmit. Requiring info_kind, state, a bitrate and
- * restart_ms first is the positive evidence that this `ip` renders the CAN block, and
- * therefore that the missing array means empty rather than unsupported.
+ * ends up silently unable to transmit. Requiring info_kind, state and restart_ms first is
+ * the positive evidence that this `ip` renders the CAN block, and therefore that the missing
+ * array means empty rather than unsupported. Deliberately NOT the bitrate: the kernel omits
+ * that until one is set, so demanding it would classify every cold boot as unreadable.
  */
 export function parseCanLinkConfig(ipOutput: string): CanLinkReading {
   let parsed: unknown;
@@ -154,23 +163,25 @@ export function parseCanLinkConfig(ipOutput: string): CanLinkReading {
   if (deviceState === null) {
     return unreadable("no `info_data.state` — cannot tell a running controller from a stopped one");
   }
-  const bitrateHz = bitrateOf(info);
-  if (bitrateHz === null) {
-    return unreadable("neither `info_data.bittiming.bitrate` nor `info_data.bittiming_bitrate` is present");
-  }
   const restartMs = asNumber(info.restart_ms);
   if (restartMs === null) {
     return unreadable("no `info_data.restart_ms` — cannot tell whether bus-off recovery is configured");
   }
+  const ctrlmodes = readCtrlmodes(info.ctrlmode);
+  if (ctrlmodes === null) {
+    return unreadable("`info_data.ctrlmode` is present but is not an array of strings");
+  }
+  const flags = asStringArray(entry.flags) ?? [];
   return {
     kind: "read",
     link: {
-      up: (asStringArray(entry.flags) ?? []).includes("UP"),
+      up: flags.includes("UP"),
+      noCarrier: flags.includes("NO-CARRIER"),
       operstate: asString(entry.operstate) ?? "UNKNOWN",
       deviceState,
-      bitrateHz,
+      bitrateHz: bitrateOf(info),
       restartMs,
-      ctrlmodes: asStringArray(info.ctrlmode) ?? [],
+      ctrlmodes,
       ctrlmodeSupported: asStringArray(info.ctrlmode_supported),
     },
   };
@@ -179,9 +190,11 @@ export function parseCanLinkConfig(ipOutput: string): CanLinkReading {
 /**
  * The `ip link set` arguments that configure the interface, as an argv array.
  *
- * ⚠️ Built from the same two constants the skip compares against, on purpose. Two
- * spellings of 500000 is the one drift this design is exposed to, and it is the dangerous
- * direction: a skip that fires on a bus configured differently from what we would have set.
+ * ⚠️ INVARIANT: one skip condition per argument this function sets. Sharing the two
+ * constants with the comparison keeps their VALUES from drifting, but the property SET is
+ * what actually bites — add `one-shot` or a pinned sample-point here without adding a
+ * condition to decideCanBringUp() and the skip starts firing on a bus configured differently
+ * from the one this would have produced. That direction is both dangerous and silent.
  */
 export function canConfigureArgs(iface: string, active: boolean): string[] {
   return [
@@ -199,24 +212,42 @@ export function canConfigureArgs(iface: string, active: boolean): string[] {
   ];
 }
 
-/** What was found, field by field, so one journal line explains the whole verdict. */
+/**
+ * What was found, field by field, so one journal line explains the whole verdict.
+ *
+ * ⚠️ This line is the only instrument the change is verified by on a real bike, so every
+ * field it can carry, it carries — `ctrlmode_supported` because it is positive proof this
+ * `ip` renders ctrlmode arrays at all (which is what makes an ABSENT `ctrlmode` readable
+ * as "no flags"), and NO-CARRIER because a bus-off-cycling adapter reads ERROR-ACTIVE on
+ * most samples while carrying it, and the first deploy is the cheapest chance to see that.
+ */
 function describe(link: CanLinkConfig): string {
   const supported = link.ctrlmodeSupported ? ` ctrlmode_supported=[${link.ctrlmodeSupported.join(",")}]` : "";
   return (
-    `state=${link.deviceState} bitrate=${link.bitrateHz} restart_ms=${link.restartMs} ` +
-    `ctrlmode=[${link.ctrlmodes.join(",")}]${supported}`
+    `state=${link.deviceState} operstate=${link.operstate}${link.noCarrier ? " NO-CARRIER" : ""} ` +
+    `bitrate=${link.bitrateHz} restart_ms=${link.restartMs} ctrlmode=[${link.ctrlmodes.join(",")}]${supported}`
   );
 }
 
 /**
- * The bitrate, from either place iproute2 puts it: `bittiming` is suppressed entirely for
- * drivers advertising a fixed bitrate list, which publish `bittiming_bitrate` instead.
- * The Korlan's `usb_8dev` uses bittiming_const, so it takes the first branch — the second
- * exists so a different adapter degrades to "reconfigure it" rather than "unreadable".
+ * The bitrate, from either place iproute2 puts it, or 0 when it says nothing: `bittiming`
+ * is suppressed for drivers advertising a fixed bitrate list, which publish
+ * `bittiming_bitrate` instead, and BOTH are absent on a link that has never been
+ * configured. The Korlan's `usb_8dev` uses bittiming_const, so it takes the first branch.
  */
-function bitrateOf(info: Record<string, unknown>): number | null {
+function bitrateOf(info: Record<string, unknown>): number {
   const bittiming = asRecord(info.bittiming);
-  return (bittiming ? asNumber(bittiming.bitrate) : null) ?? asNumber(info.bittiming_bitrate);
+  return (bittiming ? asNumber(bittiming.bitrate) : null) ?? asNumber(info.bittiming_bitrate) ?? 0;
+}
+
+/**
+ * `[]` for an absent key — the guard chain above is what makes that readable as "no flags
+ * set" rather than "this `ip` does not render them" — but `null` for a key that is present
+ * and the wrong shape. Absence is evidence here; a malformed array is not, and every other
+ * guard in this file treats an unexpected shape as unreadable.
+ */
+function readCtrlmodes(value: unknown): string[] | null {
+  return value === undefined ? [] : asStringArray(value);
 }
 
 function unreadable(why: string): CanLinkReading {
@@ -237,9 +268,10 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/** Strict, like every other guard here: one non-string entry makes the whole array unreadable. */
 function asStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value)) {
+  if (!Array.isArray(value) || !value.every(entry => typeof entry === "string")) {
     return null;
   }
-  return value.filter((entry): entry is string => typeof entry === "string");
+  return value;
 }

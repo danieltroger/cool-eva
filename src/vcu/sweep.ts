@@ -28,11 +28,10 @@ import type { ServiceGateVerdict } from "./service-gate.ts";
 // and no HTTP parameter anywhere that names a service, an identifier or a value.
 //
 // ⚠️ It does not configure can0 and does not own the socket. The channel is the service's,
-// already up and already started. Nothing here calls `bringUpCan` (which takes the
-// interface DOWN unless it is already configured, and would kill every other raw-CAN
-// socket on the Pi), and nothing here
-// calls `channel.start()` or `channel.stop()`. Frames are handed in by the caller rather
-// than subscribed to, so this module owns no listener to leak either.
+// already up and already started. Nothing here calls `bringUpCan` (which downs the interface
+// when it is not already configured, killing every other raw-CAN socket on the Pi), and
+// nothing here calls `channel.start()` or `channel.stop()`. Frames are handed in by the
+// caller rather than subscribed to, so this module owns no listener to leak either.
 //
 // Why a ~277-request burst is allowed to exist inside the always-on service at all, and
 // what the old ssh-script rule was really about: docs/vcu-parameters.md §9.
