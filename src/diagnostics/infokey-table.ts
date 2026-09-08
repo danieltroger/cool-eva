@@ -47,6 +47,18 @@ export interface InfokeyField {
    * can be honoured; see the note there on why this is not evaluated as code.
    */
   equation: string;
+  /**
+   * Why this field's `equation` is not applied TO THIS FIELD, or null.
+   *
+   * ⚠️ A different fault from the one `SCALING_BY_EQUATION` refuses. There the
+   * equation itself is malformed and no field may use it. Here the equation is
+   * well-formed and is CORRECT for the 17 other fields sharing it — only this
+   * field's result is impossible. So the refusal has to be per-field: refusing
+   * `f(x)=x*0.1` wholesale would take `V_ODOMETER` with it, and the same pair of
+   * reads that refutes id 80 confirms id 36 to the last digit.
+   * docs/lifetime-battery-statistics.md.
+   */
+  refusedScaling: string | null;
 }
 
 /**
@@ -95,11 +107,25 @@ export function lookupInfokey(id: number): InfokeyField | null {
 /**
  * How a raw field value scales into its stated unit.
  *
- * `applied: false` is a real outcome and not an error: Energica states a scaling
- * this repo will not perform (today, only `AvgDOD`'s). The raw number is still
- * returned, so a caller always has something true to show.
+ * `applied: false` is a real outcome and not an error, and it is reached two ways
+ * that must not be collapsed into one: `AvgDOD`'s equation is malformed for
+ * everybody, and `TotalExchangedAh`'s is well-formed but gives an impossible
+ * result for that field alone. Either way the raw number is still returned, so a
+ * caller always has something true to show.
  */
-export type InfokeyScaling = { applied: true; value: number } | { applied: false; reason: string; equation: string };
+export type InfokeyScaling =
+  | { applied: true; value: number }
+  /**
+   * ⚠️ `kind` is the whole reason this arm exists twice over. The two refusals are
+   * different faults — `malformed-equation` means nobody may use that expression,
+   * `impossible-result` means the expression is fine and this one field's answer is
+   * not — and a caller that can only tell them apart by matching `reason` prose is a
+   * caller that will eventually merge them.
+   */
+  | { applied: false; kind: InfokeyRefusal; reason: string; equation: string };
+
+/** Which of the two refusals happened. See `InfokeyScaling`. */
+export type InfokeyRefusal = "malformed-equation" | "impossible-result";
 
 /**
  * Applies a field's equation to a raw integer.
@@ -110,12 +136,29 @@ export type InfokeyScaling = { applied: true; value: number } | { applied: false
  * identity there would put an unscaled number on screen wearing a unit.
  */
 export function scaleInfokeyValue(field: InfokeyField, raw: number): InfokeyScaling {
+  // ⚠️ THE THROW COMES FIRST, ahead of the per-field refusal. A field carrying a
+  // refusal is by construction one somebody is unsure about, so it is the last field
+  // that should be exempt from the guard that catches an equation nobody has read —
+  // and returning early on `refusedScaling` would exempt exactly those.
   if (!(field.equation in SCALING_BY_EQUATION)) {
     throw new Error(`infokey ${field.id} (${field.name}) has unhandled equation ${JSON.stringify(field.equation)}`);
   }
+  if (field.refusedScaling !== null) {
+    return {
+      applied: false,
+      kind: "impossible-result",
+      reason: field.refusedScaling,
+      equation: field.equation,
+    };
+  }
   const scaling = SCALING_BY_EQUATION[field.equation];
   if (scaling === null) {
-    return { applied: false, reason: "Energica's own equation is malformed", equation: field.equation };
+    return {
+      applied: false,
+      kind: "malformed-equation",
+      reason: "Energica's own equation is malformed",
+      equation: field.equation,
+    };
   }
   return { applied: true, value: scaling(raw) };
 }
@@ -207,7 +250,17 @@ export const INFOKEY_TABLE: readonly InfokeyField[] = [
   field(77, "B_AVG_CELL", "mV", "uint16_t", ""),
   field(78, "V_TCSOC", "%", "uint8_t", ""),
   field(79, "B_SOH", "%", "uint8_t", ""),
-  field(80, "TotalExchangedAh", "Ah", "uint32_t", "f(x)=x*0.1"),
+  // ⚠️ The one field whose scaling is refused for its RESULT rather than its form.
+  // Energica's ×0.1 makes this bike's pack move 3.47 Ah/km where its own logged pack
+  // current says 0.47, and the true scale is not settled: ×0.01 and ÷64 both fit.
+  field(
+    80,
+    "TotalExchangedAh",
+    "Ah",
+    "uint32_t",
+    "f(x)=x*0.1",
+    "Energica's ×0.1 reads 7.4× more Ah than this pack has moved; the true scale is unsettled — docs/lifetime-battery-statistics.md"
+  ),
   field(81, "CompletedCharges", "", "uint16_t", ""),
   field(82, "CompletedACCharges", "", "uint16_t", ""),
   field(83, "CompletedDCCharges", "", "uint16_t", ""),
@@ -253,6 +306,13 @@ export const INFOKEY_TABLE: readonly InfokeyField[] = [
 
 const INFOKEY_BY_ID = new Map(INFOKEY_TABLE.map(entry => [entry.id, entry]));
 
-function field(id: number, name: string, unit: string, datatype: InfokeyDatatype, equation: string): InfokeyField {
-  return { id, name, unit, datatype, equation };
+function field(
+  id: number,
+  name: string,
+  unit: string,
+  datatype: InfokeyDatatype,
+  equation: string,
+  refusedScaling: string | null = null
+): InfokeyField {
+  return { id, name, unit, datatype, equation, refusedScaling };
 }

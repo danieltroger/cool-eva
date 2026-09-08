@@ -101,3 +101,35 @@ export function compass(degrees) {
   const points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   return points[Math.round(degrees / 45) % 8];
 }
+
+/**
+ * A number at whatever precision it needs.
+ *
+ * ⚠️ ONE rule, used by the All tab's grid and by the lifetime block pinned above it.
+ * They sit against each other on the same screen, and two numbers a centimetre apart
+ * disagreeing about what "precise" means is what you notice first.
+ *
+ * @param {number} value
+ */
+export function reading(value) {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
+}
+
+/**
+ * …with its thousands grouped. Only the lifetime block uses this.
+ *
+ * 658 112 is legible where 658112 is a smear, and that block carries the two longest
+ * numbers on the dashboard. The live grid is deliberately left ungrouped: its values
+ * change several times a second and a group separator appearing and disappearing under
+ * a moving number is worse than the smear.
+ *
+ * @param {number} value
+ */
+export function groupedReading(value) {
+  const [whole, fraction] = reading(value).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+}

@@ -10,6 +10,8 @@ import { MUTED } from "../lib/colors.js";
 // count — still fall out of the registry's `group` field, as every other group here does.
 import { getsLatchedTile } from "../lib/latched.js";
 import { isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
+import { formatLifetimeValue, lifetimeError, lifetimeStats, loadLifetimeStats } from "../lib/lifetime.js";
+import { ageInWords, reading } from "../lib/format.js";
 
 const { div, input, span } = van.tags;
 
@@ -24,8 +26,12 @@ const { div, input, span } = van.tags;
 const filter = van.state("");
 
 export function AllView() {
+  // Fetched here rather than at module scope: it is one request, and it should happen
+  // when somebody looks at this tab rather than on every page load.
+  void loadLifetimeStats();
   return div(
     { class: "view" },
+    LifetimeBlock(),
     div(
       { class: "filter" },
       input({
@@ -72,6 +78,72 @@ export function AllView() {
           )
       );
     }
+  );
+}
+
+/**
+ * The bike's lifetime battery statistics, above the grid.
+ *
+ * ⚠️ PINNED RATHER THAN A SECTION OF THE GRID, and the reason is not layout: these are
+ * not signals. They have no arrival time and no staleness, so `groupOf` and
+ * `isStale(key, STALE_MS)` — which every tile below depends on — have nothing true to
+ * say about them, and a "lifetime" group sorting alphabetically between `gps` and
+ * `motor` would be findable only by somebody who already knew it was there.
+ *
+ * It still OBEYS the filter, so the one interaction this view has keeps working: type
+ * anything and these rows narrow with the rest, and the block disappears when none of
+ * them match. docs/dashboard-decisions.md § "The lifetime block".
+ */
+function LifetimeBlock() {
+  return () => {
+    const needle = filter.val;
+    const response = lifetimeStats.val;
+    if (!response) {
+      const failure = lifetimeError.val;
+      return failure && needle === "" ? div({ class: "section" }, `lifetime · ${failure}`) : div();
+    }
+    if (!response.reading) {
+      // Not an error: most Pis have never taken one. Says how, because the answer is a
+      // command somebody has to run at the bike with the service stopped.
+      return needle === ""
+        ? div(
+            div({ class: "section" }, "lifetime · never read"),
+            div({ class: "raw-grid" }, div({ class: "raw" }, div({ class: "raw-sub" }, response.howToRead)))
+          )
+        : div();
+    }
+    const { statistics, source } = response.reading;
+    const rows = statistics.rows.filter(row => row.key.includes(needle) || row.label.includes(needle));
+    if (rows.length === 0) {
+      return div();
+    }
+    return div(
+      div(
+        { class: "section" },
+        `lifetime · read ${ageInWords(statistics.readAt)}${statistics.complete ? "" : " · INCOMPLETE"}` +
+          `${source === "service" ? "" : " · service stopped"}`
+      ),
+      div({ class: "raw-grid" }, ...rows.map(LifetimeTile))
+    );
+  };
+}
+
+/**
+ * One lifetime number, in the same tile the grid uses.
+ *
+ * The note is the load-bearing half for two of these rows — `charge moved` carries a
+ * raw count and the reason it is not an amount of charge — so it is rendered at the
+ * same weight as a rejected reading rather than tucked away.
+ *
+ * @param {import("../../src/diagnostics/lifetime-stats.ts").LifetimeRow} row
+ */
+function LifetimeTile(row) {
+  return div(
+    { class: `raw${row.status === "rejected" || row.status === "missing" ? " stale" : ""}` },
+    div({ class: "raw-key" }, row.label),
+    div({ class: "raw-value" }, formatLifetimeValue(row)),
+    row.detail.length > 0 ? div({ class: "raw-sub" }, row.detail.join(" · ")) : span(),
+    row.note ? div({ class: row.status === "rejected" ? "raw-fault" : "raw-sub" }, row.note) : span()
   );
 }
 
@@ -201,8 +273,7 @@ function formatValue(key, value) {
   if (key === "gps_lat" || key === "gps_lon" || key === "waypoint_lat" || key === "waypoint_lon") {
     return value.toFixed(6);
   }
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-  return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
+  // ../lib/format.js, so the pinned lifetime block above this grid and the grid itself
+  // cannot disagree about what "precise" means a centimetre apart.
+  return reading(value);
 }

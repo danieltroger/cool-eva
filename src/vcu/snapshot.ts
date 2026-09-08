@@ -474,7 +474,7 @@ function note(...parts: (string | null)[]): string | null {
  * withholds `value` on a width mismatch, ./param-file.ts's parser throws on a line it does
  * not fully understand — and this follows them.
  */
-function bytesFromHex(rawHex: string): Uint8Array | null {
+export function bytesFromHex(rawHex: string): Uint8Array | null {
   const parts = rawHex.split(/\s+/).filter(part => part.length > 0);
   if (!parts.every(part => /^[0-9a-fA-F]{1,2}$/.test(part))) {
     console.warn(`vcu-snapshot: “${rawHex}” is not a hex record, so that row is served with no typed value`);

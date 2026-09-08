@@ -16,8 +16,11 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 // A8 sends 1227 First Frames for 1198 `0x36` blocks + 28 of these + 1 `0x18`.
 //
 // Layout, confirmed against all 29: `57 <recordCount> <DTC-hi> <DTC-lo> <status>`,
-// then the fault's infokey fields in payload order, then ONE trailing byte whose
-// meaning is not known. See docs/diagnostics-and-checks.md §11.3.1.
+// then the fault's infokey fields in payload order, then ONE trailing byte — a
+// count of KEY CYCLES since the record was stored. It reads `FF` on every reply here
+// because these predate the clear at the end of this same capture; the ceiling has never
+// been watched being reached. ./captured-lifetime-reads.ts holds the same components read
+// after it. See docs/diagnostics-and-checks.md §11.3.1.
 
 export interface CapturedFreezeFrame {
   readonly component: number;

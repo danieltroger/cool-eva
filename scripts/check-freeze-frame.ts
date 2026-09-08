@@ -46,13 +46,10 @@ import {
 // they check the manufacturer's own data against this repo's independently
 // sourced DTC table, and a disagreement there would be real.
 //
-// `trailingHex` was written down as the number to watch, on the rule that a
-// non-empty value on a real reply would mean the layout was wrong. The bike is back,
-// §8 replays 29 real replies, and it is non-empty on ALL of them — so the rule as
-// stated would condemn a layout that the same 29 replies confirm. What the rule
-// actually caught is that the reply is one byte longer than the fields account for;
-// the fields themselves decode correctly, which is a different fault to the one it
-// predicted. The trailing byte is FREEZE_FRAME_TRAILING_BYTES, and still undecoded.
+// `trailingHex` was written down as the number to watch, on a rule that would have
+// condemned a layout the same 29 replies confirm — it is non-empty on all of them. What
+// it caught was FREEZE_FRAME_TRAILING_BYTES: one byte past the fields, counting key
+// cycles since the record was stored. Both stories: docs/diagnostics-and-checks.md.
 
 const failures: string[] = [];
 
@@ -81,10 +78,29 @@ for (const field of INFOKEY_TABLE) {
     failures.push(`infokey ${field.id} (${field.name}): ${error instanceof Error ? error.message : String(error)}`);
   }
 }
-const refusedScalings = INFOKEY_TABLE.filter(field => !scaleInfokeyValue(field, 1).applied);
+// ⚠️ TWO refusals, asserted SEPARATELY because they are different faults reached by
+// different code, and a "simplification" that merged the two mechanisms would refuse
+// `f(x)=x*0.1` for all 18 fields that share it — V_ODOMETER among them.
+const scalings = INFOKEY_TABLE.map(field => ({ field, scaling: scaleInfokeyValue(field, 1) }));
+const refusedScalings = scalings.filter(entry => !entry.scaling.applied).map(entry => entry.field);
+// ⚠️ Asked of the RESULT, not of the table. Filtering `field.refusedScaling` here would
+// be the check reaching around the API it is meant to be testing, and would still pass
+// if `scaleInfokeyValue` stopped honouring it.
+const byKind = (kind: string) =>
+  scalings.filter(entry => !entry.scaling.applied && entry.scaling.kind === kind).map(entry => entry.field);
+const malformedEquations = byKind("malformed-equation");
+const impossibleResults = byKind("impossible-result");
 check(
-  refusedScalings.length === 1 && refusedScalings[0].name === "AvgDOD",
-  `exactly one field's equation should be refused (AvgDOD's), got ${refusedScalings.map(f => f.name).join(", ")}`
+  malformedEquations.length === 1 && malformedEquations[0].name === "AvgDOD",
+  `exactly one field's EQUATION should be unusable (AvgDOD's f(x)=x@&255), got ${malformedEquations.map(f => f.name).join(", ")}`
+);
+check(
+  impossibleResults.length === 1 && impossibleResults[0].name === "TotalExchangedAh",
+  `exactly one field's RESULT should be refused under a well-formed equation (TotalExchangedAh), got ${impossibleResults.map(f => f.name).join(", ")}`
+);
+check(
+  refusedScalings.length === 2,
+  `those two and no others should be unscaled, got ${refusedScalings.map(f => f.name).join(", ")}`
 );
 console.log(`${INFOKEY_TABLE.length} fields, ids 1…${INFOKEY_TABLE[INFOKEY_TABLE.length - 1].id}`);
 console.log(`refused scalings: ${refusedScalings.map(f => `${f.name} (${f.equation})`).join(", ")}`);
@@ -571,7 +587,7 @@ console.log(
 );
 console.log(
   "✓ 29 CAPTURED 0x17 replies decode, every infokey resolves, and the layout predicts" +
-    " all 29 lengths to the byte — with one trailing byte per reply still unexplained"
+    " all 29 lengths to the byte — with the trailing key-cycle counter reading FF on all 29, four weeks before the clear"
 );
 
 /** Reassembles and decodes one transfer, printing every step. Returns null on failure. */
