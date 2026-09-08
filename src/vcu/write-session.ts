@@ -154,10 +154,14 @@ const PACE_MS = 10;
 const STOP_FRAME_GAP_MS = 20;
 
 /**
- * Gap between the two charge-current frames (0x120 commit twin, then 0x121 command). The dash spaces
- * its own pair ~5 ms apart; matched here, since that spacing is what was proven to commit on-bike.
+ * Gap between the two charge-current frames (0x120 commit twin, then 0x121 command).
+ *
+ * The dash's own DC pairs were measured at 4.217-10.122 ms apart (mean 6.685) across the twelve
+ * captured on 2026-09-07 — scripts/charge-command-fixtures.ts, which is where the "~5 ms" this
+ * used to cite came from. Exported so scripts/check-charge-command.ts §6 can hold it inside the
+ * measured spread rather than inside an estimate.
  */
-const CURRENT_FRAME_GAP_MS = 5;
+export const CURRENT_FRAME_GAP_MS = 5;
 
 // ── ECUReset (resetVcu) ─────────────────────────────────────────────────────
 const SERVICE_ECU_RESET = 0x11;

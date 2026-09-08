@@ -13,9 +13,15 @@
 // ✅ That b2 is the rider's setting rather than a measurement is settled by the current
 // obeying it: dialled DOWN, the measured DC current lands on the commanded value exactly,
 // 9 of 9, and across 53 268 samples on the following plateaus the delivered current never
-// once exceeded it. Dialling UP is NOT obeyed — set 75 and it stops at 36-73 depending on
-// the session — which is precisely why the signal is worth having: it answers "did I cap it
-// myself?". The AC twin (0x1A) is decoded too now, but ONLY for its ceiling (b4): charge_limit_a
+// once exceeded it.
+//
+// ⚠️ Dialling UP is STATION-BOUND, not refused — an earlier version of this comment said it
+// "is NOT obeyed", which would make a successful live test look like a failure. Measured
+// 2026-09-07: dialled 50 → 75 A the delivered current rose 49.5 → 72.5 A immediately, so the
+// VCU honours an increase; what it cannot do is conjure current the station or the pack will
+// not give, which is why 75 lands at 36-73 depending on the session. So a raise that does not
+// move the current is the charger's decision, and only a LOWERING is a clean test of whether a
+// command took. The AC twin (0x1A) is decoded too now, but ONLY for its ceiling (b4): charge_limit_a
 // already carries the AC setpoint off 0x10A b7 ÷ 7, whereas nothing else on the bus states the
 // AC ceiling a charge-current command must echo. docs/can-0x121-charge-command.md.
 //

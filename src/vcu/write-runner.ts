@@ -35,6 +35,7 @@ import {
   type WriteTarget,
 } from "./write-targets.ts";
 import { parameterTableFor } from "./table-catalog.ts";
+import { readRunningVersion } from "../version.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
 // to it, read the result back, and write down what happened. The read engine is
@@ -173,6 +174,14 @@ export interface VcuWriteRunner {
 export interface VcuWriteStatus {
   /** False when SERVICE_WRITE_ENABLED is not 1. The page then labels the buttons as off. */
   enabled: boolean;
+  /**
+   * Which commit the Pi is running — `09c3b84`, `09c3b84+dirty`, or `unknown`.
+   *
+   * ⚠️ On the payload the page fetches before every arm, because "the feature does nothing"
+   * and "the feature is not deployed yet" are indistinguishable from the garage and were the
+   * same thing on 2026-09-07. src/version.ts has the story.
+   */
+  runningVersion: string;
   gate: ServiceGateVerdict;
   /**
    * ⚠️ Whether anything on this Pi has confirmed which parameter table the bike runs,
@@ -338,6 +347,7 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
   const sweep = await context.latestSweep();
   return {
     enabled: context.enabled,
+    runningVersion: (await readRunningVersion()).label,
     gate: context.gate(),
     tableGate: evaluateTableGate(sweep?.report ?? null),
     clock: readPiClock(),

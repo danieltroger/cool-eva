@@ -56,6 +56,16 @@ const CHECKS: SelfCheck[] = [
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
+    script: "scripts/check-charge-command.ts",
+    covers:
+      "the charge-current transmitter against the dash's OWN frames, captured off the bus during a real DC fast " +
+      "charge on 2026-09-07: that buildChargeCurrentCommand reproduces all twelve dial changes byte for byte with " +
+      "the 0x120 commit twin first, that it never again produces the 0x121-only frame the bike really sent that " +
+      "day and that moved no current, that both decoders read the captured commands back, that the opcode gate " +
+      "emits nothing for the real non-command frames sharing the id, and that the transmit spacing sits inside the " +
+      "dash's own measured 4.2-10.1 ms",
+  },
+  {
     script: "scripts/check-pack-resistance.ts",
     covers:
       "the pack-resistance estimator that replaced the BMS's own unusable 0x206 figure, driven by real 0x200 " +

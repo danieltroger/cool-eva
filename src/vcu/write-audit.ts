@@ -21,6 +21,20 @@ import { join } from "path";
 
 const AUDIT_FILE = "service-writes.jsonl";
 
+/**
+ * The commit label every record is stamped with, set once at startup by src/index.ts.
+ *
+ * Module-level rather than a parameter on purpose: the stamp must not be forgettable at a
+ * call site, and there are nine of them. Stays "unknown" if nothing set it, which is the
+ * honest answer for a process that never read its own version.
+ */
+let runningVersion = "unknown";
+
+/** Tells the journal which commit is running. Called once, before anything can be written. */
+export function rememberRunningVersion(label: string): void {
+  runningVersion = label;
+}
+
 /** What kind of change was attempted. A closed union so the file cannot grow shapes nothing reads. */
 export type AuditAction =
   | "parameter-write"
@@ -65,6 +79,15 @@ export interface AuditRecord {
   rawHex?: string;
   /** Why it failed, or what is unusual about it succeeding. */
   note?: string;
+  /**
+   * Which commit was running when this happened — `09c3b84`, `09c3b84+dirty`, or `unknown`.
+   *
+   * ⚠️ Stamped by appendAuditRecord rather than by the callers, so a future action cannot
+   * forget it. The 2026-09-07 charge-current records are the argument: they say exactly what
+   * was sent and there is no way to tell from them that the build was five days old, which is
+   * the one fact that explained the whole failure. src/version.ts.
+   */
+  runningVersion?: string;
 }
 
 /**
@@ -77,18 +100,19 @@ export interface AuditRecord {
  * calibration changed with nothing anywhere saying so.
  */
 export async function appendAuditRecord(directory: string, record: AuditRecord): Promise<void> {
+  const stamped: AuditRecord = { ...record, runningVersion };
   try {
     await mkdir(directory, { recursive: true });
     const handle = await open(join(directory, AUDIT_FILE), "a");
     try {
-      await handle.write(`${JSON.stringify(record)}\n`);
+      await handle.write(`${JSON.stringify(stamped)}\n`);
     } finally {
       await handle.close();
     }
   } catch (err) {
     console.error("=".repeat(72));
     console.error(`vcu-write: COULD NOT RECORD ${record.action} (${record.status}) IN THE AUDIT JOURNAL:`, err);
-    console.error(`vcu-write: the record that was lost: ${JSON.stringify(record)}`);
+    console.error(`vcu-write: the record that was lost: ${JSON.stringify(stamped)}`);
     console.error("vcu-write: the action itself already happened. Copy the line above somewhere by hand.");
     console.error("=".repeat(72));
   }
