@@ -1,9 +1,10 @@
 import { createCipheriv, createPublicKey, diffieHellman, generateKeyPair, hkdf, randomBytes } from "crypto";
 import type { KeyObject } from "crypto";
-import { appendFile, mkdir, readFile } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
 import { gzip } from "zlib";
+import { appendDurably } from "./durable.ts";
 import type { SignalSource } from "../db.ts";
 
 // Write-only ride log: the Pi holds ONLY a public key, so it can append history
@@ -17,11 +18,14 @@ import type { SignalSource } from "../db.ts";
 // discarded immediately, so each segment is independently sealed — compromising
 // the Pi cannot retroactively decrypt anything already written.
 //
-// Segments are self-framing and appended whole, so a power cut mid-write costs
-// at most the current buffer and leaves every earlier segment readable. Each one
-// also carries the unit/group/source of the signals it contains, so a segment
-// stays interpretable on its own even if the registry is later renamed — this is
-// the only copy of the data, so it must not depend on a matching checkout.
+// Segments are self-framing and appended whole, and every append is flushed to the
+// card before it counts as written (./durable.ts) — this Pi loses power with the bike,
+// and an append the kernel had not written back yet comes back as NULs.
+// docs/power-cuts.md. A cut still costs whatever had not been sealed yet.
+//
+// Each segment also carries the unit/group/source of the signals it contains, so a
+// segment stays interpretable on its own even if the registry is later renamed — this
+// is the only copy of the data, so it must not depend on a matching checkout.
 
 const generateKeyPairAsync = promisify(generateKeyPair);
 const hkdfAsync = promisify(hkdf);
@@ -246,9 +250,13 @@ async function sealSegment(readings: Reading[], publicKey: KeyObject, publicRaw:
     cipher.setAAD(header);
     const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
 
-    await appendFile(segmentPathFor(new Date()), Buffer.concat([header, ciphertext, cipher.getAuthTag()]));
+    await appendDurably(segmentPathFor(new Date()), Buffer.concat([header, ciphertext, cipher.getAuthTag()]));
   } catch (error) {
     // Put the readings back so the next tick retries rather than dropping data.
+    //
+    // ⚠️ When it was the FLUSH that failed the bytes are probably on the card already, so
+    // the retry appends them a second time. Duplicate rows beat lost ones and the decoder
+    // has `session` + `seq` to spot them, but nothing dedupes: docs/power-cuts.md.
     buffered = readings.concat(buffered);
     console.error("ride-log: failed to seal segment, will retry:", error);
   }

@@ -1,5 +1,6 @@
-import { mkdir, open, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, open, readFile, rm } from "fs/promises";
 import { join } from "path";
+import { replaceFileDurably, syncDirectory } from "../storage/durable.ts";
 import {
   describeChange,
   diffSnapshots,
@@ -28,6 +29,9 @@ import type { FileHandle } from "fs/promises";
 //  5. ⚠️ A worse run never clobbers `latest.json`. That file is the diff baseline and what
 //     GET /vcu-params and /vcu-backup.csv serve; a three-parameter run must not replace a
 //     file full of real values. See `replacesLatest` below for why it is a comparison.
+//     A power cut must not clobber it either, so it is renamed into place and never
+//     written in place — a truncated one reads as null, which BLOCKS the table gate.
+//     docs/power-cuts.md.
 
 const PARTIAL_FILE = "sweep.partial.jsonl";
 const LATEST_FILE = "latest.json";
@@ -97,22 +101,60 @@ export async function loadPartialRows(directory: string): Promise<Map<number, Vc
  */
 export async function openPartialSweepLog(directory: string): Promise<PartialSweepLog> {
   await mkdir(directory, { recursive: true });
-  const handle: FileHandle = await open(join(directory, PARTIAL_FILE), "a");
+  const path = join(directory, PARTIAL_FILE);
+  // "ax" so we learn whether the entry is ours to flush. Only EEXIST may fall through;
+  // an ENOENT would mean the mkdir above did not do what it says.
+  let handle: FileHandle;
+  let created = true;
+  try {
+    handle = await open(path, "ax");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw err;
+    }
+    handle = await open(path, "a");
+    created = false;
+  }
+  if (created) {
+    // The rows are flushed at close(); the directory ENTRY is flushed here, because a
+    // cut can otherwise take the whole file and leave the rows nowhere. A cut in the gap
+    // leaves a zero-length file, which loadPartialRows reads as "no rows" and resumes from.
+    await syncDirectory(directory);
+  }
   return {
     append: async row => {
       // No fsync per row on purpose: 277 of them onto a Pi Zero's SD card buys
       // protection against a power cut, which is not the failure this is built for.
       // A dropped link, an abort or a killed process all leave the page cache — and
-      // therefore the file — intact.
+      // therefore the file — intact. What a cut costs here is re-ASKING the bike, inside
+      // a procedure someone is standing over; docs/power-cuts.md argues it against the
+      // ride log, where the same bytes are the only copy that will ever exist.
       await handle.write(`${JSON.stringify({ at: Date.now(), ...row })}\n`);
     },
-    close: () => handle.close(),
+    // One flush for the whole sweep rather than 277, at the moment that matters: a sweep
+    // ending is very often the bike being switched off.
+    close: async () => {
+      try {
+        await handle.datasync();
+      } finally {
+        await handle.close();
+      }
+    },
   };
 }
 
-/** Throws the resume file away. Only ever called for a sweep that covered everything. */
+/**
+ * Throws the resume file away. Only ever called for a sweep that covered everything.
+ *
+ * ⚠️ The removal is flushed, and that is not tidiness. It runs from inside writeSnapshot
+ * AFTER the snapshot is on the card, so a cut here resurrects the resume file next to a
+ * durable `latest.json` — and the next sweep then "resumes" from a COMPLETE previous run,
+ * asks the bike nothing, and writes those weeks-old values back out stamped with today's
+ * `readAt`, with reportChanges saying nothing moved. docs/power-cuts.md.
+ */
 export async function clearPartialSweep(directory: string): Promise<void> {
   await rm(join(directory, PARTIAL_FILE), { force: true });
+  await syncDirectory(directory);
 }
 
 /**
@@ -198,7 +240,9 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   const baseline = await loadSnapshotFile(join(directory, LATEST_FILE));
   const archivePath = join(directory, `${new Date(snapshot.readAt).toISOString().replace(/:/g, "-")}.json`);
   const serialised = `${JSON.stringify(snapshot, null, 2)}\n`;
-  await writeFile(archivePath, serialised, "utf-8");
+  // Renamed into place rather than written in place, like latest.json below: a JSON file
+  // with a hole in it does not parse, so "no archive" beats "half an archive".
+  await replaceFileDurably(archivePath, serialised);
 
   const read = snapshot.rows.filter(row => row.status === "read").length;
   const baselineRead = baseline?.rows.filter(row => row.status === "read").length ?? 0;
@@ -215,7 +259,7 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   // point. docs/vcu-parameters.md §14.
   const replacesLatest = read > 0 && (snapshot.complete || read >= baselineRead);
   if (replacesLatest) {
-    await writeFile(join(directory, LATEST_FILE), serialised, "utf-8");
+    await replaceFileDurably(join(directory, LATEST_FILE), serialised);
   }
   console.log(
     `vcu-sweep: ${read}/${snapshot.rows.length} read${snapshot.complete ? "" : "  ⚠️ INCOMPLETE — start it again to resume"}` +

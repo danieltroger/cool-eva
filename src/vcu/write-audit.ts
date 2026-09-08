@@ -1,6 +1,7 @@
-import { mkdir, open, readFile } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { join } from "path";
 import { readRunningVersion } from "../version.ts";
+import { appendDurably } from "../storage/durable.ts";
 
 // Every attempt to change something on this motorcycle, appended to one file, for ever.
 // What was asked for, what the bike held before, what it held after, and how it went —
@@ -93,16 +94,14 @@ export async function appendAuditRecord(directory: string, record: AuditRecord):
   const stamped: AuditRecord = { ...record, runningVersion: (await readRunningVersion()).label };
   try {
     await mkdir(directory, { recursive: true });
-    const handle = await open(join(directory, AUDIT_FILE), "a");
-    try {
-      await handle.write(`${JSON.stringify(stamped)}\n`);
-    } finally {
-      await handle.close();
-    }
+    // Flushed before it counts as recorded, and the directory too on the first record
+    // ever written here — an unflushed append comes back as NULs after a power cut, which
+    // is how a 1710-NUL line got into this file on 2026-09-08. docs/power-cuts.md.
+    await appendDurably(join(directory, AUDIT_FILE), `${JSON.stringify(stamped)}\n`);
   } catch (err) {
     console.error("=".repeat(72));
     console.error(`vcu-write: COULD NOT RECORD ${record.action} (${record.status}) IN THE AUDIT JOURNAL:`, err);
-    console.error(`vcu-write: the record that was lost: ${JSON.stringify(stamped)}`);
+    console.error(`vcu-write: the record that may not have reached the card: ${JSON.stringify(stamped)}`);
     console.error("vcu-write: the action itself already happened. Copy the line above somewhere by hand.");
     console.error("=".repeat(72));
   }

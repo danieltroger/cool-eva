@@ -331,6 +331,24 @@ const CHECKS: SelfCheck[] = [
       "Walked end to end as well as at each end, because covering both ends left a crossed pair between them green",
   },
   {
+    script: "scripts/check-power-cut-durability.ts",
+    covers:
+      "the four things the service writes, against the power cut this Pi takes every ride: that appendDurably " +
+      "keeps fs/promises appendFile's full-write behaviour while flushing the file, and flushes the DIRECTORY " +
+      "only on the call that created it; that replaceFileDurably swaps latest.json by rename rather than " +
+      "rewriting it in place — proved against an in-place writeFile mutant by holding an fd open across the " +
+      "write, where in-place hands the held reader the new bytes through the same inode and a rename leaves it " +
+      "on the complete old file; that the readers still behave on the shapes a cut actually leaves (a NUL run " +
+      "over a whole line of the audit journal and of the resume file, a truncated latest.json, one that parses " +
+      "but is not a snapshot), which is the FIRST coverage those readers have had; that the flush counters move, " +
+      "so deleting a datasync() turns this red rather than passing quietly; that a 1710-byte hole punched into a " +
+      "real sealed .celog costs exactly the segments whose bytes it touches and nothing on either side of it, " +
+      "measured through scripts/decrypt-log.ts itself as a subprocess because check-ride-log-status.ts only has " +
+      "a MIRRORED copy of its segment reader; and that syncFilesystems reports a missing command as a sentence " +
+      "rather than throwing into the update endpoint. ⚠️ macOS fsync is not F_FULLFSYNC, so a green run here " +
+      "proves the code path and the ordering — the durability claim is an ext4-on-Linux one",
+  },
+  {
     script: "scripts/check-tab-routing.ts",
     covers:
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",

@@ -4,6 +4,7 @@ import { lstat, readdir } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
+import { syncFilesystems } from "../storage/durable.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +20,10 @@ const execFileAsync = promisify(execFile);
 // poisons .git with root-owned files and the next pull as the owner then fails silently.
 // That incident, and why this shape deletes safe.directory and GIT_SSH_COMMAND rather
 // than adding to them, is docs/deploy.md.
+//
+// ⚠️ The new objects are flushed to the card before the restart is fired, because this Pi
+// loses power with the bike and a pull that only reached the page cache is #57's corrupted
+// repo. flushThenRestart() does both, in that order. docs/power-cuts.md.
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -57,7 +62,7 @@ export async function handleUpdateEndpoint(
     const summary = output || "Already up to date.";
     respond(res, 200, { ok: true, message: `${summary}\n\nRestarting cool-eva…` });
     // The restart kills this process, so wait for the reply to leave the socket first.
-    res.once("finish", scheduleServiceRestart);
+    res.once("finish", () => void flushThenRestart());
   } catch (err) {
     // A non-zero git exit (merge conflict, no network, detached head) lands here with
     // its output carried on the error; surface that rather than a bare "failed".
@@ -297,6 +302,31 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
     );
   }
   return null;
+}
+
+/**
+ * Flush what the pull wrote, then restart. In that order, and the restart cannot be lost.
+ *
+ * ⚠️ Runs AFTER the reply is on the wire, not before it: `res.once("finish")` is the only
+ * thing that arms the restart, and this can take up to SYNC_TIMEOUT_MS, so flushing first
+ * would put 30 s of garage wifi between a successful pull and the restart it promised.
+ *
+ * ⚠️ scheduleServiceRestart() is in the `finally`. A flush that fails, or one that has to
+ * be given up on, must never cost the restart — the reply has already told the rider it is
+ * coming, and the new code is on disk either way. The `catch` is what keeps the discarded
+ * promise from becoming an unhandled rejection, which Node 24 turns into an exit.
+ */
+async function flushThenRestart(): Promise<void> {
+  try {
+    const failure = await syncFilesystems();
+    if (failure) {
+      console.warn(`update: ${failure}`);
+    }
+  } catch (err) {
+    console.warn("update: flushing the checkout to disk threw:", err);
+  } finally {
+    scheduleServiceRestart();
+  }
 }
 
 // Restart the service the moment the reply has flushed. `--no-block` hands the job to
