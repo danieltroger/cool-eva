@@ -408,21 +408,28 @@ after    01 00 A0 80 00 00 10 01
 
 ⚠️ Not caused by this project: there was no KWP traffic from the Pi at 13:45:47, the last transmit having been a freeze-frame read 27 minutes earlier.
 
-### 🟡 `0x101` b0/b1 — the first correlate that frame has ever had
+### ✅ `0x101` b1 is b0 quantised — and two claims made here first were wrong
 
-`0x101` is **undecoded** and sits on the inventory of unmapped frames, recorded there as "was constant parked" with b0 spanning `29-96` (12 distinct values) and **b1 spanning `28-3C` — only two distinct values in 40 878 frames**.
+`0x101` is **undecoded** and sits on the inventory of unmapped frames, recorded there as "was constant parked", with b0 spanning `29-96` (12 distinct values) and b1 spanning `28-3C` — **two distinct values in 40 878 frames.**
 
-Across the fault instant, exactly **two** ids changed persistently: `0x100` above, and `0x101`. And it moved again, independently, across the reverse-gear sequence later the same afternoon:
+Across the blocking fault above, exactly **two** ids changed persistently: `0x100`, and `0x101`. That observation stands and is the reason to look at this frame at all.
 
-| moment                    | b0        | b1            |
-| ------------------------- | --------- | ------------- |
-| before reverse            | `2B` (43) | `28` (**40**) |
-| after reverse             | `3E` (62) | `3C` (**60**) |
-| during the blocking fault | `53` (83) | `50` (**80**) |
+**But the relationship between its two bytes is now settled, and it is not interesting in the way first claimed:**
 
-Two things fall out. **b1 reached `0x50` (80), outside its entire observed range** — the survey had never seen it above 60. And b1 is **quantised in steps of 20** across three values now (40 / 60 / 80) while **b0 tracks 2-3 counts above b1 every time**, so the two bytes are a coupled pair rather than independent fields.
+```
+b1 == floor(b0 / 20) * 20        344 957 of 344 957 frames        zero exceptions
+```
 
-That is the best handle `0x101` has ever had: it moves with vehicle activity _and_ it moves with a blocking fault. 🟡 A discrete level pair rather than a temperature is the natural reading of a 20-step quantisation, but three samples do not settle it, and no name for either byte exists in any source.
+Measured across six archive captures, and it also holds for all three of the 2026-09-08 samples (43/40, 62/60, 83/80). **b1 carries no information that b0 does not.** It is b0 rounded down to the nearest 20 — the shape of a coarse display level derived from a fine value, which is why it looks quantised and why it appears to "track" b0.
+
+⚠️ **Two claims recorded here on 2026-09-08 were refuted the same day, by the archive:**
+
+- ❌ _"b1 reached `0x50` (80), outside its entire observed range."_ False. That rested on the inventory's `28-3C` figure, which came from **one parked survey**. Across the archive b1 takes `20`, `60` and `100` — and `100` appears in **184 936 frames**. 80 is unremarkable; it is simply a value that parked survey never sampled.
+- ❌ _"b0 tracks 2-3 counts above b1 every time."_ False, and it was never a fact about the bike: `b0 - b1` is `b0 mod 20` by construction, so it spans 0-19. It looked like a constant offset because the two most common values, b0=101/b1=100 and b0=62/b1=60, happen to sit just above a boundary.
+
+Both errors have the same cause — treating a narrow parked sample as the full observed range without checking the archive. The inventory line says "was constant parked", which was the warning.
+
+**What is left open** is b0 alone: it spans at least 20-112, it moved with vehicle activity and it moved at the blocking fault, and no source names it. The useful consequence of the above is that this is now **one** unknown byte rather than two.
 
 ## 0x102 — body, lights, vehicle state and attitude
 
