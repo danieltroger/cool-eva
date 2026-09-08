@@ -18,6 +18,7 @@ import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
 import { readRunningVersion } from "./version.ts";
+import { startChargeAckWatch } from "./charge/ack-watch.ts";
 import { rememberRunningVersion } from "./vcu/write-audit.ts";
 import { loadLatestSweep, loadLatestTableType } from "./vcu/snapshot-store.ts";
 import {
@@ -102,6 +103,9 @@ console.log(`cool-eva: running ${runningVersion.label}${runningVersion.dirty ? "
 
 // --- Signal registry ---
 defineSignals(SIGNALS);
+// Collects the acknowledgement signals from the first frame, so a command sent seconds after boot
+// still has a lookback to judge against.
+startChargeAckWatch();
 configurePackTemperature(CUSTOM_BMS_CONFIG);
 console.log(
   CUSTOM_BMS_CONFIG

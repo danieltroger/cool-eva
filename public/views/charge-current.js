@@ -7,6 +7,7 @@ import {
   applyWriteStatus,
   ceilingIsFallback,
   chargeType,
+  writeStatus,
   fetchChargeWriteStatus,
   liveCeiling,
   onChargeSessionEnd,
@@ -50,6 +51,15 @@ const lastResult = van.state(/** @type {{ amps: number, succeeded: boolean } | n
 onChargeSessionEnd(forgetCommand);
 
 export const ARMED_KEY = "charge-current";
+
+/**
+ * How long to keep asking the Pi whether the command took, and how often.
+ *
+ * The total covers ACK_TIMEOUT_MS (10 s in src/charge/acknowledge.ts) plus a beat, so the poll
+ * outlives the window it is waiting on rather than giving up one request short of the answer.
+ */
+const ACK_POLL_TOTAL_MS = 14_000;
+const ACK_POLL_INTERVAL_MS = 2_000;
 
 /**
  * The control, or an empty node when it must not be offered.
@@ -207,14 +217,40 @@ function Outcome() {
     const result = lastResult.val;
     return div(
       message.val ? div({ style: `color:${result?.succeeded ? GOOD : WARN}` }, message.val) : div(),
-      result?.succeeded
-        ? div(
-            { style: `color:${WATCH}` },
-            `🔍  Commanded ${result.amps} A — the AC setpoint (charge_limit_a) should follow if the current allows.`
-          )
-        : div()
+      Acknowledgement()
     );
   });
+}
+
+/**
+ * Whether the bike actually took the last command — the Pi's own verdict, not a hint about where
+ * to look.
+ *
+ * ⚠️ This is the whole point of the feature after 2026-09-07, when three commands changed the
+ * dash's number, moved no current, and nothing anywhere said so. It reads the vehicle's own charge
+ * request, never the delivered amps: `pack_a` conflates "the VCU accepted my command" with "the
+ * station could deliver it", and those are exactly the two answers this tells apart. So a
+ * `station-limited` verdict is amber and explicitly NOT a fault — only a reduction proves anything,
+ * since dialling up is the charger's decision. src/charge/acknowledge.ts.
+ */
+function Acknowledgement() {
+  const ack = writeStatus.val?.status?.chargeAck;
+  if (!ack) {
+    return div();
+  }
+  const colour = ack.verdict.kind === "took" ? GOOD : ack.verdict.kind === "not-acknowledged" ? WARN : MUTED;
+  return div({ style: `color:${colour}` }, `${ackIcon(ack.verdict.kind)}  ${ack.message}`);
+}
+
+/** @param {string} kind */
+function ackIcon(kind) {
+  if (kind === "took") {
+    return "✅";
+  }
+  if (kind === "not-acknowledged") {
+    return "⚠️";
+  }
+  return "🔍";
 }
 
 /**
@@ -320,4 +356,31 @@ async function performChargeCurrent() {
     return;
   }
   lastResult.val = { amps: value, succeeded: payload.result.succeeded };
+  void pollAcknowledgement();
+}
+
+/**
+ * Refreshes the status until the Pi has a verdict on the command just sent.
+ *
+ * ⚠️ 0x121 is an event frame with no reply, so the answer is not in the POST's response — it
+ * arrives over the following seconds as the bike's own charge request moves or fails to. Without
+ * this the verdict would not appear until the next time something else fetched the status, which
+ * is the arm before the NEXT command: too late to be the thing you read while standing at the bike.
+ *
+ * ⚠️ Stops the moment anything is armed. A poll that kept calling fetchChargeWriteStatus() would
+ * keep clearing `armed` under a rider who had started a second gesture.
+ */
+async function pollAcknowledgement() {
+  const deadline = performance.now() + ACK_POLL_TOTAL_MS;
+  while (performance.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, ACK_POLL_INTERVAL_MS));
+    if (armed.val !== "") {
+      return;
+    }
+    await fetchChargeWriteStatus();
+    const kind = writeStatus.val?.status?.chargeAck?.verdict.kind;
+    if (kind !== undefined && kind !== "waiting") {
+      return;
+    }
+  }
 }

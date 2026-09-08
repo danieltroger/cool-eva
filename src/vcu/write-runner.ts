@@ -36,6 +36,7 @@ import {
 } from "./write-targets.ts";
 import { parameterTableFor } from "./table-catalog.ts";
 import { readRunningVersion } from "../version.ts";
+import { chargeAckState, noteChargeCommandSent, type ChargeAckState } from "../charge/ack-watch.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
 // to it, read the result back, and write down what happened. The read engine is
@@ -174,6 +175,14 @@ export interface VcuWriteRunner {
 export interface VcuWriteStatus {
   /** False when SERVICE_WRITE_ENABLED is not 1. The page then labels the buttons as off. */
   enabled: boolean;
+  /**
+   * How the last charge-current command turned out, or null when none has been sent this session.
+   *
+   * ⚠️ On the status payload rather than in the POST reply because the answer is not synchronous:
+   * 0x121 is an event frame with no reply, and whether the VCU took it shows up over the following
+   * seconds on the charge request. The page polls this while its window is open.
+   */
+  chargeAck: ChargeAckState | null;
   /**
    * Which commit the Pi is running — `09c3b84`, `09c3b84+dirty`, or `unknown`.
    *
@@ -348,6 +357,7 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
   return {
     enabled: context.enabled,
     runningVersion: (await readRunningVersion()).label,
+    chargeAck: chargeAckState(),
     gate: context.gate(),
     tableGate: evaluateTableGate(sweep?.report ?? null),
     clock: readPiClock(),
@@ -1076,6 +1086,11 @@ async function performChargeCurrent(
     `vcu-write: about to command ${mode.toUpperCase()} charge current ${request.amps} A (ceiling ${ceiling} A) on 0x121`
   );
   const outcome = await sendChargeCommand(channel, mode, request.amps, ceiling);
+  if (outcome.status === "sent") {
+    // Starts the acknowledgement window. ⚠️ After the send, so a frame that never left the Pi is
+    // not watched for an answer it could not produce.
+    noteChargeCommandSent(mode, request.amps);
+  }
   await appendAuditRecord(context.directory, {
     at: Date.now(),
     clockTrustworthy: readPiClock().trustworthy,

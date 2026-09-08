@@ -39,6 +39,14 @@ export const SIGNALS: SignalDef[] = [
   // combination bounds.js renders ungated — so each is named in its BY_KEY, and
   // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
   { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true },
+
+  // Whether a charge-current command took, written by src/charge/ack-watch.ts. Recorded rather
+  // than merely shown because the failure this answers is UNATTENDED: on 2026-09-07 three commands
+  // moved no current and nothing anywhere said so afterwards. `charge_cmd_ack` is the verdict as
+  // CHARGE_ACK_CODE spells it, so a decrypted ride log answers "did it work" with no live observer.
+  { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true },
   { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true },
   // Fun mode's gate (src/fan/fun.ts, docs/fan-control.md §"Fun mode"). `fan_fun_available`

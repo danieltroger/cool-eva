@@ -56,6 +56,16 @@ const CHECKS: SelfCheck[] = [
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
+    script: "scripts/check-charge-ack.ts",
+    covers:
+      "whether the Pi can tell that a charge-current command took, against the 2026-09-07 session where three " +
+      "commands provably moved nothing and two provably worked: that all seven adjudicate as their known outcomes, " +
+      "that the fixture still holds at least two true positives and two true negatives, that the naive " +
+      "first-crossing test really would have scored two of the failures as successes (which is why the envelope " +
+      "exists), that the settle grace changes no verdict, that a binding command still reads waiting halfway " +
+      "through its window, that the ride-log codes are distinct, and that nothing in the adjudicator reads pack_a",
+  },
+  {
     script: "scripts/check-charge-command.ts",
     covers:
       "the charge-current transmitter against the dash's OWN frames, captured off the bus during a real DC fast " +
