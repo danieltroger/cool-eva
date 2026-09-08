@@ -340,16 +340,17 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-waypoint-endpoint.ts",
     covers:
-      "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): the " +
-      "four refusal branches a rider actually hears \u2014 no fix, an unsynced or contested clock, and, new here, " +
-      "a fix that is not a position on Earth \u2014 plus that a refusal records NOTHING and does not consume a " +
+      "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): three " +
+      "of the five refusal sentences a rider actually hears \u2014 no fix, a clock that has never synced, and, " +
+      "new here, a fix that is not a position on Earth \u2014 plus that a refusal records NOTHING and does not consume a " +
       "sequence number, that a save copies the held fix rather than inferring one and stamps all three signals " +
       "with a single timestamp, and that Siri's contract survives: no Accept header (or any other) gets one line " +
       "of text/plain with 200, because Siri never speaks a non-2xx body. The clock is corroborated with real " +
       "readings rather than faked with GPS_TIME_SYNC=0, which would delete the clock refusal instead of testing " +
-      "it; the verdict is in-agreement, so `date` is never spawned. \u26a0 The 30-second stale-fix branch is NOT " +
-      "covered \u2014 its age comes from a monotonic mark taken inside record(), so reaching it means waiting 31 " +
-      "real seconds against a suite that runs in ten",
+      "it; the verdict is in-agreement, so `date` is never spawned. \u26a0 Two sentences are NOT covered: the " +
+      "30-second stale fix, whose age comes from a monotonic mark taken inside record(), so reaching it means " +
+      "waiting 31 real seconds against a suite that runs in ten; and the clock's `contested` wording, which needs " +
+      "a corroborated time contradicting one already trusted \u2014 check-gps-clock.ts drives that gate directly",
   },
   {
     script: "scripts/decode-dtc-response.ts",
