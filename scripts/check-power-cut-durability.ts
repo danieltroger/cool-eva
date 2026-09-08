@@ -3,6 +3,7 @@ import { generateKeyPair } from "crypto";
 import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { promisify } from "util";
 import {
   appendDurably,
@@ -12,7 +13,13 @@ import {
   syncFilesystems,
 } from "../src/storage/durable.ts";
 import { appendReading, closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
-import { loadLatestSweep, loadPartialRows, writeSnapshot } from "../src/vcu/snapshot-store.ts";
+import {
+  clearPartialSweep,
+  loadLatestSweep,
+  loadPartialRows,
+  openPartialSweepLog,
+  writeSnapshot,
+} from "../src/vcu/snapshot-store.ts";
 import { appendAuditRecord, recentAuditRecords } from "../src/vcu/write-audit.ts";
 import { loadLatestSnapshot } from "../src/http/vcu-params.ts";
 import type { VcuParameterRow } from "../src/vcu/snapshot.ts";
@@ -29,6 +36,11 @@ import type { VcuParameterRow } from "../src/vcu/snapshot.ts";
 // writeFile from a tmp+rename with no race at all: in-place hands the held reader the new
 // bytes through the same inode — the very path by which a cut hands it a hole — while a
 // rename leaves that reader on the complete old file and moves the inode.
+//
+// ⚠️ Two mutations this cannot catch, listed so nobody assumes otherwise: deleting the
+// `datasync()` inside flush() while leaving `counters.flushes` beside it, and syncDirectory
+// warning instead of throwing when the FSYNC (not the open) fails. Neither is observable
+// from userspace on a healthy filesystem.
 
 const execFileAsync = promisify(execFile);
 const generateKeyPairAsync = promisify(generateKeyPair);
@@ -56,6 +68,7 @@ try {
   await checkCounters();
   await checkHoledRideLog();
   await checkSyncFilesystems();
+  await checkUncoveredWriters();
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }
@@ -89,13 +102,15 @@ async function checkAppendDurably(): Promise<void> {
   check("nothing failed", afterAppend.failures - before.failures === 0);
 
   // A missing DIRECTORY must stay an error — only EEXIST may fall through to a plain open.
-  let rejected = false;
+  // ⚠️ The errno, not merely "it rejected": the property is that ENOENT does NOT fall
+  // through, and any-rejection would survive a refactor that fails before reaching open().
+  let code: string | undefined;
   try {
     await appendDurably(join(directory, "no-such-dir", "x.log"), "nope\n");
-  } catch {
-    rejected = true;
+  } catch (error) {
+    code = (error as NodeJS.ErrnoException).code;
   }
-  check("an append into a missing directory rejects rather than being created", rejected);
+  check("an append into a missing directory rejects with ENOENT rather than creating it", code === "ENOENT");
 }
 
 /**
@@ -112,10 +127,15 @@ async function checkAtomicReplace(): Promise<void> {
   const oldContent = `${"OLD".repeat(400)}\n`;
   const newContent = `${"NEW".repeat(400)}\n`;
 
-  const mutant = await observeReplacement(join(directory, "mutant.json"), oldContent, newContent, async (p, data) => {
-    // The mutant IS origin/main's writer: snapshot-store.ts:201,218 wrote in place.
-    await writeFile(p, data, "utf-8");
-  });
+  const mutant = await observeReplacement(
+    join(directory, "mutant.json"),
+    oldContent,
+    newContent,
+    async (target, data) => {
+      // The mutant IS origin/main's writer: snapshot-store.ts:201,218 wrote in place.
+      await writeFile(target, data, "utf-8");
+    }
+  );
   check("MUTANT in-place writeFile: the held reader sees the new bytes", mutant.heldRead === newContent);
   check("MUTANT in-place writeFile: the inode does not change", !mutant.inodeChanged);
 
@@ -206,9 +226,11 @@ async function checkCrashShapedCorpus(): Promise<void> {
     "and it says the file could not be READ rather than that it was not a snapshot",
     truncated.warns.some(line => line.includes("could not read the baseline"))
   );
+  const page = await captureConsole(() => loadLatestSnapshot(directory));
+  check("the page says why rather than 'no sweep has run'", page.result.state === "unreadable");
   check(
-    "the page says why rather than 'no sweep has run'",
-    (await loadLatestSnapshot(directory)).state === "unreadable"
+    "and it too names the damage rather than staying quiet",
+    page.warns.some(line => line.includes("not valid JSON"))
   );
 
   await writeFile(join(directory, "latest.json"), "{}", "utf-8");
@@ -282,6 +304,133 @@ function oneReadRow(): VcuParameterRow {
     otherBikeValue: null,
     note: null,
   };
+}
+
+/**
+ * §7 — the paths the diff review found uncovered.
+ *
+ * The resume file's own writer (which had none at all), the tidy-up flush after a completed
+ * sweep, and two failure behaviours that can actually be provoked: a replace whose rename
+ * fails must leave no `.tmp`, and a create whose write fails must already have flushed the
+ * directory entry. Every one of these shipped green under a mutation before this section.
+ */
+async function checkUncoveredWriters(): Promise<void> {
+  console.log("\n§7 the resume file and the tidy-up flush");
+  const directory = join(workDir, "resume");
+  await mkdirp(directory);
+
+  const beforeOpen = durabilityCounters();
+  const log = await openPartialSweepLog(directory);
+  const afterOpen = durabilityCounters();
+  check(
+    "creating the resume file flushes its directory entry",
+    afterOpen.directorySyncs - beforeOpen.directorySyncs === 1
+  );
+  check("but not the rows yet", afterOpen.flushes - beforeOpen.flushes === 0);
+
+  await log.append(oneReadRow());
+  const afterAppend = durabilityCounters();
+  check("a row costs no flush at all — the 277-per-sweep argument", afterAppend.flushes - afterOpen.flushes === 0);
+
+  await log.close();
+  const afterClose = durabilityCounters();
+  check("closing flushes the rows exactly once", afterClose.flushes - afterAppend.flushes === 1);
+  check("the row is on disk", (await readFile(join(directory, "sweep.partial.jsonl"), "utf-8")).includes('"index":1'));
+
+  // Reopening an existing resume file must not re-flush the directory entry.
+  const reopened = await openPartialSweepLog(directory);
+  const afterReopen = durabilityCounters();
+  check(
+    "reopening an existing resume file does not re-flush the directory",
+    afterReopen.directorySyncs - afterClose.directorySyncs === 0
+  );
+  await reopened.close();
+
+  const beforeClear = durabilityCounters();
+  await clearPartialSweep(directory);
+  const afterClear = durabilityCounters();
+  check("clearing the resume file flushes the removal", afterClear.directorySyncs - beforeClear.directorySyncs === 1);
+  check("and the file is gone", !(await exists(join(directory, "sweep.partial.jsonl"))));
+
+  // ⚠️ Covers syncDirectory's OPEN failing, not its fsync failing. The second cannot be
+  // provoked on a healthy filesystem, and is one of the three gaps listed in the header.
+  let syncCode: string | undefined;
+  try {
+    await syncDirectory(join(directory, "not-a-directory"));
+  } catch (error) {
+    syncCode = (error as NodeJS.ErrnoException).code;
+  }
+  check("syncDirectory on a missing directory throws rather than warning", syncCode === "ENOENT");
+
+  // ⚠️ A failure AFTER the temporary file exists, which is the only kind whose cleanup can
+  // be observed: renaming onto a non-empty directory fails EISDIR, by which point the tmp
+  // has been written, flushed and closed. A missing parent would fail at open() instead and
+  // would prove nothing, because there would be no tmp to leave behind.
+  const blocked = join(directory, "blocked.json");
+  await mkdirp(join(blocked, "makes-it-non-empty"));
+  let replaceRejected = false;
+  try {
+    await replaceFileDurably(blocked, "{}\n");
+  } catch {
+    replaceRejected = true;
+  }
+  check("a replace whose rename fails rejects", replaceRejected);
+  check("and removes its temporary file rather than orphaning it", !(await exists(`${blocked}.tmp`)));
+
+  // ⚠️ Fault injection, deliberately: a create that succeeds followed by a write that fails
+  // is the case where flushing the directory AFTER the write loses that entry for ever —
+  // the retry then takes the EEXIST branch and never flushes it again.
+  const halfMade = join(directory, "half-made.log");
+  const beforeHalf = durabilityCounters();
+  try {
+    await appendDurably(halfMade, undefined as unknown as string);
+  } catch {
+    // The rejection is the point; what matters is what happened before it.
+  }
+  const afterHalf = durabilityCounters();
+  check(
+    "a create whose write then fails still flushed the directory entry",
+    afterHalf.directorySyncs - beforeHalf.directorySyncs === 1
+  );
+  check("and the file it created is there to be appended to", await exists(halfMade));
+
+  // ⚠️ The blocking bug this section was written for: a handle opened and then abandoned
+  // because a later step threw. One fd every 30 s reaches the default 1024 in about eight
+  // hours, and a dying card is a PERSISTENT error — so the failure path, not the happy one,
+  // is where a leak actually accrues. Counted rather than reasoned about.
+  const leakDirectory = join(directory, "leak");
+  await mkdirp(leakDirectory);
+  for (let index = 0; index < 5; index += 1) {
+    await failedAppend(join(leakDirectory, `warm-${index}.log`));
+  }
+  const openBefore = await openFileCount();
+  for (let index = 0; index < 40; index += 1) {
+    await failedAppend(join(leakDirectory, `cold-${index}.log`));
+  }
+  const openAfter = await openFileCount();
+  check(`40 failed creates leak no descriptors (${openBefore} → ${openAfter} open)`, openAfter - openBefore <= 1);
+}
+
+/** One append that is guaranteed to fail after the file has been created. */
+async function failedAppend(path: string): Promise<void> {
+  try {
+    await appendDurably(path, undefined as unknown as string);
+  } catch {
+    // The failure is the point; the caller is measuring what it left behind.
+  }
+}
+
+/**
+ * How many descriptors this process holds. /dev/fd is present on both darwin and Linux;
+ * an unreadable one would make the leak assertion vacuous rather than wrong, so it says so.
+ */
+async function openFileCount(): Promise<number> {
+  try {
+    return (await readdir("/dev/fd")).length;
+  } catch (error) {
+    console.warn("could not read /dev/fd, so the descriptor count is not being checked:", error);
+    return 0;
+  }
 }
 
 interface ConsoleCapture<T> {
@@ -488,5 +637,5 @@ async function exists(path: string): Promise<boolean> {
 }
 
 function repoRoot(): string {
-  return dirname(dirname(new URL(import.meta.url).pathname));
+  return dirname(dirname(fileURLToPath(import.meta.url)));
 }

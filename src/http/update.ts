@@ -318,14 +318,20 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
  */
 async function flushThenRestart(): Promise<void> {
   try {
-    const failure = await syncFilesystems();
-    if (failure) {
-      console.warn(`update: ${failure}`);
+    try {
+      const failure = await syncFilesystems();
+      if (failure) {
+        console.warn(`update: ${failure}`);
+      }
+    } finally {
+      scheduleServiceRestart();
     }
   } catch (err) {
-    console.warn("update: flushing the checkout to disk threw:", err);
-  } finally {
-    scheduleServiceRestart();
+    // ⚠️ Around EVERYTHING, including the restart itself. This runs on a `void`ed promise, and
+    // ChildProcess.spawn defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to nextTick — every
+    // other errno throws synchronously, so an ENOMEM on a Pi Zero would become an unhandled
+    // rejection, which Node 24 turns into an exit.
+    console.warn("update: could not flush the checkout or restart the service:", err);
   }
 }
 

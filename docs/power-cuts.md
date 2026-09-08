@@ -30,7 +30,7 @@ That is not a hypothesis. It is what the ride log looks like.
 
 Each mid-file hole marks one power cut.
 
-The four writers, and what each was doing before this change — all four unflushed:
+The four writes, and what each was doing before this change — none of them flushed (`snapshot-store.ts` owns two of them):
 
 | Write                                   | Where                          | Shape                                    |
 | --------------------------------------- | ------------------------------ | ---------------------------------------- |
@@ -40,7 +40,7 @@ The four writers, and what each was doing before this change — all four unflus
 | `latest.json` + `<iso>.json`, per sweep | `src/vcu/snapshot-store.ts`    | in-place `writeFile()`                   |
 | `git pull`, per Update press            | `src/http/update.ts`           | no flush before the restart              |
 
-> ⚠️ #158 cites the audit journal's append at `write-audit.ts:110-116`. Those lines are the **reader's** catch block. The append was at `:82-87`. The claim was right, the citation was not.
+> ⚠️ #158 cites the audit journal's append at `write-audit.ts:110-116`. Those lines are the **reader's** catch block; the append was at `:82-87` **as of `dd8acac`**, which is the commit #158 was counting lines in. The claim was right, the citation was not — and since a callout about a wrong citation had better not become one, note that line numbers in this file are stated against the commit named beside them.
 
 `SIGTERM` (`src/index.ts:498`) already seals the ride log before stopping the fan — but it never runs on a power cut, and nothing on the bus warns of one: `key_on` has never read 0, `vcu_12v_power_good` reads 0 in every frame, and `psu_12v_mv` (0x501, 10 Hz) simply stops.
 
@@ -74,7 +74,7 @@ Not tidiness. `clearPartialSweep` runs from _inside_ `writeSnapshot`, after the 
 
 ### Why `latest.json` is renamed into place
 
-It is the diff baseline behind `GET /vcu-params` and `/vcu-backup.csv` — and it also feeds `loadLatestTableType`, which `table-gate.ts` reads as _"nothing has confirmed either micro"_ when it is null, and then **blocks**. A cut inside the old in-place `writeFile` therefore cost the VCU read gate until the next successful sweep. A rename has no such window.
+It is the diff baseline behind `GET /vcu-params` and `/vcu-backup.csv` — and it also feeds `loadLatestTableType`, which `table-gate.ts` reads as _"nothing has confirmed either micro"_ when it is null, and then **blocks**. A cut inside the old in-place `writeFile` therefore cost the VCU **write** gate until the next successful sweep — parameter writes, not reads: `table-gate.ts:25` says in capitals that reads are deliberately not gated, because a read is the only way back out of that state. A rename has no such window.
 
 ### Why the `sync` runs after the reply, not before it
 
@@ -82,7 +82,11 @@ It is the diff baseline behind `GET /vcu-params` and `/vcu-backup.csv` — and i
 
 So `flushThenRestart()` runs after the reply is on the wire, and **`scheduleServiceRestart()` is in its `finally`** — no failure or timeout in the flush can cost the restart. The reply makes no claim about flushing, so it cannot make a false one; a failure goes to `journalctl`, where the person who can act on it is looking.
 
-`SYNC_TIMEOUT_MS` is a hang guard, the same instrument `PULL_TIMEOUT_MS` is, and it is a bound rather than a measurement on purpose: only the Pi's own SD card could inform a number, and both directions are harmless. When it fires, `execFile` SIGTERMs the `sync` **process**, which does not stop the kernel's writeback — so the log line says _"stopped waiting"_, never _"the data did not land"_.
+`SYNC_TIMEOUT_MS` bounds **how long we wait**, and nothing else. That distinction was a bug here first, and it is worth spelling out because the obvious implementation does not work:
+
+`execFile`'s own `timeout` option only _sends_ SIGTERM, and settles the promise on the child's exit. `sync(2)` is uninterruptible, so on the slow or dying card this whole file is about, the signal sits pending while the kernel finishes writeback. Measured against a child that ignores SIGTERM, `execFile` timeouts of 300/500/1000/2000 ms all settled only when the child exited **8 s** later — and settled by **resolving**, because the exit status was 0. A wedged flush would therefore have been reported as a success, with nothing in the journal at all, and the restart delayed for as long as the flush took.
+
+So the bound is a timer raced against the child, and stopping the wait is all it does. When it fires, the flush is still running; the restart goes ahead anyway. The log line says _"stopped waiting"_ and explicitly **not** _"the data did not land"_ — writeback already issued carries on — but it does not claim all of it landed either. The number itself is a bound rather than a measurement on purpose: only the Pi's own SD card could inform one, and both directions are harmless.
 
 ## 4. What a crash can still lose
 
@@ -92,7 +96,7 @@ A hardening change that lets someone believe the problem is gone has done harm. 
 2. **The one write in flight**, if the cut lands between the `write()` and the `datasync()`. The window shrinks from ~30 s of writeback delay to the duration of one flush; it does not become zero.
 3. **A whole sweep's resume rows**, by the deliberate decision above.
 4. **A cut during the `git pull` itself** — half-fetched objects, a stale `index.lock`. Unchanged. `deployHint` in `src/http/update.ts` already names that one and tells the rider to delete the lock.
-5. **Every file we do not fsync.** Under `data=ordered` the whole filesystem still gets metadata ahead of data; only these four writes are covered.
+5. **Every file we do not fsync.** `data=ordered` is not the cause and never was — it is the mode that forces data out _before_ the metadata referencing it is committed, and the mode where metadata may precede data is `data=writeback`. What defeats it here is `delalloc`: blocks that have not been allocated yet are not in the transaction that publishes `i_size`, so there is nothing for ordered mode to order. An explicit flush is what puts them there, and only these four writes get one.
 6. **An SD card that lies.** `fsync` is only as honest as the device. A card that acknowledges a flush it has not completed, or that loses an erase block mid-program, defeats all of this. That is the hardware half, and it is still open.
 
 ### Duplicates, on a flush failure
@@ -111,11 +115,13 @@ Recorded because it was measured and got the wrong answer once: better-sqlite3 s
 
 That number is **not** extrapolated to the Pi: different filesystem, different device class, and the rails for this work barred ssh'ing the bike to measure it. What survives the difference is the frequency. The ride log flushes twice a minute, the audit journal about once per deliberate change to the bike, the snapshot twice per manually-started sweep, the resume file once per sweep. Even at a pessimistic 50 ms per flush on a poor SD card that is a 0.17 % duty cycle on one timer callback. No interval moved and no burst gained a per-item flush, so the functionality cost is none.
 
-**Cost of one hole** — #158 records the loss per hole as unmeasured, because the private key is not on the Pi. Measured instead on a synthetic file of the same shape, in `scripts/check-power-cut-durability.ts` §5: 24 real segments sealed through `src/storage/encrypted-log.ts` into one 4763-byte `.celog`, a **1710-byte NUL run** punched at byte 1587, then decrypted by `scripts/decrypt-log.ts` itself.
+**Cost of one hole** — #158 records the loss per hole as unmeasured, because the private key is not on the Pi. Measured instead on a synthetic file of the same shape, in `scripts/check-power-cut-durability.ts` §5: 24 real segments sealed through `src/storage/encrypted-log.ts` into one `.celog` of about 4.75 kB, a **1710-byte NUL run** punched a third of the way in, then decrypted by `scripts/decrypt-log.ts` itself. (The exact byte figures move a few bytes per run — fresh nonces, gzip — so the reproducible result is the segment count, not the offsets.)
 
 > A 1710-byte hole cost **9 of 24 segments** — exactly those whose bytes it touched — and every one of the 15 on either side of it was recovered.
 
-That is the resync contract holding: `decrypt-log.ts` scans forward to the next `COOLEVA1` and carries on, so a hole costs the segments inside it and nothing else. At a 30 s segment interval, each of the six holes in `rides-2026-09-07.celog` cost on the order of a few minutes of readings, not the file.
+That is the resync contract holding: `decrypt-log.ts` scans forward to the next `COOLEVA1` and carries on, so a hole costs the segments inside it and nothing else.
+
+⚠️ **Do not read "9 of 24" across to the real log.** The synthetic file carries one reading per segment, ~198 bytes each, so nine segments is just 1710/198 — an artefact of the fixture. A real day file is ≥ 54.8 MB over at most 2880 segments, i.e. **≥ 19 kB per segment**, so a 1306–3398-byte hole lands inside one segment or straddles two: **30–60 s of readings per hole**, not minutes. The measurement is of the reader's behaviour; the segment count does not transfer.
 
 > ⚠️ macOS `fsync` is not `F_FULLFSYNC`. A green check run on the development Mac proves the calls are made and the ordering is right — the **durability** claim is an ext4-on-Linux claim, and nothing in the suite can test it.
 

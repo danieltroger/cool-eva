@@ -340,11 +340,13 @@ const CHECKS: SelfCheck[] = [
       "write, where in-place hands the held reader the new bytes through the same inode and a rename leaves it " +
       "on the complete old file; that the readers still behave on the shapes a cut actually leaves (a NUL run " +
       "over a whole line of the audit journal and of the resume file, a truncated latest.json, one that parses " +
-      "but is not a snapshot), which is the FIRST coverage those readers have had; that the flush counters move, " +
-      "so deleting a datasync() turns this red rather than passing quietly; that a 1710-byte hole punched into a " +
+      "but is not a snapshot), which is the FIRST coverage those readers have had; that the real writers move the " +
+      "flush counters, so a call site reverted to appendFile or writeFile turns this red — though NOT that the " +
+      "syscall happened, since deleting the datasync() and leaving the counter beside it is invisible from " +
+      "userspace, one of two gaps the check names in its own header; that a 1710-byte hole punched into a " +
       "real sealed .celog costs exactly the segments whose bytes it touches and nothing on either side of it, " +
       "measured through scripts/decrypt-log.ts itself as a subprocess because check-ride-log-status.ts only has " +
-      "a MIRRORED copy of its segment reader; and that syncFilesystems reports a missing command as a sentence " +
+      "a MIRRORED copy of its segment reader; that the resume file flushes its directory entry on creation and its rows once at close but never per row, and that clearPartialSweep flushes the removal; and that syncFilesystems reports a missing command as a sentence " +
       "rather than throwing into the update endpoint. ⚠️ macOS fsync is not F_FULLFSYNC, so a green run here " +
       "proves the code path and the ordering — the durability claim is an ext4-on-Linux one",
   },

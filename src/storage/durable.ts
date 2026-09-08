@@ -19,7 +19,16 @@ import type { FileHandle } from "fs/promises";
 
 const execFileAsync = promisify(execFile);
 
-/** A wedged flush must not postpone the service restart for ever. See syncFilesystems(). */
+/**
+ * How long we WAIT for `sync(1)` — never how long it takes.
+ *
+ * ⚠️ Those are different things and conflating them was a bug here. `sync(2)` is
+ * uninterruptible, so a signal cannot shorten it; measured, `execFile`'s own `timeout`
+ * option does not bound anything, because the promise settles on the child's exit and a
+ * child that will not die does not settle it — and if it later exits 0 the call RESOLVES,
+ * reporting a wedged flush as a success. So the bound is a timer we race, and stopping the
+ * wait is all it does. docs/power-cuts.md.
+ */
 const SYNC_TIMEOUT_MS = 30_000;
 
 /** What actually reached the card. Exists so a check can assert the flush happened at all. */
@@ -41,6 +50,14 @@ const counters: DurabilityCounters = { flushes: 0, directorySyncs: 0, failures: 
 export async function appendDurably(path: string, data: Buffer | string): Promise<void> {
   const { handle, created } = await openForAppend(path);
   try {
+    // ⚠️ BEFORE the write, not after. The entry exists the moment "ax" succeeds, so if the
+    // write or the flush fails here, every retry takes the EEXIST branch and this path would
+    // never be flushed again — a cut would then cost the whole day's file, which is the
+    // exact case this call exists for. Flushing first exposes a zero-length file instead,
+    // which every reader already treats as no data.
+    if (created) {
+      await syncDirectory(dirname(path));
+    }
     // writeFile() rather than write(): write() reports a short write in `bytesWritten` and
     // leaves acting on it to the caller, so a partial record would be flushed to the card
     // as a truncated one — this module's own injury, made permanent. writeFile() loops,
@@ -50,9 +67,47 @@ export async function appendDurably(path: string, data: Buffer | string): Promis
   } finally {
     await closeReportingOnly(handle, path);
   }
-  if (created) {
-    await syncDirectory(dirname(path));
+}
+
+/** A handle held open across many writes, flushed once when it is closed. */
+export interface DeferredAppend {
+  write: (data: Buffer | string) => Promise<void>;
+  /** Flushes, then closes. Throws what the flush threw; the handle is closed either way. */
+  close: () => Promise<void>;
+}
+
+/**
+ * Opens `path` for appending, flushing the DIRECTORY if this call created it, and leaves
+ * the data unflushed until close().
+ *
+ * For the one writer whose per-write flush is argued against and whose file is still worth
+ * keeping: the parameter sweep's resume file. The directory entry costs one flush, once;
+ * 277 data flushes inside a bus burst are what src/vcu/snapshot-store.ts refuses.
+ *
+ * ⚠️ Here rather than hand-rolled at that call site, because the hand-rolled version leaked
+ * the handle when the directory flush threw — the exact failure this file opens by warning
+ * about, in the one place the recipe was copied instead of imported.
+ */
+export async function openDeferredAppend(path: string): Promise<DeferredAppend> {
+  const { handle, created } = await openForAppend(path);
+  try {
+    if (created) {
+      await syncDirectory(dirname(path));
+    }
+  } catch (error) {
+    await closeReportingOnly(handle, path);
+    throw error;
   }
+  return {
+    write: data => handle.writeFile(data),
+    close: async () => {
+      try {
+        await flush(handle, path);
+      } finally {
+        await closeReportingOnly(handle, path);
+      }
+    },
+  };
 }
 
 /**
@@ -66,22 +121,25 @@ export async function replaceFileDurably(path: string, data: string): Promise<vo
   const temporaryPath = `${path}.tmp`;
   try {
     const handle = await open(temporaryPath, "w");
+
     try {
       await handle.writeFile(data);
       await flush(handle, temporaryPath);
     } finally {
       await closeReportingOnly(handle, temporaryPath);
     }
+    await rename(temporaryPath, path);
+    await syncDirectory(dirname(path));
   } catch (error) {
-    // ⚠️ After the close above, never instead of it. A power cut can still leave one of
-    // these behind; nothing reads a `.tmp` and the next write of that name overwrites it.
+    // ⚠️ After the close above, never instead of it — and covering the rename and directory
+    // flush too, not just the write. writeSnapshot's archive name is unique per sweep, so an
+    // orphan there is overwritten by nothing and would accumulate for the life of a card
+    // whose free space may be why the write failed. A power cut can still leave one behind.
     await rm(temporaryPath, { force: true }).catch((removeError: unknown) => {
       console.warn(`durable: could not remove ${temporaryPath} after a failed write:`, removeError);
     });
     throw error;
   }
-  await rename(temporaryPath, path);
-  await syncDirectory(dirname(path));
 }
 
 /**
@@ -109,23 +167,42 @@ export async function syncDirectory(directory: string): Promise<void> {
  * ⚠️ `sync` here is the COREUTILS BINARY as a child process, not a `*Sync` Node API —
  * CLAUDE.md bans those and this is not one of them.
  *
- * The timeout is a hang guard, the same instrument PULL_TIMEOUT_MS is, and it is a bound
- * rather than a measurement on purpose: only the Pi's own SD card could inform a number,
- * and both directions are harmless. `command` is a parameter so the failure path stays
- * checkable without breaking `sync` on the machine running the suite.
+ * `command` is a parameter so the failure path stays checkable without breaking `sync` on
+ * the machine running the suite.
  */
 export async function syncFilesystems(command = "sync"): Promise<string | null> {
+  const child = execFile(command, []);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const finished = new Promise<string | null>(resolve => {
+    child.once("error", error => resolve(`\`${command}\` could not be run: ${(error as Error).message}`));
+    child.once("close", (code, signal) => {
+      if (code === 0) {
+        resolve(null);
+        return;
+      }
+      resolve(`\`${command}\` ended ${signal ? `on ${signal}` : `with status ${code}`} without reporting success`);
+    });
+  });
+  // setTimeout is driven by libuv's own clock rather than the wall clock this process
+  // steps from GPS, so a `date -u -s` mid-flush cannot fire or postpone it.
+  const gaveUpWaiting = new Promise<string>(resolve => {
+    timer = setTimeout(
+      () =>
+        resolve(
+          `stopped waiting for \`${command}\` after ${SYNC_TIMEOUT_MS / 1000} s — it is still running. ` +
+            `Writeback already issued carries on, so this is "we did not wait", NOT "the data did not land" ` +
+            `— but it is also not a promise that all of it did.`
+        ),
+      SYNC_TIMEOUT_MS
+    );
+  });
   try {
-    await execFileAsync(command, [], { timeout: SYNC_TIMEOUT_MS });
-    return null;
-  } catch (error) {
-    const failure = error as Error & { killed?: boolean };
-    if (failure.killed === true) {
-      // Said this way round on purpose: the SIGTERM stops the `sync` process, not the
-      // kernel's writeback, so the data has very likely landed anyway.
-      return `stopped waiting for \`${command}\` after ${SYNC_TIMEOUT_MS / 1000} s — that is "we did not wait", not "the data did not land"`;
-    }
-    return `\`${command}\` failed: ${failure.message}`;
+    return await Promise.race([finished, gaveUpWaiting]);
+  } finally {
+    clearTimeout(timer);
+    // Unref rather than kill: the whole point above is that a signal does not stop a sync.
+    // Killing it would only stop US waiting, which the race has already done.
+    child.unref();
   }
 }
 

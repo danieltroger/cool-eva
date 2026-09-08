@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, rm } from "fs/promises";
 import { join } from "path";
-import { replaceFileDurably, syncDirectory } from "../storage/durable.ts";
+import { openDeferredAppend, replaceFileDurably, syncDirectory } from "../storage/durable.ts";
 import {
   describeChange,
   diffSnapshots,
@@ -101,45 +101,23 @@ export async function loadPartialRows(directory: string): Promise<Map<number, Vc
  */
 export async function openPartialSweepLog(directory: string): Promise<PartialSweepLog> {
   await mkdir(directory, { recursive: true });
-  const path = join(directory, PARTIAL_FILE);
-  // "ax" so we learn whether the entry is ours to flush. Only EEXIST may fall through;
-  // an ENOENT would mean the mkdir above did not do what it says.
-  let handle: FileHandle;
-  let created = true;
-  try {
-    handle = await open(path, "ax");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-      throw err;
-    }
-    handle = await open(path, "a");
-    created = false;
-  }
-  if (created) {
-    // The rows are flushed at close(); the directory ENTRY is flushed here, because a
-    // cut can otherwise take the whole file and leave the rows nowhere. A cut in the gap
-    // leaves a zero-length file, which loadPartialRows reads as "no rows" and resumes from.
-    await syncDirectory(directory);
-  }
+  // ../storage/durable.ts rather than an open() here: it flushes the directory entry on the
+  // call that creates the file, closes the handle if that flush throws, and flushes the rows
+  // once at close(). Hand-rolling those three leaked the handle on the middle one.
+  const log = await openDeferredAppend(join(directory, PARTIAL_FILE));
   return {
-    append: async row => {
+    append: row => {
       // No fsync per row on purpose: 277 of them onto a Pi Zero's SD card buys
       // protection against a power cut, which is not the failure this is built for.
       // A dropped link, an abort or a killed process all leave the page cache — and
       // therefore the file — intact. What a cut costs here is re-ASKING the bike, inside
       // a procedure someone is standing over; docs/power-cuts.md argues it against the
       // ride log, where the same bytes are the only copy that will ever exist.
-      await handle.write(`${JSON.stringify({ at: Date.now(), ...row })}\n`);
+      return log.write(`${JSON.stringify({ at: Date.now(), ...row })}\n`);
     },
     // One flush for the whole sweep rather than 277, at the moment that matters: a sweep
     // ending is very often the bike being switched off.
-    close: async () => {
-      try {
-        await handle.datasync();
-      } finally {
-        await handle.close();
-      }
-    },
+    close: () => log.close(),
   };
 }
 
@@ -276,7 +254,14 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   if (snapshot.complete) {
     // Only once the sweep finished: deleting the resume file after a partial run is
     // exactly the "losing what we got" rule 1 exists to avoid.
-    await clearPartialSweep(directory);
+    //
+    // ⚠️ Warned, not thrown. Everything that matters is already on the card by this line, so
+    // letting a tidy-up fsync reject would skip reportChanges below — the ⚠️ VALUE(S) CHANGED
+    // line, the loudest thing a sweep can say — and would mark a safely written sweep as
+    // failed on the dashboard (../vcu/read-runner.ts sets `failure` from this rejection).
+    await clearPartialSweep(directory).catch((err: unknown) => {
+      console.warn(`vcu-sweep: could not clear ${PARTIAL_FILE}; a resume file may outlive this sweep:`, err);
+    });
   }
   reportChanges(baseline, snapshot);
 }
