@@ -1,4 +1,4 @@
-import { MIN_RUNNING_DUTY_PERCENT } from "./control.ts";
+import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT } from "./control.ts";
 
 // What duty the automatic mode asks for, as arithmetic and nothing else.
 //
@@ -68,8 +68,9 @@ export const TEMPERATURE_FRESH_MS = 5_000;
 
 /**
  * …and how long the last in-bounds reading is steered by before it is given up on.
- * Past this the fan runs at the floor rather than at whatever the curve makes of a
- * number nobody is refreshing. See docs/fan-control.md §"When the temperature goes away".
+ * Past this the fan runs at the floor — or flat out, on a DC session — rather than at
+ * whatever the curve makes of a number nobody is refreshing. See docs/fan-control.md
+ * §"When the temperature goes away".
  */
 export const TEMPERATURE_GRACE_MS = 60_000;
 
@@ -84,7 +85,8 @@ export const FAN_REASON = {
   MANUAL: 0,
   /** Nothing has arrived under `batt_temp_hi` yet and the grace has not run out. */
   NO_READING_YET: 1,
-  /** No usable `batt_temp_hi` for TEMPERATURE_GRACE_MS. The floor, and a fault. */
+  /** No usable `batt_temp_hi` for TEMPERATURE_GRACE_MS. A fault, and a duty that is never
+   * 0 — the floor, or MAX_DUTY_PERCENT if a DC session is what is setting it. */
   TEMPERATURE_FAULT: 2,
   /** Pack below the start threshold (or back under the stop one). */
   BELOW_THRESHOLD: 3,
@@ -146,18 +148,15 @@ export interface FanCurveDecision {
 export function fanCurveDecision(inputs: FanCurveInputs): FanCurveDecision {
   const charging = inputs.chargeManagerState === CHARGE_MANAGER_STATE_DC;
   const temperature = usableTemperature(inputs);
-  const input = temperatureInputOf(inputs, temperature);
-  // The age alone, because usableTemperature() gives up on ANY reading past the grace
-  // before it looks at whether the number is plausible — so there is no reachable state
-  // where the grace has run out and a temperature survives it.
-  const faulted = inputs.temperatureAgeMs > TEMPERATURE_GRACE_MS;
+  const input = temperatureInputOf(inputs.temperatureAgeMs, temperature);
+  const faulted = graceExpired(inputs.temperatureAgeMs);
 
   // ⚠️ The DUTY here answers to nothing — not the pack, not the speed gate, not a dead
   // sensor — but the REASON still lets the fault name itself. A DC session that swallowed
   // it would hide a broken batt_temp_hi until the next ride, at 48 °C, with no fan.
   if (charging) {
     return {
-      dutyPercent: 100,
+      dutyPercent: MAX_DUTY_PERCENT,
       reason: faulted ? FAN_REASON.TEMPERATURE_FAULT : FAN_REASON.DC_SESSION,
       temperatureInput: input,
       temperatureC: temperature,
@@ -185,7 +184,7 @@ export function fanCurveDecision(inputs: FanCurveInputs): FanCurveDecision {
     return { dutyPercent: 0, reason: FAN_REASON.BELOW_THRESHOLD, temperatureInput: input, temperatureC: temperature };
   }
   return {
-    dutyPercent: rampDuty(temperature, FAN_ON_TEMPERATURE_C, RIDING_CURVE_TOP_C),
+    dutyPercent: ridingCurveDuty(temperature),
     reason: FAN_REASON.PACK_TEMPERATURE,
     temperatureInput: input,
     temperatureC: temperature,
@@ -203,34 +202,47 @@ export function isPackTemperaturePlausible(celsius: number | null): celsius is n
 }
 
 /**
- * The straight line from the floor at `footC` to 100 % at `topC`, clamped at both ends.
+ * The riding / parked / AC curve: a straight line from the floor at FAN_ON_TEMPERATURE_C
+ * to 100 % at RIDING_CURVE_TOP_C, clamped at both ends.
  *
- * The riding / parked / AC curve is the only thing shaped like this now: a DC session is
- * a flat 100 % and consults no temperature at all.
+ * It took its two endpoints as parameters while a second, shallower line to 54 °C shared
+ * the arithmetic. A DC session is a flat MAX_DUTY_PERCENT now and consults no temperature
+ * at all, so the endpoints are read straight from the constants they were always given.
  */
-function rampDuty(temperatureC: number, footC: number, topC: number): number {
-  if (temperatureC >= topC) {
+function ridingCurveDuty(temperatureC: number): number {
+  if (temperatureC >= RIDING_CURVE_TOP_C) {
     return 100;
   }
-  if (temperatureC <= footC) {
+  if (temperatureC <= FAN_ON_TEMPERATURE_C) {
     return MIN_RUNNING_DUTY_PERCENT;
   }
-  const span = (temperatureC - footC) / (topC - footC);
+  const span = (temperatureC - FAN_ON_TEMPERATURE_C) / (RIDING_CURVE_TOP_C - FAN_ON_TEMPERATURE_C);
   const duty = MIN_RUNNING_DUTY_PERCENT + span * (100 - MIN_RUNNING_DUTY_PERCENT);
   return Math.round(duty);
 }
 
 /** Whether `temperature` is a live reading, one held from before, or nothing at all. */
-function temperatureInputOf(inputs: FanCurveInputs, temperature: number | null): FanTemperatureInput {
+function temperatureInputOf(temperatureAgeMs: number, temperature: number | null): FanTemperatureInput {
   if (temperature === null) {
     return FAN_TEMPERATURE_INPUT.NONE;
   }
-  return inputs.temperatureAgeMs > TEMPERATURE_FRESH_MS ? FAN_TEMPERATURE_INPUT.HELD : FAN_TEMPERATURE_INPUT.LIVE;
+  return temperatureAgeMs > TEMPERATURE_FRESH_MS ? FAN_TEMPERATURE_INPUT.HELD : FAN_TEMPERATURE_INPUT.LIVE;
+}
+
+/**
+ * Whether the last reading is old enough to be given up on.
+ *
+ * ⚠️ The grace is an age test and nothing else, which is what makes a fault and a usable
+ * temperature mutually exclusive: usableTemperature() gives up on ANY reading past this
+ * before it looks at whether the number is plausible.
+ */
+function graceExpired(temperatureAgeMs: number): boolean {
+  return temperatureAgeMs > TEMPERATURE_GRACE_MS;
 }
 
 /** The temperature to steer by, or null when there is none inside the grace. */
 function usableTemperature(inputs: FanCurveInputs): number | null {
-  if (inputs.temperatureAgeMs > TEMPERATURE_GRACE_MS) {
+  if (graceExpired(inputs.temperatureAgeMs)) {
     return null;
   }
   return isPackTemperaturePlausible(inputs.packTemperatureC) ? inputs.packTemperatureC : null;

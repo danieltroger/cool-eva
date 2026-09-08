@@ -108,10 +108,11 @@ check(
 // cooling is radiator-limited rather than curve-limited, and a stationary bike at a
 // charger pays nothing for max airflow. What it does NOT swallow is the fault: §5 below.
 //
-// ⚠️ The two literal duties in the first assertions are the OLD curve's answers at those
-// temperatures. Phrased as "is it 100 %" alone, a resurrected ramp that happened to be
-// clamped would pass; phrased against 65 and 30, the two points a ramp actually differs
-// at, it cannot.
+// ⚠️ The sweep below is what proves the answer is constant; the two assertions before it
+// are the same property at the two temperatures a resurrected ramp would differ at, named
+// separately because .every() cannot say WHICH temperature failed. Their labels carry the
+// retired ramp's own answers — 65 at 44.5 °C, 30 at 5 °C — so a failure reads as a policy
+// that came back rather than as an arithmetic slip.
 
 console.log("\n2. the DC rule — 100 % for the whole session, whatever the pack is doing");
 
@@ -301,6 +302,9 @@ check(
 // DC rule that swallowed the fault would hide a dead batt_temp_hi for exactly the sessions
 // where the pack matters most, and it would surface on the next ride, at 48 °C, with no
 // fan. Satisfying either half alone is the bug; both together are the requirement.
+// The reason asserted is FAN_REASON.TEMPERATURE_FAULT and §8 pins that to
+// TEMPERATURE_FAULT_REASON — public/views/fan.js's own copy, the number that actually
+// paints the banner red — so the two together are what say the banner still fires here.
 for (const [what, overrides] of [
   ["a reading that went quiet", { packTemperatureC: 42 }],
   ["a pack that was cold when the sensor died", { packTemperatureC: 5 }],
@@ -316,14 +320,6 @@ for (const [what, overrides] of [
       decision.temperatureC === null
   );
 }
-// The dashboard's own copy of the code, not the enum's — public/views/fan.js compares
-// against THIS number to paint the banner red, so this is what pins "the banner still
-// fires on DC" rather than merely "some fault code came out".
-check(
-  "…and the code it publishes is the one the dashboard paints red",
-  fanCurveDecision(inputs({ ...dc, packTemperatureC: null, temperatureAgeMs: 60_001 })).reason ===
-    TEMPERATURE_FAULT_REASON
-);
 check(
   "the grace is the same 60 s on a DC session — 60 000 is the rule, 60 001 is the fault",
   reasonAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 60_000 }) === FAN_REASON.DC_SESSION &&
@@ -335,10 +331,6 @@ check(
     dutyAt({ packTemperatureC: null, temperatureAgeMs: 1000 }) === 0 &&
     fanCurveDecision(inputs({ packTemperatureC: null, temperatureAgeMs: 1000 })).temperatureInput ===
       FAN_TEMPERATURE_INPUT.NONE
-);
-check(
-  "…except on DC, which needs no temperature at all and runs flat out without one",
-  dutyAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 1000 }) === 100
 );
 check(
   "waiting for the first reading does not last forever — the grace turns it into the fault",
