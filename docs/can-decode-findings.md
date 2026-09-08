@@ -662,7 +662,9 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 
 ✅ **PROVEN 2026-09-08: the broadcast pair IS the bank-2 block.** This was the outstanding experiment and it has now been run, twice over.
 
-**Both fields matched exactly, in one session, across two unrelated transports.** A9 bank 2 index 138 read `FF 83` (signed **−125**) and index 139 read `FF C6` (signed **−58**) over KWP on `0x7C0`/`0x7E0`; seconds later the 100 Hz broadcast on `0x102` carried `80 10 02 44 83 FF C6 FF` — b4-5 LE = **−125**, b6-7 LE = **−58**. Roll −12.5°, pitch −5.8°, on the side stand. Two independent fields agreeing to the unit at an arbitrary attitude is a far more specific coincidence than the earlier single-field match on different days.
+**Both fields matched exactly, in one session, across two unrelated transports.** A9 bank 2 index 138 read `FF 83` (signed **−125**) and index 139 read `FF C6` (signed **−58**) over KWP on `0x7C0`/`0x7E0`; seconds later the 100 Hz broadcast on `0x102` carried `80 10 02 44 83 FF C6 FF` — b4-5 LE = **−125**, b6-7 LE = **−58**.
+
+⚠️ **The two transports print that value with opposite byte order, and it is not a discrepancy.** The parameter read renders its 16-bit result big-endian (`FF 83`); the frame carries it little-endian on the wire (`83 FF`). Both are −125. Worth a clause because the raw hex looks like a mismatch at a glance, and "the bytes disagree" is the wrong conclusion to draw from it. Roll −12.5°, pitch −5.8°, on the side stand. Two independent fields agreeing to the unit at an arbitrary attitude is a far more specific coincidence than the earlier single-field match on different days.
 
 **And they track together as the bike moves.** Re-derived during review across a settling bike: live `0x102` roll −4.6° / −5.2° / **−12.0°** against bank 2 index 138 reading −46 / −52 / **−120**, with pitch holding −5.8° / −58 throughout. A 7.4° change in one field while the other stays put, followed on both transports, is the tilt test this section asked for. Also inferred: the pitch sign convention above is measured off this bike's brake and throttle bits, not read out of any document.
 
@@ -693,15 +695,21 @@ Measured 2026-09-08 with the bike connected, reverse selected deliberately twice
 
 **❌ "Exactly four transitions in 195 868 frames."** The frame count is not reproducible from any capture or combination of captures on the Pi — the 2026-09-08 files hold millions of `0x104` frames, one overnight capture alone carrying 2 879 174. More importantly the denominator is doing rhetorical work it has not earned: the overwhelming majority of those frames are a **stationary** bike, where neither hypothesis predicts anything. Restricted to frames where the bike was actually moving, the observation is two pulses among a few hundred moving frames, which is a far weaker statement than "4 in 195 868".
 
-**❌ The bit fires 38 410 times in the archive, and every one of them is a creeping bike.** Swept across **15 006 363** `0x104` frames in every local archive capture, decoding each hit with this repo's own bit offsets:
+**❌ The bit fires in 742 separate bursts in the archive, and every one of them is a creeping bike.** Swept across **14 965 486** `0x104` frames in every local archive capture, decoding each hit with this repo's own bit offsets:
 
 ```
-bit 63 set                        38 410 frames
-of those, speed > 0               38 410      — all of them
+bit 63 set                        37 288 frames
+of those, speed > 0               37 288      — all of them
+of those, at a standstill              0
+rising edges (distinct bursts)       742
 speed range on those frames       0.5 … 4.5 km/h
 ```
 
-**Not one fires at a standstill, and not one fires above 4.5 km/h.** That is decisive against "reverse selected": reverse is selected once, while stopped, and then held — it is not a thing that happens 38 410 times at 0.5-4.5 km/h. It is precisely §12's reading, reproduced here independently and at 60× the sample (§12: median 0.4 km/h, p95 0.7, never above 4.1).
+**Not one fires at a standstill, and not one fires above 4.5 km/h.** That is decisive against "reverse selected": reverse is selected once, while stopped, and then held — it is not a thing that happens in 742 separate bursts at 0.5-4.5 km/h. It agrees with §12 (median 0.4 km/h, p95 0.7, never above 4.1).
+
+⚠️ **This first claimed "60× the sample", which is a units error of exactly the kind this document keeps warning about.** It compared 37 288 _frames_ against §12's 597 _rising edges_. At 100 Hz one ~10 ms pulse is one frame or several, so frames are not events. Like for like the archive gives **742 rising edges against 597** — **1.24×** — and even that overstates it: §12 measured `rides.db` over six days of riding while this reads the capture archive, and the two corpora overlap heavily, so much of the 742 is very likely the _same_ events counted through a different pipeline. Read this sweep as an independent **reproduction** of §12, not as a bigger sample than it.
+
+⚠️ **The denominator also double-counted.** `ride-1.log` and `ride-2026-08-02.log` in the local archive are **byte-identical** — same md5, same 39 301 120 bytes — and both were being scanned. The figures above exclude the duplicate, which is why they are slightly smaller than the ones first published here: 14 965 486 frames rather than 15 006 363, and 37 288 hits rather than 38 410.
 
 ⚠️ **It is also not a capture-start artefact**, which is the obvious alternative for a bit that fires in short bursts. The first hit in each capture sits deep inside it — frame #8 359, #11 443, #20 847, #50 798, **#571 235** — not at frame 1. Two captures do start early (#73, #564), and they are the exception rather than the pattern.
 
