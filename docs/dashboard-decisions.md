@@ -387,7 +387,7 @@ The one interaction this view has is the filter box, and a pinned block that ign
 
 ### Seven tiles, not eleven
 
-The first version gave every decoded field its own tile and pushed the signal grid off the bottom of a 414 px screen — on the tab whose whole purpose is going to look at a raw number. The charge counters became one tile carrying `969 AC · 17 DC · 32 neither`, and the four cell readings became a spread with its bounds and ids underneath. Rows carry a `detail` array for exactly this, formatted in `src/diagnostics/lifetime-stats.ts` rather than in the browser: what belongs with what, and what a rejected constituent should look like, is the same judgement as the row itself.
+The first version gave every decoded field its own tile and pushed the signal grid off the bottom of a 414 px screen — on the tab whose whole purpose is going to look at a raw number. The charge counters became one tile carrying `969 AC · 17 DC · 32 neither`, and the four cell readings became a spread with its bounds and ids underneath. Rows carry a `detail` array for exactly this, formatted in `src/diagnostics/lifetime-rows.ts` rather than in the browser: what belongs with what, and what a rejected constituent should look like, is the same judgement as the row itself.
 
 ### The notes are the feature, not decoration
 

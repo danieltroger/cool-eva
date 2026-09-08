@@ -3,10 +3,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
 import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
-import { HOW_TO_READ, type LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
+import type { LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
+import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
 import { summariseLifetimeStatistics } from "../src/diagnostics/lifetime-stats.ts";
-import { LIFETIME_READ_PAYLOADS, lifetimeReadPayload } from "./captured-lifetime-reads.ts";
+import { LIFETIME_READ_PAYLOADS } from "./captured-lifetime-reads.ts";
+import { parseHexFrame } from "./captured-dtc-transfer.ts";
 
 // Builds a single self-contained HTML file showing the service sheet with no Pi on the
 // other end. The point is being able to look at a design change before riding out to the
@@ -40,7 +42,7 @@ const reExportRe = /^export\s+\{([^}]*)\}\s+from\s+"([^"]+)";?\s*$/;
 function buildLifetimePreview(): LifetimeStatsResponse {
   const responses = LIFETIME_READ_PAYLOADS.map(entry => ({
     component: entry.component,
-    response: decodeFreezeFrameResponse(lifetimeReadPayload(entry.component), entry.component),
+    response: decodeFreezeFrameResponse(parseHexFrame(entry.payloadHex), entry.component),
   }));
   return {
     reading: {

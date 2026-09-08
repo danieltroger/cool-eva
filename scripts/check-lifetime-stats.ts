@@ -1,12 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { CAPTURED_FREEZE_FRAMES, capturedFreezeFramePayload } from "./captured-freeze-frames.ts";
 import {
   CAPTURED_EXCHANGE_53,
   CAPTURED_EXCHANGE_54,
   CAPTURED_EXCHANGE_60,
-  LIFETIME_READ_PAYLOADS,
   capturedExchangePayload,
   frameIntervalMs,
   EXPECTED_20260808_C51,
@@ -23,9 +19,11 @@ import {
 } from "../src/diagnostics/freeze-frame.ts";
 import { lookupInfokey, scaleInfokeyValue } from "../src/diagnostics/infokey-table.ts";
 import { summariseLifetimeStatistics, type LifetimeRow } from "../src/diagnostics/lifetime-stats.ts";
-import { loadLifetimeStatistics, writeLifetimeRead } from "../src/vcu/lifetime-store.ts";
-import { HOW_TO_READ } from "../src/http/lifetime-stats.ts";
+import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
+import { parseHexFrame } from "./captured-dtc-transfer.ts";
+import { bandFor } from "../src/diagnostics/lifetime-bands.ts";
+import { boundsFor } from "../public/lib/bounds.js";
 
 // Checks the lifetime battery statistics against the only two readings that exist —
 // 2026-08-08 (scripts/captured-freeze-frames.ts, before the clear) and 2026-09-08
@@ -70,10 +68,10 @@ const after52 = decodeFreezeFrameResponse(lifetimeReadPayload(52), 52);
 console.log("── §1 the two readings ────────────────────────────────────────────");
 
 for (const [label, response] of [
-  ["2026-08-08 component 51", before51],
-  ["2026-08-08 component 52", before52],
-  ["2026-09-08 component 51", after51],
-  ["2026-09-08 component 52", after52],
+  ["2026-08-08 c51", before51],
+  ["2026-08-08 c52", before52],
+  ["2026-09-08 c51", after51],
+  ["2026-09-08 c52", after52],
 ] as const) {
   check(response.kind === "frame", `${label} should decode to a frame, got ${response.kind}`);
 }
@@ -245,7 +243,10 @@ for (const [label, response, component] of [
   const actual = response.kind === "frame" ? response.frame.rawHex.split(" ").length : null;
   check(expected !== null && actual === expected, `${label} payload should be ${expected} bytes, got ${actual}`);
 }
-check(depthAfter === 0x643a, "AvgDOD should read the two bytes before the trailing one, not through it");
+check(
+  depthAfter === EXPECTED_20260908_C52.AvgDOD,
+  "AvgDOD should read the two bytes before the trailing one, not through it"
+);
 
 // ── §6 The rows the dashboard shows ────────────────────────────────────────
 console.log("\n── §6 presentation ────────────────────────────────────────────────");
@@ -284,10 +285,7 @@ check(
 // ⚠️ B_SOC is 0xFF here as well as the cells. It is gated but appears only in the
 // detail line, so a fixture with a plausible 99 % leaves its band unexercised.
 const sentinel = decodeFreezeFrameResponse(
-  Uint8Array.from([
-    0x57, 0x01, 0x00, 0x33, 0x05, 0x7c, 0xff, 0x63, 0x64, 0xff, 0xff, 0xff, 0xff, 0x0d, 0x1b, 0xff, 0xfe, 0xff, 0xff,
-    0xff, 0xff, 0x00, 0x02, 0xd0, 0x55, 0x05,
-  ]),
+  parseHexFrame("57 01 00 33 05 7C FF 63 64 FF FF FF FF 0D 1B FF FE FF FF FF FF 00 02 D0 55 05"),
   51
 );
 const sentinelReading = summariseLifetimeStatistics(0, [{ component: 51, response: sentinel }]);
@@ -314,16 +312,33 @@ check(
   `an impossible state of charge must be marked, not printed as a percentage, got ${spread?.detail[3]}`
 );
 
+// A replaced pack reads zero, and the odometer divided by no packs at all is Infinity.
+// ⚠️ All three candidate scales, because the guard lived in the helper and the third
+// sentence had been hand-inlined past it.
+// ⚠️ WITH component 51, because the odometer lives there. Without it `odometerKm` is
+// null, no kilometres-per-pack is computed at all, and the division never happens — the
+// first version of this case passed against an unguarded divide.
+const replacedPack = summariseLifetimeStatistics(0, [
+  { component: 51, response: after51 },
+  {
+    component: 52,
+    response: decodeFreezeFrameResponse(
+      parseHexFrame("57 01 00 34 05 00 00 00 00 03 FA 03 C9 00 11 01 26 64 3A 05"),
+      52
+    ),
+  },
+]).rows.find(row => row.key === "exchanged_ah");
+check(
+  !/Infinity|NaN/.test(JSON.stringify(replacedPack)),
+  `a counter reading zero must not put Infinity on the tile: ${JSON.stringify(replacedPack)}`
+);
+
 // ⚠️ And ONE dead cell, not three. With every constituent a sentinel, each band masks
 // the other two — widening any single one leaves the row rejected by its neighbours, so
 // none of the three is actually covered. This is the real 2026-09-08 payload with only
 // B_MIN_CELL replaced by 0xFFFF.
 const oneDeadCell = decodeFreezeFrameResponse(
-  Uint8Array.from(
-    "57 01 00 33 05 7C 63 63 64 10 82 04 39 0D 1B FF FE 10 8F FF FF 00 02 D0 55 05"
-      .split(" ")
-      .map(byte => Number.parseInt(byte, 16))
-  ),
+  parseHexFrame("57 01 00 33 05 7C 63 63 64 10 82 04 39 0D 1B FF FE 10 8F FF FF 00 02 D0 55 05"),
   51
 );
 const oneDeadSpread = summariseLifetimeStatistics(0, [{ component: 51, response: oneDeadCell }]).rows.find(
@@ -348,11 +363,25 @@ check(!half.complete, "a reading missing component 52 must not be complete");
 // ⚠️ Every row the missing component owns says so. Dropping them instead would look
 // like a bike with fewer statistics rather than a read that half failed.
 for (const key of ["charges", "exchanged_ah", "average_battery_temp_c", "average_depth_of_discharge"]) {
+  const row = half.rows.find(candidate => candidate.key === key);
+  check(row?.status === "missing", `${key} must be present and marked missing when component 52 does not answer`);
+  // ⚠️ And say WHAT it answered. A component-mismatch is not hypothetical on this bus,
+  // and "did not answer with a frame" alone would hide it.
   check(
-    half.rows.some(row => row.key === key && row.status === "missing"),
-    `${key} must be present and marked missing when component 52 does not answer`
+    (row?.note ?? "").includes("unrecognised"),
+    `${key}'s note must carry what the component actually said, got ${row?.note}`
   );
 }
+
+// A component that answers somebody else's question must say so by name.
+const mismatched = summariseLifetimeStatistics(0, [
+  { component: 51, response: after51 },
+  { component: 52, response: decodeFreezeFrameResponse(parseHexFrame("57 01 00 3E 05 52 00 00 06 C4 00 C0 01"), 52) },
+]);
+check(
+  (mismatched.rows.find(row => row.key === "charges")?.note ?? "").includes("component-mismatch"),
+  `a reply about another component must be named as one, got ${mismatched.rows.find(row => row.key === "charges")?.note}`
+);
 check(
   half.rows.some(row => row.key === "odometer_km" && row.status === "ok"),
   "what did answer must still be shown"
@@ -393,6 +422,28 @@ check(
 console.log(
   `  First Frame → our flow control ${firstFrameToFlowControl.toFixed(3)} ms · then the micro waited ${flowControlToConsecutive.toFixed(3)} ms`
 );
+
+// ── §7a The bands this repo keeps in two places must agree ────────────────
+console.log("\n── §7a plausibility bands ────────────────────────────────────────");
+
+// ⚠️ ASSERTED, not asserted-in-prose. lifetime-bands.ts's header says the cell band is
+// "the band public/lib/bounds.js gates the live cell voltages with, quoted rather than
+// re-invented" — and until this ran, widening one left the other silently behind. The
+// same pinning scripts/check-fan-fun.ts does for FAN_MODE_CODE.
+for (const [key, liveKey, group] of [
+  ["cell_avg_mv", "cell_avg_mv", "battery"],
+  ["cell_min_mv", "cell_min_mv", "battery"],
+  ["cell_max_mv", "cell_max_mv", "battery"],
+  ["cell_spread_mv", "cell_spread_mv", "battery"],
+] as const) {
+  const live = boundsFor(liveKey, "mV", group);
+  const ours = bandFor(key);
+  check(
+    live !== null && ours !== null && live[0] === ours[0] && live[1] === ours[1],
+    `${key} is ${JSON.stringify(ours)} here and ${JSON.stringify(live)} in bounds.js — they gate the same quantity`
+  );
+}
+console.log("  the four cell bands match public/lib/bounds.js");
 
 // ── §7b The instruction the dashboard shows must be a command that runs ────
 console.log("\n── §7b the on-screen instruction ──────────────────────────────────");

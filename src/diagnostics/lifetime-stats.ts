@@ -1,4 +1,4 @@
-import { counterRows, packRows } from "./lifetime-rows.ts";
+import { counterRows, fieldOf, packRows } from "./lifetime-rows.ts";
 import type { FreezeFrame, FreezeFrameResponse, FreezeFrameValue } from "./freeze-frame.ts";
 
 // The bike's own lifetime battery statistics, out of the two freeze frames that carry
@@ -93,7 +93,10 @@ export function summariseLifetimeStatistics(
     // The odometer comes from the OTHER component, so the counters' rows are built with
     // it in hand: kilometres per full pack is the only form of the charge counter a
     // rider can weigh, and it needs both frames.
-    rows: [...counterRows(counters, odometerOf(packState)), ...packRows(packState)],
+    rows: [
+      ...counterRows(counters, odometerOf(packState), outcomeOf(responses, LIFETIME_COMPONENTS.counters)),
+      ...packRows(packState, outcomeOf(responses, LIFETIME_COMPONENTS.packState)),
+    ],
     components: responses.map(entry => describeOutcome(entry.component, entry.response)),
   };
 }
@@ -107,14 +110,30 @@ function frameFor(
   return entry && entry.response.kind === "frame" ? entry.response.frame : null;
 }
 
+/**
+ * What a component answered with, when it was not a frame — `refused`,
+ * `component-mismatch` or `unrecognised`, with the first bytes of what it said.
+ *
+ * ⚠️ This is what makes the header's claim true. `components` carries the same thing
+ * structurally, but nothing renders it, so a `component-mismatch` — "not hypothetical
+ * on a bus where an answer to somebody else's question is a thing that happens" — would
+ * have left the screen saying only "did not answer with a frame".
+ */
+function outcomeOf(
+  responses: readonly { component: number; response: FreezeFrameResponse }[],
+  component: number
+): string | null {
+  const entry = responses.find(candidate => candidate.component === component);
+  if (!entry || entry.response.kind === "frame") {
+    return null;
+  }
+  const bytes = entry.response.rawHex.split(" ").slice(0, 6).join(" ");
+  return `${entry.response.kind}${bytes.length > 0 ? `, ${bytes}…` : ""}`;
+}
+
 /** The odometer in km, or null when component 51 did not answer. */
 function odometerOf(frame: FreezeFrame | null): number | null {
   return frame ? (fieldOf(frame, "V_ODOMETER")?.value ?? null) : null;
-}
-
-/** One field of a frame by Energica's own name, or null when the shortlist does not carry it. */
-function fieldOf(frame: FreezeFrame, name: string): FreezeFrameValue | null {
-  return frame.values.find(value => value.name === name) ?? null;
 }
 
 function describeOutcome(component: number, response: FreezeFrameResponse): LifetimeComponentOutcome {

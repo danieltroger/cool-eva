@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { decodeFreezeFrameResponse } from "../diagnostics/freeze-frame.ts";
 import { summariseLifetimeStatistics, type LifetimeStatistics } from "../diagnostics/lifetime-stats.ts";
+import { bytesFromHex } from "./snapshot.ts";
 
 // Where the last lifetime-statistics reading lives, and the reason it is a file at all:
 // this is not a broadcast signal, so nothing re-derives it after a restart. One JSON
@@ -17,8 +18,23 @@ import { summariseLifetimeStatistics, type LifetimeStatistics } from "../diagnos
 // service stopped; an in-service read writes the same file. Which one it was is
 // recorded, because "the bike was read while the service was down" is worth knowing
 // when the age stamp is three weeks old.
+//
+// What a write refuses and why: `writeLifetimeRead`, and docs/lifetime-battery-statistics.md.
 
 const LATEST_FILE = "lifetime.json";
+
+/**
+ * How a reading is taken today, verbatim, shown on a Pi that has never taken one.
+ *
+ * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts runs it through
+ * the script's own argument parser, because the first version said `--components 51,52`
+ * — a flag that never existed — and it was the first instruction every Pi would show.
+ *
+ * It lives here rather than with the endpoint that serves it because this module owns
+ * the file the command produces, and both the CLI and the HTTP layer already import it.
+ */
+export const HOW_TO_READ =
+  "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save, with the service stopped";
 
 /** How the reading was taken. Not cosmetic — see the header. */
 export type LifetimeReadSource = "service" | "read-freeze-frame.ts";
@@ -30,6 +46,18 @@ export interface StoredLifetimeReply {
   payloadHex: string | null;
   /** Why there is no payload. Null when there is one. */
   failure: string | null;
+}
+
+/**
+ * A reading as the dashboard receives it.
+ *
+ * Named rather than inferred from the loader, so the browser's view of the payload is a
+ * contract rather than an implementation detail — src/http/vcu-params.ts's own union is
+ * the precedent.
+ */
+export interface StoredLifetimeReading {
+  statistics: LifetimeStatistics;
+  source: LifetimeReadSource;
 }
 
 /** The file's contents. */
@@ -47,9 +75,7 @@ export interface StoredLifetimeRead {
  * page with nothing true to show. They are logged separately rather than swallowed,
  * since only one of them is fixed by reading the bike.
  */
-export async function loadLifetimeStatistics(
-  directory: string
-): Promise<{ statistics: LifetimeStatistics; source: LifetimeReadSource } | null> {
+export async function loadLifetimeStatistics(directory: string): Promise<StoredLifetimeReading | null> {
   const stored = await loadStoredRead(directory);
   if (!stored) {
     return null;
@@ -77,6 +103,8 @@ export async function writeLifetimeRead(
 ): Promise<{ stored: boolean; reason: string }> {
   const answered = read.replies.filter(reply => reply.payloadHex !== null).length;
   const path = join(directory, LATEST_FILE);
+  await mkdir(directory, { recursive: true });
+  await archive(directory, read);
   const previous = await loadStoredRead(directory);
   const previousAnswered = previous?.replies.filter(reply => reply.payloadHex !== null).length ?? 0;
   if (answered === 0) {
@@ -91,11 +119,23 @@ export async function writeLifetimeRead(
     console.warn(`lifetime: ⚠️  ${reason}`);
     return { stored: false, reason };
   }
-  await mkdir(directory, { recursive: true });
   await writeFile(path, `${JSON.stringify(read, null, 2)}\n`, "utf-8");
   const reason = `stored ${answered}/${read.replies.length} replies from ${read.source} in ${path}`;
   console.log(`lifetime: ${reason}`);
   return { stored: true, reason };
+}
+
+/**
+ * Every run leaves a trace, refused or not — src/vcu/snapshot-store.ts rule 1.
+ *
+ * ⚠️ Rule 5 without rule 1 is how you lose a reading. Refusing to overwrite the good
+ * file is right, but it left the bytes of the refused run in terminal scrollback only —
+ * and this doc's own #160 is about payloads lost exactly that way, on a read that costs
+ * a service stop and a trip to the garage.
+ */
+async function archive(directory: string, read: StoredLifetimeRead): Promise<void> {
+  const stamp = new Date(read.readAt).toISOString().replace(/:/g, "-");
+  await writeFile(join(directory, `lifetime-${stamp}.json`), `${JSON.stringify(read, null, 2)}\n`, "utf-8");
 }
 
 /** The file as it sits on disk, undecoded. For a caller that wants the bytes rather than the reading. */
@@ -151,12 +191,14 @@ function decodeStoredReply(reply: StoredLifetimeReply) {
   if (reply.payloadHex === null) {
     return { kind: "unrecognised" as const, reason: reply.failure ?? "no reply", rawHex: "" };
   }
-  const bytes = reply.payloadHex
-    .split(" ")
-    .filter(byte => byte.length > 0)
-    .map(byte => Number.parseInt(byte, 16));
-  if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 0xff)) {
+  // ⚠️ ./snapshot.ts's parser, not a local one. The copy this replaced split on a
+  // literal space and validated the parsed NUMBER rather than the token, so `"AB\tCD"`
+  // came back one byte short — and a payload one byte short decodes every field after
+  // it out of the wrong bytes, confidently. That header argues the same case for
+  // `latest.json`; this file is read back the same way.
+  const bytes = bytesFromHex(reply.payloadHex);
+  if (bytes === null) {
     return { kind: "unrecognised" as const, reason: "stored payload is not hex bytes", rawHex: reply.payloadHex };
   }
-  return decodeFreezeFrameResponse(Uint8Array.from(bytes), reply.component);
+  return decodeFreezeFrameResponse(bytes, reply.component);
 }

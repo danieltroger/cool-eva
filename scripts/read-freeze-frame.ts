@@ -10,9 +10,8 @@ import { createVcuKwpClient, type VcuMultiFrameOutcome } from "../src/vcu/kwp-cl
 import { decodeMultiFrameReply, decodeStoredDtcList, toHex } from "../src/vcu/multiframe-codec.ts";
 import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
-import { HOW_TO_READ } from "../src/http/lifetime-stats.ts";
 import { LIFETIME_COMPONENTS } from "../src/diagnostics/lifetime-stats.ts";
-import { writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
+import { HOW_TO_READ, writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
 
 // The first live test for the multi-frame KWP transport. **This is the only way to
 // run it against the bike**, and it exists because the read cannot be done by hand:
@@ -299,8 +298,7 @@ function reportRaw(
   }
 }
 
-/** Reads argv into a job, or null when it does not name exactly one. */
-
+/** One byte as two uppercase hex digits. */
 function hex(byte: number): string {
   return byte.toString(16).padStart(2, "0").toUpperCase();
 }

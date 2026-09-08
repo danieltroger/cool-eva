@@ -81,11 +81,15 @@ for (const field of INFOKEY_TABLE) {
 // ⚠️ TWO refusals, asserted SEPARATELY because they are different faults reached by
 // different code, and a "simplification" that merged the two mechanisms would refuse
 // `f(x)=x*0.1` for all 18 fields that share it — V_ODOMETER among them.
-const refusedScalings = INFOKEY_TABLE.filter(field => !scaleInfokeyValue(field, 1).applied);
-const malformedEquations = INFOKEY_TABLE.filter(
-  field => field.refusedScaling === null && !scaleInfokeyValue(field, 1).applied
-);
-const impossibleResults = INFOKEY_TABLE.filter(field => field.refusedScaling !== null);
+const scalings = INFOKEY_TABLE.map(field => ({ field, scaling: scaleInfokeyValue(field, 1) }));
+const refusedScalings = scalings.filter(entry => !entry.scaling.applied).map(entry => entry.field);
+// ⚠️ Asked of the RESULT, not of the table. Filtering `field.refusedScaling` here would
+// be the check reaching around the API it is meant to be testing, and would still pass
+// if `scaleInfokeyValue` stopped honouring it.
+const byKind = (kind: string) =>
+  scalings.filter(entry => !entry.scaling.applied && entry.scaling.kind === kind).map(entry => entry.field);
+const malformedEquations = byKind("malformed-equation");
+const impossibleResults = byKind("impossible-result");
 check(
   malformedEquations.length === 1 && malformedEquations[0].name === "AvgDOD",
   `exactly one field's EQUATION should be unusable (AvgDOD's f(x)=x@&255), got ${malformedEquations.map(f => f.name).join(", ")}`

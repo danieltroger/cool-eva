@@ -164,4 +164,6 @@ sudo systemctl start cool-eva
 
 `vcu-params/lifetime.json` holds the **payloads**, not the rendered numbers. The decode is an inference and this repo has already changed its mind about one field's scaling; storing today's reading of the bytes would freeze it into a file nobody would think to re-examine. Bytes re-decode. `src/vcu/lifetime-store.ts`.
 
+Two writes are **refused**: one where nothing answered, and one carrying fewer replies than the file already holds. Taking a reading needs the service stopped and `can0` up ACTIVE, so "the bike was asleep" is the likeliest run of all, and letting it overwrite the file would destroy payloads that cost a trip to the garage. ⚠️ **Every run is archived anyway**, refused or not, as `lifetime-<timestamp>.json` — refusing the overwrite without keeping the bytes is how #160 lost a set of them.
+
 A reading where only one component answered is stored and labelled `complete: false` rather than discarded — `src/vcu/snapshot-store.ts` rule 3, for the same reason.

@@ -1,4 +1,4 @@
-import { BANDS, withinBand } from "./lifetime-bands.ts";
+import { bandFor, withinBand } from "./lifetime-bands.ts";
 import type { FreezeFrame, FreezeFrameValue } from "./freeze-frame.ts";
 import type { LifetimeRow } from "./lifetime-stats.ts";
 
@@ -12,17 +12,58 @@ import type { LifetimeRow } from "./lifetime-stats.ts";
 // are shown unscaled, so the line under them is what makes them mean anything, and
 // deciding that is the same judgement as deciding the row.
 
-/** The counters, from component 52. Empty when it did not answer with a frame. */
-export function counterRows(frame: FreezeFrame | null, odometerKm: number | null): LifetimeRow[] {
+/**
+ * Every row this module can produce: its label and the component that carries it.
+ *
+ * ⚠️ ONE place. Each of these was previously spelled twice — once where the field
+ * decodes and once in the "component did not answer" branch — so a rename left the tile
+ * called one thing when the read worked and another when it did not.
+ */
+const ROWS: Record<string, { label: string; component: number }> = {
+  charges: { label: "charges", component: 52 },
+  exchanged_ah: { label: "charge moved", component: 52 },
+  average_battery_temp_c: { label: "average pack temperature", component: 52 },
+  average_depth_of_discharge: { label: "average depth of discharge", component: 52 },
+  odometer_km: { label: "odometer", component: 51 },
+  state_of_health: { label: "state of health", component: 51 },
+  cell_spread_mv: { label: "cell spread", component: 51 },
+};
+
+/**
+ * One row, with the fields a row usually does not decide filled in.
+ *
+ * Six of these rows differ from each other in two fields out of eight; spelling all
+ * eight each time buried the part that varies and made adding a field a ten-site edit.
+ */
+function row(key: string, fields: Partial<Omit<LifetimeRow, "key">>): LifetimeRow {
+  return {
+    key,
+    label: ROWS[key]?.label ?? key,
+    status: "ok",
+    value: null,
+    unit: "",
+    raw: null,
+    detail: [],
+    note: null,
+    ...fields,
+  };
+}
+
+/** The counters, from component 52. Every row marked `missing` when it did not answer. */
+export function counterRows(
+  frame: FreezeFrame | null,
+  odometerKm: number | null,
+  outcome: string | null
+): LifetimeRow[] {
   if (!frame) {
     // ⚠️ EVERY row this component owns, not a representative pair. A half reading that
     // silently dropped two tiles would look like a bike that has fewer statistics, not
     // like a read that half failed.
     return [
-      missingRow("charges", "charges", 52),
-      missingRow("exchanged_ah", "charge moved", 52),
-      missingRow("average_battery_temp_c", "average pack temperature", 52),
-      missingRow("average_depth_of_discharge", "average depth of discharge", 52),
+      missingRow("charges", outcome),
+      missingRow("exchanged_ah", outcome),
+      missingRow("average_battery_temp_c", outcome),
+      missingRow("average_depth_of_discharge", outcome),
     ];
   }
   return [
@@ -38,13 +79,9 @@ export function counterRows(frame: FreezeFrame | null, odometerKm: number | null
 }
 
 /** Pack health and the odometer, from component 51. */
-export function packRows(frame: FreezeFrame | null): LifetimeRow[] {
+export function packRows(frame: FreezeFrame | null, outcome: string | null): LifetimeRow[] {
   if (!frame) {
-    return [
-      missingRow("odometer_km", "odometer", 51),
-      missingRow("state_of_health", "state of health", 51),
-      missingRow("cell_spread_mv", "cell spread", 51),
-    ];
+    return [missingRow("odometer_km"), missingRow("state_of_health"), missingRow("cell_spread_mv")];
   }
   return [
     numberRow("odometer_km", "odometer", fieldOf(frame, "V_ODOMETER")),
@@ -75,7 +112,7 @@ const SOC_CONTEXT_NOTE = "a full pack always looks tighter than an empty one, so
  */
 function exchangedRow(field: FreezeFrameValue | null, odometerKm: number | null): LifetimeRow {
   if (!field) {
-    return missingRow("exchanged_ah", "charge moved", 52);
+    return missingRow("exchanged_ah");
   }
   if (field.value !== null) {
     // ⚠️ Derived, never asserted. If ./infokey-table.ts ever applies a scale to this
@@ -83,23 +120,21 @@ function exchangedRow(field: FreezeFrameValue | null, odometerKm: number | null)
     // candidate scales beside a value that has stopped being a candidate.
     return numberRow("exchanged_ah", "charge moved", field);
   }
-  return {
-    key: "exchanged_ah",
-    label: "charge moved",
+  return row("exchanged_ah", {
     status: "unscaled",
-    value: null,
-    unit: "",
     raw: field.raw,
     detail: [
       describeCandidate(field.raw * 0.01, "×0.01", odometerKm),
       describeCandidate(field.raw / 64, "÷64", odometerKm),
     ],
+    // ⚠️ Through the same helper as the two candidates above. Hand-inlining this third
+    // copy is how it lost the `packs <= 0` guard and put ≈Infinity back on the one row
+    // whose whole job is to be honest about a number nobody knows.
     note:
-      `Energica's own scaling would make it ${Math.round(field.raw * 0.1)} Ah — ` +
-      `${Math.round((field.raw * 0.1) / FULL_PACK_AH)} full packs, ${odometerKm === null ? "" : `≈${Math.round(odometerKm / ((field.raw * 0.1) / FULL_PACK_AH))} km each, `}` +
+      `Energica's own would be ${describeCandidate(field.raw * 0.1, "×0.1", odometerKm)}, ` +
       `which this pack's own logged current refutes by 7.4×. Which of the two above is right is unsettled; ` +
       `two reads bracketing one charge session would settle it.`,
-  };
+  });
 }
 
 /**
@@ -119,10 +154,16 @@ function describeCandidate(ampHours: number, label: string, odometerKm: number |
   return `≈${Math.round(ampHours)} Ah at ${label} — ≈${Math.round(packs)} full packs${range}`;
 }
 
-/** One raw reading for a detail line, marked when it is outside its band. */
+/**
+ * One raw reading for a detail line, marked when it is outside its band.
+ *
+ * ⚠️ Gates on `value` and prints `raw`. Identical for every key it is used with, since
+ * all of them scale by the identity — but the day one of them does not, this shows the
+ * unscaled number against a bound checked on the scaled one.
+ */
 function gated(field: FreezeFrameValue | null, key: string): string {
   if (!field) {
-    return "?";
+    return "–";
   }
   return withinBand(key, field.value) ? String(field.raw) : `⚠ ${field.raw}`;
 }
@@ -137,18 +178,13 @@ function gated(field: FreezeFrameValue | null, key: string): string {
  */
 function depthOfDischargeRow(field: FreezeFrameValue | null): LifetimeRow {
   if (!field) {
-    return missingRow("average_depth_of_discharge", "average depth of discharge", 52);
+    return missingRow("average_depth_of_discharge");
   }
-  return {
-    key: "average_depth_of_discharge",
-    label: "average depth of discharge",
+  return row("average_depth_of_discharge", {
     status: "unscaled",
-    value: null,
-    unit: "",
     raw: field.raw,
-    detail: [],
     note: `${field.raw & 0xff} % if Energica's malformed equation means x & 255 — their own tool agreed once, unconfirmed`,
-  };
+  });
 }
 
 /**
@@ -164,16 +200,13 @@ function chargesRow(
   direct: FreezeFrameValue | null
 ): LifetimeRow {
   if (!total || !alternating || !direct) {
-    return missingRow("charges", "charges", 52);
+    return missingRow("charges");
   }
   const residue = total.raw - alternating.raw - direct.raw;
   const impossible = residue < 0;
-  return {
-    key: "charges",
-    label: "charges",
+  return row("charges", {
     status: impossible ? "rejected" : "ok",
     value: impossible ? null : total.raw,
-    unit: "",
     raw: total.raw,
     detail: [`${alternating.raw} AC`, `${direct.raw} DC`, `${residue} neither`],
     note: impossible
@@ -181,7 +214,7 @@ function chargesRow(
       : "the AC count most likely counts charger cycles rather than plug-ins — 68 of them in the month between the " +
         "two reads, on a bike left plugged in at home. The last number is counted in the total but in neither " +
         "subtotal: aborted or pre-counter sessions, unidentified.",
-  };
+  });
 }
 
 /**
@@ -196,49 +229,30 @@ function cellSpreadRow(frame: FreezeFrame): LifetimeRow {
   const minimum = fieldOf(frame, "B_MIN_CELL");
   const maximum = fieldOf(frame, "B_MAX_CELL");
   if (!minimum || !maximum) {
-    return missingRow("cell_spread_mv", "cell spread", 51);
+    return missingRow("cell_spread_mv");
   }
   const detail = [
-    describeCell("average", fieldOf(frame, "B_AVG_CELL"), "cell_avg_mv"),
-    `${describeCell("weakest", minimum, "cell_min_mv")} (#${gated(fieldOf(frame, "B_MIN_CELL_ID"), "cell_min_id")})`,
-    `${describeCell("strongest", maximum, "cell_max_mv")} (#${gated(fieldOf(frame, "B_MAX_CELL_ID"), "cell_max_id")})`,
+    `average ${gated(fieldOf(frame, "B_AVG_CELL"), "cell_avg_mv")} mV`,
+    `weakest ${gated(minimum, "cell_min_mv")} mV (#${gated(fieldOf(frame, "B_MIN_CELL_ID"), "cell_min_id")})`,
+    `strongest ${gated(maximum, "cell_max_mv")} mV (#${gated(fieldOf(frame, "B_MAX_CELL_ID"), "cell_max_id")})`,
     `at ${gated(fieldOf(frame, "B_SOC"), "state_of_charge")} % charge`,
   ];
   const bounded = withinBand("cell_min_mv", minimum.value) && withinBand("cell_max_mv", maximum.value);
   const spread = maximum.raw - minimum.raw;
-  if (!bounded || spread < 0) {
-    return {
-      key: "cell_spread_mv",
-      label: "cell spread",
-      status: "rejected",
-      value: null,
-      unit: "mV",
-      // ⚠️ NOT the computed spread. Two dead cells both reading 0xFFFF give a spread of
-      // 0 — the most reassuring number this tile can show, made of the worst reading it
-      // can get. There is no number here, and the detail carries the sentinels.
-      raw: null,
-      detail,
-      note: "computed from a cell voltage outside 1500…4500 mV — a dead sensor or a sentinel, not a reading",
-    };
-  }
-  return {
-    key: "cell_spread_mv",
-    label: "cell spread",
-    status: "ok",
-    value: spread,
+  const rejected = !bounded || spread < 0 || !withinBand("cell_spread_mv", spread);
+  return row("cell_spread_mv", {
+    status: rejected ? "rejected" : "ok",
+    value: rejected ? null : spread,
     unit: "mV",
-    raw: spread,
+    // ⚠️ NOT the computed spread when rejected. Two dead cells both reading 0xFFFF give
+    // a spread of 0 — the most reassuring number this tile can show, made of the worst
+    // reading it can get. There is no number here; the detail carries the sentinels.
+    raw: rejected ? null : spread,
     detail,
-    note: SOC_CONTEXT_NOTE,
-  };
-}
-
-/** One cell voltage for the detail line, marked when it is outside its band. */
-function describeCell(label: string, field: FreezeFrameValue | null, key: string): string {
-  if (!field) {
-    return `${label} –`;
-  }
-  return withinBand(key, field.value) ? `${label} ${field.raw} mV` : `${label} ⚠ ${field.raw}`;
+    note: rejected
+      ? "computed from a cell voltage outside 1500…4500 mV — a dead sensor or a sentinel, not a reading"
+      : SOC_CONTEXT_NOTE,
+  });
 }
 
 /** One decoded field as a row, gated against its physical band. */
@@ -249,47 +263,33 @@ function numberRow(
   note: string | null = null
 ): LifetimeRow {
   if (!field) {
-    return missingRow(key, label, null);
+    return missingRow(key);
   }
   if (field.value === null) {
-    return {
-      key,
-      label,
-      status: "unscaled",
-      value: null,
-      unit: field.unit,
-      raw: field.raw,
-      detail: [],
-      note: field.scalingNote,
-    };
+    return row(key, { label, status: "unscaled", unit: field.unit, raw: field.raw, note: field.scalingNote });
   }
-  const band = BANDS[key];
-  if (band && (field.value < band[0] || field.value > band[1])) {
-    return {
-      key,
+  const band = bandFor(key);
+  if (band && !withinBand(key, field.value)) {
+    return row(key, {
       label,
       status: "rejected",
-      value: null,
       unit: field.unit,
       raw: field.raw,
-      detail: [],
       note: `outside ${band[0]}…${band[1]} ${field.unit} — a dead sensor or a sentinel, not a reading`,
-    };
+    });
   }
-  return { key, label, status: "ok", value: field.value, unit: field.unit, raw: field.raw, detail: [], note };
+  return row(key, { label, value: field.value, unit: field.unit, raw: field.raw, note });
 }
 
-function missingRow(key: string, label: string, component: number | null): LifetimeRow {
-  return {
-    key,
-    label,
+function missingRow(key: string, outcome: string | null = null): LifetimeRow {
+  const component = ROWS[key]?.component ?? null;
+  return row(key, {
     status: "missing",
-    value: null,
-    unit: "",
-    raw: null,
-    detail: [],
-    note: component === null ? "not in the reply" : `component ${component} did not answer with a frame`,
-  };
+    note:
+      component === null
+        ? "not in the reply"
+        : `component ${component} did not answer with a frame${outcome === null ? "" : ` — ${outcome}`}`,
+  });
 }
 
 /**
@@ -303,6 +303,6 @@ function missingRow(key: string, label: string, component: number | null): Lifet
 const FULL_PACK_AH = 64;
 
 /** One field of a frame by Energica's own name, or null when the shortlist does not carry it. */
-function fieldOf(frame: FreezeFrame, name: string): FreezeFrameValue | null {
+export function fieldOf(frame: FreezeFrame, name: string): FreezeFrameValue | null {
   return frame.values.find(value => value.name === name) ?? null;
 }

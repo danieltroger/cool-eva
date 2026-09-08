@@ -113,7 +113,19 @@ export function lookupInfokey(id: number): InfokeyField | null {
  * result for that field alone. Either way the raw number is still returned, so a
  * caller always has something true to show.
  */
-export type InfokeyScaling = { applied: true; value: number } | { applied: false; reason: string; equation: string };
+export type InfokeyScaling =
+  | { applied: true; value: number }
+  /**
+   * ⚠️ `kind` is the whole reason this arm exists twice over. The two refusals are
+   * different faults — `malformed-equation` means nobody may use that expression,
+   * `impossible-result` means the expression is fine and this one field's answer is
+   * not — and a caller that can only tell them apart by matching `reason` prose is a
+   * caller that will eventually merge them.
+   */
+  | { applied: false; kind: InfokeyRefusal; reason: string; equation: string };
+
+/** Which of the two refusals happened. See `InfokeyScaling`. */
+export type InfokeyRefusal = "malformed-equation" | "impossible-result";
 
 /**
  * Applies a field's equation to a raw integer.
@@ -124,17 +136,29 @@ export type InfokeyScaling = { applied: true; value: number } | { applied: false
  * identity there would put an unscaled number on screen wearing a unit.
  */
 export function scaleInfokeyValue(field: InfokeyField, raw: number): InfokeyScaling {
-  // Before the lookup, because this refusal is about the FIELD and the lookup is
-  // about the equation — see `refusedScaling`.
-  if (field.refusedScaling !== null) {
-    return { applied: false, reason: field.refusedScaling, equation: field.equation };
-  }
+  // ⚠️ THE THROW COMES FIRST, ahead of the per-field refusal. A field carrying a
+  // refusal is by construction one somebody is unsure about, so it is the last field
+  // that should be exempt from the guard that catches an equation nobody has read —
+  // and returning early on `refusedScaling` would exempt exactly those.
   if (!(field.equation in SCALING_BY_EQUATION)) {
     throw new Error(`infokey ${field.id} (${field.name}) has unhandled equation ${JSON.stringify(field.equation)}`);
   }
+  if (field.refusedScaling !== null) {
+    return {
+      applied: false,
+      kind: "impossible-result",
+      reason: field.refusedScaling,
+      equation: field.equation,
+    };
+  }
   const scaling = SCALING_BY_EQUATION[field.equation];
   if (scaling === null) {
-    return { applied: false, reason: "Energica's own equation is malformed", equation: field.equation };
+    return {
+      applied: false,
+      kind: "malformed-equation",
+      reason: "Energica's own equation is malformed",
+      equation: field.equation,
+    };
   }
   return { applied: true, value: scaling(raw) };
 }

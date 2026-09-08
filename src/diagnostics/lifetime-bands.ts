@@ -21,14 +21,25 @@ export const BANDS: Record<string, readonly [number, number]> = {
   state_of_health: [0, 100],
   state_of_charge: [0, 100],
   odometer_km: [0, 999_999],
+  // Derived rather than read, but gated all the same: bounds.js gates the live
+  // cell_spread_mv and this path would otherwise be the one place a spread is ungated.
+  cell_spread_mv: [0, 2000],
   average_battery_temp_c: [-40, 80],
 };
 
-/** Whether a scaled value sits inside its physical band. True when there is no band for the key. */
+/** The band for a row key, or null when it has none. */
+export function bandFor(key: string): readonly [number, number] | null {
+  return BANDS[key] ?? null;
+}
+
+/**
+ * Whether a scaled value sits inside its physical band. True when there is no band.
+ *
+ * The ONE comparison. A caller that wants the numbers for a message asks `bandFor` and
+ * still comes back through here to decide, rather than inlining `< lo || > hi` and
+ * drifting the day this grows a NaN guard.
+ */
 export function withinBand(key: string, value: number | null): boolean {
-  const band = BANDS[key];
-  if (!band) {
-    return true;
-  }
-  return value !== null && value >= band[0] && value <= band[1];
+  const band = bandFor(key);
+  return band === null ? true : value !== null && value >= band[0] && value <= band[1];
 }

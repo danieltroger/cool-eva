@@ -11,7 +11,7 @@ import { MUTED } from "../lib/colors.js";
 import { getsLatchedTile } from "../lib/latched.js";
 import { isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
 import { formatLifetimeValue, lifetimeError, lifetimeStats, loadLifetimeStats } from "../lib/lifetime.js";
-import { ageInWords } from "../lib/format.js";
+import { ageInWords, reading } from "../lib/format.js";
 
 const { div, input, span } = van.tags;
 
@@ -273,8 +273,7 @@ function formatValue(key, value) {
   if (key === "gps_lat" || key === "gps_lon" || key === "waypoint_lat" || key === "waypoint_lon") {
     return value.toFixed(6);
   }
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-  return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
+  // ../lib/format.js, so the pinned lifetime block above this grid and the grid itself
+  // cannot disagree about what "precise" means a centimetre apart.
+  return reading(value);
 }

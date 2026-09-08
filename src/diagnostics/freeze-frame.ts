@@ -1,6 +1,12 @@
 import { lookupByComponentSymptom } from "./dtc-table.ts";
 import { freezeFrameFieldBytes, infokeyFieldsFor, infokeysFor, type FaultInfokeys } from "./fault-infokeys.ts";
-import { infokeyWidth, scaleInfokeyValue, type InfokeyDatatype, type InfokeyField } from "./infokey-table.ts";
+import {
+  infokeyWidth,
+  scaleInfokeyValue,
+  type InfokeyDatatype,
+  type InfokeyField,
+  type InfokeyRefusal,
+} from "./infokey-table.ts";
 import { describeNegativeResponseCode } from "./obd-dtc.ts";
 
 // The third fault channel: what the bike was doing at the moment a code latched.
@@ -202,6 +208,14 @@ export interface FreezeFrameValue {
   equation: string;
   /** Why `value` is null, or null when it is not. */
   scalingNote: string | null;
+  /**
+   * WHICH refusal, when there was one.
+   *
+   * Carried beside the prose because the two are different faults and a consumer that
+   * can only tell them apart by matching `scalingNote` is one that will eventually stop
+   * telling them apart. ./infokey-table.ts's `InfokeyScaling` argues it.
+   */
+  scalingRefusal: InfokeyRefusal | null;
 }
 
 /** A decoded freeze frame. */
@@ -455,6 +469,7 @@ function readField(field: InfokeyField, bytes: Uint8Array): FreezeFrameValue {
     value: scaling.applied ? scaling.value : null,
     equation: field.equation,
     scalingNote: scaling.applied ? null : scaling.reason,
+    scalingRefusal: scaling.applied ? null : scaling.kind,
   };
 }
 

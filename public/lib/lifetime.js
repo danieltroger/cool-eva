@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { groupedReading } from "./format.js";
 
 // The bike's lifetime battery statistics, fetched once when the All tab is first
 // shown. Not a signal: nothing broadcasts these, so there is no socket to bind to and
@@ -71,30 +72,11 @@ export function formatLifetimeValue(row) {
     return `⚠ ${row.raw}`;
   }
   if (row.status === "unscaled") {
-    return `${formatNumber(row.raw)} raw`;
+    return `${row.raw === null ? "–" : groupedReading(row.raw)} raw`;
   }
   const value = row.value;
   if (value === null) {
     return "–";
   }
-  return `${formatNumber(value)}${row.unit ? ` ${row.unit}` : ""}`;
-}
-
-/**
- * Digits, with whatever precision the number needs — the same rule views/all.js uses
- * for the grid it sits above, so the two do not read as different kinds of number.
- *
- * @param {number | null} value
- */
-function formatNumber(value) {
-  if (value === null) {
-    return "–";
-  }
-  // Grouped on the integer part whether or not there is a fraction: 658 112 is legible
-  // where 658112 is a smear, and an ungrouped 18440.5 beside it would look like a
-  // different kind of number.
-  const text = Number.isInteger(value) ? String(value) : Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(2);
-  const [whole, fraction] = text.split(".");
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return fraction === undefined ? grouped : `${grouped}.${fraction}`;
+  return `${groupedReading(value)}${row.unit ? ` ${row.unit}` : ""}`;
 }
