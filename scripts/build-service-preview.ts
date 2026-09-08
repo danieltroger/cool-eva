@@ -3,6 +3,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
 import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
+import { HOW_TO_READ, type LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
+import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
+import { summariseLifetimeStatistics } from "../src/diagnostics/lifetime-stats.ts";
+import { LIFETIME_READ_PAYLOADS, lifetimeReadPayload } from "./captured-lifetime-reads.ts";
 
 // Builds a single self-contained HTML file showing the service sheet with no Pi on the
 // other end. The point is being able to look at a design change before riding out to the
@@ -25,6 +29,27 @@ const namespaceImportRe = /^import\s+\*\s+as\s+(\w+)\s+from\s+"([^"]+)";?\s*$/;
 const exportFnRe = /^export\s+(async\s+)?function\s+(\w+)/;
 const exportConstRe = /^export\s+(?:const|let|class)\s+(\w+)/;
 const reExportRe = /^export\s+\{([^}]*)\}\s+from\s+"([^"]+)";?\s*$/;
+
+/**
+ * The stored reading the preview serves, built from the fixture.
+ *
+ * `readAt` is when the bike was actually read — 13:18:49 CEST on 2026-09-08 — so the
+ * age on screen is a true one that grows, rather than a frozen "just now" that would
+ * make the age stamp look like decoration.
+ */
+function buildLifetimePreview(): LifetimeStatsResponse {
+  const responses = LIFETIME_READ_PAYLOADS.map(entry => ({
+    component: entry.component,
+    response: decodeFreezeFrameResponse(lifetimeReadPayload(entry.component), entry.component),
+  }));
+  return {
+    reading: {
+      statistics: summariseLifetimeStatistics(Date.UTC(2026, 8, 8, 11, 18, 49), responses),
+      source: "read-freeze-frame.ts",
+    },
+    howToRead: HOW_TO_READ,
+  };
+}
 
 /** Resolve a module-relative specifier to a key rooted at `public/`. */
 function resolveSpecifier(fromKey: string, specifier: string): string {
@@ -174,7 +199,15 @@ if (!template.includes("__TABLES__")) {
 // preview serves the real ones, generated here. A hand-written stub would make the
 // preview say "not in Energica's code table" about codes that are in it, which is
 // exactly the failure src/http/dtc-table.ts's own header warns about.
-const tables = JSON.stringify({ "/dtc-table": buildDtcTable(), "/fault-infokeys": buildFaultInfokeys() });
+const tables = JSON.stringify({
+  "/dtc-table": buildDtcTable(),
+  "/fault-infokeys": buildFaultInfokeys(),
+  // The REAL 2026-09-08 reading, decoded from the committed fixture, so a screenshot
+  // of the All tab shows this bike's own lifetime numbers rather than invented ones —
+  // including the two the decoder refuses to scale, which are the whole point of
+  // looking at it. scripts/captured-lifetime-reads.ts.
+  "/lifetime-stats": buildLifetimePreview(),
+});
 
 const html = template
   .replace("__CSS__", () => css)

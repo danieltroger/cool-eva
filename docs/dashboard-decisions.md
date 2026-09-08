@@ -373,6 +373,26 @@ The contactor bit needs a longer answer, because a steady BOOLEAN does not reach
 
 ---
 
+## The lifetime block — `views/all.js`, `lib/lifetime.js`
+
+The bike's lifetime battery statistics sit above the All tab's filter box, pinned, in the grid's own tiles.
+
+### Why pinned rather than a section of the grid
+
+Not layout: **they are not signals.** Every tile below comes from `knownKeys` and is drawn by `groupOf(key)` with `isStale(key, STALE_MS)` deciding whether it has gone quiet. A lifetime statistic has no arrival time and no staleness — nothing broadcasts it (`obd-garage/DC_CHARGE_LIMITS.md` §10.6) — so making it a `groupOf()` section would mean lying to `isStale` about a number that was true a week ago and still is. It would also sort alphabetically, between `gps` and `motor`, where only somebody who already knew it existed would find it.
+
+### …but it obeys the filter
+
+The one interaction this view has is the filter box, and a pinned block that ignored it would be the first thing on screen that does not respond to typing. So the block filters its own rows by the same needle and disappears when none match. Type `cell` and you get the lifetime cell spread above the live cell voltages, which is the comparison worth having.
+
+### Seven tiles, not eleven
+
+The first version gave every decoded field its own tile and pushed the signal grid off the bottom of a 414 px screen — on the tab whose whole purpose is going to look at a raw number. The charge counters became one tile carrying `969 AC · 17 DC · 32 neither`, and the four cell readings became a spread with its bounds and ids underneath. Rows carry a `detail` array for exactly this, formatted in `src/diagnostics/lifetime-stats.ts` rather than in the browser: what belongs with what, and what a rejected constituent should look like, is the same judgement as the row itself.
+
+### The notes are the feature, not decoration
+
+Two of these numbers are shown **unscaled** — `TotalExchangedAh` because its scale is refused, `AvgDOD` because Energica's equation for it is malformed — so the line underneath is what makes the number mean anything at all. It renders at the same weight as a rejected reading rather than tucked away, and it carries the thing a person standing at the bike can act on: what would settle it. `docs/lifetime-battery-statistics.md`.
+
 ## Plausibility bounds — `lib/bounds.js`
 
 The gate exists because the real data is not clean. Across 7.6 M logged readings (Apr–Aug 2026) the bike has produced `coolant_in` at −242 °C in 59 450 rows and `coolant_out` at 988 °C in 40 351 rows — an open/flaky PT100, not noise — plus rarer `0xFFFF` sentinels on the cell voltages, −32767 on GPS altitude, and `high_beam` briefly reading 193. Rendering those raw is how you end up watching "−242 °C" on a coolant tile at 90 km/h, and a single one of them destroys a sparkline's autoscale for as long as it stays in the window.
