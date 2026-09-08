@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { CALM, MUTED } from "./colors.js";
+import { MUTED } from "./colors.js";
 
 // Inline-SVG drawing primitives: sparkline, meter, split bar, ring.
 //
@@ -12,7 +12,7 @@ import { CALM, MUTED } from "./colors.js";
 // have: at 90 km/h the only readable chart is a bare shape with one number on it.
 //
 // Everything below takes plain numbers and returns an element, or — for
-// limitMarkerPositions() — the geometry an element is built from. No state, no
+// derateSpans() — the geometry an element is built from. No state, no
 // subscriptions — the views decide when to redraw, which is the 2 Hz chartTick
 // rather than the 20 Hz frame rate of the underlying signals.
 
@@ -24,11 +24,35 @@ const svgTags = van.tags("http://www.w3.org/2000/svg");
 const TRACK = "#0b1220";
 
 /**
- * How far from either end a limit marker may be drawn, in viewBox units. Small enough
- * to read as "at the end" on a 280 px phone bar and large enough that the whole stroke
- * is inside the viewBox on a 1000 px one.
+ * The hatching over a stretch of bar the BMS has derated away. Between TRACK and the
+ * centre divider's #475569 in weight on purpose: it has to read as "this part is gone"
+ * at a glance without competing with the fill, which is the number being displayed.
  */
-const MARKER_INSET = 0.6;
+const DERATED = "#334155";
+
+/**
+ * Hatch geometry, in viewBox x — a period of 3 puts about 33 bands across a full bar
+ * and about 8 across a quarter of one, dense enough to read as texture rather than as
+ * a row of ticks at every derate worth showing.
+ */
+const HATCH_DASH = 1.7;
+const HATCH_GAP = 1.3;
+
+/**
+ * Narrowest hatched stretch worth drawing, in viewBox units — a bit over one period.
+ * Below this it is a smudge at the end of the bar rather than a pattern, and a rider
+ * cannot tell a 2% derate from a rendering artifact.
+ */
+const MIN_HATCH_WIDTH = 3.5;
+
+/**
+ * What each half of a split bar shows at its end. Fixed, and asymmetric on this bike:
+ * the two directions are not remotely the same size, so one number for both would spend
+ * most of the regen half on power the machine cannot produce.
+ * @typedef {object} SplitBarScale
+ * @property {number} drive largest magnitude the right half can show
+ * @property {number} regen largest magnitude the left half can show
+ */
 
 /**
  * A bare trace with no axes. Autoscales to its own window, with a floor on the
@@ -117,15 +141,17 @@ export function meter({ fraction, color, height = 10, marker = null }) {
  * is the one number where direction matters as much as magnitude, and a signed
  * digit is much slower to read than a bar that moves the other way.
  *
- * `limits` draws the two ceilings as dashed lines — where you are cut off, against
- * where you are. Both are positive magnitudes in the same units as `value`, and they
- * arrive as ONE object rather than as two parameters on purpose: two would be a pair
- * of same-typed arguments a caller can cross, and a crossed pair draws a plausible
- * screen rather than a broken one. Which side each lands on is this function's
- * business, the same way `fullScale` being a magnitude rather than a range is.
+ * `limits` is what the BMS is allowing right now, and it does not move the scale — it
+ * hatches the part of the scale you can no longer reach. `fullScale` is the scale, per
+ * half, and it never moves at all.
+ *
+ * Both are positive magnitudes in the same units as `value`, and both arrive as ONE
+ * object rather than as two parameters on purpose: two would be a pair of same-typed
+ * arguments a caller can cross, and a crossed pair draws a plausible screen rather than
+ * a broken one. Which side each lands on is this function's business.
  * @param {object} options
  * @param {number | null} options.value
- * @param {number} options.fullScale largest magnitude the bar can show, per side
+ * @param {SplitBarScale} options.fullScale largest magnitude each half can show
  * @param {string} options.color
  * @param {import("./power-limits.js").PowerLimitsKw | null} [options.limits]
  * @param {number} [options.height]
@@ -134,12 +160,18 @@ export function meter({ fraction, color, height = 10, marker = null }) {
 export function splitBar({ value, fullScale, color, limits = null, height = 14 }) {
   const width = 100;
   const centre = width / 2;
-  const magnitude = value == null ? 0 : Math.min(Math.abs(value) / fullScale, 1) * centre;
   // Negative is discharge on this bike, and discharge is the direction you are
   // going, so it draws to the right. See the sign note in derive.js.
   const isDrive = (value ?? 0) < 0;
-  const children = [
-    svgTags.rect({ x: 0, y: 0, width, height, rx: 2, fill: TRACK }),
+  const scale = isDrive ? fullScale.drive : fullScale.regen;
+  const magnitude = value == null || scale <= 0 ? 0 : Math.min(Math.abs(value) / scale, 1) * centre;
+  const children = [svgTags.rect({ x: 0, y: 0, width, height, rx: 2, fill: TRACK })];
+  // Under the fill: the hatching is the track saying "not available", and where you
+  // have actually reached into it the fill is the more urgent of the two facts.
+  for (const span of derateSpans({ limits, fullScale, centre })) {
+    children.push(hatching(span, height));
+  }
+  children.push(
     svgTags.rect({
       x: isDrive ? centre : centre - magnitude,
       y: 0,
@@ -147,83 +179,86 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
       height,
       fill: color,
     }),
-    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }),
-  ];
-  // After the fill, so a limit the bar has run past is still legible on top of it.
-  for (const x of limitMarkerPositions({ limits, fullScale, centre })) {
-    children.push(limitMarker(x, height));
-  }
+    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" })
+  );
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
 }
 
 /**
- * Where the dashed limit lines land, in viewBox x. Drive is right of centre and regen
- * is left, matching the fill. A ceiling wider than the bar is PINNED to the end.
+ * The stretches of bar the BMS has taken away, in viewBox x — from each ceiling out to
+ * that side's end. Drive is right of centre and regen is left, matching the fill.
  *
- * ⚠️ It was dropped instead until the numbers behind that were re-measured. Dropping
- * makes "the pack allows more than the bike can take" and "0x202 has not arrived" the
- * same picture, and that is not the rare collision it was argued to be: weighted by
- * elapsed time rather than by the deadbanded signal's own rows, the discharge ceiling
- * is off a 130 kW bar for 5-11% of moving time. Pinning is ambiguous too — a line at
- * the end could be a ceiling AT full scale or past it — but both of those readings say
- * "the pack is not what is limiting you", so they lead a rider to the same place, while
- * absence-or-no-data does not. docs/dashboard-decisions.md §"The power bar" has the
- * measurement and the estimator that got it wrong.
+ * The scale never moves. That is the whole point of showing a derate this way rather
+ * than as a line at the ceiling, which is what this drew first: a line answers "where
+ * is the limit" and leaves the rider to measure the gap, while hatching answers "how
+ * much has gone" directly, and the two ends stop being special cases. A ceiling wider
+ * than its half hatches NOTHING, which is exactly true — the pack is not what is
+ * limiting you — where the line had to be either dropped (indistinguishable from "0x202
+ * has not arrived", 5-11% of moving time) or pinned to the end (indistinguishable from a
+ * ceiling AT full scale). A ceiling of zero hatches the whole half, where the line sat
+ * on the centre divider and could be mistaken for it.
+ *
+ * Each half is measured against ITS OWN full scale, which is why `fullScale` is a pair.
+ * A single scale wide enough for the drive side leaves the regen side unable to fill
+ * more than a third of its half on the best day the pack has ever had — so ~70% of it
+ * would hatch permanently, on a healthy bike, teaching the eye to ignore the hatching
+ * exactly where it is the signal. See docs/dashboard-decisions.md §"The power bar".
  *
  * Pure, and exported, so scripts/check-power-bar.ts can assert which side each lands on
  * without a DOM — van's tags need document.createElementNS and Node has neither.
  * @param {object} options
  * @param {import("./power-limits.js").PowerLimitsKw | null} options.limits
- * @param {number} options.fullScale
+ * @param {SplitBarScale} options.fullScale
  * @param {number} options.centre half the bar's width, in viewBox units
- * @returns {number[]}
+ * @returns {Array<{ x: number, width: number }>}
  */
-export function limitMarkerPositions({ limits, fullScale, centre }) {
-  if (limits == null || fullScale <= 0) {
+export function derateSpans({ limits, fullScale, centre }) {
+  if (limits == null) {
     return [];
   }
   const sides = [
-    { value: limits.drive, direction: 1 },
-    { value: limits.regen, direction: -1 },
+    { value: limits.drive, scale: fullScale.drive, direction: 1 },
+    { value: limits.regen, scale: fullScale.regen, direction: -1 },
   ];
-  const positions = [];
+  const spans = [];
   for (const side of sides) {
-    if (side.value == null) {
+    if (side.value == null || side.scale <= 0) {
       continue;
     }
-    const fraction = Math.min(side.value / fullScale, 1);
-    // Half a stroke would fall outside the viewBox at the extremes and be clipped away
-    // by the SVG's own bounds, so the pinned case — the one this inset exists for —
-    // would draw at half width or vanish.
-    positions.push(clamp(centre + side.direction * fraction * centre, MARKER_INSET, 2 * centre - MARKER_INSET));
+    const reachable = Math.min(side.value / side.scale, 1) * centre;
+    const lost = centre - reachable;
+    // A sliver narrower than one dash cannot be read as hatching — it renders as a
+    // smudge at the end of the bar and invites the reader to wonder what it is.
+    if (lost < MIN_HATCH_WIDTH) {
+      continue;
+    }
+    spans.push({ x: side.direction > 0 ? centre + reachable : 0, width: lost });
   }
-  return positions;
-}
-
-/** @param {number} value @param {number} low @param {number} high */
-function clamp(value, low, high) {
-  return Math.max(low, Math.min(high, value));
+  return spans;
 }
 
 /**
- * One dashed line across the bar.
- * @param {number} x
+ * One hatched stretch: a single horizontal line as thick as the bar, dashed along its
+ * length, which is a run of vertical bands for two attributes and no per-dash geometry.
+ *
+ * Deliberately NOT `vector-effect: non-scaling-stroke`, unlike every other stroke in
+ * this file. The stroke width here IS the bar's height, in viewBox units, and the dash
+ * period is a fraction of the bar's length — both are meant to stretch with the tile,
+ * so the hatching stays the same shape on a phone and on a laptop. The non-scaling
+ * strokes elsewhere are hairlines, where stretching is the bug.
+ * @param {{ x: number, width: number }} span
  * @param {number} height
  * @returns {Element}
  */
-function limitMarker(x, height) {
+function hatching(span, height) {
   return svgTags.line({
-    x1: x.toFixed(2),
-    y1: 0,
-    x2: x.toFixed(2),
-    y2: height,
-    stroke: CALM,
-    "stroke-width": 1.2,
-    "stroke-dasharray": "2 2",
-    // preserveAspectRatio="none" stretches the viewBox to the tile, and for a vertical
-    // line that stretch lands on the stroke WIDTH — a hairline on a narrow phone and a
-    // slab on a wide one, with the dashes squashed the other way.
-    "vector-effect": "non-scaling-stroke",
+    x1: span.x.toFixed(2),
+    y1: height / 2,
+    x2: (span.x + span.width).toFixed(2),
+    y2: height / 2,
+    stroke: DERATED,
+    "stroke-width": height,
+    "stroke-dasharray": `${HATCH_DASH} ${HATCH_GAP}`,
   });
 }
 

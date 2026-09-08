@@ -1,6 +1,6 @@
 import { power } from "../public/lib/colors.js";
 import { BAD, CALM, GOOD, MUTED, WARN, WATCH } from "../public/lib/colors.js";
-import { limitMarkerPositions } from "../public/lib/svg.js";
+import { derateSpans } from "../public/lib/svg.js";
 import { powerLimitsKw } from "../public/lib/power-limits.js";
 
 // The riding screen's power bar, checked from Node.
@@ -15,7 +15,7 @@ import { powerLimitsKw } from "../public/lib/power-limits.js";
 // That is the failure this file exists to make loud.
 //
 // Node has no DOM, so this reaches the two pure pieces rather than the drawn SVG:
-// `limitMarkerPositions()` decides which side each dashed line lands on, and
+// `derateSpans()` decides which stretch of bar each ceiling hatches away, and
 // `powerLimitsKw()` takes its reader as a parameter the way charge-mode.js does.
 //
 // §5 exists because covering those two ENDS is not the same as covering the path
@@ -35,8 +35,12 @@ import { powerLimitsKw } from "../public/lib/power-limits.js";
 const DRIVE_KW = -100;
 const REGEN_KW = 20;
 
-/** ride.js's POWER_LIMIT_KW. Copied, not imported: ride.js pulls in van, which needs a DOM. */
-const FULL_SCALE_KW = 130;
+/**
+ * ride.js's POWER_SCALE_KW. Copied, not imported: ride.js pulls in van, which needs a
+ * DOM. Asymmetric on purpose — the regen half is a third the size of the drive half,
+ * because that is the shape of the machine.
+ */
+const FULL_SCALE_KW = { drive: 130, regen: 45 };
 const CENTRE = 50;
 
 const failures: string[] = [];
@@ -116,69 +120,81 @@ if (zeroVoltage.drive !== null || zeroVoltage.regen !== null) {
   failures.push(`0 V is a missing reading, not a pack — it must not draw a 0 kW ceiling on a healthy bike`);
 }
 
-// 3. Which side each dashed line lands on. Drive is negative kW and draws RIGHT of
-//    centre, so its marker must too; regen draws left. Swapping them would read as the
-//    BMS allowing 96 kW of regen and 38 kW of drive, which is a plausible-looking lie.
-const positions = limitMarkerPositions({
-  limits: { drive: 96, regen: 38.4 },
-  fullScale: FULL_SCALE_KW,
-  centre: CENTRE,
-});
-if (positions.length !== 2) {
-  failures.push(`two in-range limits must draw two lines, got ${positions.length}`);
+// 3. Which side each ceiling hatches. The bar is centre-out, drive draws RIGHT, so the
+//    drive ceiling must take the right END away — from the ceiling out to full scale,
+//    never the reachable part. Crossing the two sides would read as the BMS allowing
+//    96 kW of regen and 38 kW of drive, which is a plausible-looking lie.
+const spans = derateSpans({ limits: { drive: 96, regen: 22.5 }, fullScale: FULL_SCALE_KW, centre: CENTRE });
+if (spans.length !== 2) {
+  failures.push(`two derated ceilings hatch two stretches, got ${spans.length}`);
 } else {
-  const [drive, regen] = positions;
-  if (drive <= CENTRE) {
-    failures.push(`the discharge limit must draw right of centre (${CENTRE}), landed at ${drive}`);
+  const [drive, regen] = spans;
+  // 96 of 130 kW leaves 34 kW unreachable, which is 34/130 of the drive half.
+  const expectedDriveWidth = ((FULL_SCALE_KW.drive - 96) / FULL_SCALE_KW.drive) * CENTRE;
+  if (Math.abs(drive.width - expectedDriveWidth) > 1e-9) {
+    failures.push(
+      `a 96 kW ceiling on a ${FULL_SCALE_KW.drive} kW half hatches ${expectedDriveWidth}, got ${drive.width}`
+    );
   }
-  if (regen >= CENTRE) {
-    failures.push(`the regen limit must draw left of centre (${CENTRE}), landed at ${regen}`);
+  if (Math.abs(drive.x + drive.width - 2 * CENTRE) > 1e-9) {
+    failures.push(`the drive hatching must run to the bar's right end, ends at ${drive.x + drive.width}`);
   }
-  const expectedDrive = CENTRE + (96 / FULL_SCALE_KW) * CENTRE;
-  if (Math.abs(drive - expectedDrive) > 1e-9) {
-    failures.push(`96 kW of ${FULL_SCALE_KW} kW belongs at x=${expectedDrive}, landed at ${drive}`);
+  if (drive.x <= CENTRE) {
+    failures.push(`the drive hatching must start right of centre (${CENTRE}), starts at ${drive.x}`);
+  }
+  if (regen.x !== 0) {
+    failures.push(`the regen hatching must start at the bar's left end, starts at ${regen.x}`);
+  }
+  if (regen.x + regen.width >= CENTRE) {
+    failures.push(`the regen hatching must stop left of centre (${CENTRE}), ends at ${regen.x + regen.width}`);
+  }
+  // The reachable part is what is left, and it is the half the rider reads against.
+  // …and each half is measured against ITS OWN scale. 22.5 of 45 kW is exactly half the
+  // regen side; read against the drive side's 130 it would be 83% of it instead.
+  if (Math.abs(regen.width - CENTRE / 2) > 1e-9) {
+    failures.push(`22.5 kW of a ${FULL_SCALE_KW.regen} kW regen half hatches ${CENTRE / 2}, got ${regen.width}`);
   }
 }
 
-// 4. …and the ends. A ceiling wider than the bar is PINNED there rather than dropped:
-//    dropping made it indistinguishable from "0x202 has not arrived", which is 5-11% of
-//    moving time, while both readings of a pinned line say "the pack is not your limit".
-//    The pin must also stay inside the viewBox, or the stroke is half clipped away.
-const pinned = limitMarkerPositions({ limits: { drive: 400, regen: null }, fullScale: FULL_SCALE_KW, centre: CENTRE });
-const atFullScale = limitMarkerPositions({
-  limits: { drive: FULL_SCALE_KW, regen: null },
+// 4. …and the two ends, which are the reason this hatches rather than drawing a line at
+//    the ceiling. Both used to be special cases: a line past full scale had to be
+//    dropped (indistinguishable from "0x202 has not arrived") or pinned (from a ceiling
+//    AT full scale), and a line at zero sat on the centre divider. Neither survives here.
+const roomToSpare = derateSpans({ limits: { drive: 400, regen: null }, fullScale: FULL_SCALE_KW, centre: CENTRE });
+if (roomToSpare.length !== 0) {
+  failures.push(`a ceiling past full scale takes nothing away and must hatch nothing, got ${roomToSpare.length}`);
+}
+const exactlyFull = derateSpans({
+  limits: { drive: FULL_SCALE_KW.drive, regen: null },
   fullScale: FULL_SCALE_KW,
   centre: CENTRE,
 });
-if (pinned.length !== 1 || atFullScale.length !== 1) {
-  failures.push(`a ceiling at or past full scale still draws one line, got ${pinned.length} and ${atFullScale.length}`);
-} else {
-  if (pinned[0] !== atFullScale[0]) {
-    failures.push(`a ceiling past full scale must pin where one AT full scale sits, ${pinned[0]} vs ${atFullScale[0]}`);
-  }
-  if (pinned[0] >= 2 * CENTRE || pinned[0] <= CENTRE) {
-    failures.push(`the pinned line must sit inside the bar's right end, landed at ${pinned[0]}`);
-  }
+if (exactlyFull.length !== 0) {
+  failures.push(`a ceiling AT full scale takes nothing away either, got ${exactlyFull.length}`);
 }
-const fullyDerated = limitMarkerPositions({ limits: { drive: 0, regen: 0 }, fullScale: FULL_SCALE_KW, centre: CENTRE });
-if (fullyDerated.length !== 2 || fullyDerated.some(x => x !== CENTRE)) {
-  failures.push(`a 0 kW ceiling belongs ON the centre line — the bar cannot move at all — got ${fullyDerated}`);
+const shutDown = derateSpans({ limits: { drive: 0, regen: 0 }, fullScale: FULL_SCALE_KW, centre: CENTRE });
+if (shutDown.length !== 2 || shutDown.some(span => Math.abs(span.width - CENTRE) > 1e-9)) {
+  failures.push(`a 0 kW ceiling hatches its ENTIRE half — the loudest thing this bar says — got ${shutDown}`);
 }
-const noLimits = limitMarkerPositions({
-  limits: { drive: null, regen: null },
+const sliver = derateSpans({
+  limits: { drive: FULL_SCALE_KW.drive - 1, regen: null },
   fullScale: FULL_SCALE_KW,
   centre: CENTRE,
 });
+if (sliver.length !== 0) {
+  failures.push(`a derate too narrow to render as hatching is a smudge, not a pattern — got ${sliver.length}`);
+}
+const noLimits = derateSpans({ limits: { drive: null, regen: null }, fullScale: FULL_SCALE_KW, centre: CENTRE });
 if (noLimits.length !== 0) {
-  failures.push(`a bike that has not sent 0x202 yet must draw no lines, got ${noLimits.length}`);
+  failures.push(`a bike that has not sent 0x202 yet hatches nothing, got ${noLimits.length}`);
 }
-if (limitMarkerPositions({ limits: null, fullScale: FULL_SCALE_KW, centre: CENTRE }).length !== 0) {
-  failures.push("a bar handed no limits at all must draw no lines");
+if (derateSpans({ limits: null, fullScale: FULL_SCALE_KW, centre: CENTRE }).length !== 0) {
+  failures.push("a bar handed no limits at all must hatch nothing");
 }
 
 // 5. A charge is up. Both ceilings must go quiet: the BMS zeroes them during a DC
-//    session because neither path carries that current, so drawing them puts two
-//    ceilings of 0 kW under a bar showing +24 kW of charge power — on a screen the
+//    session because neither path carries that current, so believing them would hatch
+//    the WHOLE bar away under a fill showing +24 kW of charge power — on a screen the
 //    rider can be looking at mid-charge, and fresh enough that staleness never fires.
 const dcCharging = powerLimitsKw(
   reading({ "allowed_discharge_a": 0, "allowed_regen_a": 0, "pack_v": 341, "fast_dc_contactor": 1 }),
@@ -200,24 +216,31 @@ if (acCharging.drive !== null || acCharging.regen !== null) {
 // 6. End to end, through the shape the view actually forwards. §2 and §3 each cover one
 //    end; this is the only case that fails if the two are joined the wrong way round.
 //    Deliberately asymmetric amps, so a swap cannot land on the same number by accident.
-const endToEnd = limitMarkerPositions({
+const endToEnd = derateSpans({
   limits: powerLimitsKw(reading({ "allowed_discharge_a": 300, "allowed_regen_a": 60, "pack_v": 320 }), fresh),
   fullScale: FULL_SCALE_KW,
   centre: CENTRE,
 });
 if (endToEnd.length !== 2) {
-  failures.push(`a riding bike draws both lines, got ${endToEnd.length}`);
-} else if (endToEnd[0] <= CENTRE || endToEnd[1] >= CENTRE) {
+  failures.push(`a riding bike with both ceilings inside the bar hatches two stretches, got ${endToEnd.length}`);
+} else if (endToEnd[0].x <= CENTRE || endToEnd[1].x !== 0) {
   failures.push(
-    `300 A of discharge and 60 A of regen must draw right and left of ${CENTRE} respectively, got ` +
-      `${endToEnd[0]} and ${endToEnd[1]} — the two ceilings are crossed somewhere between the reader and the bar`
+    `300 A of discharge and 60 A of regen must hatch the right and left ends respectively, got x=${endToEnd[0].x} ` +
+      `and x=${endToEnd[1].x} — the two ceilings are crossed somewhere between the reader and the bar`
+  );
+} else if (endToEnd[0].width >= endToEnd[1].width) {
+  failures.push(
+    `300 A leaves 96 of 130 kW on the drive half and 60 A leaves 19.2 of 45 on the regen half, so regen must ` +
+      `lose MORE of its own half — got ${endToEnd[0].width} drive against ${endToEnd[1].width} regen`
   );
 }
 
 console.log(`colour: ${REGEN_KW} kW regen is ${power(REGEN_KW)}, ${DRIVE_KW} kW drive is ${power(DRIVE_KW)}`);
 console.log(`limits: 300 A / 120 A at 320 V is ${nominal.drive} kW drive and ${nominal.regen} kW regen`);
-console.log(`markers: ${positions.map(x => x.toFixed(2)).join(", ")} on a bar centred at ${CENTRE}`);
-console.log(`end to end: 300 A / 60 A at 320 V lands at ${endToEnd.map(x => x.toFixed(2)).join(", ")}`);
+console.log(
+  `hatching: ${spans.map(s => `${s.x.toFixed(1)}+${s.width.toFixed(1)}`).join(", ")} on ${FULL_SCALE_KW.drive}/${FULL_SCALE_KW.regen} kW halves`
+);
+console.log(`end to end: 300 A / 60 A at 320 V hatches ${endToEnd.map(s => s.width.toFixed(1)).join(" and ")} wide`);
 
 if (failures.length > 0) {
   console.error("FAILED:");
@@ -228,6 +251,6 @@ if (failures.length > 0) {
 }
 console.log(
   "✓ regen is green and drive never is, the ramp gets warmer with load, both ceilings convert through the measured " +
-    "pack voltage with 0 A surviving and 0 V rejected, both go quiet while a charge is up, and the dashed lines " +
-    "land on the sides the fill uses — end to end, pinned inside the bar rather than dropped off it"
+    "pack voltage with 0 A surviving and 0 V rejected, both go quiet while a charge is up, and each ceiling " +
+    "hatches away its own side's far end — end to end, nothing at full scale and the whole half at zero"
 );

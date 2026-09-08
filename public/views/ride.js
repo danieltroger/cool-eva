@@ -21,8 +21,17 @@ const { div, span } = van.tags;
 // comes from GPS rather than the bike, per the request — the wheel-derived figure
 // is kept underneath it, because the gap between them is your speedometer error.
 
-/** Widest power the bar scales to. The Ribelle peaks around 126 kW. */
-const POWER_LIMIT_KW = 130;
+/**
+ * What each half of the power bar shows at its end. Fixed — it is the derate that
+ * moves, not the scale — and asymmetric, because the two directions are not the same
+ * size on this machine and pretending they are wastes most of one half.
+ *
+ * Drive: the Ribelle peaks around 126 kW, and the archive's deepest sample is −117.3.
+ * Regen: the archive's largest is 40.9 kW, under 22.4 for 99% of positive samples, and
+ * the BMS's own configured ceiling of 120 A cannot reach 41 kW at any pack voltage this
+ * bike has ever held. Both leave about a tenth of headroom over what has been recorded.
+ */
+const POWER_SCALE_KW = { drive: 130, regen: 45 };
 
 export function RideView() {
   return div(
@@ -119,11 +128,12 @@ function SpeedHero() {
  * on the hypermiling screen, because it is the same watts the coolant loop has to
  * carry away — it belongs next to the temperatures it explains.
  *
- * The dashed lines are the BMS's own ceilings (lib/power-limits.js). They are what
- * turns the bar from "how hard am I pulling" into "how much is left before the pack
- * says no", and they MOVE — the discharge ceiling averages 91 kW over moving time in
- * the archive against the bike's 126 kW peak, so a rider reading a full-looking bar
- * without them is usually reading a derate as headroom.
+ * The hatching is the BMS's own ceilings (lib/power-limits.js), shown as the part of
+ * the scale you can no longer reach. It is what turns the bar from "how hard am I
+ * pulling" into "how much is left before the pack says no", and it MOVES — the
+ * discharge ceiling averages 91 kW over moving time in the archive against the bike's
+ * 126 kW peak, so a rider reading a full-looking bar without it is usually reading a
+ * derate as headroom.
  */
 function PowerRow() {
   return div(
@@ -139,7 +149,7 @@ function PowerRow() {
       const limits = powerLimitsKw(valueOf, isStale);
       return splitBar({
         value: kilowatts,
-        fullScale: POWER_LIMIT_KW,
+        fullScale: POWER_SCALE_KW,
         color: colors.power(kilowatts),
         limits,
       });
