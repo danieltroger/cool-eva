@@ -54,7 +54,7 @@ const PORT = 80;
 const CAN_IFACE = "can0";
 // Where the menu's "Update" button runs `git pull`: this checkout, wherever it is.
 // ROOT is derived from the running file's own path, so it is the right directory
-// whatever it is named — CLAUDE.md notes an existing Pi kept the pre-rename name.
+// whatever the checkout is named or wherever it was moved to.
 const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
 
 // Config (env overrides). README's Configuration section is the full table; this indexes it:

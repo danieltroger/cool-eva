@@ -235,6 +235,7 @@ function DownloadButton() {
 }
 
 const canRestartMessage = van.state("");
+const canRestartFailed = van.state(false);
 const canRestarting = van.state(false);
 
 /**
@@ -242,6 +243,10 @@ const canRestarting = van.state(false);
  * `ip link` commands on the Pi; the result note reports what happened, since the bus
  * coming back is not something this button can see from here — the CAN dot in the header
  * is what confirms it a poll later.
+ *
+ * Styled from `ok` for the same reason UpdateButton is: /can-restart answers 500 with
+ * ok:false, and a failure rendered in the same grey as a success is the bug style.css
+ * argues against for .action-note.failure.
  */
 function CanRestartButton() {
   return div(
@@ -251,14 +256,17 @@ function CanRestartButton() {
         disabled: canRestarting,
         onclick: async () => {
           canRestarting.val = true;
+          canRestartFailed.val = false;
           canRestartMessage.val = "restarting…";
           try {
             const response = await fetch("/can-restart", { method: "POST" });
             const reply = /** @type {CanRestartReply} */ (await response.json());
             canRestartMessage.val = reply.message;
+            canRestartFailed.val = !reply.ok;
           } catch (error) {
             console.warn("can-restart: request failed", error);
             canRestartMessage.val = "Restart request failed — is the Pi reachable?";
+            canRestartFailed.val = true;
           } finally {
             canRestarting.val = false;
           }
@@ -266,11 +274,15 @@ function CanRestartButton() {
       },
       "🔄  CAN bus restart"
     ),
-    () => (canRestartMessage.val ? div({ class: "action-note" }, canRestartMessage.val) : div())
+    () =>
+      canRestartMessage.val
+        ? div({ class: `action-note${canRestartFailed.val ? " failure" : ""}` }, canRestartMessage.val)
+        : div()
   );
 }
 
 const updateMessage = van.state("");
+const updateFailed = van.state(false);
 const updating = van.state(false);
 
 /**
@@ -279,6 +291,10 @@ const updating = van.state(false);
  * date." and a summary of what changed are both worth reading. It then restarts the
  * service so the new code takes effect, which drops this WebSocket; the store reconnects
  * on its own once the service is back.
+ *
+ * The note is styled from `ok`, not just filled from `message`: a failed pull used to
+ * render in the same grey as a successful one, which is the bug style.css argues against
+ * for .action-note.failure.
  */
 function UpdateButton() {
   return div(
@@ -288,14 +304,17 @@ function UpdateButton() {
         disabled: updating,
         onclick: async () => {
           updating.val = true;
+          updateFailed.val = false;
           updateMessage.val = "updating…";
           try {
             const response = await fetch("/update", { method: "POST" });
             const reply = /** @type {UpdateReply} */ (await response.json());
             updateMessage.val = reply.message;
+            updateFailed.val = !reply.ok;
           } catch (error) {
             console.warn("update: request failed", error);
             updateMessage.val = "Update request failed — is the Pi reachable?";
+            updateFailed.val = true;
           } finally {
             updating.val = false;
           }
@@ -303,7 +322,10 @@ function UpdateButton() {
       },
       "⬆  Update"
     ),
-    () => (updateMessage.val ? div({ class: "action-note" }, updateMessage.val) : div())
+    () =>
+      updateMessage.val
+        ? div({ class: `action-note output${updateFailed.val ? " failure" : ""}` }, updateMessage.val)
+        : div()
   );
 }
 

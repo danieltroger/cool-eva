@@ -760,6 +760,20 @@
             message: `Waypoint ${STATUS.waypoints} saved — 57.0000, 12.0000, 11 satellites.`,
           });
         }
+        if (path === "/update") {
+          // A FAILED pull, deliberately: it is the reply that exercises all three of the
+          // note's claims at once — the newlines survive (white-space: pre-wrap), the long
+          // URL wraps instead of widening the sheet (overflow-wrap: anywhere), and `ok:
+          // false` paints it as a failure rather than in the same grey as a success.
+          return json({
+            ok: false,
+            message:
+              "Stopped after 60 s — bad wifi, or a remote that never answered.\n\n" +
+              "remote: Enumerating objects: 41, done.\n" +
+              "fatal: unable to access 'https://github.com/danieltroger/cool-eva.git/': " +
+              "Failed to connect to github.com port 443 after 60000 ms: Couldn't connect to server",
+          });
+        }
         if (path === "/vcu-read") {
           if (method === "POST") {
             READ_STATE.run = {

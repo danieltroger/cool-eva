@@ -78,18 +78,20 @@ sudo apt-get install -y build-essential python3 git
 Deploy convention is a git checkout at `/home/pi/cool-eva`, owned by `pi`:
 
 ```sh
-git clone <this-repo-url> /home/pi/cool-eva
+# Public fork — nothing to configure, the Pi only ever pulls:
+git clone https://github.com/<your-fork>/cool-eva.git /home/pi/cool-eva
+
+# Private fork — keep the ssh remote and see the note below:
+git clone git@github.com:<your-fork>/cool-eva.git /home/pi/cool-eva
+
 cd /home/pi/cool-eva
 ```
 
-**SSH deploy key (needed for the dashboard's Update button).** With an SSH remote (`git@github.com:…`), a `git pull` needs a key GitHub accepts. The service runs as **root**, but the Update button pulls with `HOME=/home/pi` so it uses `pi`'s key, config and `known_hosts` — so put the deploy key in `pi`'s `~/.ssh` and confirm it works as `pi`:
+**⚠️ Never `sudo git pull` in this checkout.** A pull as root leaves root-owned files in `.git`, and the next pull as `pi` then fails — _silently_, so the service restarts on the old commit while the journal looks healthy. If it has already happened: `sudo chown -R pi:pi /home/pi/cool-eva`. The dashboard's Update button pulls as the checkout's owner for exactly this reason, even though the service itself is root.
 
-```sh
-# generate a key if there isn't one, add the .pub as a deploy key on GitHub, then:
-sudo -u pi git -C /home/pi/cool-eva ls-remote origin   # must succeed, not "Permission denied (publickey)"
-```
+**Which remote.** Because the pull runs as the owner, `pi`'s own ssh setup is in reach and there is nothing special to configure: a **private** fork keeps its `git@github.com:…` remote and uses `pi`'s deploy key at `/home/pi/.ssh/id_ed25519` the ordinary way. A **public** fork can use the https URL and needs no key at all. What does _not_ work is pulling as root with `HOME` pointed at `/home/pi` — OpenSSH expands `~` from the effective uid, not `$HOME` — which is why the button used to fail with `Host key verification failed.` while a pull as `pi` worked fine. `scripts/setup-service.ts` checks both the ownership and the remote at install time.
 
-(If you'd rather not use SSH, point `origin` at the HTTPS URL — only anonymous-friendly for a public repo.)
+[`docs/deploy.md`](docs/deploy.md) has the full reasoning, the 2026-09-08 incident it comes from, and the measurements behind it.
 
 ## 4. Install dependencies
 
@@ -154,13 +156,13 @@ cd /home/pi/cool-eva
 sudo node scripts/setup-service.ts
 ```
 
-This writes `/etc/systemd/system/cool-eva.service` (running as root, so it can bring up can0), then enables it at boot and starts it. Useful commands it prints (if you see `thermometer.service`, rename it to `cool-eva.service`):
+This writes `/etc/systemd/system/cool-eva.service` (running as root, so it can bring up can0), then enables it at boot and starts it. Upgrading a Pi from before the 2026-08 rename needs nothing by hand — the script stops, disables and deletes the old `thermometer` unit itself. Useful commands it prints:
 
 ```sh
 sudo systemctl status cool-eva     # check status
 sudo journalctl -u cool-eva -f     # follow logs
-sudo systemctl stop thermometer    # stop
-sudo systemctl disable thermometer # remove from boot
+sudo systemctl stop cool-eva       # stop
+sudo systemctl disable cool-eva    # remove from boot
 ```
 
 On a healthy start the logs show, roughly:
@@ -194,7 +196,7 @@ Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/stat
 
 ## 9. Deploying updates later
 
-The dashboard menu's **Update** button does this for you: it runs `git pull` in `/home/pi/cool-eva` (as root, using `pi`'s SSH key — see §3), shows git's output, then restarts the service so the new code takes effect. The WebSocket drops on restart and the dashboard reconnects on its own. It does **not** run `npm install`, so use it only for code changes.
+The dashboard menu's **Update** button does this for you: it runs `git pull --ff-only` in `/home/pi/cool-eva` **as the checkout's owner, not as root** (see §3), shows git's output, then restarts the service so the new code takes effect. The WebSocket drops on restart and the dashboard reconnects on its own. It does **not** run `npm install`, so use it only for code changes.
 
 By hand (or when a dependency changed):
 

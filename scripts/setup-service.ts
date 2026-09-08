@@ -1,5 +1,6 @@
-import { execSync } from "child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { execFileSync, execSync } from "child_process";
+import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths, foreignOwner } from "../src/http/update.ts";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -47,6 +48,13 @@ const RIDE_LOG_PUBLIC_KEY = join(projectDir, "ride-log-key.public.pem");
  * so a fresh install needs nothing here.
  */
 const ENV_FILE = "/etc/default/cool-eva";
+
+/**
+ * How long to spend proving the remote is readable. Short on purpose: a Pi with no
+ * reception is the common case, and this is advisory — the service is already running by
+ * the time it fires.
+ */
+const LS_REMOTE_TIMEOUT_MS = 10_000;
 
 // `process.execPath`, NOT `which node`: under sudo the PATH is root's, so a Node
 // installed with nvm as the pi user is not on it at all ("sudo: node: command not
@@ -104,6 +112,10 @@ console.log(`  sudo nano ${ENV_FILE}                   — set COOLANT_ENABLED=0
 
 warnIfNodeIsUserWritable();
 warnIfNoRideLogKey();
+// Local and offline, so it runs unconditionally — the poisoned-.git warning is the one
+// this exists for, and a garage Pi usually fails the network check below.
+await warnIfGitIsWronglyOwned();
+warnIfRemoteUnreadable();
 
 /**
  * Refuse to install a unit that cannot start. Without this the only symptom is
@@ -213,6 +225,119 @@ function readEnvFile(): Record<string, string> {
     console.log(`(could not read ${ENV_FILE}: ${(error as Error).message})`);
   }
   return values;
+}
+
+/**
+ * Prove the Update button will be able to pull, at the one moment someone is sitting in
+ * front of the Pi to fix it — rather than months later, in a garage, from a phone.
+ *
+ * Run exactly as the button will: as the checkout's OWNER, via the same asOwnerCommand()
+ * the endpoint uses. That is what makes this a proof rather than an approximation — root
+ * can reach remotes the owner cannot (and leaves root-owned files in .git when it pulls,
+ * which is the bug this whole path exists to prevent).
+ *
+ * The remote's scheme is deliberately not the test. https and ssh are both correct
+ * (INSTALL.md §3); the only question is whether origin is readable as that user.
+ */
+function warnIfRemoteUnreadable(): void {
+  const ownerUid = statSync(projectDir).uid;
+  const currentUid = process.getuid?.() ?? ownerUid;
+  let remoteUrl: string;
+  try {
+    const { command, args } = asOwnerCommand(["-C", projectDir, "remote", "get-url", "origin"], ownerUid, currentUid);
+    remoteUrl = execFileSync(command, args, { stdio: ["ignore", "pipe", "pipe"] })
+      .toString()
+      .trim();
+  } catch (error) {
+    // A checkout with no `origin` exits non-zero too, and that must not fail an install
+    // that has already written the unit and started the service.
+    console.log(`(could not read this checkout's origin: ${(error as Error).message})`);
+    return;
+  }
+  try {
+    const { command, args } = asOwnerCommand(
+      ["-C", projectDir, "ls-remote", "--exit-code", "origin", "HEAD"],
+      ownerUid,
+      currentUid
+    );
+    execFileSync(command, args, { timeout: LS_REMOTE_TIMEOUT_MS, stdio: ["ignore", "ignore", "pipe"] });
+    // ⚠️ Readable, and nothing more: ls-remote writes nothing into .git, so it cannot tell
+    // you the pull will succeed. warnIfGitIsWronglyOwned covers the other half.
+    console.log(`deploy: ${remoteUrl} is readable as the checkout's owner (uid ${ownerUid})`);
+  } catch (error) {
+    reportUnreadableRemote(remoteUrl, error as Error & { stderr?: Buffer | string }, ownerUid);
+  }
+}
+
+/**
+ * Split a real failure from "this Pi is simply offline", because the second is the NORMAL
+ * case here — CLAUDE.md: there is no reception in the garage, and re-running this script is
+ * the documented way to migrate a Pi. A warning that shouts on every offline install is one
+ * people learn to scroll past.
+ *
+ * ⚠️ Quiet is the default side of that split, so it must not become a catch-all: anything
+ * deployHint() recognises — a refused key, an unknown host, a sudo that cannot switch user,
+ * an https remote asking for a login — is a real failure in an offline costume, and is said
+ * out loud.
+ */
+function reportUnreadableRemote(
+  remoteUrl: string,
+  error: Error & { stderr?: Buffer | string },
+  ownerUid: number
+): void {
+  const stderr = (error.stderr ?? "").toString().trim();
+  const hint = deployHint(stderr, { directory: projectDir, ownerUid });
+  if (!hint) {
+    console.log("");
+    console.log(`(could not verify ${remoteUrl} as the checkout's owner — expected if this Pi is offline.`);
+    console.log(` git said: ${stderr.split("\n")[0] || error.message})`);
+    return;
+  }
+  console.warn("");
+  console.warn(`\u26a0 The Update button (git ${PULL_ARGS.join(" ")}) will NOT be able to pull from ${remoteUrl}.`);
+  console.warn(`  ${stderr.split("\n")[0]}`);
+  console.warn("");
+  console.warn(`  ${hint}`);
+  console.warn("");
+}
+
+/**
+ * The state an earlier root pull leaves behind: an owner-owned worktree whose .git belongs
+ * to root, so the pull fails writing nothing and the service restarts on the old commit
+ * with a healthy-looking journal. docs/deploy.md §"What went wrong".
+ *
+ * This is the one moment someone is standing in front of the Pi, and it is offline, so
+ * unlike the ls-remote check it runs on a garage Pi.
+ */
+async function warnIfGitIsWronglyOwned(): Promise<void> {
+  const ownerUid = statSync(projectDir).uid;
+  const gitPath = join(projectDir, ".git");
+  // logs/ and refs/ are where a pull writes, and both are small. NOT objects/, and not
+  // .git itself: a pull never rewrites those, so they always look innocent.
+  // .git itself is checked WITHOUT recursing (that would drag objects/ in): a root-owned
+  // .git directory over owner-owned contents is unpullable too, and the walk below cannot
+  // see it. ⚠️ In a linked `git worktree` all of these are absent and this quietly finds
+  // nothing — which is the shape agents develop in, not the shape the Pi runs.
+  const offenders = [
+    ...(await findForeignOwnedPaths(
+      [join(gitPath, "logs"), join(gitPath, "refs"), join(gitPath, "FETCH_HEAD")],
+      ownerUid
+    )),
+    ...[await foreignOwner(gitPath, ownerUid)].filter(entry => entry !== null),
+  ];
+  if (offenders.length === 0) {
+    return;
+  }
+  console.warn("");
+  console.warn(`\u26a0 Files under ${gitPath} are not owned by the checkout's owner (uid ${ownerUid}).`);
+  console.warn("  Something ran `sudo git pull` here. The Update button pulls as the owner, so it");
+  console.warn("  cannot write refs — the pull silently does nothing and the service restarts on");
+  console.warn("  the OLD commit, with a healthy-looking journal.");
+  for (const offender of offenders) {
+    console.warn(`    ${offender.path} is owned by uid ${offender.uid}`);
+  }
+  console.warn(`  Repair: sudo chown -R ${ownerUid} ${projectDir}`);
+  console.warn("");
 }
 
 /**
