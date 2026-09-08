@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from "child_process";
-import { PULL_ARGS, asOwnerCommand, deployHint } from "../src/http/update.ts";
+import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths } from "../src/http/update.ts";
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -114,7 +114,7 @@ warnIfNodeIsUserWritable();
 warnIfNoRideLogKey();
 // Local and offline, so it runs unconditionally — the poisoned-.git warning is the one
 // this exists for, and a garage Pi usually fails the network check below.
-warnIfGitIsWronglyOwned();
+await warnIfGitIsWronglyOwned();
 warnIfRemoteUnreadable();
 
 /**
@@ -306,23 +306,23 @@ function reportUnreadableRemote(
  * to root, so the pull fails writing nothing and the service restarts on the old commit
  * with a healthy-looking journal. docs/deploy.md §"What went wrong".
  *
- * This is the one moment someone is standing in front of the Pi, so it is worth the two
- * stat() calls — and it is offline, so unlike the ls-remote check it runs on a garage Pi.
+ * This is the one moment someone is standing in front of the Pi, and it is offline, so
+ * unlike the ls-remote check it runs on a garage Pi.
  */
-function warnIfGitIsWronglyOwned(): void {
+async function warnIfGitIsWronglyOwned(): Promise<void> {
   const ownerUid = statSync(projectDir).uid;
   const gitPath = join(projectDir, ".git");
-  // .git itself, plus the reflog directory the 2026-09-08 incident actually tripped on.
-  // One stat each, keeping the uid that selected the offender — re-statting to print it
-  // could report a different number than the one that failed the comparison.
-  const offenders = [gitPath, join(gitPath, "logs", "refs")]
-    .map(path => ({ path, uid: statSync(path, { throwIfNoEntry: false })?.uid }))
-    .filter((entry): entry is { path: string; uid: number } => entry.uid !== undefined && entry.uid !== ownerUid);
+  // logs/ and refs/ are where a pull writes, and both are small. NOT objects/, and not
+  // .git itself: a pull never rewrites those, so they always look innocent.
+  const offenders = await findForeignOwnedPaths(
+    [join(gitPath, "logs"), join(gitPath, "refs"), join(gitPath, "FETCH_HEAD")],
+    ownerUid
+  );
   if (offenders.length === 0) {
     return;
   }
   console.warn("");
-  console.warn(`\u26a0 ${gitPath} is not owned by the checkout's owner (uid ${ownerUid}).`);
+  console.warn(`\u26a0 Files under ${gitPath} are not owned by the checkout's owner (uid ${ownerUid}).`);
   console.warn("  Something ran `sudo git pull` here. The Update button pulls as the owner, so it");
   console.warn("  cannot write refs — the pull silently does nothing and the service restarts on");
   console.warn("  the OLD commit, with a healthy-looking journal.");

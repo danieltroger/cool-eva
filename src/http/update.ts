@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { execFile, spawn } from "child_process";
-import { stat } from "fs/promises";
+import { lstat, readdir } from "fs/promises";
+import { join } from "path";
 import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
 
@@ -108,7 +109,7 @@ export async function pullCommandFor(
   directory: string,
   currentUid: number
 ): Promise<{ command: string; args: string[]; ownerUid: number }> {
-  const { uid } = await stat(directory);
+  const { uid } = await lstat(directory);
   return { ...asOwnerCommand(["-C", directory, ...PULL_ARGS], uid, currentUid), ownerUid: uid };
 }
 
@@ -158,6 +159,54 @@ export interface DeployContext {
   ownerUid: number;
 }
 
+/** A path that does not belong to the checkout's owner, and who owns it instead. */
+export interface ForeignPath {
+  path: string;
+  uid: number;
+}
+
+/**
+ * Walk `roots` and return what is not owned by `ownerUid` — the fingerprint a root pull
+ * leaves behind.
+ *
+ * ⚠️ Sampling `.git` and `.git/logs/refs` does NOT work, which is how the first version of
+ * this was wrong: a pull neither creates nor rewrites them, so they keep the cloner's
+ * ownership no matter who pulls. What a root pull creates is the LEAVES —
+ * `.git/logs/refs/remotes/origin/<branch>`, `FETCH_HEAD`, the per-ref files — which is
+ * exactly what the Pi's error named. Verified by inode: the two parents survive a pull
+ * unchanged while the leaf appears only after one. So this recurses.
+ *
+ * Cheap because the caller passes only `logs/` and `refs/` — tens of small files — never
+ * `objects/`. Stops at `limit`, since the repair is the same whether 3 files or 3000 are
+ * wrong and a warning nobody can read is not a better warning.
+ */
+export async function findForeignOwnedPaths(roots: string[], ownerUid: number, limit = 8): Promise<ForeignPath[]> {
+  const found: ForeignPath[] = [];
+  const pending = [...roots];
+  while (pending.length > 0 && found.length < limit) {
+    const current = pending.shift() as string;
+    let entry;
+    try {
+      entry = await lstat(current);
+    } catch (error) {
+      // Absent is normal: FETCH_HEAD before the first fetch, logs/ with reflogs disabled.
+      // Anything else is worth a line rather than silence.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn(`deploy: could not stat ${current}: ${(error as Error).message}`);
+      }
+      continue;
+    }
+    if (entry.uid !== ownerUid) {
+      found.push({ path: current, uid: entry.uid });
+    }
+    if (entry.isDirectory()) {
+      const children = await readdir(current);
+      pending.push(...children.map(child => join(current, child)));
+    }
+  }
+  return found;
+}
+
 /**
  * Turn a git failure into the one sentence that fixes it, or null when we have nothing
  * useful to add. Shared with scripts/setup-service.ts so the installer and the button
@@ -191,11 +240,13 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
     );
   }
   if (/Not possible to fast-forward/.test(streams)) {
+    // ⚠️ @{u}, never origin/HEAD: origin/HEAD is pinned at clone time to the DEFAULT
+    // branch, so on a Pi parked on a test branch (CLAUDE.md documents doing that) this
+    // sentence would silently replace the tree with main's content.
     return (
       "The checkout has commits the remote does not — this pull is --ff-only and will not " +
       `merge them on the bike. To discard them: sudo -u ${owner} git -C ${deploy.directory} ` +
-      "fetch origin && sudo -u " +
-      `${owner} git -C ${deploy.directory} reset --hard origin/HEAD.`
+      `fetch origin && sudo -u ${owner} git -C ${deploy.directory} reset --hard '@{u}'.`
     );
   }
   if (/could not read Username|Authentication failed/.test(streams)) {
@@ -232,7 +283,9 @@ function scheduleServiceRestart(): void {
     console.warn("update: could not spawn service restart:", err);
   });
   restart.on("exit", code => {
-    if (code !== 0) {
+    // ⚠️ null means signalled, which is the SUCCESS path here: the restart we just queued
+    // tears down our own cgroup. Only a real non-zero exit is a failure.
+    if (code !== 0 && code !== null) {
       console.warn(`update: service restart exited ${code} — the new code is on disk but not running`);
     }
   });

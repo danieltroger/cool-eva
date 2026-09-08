@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { execFile } from "node:child_process";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import {
   asOwnerCommand,
   deployHint,
   describePullFailure,
+  findForeignOwnedPaths,
   handleUpdateEndpoint,
   pullCommandFor,
 } from "../src/http/update.ts";
@@ -315,6 +316,45 @@ try {
   check(
     "and tells the rider how to get out of it, since this repo force-pushes branches",
     /reset --hard/.test(divergedReply.message)
+  );
+  // ⚠️ origin/HEAD is pinned at clone time to the DEFAULT branch. A Pi parked on a test
+  // branch (CLAUDE.md documents doing that) would have its tree replaced with main's.
+  check("naming the tracked branch, not origin/HEAD", /@\{u\}/.test(divergedReply.message));
+  check("and never origin/HEAD, which is a different branch", !/origin\/HEAD/.test(divergedReply.message));
+
+  // --- 8. what a root pull actually leaves behind -----------------------------
+
+  console.log("\n8. finding a checkout an earlier root pull poisoned");
+
+  // ⚠️ THE ASSERTION THE FIRST VERSION OF THIS PROBE FAILED. A pull neither creates nor
+  // rewrites .git or .git/logs/refs — verified by inode — so they keep the CLONER's
+  // ownership however the pull ran, and sampling them finds nothing. What a root pull
+  // creates is the leaf: .git/logs/refs/remotes/origin/<branch>, exactly the path the
+  // Pi's error named.
+  const gitDir = join(checkout, ".git");
+  const ownUid = statSync(checkout).uid;
+  const leaf = join(gitDir, "logs", "refs", "remotes", "origin", "main");
+  const refRoots = [join(gitDir, "logs"), join(gitDir, "refs")];
+  check("the leaf a pull creates is really there to be checked", existsSync(leaf));
+  check("a correctly-owned checkout reports nothing", (await findForeignOwnedPaths(refRoots, ownUid)).length === 0);
+  // Everything is "foreign" to a uid nobody owns, so this proves the walk REACHES the
+  // leaf rather than stopping at the parents the old version sampled.
+  const foreign = await findForeignOwnedPaths(refRoots, ownUid + 1, 50);
+  check(
+    "and a poisoned one is found by walking to the leaves",
+    foreign.some(entry => entry.path === leaf)
+  );
+  check(
+    "reporting who owns each",
+    foreign.every(entry => entry.uid === ownUid)
+  );
+  check(
+    "a missing path is skipped, not thrown — FETCH_HEAD before the first fetch",
+    (await findForeignOwnedPaths([join(gitDir, "no-such-file")], ownUid + 1)).length === 0
+  );
+  check(
+    "and the report is capped, since the repair is the same at 3 files or 3000",
+    (await findForeignOwnedPaths(refRoots, ownUid + 1, 2)).length === 2
   );
 } finally {
   await rm(workDir, { recursive: true, force: true });

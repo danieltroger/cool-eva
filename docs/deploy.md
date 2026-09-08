@@ -38,6 +38,21 @@ sudo chown -R pi:pi /home/pi/cool-eva
 
 `scripts/setup-service.ts` checks for it at install (`warnIfGitIsWronglyOwned`), and `deployHint()` names the repair if the button hits it.
 
+### ⚠️ Which paths actually go root-owned
+
+Not the obvious ones. **A pull neither creates nor rewrites `.git` or `.git/logs/refs`**, so both keep the ownership the _clone_ gave them however the pull ran — sampling them finds a poisoned checkout perfectly innocent. This is not theory; the first version of the installer check did exactly that and could not have fired on the incident it was written for. Verified by inode:
+
+```
+after clone:  143410603  .git
+              143410656  .git/logs/refs
+              MISSING    .git/logs/refs/remotes/origin/main
+after pull:   143410603  .git                                  ← unchanged
+              143410656  .git/logs/refs                        ← unchanged
+              143410686  .git/logs/refs/remotes/origin/main    ← created by the pull
+```
+
+What a root pull leaves root-owned is the **leaves it creates**: `logs/refs/remotes/origin/<branch>`, `FETCH_HEAD`, per-ref files under `refs/`. That is precisely the path the Pi's error named. So `findForeignOwnedPaths()` recurses, over `logs/` and `refs/` only — never `objects/`, which is large and which a fast-forward does not need to write.
+
 ## What matching the user to the owner bought
 
 Three mechanisms collapsed into one, which is the argument for this being the right layer rather than a third workaround:
@@ -59,7 +74,7 @@ Delete `-H` and ssh keeps working, which is exactly how it would get deleted for
 
 ## Other decisions
 
-**`--ff-only`.** A diverged checkout fails loudly instead of building a merge commit on a bike that nobody is there to review. This repo's agent workflow force-pushes branches, so divergence is a real case, not a theoretical one — `deployHint()` names the way out (`fetch` + `reset --hard origin/HEAD`).
+**`--ff-only`.** A diverged checkout fails loudly instead of building a merge commit on a bike that nobody is there to review. This repo's agent workflow force-pushes branches, so divergence is a real case, not a theoretical one — `deployHint()` names the way out (`fetch` + `reset --hard '@{u}'`). ⚠️ `@{u}`, not `origin/HEAD`: the latter is pinned at clone time to the _default_ branch, so on a Pi parked on a test branch that advice would silently replace the tree with `main`'s content.
 
 **The uid comes from `stat()`ing the checkout, not from a hardcoded `pi`.** The invariant is _"the puller is the owner"_; a hardcoded name reintroduces the same bug mirrored the moment a checkout belongs to someone else, and does it silently. It also makes the behaviour testable — there is no `pi` user on a laptop or in CI, but there is always an owner. ⚠️ It stats the **worktree root**; the invariant is really about the object store, and the two diverge in a linked `git worktree` (where `.git` is a file pointing elsewhere) and in a checkout whose `.git` was chowned separately.
 
