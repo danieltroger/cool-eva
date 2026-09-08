@@ -53,6 +53,10 @@ after pull:   143410603  .git                                  ← unchanged
 
 What a root pull leaves root-owned is the **leaves it creates**: `logs/refs/remotes/origin/<branch>`, `FETCH_HEAD`, per-ref files under `refs/`. That is precisely the path the Pi's error named. So `findForeignOwnedPaths()` recurses, over `logs/` and `refs/` only — never `objects/`, which is large and which a fast-forward does not need to write.
 
+Two properties of that walk are load-bearing and neither is obvious. It uses `lstat`, so a symlink is judged by **its own** ownership and is never followed — no loops, and nothing outside the repo gets walked. And it **reports a directory it cannot list rather than throwing**: an unreadable root-owned directory is a likely symptom of the very state being looked for, and this runs at the end of an install that has already started the service, so throwing would fail a good install on the evidence it was called to report.
+
+`.git` itself is deliberately not among the roots. A pull never rewrites it, and the one way it ends up root-owned — someone `sudo git clone`d the checkout — makes root the owner of everything consistently, which pulls fine because the button follows the owner rather than assuming `pi`.
+
 ## What matching the user to the owner bought
 
 Three mechanisms collapsed into one, which is the argument for this being the right layer rather than a third workaround:

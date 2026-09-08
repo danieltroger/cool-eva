@@ -200,8 +200,16 @@ export async function findForeignOwnedPaths(roots: string[], ownerUid: number, l
       found.push({ path: current, uid: entry.uid });
     }
     if (entry.isDirectory()) {
-      const children = await readdir(current);
-      pending.push(...children.map(child => join(current, child)));
+      try {
+        const children = await readdir(current);
+        pending.push(...children.map(child => join(current, child)));
+      } catch (error) {
+        // ⚠️ Never rethrow. An unreadable directory is a LIKELY SYMPTOM of the state this
+        // is looking for, and this runs at the end of an install that has already started
+        // the service — throwing here would fail a good install on the evidence it was
+        // called to report. lstat above already recorded the directory if it is foreign.
+        console.warn(`deploy: could not list ${current}: ${(error as Error).message}`);
+      }
     }
   }
   return found;

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { execFile } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -356,6 +356,21 @@ try {
     "and the report is capped, since the repair is the same at 3 files or 3000",
     (await findForeignOwnedPaths(refRoots, ownUid + 1, 2)).length === 2
   );
+
+  // ⚠️ An unreadable directory is a LIKELY SYMPTOM of the state being looked for, and this
+  // runs after the installer has already started the service — so it must report, never
+  // throw. (Running the suite as root reads the directory anyway; the assertion is that
+  // the call resolves either way, which is the property that matters.)
+  const sealed = join(workDir, "sealed");
+  await mkdir(sealed, { mode: 0o000 });
+  let resolved = true;
+  try {
+    await findForeignOwnedPaths([sealed], ownUid + 1);
+  } catch {
+    resolved = false;
+  }
+  await chmod(sealed, 0o700);
+  check("a directory it cannot list is reported, never thrown — that would fail a good install", resolved);
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }
