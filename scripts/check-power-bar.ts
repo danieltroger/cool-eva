@@ -1,6 +1,6 @@
 import { power } from "../public/lib/colors.js";
-import { BAD, CALM, GOOD, MUTED, WARN, WATCH } from "../public/lib/colors.js";
-import { derateSpans } from "../public/lib/svg.js";
+import { CALM, GOOD, MUTED } from "../public/lib/colors.js";
+import { DERATED, TRACK, derateSpans } from "../public/lib/svg.js";
 import { powerLimitsKw } from "../public/lib/power-limits.js";
 
 // The riding screen's power bar, checked from Node.
@@ -61,29 +61,40 @@ if (power(DRIVE_KW) === GOOD) {
 if (power(null) !== MUTED) {
   failures.push(`no reading must be ${MUTED}, got ${power(null)}`);
 }
-// The ramp is the other half of the same statement: a harder pull must never read
-// calmer. Saturation is expected — the top band is everything past 40 kW — so this is
-// ordering plus a floor on how many steps are actually distinct, which is what stops a
-// ramp collapsed to one colour from passing as monotone.
-const SEVERITY = [CALM, WATCH, WARN, BAD];
-const ramp = [-1, -5, -20, -60, -120];
-const seen = new Set<string>();
-for (let index = 0; index < ramp.length; index++) {
-  const colour = power(ramp[index]);
-  const rank = SEVERITY.indexOf(colour);
-  if (rank < 0) {
-    failures.push(`${ramp[index]} kW is drive and reads ${colour}, which is not on the drive ramp at all`);
-    continue;
-  }
-  seen.add(colour);
-  if (index > 0 && rank < SEVERITY.indexOf(power(ramp[index - 1]))) {
-    failures.push(
-      `${ramp[index]} kW reads calmer than ${ramp[index - 1]} kW (${colour} after ${power(ramp[index - 1])})`
-    );
+// Drive is white at every load — the ramp by magnitude is gone. A drive reading that
+// comes back anything but CALM is either the ramp returning or the sign convention
+// inverted again, and both are silent on screen.
+for (const kilowatts of [-0.4, -1, -5, -20, -60, -120]) {
+  if (power(kilowatts) !== CALM) {
+    failures.push(`${kilowatts} kW is drive and must read ${CALM} at any load, got ${power(kilowatts)}`);
   }
 }
-if (seen.size < SEVERITY.length) {
-  failures.push(`the drive ramp only reached ${seen.size} of ${SEVERITY.length} colours over ${ramp.join(", ")} kW`);
+// …and the dashed derate rule has to stay legible over everything it is drawn on: the
+// track, and BOTH fills, since it draws on top of them and the reading it carries there
+// is "you are past the ceiling". Over the old BAD red it was 1.72:1, which is what
+// retired the ramp. Measured from the shipped constants rather than restated, so
+// retuning any of the three has to keep the set legible.
+//
+// ⚠️ 2.5 rather than 3, and the green regen fill is why. One grey cannot clear 3:1
+// against a near-black track, a near-white fill AND a mid-luminance green at the same
+// time — brightening it for the green costs the track, darkening it costs the white.
+// Green is the binding case at ~2.7 and it is also the rarest, regen crossing its own
+// ceiling being far less common than drive crossing its. The floor exists to catch a
+// repeat of the 1.72, not to certify the palette.
+const MIN_RULE_CONTRAST = 2.5;
+const againstRule: Array<{ what: string; hex: string }> = [
+  { what: "the track", hex: TRACK },
+  { what: `the drive fill (${DRIVE_KW} kW)`, hex: power(DRIVE_KW) },
+  { what: `the regen fill (${REGEN_KW} kW)`, hex: power(REGEN_KW) },
+];
+const ruleContrasts = againstRule.map(target => ({ ...target, ratio: contrast(DERATED, target.hex) }));
+for (const target of ruleContrasts) {
+  if (target.ratio < MIN_RULE_CONTRAST) {
+    failures.push(
+      `the derate rule ${DERATED} over ${target.what} ${target.hex} is ${target.ratio.toFixed(2)}:1, under the ` +
+        `${MIN_RULE_CONTRAST}:1 floor — a rider cannot see the dashes there`
+    );
+  }
 }
 
 // 2. The kW conversion. Amps at the pack times the pack's own volts, and the two
@@ -269,7 +280,10 @@ if (endToEnd.length !== 2) {
   }
 }
 
-console.log(`colour: ${REGEN_KW} kW regen is ${power(REGEN_KW)}, ${DRIVE_KW} kW drive is ${power(DRIVE_KW)}`);
+console.log(
+  `colour: ${REGEN_KW} kW regen is ${power(REGEN_KW)}, ${DRIVE_KW} kW drive is ${power(DRIVE_KW)}; rule over ` +
+    `${ruleContrasts.map(target => target.ratio.toFixed(2)).join(", ")}:1`
+);
 console.log(`limits: 300 A / 120 A at 320 V is ${nominal.drive} kW drive and ${nominal.regen} kW regen`);
 console.log(
   `hatching: ${spans.map(s => `${s.x.toFixed(1)}+${s.width.toFixed(1)}`).join(", ")} on ${FULL_SCALE_KW.drive}/${FULL_SCALE_KW.regen} kW halves`
@@ -284,7 +298,24 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ regen is green and drive never is, the ramp gets warmer with load, both ceilings convert through the measured " +
-    "pack voltage with 0 A surviving and 0 V rejected, both go quiet while a charge is up, and each ceiling " +
-    "hatches away its own side's far end — end to end, nothing at full scale and the whole half at zero"
+  "✓ regen is green and drive is white at every load, with the derate rule legible over it, both ceilings convert " +
+    "through the measured pack voltage with 0 A surviving and 0 V rejected, both go quiet while a charge is up, " +
+    "and each ceiling hatches away its own side's far end — end to end, nothing at full scale and the whole half " +
+    "at zero"
 );
+
+/**
+ * WCAG relative-luminance contrast between two `#rrggbb` strings. Restated here rather
+ * than imported because nothing in the app computes it — style.css states its ratios as
+ * measured constants in prose, and a check that took its numbers from the thing it is
+ * checking would assert nothing.
+ */
+function contrast(first: string, second: string): number {
+  const luminance = (hex: string) => {
+    const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+    const linear = channels.map(value => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  };
+  const [high, low] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return (high + 0.05) / (low + 0.05);
+}

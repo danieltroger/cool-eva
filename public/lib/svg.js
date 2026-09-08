@@ -21,7 +21,7 @@ const svgTags = van.tags("http://www.w3.org/2000/svg");
 // Unfilled part of any bar or ring. Must not be the tile background (#1e293b) —
 // that was the first version, and it made every bar invisible until it was more
 // than half full, which is exactly when you no longer need to look at it.
-const TRACK = "#0b1220";
+export const TRACK = "#0b1220";
 
 /**
  * The dashes over a stretch of bar the BMS has derated away.
@@ -33,7 +33,7 @@ const TRACK = "#0b1220";
  * the eye could not tell whether a dark chunk meant headroom or the space between two
  * marks. The fix is that the marking is no longer full height — see HATCH_HEIGHT.
  */
-const DERATED = "#64748b";
+export const DERATED = "#64748b";
 
 /**
  * Hatch geometry, in viewBox x — a period of 3 puts about 33 dashes across a full bar
@@ -183,13 +183,17 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
   // Over the fill, not under it. A rule marking the unreachable stretch that disappears
   // the moment you reach into it hides the one reading that needed it; the fill is still
   // the loudest thing on the bar, since the rule is under a third of its height.
+  //
+  // ⚠️ There is no zero divider, and there was one — a 1-unit slate rect at the centre.
+  // Nothing needs it: the bar always spans the whole tile, so zero is the middle of a
+  // shape the eye already has, and the fill grows FROM there, so its inner edge marks
+  // the same point whenever there is any power to speak of. What it did instead was
+  // stand in the way. It had to be drawn after the hatching to survive a 0 A ceiling,
+  // and it then read as a slate block interrupting a run of dashes — one more thing on
+  // the bar to work out, in the state with the least to say.
   for (const span of derateSpans({ limits, fullScale, centre })) {
     children.push(hatching(span, height));
   }
-  // …and the zero mark last of all. At a 0 A ceiling the hatching covers the whole bar,
-  // and drawn before it the divider went under the dashes at 1.6:1 — so the loudest
-  // thing this bar can say came with the loss of the reference you read it against.
-  children.push(svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }));
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
 }
 
