@@ -262,6 +262,17 @@ const CHECKS: SelfCheck[] = [
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
   },
   {
+    script: "scripts/check-power-bar.ts",
+    covers:
+      "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +
+      "backwards: that regen reads green and a pull never does — inverted from 2026-08-03 until 2026-09-08, under " +
+      "a doc comment that said the right thing throughout — that the drive ramp only ever gets warmer with load " +
+      "and reaches all four of its colours, that both BMS ceilings convert to kW through the MEASURED pack " +
+      "voltage with a 0 A derate surviving as a real limit and a 0 V reading rejected as a missing one, and that " +
+      "the dashed limit lines land on the same sides the fill uses, sit at the bar's end at exactly full scale, " +
+      "sit on the centre line at zero, and are dropped rather than pinned when a ceiling is wider than the bar",
+  },
+  {
     script: "scripts/check-tab-routing.ts",
     covers:
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",

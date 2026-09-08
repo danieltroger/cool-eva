@@ -108,22 +108,28 @@ export function meter({ fraction, color, height = 10, marker = null }) {
  * A bar that grows from the centre: regen to the left, drive to the right. Power
  * is the one number where direction matters as much as magnitude, and a signed
  * digit is much slower to read than a bar that moves the other way.
+ *
+ * `driveLimit` and `regenLimit` are drawn as dashed lines across the bar — where the
+ * BMS is cutting you off, against where you are. Both are positive magnitudes in the
+ * same units as `value`; the side each belongs on is this function's business, not the
+ * caller's, for the same reason `fullScale` is a magnitude and not a range.
  * @param {object} options
  * @param {number | null} options.value
- * @param {number} options.limit largest magnitude the bar can show
+ * @param {number} options.fullScale largest magnitude the bar can show, per side
  * @param {string} options.color
+ * @param {number | null} [options.driveLimit] dashed line this far right of centre
+ * @param {number | null} [options.regenLimit] dashed line this far left of centre
  * @param {number} [options.height]
  * @returns {Element}
  */
-export function splitBar({ value, limit, color, height = 14 }) {
+export function splitBar({ value, fullScale, color, driveLimit = null, regenLimit = null, height = 14 }) {
   const width = 100;
   const centre = width / 2;
-  const magnitude = value == null ? 0 : Math.min(Math.abs(value) / limit, 1) * centre;
+  const magnitude = value == null ? 0 : Math.min(Math.abs(value) / fullScale, 1) * centre;
   // Negative is discharge on this bike, and discharge is the direction you are
   // going, so it draws to the right. See the sign note in derive.js.
   const isDrive = (value ?? 0) < 0;
-  return svgTags.svg(
-    { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" },
+  const children = [
     svgTags.rect({ x: 0, y: 0, width, height, rx: 2, fill: TRACK }),
     svgTags.rect({
       x: isDrive ? centre : centre - magnitude,
@@ -132,8 +138,70 @@ export function splitBar({ value, limit, color, height = 14 }) {
       height,
       fill: color,
     }),
-    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" })
-  );
+    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }),
+  ];
+  // After the fill, so a limit the bar has run past is still legible on top of it.
+  for (const x of limitMarkerPositions({ driveLimit, regenLimit, fullScale, centre })) {
+    children.push(limitMarker(x, height));
+  }
+  return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
+}
+
+/**
+ * Where the dashed limit lines land, in viewBox x. Drive is right of centre and regen
+ * is left, matching the fill.
+ *
+ * ⚠️ A limit wider than the bar is DROPPED rather than pinned to the end. Pinning would
+ * put it under the border where it reads as nothing anyway, and it would make "the pack
+ * allows more than the bike can take" — the one case with nothing to warn about — look
+ * identical to a limit sitting exactly at full scale. Rare either way: measured over the
+ * archive the discharge ceiling is past 130 kW for 0.83% of covered time and the regen
+ * ceiling never is (docs/dashboard-decisions.md §"The power bar").
+ *
+ * Pure, and exported, so scripts/check-power-bar.ts can assert which side each lands on
+ * without a DOM — van's tags need document.createElementNS and Node has neither.
+ * @param {object} options
+ * @param {number | null} options.driveLimit
+ * @param {number | null} options.regenLimit
+ * @param {number} options.fullScale
+ * @param {number} options.centre half the bar's width, in viewBox units
+ * @returns {number[]}
+ */
+export function limitMarkerPositions({ driveLimit, regenLimit, fullScale, centre }) {
+  const sides = [
+    { value: driveLimit, direction: 1 },
+    { value: regenLimit, direction: -1 },
+  ];
+  const positions = [];
+  for (const side of sides) {
+    if (side.value == null || fullScale <= 0 || side.value > fullScale) {
+      continue;
+    }
+    positions.push(centre + side.direction * (side.value / fullScale) * centre);
+  }
+  return positions;
+}
+
+/**
+ * One dashed line across the bar.
+ * @param {number} x
+ * @param {number} height
+ * @returns {Element}
+ */
+function limitMarker(x, height) {
+  return svgTags.line({
+    x1: x.toFixed(2),
+    y1: 0,
+    x2: x.toFixed(2),
+    y2: height,
+    stroke: "#e2e8f0",
+    "stroke-width": 1.2,
+    "stroke-dasharray": "2 2",
+    // preserveAspectRatio="none" stretches the viewBox to the tile, and for a vertical
+    // line that stretch lands on the stroke WIDTH — a hairline on a narrow phone and a
+    // slab on a wide one, with the dashes squashed the other way.
+    "vector-effect": "non-scaling-stroke",
+  });
 }
 
 /**
