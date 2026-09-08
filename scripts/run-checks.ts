@@ -229,7 +229,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-service-preview.ts",
     covers:
-      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output",
+      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: each PANEL_BLOCK marker is read out of the template and its class looked for in public/views/vcu-write.js, since a renamed class would leave every close-up throwing at render and this check parses the page rather than running it. It cannot see a dead panel; docs/diagnostics-and-checks.md §11.6 says what that costs",
   },
   {
     script: "scripts/check-freeze-frame.ts",

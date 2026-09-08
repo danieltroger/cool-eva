@@ -767,6 +767,20 @@ Failure uses `process.exitCode = 1` rather than `process.exit()`, which the othe
 
 ---
 
+### 11.6 The design preview, and the one thing its check cannot see
+
+`scripts/build-service-preview.ts` bundles `public/` into one self-contained HTML file, so a design change can be looked at without riding out to the garage. With no flag it builds the whole dashboard as it actually runs; `--annotated` builds the design-review sheet instead — the same modules, mounted one state per panel with prose explaining each. `scripts/check-service-preview.ts` builds both and **parses** what came out, which is exactly what it was written for: a Prettier run once turned the `__MODULES__` placeholder into `__MODULES__,`, every bundle after that carried `},,` and died on `Unexpected token ','`, and `npm test` stayed green throughout because nothing executed the file.
+
+**It parses. It does not run.** On 2026-09-08 that gap had been open for twelve days. Each close-up panel scoped itself to one block of the write section with `:nth-child(5) > :nth-child(1|2|3)`, written in `b98e019` (2026-08-20) when `VcuWrite()` held three blocks. It has held six since `7c1df26`, `a17bddd` and `213f7fc` added the headlight, reset-VCU and all-lights controls on 2026-08-27/28. Every close-up therefore framed blocks its caption did not describe — "The fold, shut" showed Reset VCU, the two parameter panels showed the service actions and the journal — and the shape guard in front of them rejected after 4 s, before any of the staging ran. So **the panel captioned "The fold, opened" rendered it shut, "Primed: the service point" rendered nothing armed, and both parameter panels rendered a value nobody had typed.** Five of seven panels carried "This panel did not render", and the suite was green for all of it.
+
+Three things were wrong, and each is worth separating:
+
+1. **The scoping was positional.** A close-up now finds its block by a marker INSIDE it (`PANEL_BLOCK`) — the parameter form owns the section's only `select`, the service actions own the only `.risk-fold` — and a marker moves with the block it names.
+2. **The hiding was inline.** Setting `style.display` on the blocks that exist when a panel is staged does not survive the write button's first tap, which re-reads the Pi and re-renders the whole controls binding into new nodes; the panel came back showing all six blocks. The rule is now a stylesheet generated from `PANEL_BLOCK` at boot, so it applies to whatever VanJS renders next, and the marker is still written down once.
+3. **The failure was mute.** One unchanging "timed out waiting for the sheet to settle" names neither what was awaited nor that a shape assumption, rather than a slow render, was what failed. `settle()` now takes what it is waiting for and says it, a moved child count throws instead of timing out, and `assertOneBlockMatches` refuses a marker that matches none or several rather than letting a panel frame something plausible and wrong.
+
+**What is still uncovered: whether a panel renders at all.** That needs a browser in the suite, and §11.1 gives the reason there is not one. What `check-service-preview.ts` gained instead is the rename — it reads the markers out of the template and asserts each class is still written by `public/views/vcu-write.js`, which is the likeliest way to break this again. It also now counts `form` panels, which its `kind:` alternation had been silently omitting, so its floor of five was being cleared by five of seven. Until the suite can open a page, the annotated preview is checked by a person looking at it, and this is written down so the next reader knows what the ✓ means.
+
 ## 12. Extracting Energica's VCU parameter tables
 
 `scripts/extract-vcu-tables.ts` pulls the tables out of the manufacturer's service-tool executable and writes `src/vcu/table-catalog.data.ts`. README §"Adding your bike's VCU parameter table" is the operator-facing walkthrough.

@@ -92,9 +92,41 @@ if (!annotated.includes("pv-panels")) {
 if (!/const PANELS = \[\s*\{/.test(annotated)) {
   failures.push("the annotated sheet's PANELS array is empty — it would render no panels");
 }
-const panelCount = (annotated.match(/^\s*kind: "(key|sheet|actions)",$/gm) ?? []).length;
+// ⚠️ `form` belongs in this alternation. It was missing, so the two parameter-write
+// panels were never counted and the floor of five was being cleared by five of seven.
+const panelCount = (annotated.match(/^\s*kind: "(key|sheet|actions|form)",$/gm) ?? []).length;
 if (panelCount < 5) {
   failures.push(`the annotated sheet declares only ${panelCount} panels`);
+}
+
+// ⚠️ A close-up finds its block by a MARKER INSIDE it (PANEL_BLOCK) rather than by
+// position — four :nth-child selectors framed the wrong block in every close-up from
+// 2026-08-27 until 2026-09-08, see docs/diagnostics-and-checks.md §11.6. But a marker is
+// only a handle while the shipped page still writes that class, and a rename would leave
+// every close-up throwing at render — which nothing here can see, because this check
+// parses the generated page and never runs it. So the markers are read out of the
+// template rather than restated, and each is looked for in the view it points at.
+const declaration = /const PANEL_BLOCK = \{([^}]*)\}/.exec(annotated);
+if (!declaration) {
+  failures.push("the annotated sheet declares no PANEL_BLOCK, so nothing tells a close-up which block it is about");
+} else {
+  const markers = [...declaration[1].matchAll(/"([^"]+)"/g)].map(match => match[1]);
+  if (markers.length === 0) {
+    failures.push("PANEL_BLOCK is empty — every close-up would show the whole write section");
+  }
+  const view = await readFile("public/views/vcu-write.js", "utf8");
+  for (const marker of markers) {
+    // `select.probe-input` → `probe-input`, and the class has to be a WHOLE token in the
+    // attribute: `\brisk-fold\b` alone is also satisfied by `risk-fold-caret`, which is a
+    // span on the same control and would keep this green through the rename it exists for.
+    const token = marker.slice(marker.indexOf(".") + 1);
+    if (!new RegExp(`class: "(?:[^"]*\\s)?${token}(?:\\s[^"]*)?"`).test(view)) {
+      failures.push(`the close-ups scope by ${marker}, but public/views/vcu-write.js writes no class ${token}`);
+    }
+  }
+  if (!failures.some(failure => failure.includes("PANEL_BLOCK") || failure.includes("close-ups scope by"))) {
+    console.log(`  close-up markers still written by the view: ${markers.join(", ")}`);
+  }
 }
 
 if (failures.length > 0) {
