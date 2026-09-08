@@ -431,6 +431,34 @@ Both errors have the same cause — treating a narrow parked sample as the full 
 
 **What is left open** is b0 alone: it spans at least 20-112, it moved with vehicle activity and it moved at the blocking fault, and no source names it. The useful consequence of the above is that this is now **one** unknown byte rather than two.
 
+### 🟡 b0 is a discrete state code, not a measurement — and it is not SOC or temperature
+
+Tested against a 147 km/h road capture (`capture-20260802-210358-346ecdd5.log`) and a parked/charging one, aligning b0 with the signals this repo already decodes.
+
+**The shape rules out a physical quantity.** Across **324 970 aligned ride samples** b0 takes **13 distinct values** — `41 42 43 46 47 51 52 53 59 62 63 143 150` — and is overwhelmingly concentrated on two of them:
+
+| b0                                   | when                            | samples                      |
+| ------------------------------------ | ------------------------------- | ---------------------------- |
+| **43**                               | riding                          | ~110 000                     |
+| **62**                               | riding                          | ~31 000                      |
+| 52 / 53                              | riding                          | ~5 000 each                  |
+| **101**                              | parked / charging               | dominant for a whole capture |
+| **83**                               | during the blocking fault above | —                            |
+| 41, 42, 46, 47, 51, 59, 63, 143, 150 | transient                       | 2 to a few hundred each      |
+
+A temperature, a range estimate or a state of charge moves continuously. This sits on a value, jumps, and sits again — with a gap from 63 straight to 143.
+
+**Two tempting readings are refuted outright:**
+
+| hypothesis | test | result |
+| --- | --- | --- |
+| b0 is **state of charge** | 230 620 aligned samples | ❌ `b0 == soc` in **0** of them; correlation **−0.07**; the ranges do not even overlap (SOC 34-40, b0 41-150) |
+| b0 is **motor temperature** | same capture | ❌ correlation **−0.15**, while motor temperature only spanned 26.0-42.8 °C |
+
+⚠️ **And a correlation that must not be over-read.** b0 correlates **−0.57 with both speed and rpm**, and −0.38 with throttle. That looks like a measurement of something that falls as the bike speeds up. It is almost certainly not: with only 13 discrete values, a negative correlation is what you get when one state happens to hold while moving and another while stopped. **Do not decode b0 as a speed-derived quantity on the strength of that number** — the discreteness is the stronger evidence and it points the other way.
+
+**Where that leaves it:** a small state vocabulary, no name in any source, distinct values for riding / parked / faulted, and one value (83) so far seen only when the VCU raised a blocking fault. That is a sharper target than "an unknown byte", and the fault value is the thread worth pulling — but three observations of it is not a decode.
+
 ## 0x102 — body, lights, vehicle state and attitude
 
 `src/can/decode.ts` (bytes 0-3) and `src/can/attitude.ts` (bytes 4-7). 100 Hz.
