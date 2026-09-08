@@ -4,12 +4,13 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
-import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
+import { coolantDelta, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
 import { packResistance } from "../lib/pack-resistance-live.js";
 import { powerLimitsKw } from "../lib/power-limits.js";
-import { PairTile, SectionLabel, SignalTile, Tile } from "../lib/tiles.js";
-import { meter, sparkline, splitBar } from "../lib/svg.js";
+import { PairTile, SectionLabel, SignalTile } from "../lib/tiles.js";
+import { sparkline } from "../lib/svg.js";
+import { POWER_SCALE_KW, powerBar } from "../lib/power-bar.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 import { power, whole } from "../lib/format.js";
@@ -23,35 +24,10 @@ const { div, span } = van.tags;
 // comes from GPS rather than the bike, per the request — the wheel-derived figure
 // is kept underneath it, because the gap between them is your speedometer error.
 
-/**
- * What each half of the power bar shows at its end. Fixed — it is the derate that
- * moves, not the scale — and asymmetric, because the two directions are not the same
- * size on this machine and pretending they are wastes most of one half.
- *
- * ⚠️ Sized against the CEILING each half has to be able to clear, not against the power
- * recorded in it. That distinction is the whole of why `regen` is not 45: the regen
- * ceiling is `allowed_regen_a × pack_v` and cannot pass 120 A × 341.2 V = 40.9 kW, so a
- * 45 kW half could never be un-hatched — 0.00% of moving time in the archive, a
- * permanent 15% floor of dashes on a healthy pack. Which is the exact fault the hatching
- * exists to remove, at a fifth of the size.
- *
- * 130 = 400 A at 325 V; 36 = 120 A at 300 V — each direction's configured current limit
- * at a representative pack voltage. Measured over 1054 minutes of moving time, that
- * clears the drive half for 20.1% of the time the BMS is allowing its full 400 A and the
- * regen half for 23.0% of the time it is allowing its full 120 A, so neither half is
- * systematically noisier than the other. 130 also contains the archive's deepest sample
- * (−117.3 kW) and the Ribelle's ~126 kW peak. 36 does not contain regen's largest ever
- * (40.9 kW) and is not meant to: 4 of 57 443 positive samples exceed 38 kW, and clamping
- * that tail costs far less than a half that can never come clean.
- * docs/dashboard-decisions.md §"The power bar" has the measurements.
- */
-const POWER_SCALE_KW = { drive: 130, regen: 36 };
-
 export function RideView() {
   return div(
     { class: "view" },
     SpeedHero(),
-    PowerRow(),
     SectionLabel("Thermal"),
     CoolantDeltaTile(),
     PairTile({
@@ -72,12 +48,25 @@ export function RideView() {
       caption: "in / out",
       className: "span2",
     }),
-    SignalTile({
-      key: "bike_coolant_temp",
+    PairTile({
+      // The motor's own sensor beside the bike's OBD temperature — separate sensors, not
+      // one at two resolutions: docs/can-decode-findings.md §"0x020 / 0x022" has the
+      // 2026-08-02 lap putting PID 05 up 27 → 30 °C in step with the inverter gate channel
+      // while 0x022 moved 27.9 → 28.5. This tile showed PID 05 alone under the OTHER one's
+      // name.
+      //
+      // ⚠️ Captioned "OBD", not "coolant": coolant is PID 05's OBD-II label, what the
+      // capture establishes is that it tracks the gate, and the Coolant tile two rows up
+      // is the MAX31865 probes. PID 05 is keys[1] because PairTile colours and charts from
+      // the upper key and it is the more responsive of the two. The inverter IGBT channels
+      // are hotter still and are NOT here — they are inverter readings, and that doc marks
+      // their min/inst/max ordering unverified.
       label: "Motor",
+      keys: ["motor_temp_c", "bike_coolant_temp"],
       format: value => units.temp(value).toFixed(0),
       unit: units.tempUnit,
       color: colors.temperature,
+      caption: "motor / OBD",
       chart: true,
       minSpan: 5,
     }),
@@ -89,7 +78,6 @@ export function RideView() {
       color: colors.temperature,
     }),
     SectionLabel("Energy"),
-    ChargeTile(),
     SignalTile({
       key: "range_km",
       label: "Range",
@@ -101,84 +89,74 @@ export function RideView() {
 }
 
 /**
- * GPS speed, as large as the screen allows. The bike's own wheel speed sits in the
- * sub-line: it reads high by a few percent like every vehicle speedometer, and
- * seeing both is the only way to know by how much on this bike.
+ * Speed, power and the meter as one instrument.
+ *
+ * The meter is a strip down the left edge rather than a band under a card of its own: it
+ * runs beside a numeral already that tall, so it costs no row, and this screen is short
+ * of rows rather than of width. Wheel speed sits in the sub-line because it reads high by
+ * a few percent like every vehicle speedometer, and charge at the end of that line —
+ * small, because it moves slowly, and here because it must never need a scroll.
+ *
+ * The dashed stretches are the BMS's own ceilings (lib/power-limits.js), and they MOVE:
+ * the discharge ceiling averages 91 kW over moving time against the bike's 126 kW peak.
+ * docs/dashboard-decisions.md §"The power meter" has the rest.
  */
 function SpeedHero() {
   return div(
-    { class: "hero" },
-    div({ class: "label" }, "Speed"),
-    div(
-      { class: "hero-value" },
-      () => {
-        const gps = signalState("gps_speed_kmh").val;
-        return gps ? String(Math.round(units.speed(gps.value))) : "–";
-      },
-      span({ class: "hero-unit" }, units.speedUnit)
-    ),
-    div({ class: "sub" }, () => {
-      // 0x104 at 0.5 km/h beats the OBD PID's whole km/h, and arrives whether or
-      // not the poller is running.
-      const wheel = valueOf("speed_can_kmh") ?? valueOf("speed_kmh");
-      const gps = valueOf("gps_speed_kmh");
-      if (wheel == null) {
-        return "GPS · no wheel speed";
-      }
-      if (gps == null) {
-        return `wheel ${Math.round(units.speed(wheel))} ${units.speedUnit()} · no GPS fix`;
-      }
-      // The error is a difference of two speeds, so it converts by the same factor as a
-      // speed — no offset — and speed() applied to the difference gives exactly that.
-      const error = units.speed(wheel) - units.speed(gps);
-      const sign = error >= 0 ? "+" : "−";
-      return `GPS · wheel reads ${Math.round(units.speed(wheel))} (${sign}${Math.abs(error).toFixed(0)})`;
-    })
-  );
-}
-
-/**
- * Power flow and what it is costing in heat. The I²R figure is here, and not only
- * on the hypermiling screen, because it is the same watts the coolant loop has to
- * carry away — it belongs next to the temperatures it explains.
- *
- * The hatching is the BMS's own ceilings (lib/power-limits.js), shown as the part of
- * the scale you can no longer reach. It is what turns the bar from "how hard am I
- * pulling" into "how much is left before the pack says no", and it MOVES — the
- * discharge ceiling averages 91 kW over moving time in the archive against the bike's
- * 126 kW peak, so a rider reading a full-looking bar without it is usually reading a
- * derate as headroom.
- */
-function PowerRow() {
-  return div(
-    { class: "tile span2" },
-    div({ class: "label" }, "Power"),
-    div(
-      { class: "value", style: () => `color:${colors.power(valueOf("pack_kw"))}` },
-      () => power(valueOf("pack_kw")),
-      span({ class: "unit" }, "kW")
-    ),
+    { class: "hero speed-hero" },
     () => {
       const kilowatts = valueOf("pack_kw");
-      const limits = powerLimitsKw(valueOf, isStale);
-      return splitBar({
+      return powerBar({
         value: kilowatts,
         fullScale: POWER_SCALE_KW,
         color: colors.power(kilowatts),
-        limits,
+        limits: powerLimitsKw(valueOf, isStale),
       });
     },
-    div({ class: "sub" }, () => {
-      const watts = resistiveLossWatts();
-      const percent = resistiveLossPercent();
-      if (watts == null) {
-        return "regen ← → drive";
-      }
-      const percentText = percent == null ? "" : ` · ${percent.toFixed(1)}% of output`;
-      const note = resistanceNote(packResistance.val);
-      const qualifier = note === "" ? "" : ` · ${note}`;
-      return `${Math.round(watts)} W lost as heat${percentText}${qualifier}`;
-    })
+    div(
+      { class: "hero-main" },
+      div({ class: "hero-row" }, div({ class: "label" }, "Speed"), div({ class: "label" }, "Power")),
+      div(
+        { class: "hero-row" },
+        div(
+          { class: "hero-value" },
+          () => {
+            const gps = signalState("gps_speed_kmh").val;
+            return gps ? String(Math.round(units.speed(gps.value))) : "–";
+          },
+          span({ class: "hero-unit" }, units.speedUnit)
+        ),
+        div(
+          { class: "value hero-aside", style: () => `color:${colors.power(valueOf("pack_kw"))}` },
+          () => power(valueOf("pack_kw")),
+          span({ class: "unit" }, "kW")
+        )
+      ),
+      div(
+        { class: "hero-row" },
+        div({ class: "sub" }, () => {
+          // 0x104 at 0.5 km/h beats the OBD PID's whole km/h, and arrives whether or
+          // not the poller is running.
+          const wheel = valueOf("speed_can_kmh") ?? valueOf("speed_kmh");
+          const gps = valueOf("gps_speed_kmh");
+          if (wheel == null) {
+            return "GPS · no wheel speed";
+          }
+          if (gps == null) {
+            return `wheel ${Math.round(units.speed(wheel))} ${units.speedUnit()} · no GPS fix`;
+          }
+          // The error is a difference of two speeds, so it converts by the same factor as
+          // a speed — no offset — and speed() applied to the difference gives exactly that.
+          const error = units.speed(wheel) - units.speed(gps);
+          const sign = error >= 0 ? "+" : "−";
+          return `GPS · wheel reads ${Math.round(units.speed(wheel))} (${sign}${Math.abs(error).toFixed(0)})`;
+        }),
+        div(
+          { class: "hero-charge", style: () => `color:${colors.stateOfCharge(valueOf("soc"))}` },
+          () => `${whole(valueOf("soc"))} %`
+        )
+      )
+    )
   );
 }
 
@@ -237,30 +215,14 @@ function CoolantDeltaTile() {
       if (watts == null) {
         return "out − in";
       }
+      // The Power card carried this sentence's other half — the same watts as a share of
+      // output — and the card is gone. Both belong here anyway: these are the watts the
+      // loop above has to carry away, which is what the ΔT beside them measures.
+      const percent = resistiveLossPercent();
+      const share = percent == null ? "" : ` · ${percent.toFixed(1)}% of output`;
       const note = resistanceNote(packResistance.val);
       const qualifier = note === "" ? "" : ` (${note})`;
-      return `out − in · ${Math.round(watts)} W going in${qualifier}`;
+      return `out − in · ${Math.round(watts)} W going in${share}${qualifier}`;
     })
   );
-}
-
-/** State of charge as a bar, because a percentage is a shape before it is a number. */
-function ChargeTile() {
-  return Tile({
-    label: "Charge",
-    value: () => whole(valueOf("soc")),
-    unit: "%",
-    color: () => colors.stateOfCharge(valueOf("soc")),
-    className: "span2",
-    extra: [
-      () => {
-        const soc = valueOf("soc");
-        return meter({ fraction: soc == null ? null : soc / 100, color: colors.stateOfCharge(soc) });
-      },
-    ],
-    sub: () => {
-      const energy = remainingWh();
-      return energy == null ? "" : `${(energy / 1000).toFixed(1)} kWh left`;
-    },
-  });
 }

@@ -1,9 +1,10 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { CALM, MUTED } from "./colors.js";
+import { CALM, MUTED, TRACK } from "./colors.js";
 
-// Inline-SVG drawing primitives: sparkline, meter, split bar, ring.
+// Inline-SVG drawing primitives: sparkline, meter, ring, bar strip, heatmap.
+// The power meter is not here — it is lib/power-bar.js, which has opinions these do not.
 //
 // Hand-rolled rather than pulled from a chart library, for two reasons. The whole
 // dashboard is ~30 kB and loads over a phone hotspot in a garage — uPlot alone is
@@ -11,58 +12,17 @@ import { CALM, MUTED } from "./colors.js";
 // (axes, ticks, legends, tooltips) are all things this screen deliberately does not
 // have: at 90 km/h the only readable chart is a bare shape with one number on it.
 //
-// Everything below takes plain numbers and returns an element, or — for
-// derateSpans() — the geometry an element is built from. No state, no
+// Everything below takes plain numbers and returns an element. No state, no
 // subscriptions — the views decide when to redraw, which is the 2 Hz chartTick
 // rather than the 20 Hz frame rate of the underlying signals.
 
 const svgTags = van.tags("http://www.w3.org/2000/svg");
 
-// Unfilled part of any bar or ring. Must not be the tile background — that was the
-// first version, and it made every bar invisible until it was more than half full,
-// which is exactly when you no longer need to look at it.
-//
-// ⚠️ Every colour here goes into `style`, never into a bare `fill=`/`stroke=`
-// presentation attribute, because these are var() tokens now. Chrome does resolve
-// var() in a presentation attribute; WebKit is untested and this page is only ever
-// read on a phone, so the form that is plain CSS everywhere is the one to use.
-export const TRACK = "var(--track)";
-
-/**
- * The dashes over a stretch of bar the BMS has derated away.
- *
- * ⚠️ They are drawn ON the track and the track is NOT recoloured underneath them. The
- * first version painted full-height blocks in a lighter slate instead, and that failed
- * in a way only a screenshot showed: the gaps between the blocks were the track's own
- * colour, so a gap and the still-available stretch beside it were the same pixels, and
- * the eye could not tell whether a dark chunk meant headroom or the space between two
- * marks. The fix is that the marking is no longer full height — see HATCH_HEIGHT.
- */
-export const DERATED = "var(--derated)";
-
-/**
- * Hatch geometry, in viewBox x — a period of 3 puts about 33 dashes across a full bar
- * and about 8 across a quarter of one, dense enough to read as a rule rather than as a
- * row of ticks at every derate worth showing.
- */
-const HATCH_DASH = 1.7;
-const HATCH_GAP = 1.3;
-
-/**
- * How tall the dashes are as a fraction of the bar. Well under 1 is the whole point:
- * anything the full height of the bar competes with the fill for "this is the bar", and
- * a short rule down the middle of a stretch cannot be confused with the stretch itself.
- */
-const HATCH_HEIGHT = 0.3;
-
-/**
- * What each half of a split bar shows at its end. Fixed, and asymmetric on this bike:
- * the two directions are not remotely the same size, so one number for both would spend
- * most of the regen half on power the machine cannot produce.
- * @typedef {object} SplitBarScale
- * @property {number} drive largest magnitude the right half can show
- * @property {number} regen largest magnitude the left half can show
- */
+// ⚠️ Every colour below goes into `style`, never into a bare `fill=`/`stroke=`
+// presentation attribute, because these are var() tokens. Chrome does resolve var() in a
+// presentation attribute; WebKit is untested and this page is only ever read on a phone,
+// so the form that is plain CSS everywhere is the one to use. TRACK itself lives in
+// colors.js with the other token names.
 
 /**
  * A bare trace with no axes. Autoscales to its own window, with a floor on the
@@ -158,151 +118,6 @@ export function meter({ fraction, color, height = 10, marker = null }) {
     children.push(svgTags.rect({ x, y: -1, width: 1, height: height + 2, style: `fill:${CALM}` }));
   }
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
-}
-
-/**
- * A bar that grows from the centre: regen to the left, drive to the right. Power
- * is the one number where direction matters as much as magnitude, and a signed
- * digit is much slower to read than a bar that moves the other way.
- *
- * `limits` is what the BMS is allowing right now, and it does not move the scale — it
- * hatches the part of the scale you can no longer reach. `fullScale` is the scale, per
- * half, and it never moves at all.
- *
- * Both are positive magnitudes in the same units as `value`, and both arrive as ONE
- * object rather than as two parameters on purpose: two would be a pair of same-typed
- * arguments a caller can cross, and a crossed pair draws a plausible screen rather than
- * a broken one. Which side each lands on is this function's business.
- * @param {object} options
- * @param {number | null} options.value
- * @param {SplitBarScale} options.fullScale largest magnitude each half can show
- * @param {string} options.color
- * @param {import("./power-limits.js").PowerLimitsKw | null} [options.limits]
- * @param {number} [options.height]
- * @returns {Element}
- */
-export function splitBar({ value, fullScale, color, limits = null, height = 14 }) {
-  const width = 100;
-  const centre = width / 2;
-  // Negative is discharge on this bike, and discharge is the direction you are
-  // going, so it draws to the right. See the sign note in derive.js.
-  const isDrive = (value ?? 0) < 0;
-  const scale = isDrive ? fullScale.drive : fullScale.regen;
-  const magnitude = value == null || scale <= 0 ? 0 : Math.min(Math.abs(value) / scale, 1) * centre;
-  const children = [
-    svgTags.rect({ x: 0, y: 0, width, height, rx: 2, style: `fill:${TRACK}` }),
-    svgTags.rect({
-      x: isDrive ? centre : centre - magnitude,
-      y: 0,
-      width: magnitude.toFixed(2),
-      height,
-      style: `fill:${color}`,
-    }),
-  ];
-  // Over the fill, not under it. A rule marking the unreachable stretch that disappears
-  // the moment you reach into it hides the one reading that needed it; the fill is still
-  // the loudest thing on the bar, since the rule is under a third of its height.
-  //
-  // ⚠️ There is no zero divider, and there was one — a 1-unit slate rect at the centre.
-  // Nothing needs it: the bar always spans the whole tile, so zero is the middle of a
-  // shape the eye already has, and the fill grows FROM there, so its inner edge marks
-  // the same point whenever there is any power to speak of. What it did instead was
-  // stand in the way. It had to be drawn after the hatching to survive a 0 A ceiling,
-  // and it then read as a slate block interrupting a run of dashes — one more thing on
-  // the bar to work out, in the state with the least to say.
-  for (const span of derateSpans({ limits, fullScale, centre })) {
-    children.push(hatching(span, height));
-  }
-  return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
-}
-
-/**
- * The stretches of bar the BMS has taken away, in viewBox x — from each ceiling out to
- * that side's end. Drive is right of centre and regen is left, matching the fill.
- *
- * The scale never moves. That is the whole point of showing a derate this way rather
- * than as a line at the ceiling, which is what this drew first: a line answers "where
- * is the limit" and leaves the rider to measure the gap, while hatching answers "how
- * much has gone" directly, and the two ends stop being special cases. A ceiling wider
- * than its half hatches NOTHING, and — with no minimum width to swallow the small
- * cases — an unhatched half means exactly one thing: the pack is not what is limiting
- * you. The line had to be either dropped (indistinguishable from "0x202 has not
- * arrived", 5-11% of moving time) or pinned to the end (indistinguishable from a ceiling
- * AT full scale). A ceiling of zero hatches the whole half, where the line sat on the
- * centre divider and could be mistaken for it.
- *
- * Each half is measured against ITS OWN full scale, which is why `fullScale` is a pair.
- * A single scale wide enough for the drive side leaves the regen side unable to fill
- * more than a third of its half on the best day the pack has ever had — so ~70% of it
- * would hatch permanently, on a healthy bike, teaching the eye to ignore the hatching
- * exactly where it is the signal. See docs/dashboard-decisions.md §"The power bar".
- *
- * Pure, and exported, so scripts/check-power-bar.ts can assert which side each lands on
- * without a DOM — van's tags need document.createElementNS and Node has neither.
- * @param {object} options
- * @param {import("./power-limits.js").PowerLimitsKw | null} options.limits
- * @param {SplitBarScale} options.fullScale
- * @param {number} options.centre half the bar's width, in viewBox units
- * @returns {Array<{ x: number, width: number }>}
- */
-export function derateSpans({ limits, fullScale, centre }) {
-  if (limits == null) {
-    return [];
-  }
-  const sides = [
-    { value: limits.drive, scale: fullScale.drive, direction: 1 },
-    { value: limits.regen, scale: fullScale.regen, direction: -1 },
-  ];
-  const spans = [];
-  for (const side of sides) {
-    if (side.value == null || side.scale <= 0) {
-      continue;
-    }
-    const reachable = Math.min(side.value / side.scale, 1) * centre;
-    const lost = centre - reachable;
-    // ⚠️ Strictly zero, and no "too small to bother" threshold. There was one, at 7% of
-    // a half, and it drew NOTHING for any drive ceiling in (120.9, 130] kW — a derate of
-    // up to 9.1 kW rendered identically to a healthy pack, for 10.4% of moving time
-    // against the 6.2% where the blank end is honest. That is the "absence has two
-    // meanings" failure this bar has now been through twice; the threshold was a third
-    // route to it. A derate too small to see renders as a mark too small to see, which
-    // is the truthful picture and needs no rule.
-    if (lost <= 0) {
-      continue;
-    }
-    spans.push({ x: side.direction > 0 ? centre + reachable : 0, width: lost });
-  }
-  return spans;
-}
-
-/**
- * One hatched stretch: a single dashed horizontal rule down the middle of it, which is
- * a run of marks for two attributes and no per-dash geometry.
- *
- * Deliberately NOT `vector-effect: non-scaling-stroke`, unlike every other stroke in
- * this file. Both the stroke width and the dash period here are fractions of the bar's
- * own dimensions, so the rule keeps its proportions from a 380 px phone to a 1000 px
- * laptop. The non-scaling strokes elsewhere are hairlines, where stretching is the bug.
- * @param {{ x: number, width: number }} span
- * @param {number} height
- * @returns {Element}
- */
-function hatching(span, height) {
-  return svgTags.line({
-    x1: span.x.toFixed(2),
-    y1: height / 2,
-    x2: (span.x + span.width).toFixed(2),
-    y2: height / 2,
-    style: `stroke:${DERATED}`,
-    "stroke-width": (height * HATCH_HEIGHT).toFixed(2),
-    "stroke-dasharray": `${HATCH_DASH} ${HATCH_GAP}`,
-    // Anchors the pattern to the BAR rather than to this span's start. Without it the
-    // dashes are placed from `span.x`, which is a constant 0 on the regen side but the
-    // moving ceiling on the drive side — so the drive texture slid sideways every time
-    // the derate changed, at 2 Hz, reading as motion where there is none, and the two
-    // halves behaved differently for no reason visible to anyone looking at them.
-    "stroke-dashoffset": span.x.toFixed(2),
-  });
 }
 
 /**

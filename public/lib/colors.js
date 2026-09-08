@@ -13,6 +13,19 @@
    re-runs would otherwise keep its old ink for as long as the element lives.
    The values, and the contrast ratio behind each, are in style.css's palette blocks. */
 export const CALM = "var(--fg)";
+/* Drive on the power meter, and the kW figure beside it. Its own token because the
+   meter's fill used to be CALM — the same ink as the numerals next to it — so the two
+   loudest things on the hero were drawn in one colour. Regen stays GOOD: one green on
+   this dashboard, not two. */
+export const FLOW = "var(--flow)";
+/* The unfilled part of any bar, ring or meter. Here rather than beside the drawing code
+   because two modules draw with it — svg.js and power-bar.js — and it was exported from
+   both for a while, with the two docblocks already disagreeing about what it was for. A
+   palette-token name belongs with the palette-token names. ⚠️ Must NOT be --tile: that
+   was the first version, and it made every bar invisible until more than half full, which
+   is exactly when you stop needing to look at it. check-theme-contrast.ts's MARK_FLOORS
+   is what holds it away from the tile now. */
+export const TRACK = "var(--track)";
 export const GOOD = "var(--good)";
 export const WATCH = "var(--watch)";
 export const WARN = "var(--warn)";
@@ -132,7 +145,7 @@ export function lossFraction(percent) {
 }
 
 /**
- * Power flow: regen green because energy is coming back, drive white at any load.
+ * Power flow: regen green because energy is coming back, drive its own blue at any load.
  *
  * ⚠️ `pack_kw` is NEGATIVE under discharge and POSITIVE on regen and charge — the
  * convention derive.js asserts by name rather than leaving in a minus sign. The
@@ -144,10 +157,10 @@ export function lossFraction(percent) {
  * Drive used to ramp CALM → WATCH → WARN → BAD by magnitude, and that ramp is gone
  * rather than retuned. Two reasons, and the second is the real one:
  *
- *   • Contrast. The bar draws the BMS's derate as a dashed rule ON TOP of the fill, and
- *     that rule sat at 1.72:1 over the BAD red — the one state where crossing into
- *     unreachable power matters most. White takes it to 3.65:1 and needs no second
- *     colour to be legible against.
+ *   • Contrast. The meter marks the BMS's ceiling ON TOP of the fill, and over the old
+ *     BAD red that mark sat at 1.72:1 — the one state where crossing into unreachable
+ *     power matters most. One flat colour per direction needs no second colour to be
+ *     legible against, and scripts/check-power-bar.ts holds both to a floor.
  *   • The ramp answered a worse question. Its thresholds were absolute — 3, 15, 40 kW —
  *     while the hatching beside it answers "how close am I to what the pack will
  *     actually give me", which moves with heat, cold and SOC and is the number a rider
@@ -159,5 +172,5 @@ export function power(kilowatts) {
   if (kilowatts == null) {
     return MUTED;
   }
-  return kilowatts > 0.5 ? GOOD : CALM;
+  return kilowatts > 0.5 ? GOOD : FLOW;
 }

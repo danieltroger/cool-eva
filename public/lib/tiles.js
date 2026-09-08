@@ -59,32 +59,6 @@ function trace(key, color, chartWindowMs, minSpan) {
 }
 
 /**
- * The standard readout: small label, large number, small unit, optional second line.
- * @param {object} options
- * @param {string} options.label
- * @param {() => string} options.value
- * @param {string | (() => string)} [options.unit] a bare label, or a function of it for
- *   a unit that changes at runtime — the metric/imperial toggle passes the latter
- * @param {() => string} [options.sub]
- * @param {() => string} [options.color]
- * @param {string} [options.className]
- * @param {(Element | (() => Element))[]} [options.extra]
- */
-export function Tile({ label, value, unit = "", sub, color, className = "", extra = [] }) {
-  return div(
-    { class: `tile ${className}` },
-    div({ class: "label" }, label),
-    div(
-      { class: "value", style: () => (color ? `color:${color()}` : "") },
-      value,
-      unit ? span({ class: "unit" }, unit) : null
-    ),
-    sub ? div({ class: "sub" }, sub) : null,
-    ...extra
-  );
-}
-
-/**
  * A tile bound to one signal, with staleness and fault handling. Where the plausibility
  * gate becomes visible: a rejected reading shows as "sensor fault", not a frozen number.
  * @param {object} options
@@ -189,9 +163,12 @@ export function PairTile({
 }) {
   const first = signalState(keys[0]);
   const second = signalState(keys[1]);
-  // The upper key carries the trace: for a min/max pair it is the hot end that
-  // decides when the BMS starts derating, and two overlaid lines a few degrees
-  // apart read as one thick line at this size anyway.
+  // ⚠️ keys[1] LEADS: it carries the trace and, when it is there, the colour. For a
+  // min/max pair that is the hot end, which is what decides when the BMS starts derating;
+  // for two different sensors it is whichever one the tile is really about, so callers
+  // order their keys for that rather than by temperature — views/ride.js's Motor tile says
+  // so at its call site. Two overlaid lines a few degrees apart read as one thick line at
+  // this size anyway, which is why only one is drawn.
   const extra = chart ? [trace(keys[1], color, chartWindowMs, minSpan)] : [];
   return div(
     {
@@ -206,8 +183,10 @@ export function PairTile({
         // OR, not AND: half a pair going quiet is already reason not to read the
         // number as current. Requiring both meant a frozen high value stayed at
         // full brightness for as long as the low kept arriving.
-        const seen = first.val || second.val;
-        const stale = seen && (isStale(keys[0], STALE_MS) || isStale(keys[1], STALE_MS));
+        // ⚠️ …but only halves that have EVER arrived can be stale. isStale() is true for a
+        // key with no reading at all, so a pair whose second half never shows up — an OBD
+        // poller that is down behind a 10 Hz stream — dimmed permanently with nothing wrong.
+        const stale = (first.val && isStale(keys[0], STALE_MS)) || (second.val && isStale(keys[1], STALE_MS));
         return `tile ${className}${stale ? " stale" : ""}`;
       },
       style: () => (hasEverArrived(keys[0]) || hasEverArrived(keys[1]) ? "" : "display:none"),
@@ -217,17 +196,26 @@ export function PairTile({
       {
         class: "value",
         style: () => {
-          const reading = second.val;
+          // Whichever half is there, keys[1] leading. A pair from two different sources can
+          // lose the leading half while the other streams, and painting a live reading in
+          // the no-data ink is the same fault as blanking it.
+          const reading = second.val ?? first.val;
           return `color:${color ? color(reading ? reading.value : null) : CALM}`;
         },
       },
       () => {
+        // Each half stands alone. ⚠️ A missing half used to blank the WHOLE pair, which
+        // is wrong wherever the two come from different places: the Motor tile pairs an
+        // OBD poll with a 10 Hz stream, so the poller going quiet hid a motor temperature
+        // that was still arriving, and one dead MAX31865 hides the surviving probe. Same
+        // reasoning as the OR in the staleness class above — half a pair is still half a
+        // pair, and the dash says which half is gone rather than that both are.
         const low = first.val;
         const high = second.val;
-        if (!low || !high) {
+        if (!low && !high) {
           return "–";
         }
-        return `${format(low.value)} / ${format(high.value)}`;
+        return `${low ? format(low.value) : "–"} / ${high ? format(high.value) : "–"}`;
       },
       unit ? span({ class: "unit" }, unit) : null
     ),
@@ -239,8 +227,11 @@ export function PairTile({
       // signed byte off 0x660, so a garbage 0x7F or 0x80 is a real possibility
       // rather than a theoretical one. Paced at 2 Hz so the notice expires.
       chartTick.val;
+      // The end names come from the caller's own caption ("min / max", "motor / OBD") —
+      // hard-coded "low"/"high" named the Motor tile's OBD sensor "high", which it is not.
+      const ends = caption.split("/").map(part => part.trim());
       const faulted = keys
-        .map((key, index) => ({ fault: faultState(key).val, end: index === 0 ? "low" : "high" }))
+        .map((key, index) => ({ fault: faultState(key).val, end: ends[index] || `key ${index + 1}` }))
         .filter(entry => entry.fault && peekServerTime() - entry.fault.ts < FAULT_MEMORY_MS);
       if (faulted.length > 0) {
         const detail = faulted.map(entry => `${entry.end} ${entry.fault?.value.toFixed(0)}`).join(", ");
