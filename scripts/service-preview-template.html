@@ -477,8 +477,8 @@
           clockTrustworthy: true,
           action: "read-service-stamp",
           status: "read",
-          before: "2024-11-08",
-          after: 8421,
+          before: "2000-01-01T00:00:00.000Z",
+          after: 0,
         },
         {
           at: NOW - 9 * DAY,
@@ -648,20 +648,52 @@
         };
 
         if (action === "read-service-stamp") {
-          record({ action: "read-service-stamp", status: "read", before: "2024-11-08", after: 8421 });
+          // ⚠️ The fixture is what the bike REALLY answered on 2026-09-08, message, journal
+          // and raw words together. A plausible-looking 2024 date beside a zero stamp would
+          // make the preview disagree with itself in the one screenshot this exists for.
+          record({
+            action: "read-service-stamp",
+            status: "read",
+            before: "2000-01-01T00:00:00.000Z",
+            after: 0,
+            rawHex: "13E8=0000 13E9=0000 13EA=0000 13EB=0000",
+          });
           return {
             action: "read-service-stamp",
             status: "read",
-            message: "Last service stamped 2024-11-08 at 8421 (km or miles, per market).",
+            message:
+              "Last service stamped 2000-01-01T00:00:00.000Z at 0 (km or miles, per market). " +
+              "\u26a0\ufe0f reads zero — no service point has ever been set on this bike, or A8 answered with an empty cell",
             succeeded: true,
+            stamp: {
+              // The 2026-09-08 payload, as A8 really answered: four zero WORDs.
+              // docs/service-stamp.md §2.
+              before: {
+                raw: { dateLow: 0, dateHigh: 0, odometerLow: 0, odometerHigh: 0 },
+                dateSeconds: 0,
+                dateIso: "2000-01-01T00:00:00.000Z",
+                odometer: 0,
+                implausible:
+                  "reads zero — no service point has ever been set on this bike, or A8 answered with an empty cell",
+              },
+              after: null,
+            },
           };
         }
         if (action === "set-service-point") {
-          record({ action: "set-service-point", status: "started", before: "2024-11-08", after: "2026-08-19" });
+          // Over the zero stamp the read above reports — the same fixture, one action later.
+          record({
+            action: "set-service-point",
+            status: "started",
+            before: "2000-01-01T00:00:00.000Z",
+            after: "2026-09-08",
+          });
           return {
             action: "set-service-point",
             status: "started",
-            message: "Service point set. The bike stamped 2026-08-19 at 14849, over 2024-11-08 at 8421.",
+            message:
+              "Service point set. The bike stamped 2026-09-08T12:17:06.000Z at 14849, over " +
+              "2000-01-01T00:00:00.000Z at 0.",
             succeeded: true,
           };
         }

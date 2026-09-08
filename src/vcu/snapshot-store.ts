@@ -68,6 +68,18 @@ export async function loadPartialRows(directory: string): Promise<Map<number, Vc
     if (line.trim().length === 0) {
       continue;
     }
+    if (line.replace(/\0/g, "").trim().length === 0) {
+      // A HOLE, not a parse failure — the same injury, in the same shape, as the audit
+      // journal's (src/vcu/write-audit.ts, docs/power-cuts.md). A power cut leaves the block
+      // allocated and the write lost; U+0000 is not JS whitespace, so this reached JSON.parse
+      // and came back as a SyntaxError about a line whose NULs the message renders as spaces.
+      // Still a WARNING — a hole is a damaged file where a torn tail is a killed process, and
+      // the level is what carries that — but it names the injury and carries no stack trace.
+      console.warn(
+        `vcu-sweep: ${PARTIAL_FILE} line ${position + 1} is ${line.length} NUL bytes — a row lost to a power cut, not a parse error`
+      );
+      continue;
+    }
     try {
       const row = JSON.parse(line) as VcuParameterRow;
       rows.set(row.index, row);

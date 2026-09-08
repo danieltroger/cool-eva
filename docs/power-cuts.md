@@ -28,6 +28,8 @@ That is not a hypothesis. It is what the ride log looks like.
 | `rides-2026-09-08.celog` | one run, on a day barely started |
 | `vcu-params/service-writes.jsonl` | a 1710-NUL line, same mechanism, same day |
 
+⚠️ **A fixed writer does not repair a file that is already holed.** That 1710-NUL line is still on the Pi, and it is line 11 of a file the dashboard reads on _every_ GET and POST to `/vcu-write`. U+0000 is not JS whitespace, so `trim()` did not catch it and `JSON.parse` threw once per request. `recentAuditRecords` treats a NUL-only line as blank and names it once instead (#154, `scripts/check-write-audit.ts`) — nothing is recovered, because 1710 NUL bytes are not a record.
+
 Each mid-file hole marks one power cut.
 
 The four writes, and what each was doing before this change — none of them flushed (`snapshot-store.ts` owns two of them):
