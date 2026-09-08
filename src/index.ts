@@ -12,6 +12,7 @@ import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
+import { handleLifetimeStatsEndpoint } from "./http/lifetime-stats.ts";
 import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
 import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
@@ -453,6 +454,13 @@ const server = createServer(async (req, res) => {
   // the bike answer anything.
   if (url.pathname === "/vcu-params") {
     await handleVcuParamsEndpoint(res, VCU_PARAM_DIR);
+    return;
+  }
+  // The bike's lifetime battery statistics as last read. A file, not a bus read —
+  // see the header of ./http/lifetime-stats.ts for why that is not a temporary state
+  // of affairs but the shape of the thing.
+  if (url.pathname === "/lifetime-stats") {
+    await handleLifetimeStatsEndpoint(res, VCU_PARAM_DIR);
     return;
   }
   // Service mode. The ONE endpoint here that causes traffic on the bike's bus, and

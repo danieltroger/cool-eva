@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { decodeFreezeFrameResponse, formatFreezeFrameValue } from "../src/diagnostics/freeze-frame.ts";
 import {
   describeFreezeFrameLogResult,
@@ -7,6 +9,8 @@ import {
 import { createVcuKwpClient, type VcuMultiFrameOutcome } from "../src/vcu/kwp-client.ts";
 import { decodeMultiFrameReply, decodeStoredDtcList, toHex } from "../src/vcu/multiframe-codec.ts";
 import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
+import { LIFETIME_COMPONENTS } from "../src/diagnostics/lifetime-stats.ts";
+import { writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
 
 // The first live test for the multi-frame KWP transport. **This is the only way to
 // run it against the bike**, and it exists because the read cannot be done by hand:
@@ -41,8 +45,15 @@ import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 
 const CAN_IFACE = process.env.CAN_IFACE ?? "can0";
 
+/** Where `--save` writes. The same default and the same override the service uses. */
+const STORE_DIRECTORY = process.env.VCU_PARAM_DIR ?? join(dirname(fileURLToPath(import.meta.url)), "..", "vcu-params");
+
 /** What this run was asked to do. Closed, so an unrecognised flag is refused rather than defaulted. */
-type Job = { kind: "list" } | { kind: "freeze-frame"; component: number } | { kind: "log"; maxBlocks: number | null };
+type Job =
+  | { kind: "list" }
+  | { kind: "freeze-frame"; component: number }
+  | { kind: "lifetime"; save: boolean }
+  | { kind: "log"; maxBlocks: number | null };
 
 const job = parseArguments(process.argv.slice(2));
 if (!job) {
@@ -51,6 +62,8 @@ if (!job) {
       "usage: read-freeze-frame.ts <one of>",
       "  --list                 0x18 — which components have a stored code. Start here.",
       "  --component <1-63>     0x17 — one component's freeze frame.",
+      "  --lifetime [--save]    0x17 on components 51 and 52 — the lifetime battery statistics.",
+      "                         --save writes them where the dashboard reads them.",
       "  --log [--max <n>]      0x35/0x36/0x37 — the whole stored log. Minutes, and cancellable with Ctrl-C.",
       "",
       "Stop the cool-eva service first, and bring can0 up ACTIVE yourself — see the header.",
@@ -98,6 +111,9 @@ switch (job.kind) {
   case "freeze-frame":
     await runFreezeFrame(job.component);
     break;
+  case "lifetime":
+    await runLifetime(job.save);
+    break;
   case "log":
     await runLog(job.maxBlocks);
     break;
@@ -134,18 +150,27 @@ async function runList(): Promise<void> {
   console.log("\n  → Ask 0x17 about the codes listed above rather than guessing components.");
 }
 
-/** `0x17` — one component's freeze frame, decoded through the tables from #62. */
-async function runFreezeFrame(component: number): Promise<void> {
+/**
+ * `0x17` — one component's freeze frame, decoded through the tables from #62.
+ *
+ * Returns what it got in the store's own shape, so `--lifetime --save` writes the same
+ * bytes this printed rather than reading the bike a second time to get them.
+ */
+async function runFreezeFrame(component: number): Promise<StoredLifetimeReply> {
   console.log(`\n── 0x17 ReadDTCInformation on A8, component ${component} ──`);
   const outcome = await client.multiFrameRead("A8", { kind: "read-freeze-frame", component });
   if (!reportRaw(outcome, "0x17")) {
-    return;
+    return { component, payloadHex: null, failure: outcome.status };
   }
   const decoded = decodeFreezeFrameResponse(outcome.payload, component);
+  // ⚠️ The three non-frame outcomes still carry bytes, and those bytes are stored:
+  // a refusal or an answer to somebody else's question is evidence, and the store
+  // decodes what it is given rather than only what worked.
+  const reply: StoredLifetimeReply = { component, payloadHex: toHex(outcome.payload), failure: null };
   if (decoded.kind !== "frame") {
     console.log(`  ${decoded.kind}: ${"reason" in decoded ? decoded.reason : ""}`);
-    console.log(`  raw: ${decoded.rawHex}`);
-    return;
+    console.log(`  raw: ${toHex(outcome.payload)}`);
+    return reply;
   }
   const { frame } = decoded;
   for (const value of frame.values) {
@@ -175,6 +200,30 @@ async function runFreezeFrame(component: number): Promise<void> {
     `  recordCount: ${frame.recordCount} (expected 1)   truncated: ${frame.truncated}   ` +
       `shortlistKnown: ${frame.shortlistKnown}`
   );
+  return reply;
+}
+
+/**
+ * The lifetime battery statistics — components 51 and 52 — and, with `--save`, the
+ * file the dashboard reads them from.
+ *
+ * The pair is fixed rather than a list the caller chooses: the store decodes exactly
+ * these two, so a `--save` that could write any component would produce a file the
+ * page cannot read. src/diagnostics/lifetime-stats.ts names them.
+ */
+async function runLifetime(save: boolean): Promise<void> {
+  const replies: StoredLifetimeReply[] = [];
+  for (const component of [LIFETIME_COMPONENTS.packState, LIFETIME_COMPONENTS.counters]) {
+    replies.push(await runFreezeFrame(component));
+  }
+  const answered = replies.filter(reply => reply.payloadHex !== null).length;
+  if (!save) {
+    console.log(`\n  → ${answered}/2 answered. Add --save to store them where the dashboard reads them.`);
+    return;
+  }
+  // Stored even when only one answered: a half reading is kept and labelled, never
+  // discarded — src/vcu/snapshot-store.ts rule 3, for the same reason.
+  await writeLifetimeRead(STORE_DIRECTORY, { readAt: Date.now(), source: "read-freeze-frame.ts", replies });
 }
 
 /** `0x35`/`0x36`/`0x37` — the whole stored log. Minutes. */
@@ -253,6 +302,9 @@ function reportRaw(
 function parseArguments(args: string[]): Job | null {
   if (args.includes("--list")) {
     return { kind: "list" };
+  }
+  if (args.includes("--lifetime")) {
+    return { kind: "lifetime", save: args.includes("--save") };
   }
   const componentIndex = args.indexOf("--component");
   if (componentIndex !== -1) {
