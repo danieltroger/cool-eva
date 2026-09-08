@@ -97,7 +97,17 @@ export type ServiceWriteRequest =
    * chosen from the LIVE charge type here, not by the caller — so a stale page cannot frame a
    * DC command into an AC session. Transient and rider-overridable; refused unless charging.
    */
-  | { kind: "charge-current"; amps: number }
+  | {
+      kind: "charge-current";
+      amps: number;
+      /**
+       * Who asked. ⚠️ `manual` stands the automatic controller down for the session — the rider
+       * setting a current by hand means the same thing from the phone as from the dial. It is on the
+       * REQUEST rather than inferred from the route because a POST refused for a bad header or a
+       * stale confirm token must not stand anything down; only a frame that actually went out does.
+       */
+      origin: "manual" | "automatic";
+    }
   /**
    * Stop an active charge by injecting the 0x120 request-twin `96 ff 01 …` — the half of the
    * dash's Mode-stop that alone commits (2026-08-25 on-bike). Source-agnostic — the same frame
@@ -265,6 +275,11 @@ export interface SweptValue {
 }
 
 export interface VcuWriteRunnerOptions {
+  /**
+   * Called when a charge current the RIDER asked for really reached the bus. The automatic
+   * controller stands down on it; nothing else listens.
+   */
+  onManualChargeCurrent?: () => void;
   /** The service's already-started channel; null when CAN is off, in which case everything is refused. */
   channel: () => RawChannel | null;
   /** False when the bus is listen-only (OBD_ENABLED=0) — every frame would be swallowed silently. */
@@ -1091,6 +1106,12 @@ async function performChargeCurrent(
     // Starts the acknowledgement window. ⚠️ After the send, so a frame that never left the Pi is
     // not watched for an answer it could not produce.
     noteChargeCommandSent(mode, request.amps);
+    if (request.origin === "manual") {
+      // ⚠️ Only for a frame that actually went out, and only for a HAND-set current. Beside the ack
+      // hook rather than in the HTTP router, which fires before the header, the confirm token and
+      // every gate are checked — a refused POST used to stand the controller down for the session.
+      context.onManualChargeCurrent?.();
+    }
   }
   await appendAuditRecord(context.directory, {
     at: Date.now(),
