@@ -406,7 +406,9 @@ after    01 00 A0 80 00 00 10 01
 
 `blocking_fault` is what refuses drive, so that is the failed start. ✅ **No DTC was stored** — the list was the same 41 codes before and after — which is exactly why the dash could only say "undefined error": there was nothing to name. A full power cycle cleared it (`system_fault=0`, `blocking=0` at 14:29:52) and reverse worked afterwards.
 
-⚠️ Not caused by this project: there was no KWP traffic from the Pi at 13:45:47, the last transmit having been a freeze-frame read 27 minutes earlier.
+⚠️ Not caused by this project's **diagnostics**: there was no KWP traffic from the Pi at 13:45:47, the last KWP transmit having been a freeze-frame read 26 min 54 s earlier (last `0x17` at 13:18:53.102951, fault at 13:45:47.506649), and there are zero `0x7C0` frames in the fault capture at all.
+
+⚠️ **This sentence used to say "the last transmit", full stop, and that is false.** The Pi transmits `0x7DF` OBD requests continuously — tens of thousands of frames in an ordinary capture on this bike (42 748 and 122 934 in two archive captures picked at random, against zero `0x7C0` in the same files). So the Pi **was** transmitting on the bus when the fault appeared; what it was not doing was KWP. The narrower claim is the true one and it is the one that should have been written, because this is an exculpatory statement about a fault on someone's motorcycle and the difference between "we were silent" and "we were doing the routine thing we always do" is exactly the difference that matters. Routine mode-01 polling has run for months across every capture in the archive without a blocking fault, which is the actual argument.
 
 ### ✅ `0x101` b1 is b0 quantised — and two claims made here first were wrong
 
