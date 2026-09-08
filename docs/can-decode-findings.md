@@ -604,7 +604,11 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 
 ⚠️ **THIS IS APPARENT ATTITUDE, NOT LEAN ANGLE.** The block is Gx/Gy/Gz/Phi/Thete/Mag and nothing else — three accelerometers and what is derived from them, **no gyro**. Both angles are the direction of the measured vertical, so they answer "which way is down as far as the bike can tell", not "how far over is the bike". Cornering hides itself almost completely (point 3); braking shows up as pitch (point 4). Anything wanting real lean needs a rate gyro the bike does not publish here.
 
-🟡 **Inferred, not proven:** that the broadcast pair IS the bank-2 block rather than an independent copy of the same sensor. Bit-identical Phi bytes on the side stand is strong, but the two were read on different days over different transports. Reading A9 bank 2 ids 0x87-0x8C live while tilting the bike settles it, and is the outstanding experiment (see the service-tool analysis in `obd-garage/`). Also inferred: the pitch sign convention above is measured off this bike's brake and throttle bits, not read out of any document.
+✅ **PROVEN 2026-09-08: the broadcast pair IS the bank-2 block.** This was the outstanding experiment and it has now been run, twice over.
+
+**Both fields matched exactly, in one session, across two unrelated transports.** A9 bank 2 index 138 read `FF 83` (signed **−125**) and index 139 read `FF C6` (signed **−58**) over KWP on `0x7C0`/`0x7E0`; seconds later the 100 Hz broadcast on `0x102` carried `80 10 02 44 83 FF C6 FF` — b4-5 LE = **−125**, b6-7 LE = **−58**. Roll −12.5°, pitch −5.8°, on the side stand. Two independent fields agreeing to the unit at an arbitrary attitude is a far more specific coincidence than the earlier single-field match on different days.
+
+**And they track together as the bike moves.** Re-derived during review across a settling bike: live `0x102` roll −4.6° / −5.2° / **−12.0°** against bank 2 index 138 reading −46 / −52 / **−120**, with pitch holding −5.8° / −58 throughout. A 7.4° change in one field while the other stays put, followed on both transports, is the tilt test this section asked for. Also inferred: the pitch sign convention above is measured off this bike's brake and throttle bits, not read out of any document.
 
 **Why the out-of-range warning needs five consecutive frames.** A bare inequality would spend the warning on noise. This bike emits occasional junk samples on plenty of signals — `high_beam` reading 193, 0xFFFF cell voltages, −32767 GPS altitude, the whole reason `public/lib/bounds.js` exists — and one of those landing in b4-7 must not silence the diagnostic for the rest of the boot, because the thing it is there to catch (a frame layout change) arrives later and lasts forever. 0x102 is 100 Hz, so five frames is 50 ms: nothing a real layout change would survive, and far more than a single corrupted sample can fake. `pack-temperature.ts` guards its warnings the same way at 3, against frames that arrive at 1-20 Hz rather than 100. The journal line is rationed to once per axis per process for the same reason: at 100 Hz a layout change would otherwise fill the journal at 200 lines a second and push out whatever else went wrong at the same moment. The sample itself is dropped on every out-of-range frame regardless.
 
@@ -612,28 +616,42 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 
 ## 0x104 — odometer / speed / rpm
 
-### ✅ `reverse_gear` (bit 63) — measured on the bike, and it is a PULSE not a level
-
-Settled 2026-09-08 with the bike connected: reverse selected deliberately twice, against a **195 868-frame** capture of `0x104`.
-
-```
-14:36:59.474  b7 0x40 → 0xC0   bit63=1   bits60-62=4
-14:36:59.485  b7 0xC0 → 0x40   bit63=0   bits60-62=4    (11 ms)
-14:37:05.164  b7 0x40 → 0xC0   bit63=1   bits60-62=4
-14:37:05.174  b7 0xC0 → 0x40   bit63=0   bits60-62=4    (10 ms)
-```
-
-**Exactly four transitions in 195 868 frames** — two pulses, on the only two occasions reverse was touched, and nothing else in the whole capture.
-
-✅ **This refutes the tachometer objection.** The standing dispute was that 406 of 1122 historical frames "belonged to the tachometer field at bits 60-62", casting doubt on the bit. Here **bits 60-62 held constant at `4` across all 195 868 frames** while bit 63 moved twice on cue. The bit position is right, and it is not tachometer bleed.
-
-⚠️ **But the SEMANTICS in `decode.ts` are wrong.** Reverse was held for seconds; the bit was high for **eleven milliseconds**. It is a momentary "reverse selected" event, not a sustained "in reverse" state. Decoded as a level (`bitFieldLe(data, 63, 1)`), a consumer that samples rather than watches every frame will essentially never see it — the dashboard cannot render reverse from this, though log-on-change does capture both edges.
-
-🟡 **And there appears to be no sustained reverse state anywhere on the bus.** Comparing every id across three windows — before the first pulse, between the two, after the second — **nothing state-like held a distinct value between them**. Had the two pulses been the entry and exit of one engagement, the bike would have been in reverse for those 5.7 s and something should have said so. Nothing did, which is also what confirms these were two separate selections rather than one bracketed engagement. ⚠️ The window test only covers frames that are state-like (≤2 distinct values in a window); a reverse indicator hiding inside a continuously-changing frame would not have been caught.
-
-**What this leaves open:** whether a consumer should latch the pulse (and for how long) is a design decision, not a decode one, and is deliberately not made here.
-
 `src/can/decode.ts`. LE and not byte-aligned, at 100 Hz.
+
+### 🟡 `reverse_gear` (bit 63) — a PULSE not a level, and it is probably not "reverse"
+
+⚠️ **This section was written as ✅ and it should not have been. It also failed to cite `docs/vcu-parameters.md` §12, which had already settled the same question three weeks earlier on a far larger sample — and reached a different conclusion.** §12 stands; this section defers to it. What survives here is the pulse shape, not the meaning.
+
+Measured 2026-09-08 with the bike connected, reverse selected deliberately twice:
+
+```
+14:36:59.474  b7 0x40 → 0xC0   bit63=1
+14:36:59.485  b7 0xC0 → 0x40   bit63=0    (10.14 ms)
+14:37:05.164  b7 0x40 → 0xC0   bit63=1
+14:37:05.174  b7 0xC0 → 0x40   bit63=0    (10 ms)
+```
+
+✅ **What is solid:** the bit fires as a ~10 ms pulse, twice, on the two occasions reverse was touched. Decoded as a level (`bitFieldLe(data, 63, 1)`), a consumer that samples rather than watches every frame will essentially never see it. That much is real and is why the dashboard cannot render reverse from this signal.
+
+#### ❌ Three things this section claimed that do not hold
+
+**❌ "Exactly four transitions in 195 868 frames."** The frame count is not reproducible from any capture or combination of captures on the Pi — the 2026-09-08 files hold millions of `0x104` frames, one overnight capture alone carrying 2 879 174. More importantly the denominator is doing rhetorical work it has not earned: the overwhelming majority of those frames are a **stationary** bike, where neither hypothesis predicts anything. Restricted to frames where the bike was actually moving, the observation is two pulses among a few hundred moving frames, which is a far weaker statement than "4 in 195 868".
+
+**❌ The bit also fires when nobody selects reverse.** The overnight capture of 2026-09-08 (`capture-20260908-000823`, **2 879 174** `0x104` frames) has byte 7 = `0x00` in 2 879 169 of them and **`0x80` in 5** — bit 63 set, five times, on a bike nobody was selecting reverse on. That is fatal to reading the pulse as "reverse selected" and is comfortable for §12's rollback reading below. It also shows bits 60-62 sitting at **0** for that entire capture.
+
+**❌ "Bits 60-62 held constant at `4` across all 195 868 frames", refuting the tachometer objection.** Constant at 4 _within the single capture that holds the pulses_. Across the day's other captures byte 7 reads `0x00` throughout — so bits 60-62 are 0 before the power cycle and 4 after, and any frame set large enough to reach 195 868 necessarily contains frames where the claim is false. The tachometer objection is answered for that one capture, not archive-wide.
+
+**❌ The between-pulse argument is circular.** It concluded both that _"there appears to be no sustained reverse state anywhere on the bus"_ **and** that the absence of one between the pulses _"confirms these were two separate selections rather than one bracketed engagement"_. If the first is true the second has no premise: a bus that never publishes a sustained reverse state shows nothing during the gap under **either** hypothesis. One null result was spent twice, in two directions that undercut each other. The measurement itself reproduces — no state-like id had a between-only payload — but it supports only the first claim.
+
+#### 🟡 And the meaning is §12's, not this section's
+
+`docs/vcu-parameters.md` §12 settled this against `rides.db` over six days of riding: **597 rising edges in 62 bursts**, 404 of 597 shorter than 50 ms, median `speed_can_kmh` at a rising edge **0.4 km/h**, p95 0.7, never above 4.1. Its conclusion is that the bit is a **direction-of-rotation or rollback indicator** — plausibly the sign bit that `speed_can_kmh` and `motor_rpm_can` both lack, since both are unsigned and neither ever goes negative in 6.2 M rows.
+
+The 2026-09-08 pulses fit that reading exactly rather than contradicting it. Both pulse frames are byte-identical (`50 D0 02 00 05 80 02 C0`) and decode through this repo's own `decodeFrame` to **0.5 km/h and 20 rpm** — the single frame at the peak of a smooth creep ramp (0 → 0.1 → 0.2 → 0.3 → 0.4 → 0.5 → 0.4 → 0.2 → 0), at almost exactly §12's median.
+
+⚠️ **This experiment cannot separate the two readings, by construction.** Engaging reverse is what turns the wheel backwards, so "reverse was selected" and "the wheel rotated backwards" happened at the same instant both times. A test that discriminates has to produce one without the other — roll the bike backwards in neutral (rollback, no reverse selected), or select reverse with the wheel held still.
+
+**What this leaves open:** whether a consumer should latch the pulse is a design decision, not a decode one, and is deliberately not made here. `reverse_gear` has three consumers — `EXCLUDED_FROM_GATE` in `src/vcu/service-gate.ts`, `grafana/dashboards/ride-summary.json`, and §12 — and §12 already excludes it from the safety gate _because_ it is a short pulse, so nothing safety-bearing depends on the wrong name. The **doc** needed fixing, not the code.
 
 **The odometer is the solid part:** `8D 99 02 00 …` → 170381 × 0.1 = 17038.1 km. ✅ It gets its own key rather than overwriting the BLE hub's `odometer_km`, because the bike publishes three odometer-ish numbers and they do not all agree. Read within the same minute on 2026-08-02, parked: CAN 17038.1 km · BLE `odometer_km` 17038 km · OBD PID 31 `dist_since_clear_km` 17042 km. So CAN and BLE agree to within their resolution and PID 31 sits 4 km above both — which is what you'd expect, since PID 31 counts distance since the last DTC clear rather than lifetime distance, and evidently started from a non-zero odometer. Keeping them as separate signals means a ride can settle it; merging them would just make one value flap between writers.
 

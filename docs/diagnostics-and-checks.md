@@ -660,7 +660,7 @@ The single sharpest reply is component 44, `P0A07`: `ai_WaterPumpCurrent_In` rea
 
 **The trailing byte is not decoded.** It is not a checksum, and this was tested exhaustively rather than casually: the entire CRC-8 space (256 polynomials × 256 inits × 256 xorouts × 4 reflection combinations × 7 byte ranges), nine accumulator variants (sum mod 256, sum mod 255, end-around carry, one's and two's complement, XOR, XOR complement, LRC, byte count) and 18 named CRC-8 presets. **Nothing beats a degenerate 6 of 29** — polynomial 0 with xorout `FF`, which only reproduces the six `0xFF` values and would match any data containing six `0xFF`s.
 
-✅ **SETTLED 2026-09-08: it is a saturating occurrence counter.** The first live freeze-frame read off this bike, four weeks after the codes were cleared, decides it — and it decides it the hard way, because the two readings made opposite predictions and only one survived.
+✅ **SETTLED 2026-09-08: it is a per-record counter that advances once per cycle, and the payload beside it stays frozen.** The first live freeze-frame read off this bike, four weeks after the codes were cleared, refuted the sentinel reading; a second read the same afternoon, across a VCU reset and a key cycle, established what the counter actually counts. ⚠️ This section first said "saturating **occurrence** counter", which the second read does not support — see below.
 
 | component  | before the clear (2026-08-08) | after it (2026-09-08) |
 | ---------- | ----------------------------- | --------------------- |
@@ -670,13 +670,44 @@ The single sharpest reply is component 44, `P0A07`: `ai_WaterPumpCurrent_In` rea
 | 60 `P1052` | `FF`                          | **`05`**              |
 | 53 `P0601` | `07`                          | **`01`**              |
 
-The codes were cleared at 2026-08-09 14:42:32 by the factory tool's `14 FF FF` (recorded above as the thing that compromised the naive re-read test). A **counter** predicts exactly this: saturated at 255 before, reset to zero by the clear, and recounted to single digits in the weeks since. A **sentinel** predicts `FF` stays `FF` — "not applicable" does not become 5 because a technician cleared some codes. All four `FF`s moved. The sentinel reading is refuted.
+The codes were cleared at **2026-08-08 19:04:28.391939** by the factory tool's `14 FF FF` (recorded above as the thing that compromised the naive re-read test). A **counter** predicts exactly this: saturated at 255 before, reset to zero by the clear, and recounted to single digits in the weeks since. A **sentinel** predicts `FF` stays `FF` — "not applicable" does not become 5 because a technician cleared some codes. The `FF`s moved. The sentinel reading is refuted.
+
+⚠️ **This paragraph used to date the clear `2026-08-09 14:42:32`, and that was wrong twice over.** The archive holds exactly **one** `7C0 … 14 FF FF` request in every capture on disk, and it is on **2026-08-08**. There are zero on 2026-08-09 — the hits a naive `grep '14 FF FF'` finds that day are payload bytes inside GPS `0x410` frames, which is presumably how the wrong date was arrived at. Worse, `2026-08-09 14:42:32` is a **real timestamp for a different event**: it is when a charge-manager fault cleared during the aborted DC attempt (`docs/charge-manager.md`). Two unrelated "clears" a day apart had been conflated.
+
+⚠️ **And "all four `FF`s moved" undercounts.** Six components read `FF` historically — **36, 44, 51, 52, 54, 60**, and this same section says "six `0xFF`s" two paragraphs down. Four of them moved to small counts. The other two, **36 and 54, have no stored record at all today**: `0x17` returns `57 00` (recordCount 0) for both, because `0x18` now lists exactly five components — 44, 51, 52, 53, 60. `57 00` is the ordinary "no stored code for this component" answer, not a third outcome. (It is worth stating that these five are the KWP per-component list and are _not_ the same thing as the 41 codes in the OBD mode-03 list; conflating the two is what made 36 and 54 look readable.)
 
 ⚠️ Note this closes the question **despite** the compromised test, not by escaping it. The earlier worry was that a clear would reset a counter and make unchanged-or-low values consistent with both readings. What rescued it is that the sentinel reading predicts _no change at all_ — so the clear, which looked like it destroyed the experiment, is the very thing that separated the two hypotheses.
 
 The historical values (1, 2, 3, 5…61, 118, and six `0xFF`s) now read as counts on a bike whose codes had not been cleared in a long time, with the most persistent faults saturated.
 
 ⚠️ Do NOT reason from "components seen once read `01`". Nothing in the capture measures how many times a component was seen; that sentence is the counter hypothesis restated as if it corroborated itself, and it stood here until a review caught it. The `0x58` list carries no per-DTC counter — exactly three bytes per record — so there is no second source.
+
+#### ✅ The second read, 2026-09-08 15:50 — what the counter counts
+
+The components were re-read the same afternoon, after a VCU reset (`ECUReset 11 02`, 15:19:31) and a key-off/key-on (15:31 / 15:47). **Every one of the five advanced by exactly +1:**
+
+| component  | 13:18 | 15:50 | Δ   |
+| ---------- | ----- | ----- | --- |
+| 44 `P0A07` | `08`  | `09`  | +1  |
+| 51 `P1050` | `05`  | `06`  | +1  |
+| 52 `P1051` | `05`  | `06`  | +1  |
+| 53 `P0601` | `01`  | `02`  | +1  |
+| 60 `P1052` | `05`  | `06`  | +1  |
+
+✅ **The rest of the record did not move at all.** Two replies are byte-identical apart from the last byte:
+
+```
+component 60   57 01 00 3C 05 05   ->   57 01 00 3C 05 06
+component 53   57 01 00 35 45 10 00 00 00 01   ->   ...02
+```
+
+That is the strongest form of the refutation the section already claimed: the frozen payload — substate, temperatures, currents — is genuinely frozen, and the trailing byte advances underneath it **without the record being re-stored**. Whatever it counts happens outside the fault event.
+
+❌ **This is what rules out "occurrence counter", the reading this section previously settled on.** Five components with five different absolute values (9, 6, 6, 6, 2) and five different faults do not increment in lockstep because each independently occurred once more. The increment is **per cycle, at most once per cycle** — a fault that fires fifty times in one ride still moves it by one.
+
+🟡 **Nor is it a standard OBD aging counter**, and this bike is unusually well placed to say so. An aging counter counts _fault-free_ cycles and resets when the fault recurs. `P0A07` on component 44 is **permanently present** on this bike — the coolant pump is wired to the heated-grip output, so the VCU's pump driver sits open-circuit, and the freeze frame reads `ai_WaterPumpCurrent_In = 0 mA` against a 400 mA threshold. A healing counter would be pinned at 0 forever; this one climbs. So it counts cycles **since the record was stored**, not cycles since the fault was last seen.
+
+⚠️ **One thing this test could not separate, recorded rather than glossed.** The interval contained _both_ a VCU reset and a key-off/key-on, and the counters moved **+1, not +2**. Either an `ECUReset` does not count as a cycle, or the two collapsed into one. A reset with no key cycle around it would separate them, and until someone runs that, "cycle" here means "at least one of those two things happened", not specifically "key cycle". The saturation claim also still rests on the historical `FF`s rather than on anything watched saturating.
 
 ⚠️ **The obvious test is compromised by this same capture.** "Read them again and see whether the counters moved" looks decisive but is not: at `19:04:28.392`, 25 s after the last freeze-frame read, the factory tool sent `14 FF FF` (ClearDiagnosticInformation) to the A8 and got `54 FF FF` back. The codes were cleared in this session. Unchanged or low values on a re-read are therefore consistent with the counter reading _and_ with its negation, since a clear would plausibly reset a counter too. A test that does discriminate has to span a clear it knows about, or find a component whose fault recurs on a known schedule.
 

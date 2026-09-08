@@ -23,9 +23,10 @@
 // itself almost completely (roll stayed inside ±17.9° on rides that reached 186 km/h), while
 // braking shows up as pitch. Anything wanting real lean needs a gyro the bike does not publish.
 //
-// 🟡 Inferred, not proven: that the broadcast pair IS the bank-2 block rather than an
-// independent copy of the same sensor, and the pitch sign convention, which is measured off
-// this bike's own brake and throttle bits rather than read out of a document.
+// ✅ Proven 2026-09-08: the broadcast pair IS the bank-2 block. A9 bank 2 ids 138/139 read
+// -125/-58 over KWP while 0x102 b4-7 carried -125/-58 on the broadcast, seconds apart, and the
+// two track together across a 7.4 deg roll change. 🟡 Still inferred: the pitch sign convention,
+// which is measured off this bike's own brake and throttle bits rather than read out of a document.
 //
 // Evidence in full: docs/can-decode-findings.md § "Bytes 4-7 — the attitude sensor's two angles".
 
