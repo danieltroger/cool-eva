@@ -1,7 +1,8 @@
 import { SIGNALS } from "../src/can/registry.ts";
 import { defineSignals, latestValue, record } from "../src/can/signals.ts";
 import { FAN_MODE_CODE, startFanAutomatic } from "../src/fan/auto.ts";
-import { MAX_DUTY_PERCENT, startFanControl } from "../src/fan/control.ts";
+import type { FanController, FanState } from "../src/fan/control.ts";
+import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT, startFanControl } from "../src/fan/control.ts";
 import type { FanPwm } from "../src/fan/pwm.ts";
 import {
   FAN_GESTURE_BUTTON,
@@ -22,7 +23,8 @@ import {
   type HoldState,
 } from "../src/gestures/long-press.ts";
 import { boundsFor } from "../public/lib/bounds.js";
-import { WAYPOINT_REFUSAL_TEXT } from "../public/lib/announce.js";
+import { fanAnnouncementKey, fanAnnouncementText } from "../public/lib/fan-display.js";
+import { WAYPOINT_REFUSAL_TEXT, foldAnnouncement } from "../public/lib/announce.js";
 import { DOUBLE_CLICK_WINDOW_MS } from "../public/lib/gestures.js";
 
 // The handlebar hold gestures — the fan cycle on MODE ENTER and the waypoint on the
@@ -74,7 +76,7 @@ function check(what: string, condition: boolean) {
 /** 160 ENTER presses; the longest anywhere in the archive. No other decoded bit is this clean. */
 const LONGEST_ENTER_PRESS_MS = 290;
 
-/** 775 of the 779 indicator-cancel presses. The other four are one afternoon's experiment. */
+/** 770 of the 779 indicator-cancel presses. The other nine are one afternoon's experiment. */
 const LONGEST_ORDINARY_CANCEL_PRESS_MS = 330;
 
 /** The 0.940 s press from inside that experiment — the nearest thing to a false positive. */
@@ -427,6 +429,89 @@ fanCycle.stop();
 automatic.stop();
 await controller.stop();
 
+// --- 3b. A stop that FAILS still has to be watched -------------------------------
+//
+// ⚠️ src/fan/control.ts's goIdle() sets the target to 0 and drops the output BEFORE a
+// failing sysfs write can throw, and commandDuty() turns that into `{ok: false}` rather
+// than an exception. So a refusal can still leave the fan genuinely stopped — and if the
+// watchdog is armed only on success, that is a fan switched off by a gesture with nothing
+// left watching for the bike moving again. Arm it on the attempt instead.
+
+console.log("\n3b. a stop the bridge refused is still a stopped fan");
+
+const stubbornState: FanState = { dutyPercent: 0, targetPercent: 0, driverEnabled: false, phase: "idle" };
+const failingStopController: FanController = {
+  configured: true,
+  fault: null,
+  setDutyPercent: async percent => {
+    if (percent < MIN_RUNNING_DUTY_PERCENT) {
+      // Exactly what goIdle() leaves behind when one of its writes fails: the fan IS off.
+      stubbornState.targetPercent = 0;
+      stubbornState.dutyPercent = 0;
+      stubbornState.driverEnabled = false;
+      stubbornState.phase = "idle";
+      return { ok: false, message: "could not stop the fan: pinctrl vanished" };
+    }
+    stubbornState.targetPercent = percent;
+    stubbornState.dutyPercent = percent;
+    stubbornState.driverEnabled = true;
+    stubbornState.phase = "running";
+    return { ok: true, message: `commanded ${percent} %` };
+  },
+  state: () => stubbornState,
+  stop: async () => {},
+};
+
+const stubbornBus = setInterval(() => {
+  record("btn_mode_enter", stubbornPress);
+  record("speed_can_kmh", stubbornSpeed);
+  record("batt_temp_hi", 20);
+}, TICK_MS);
+let stubbornPress = 0;
+let stubbornSpeed = 0;
+const stubbornLoop = startFanAutomatic(failingStopController, {
+  tickMs: TICK_MS,
+  speedMaxAgeMs: 400,
+  chargeSessionMaxAgeMs: 400,
+});
+const stubbornCycle = startFanCycleGesture(stubbornLoop, { revertBeatMs: 50 });
+const stubbornGestures = startHoldGestures([stubbornCycle.gesture]);
+await settle(TICK_MS * 4);
+
+// ⚠️ One tap first, and it is not padding. src/can/signals.ts notifies only when a value
+// MOVES, so re-recording the 0 this button already holds from §3 raises no event and this
+// second runner would never see the 0 that a watched 0→1 needs. On the bike the first
+// 0x102 frame after boot is the first record of that key and does notify; here the store
+// is already warm. The tap is 100 ms, far too short to fire anything.
+stubbornPress = 1;
+record("btn_mode_enter", 1);
+await settle(100);
+stubbornPress = 0;
+record("btn_mode_enter", 0);
+await settle(TICK_MS * 4);
+
+stubbornPress = 1;
+record("btn_mode_enter", 1);
+await settle(FAN_HOLD_MS + HOLD_BEAT_MS * 2);
+stubbornPress = 0;
+record("btn_mode_enter", 0);
+await settle(TICK_MS * 4);
+check(
+  "the hold stopped the fan even though the bridge refused",
+  stubbornLoop.mode() === "manual" && failingStopController.state().targetPercent === 0
+);
+stubbornSpeed = 5;
+record("speed_can_kmh", 5);
+await settle(250);
+check(
+  "⚠️  …and riding away STILL hands it back — the watchdog is armed on the attempt, not on the reply",
+  stubbornLoop.mode() === "automatic"
+);
+clearInterval(stubbornBus);
+stubbornGestures.stop();
+stubbornCycle.stop();
+stubbornLoop.stop();
+
 // --- 4. The waypoint --------------------------------------------------------------
 
 console.log("\n4. the waypoint hold saves through the endpoint's own path");
@@ -482,6 +567,61 @@ check(
   boundsFor("waypoint_seq", "", "waypoint") === null && boundsFor("waypoint_refused_seq", "", "waypoint") === null
 );
 fixes.stop();
+
+// --- 4b. The banner the phone raises ----------------------------------------------
+//
+// ⚠️ THE REGRESSION THIS SECTION EXISTS FOR. `waypoint_seq` and `waypoint_refused_seq`
+// are onDemand: they are absent from the signal store entirely until the Pi saves or
+// refuses something. An announcement that treats "the first value I ever saw" as the
+// baseline therefore swallows the banner for the FIRST waypoint of every boot — which,
+// at roughly one waypoint a ride, is most of them, and is the exact regression the two
+// signals were added to prevent.
+
+console.log("\n4b. the banner is raised for real news and swallowed for a reconnect");
+
+const fresh = { value: null, baselined: false };
+const openedWithNothing = foldAnnouncement(fresh, null);
+check(
+  "a link that comes up with the signal ABSENT is baselined silently",
+  !openedWithNothing.announce && openedWithNothing.state.baselined
+);
+check(
+  "⚠️  …and the first value that then arrives IS announced — the first waypoint of a boot",
+  foldAnnouncement(openedWithNothing.state, 1).announce
+);
+const openedWithFive = foldAnnouncement(fresh, 5);
+check(
+  "a link that comes back to a snapshot already holding 5 announces nothing — that is old news",
+  !openedWithFive.announce && openedWithFive.state.value === 5
+);
+check("…and an unchanged 5 afterwards is not news either", !foldAnnouncement(openedWithFive.state, 5).announce);
+check("…while 6 is", foldAnnouncement(openedWithFive.state, 6).announce);
+check(
+  "a signal that goes away again announces nothing rather than announcing a null",
+  !foldAnnouncement(openedWithFive.state, null).announce
+);
+check(
+  "the fan's four keys are distinct, so every step of the cycle raises its own banner",
+  new Set([
+    fanAnnouncementKey(FAN_MODE_CODE.automatic, 0),
+    fanAnnouncementKey(FAN_MODE_CODE.fun, 0),
+    fanAnnouncementKey(FAN_MODE_CODE.manual, MAX_DUTY_PERCENT),
+    fanAnnouncementKey(FAN_MODE_CODE.manual, 0),
+  ]).size === 4
+);
+check(
+  "⚠️  the curve moving the duty through zero in AUTOMATIC raises nothing",
+  fanAnnouncementKey(FAN_MODE_CODE.automatic, 0) === fanAnnouncementKey(FAN_MODE_CODE.automatic, 84)
+);
+check(
+  "…and a slider drag inside the running band raises nothing either",
+  fanAnnouncementKey(FAN_MODE_CODE.manual, 45) === fanAnnouncementKey(FAN_MODE_CODE.manual, 60)
+);
+check(
+  `the gesture's own step names the duty off the wire (${fanAnnouncementText(fanAnnouncementKey(FAN_MODE_CODE.manual, MAX_DUTY_PERCENT), MAX_DUTY_PERCENT)})`,
+  fanAnnouncementText(fanAnnouncementKey(FAN_MODE_CODE.manual, MAX_DUTY_PERCENT), MAX_DUTY_PERCENT) ===
+    `Fan: manual ${MAX_DUTY_PERCENT} %`
+);
 
 // --- 5. The thresholds, against the corpus ----------------------------------------
 

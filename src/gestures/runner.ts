@@ -166,8 +166,19 @@ function fireGesture(run: GestureRun): void {
     return;
   }
   run.inFlight = true;
-  void run.gesture
-    .perform()
+  // ⚠️ perform() is called INSIDE the try, not merely awaited: a synchronous throw — from
+  // a helper that runs before the async function's first await — would never become a
+  // rejected promise, so it would escape into a setInterval callback with nothing above
+  // it, end the process, and leave the flag latched so nothing fired again either.
+  let running: Promise<GestureOutcome>;
+  try {
+    running = run.gesture.perform();
+  } catch (error) {
+    run.inFlight = false;
+    console.warn(`gesture: ${run.gesture.button} — ${run.gesture.description} threw:`, error);
+    return;
+  }
+  void running
     .then(outcome => {
       const verdict = outcome.ok ? "" : "REFUSED — ";
       console.log(`gesture: ${run.gesture.button} held ${run.gesture.holdMs} ms — ${verdict}${outcome.message}`);

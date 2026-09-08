@@ -280,7 +280,7 @@ const CHECKS: SelfCheck[] = [
       "switch turns on at or before 2.011 s. Then the thresholds against the whole 268-capture archive: 1200 ms " +
       "clears the longest MODE ENTER press ever recorded (290 ms, over 160 presses, the only decoded handlebar " +
       "bit with no long press anywhere) by more than 4×, and 1000 ms clears the longest ordinary indicator-cancel " +
-      "press (330 ms over 775 of 779) by 3×. Then the cycle end to end against a real loop and a recording " +
+      "press outside one afternoon's experiment (330 ms over 770 of 779) by 3×. Then the cycle end to end " +
       "bridge: it walks all three states, SKIPS the quiet state above 3 km/h so a false fire while riding can only " +
       "land on the thermally safe side, reverts its own *off* when the bike moves but never a manual 0 the slider " +
       "set, and leaves the fan off when the bus goes silent — because that silence is the AC charge the state " +

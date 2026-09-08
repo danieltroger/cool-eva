@@ -1,6 +1,6 @@
 import { ageMs, latestValue, onChange, record, snapshot, type LiveValue } from "../can/signals.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
-import { monotonicNow, since } from "../monotonic.ts";
+import { monotonicNow } from "../monotonic.ts";
 import { systemClockTrust } from "./clock.ts";
 
 // Stamping "I am here, now" into the ride log, for both things that ask: GET /waypoint
@@ -68,8 +68,9 @@ export const WAYPOINT_GESTURE_BUTTON = "btn_indicator_cancel";
  * a second for the thumb to come off before the bike does something the rider did not
  * ask for. It is also why the save fires AT the threshold rather than on the release.
  *
- * Above, it clears the longest ordinary press of this switch — 0.330 s across 775 of the
- * archive's 779, the other four being one afternoon's deliberate experiment — by 3.0×.
+ * Above, it clears the longest press of this switch outside one afternoon's deliberate
+ * experiment — 0.330 s, across 770 of the archive's 779 — by 3.0×. The other nine all
+ * fall inside a single minute on 2026-08-03, the minute the hazards were activated twice.
  * Both numbers, and why it must not be trimmed further: docs/handlebar-gestures.md.
  */
 export const WAYPOINT_HOLD_MS = 1000;
@@ -281,16 +282,6 @@ export function waypointsSaved(): number {
 }
 
 /**
- * Records a refusal and returns it.
- *
- * ⚠️ A COUNTER AS WELL AS A CODE, and the counter first. record() seals a row only when
- * the value differs from the last logged one, so two identical refusals in a row would
- * write nothing the second time and raise no change event — the trap
- * docs/can-decode-findings.md §"…re-selecting the value you already had" documents. The
- * rider holding the button again at the same spot with the same stale fix would get
- * silence and read it as success.
- */
-/**
  * The speed this fix implies since the preceding one, when that is impossible — else null.
  *
  * ⚠️ Answers null, not a refusal, when there is nothing to compare against: one fix on
@@ -302,7 +293,9 @@ function implausibleJump(latitudeDeg: number, longitudeDeg: number): number | nu
   if (precedingFix === null) {
     return null;
   }
-  const elapsedMs = since(precedingFix.at);
+  // Between the two FIXES, not up to now: `now` includes however long the rider then took
+  // to press the button, and a bigger denominator makes an impossible jump look survivable.
+  const elapsedMs = (latestFix === null ? monotonicNow() : latestFix.at) - precedingFix.at;
   if (elapsedMs < MIN_FIX_INTERVAL_MS) {
     return null;
   }
@@ -333,6 +326,16 @@ export function isPositionOnEarth(latitudeDeg: number, longitudeDeg: number): bo
   );
 }
 
+/**
+ * Records a refusal and returns it.
+ *
+ * ⚠️ A COUNTER AS WELL AS A CODE, and the counter first. record() seals a row only when
+ * the value differs from the last logged one, so two identical refusals in a row would
+ * write nothing the second time and raise no change event — the trap
+ * docs/can-decode-findings.md §"…re-selecting the value you already had" documents. The
+ * rider holding the button again at the same spot with the same stale fix would get
+ * silence and read it as success.
+ */
 function refuse(refusal: WaypointRefusal, message: string, reason: string): WaypointOutcome {
   refusedCount += 1;
   record("waypoint_refused_seq", refusedCount);

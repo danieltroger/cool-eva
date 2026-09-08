@@ -51,31 +51,61 @@ export function installAnnouncements() {
 }
 
 /**
+ * Folds one reading into an announcement's memory, and says whether to raise a banner.
+ *
+ * Pure, and exported so scripts/check-hold-gestures.ts can drive it without a DOM.
+ *
+ * ⚠️ `baselined` is a SEPARATE flag, not "is the remembered value still null".
+ * `waypoint_seq` is `onDemand` and absent from the store until the Pi saves something, so
+ * a remembered null means "never arrived" — and treating the first arrival as the
+ * baseline swallowed the banner for the FIRST waypoint of every boot.
+ *
+ * @template {number | string} T
+ * @param {{ value: T | null, baselined: boolean }} state
+ * @param {T | null} reading
+ * @returns {{ state: { value: T | null, baselined: boolean }, announce: boolean }}
+ */
+export function foldAnnouncement(state, reading) {
+  if (!state.baselined) {
+    // Whatever the link just handed us is news from before we were listening.
+    return { state: { value: reading, baselined: true }, announce: false };
+  }
+  if (reading === null || reading === state.value) {
+    return { state, announce: false };
+  }
+  return { state: { value: reading, baselined: true }, announce: true };
+}
+
+/**
+ * A fresh memory, for the first paint and for every reconnect.
+ * @template {number | string} T
+ * @returns {{ value: T | null, baselined: boolean }}
+ */
+function blank() {
+  return { value: null, baselined: false };
+}
+
+/**
  * The fan's mode, as the Pi reports it.
  *
- * ⚠️ The first reading is adopted SILENTLY, and so is the first after the link comes back.
- * ./connection.js closes the socket whenever the page is hidden, so a phone taken out of a
- * pocket reconnects to a full snapshot — and announcing that would be announcing news
- * from ten minutes ago as if it had just happened. Same rule as "a hold we never saw
- * begin is not a gesture".
+ * ⚠️ The memory is thrown away whenever the link is not live, so the snapshot that comes
+ * back is adopted silently. ./connection.js closes the socket whenever the page is
+ * hidden, so a phone taken out of a pocket reconnects to a full snapshot — and announcing
+ * that would be announcing news from ten minutes ago as if it had just happened. Same
+ * rule as "a hold we never saw begin is not a gesture".
  */
 function announceFanState() {
-  /** @type {string | null} */
-  let announced = null;
+  let memory = /** @type {{ value: string | null, baselined: boolean }} */ (blank());
   van.derive(() => {
     if (connection.val !== "live") {
-      announced = null;
+      memory = blank();
       return;
     }
     const target = valueOf("fan_target_pct");
-    const key = fanAnnouncementKey(valueOf("fan_auto_mode"), target);
-    if (key === null || key === announced) {
-      return;
-    }
-    const first = announced === null;
-    announced = key;
-    if (!first) {
-      showToast(fanAnnouncementText(key, target), "good");
+    const folded = foldAnnouncement(memory, fanAnnouncementKey(valueOf("fan_auto_mode"), target));
+    memory = folded.state;
+    if (folded.announce) {
+      showToast(fanAnnouncementText(memory.value, target), "good");
     }
   });
 }
@@ -88,32 +118,24 @@ function announceFanState() {
  * the same spot with the same stale fix would look like it had worked.
  */
 function announceWaypoints() {
-  /** @type {number | null} */
-  let saved = null;
-  /** @type {number | null} */
-  let refused = null;
+  let saved = /** @type {{ value: number | null, baselined: boolean }} */ (blank());
+  let refused = /** @type {{ value: number | null, baselined: boolean }} */ (blank());
   van.derive(() => {
     if (connection.val !== "live") {
-      saved = null;
-      refused = null;
+      saved = blank();
+      refused = blank();
       return;
     }
-    const savedNow = valueOf("waypoint_seq");
-    const refusedNow = valueOf("waypoint_refused_seq");
-    if (savedNow !== null && savedNow !== saved) {
-      const first = saved === null;
-      saved = savedNow;
-      if (!first) {
-        showToast(`Waypoint ${Math.round(savedNow)} saved.`, "good");
-      }
+    const foldedSave = foldAnnouncement(saved, valueOf("waypoint_seq"));
+    saved = foldedSave.state;
+    if (foldedSave.announce) {
+      showToast(`Waypoint ${Math.round(Number(saved.value))} saved.`, "good");
     }
-    if (refusedNow !== null && refusedNow !== refused) {
-      const first = refused === null;
-      refused = refusedNow;
+    const foldedRefusal = foldAnnouncement(refused, valueOf("waypoint_refused_seq"));
+    refused = foldedRefusal.state;
+    if (foldedRefusal.announce) {
       const why = valueOf("waypoint_refusal");
-      if (!first) {
-        showToast(WAYPOINT_REFUSAL_TEXT[why ?? 0] ?? "Waypoint not saved.", "bad");
-      }
+      showToast(WAYPOINT_REFUSAL_TEXT[why ?? 0] ?? "Waypoint not saved.", "bad");
     }
   });
 }

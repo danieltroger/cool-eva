@@ -28,19 +28,18 @@ interface FanCycleContext {
   automatic: FanAutomatic;
   revertBeatMs: number;
   /**
-   * Whether THIS gesture is what stopped the fan, and so whether movement should undo it.
+   * The *off* watchdog, running only while THIS gesture is what stopped the fan.
    *
-   * ⚠️ Load-bearing, and not the same question as "is the fan off". A rider who stops the
-   * fan with the slider has said something deliberate that survives until the bike is
-   * switched off — the fan's manual mode has always meant that — and riding away must not
-   * quietly overrule it. Only the duty this file commanded is taken back.
+   * ⚠️ Its existence IS the state, which is why there is no second flag beside it. A
+   * rider who stops the fan with the slider has said something deliberate that survives
+   * until the bike is switched off — manual mode has always meant that — and riding away
+   * must not quietly overrule it, so no timer is armed for that.
    *
-   * ⚠️ It is also not merely a restatement of "the timer is running". clearInterval()
-   * cannot recall a callback that has already been queued, so a beat can land AFTER
-   * disarmRevert() — during the await in stepTheFan(), say — and undo the hold the rider
-   * just made. This flag is what that beat reads.
+   * ⚠️ Read again INSIDE the beat, not only at arming time: clearInterval() cannot recall
+   * a callback that has already been queued, so a beat can land after disarmRevert() —
+   * during the await in stepTheFan(), say — and would otherwise undo the hold the rider
+   * has just made.
    */
-  revertWhenMoving: boolean;
   timer: ReturnType<typeof setInterval> | null;
 }
 
@@ -54,7 +53,6 @@ export function startFanCycleGesture(
   const context: FanCycleContext = {
     automatic,
     revertBeatMs: options.revertBeatMs ?? AUTO_TICK_MS,
-    revertWhenMoving: false,
     timer: null,
   };
   return {
@@ -92,9 +90,12 @@ async function stepTheFan(context: FanCycleContext): Promise<GestureOutcome> {
     return { ok: outcome.ok, message: `fan to manual ${MAX_DUTY_PERCENT} % — ${outcome.message}` };
   }
   const outcome = await context.automatic.commandManualDuty(0);
-  if (outcome.ok) {
-    armRevert(context);
-  }
+  // ⚠️ Armed whatever the command SAID. ./control.ts's goIdle() sets the target to 0 and
+  // drops the output before a failing sysfs write can throw, so a refusal can still leave
+  // the fan stopped — and that is exactly the state that must not follow the rider onto a
+  // road. Arming is free when it is wrong: checkForMovement() disarms itself the moment
+  // the fan is not in the state this commanded.
+  armRevert(context);
   return { ok: outcome.ok, message: `fan off while the bike is stopped — ${outcome.message}` };
 }
 
@@ -111,12 +112,10 @@ function armRevert(context: FanCycleContext): void {
   if (context.timer !== null) {
     return;
   }
-  context.revertWhenMoving = true;
   context.timer = setInterval(() => void checkForMovement(context), context.revertBeatMs);
 }
 
 function disarmRevert(context: FanCycleContext): void {
-  context.revertWhenMoving = false;
   if (context.timer !== null) {
     clearInterval(context.timer);
     context.timer = null;
@@ -137,7 +136,9 @@ function disarmRevert(context: FanCycleContext): void {
  */
 async function checkForMovement(context: FanCycleContext): Promise<void> {
   try {
-    if (!context.revertWhenMoving) {
+    if (context.timer === null) {
+      // A beat queued before disarmRevert() cleared the timer. What it was armed for is
+      // gone, so acting on it now would undo whatever replaced it.
       return;
     }
     const state = context.automatic.state();

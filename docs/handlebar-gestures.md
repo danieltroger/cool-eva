@@ -57,7 +57,9 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — 268 captur
 
 Presses are paired per file and then **deduped by absolute press instant**, because two `candump` instances recorded some of the same seconds — the artefact `src/can/decode.ts` warns about, which turns one hold into hundreds of 10 ms toggles if the files are concatenated first. It caught two duplicated ENTER presses across two files.
 
-⚠️ The dedupe assumes the wall clock is right on both sides of a duplicated pair. The archive contains at least one capture whose clock is wrong by decades (`capture-20600808-220833-0887e861.log`, epochs in 2060 — issue #59's corrupt hub frame) and which steps mid-file. It moved none of the numbers above, both of which were reproduced independently by a second parser, but a method recorded without its failure mode is a method that gets reused where it does not hold.
+⚠️ **Two independent parsers do not agree on the counts to better than ~6 %.** A second implementation, written from this description without seeing the first, got 150 ENTER presses to 160, 775 cancel presses to 779, and 15.68 M frames of `0x102` to 15.99 M. Every _derived_ figure matched exactly — the same longest ENTER press at 0.290 s, the same three cancel presses over 1000 ms, the same five presses above 3 km/h, the hazard timings to the microsecond. The gap is edge pairing at file boundaries and dedupe tolerance (10 ms here, 50 ms there), and it is recorded because a method that promises reproducibility should say how reproducible it actually was.
+
+⚠️ The dedupe assumes the wall clock is right on both sides of a duplicated pair. The archive contains at least one capture whose clock is wrong by decades (`capture-20600808-220833-0887e861.log`, epochs in 2060 — issue #59's corrupt hub frame) and which steps mid-file. It moved none of the numbers above, but a method recorded without its failure mode is a method that gets reused where it does not hold.
 
 ## Why 1000 ms on the cancel switch and 1200 ms on ENTER
 
@@ -65,9 +67,11 @@ Different buttons, different things the bike does with a long press.
 
 **ENTER: 1200 ms** clears the longest ENTER press ever recorded by **4.1×** and every one of the 160 by at least 910 ms.
 
-**Indicator-cancel: 1000 ms**, because **holding that switch turns the HAZARD LIGHTS on** (below). It clears the longest _ordinary_ press of that switch — **0.330 s**, over 775 of the 779 — by 3.0×, and fires a full second before the earliest hazard activation ever observed.
+**Indicator-cancel: 1000 ms**, because **holding that switch turns the HAZARD LIGHTS on** (below). It clears the longest press of that switch outside one afternoon's experiment — **0.330 s** — by 3.0×, and fires a full second before the earliest hazard activation ever observed.
 
-The other four presses of that switch are all inside **one 36-second window**, on 2026-08-03 between 18:51:02 and 18:51:38, with the bike stationary: 0.409, 0.940, 1.320, 4.331 and 5.771 seconds. That is not five ordinary presses; it is somebody deliberately holding the button to find out what it does, and the trace below is what they found. Read without that exclusion the margin against the 0.940 s press is 60 ms, which is the honest worst case and the reason the hold is not trimmed any further.
+The experiment is a **single minute** — 18:51 on 2026-08-03, bike stationary — and it holds **9** of the 779 presses: 0.159, 0.210, 0.249, 0.250, 0.409, 0.940, 1.320, 4.331 and 5.771 s. **The other 770 top out at 0.330 s and not one of them reaches 0.4 s.** That minute is not ordinary riding; it is somebody deliberately holding the button to find out what it does, and the trace below is what they found — two hazard activations and two cancellations, inside the same minute.
+
+⚠️ Read without that exclusion the nearest press is 0.940 s and the margin is 60 ms; count the 0.409 s one as ordinary and it is 2.4×. Both are stated rather than buried, because the exclusion is the load-bearing step in the argument for 1000 ms and it should be attacked rather than assumed. It is the reason the hold is not trimmed any further.
 
 Replaying the whole archive through the shipped recogniser fires the fan gesture **0 times** and the waypoint gesture **3 times** — the 1.320 s, 4.331 s and 5.771 s presses from that one afternoon, sixteen days before the gesture existed.
 

@@ -602,12 +602,10 @@ async function shutdown(): Promise<void> {
   // unrecoverable; a fan left spinning has the config.txt `gpio=` lines and a five-second
   // `Restart=on-failure` behind it.
   await closeEncryptedLog();
-  // ⚠️ The curve stops FIRST. A tick landing after the bridge has been idled would
-  // re-command a duty into a process that is about to exit, and the enables would then
-  // be left HIGH for the five seconds until systemd restarts it.
-  // ⚠️ BEFORE the fan loop, for the reason the fan loop stops before the controller: a
-  // hold landing after the bridge has been idled would re-command a fan whose process is
-  // about to end, and the enables would be left HIGH until systemd restarts it.
+  // ⚠️ Everything that can command the fan stops BEFORE the bridge is idled — the
+  // gestures, then the curve. A hold or a tick landing after the bridge has been idled
+  // would re-command a duty into a process that is about to exit, and the enables would
+  // then be left HIGH for the five seconds until systemd restarts it.
   handlebarGestures.stop();
   fanCycle?.stop();
   waypointFixes.stop();
