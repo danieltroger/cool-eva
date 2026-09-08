@@ -318,6 +318,13 @@ export const SIGNALS: SignalDef[] = [
   { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
   { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true },
   { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true },
+  // The automatic charge-current controller (src/charge/auto.ts, src/charge/auto-curve.ts).
+  // `charge_auto_reason` is the CHARGE_AUTO_REASON enum, so a ride log says not just what it
+  // commanded but why — a stop that ends at the floor and one that never had a usable rate look
+  // identical in the amps alone.
+  { key: "charge_auto_mode", unit: "", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_auto_reason", unit: "", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_auto_target_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
   { key: "charge_manager_error_src", unit: "", group: "charge", source: "stream" }, // 0x610 b1 ✅
   { key: "charge_manager_error_code", unit: "", group: "charge", source: "stream" }, // 0x610 b2-3 ✅
   { key: "fast_dc_target_v", unit: "V", group: "charge", source: "stream" }, // 0x615 b0-1 ✅

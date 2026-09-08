@@ -28,6 +28,8 @@ import {
   selectParameterTable,
 } from "./vcu/param-table.ts";
 import { handleFanEndpoint } from "./http/fan.ts";
+import { handleChargeAutoEndpoint } from "./http/charge-auto.ts";
+import { startChargeAutomatic } from "./charge/auto.ts";
 import { defineSignals, record } from "./can/signals.ts";
 import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
@@ -74,6 +76,7 @@ const UPDATE_DIR = process.env.UPDATE_DIR ?? ROOT;
 //   VCU_PARAM_DIR=… → where service mode leaves its parameter snapshots
 //   SERVICE_MODE_ENABLED=0 → no parameter read from the dashboard; the snapshot is still served
 //   SERVICE_WRITE_ENABLED=1 → ⚠️ OPT IN, the other one. The dashboard may CHANGE the bike; see below.
+//   CHARGE_AUTO_ENABLED=0 → never command a DC charge current automatically (docs/charge-auto.md)
 const CAN_ENABLED = process.env.CAN_ENABLED !== "0";
 const OBD_ENABLED = process.env.OBD_ENABLED !== "0";
 const ELOCK_ENABLED = process.env.ELOCK_ENABLED !== "0";
@@ -92,6 +95,11 @@ const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
 // write stays refused until a sweep has read both TABLE_TYPE copies, which on this
 // bike it never has. README, "Changing something on the bike".
 const SERVICE_WRITE_ENABLED = process.env.SERVICE_WRITE_ENABLED === "1";
+// ⚠️ DEFAULT ON, unlike the two above — `!== "0"`, the same shape as CAN_ENABLED. The controller
+// only ever LOWERS the charge current, the rider overrides it on the bike's own dial, and it is
+// inert anyway unless SERVICE_WRITE_ENABLED is also 1, since it transmits through that door. This
+// is the kill switch a phone toggle cannot reach. docs/charge-auto.md.
+const CHARGE_AUTO_ENABLED = process.env.CHARGE_AUTO_ENABLED !== "0";
 
 // --- Which commit this is, said out loud before anything else ---
 // A feature that silently does nothing and a feature deployed five days ago look identical
@@ -428,6 +436,10 @@ const server = createServer(async (req, res) => {
   // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
   // bike's bus. Routed only when FAN_ENABLED=1, so a Pi with no fan 404s here instead of
   // offering a control that could never work.
+  if (url.pathname === "/charge-auto") {
+    await handleChargeAutoEndpoint(req, res, url, chargeAutomatic);
+    return;
+  }
   if (fanController.configured && url.pathname === "/fan") {
     await handleFanEndpoint(req, res, url, { controller: fanController, automatic: fanAutomatic });
     return;
@@ -507,6 +519,26 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`HTTP + WebSocket server on http://0.0.0.0:${PORT}`);
 });
 
+// --- Automatic DC charge current (docs/charge-auto.md) ---
+// ⚠️ It commands through the write runner's own `charge-current` action, so it inherits every lock
+// that door has — and is INERT unless SERVICE_WRITE_ENABLED is also 1. One transmit path.
+const chargeAutomatic = startChargeAutomatic(
+  {
+    commandChargeCurrent: async amps => {
+      const answer = await vcuWriteRunner.perform({ kind: "charge-current", amps });
+      return answer.ok
+        ? { succeeded: answer.result.succeeded, message: answer.result.message }
+        : { succeeded: false, message: answer.reason };
+    },
+  },
+  { enabled: CHARGE_AUTO_ENABLED }
+);
+console.log(
+  CHARGE_AUTO_ENABLED
+    ? "charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)"
+    : "charge-auto: disabled by CHARGE_AUTO_ENABLED=0"
+);
+
 // --- Graceful shutdown ---
 let shuttingDown = false;
 async function shutdown(): Promise<void> {
@@ -543,6 +575,7 @@ async function shutdown(): Promise<void> {
   // re-command a duty into a process that is about to exit, and the enables would then
   // be left HIGH for the five seconds until systemd restarts it.
   fanAutomatic.stop();
+  chargeAutomatic.stop();
   // Awaited, and before the process goes: this is the only output this service drives.
   // Deploy is `git pull` + `systemctl restart`, so leaving a fan spinning behind a dead
   // process is a routine path rather than a rare one. A SIGKILL skips this — but the unit

@@ -13,6 +13,7 @@ import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { ChargeCurrentControl } from "./charge-current.js";
 import { ChargeStopControl } from "./charge-stop.js";
+import { ChargeAutoControl } from "./charge-auto.js";
 import {
   CELL_COUNT,
   CELL_VOLTAGE_PATTERN,
@@ -64,6 +65,7 @@ export function ChargeView() {
     // Renders nothing unless this Pi has writes enabled and a charge is live — on an ordinary
     // phone both are invisible and Charge stays read-only. See ./charge-current.js and
     // ./charge-stop.js; both share the session/status machinery in ../lib/charge-write.js.
+    ChargeAutoControl(),
     ChargeCurrentControl(),
     ChargeStopControl(),
     SectionLabel("Pack"),

@@ -112,6 +112,14 @@ const BY_KEY = {
   "charge_cmd_a": [0, 127],
   "charge_cmd_ack": [0, 6],
   "charge_cmd_ack_ms": [0, 60000],
+  // The automatic controller. ⚠️ Named for the same reason as the ack codes above: blank unit in a
+  // non-BOOLEAN_GROUP group is the combination that falls through every rule. The reason bound is
+  // the size of CHARGE_AUTO_REASON, tight because the codes are ours — scripts/check-charge-auto.ts
+  // §7 asserts every one of them fits, since a code outside it renders as a dead sensor and the
+  // page silently holds the previous reason.
+  "charge_auto_mode": [0, 1],
+  "charge_auto_reason": [0, 11],
+  "charge_auto_target_a": [0, 127],
   // The charge manager's flags and raw state bytes (src/can/charge-manager.ts), added
   // 2026-08-19. Every one of them needs naming here for the same reason
   // `fast_dc_contactor` above does: a blank unit in the `charge` group — which cannot

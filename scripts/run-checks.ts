@@ -67,6 +67,21 @@ const CHECKS: SelfCheck[] = [
       "through its window, that the ride-log codes are distinct, and that nothing in the adjudicator reads pack_a",
   },
   {
+    script: "scripts/check-charge-auto.ts",
+    covers:
+      "the automatic DC charge-current controller: that all nine fail-safe branches hold and NONE of them " +
+      "commands a current, so an unknown always leaves the bike charging as it does today; that the rate estimator " +
+      "bounds a flat pack rather than calling it unknown (the case that would ratchet a stable charge to the floor " +
+      "because it is stable), reads unknown on too little history, recovers a known slope and is not driven by the " +
+      "1-3 min hottest-cell saw-tooth; that across the three real stops of 2026-09-07 under four different coolings " +
+      "the controller never peaks above the do-nothing baseline and never causes a crossing, at a bounded time cost; " +
+      "that DC2 finishes at least five minutes sooner and under the cliff, which neither a controller stuck at the " +
+      "ceiling nor one stuck at the floor can do — without which the whole check passes on a controller that does " +
+      "nothing; that the floor stays above the measured break-even where capping becomes slower than not acting; " +
+      "and that no branch is dead, the constants stay coupled, and the dashboard's hand-copied reason wording has " +
+      "not drifted from the enum",
+  },
+  {
     script: "scripts/check-charge-command.ts",
     covers:
       "the charge-current transmitter against the dash's OWN frames, captured off the bus during a real DC fast " +
