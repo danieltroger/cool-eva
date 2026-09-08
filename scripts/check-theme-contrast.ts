@@ -18,10 +18,10 @@ import { readFile } from "fs/promises";
 //     the same brown, and a ramp whose steps cannot be told apart carries no state.
 
 /** Every ink colors.js exports or draws with, and the ground each one lands on. */
-const INK_TOKENS = ["fg", "label", "sub", "calm", "good", "watch", "warn", "bad", "cold", "cool", "muted"];
+const INK_TOKENS = ["fg", "label", "sub", "good", "watch", "warn", "bad", "cold", "cool"];
 
 /** Marks sized by visibility rather than readability — see the note in svg.js. */
-const MARK_TOKENS = ["track", "tick", "centre-line"];
+const MARK_TOKENS = ["track", "centre-line"];
 
 /**
  * The floors style.css declares. Values clear 11:1 and everything else 6:1; the dark
@@ -81,7 +81,7 @@ for (const [themeName, palette] of palettes) {
   for (const ground of ["bg", "tile"] as const) {
     for (const token of INK_TOKENS) {
       const measured = contrast(palette[token], palette[ground]);
-      const floor = token === "fg" || token === "calm" ? VALUE_FLOOR : TEXT_FLOOR;
+      const floor = token === "fg" ? VALUE_FLOOR : TEXT_FLOOR;
       const label = `${themeName}:${token} on ${ground}`;
       if (measured < floor && !EXEMPT.has(label)) {
         failures.push(`${label} measures ${measured.toFixed(2)}:1, under the ${floor}:1 floor style.css declares`);
@@ -166,7 +166,9 @@ function lab(hex: string): [number, number, number] {
     return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
   });
   const x = (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047;
-  const y = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  // The same quantity contrast() measures, so it is taken from there rather than
+  // written a second time — two copies of the sRGB coefficients can drift apart.
+  const y = luminance(hex);
   const z = (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883;
   const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
   return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];

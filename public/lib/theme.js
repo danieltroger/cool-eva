@@ -9,12 +9,10 @@ import { ageOf, chartTick, valueOf } from "./store.js";
 // The values of both palettes, and the contrast measurements behind them, are in
 // style.css; docs/dashboard-decisions.md has why the light ramp is shaped as it is.
 //
-// ⚠️ This is the ONLY resolver. style.css deliberately has no `prefers-color-scheme`
-// media query, because a media query would be a second answer to the same question and
-// the two would disagree the moment the bike says one thing and the phone says another.
+// ⚠️ This is the ONLY resolver; style.css deliberately has no `prefers-color-scheme`
+// media query, and the note there says why.
 
 /** @typedef {"auto" | "light" | "dark"} ThemePreference */
-/** @typedef {"light" | "dark"} Theme */
 
 const STORAGE_KEY = "coolEva.theme";
 
@@ -44,7 +42,7 @@ const prefersLight = van.state(matchMediaLight()?.matches === true);
  * The fall-through is the whole design: an explicit choice is never overruled by the
  * bus; otherwise the bike while it is talking; otherwise the phone.
  */
-export const activeTheme = van.derive(() => {
+const activeTheme = van.derive(() => {
   const preference = themePreference.val;
   if (preference !== "auto") {
     return preference;
@@ -98,17 +96,20 @@ export function startTheming() {
   van.derive(() => {
     const theme = activeTheme.val;
     document.documentElement.dataset.theme = theme;
-    // The browser chrome around the page, which is not styled by our CSS. Both pages
-    // carry the tag; whichever one is loaded, this keeps its bar matching the screen.
-    for (const tag of document.querySelectorAll('meta[name="theme-color"]')) {
-      tag.setAttribute("content", theme === "light" ? "#ffffff" : "#0f172a");
-    }
+    // The browser chrome around the page, which our CSS does not reach. ⚠️ Only
+    // index.html: params.html loads params-page.js alone, never app.js, so it keeps the
+    // dark defaults — which is fine, it is the page you read beside a parked bike.
+    const ground = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", ground);
   });
 }
 
 /**
- * `matchMedia` guarded, because it is absent in some embedded webviews and a throw
- * here would take the whole dashboard down over a colour.
+ * Guarded because `window` is absent under Node, not because `matchMedia` is: it has
+ * shipped in every mobile browser for a decade, and claiming otherwise would be the one
+ * unmeasured assertion in this file. Several checks import modules out of public/
+ * (bounds.js into check-button-decode.ts), so a module-scope throw here would be a
+ * build failure rather than a missing colour.
  * @returns {MediaQueryList | null}
  */
 function matchMediaLight() {

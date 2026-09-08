@@ -99,13 +99,13 @@ On the single continuous **5 h 32 min daytime ride of 2026-08-08** (11:22:29 →
 
 Archive-wide: 94 transitions, median run 130.1 s dark / 190.3 s light, shortest 13.2 s.
 
-(Medians are the standard mid-point of an even-sized sample. An earlier draft quoted 138 s and 132 s, which are the upper of the two middle values — the same runs, a different convention, and worth naming because the numbers appear in `docs/dashboard-decisions.md` too.)
+(Medians are the standard mid-point of an even-sized sample; an earlier draft quoted the upper of the two middle values, 138 s and 132 s.)
 
 ## 5. What is still open
 
 1. **Whether `0x80` means the dash's SCREEN is in day mode.** Nobody has photographed the dash beside a capture. What is measured is that the bit tracks ambient light at the bike.
 2. **Polarity is inferred**, from §4.3's garage exits — strong, but an inference about which way the sensor reads rather than an observation of the screen.
-3. **Whether the bit is the dash's filtered mode or the raw sensor.** The owner's report is that the dash _"doesn't really strobe that much"_, which §4.4 says the bit does — so the dash is filtering more than this bit is, and the bit is more likely the raw sensor. That also means **the phone flips more often than the bike's own screen does**, which is understood and was the owner's explicit choice (`public/lib/theme.js` has no hysteresis).
+3. **Whether the bit is the dash's filtered mode or the raw sensor.** The owner's report is that the dash _"doesn't really strobe that much"_, which §4.4 says the bit does — so the dash is filtering more than this bit is, and the bit is more likely the raw sensor.
 
 ⚠️ These three are why the key keeps the vendor's name and this document exists. If a photograph of the dash beside a capture ever settles (1) and (3), that is the measurement to add here — and if it settles them the other way, `dash_day_mode` should be renamed `dash_light_sensor` and this file should say why.
 

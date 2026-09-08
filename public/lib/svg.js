@@ -126,7 +126,7 @@ export function meter({ fraction, color, height = 10, marker = null }) {
   ];
   if (marker != null) {
     const x = (Math.max(0, Math.min(1, marker)) * width).toFixed(2);
-    children.push(svgTags.rect({ x, y: -1, width: 1, height: height + 2, style: "fill:var(--tick)" }));
+    children.push(svgTags.rect({ x, y: -1, width: 1, height: height + 2, style: `fill:${CALM}` }));
   }
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
 }

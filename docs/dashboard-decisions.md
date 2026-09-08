@@ -578,7 +578,7 @@ So the tile counts down against the TRUE temperature (`batt_temp_hi`, sourced fr
 
 The dark screen washes out in direct sun. `lib/theme.js` resolves one of two palettes and stamps it on `<html>` as `data-theme`; `style.css` carries both under the same token names.
 
-**The bike chooses it.** `0x400` b5 bit 7 is the dashboard's own day/night flag (`docs/can-0x400-day-night.md`), and the phone follows it directly, with **no hysteresis** — the owner's explicit call: _"it doesn't really strobe that much on the bike, I think it's cooler if they switch in tandem."_ That is worth knowing rather than discovering: the bit changed **55 times on one 5 h 32 min ride**, median run 136.6 s, shortest 32.9 s, so the phone flips more often than the bike's own dash appears to. No smoothing layer was needed to build this and none should be added without asking him — `signals.ts` is log-on-change, so a patch only goes out when the bit actually flips and the repaint lands on that frame.
+**The bike chooses it.** `0x400` b5 bit 7 is the dashboard's own day/night flag (`docs/can-0x400-day-night.md`), and the phone follows it directly, with **no hysteresis** — the owner's explicit call: _"it doesn't really strobe that much on the bike, I think it's cooler if they switch in tandem."_ That is worth knowing rather than discovering: the bit changed **55 times on one 5 h 32 min ride**, so the phone flips more often than the bike's own dash appears to — §4.4 there has the run-length distribution. No smoothing layer was needed to build this and none should be added without asking him — `signals.ts` is log-on-change, so a patch only goes out when the bit actually flips and the repaint lands on that frame.
 
 **The fall-through is the design:** an explicit choice from the menu sheet is never overruled by the bus; otherwise the bike while it is talking; otherwise the phone's own `prefers-color-scheme`. The middle branch is gated on the reading's own age (`ageOf`, 10 s) rather than on `isStale()`, because `isStale` folds in link liveness and would repaint the whole screen over a twelve-second socket blip. `0x400` is 100 Hz, so that window is unreachable while the bus is live and cannot delay a flip; it only decides when a sleeping bike hands the question back to the phone.
 
@@ -606,7 +606,7 @@ That last row is deliberate rather than an oversight, and it is the same propert
 
 The light palette _beats_ the dark one on contrast and loses more than half the hue separation. For a theme whose whole purpose is direct sun — where glare degrades hue discrimination anyway and luminance is the binding constraint — that is the right side of the trade, but it is a real cost and `scripts/check-theme-contrast.ts` pins both ends of it so the next person can argue with it instead of rediscovering it.
 
-**No transition on the flip, and that is measured rather than taste.** A 150 ms cross-fade on `background-color` alone leaves the ink already switched over a ground that has not: for the whole fade the page is `#0f172a` on `#0f172a`, i.e. blank. Fixing that means transitioning `color` too, which would also ramp a tile going GOOD → WARN — and colour here is the channel that carries state _without being read_. A snap is the only option that is legible at every instant.
+**No transition on the flip, and that is measured rather than taste** — a cross-fade on the ground alone leaves the ink already switched over it, i.e. blank for the whole fade. `style.css` carries the argument at the point where someone would add one back.
 
 ## The toast banner — `lib/toast.js`
 

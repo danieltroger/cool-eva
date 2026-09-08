@@ -154,21 +154,12 @@ export function isStale(key, maxAgeMs) {
 }
 
 /**
- * How long ago a signal was last refreshed, on the server's clock, sampled rather
- * than subscribed. `Infinity` if it has never arrived.
+ * How long ago a signal was last refreshed, on the server's clock, sampled rather than
+ * subscribed. `Infinity` if it has never arrived.
  *
- * ⚠️ Deliberately NOT isStale(): that folds `linkIsLive` into freshness, which is right
- * for a tile presenting a number and wrong for theme.js, whose question is "is the BIKE
- * still saying this" and which must not repaint the whole screen over a socket blip.
- * Both halves of that distinction matter — see the note on isStaleWith() below.
- *
- * Infinity rather than leaning on `NaN < x` being false: a comparison that works by
- * accident is one refactor away from working differently.
- *
- * A caller wanting this to change over time has to be paced by something else —
- * chartTick, as tiles.js does for its fault notice — because sampling subscribes to
- * nothing. That is the point: serverTime moves on every message, including 20 Hz
- * patches, and subscribing to it here would pace the caller at the WebSocket's rate.
+ * ⚠️ Deliberately NOT isStale(), which folds `linkIsLive` into freshness: this answers
+ * "is the BIKE still saying this", not "is the page current". docs/dashboard-decisions.md
+ * §"Light and dark" has the four states that distinction produces.
  * @param {string} key
  * @returns {number}
  */

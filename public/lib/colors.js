@@ -12,7 +12,7 @@
    these are read once, when an element is CREATED (svg.js), and a binding that never
    re-runs would otherwise keep its old ink for as long as the element lives.
    The values, and the contrast ratio behind each, are in style.css's palette blocks. */
-export const CALM = "var(--calm)";
+export const CALM = "var(--fg)";
 export const GOOD = "var(--good)";
 export const WATCH = "var(--watch)";
 export const WARN = "var(--warn)";
@@ -20,7 +20,7 @@ export const BAD = "var(--bad)";
 export const COLD = "var(--cold)";
 /* 6.1:1 against the tiles dark, 6.9:1 light — matches --sub in both. Anything dimmer
    is unreadable in daylight; see the palette note in style.css before changing it. */
-export const MUTED = "var(--muted)";
+export const MUTED = "var(--sub)";
 
 /**
  * @param {number | null} celsius
