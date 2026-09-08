@@ -38,8 +38,9 @@ import { startMultiFrameTransfer, type RunningMultiFrameTransfer, type TransferS
 // ⚠️ It SENDS FLOW-CONTROL FRAMES, and the property that mattered is preserved rather than
 // spent: **no transmit address is ever derived from something the bus said.**
 //
-// ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN, which kills every
-// other raw-CAN socket on the Pi including the running cool-eva service's. This client only
+// ⚠️ IT DOES NOT CONFIGURE can0. `bringUpCan` takes the interface DOWN whenever the link
+// is not already configured the way it wants it, which kills every other raw-CAN socket on
+// the Pi including the running cool-eva service's. This client only
 // ever opens a channel on an interface that is already up, so it cannot rescue a listen-only
 // bus — which is why ./read-runner.ts refuses to start a sweep when OBD_ENABLED=0.
 //

@@ -22,9 +22,9 @@ import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 //  • **Stop the service first**: `sudo systemctl stop cool-eva`. It holds its own socket
 //    on can0, and two testers on one bus is how you get a reply matched to the wrong
 //    request — these micros answer on ONE id with no request tag.
-//  • **It does NOT bring up can0**, deliberately: `bringUpCan` takes the interface DOWN
-//    first, killing every other socket on it. Bring it up yourself, ACTIVE (not
-//    listen-only), or nothing transmits — the three commands are in the doc below.
+//  • **It does NOT bring up can0**, deliberately: `bringUpCan` may take the interface
+//    DOWN, killing every other socket on it. Usually you need to type nothing — but read
+//    the link first: docs/can-capture.md §"Reading the link by hand" (ACTIVE is an ABSENCE).
 //  • **Park the bike.** No service gate on this script, so that judgement is yours.
 //  • **Run it detached** over ssh; a link drop has already cost a whole result set.
 //    docs/diagnostics-and-checks.md §13.

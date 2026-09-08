@@ -29,7 +29,8 @@ import type { ServiceGateVerdict } from "./service-gate.ts";
 //
 // ⚠️ It does not configure can0 and does not own the socket. The channel is the service's,
 // already up and already started. Nothing here calls `bringUpCan` (which takes the
-// interface DOWN and would kill every other raw-CAN socket on the Pi), and nothing here
+// interface DOWN unless it is already configured, and would kill every other raw-CAN
+// socket on the Pi), and nothing here
 // calls `channel.start()` or `channel.stop()`. Frames are handed in by the caller rather
 // than subscribed to, so this module owns no listener to leak either.
 //

@@ -51,6 +51,16 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-can-bringup.ts",
+    covers:
+      "when the service may leave can0 alone at startup and when it must bounce it: that a link already UP at " +
+      "500000 with restart-ms 100 and the wanted listen-only mode is skipped, that a wrong bitrate, a wrong " +
+      "restart-ms, either listen-only polarity, BUS-OFF, STOPPED and SLEEPING all still bounce, that a running " +
+      "controller in ERROR-WARNING or ERROR-PASSIVE is skipped (a parked bike reaches those, and a bounce fixes " +
+      "neither), that output this repo cannot parse is never mistaken for a healthy link, and that the ip argv " +
+      "and the skip's expectations come from the same two constants",
+  },
+  {
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
