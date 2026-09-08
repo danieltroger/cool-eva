@@ -172,7 +172,7 @@ export function startFanAutomatic(controller: FanController, options: FanAutomat
   publishMode(context);
   console.log(
     `fan: automatic on ${tickMs} ms ticks — batt_temp_hi drives the curve, speed_can_kmh gates it, ` +
-      `charge_manager_state 0x${CHARGE_MANAGER_STATE_DC.toString(16)} switches to the DC curve`
+      `charge_manager_state 0x${CHARGE_MANAGER_STATE_DC.toString(16)} pins it at 100 % for the whole session`
   );
 
   return {

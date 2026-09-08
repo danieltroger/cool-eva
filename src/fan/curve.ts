@@ -8,10 +8,11 @@ import { MIN_RUNNING_DUTY_PERCENT } from "./control.ts";
 // 90 km/h and a temperature sensor dying, none of which can be staged in a garage.
 // ./auto.ts is the half that reads the bus and drives the bridge.
 //
-// Every number here — the two curves, the hysteresis pairs, the 60 s grace — is
-// argued in docs/fan-control.md §"The automatic curve". Read that before changing one.
+// Every number here — the curve, the hysteresis pairs, the 60 s grace — is argued in
+// docs/fan-control.md §"The automatic curve". Read that before changing one.
 // ⚠️ Argued, not measured: none of them has been checked against what this radiator
-// actually needs, and both tables there carry the marker saying so.
+// actually needs, and both tables there carry the marker saying so. A DC session is the
+// one case with no number to argue about: it is 100 % from end to end.
 
 /** ⚠️ 0x610 b7 = 0x23 is a DC session. NOT `charge_type`, which flaps 1↔0 mid-session. */
 export const CHARGE_MANAGER_STATE_DC = 0x23;
@@ -27,7 +28,7 @@ export const CHARGE_MANAGER_STATE_DC = 0x23;
 export const PACK_TEMPERATURE_MIN_C = -30;
 export const PACK_TEMPERATURE_MAX_C = 90;
 
-/** Warm enough to start the fan. The foot of both curves, so 35 °C maps to the floor. */
+/** Warm enough to start the fan. The foot of the curve, so 35 °C maps to the floor. */
 export const FAN_ON_TEMPERATURE_C = 35;
 
 /**
@@ -37,11 +38,8 @@ export const FAN_ON_TEMPERATURE_C = 35;
  */
 export const FAN_OFF_TEMPERATURE_C = 33;
 
-/** Where the riding / parked / AC curve reaches 100 %. */
+/** Where the riding / parked / AC curve reaches 100 %. A DC session is 100 % throughout. */
 export const RIDING_CURVE_TOP_C = 48;
-
-/** Where the DC curve reaches 100 %. Higher because a DC session runs hotter for longer. */
-export const DC_CURVE_TOP_C = 54;
 
 /** Below this the fan may start: above it the airstream through the duct does the work. */
 export const SPEED_GATE_ON_KMH = 90;
@@ -75,7 +73,12 @@ export const TEMPERATURE_FRESH_MS = 5_000;
  */
 export const TEMPERATURE_GRACE_MS = 60_000;
 
-/** Which rule set the duty. Published as `fan_auto_reason` so the dashboard can say why. */
+/**
+ * Which rule set the duty — or, when there is a temperature fault, the fault, which names
+ * itself even where the DC rule set the duty. Published as `fan_auto_reason` so the
+ * dashboard can say why. ⚠️ Codes 6 and 7 were the DC floor and the DC ramp; they are
+ * retired rather than reused, and docs/fan-control.md §6 is where their words went.
+ */
 export const FAN_REASON = {
   /** Automatic is not driving: the duty on the bridge came from the slider. */
   MANUAL: 0,
@@ -89,10 +92,8 @@ export const FAN_REASON = {
   ROAD_SPEED: 4,
   /** On the riding / parked / AC curve. */
   PACK_TEMPERATURE: 5,
-  /** DC session, pack at or under the curve's foot — the floor a DC session always gets. */
-  DC_FLOOR: 6,
-  /** DC session, on the 35 → 54 °C curve. */
-  DC_TEMPERATURE: 7,
+  /** DC session: 100 %, for the whole of it, whatever the pack temperature. */
+  DC_SESSION: 8,
 } as const;
 
 export type FanReason = (typeof FAN_REASON)[keyof typeof FAN_REASON];
@@ -130,7 +131,7 @@ export interface FanCurveDecision {
   dutyPercent: number;
   reason: FanReason;
   temperatureInput: FanTemperatureInput;
-  /** The temperature this decision was made on, or null when there was none to use. */
+  /** The temperature that was in hand when it was made, or null when there was none. */
   temperatureC: number | null;
 }
 
@@ -138,36 +139,43 @@ export interface FanCurveDecision {
  * The whole automatic policy: what the fan should be doing, and why.
  *
  * ⚠️ The one thing this must never do is answer 0 because a sensor went quiet. A dead
- * `batt_temp_hi` reads exactly like a cold pack, so the grace expiring is a floor plus a
- * fault, never an off — docs/fan-control.md §"When the temperature goes away".
+ * `batt_temp_hi` reads exactly like a cold pack, so the grace expiring is a duty plus a
+ * fault, never an off — the 30 % floor, or 100 % if a DC session is what is setting the
+ * duty. docs/fan-control.md §"When the temperature goes away".
  */
 export function fanCurveDecision(inputs: FanCurveInputs): FanCurveDecision {
   const charging = inputs.chargeManagerState === CHARGE_MANAGER_STATE_DC;
   const temperature = usableTemperature(inputs);
+  const input = temperatureInputOf(inputs, temperature);
+  // The age alone, because usableTemperature() gives up on ANY reading past the grace
+  // before it looks at whether the number is plausible — so there is no reachable state
+  // where the grace has run out and a temperature survives it.
+  const faulted = inputs.temperatureAgeMs > TEMPERATURE_GRACE_MS;
+
+  // ⚠️ The DUTY here answers to nothing — not the pack, not the speed gate, not a dead
+  // sensor — but the REASON still lets the fault name itself. A DC session that swallowed
+  // it would hide a broken batt_temp_hi until the next ride, at 48 °C, with no fan.
+  if (charging) {
+    return {
+      dutyPercent: 100,
+      reason: faulted ? FAN_REASON.TEMPERATURE_FAULT : FAN_REASON.DC_SESSION,
+      temperatureInput: input,
+      temperatureC: temperature,
+    };
+  }
 
   if (temperature === null) {
-    if (inputs.temperatureAgeMs > TEMPERATURE_GRACE_MS) {
+    if (faulted) {
       return floor(FAN_REASON.TEMPERATURE_FAULT, FAN_TEMPERATURE_INPUT.NONE);
     }
     // Nothing has arrived yet and the grace has not run out — the first seconds after a
-    // restart. A DC session still gets its floor: that rule does not consult the pack.
-    return charging
-      ? floor(FAN_REASON.DC_FLOOR, FAN_TEMPERATURE_INPUT.NONE)
-      : {
-          dutyPercent: 0,
-          reason: FAN_REASON.NO_READING_YET,
-          temperatureInput: FAN_TEMPERATURE_INPUT.NONE,
-          temperatureC: null,
-        };
-  }
-
-  const input =
-    inputs.temperatureAgeMs > TEMPERATURE_FRESH_MS ? FAN_TEMPERATURE_INPUT.HELD : FAN_TEMPERATURE_INPUT.LIVE;
-
-  if (charging) {
-    const dutyPercent = rampDuty(temperature, FAN_ON_TEMPERATURE_C, DC_CURVE_TOP_C);
-    const reason = dutyPercent > MIN_RUNNING_DUTY_PERCENT ? FAN_REASON.DC_TEMPERATURE : FAN_REASON.DC_FLOOR;
-    return { dutyPercent, reason, temperatureInput: input, temperatureC: temperature };
+    // restart, when a restart is not yet evidence of a dead sensor.
+    return {
+      dutyPercent: 0,
+      reason: FAN_REASON.NO_READING_YET,
+      temperatureInput: FAN_TEMPERATURE_INPUT.NONE,
+      temperatureC: null,
+    };
   }
 
   if (!belowSpeedGate(inputs.speedKmh, inputs.previouslyRunning)) {
@@ -197,10 +205,10 @@ export function isPackTemperaturePlausible(celsius: number | null): celsius is n
 /**
  * The straight line from the floor at `footC` to 100 % at `topC`, clamped at both ends.
  *
- * Exported because it is the arithmetic both curves are, and the two are the same shape
- * with a different top — 48 °C riding, 54 °C on DC.
+ * The riding / parked / AC curve is the only thing shaped like this now: a DC session is
+ * a flat 100 % and consults no temperature at all.
  */
-export function rampDuty(temperatureC: number, footC: number, topC: number): number {
+function rampDuty(temperatureC: number, footC: number, topC: number): number {
   if (temperatureC >= topC) {
     return 100;
   }
@@ -210,6 +218,14 @@ export function rampDuty(temperatureC: number, footC: number, topC: number): num
   const span = (temperatureC - footC) / (topC - footC);
   const duty = MIN_RUNNING_DUTY_PERCENT + span * (100 - MIN_RUNNING_DUTY_PERCENT);
   return Math.round(duty);
+}
+
+/** Whether `temperature` is a live reading, one held from before, or nothing at all. */
+function temperatureInputOf(inputs: FanCurveInputs, temperature: number | null): FanTemperatureInput {
+  if (temperature === null) {
+    return FAN_TEMPERATURE_INPUT.NONE;
+  }
+  return inputs.temperatureAgeMs > TEMPERATURE_FRESH_MS ? FAN_TEMPERATURE_INPUT.HELD : FAN_TEMPERATURE_INPUT.LIVE;
 }
 
 /** The temperature to steer by, or null when there is none inside the grace. */

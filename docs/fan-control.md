@@ -115,22 +115,24 @@ A command below 30 % stops the fan — enables LOW — rather than commanding a 
 
 Measure the rail at the IBT-2's 12 V terminal under load, then set the cap to `12 / measured × 100`. Until that measurement exists, guessing a number would be worse than the honest 100 — it would look like a decision.
 
-### The automatic curve
+### The automatic curve, and the DC rule beside it
 
-Two straight lines, both leaving the 30 % floor at 35 °C and differing only in where they reach 100 %. `batt_temp_hi` is the input to both; `src/fan/curve.ts` is the arithmetic and it is pure, so `scripts/check-fan-curve.ts` replays every point of it with no bike.
+One straight line, from the 30 % floor at 35 °C to 100 % at 48 °C, with `batt_temp_hi` as its input — and, on a DC session, no line at all. `src/fan/curve.ts` is the arithmetic and it is pure, so `scripts/check-fan-curve.ts` replays every point of it with no bike.
 
-⚠️ **Every temperature in the table below is a considered choice and none of them is a measurement.** 35, 48 and 54 have never been checked against how much air this radiator needs at a given pack temperature — §8 says so, and this is the table a reader takes the numbers from, so it says so here too. The datum that would settle them is one hot DC session logged with `FAN_ENABLED=1`. The same marker as §1's locked-rotor row, for the same reason.
+⚠️ **Both temperatures in the curve row below are a considered choice and neither is a measurement.** 35 and 48 have never been checked against how much air this radiator needs at a given pack temperature — §8 says so, and this is the table a reader takes the numbers from, so it says so here too. The datum that would settle them is one hot DC session logged with `FAN_ENABLED=1`. The same marker as §1's locked-rotor row, for the same reason. The DC row is the one line here with no number to argue about.
 
-| Condition | The fan runs when | 30 % at | 100 % at |
-| --- | --- | --- | --- |
-| **DC charging** — `charge_manager_state` = `0x23` | **always.** The floor is unconditional | ≤ 35 °C | 54 °C |
-| **Everything else** — riding, parked, **and AC charging** | `batt_temp_hi` > 35 °C **and** `speed_can_kmh` < 90 | 35 °C | 48 °C |
+| Condition | The fan runs when | Duty |
+| --- | --- | --- |
+| **DC charging** — `charge_manager_state` = `0x23` | **always** | **100 %**, start to finish |
+| **Everything else** — riding, parked, **and AC charging** | `batt_temp_hi` > 35 °C **and** `speed_can_kmh` < 90 | 30 % at 35 °C, rising to 100 % at 48 °C |
 
-So 48 °C is **100 % riding and 78 % on DC**: the second curve is not the first one extended, it is a shallower line to a higher top, and the check asserts the two disagree at that point on purpose.
+**A DC session runs the fan flat out, and that is a ruling rather than a curve.** It replaced a 30 % floor below 35 °C and a 35 → 54 °C ramp, on 2026-09-08. The evidence: on 2026-09-07 the fan was manually at 99–100 % for 61 % of the day and the pack still reached a true 55.0 °C at two DC stops — the clamp released, current collapsed to ~19.5 A, and it cost 42 minutes. Cooling here is radiator-limited, not curve-limited; there is no DC condition under which less than maximum airflow is wanted, and a stationary bike at a charger pays nothing for it — no range, no noise anybody is riding through. The rider who wants it quiet while eating has the slider, which still overrides.
 
-**AC charging takes the ordinary curve, and that is a choice rather than an oversight.** Our AC charge is a couple of kW into a ~21 kWh pack; a DC session is thirty times that and is the only case where the pack gets hot enough, fast enough, to want a curve that keeps climbing to 54 °C. The owner picked it. If an AC session is ever measured pushing the pack past 48 °C, this is the line to revisit.
+⚠️ **This retired the question in issue #124** — whether the old top of 54 °C was `LIMP_B_TEMP − 1` or a coincidence. `DC_CURVE_TOP_C` no longer exists, so there is nothing left to derive or to revisit.
 
-**The DC floor is unconditional and answers to nothing** — not the pack temperature, not the speed gate, not `batt_temp_hi` having gone missing. A DC session with a cold pack still gets 30 %, because the cheapest moment to move air through that radiator is before the pack needs it.
+**AC charging takes the ordinary curve, and that is a choice rather than an oversight.** Our AC charge is a couple of kW into a ~21 kWh pack; a DC session is thirty times that and is the only case where the pack gets hot enough, fast enough, to want more air than that curve gives. The owner picked it. If an AC session is ever measured pushing the pack past 48 °C, this is the line to revisit.
+
+**The DC rule is unconditional and answers to nothing** — not the pack temperature, not the speed gate, not `batt_temp_hi` having gone missing, and not the temperature fault. It does **not** swallow that fault, though: the duty is the rule's and the reason is still the fault's, so a dead sensor on a DC session runs at 100 % _and_ raises reason 2 exactly as it would anywhere else. Letting the rule name the reason too would hide a broken `batt_temp_hi` for the sessions where the pack matters most, and it would surface on the next ride, at 48 °C, with no fan.
 
 **Above 90 km/h the fan stops.** The airstream through the duct is already doing the work, and a fan motor driven backwards by ram air is not something to add current to. The gate is on speed alone: a hot pack at 120 km/h is a hot pack that is being cooled anyway.
 
@@ -160,7 +162,7 @@ Three signals, each one keystroke away from a near-miss that would be wrong only
 | --- | --- |
 | **`batt_temp_hi`** — the TRUE pack temperature whichever frame supplies it (`registry.ts:37`, `pack-temperature.ts`) | ⚠️ **not `batt_temp_hi_vcu`**, which carries the BMS config's offset. Under the 15-bounded clamp it reads 0 below 35 °C and (true − 35) from 35 to 54 — i.e. exactly the band this curve lives in, reported as something else |
 | **`speed_can_kmh`** — broadcast, `source: "stream"`, 0.5 km/h deadband | ⚠️ **not `speed_kmh`**, which is `source: "poll"` on the OBD group: it can be stale, and on a Pi with `OBD_ENABLED=0` it never arrives at all, which would open the gate permanently |
-| **`charge_manager_state`** (`0x610` b7) — `0x23` DC, `0x02` AC | ⚠️ **not `charge_type`** (`0x605` b2), which flaps 1↔0 _within one plug-in_ as the charger pauses delivery — fourteen times in one measured AC session, reading 0 for up to eight minutes at a stretch (`docs/charge-manager.md`). That exact behaviour already made the charge-current tile vanish mid-session. Keying the DC curve on it would drop the fan out of DC mode every time the charger paused |
+| **`charge_manager_state`** (`0x610` b7) — `0x23` DC, `0x02` AC | ⚠️ **not `charge_type`** (`0x605` b2), which flaps 1↔0 _within one plug-in_ as the charger pauses delivery — fourteen times in one measured AC session, reading 0 for up to eight minutes at a stretch (`docs/charge-manager.md`). That exact behaviour already made the charge-current tile vanish mid-session. Keying the DC rule on it would drop the fan out of DC mode every time the charger paused |
 
 `speed_can_kmh` reads about 3.5 % high against GPS, and that is left alone: it makes the gate fire at a true ~87 km/h, which is the safe side of the one it is protecting.
 
@@ -174,7 +176,7 @@ Three signals, each one keystroke away from a near-miss that would be wrong only
 | --- | --- |
 | under 5 s | follows the curve on it |
 | 5 s → 60 s | follows the curve on the **last in-bounds reading**, and says so on the dashboard |
-| over 60 s | runs at the **30 % floor** and raises a fault |
+| over 60 s | runs at the **30 % floor** and raises a fault — or at **100 %** and raises the same fault, if a DC session is what is setting the duty |
 
 ⚠️ **The third row is the whole point: it is a floor, never an off.** A dead sensor and a cold pack produce the identical observation — no temperature above 35 — and this fan has no tacho, no current sense and no way to be contradicted. "Off" on no evidence is the one answer that can cook a pack while the dashboard looks healthy. 30 % is quiet, costs almost nothing, and is wrong in the survivable direction.
 
@@ -182,7 +184,7 @@ Two consequences worth stating plainly:
 
 - **A bike whose BMS config never emits `batt_temp_hi` runs the fan at 30 % for ever**, one minute after boot. That is the same rule seen from its worst angle, and it is still the right answer: a floor is survivable and "off" on no evidence is not.
 
-  ⚠️ **The fault is _available_, not _shown_.** `fan_auto_reason` is rendered by `public/views/fan.js` and by nothing else, and that section lives behind the menu sheet — there is no fan tile on the main dashboard. So the rider who most needs to see it is the one with no reason to open the sheet, and from the outside a fan at 30 % on a warm day is indistinguishable from a fan at 30 % on the curve. An earlier draft of this section argued for the floor _because_ the fault is on screen; that was doing work the dashboard does not currently do. Surfacing reason 2 on the main view the way a sensor fault is surfaced would make the argument true as written, and is a change to make deliberately rather than a claim this page gets to make today.
+  ⚠️ **The fault is _available_, not _shown_.** `fan_auto_reason` is rendered by `public/views/fan.js` and by nothing else, and that section lives behind the menu sheet — there is no fan tile on the main dashboard. So the rider who most needs to see it is the one with no reason to open the sheet, and from the outside a fan at 30 % on a warm day is indistinguishable from a fan at 30 % on the curve. ⚠️ **The DC rule makes that worse, not better**: a dead sensor on a DC session runs at 100 %, which is indistinguishable from a healthy DC session at 100 % — on a pack that is being charged. The reason code is still the fault's (§"The automatic curve"), so the ride log and the sheet both carry it; what nobody gets is a glance that shows it. A `journalctl` line on entering the fault was considered when the DC rule landed and deliberately deferred: the non-DC fault has none either, and giving one to a single path would make the two unlike for no reason a reader could reconstruct. Do both or neither. An earlier draft of this section argued for the floor _because_ the fault is on screen; that was doing work the dashboard does not currently do. Surfacing reason 2 on the main view the way a sensor fault is surfaced would make the argument true as written, and is a change to make deliberately rather than a claim this page gets to make today.
 
 - Before the _first_ reading has ever arrived the fan waits rather than running — reason `NO_READING_YET` — because a restart is not a dead sensor. That grace is the same 60 s, so a Pi that never hears from the BMS still ends at the floor.
 
@@ -480,12 +482,25 @@ Eight signals reach the dashboard and the ride log. Every one is what the Pi **c
 | `fan_target_pct` | what was **asked** for. It differs from the above only during a kick, which is exactly how the dashboard tells "kicking" from "settled" without a second round trip |
 | `fan_driver_enabled` | 1 = both IBT-2 enables HIGH. 0 = standby, every FET off |
 | `fan_auto_mode` | `FAN_MODE_CODE` in `src/fan/auto.ts` — 0 manual, 1 automatic, **2 fun**. 0 and 1 keep the meaning every row already in a ride log has |
-| `fan_auto_reason` | which rule set the duty — the `FAN_REASON` enum in `src/fan/curve.ts` |
+| `fan_auto_reason` | which rule set the duty — the `FAN_REASON` enum in `src/fan/curve.ts`. ⚠️ Or the **fault**, where there is one: on a DC session with no usable `batt_temp_hi` the DC rule sets the duty and reason 2 still names itself. The fault outranks the rule in the reason and never in the duty |
 | `fan_temp_input` | whether the temperature under that decision was live, held, or absent — `FAN_TEMPERATURE_INPUT` |
 | `fan_fun_available` | 1 while the gate is satisfied. This is what the sheet shows and hides the Fun button on |
 | `fan_fun_gate` | which condition failed — the `FUN_GATE` enum in `src/fan/fun.ts`, so "why did the button not appear" is answerable from the ride log rather than from a guess |
 
 The last four are **codes, not text**, because a signal is a number; the sentences live in `public/lib/fan-display.js` and `scripts/check-fan-curve.ts` and `scripts/check-fan-fun.ts` assert that every code has both a sentence there and a bound in `public/lib/bounds.js`. Adding a reason without doing either goes red rather than rendering a bare integer or being drawn as a dead sensor.
+
+#### Retired reason codes
+
+A code is the wire format, so a retired one is never reused — a ride log written last month has to keep meaning what it meant. `public/lib/fan-display.js` carries sentences only for codes the Pi can still emit, so an archived row carrying one of these renders as _"Reason code 6, which this page has no words for."_ **This table is where those words went.**
+
+| Code | What it meant | Emitted until |
+| --- | --- | --- |
+| `6` `DC_FLOOR` | DC session, pack at or under the 35 °C foot — the 30 % floor every session got, whatever the temperature and the speed said | 2026-09-08 |
+| `7` `DC_TEMPERATURE` | DC session, climbing the 35 → 54 °C ramp from that floor to 100 % | 2026-09-08 |
+
+Both were replaced by `8` `DC_SESSION`, a flat 100 % — §4 "The automatic curve, and the DC rule beside it" has the argument.
+
+⚠️ **`2` `TEMPERATURE_FAULT` kept its name and its meaning and changed its duty.** The condition behind it is unchanged — no usable `batt_temp_hi` for 60 s — so a query for reason 2 returns the same _situations_ before and after. What widened is the duty beside them: every row written before 2026-09-08 is the 30 % floor, and after it a row is the 30 % floor off a DC session and **100 %** on one. `fan_duty_pct` is the column that separates them, and it is `onDemand` log-on-change, so the nearest one may be some way back.
 
 ⚠️ Widening `fan_auto_mode`'s bound to `[0, 2]` was **not** bookkeeping. At `[0, 1]` the new code 2 is rejected as a sentinel, `public/lib/store.js` keeps the previous value, and the sheet reads "Manual" over a fan taking its orders from a throttle.
 
@@ -505,7 +520,7 @@ A healthy start logs:
 ```
 fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
 fan: duty control ready — 30…100 %, 1500 ms kick-start from rest, POST /fan?duty=N
-fan: automatic on 2000 ms ticks — batt_temp_hi drives the curve, speed_can_kmh gates it, charge_manager_state 0x23 switches to the DC curve
+fan: automatic on 2000 ms ticks — batt_temp_hi drives the curve, speed_can_kmh gates it, charge_manager_state 0x23 pins it at 100 % for the whole session
 ```
 
 Without the variable it logs one line and does nothing else:
@@ -524,7 +539,7 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
   - **a fuse that _does_ clear is equally invisible.** The Pi goes on writing duty cycles into a dead circuit and the dashboard goes on rendering "Running at 60 %", because that is what was commanded. Nothing here can tell a spinning fan from an open fuse — which is why the fuse argument in §4 could never have been self-checking even if the numbers had held.
 - **Fun mode has never run on the bike.** The gate, the mapping and the drop-out are asserted against the capture archive and against a recording `FanPwm`; no session has driven the real bridge. §4 "What is not verified" lists what that leaves open.
 - **Manual mode has no shutoff.** In automatic the curve takes the fan back down on its own; a duty set from the slider runs until you set another, until the mode goes back to automatic, or until the service restarts — and a restart is a return to automatic, since the mode is not persisted. A `SIGTERM` (`systemctl restart`, the dashboard's Update button) stops the loop and then idles the bridge, in that order, so a tick cannot re-command a process that is leaving. A `SIGKILL` skips both — but the unit is `Restart=on-failure` with `RestartSec=5` (`scripts/setup-service.ts`), so the process is back about **five seconds** later and `openFanPwm()` drops both enables as its first statement. The `config.txt` `gpio=` lines are the backstop for the case where it does not come back at all.
-- **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, 54, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. What exists is the arithmetic, checked; what does not exist is a ride or a DC session logged against it. The first hot DC charge with `FAN_ENABLED=1` is the datum to go and get.
+- **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. (A DC session no longer has a number: it is 100 % throughout.) What exists is the arithmetic, checked; what does not exist is a ride or a DC session logged against it. The first hot DC charge with `FAN_ENABLED=1` is the datum to go and get.
 - **A pack whose `batt_temp_hi` never arrives runs the fan at 30 % for ever** in automatic, one minute after boot, with the fault visible only inside the menu sheet and nowhere on the main dashboard. §4 "When the temperature goes away" argues why the floor is the right answer and not a bug, and says plainly what the fault does and does not reach.
 - **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4.
 - **The udev race** described in §5 is unhandled.

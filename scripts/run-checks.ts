@@ -154,12 +154,15 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-fan-curve.ts",
     covers:
       "the automatic cooling-fan curve, which is pure so that three things nobody can stage in a garage are one " +
-      "function call: both curves' endpoints and midpoints (48 °C is 100 % riding and 78 % on DC, so the two are " +
-      "provably not one line), the 30 % floor every DC session gets whatever the pack temperature and the road " +
-      "speed say, the speed gate and BOTH hysteresis pairs asserted at the same input in both directions, and the " +
-      "three staleness tiers — live, held for 60 s, then the floor plus a fault, because a dead batt_temp_hi reads " +
-      "exactly like a cold pack and this fan has no tacho to contradict it. Plus the near-misses each signal has: " +
-      "that charge_type's DC value 2 does not select the DC curve, that an absent or impossible speed opens the " +
+      "function call: the riding curve's endpoints and midpoints, the DC rule's flat 100 % asserted at the two " +
+      "temperatures the retired ramp answered 65 and 30 at, so a resurrected curve cannot pass, and asserted to " +
+      "answer to neither gate nor the hysteresis, the speed gate and BOTH hysteresis pairs asserted at the same " +
+      "input in both directions, and the three staleness tiers — live, held for 60 s, then the floor plus a fault, " +
+      "because a dead batt_temp_hi reads exactly like a cold pack and this fan has no tacho to contradict it. And " +
+      "that the DC rule does NOT swallow that fault: four ways of losing the temperature mid-session each give " +
+      "100 % AND reason 2, the code the dashboard paints red, since a rule that named itself there would hide a " +
+      "broken sensor until the next ride. Plus the near-misses each signal has: " +
+      "that charge_type's DC value 2 does not select the DC rule, that an absent or impossible speed opens the " +
       "gate rather than holding the fan off over a hot pack, that the Pi's own bounds on batt_temp_hi are the " +
       "dashboard's, that every reason code has both a bound and a sentence, and that no slider stop lands in the " +
       "dead band under the floor. Every threshold is pinned to a LITERAL — an assertion phrased in the constant it " +
