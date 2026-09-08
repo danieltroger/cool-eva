@@ -61,6 +61,17 @@ const CHECKS: SelfCheck[] = [
       "and the skip's expectations come from the same two constants",
   },
   {
+    script: "scripts/check-can-capture.ts",
+    covers:
+      "the raw-CAN-capture unit and shell script, which ran untracked on one SD card until 2026-09 and produce " +
+      "every .log this project's decode findings rest on: that candump keeps -D (without it a cool-eva restart " +
+      "ends the capture and opens a new file, which is issue #160), that its stderr stays folded into the file " +
+      "because -D removes the file boundary that used to mark a gap, that the output still goes to $OUTPUT under " +
+      "a directory that is not tmpfs, that the name still derives from boot_id, that the wait for can0 still " +
+      "precedes the exec, that the unit runs the tracked script through /bin/sh, that no StartLimit* key sits in " +
+      "[Service] where systemd ignores it, and that the script parses as POSIX sh",
+  },
+  {
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",

@@ -1,6 +1,7 @@
 import { execFileSync, execSync } from "child_process";
 import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths, foreignOwner } from "../src/http/update.ts";
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { CAN_CAPTURE_SERVICE, CAN_CAPTURE_UNIT_PATH, canCaptureUnitText } from "./can-capture/unit.ts";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -102,6 +103,8 @@ execSync("systemctl daemon-reload");
 execSync(`systemctl enable ${SERVICE_NAME}`);
 execSync(`systemctl restart ${SERVICE_NAME}`);
 
+installCanCaptureUnit();
+
 console.log("Service installed, enabled at boot, and started.");
 console.log("");
 console.log(`  sudo systemctl status ${SERVICE_NAME}   — check status`);
@@ -116,6 +119,50 @@ warnIfNoRideLogKey();
 // this exists for, and a garage Pi usually fails the network check below.
 await warnIfGitIsWronglyOwned();
 warnIfRemoteUnreadable();
+
+/**
+ * Install the raw-CAN-capture unit alongside the telemetry one.
+ *
+ * ⚠️ It does NOT restart a capture that is already running. Restarting is the one thing
+ * that punches the hole this unit exists to avoid (issue #160), and an install is exactly
+ * when someone is least likely to want it — so a running instance keeps the old script
+ * until the operator picks a quiet moment. The line printed below says so.
+ *
+ * The existing unit is backed up rather than overwritten: until this PR it was untracked,
+ * one file on one SD card, so the copy being replaced may be the only one in existence.
+ */
+function installCanCaptureUnit(): void {
+  if (existsSync(CAN_CAPTURE_UNIT_PATH)) {
+    const backup = `${CAN_CAPTURE_UNIT_PATH}.superseded`;
+    copyFileSync(CAN_CAPTURE_UNIT_PATH, backup);
+    console.log(`Backed up the existing capture unit to ${backup}`);
+  }
+  writeFileSync(CAN_CAPTURE_UNIT_PATH, canCaptureUnitText(projectDir));
+  execSync("systemctl daemon-reload");
+  execSync(`systemctl enable ${CAN_CAPTURE_SERVICE}`);
+  console.log(`Wrote ${CAN_CAPTURE_UNIT_PATH} (raw CAN capture -> /home/pi/ride-captures)`);
+  if (isActive(CAN_CAPTURE_SERVICE)) {
+    console.log(`  ${CAN_CAPTURE_SERVICE} is already running and was NOT restarted — it keeps the old script until`);
+    console.log(`  you restart it, which costs one capture gap: sudo systemctl restart ${CAN_CAPTURE_SERVICE}`);
+    return;
+  }
+  execSync(`systemctl start ${CAN_CAPTURE_SERVICE}`);
+  console.log(`  ${CAN_CAPTURE_SERVICE} started.`);
+}
+
+/** Whether systemd considers a unit active. A non-zero exit is the documented "no". */
+function isActive(unit: string): boolean {
+  try {
+    execSync(`systemctl is-active --quiet ${unit}`);
+    return true;
+  } catch (error) {
+    // `is-active` exits non-zero for inactive, failed and not-installed alike, which are
+    // all "do not skip the start". Logged rather than swallowed, since a systemctl that
+    // cannot run at all would otherwise look identical to a stopped unit.
+    console.log(`  (${unit} is not active: ${(error as Error).message.split("\n")[0]})`);
+    return false;
+  }
+}
 
 /**
  * Refuse to install a unit that cannot start. Without this the only symptom is

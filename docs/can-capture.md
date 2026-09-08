@@ -36,13 +36,19 @@ So the down/up is not defensive habit. What makes skipping it safe is narrower t
 | `restart_ms` = 100 | ditto; at 0 there is no automatic bus-off recovery, so it is not "already configured" |
 | `LISTEN-ONLY` present **iff** listen-only was asked for | the sticky flag, proven present or absent, never assumed |
 
+⚠️ **A cold boot never takes the skip, and that is correct.** `can0` is unconfigured then — no bitrate, no `restart_ms` — so the first condition to fail is the bitrate and the service bounces the link exactly as it always did. On this bike every boot is a cold boot, because the Pi loses power with the ignition. **The skip therefore only ever fires on a service restart onto a bus that is already up**, which is precisely the deploy case issue #160 was opened about, and nothing is lost at boot because `can-capture.service` is ordered `After=cool-eva.service` and has not bound its socket yet.
+
 Anything else takes the original path, unchanged. Both branches log: the skip line names every field that was read, the bounce line names only the conditions that failed, so one line explains the verdict either way.
 
 ### Which states skip, and the one that is nearly dead
 
 ⚠️ **`ERROR-ACTIVE` is the HEALTHY state.** It means the controller is still entitled to send active error frames (`linux/can/netlink.h`: `CAN_STATE_ERROR_ACTIVE = 0, /* RX/TX error count < 96 */`). An earlier draft of this change was specified as "skip unless BUS-OFF or `ERROR-*`", which would have excluded the only state a working bus is ever in and made the feature a no-op that logs. Anyone tightening these conditions should start here.
 
-`ERROR-WARNING` (counters ≥ 96) and `ERROR-PASSIVE` (≥ 128) also skip. They are bus **conditions**, not configuration: the counters decrement again on good traffic, `ERROR-PASSIVE` costs 16 µs of suspend-transmission per frame at 500 kbit and self-heals, and a down/up does not fix what causes them — nothing on the bus is ACKing. Bouncing there would kill the capture to achieve nothing. This matters practically: a parked bike whose poller has been transmitting into a sleeping bus can climb into one of these, and a garage deploy is the commonest deploy there is.
+`ERROR-WARNING` (counters ≥ 96) and `ERROR-PASSIVE` (≥ 128) also skip. They are bus **conditions**, not configuration: the counters decrement again on good traffic, `ERROR-PASSIVE` costs 16 µs of suspend-transmission per frame at 500 kbit and self-heals, and a down/up does not fix what causes them — nothing on the bus is ACKing. Bouncing there would kill the capture to achieve nothing.
+
+✅ **This is the condition the whole change turns on, and it is now measured.** The gather of 2026-09-08 — bus awake, four minutes after a cold boot — reads **`state: ERROR-WARNING`** with `berr_counter {tx: 0, rx: 1}`. An ordinary working bus on this bike is not `ERROR-ACTIVE`. So the version of this feature that was originally specified, skipping only on `ERROR-ACTIVE`, would have refused every time and been a no-op that logs. The captured body is committed in `scripts/check-can-bringup.ts` and both polarities are asserted against it.
+
+⚠️ An earlier draft justified the widening with "a parked bike whose poller has been transmitting into a sleeping bus can climb into one of these". **That example is wrong on this bike** and is corrected rather than deleted, because it is the reasoning someone would otherwise re-derive: the Pi is powered by the bike and loses power at key-off, so it is not running to see a parked bus at all. A deploy happens with the bike awake, or on an AC charge. The justification stands on the measured awake reading instead.
 
 ⚠️ **The `BUS-OFF` branch is near-unreachable, and is not a safety net.** `can_bus_off()` (`drivers/net/can/dev/dev.c`) schedules an automatic restart after `restart_ms`, and the Korlan's `usb_8dev` driver provides `do_set_mode` (`drivers/net/can/usb/usb_8dev.c`), so with `restart-ms 100` the kernel is already resetting the controller within 100 ms and `ip` will rarely catch the device in that state at all. It refuses the skip because refusing is conservative, not because it rescues anything.
 
@@ -77,11 +83,42 @@ sudo ip link set can0 down && sudo systemctl restart cool-eva
 
 The dashboard's **CAN bus restart** button is unchanged and still there (`src/http/can-restart.ts` → `restartCanLink()`, which never downs the link).
 
+## The capture unit itself
+
+`can-capture.service` runs `capture.sh`, which `exec`s one long-lived `candump -D -tA can0` per boot into `/home/pi/ride-captures/capture-<date>-<boot_id8>.log`. Both files are tracked under `scripts/can-capture/` and installed by `scripts/setup-service.ts`.
+
+⚠️ **Until 2026-09 neither was in this repo.** They existed as one copy on one SD card, with no revert path and no review, while producing the corpus that essentially every decode finding in `docs/` rests on. That is the finding, and it is why they are here now.
+
+**`-D` is the whole behavioural change.** `Don't exit if a "detected" can device goes down`: candump keeps the socket, keeps the open file, and keeps writing. The kernel half is `raw_notify()` in `net/can/raw.c` — `NETDEV_DOWN` sets `sk_err = ENETDOWN` and does nothing else, leaving the socket bound with its filters registered, so frames resume by themselves and there is no `NETDEV_UP` case to need. Only `NETDEV_UNREGISTER` (the adapter unplugged) unbinds and reports `ENODEV`, which still exits and still gets a restart — that failure should be loud. `raw_bind()` on a device that is merely down reports `ENETDOWN` the same way, so `-D` also survives _starting_ before `can0` exists; the script's 120×2 s wait loop is still needed for the device to appear at all, and the two overlap without either being redundant.
+
+### ⚠️ `-D` invalidates a forensic rule that is written down elsewhere
+
+`docs/charge-manager.md` §E2 dates a DC-charge fault partly on this reasoning:
+
+> a reader that died would normally not resume inside the same file, which argues for the first
+
+That was true **only because candump exited**. From this change onward a reader that "dies" on an interface bounce _does_ resume inside the same file, so the rule separates nothing.
+
+**The cutover is this commit.** For captures written before it the rule still holds and E2's reading is unaffected; for captures written after it, a gap inside one file no longer implies the bus went quiet. What replaces the rule is the in-band marker below.
+
+### Why `2>&1` stays, and must
+
+The script folds candump's stderr into the capture file. That is inherited behaviour, and with `-D` it becomes load-bearing: the file boundary that used to mark a gap is gone, so candump's own `can0: interface down` line is the **only** evidence inside the file that one happened — and the file is what gets archived to the laptop, while the journal stays on an SD card that gets reflashed. Removing it would make post-`-D` captures silently gappy, which is worse than what came before. `scripts/replay-capture.ts` skips any line that is not a frame, so it costs nothing to read.
+
+### The unit is left almost exactly as it was found
+
+Only `ExecStart` changes, to run the tracked script through `/bin/sh` (so a lost exec bit cannot fail the unit at boot with `203/EXEC`). `Restart=on-failure`, `RestartSec=5`, `User=root` and the `cool-eva` ordering are what has been running and are deliberately untouched.
+
+⚠️ **If a `StartLimit*` key is ever added here, it belongs in `[Unit]`.** `StartLimitIntervalSec=` and `StartLimitBurst=` have only ever been `[Unit]` keys; in `[Service]` systemd ignores them with one journal line nobody reads, so a rate limit believed to be disabled is still in force. There is none today and `scripts/check-can-capture.ts` keeps it that way. An earlier draft of this change set `RestartSec=1` and disabled the limit to save ~12 s a day at the 8 h rotation; that was dropped, because it also removes the only brake on a fast-fail loop writing empty files into the corpus directory.
+
 ## The residual hole
 
 - **A deploy onto a link that already matches: no hole at all.** No down, no `candump` restart, no file boundary.
 - **A genuine reconfigure** — cold boot, stuck listen-only, wrong bitrate, `BUS-OFF` — really does take the interface down, and **nothing can capture through that**. That is physics, not a bug. What it costs is the interface's actual down-time plus whatever the capture side needs to notice.
 - **An unreadable `ip`** costs exactly today's behaviour plus one `console.warn`. The skip fails safe, never silent.
+- **The 8 h rotation** still opens a new file and still costs `RestartSec=5`, three times a day. Unchanged, and deliberately so.
+- **`-D` makes a wedged-down interface quiet.** Before it, an interface left down produced a visible 5 s restart loop; now it produces one stderr line and silence. `can_link` on the dashboard (`src/can/link-status.ts`, polled every 15 s) is the instrument that replaces the noise.
+- **A candump killed by hand exits 0**, so `Restart=on-failure` leaves the unit `inactive (dead)` rather than restarting it, and nothing on the dashboard says so — `can_link` reports the _interface_, not the capture. Pre-existing, but worth knowing now that this unit is deliberately quieter.
 
 ⚠️ **The biggest remaining hole is not an accident, it is a scheduled one — and it lands on the scarcest data in the project.** `scripts/capture-charge-stop.ts` and `scripts/probe-charge-command.ts` call `bringUpCan("can0", false)`; the service leaves the bus ACTIVE, so the listen-only condition **always** fails and those runs **always** bounce, then the service restart afterwards bounces back. Two guaranteed holes and two file boundaries per run of the script whose entire job is investigating DC charge stops — the case named at the top of this file as the data this project has least of. Nothing in this half of the change can reach that: the interface genuinely has to be reconfigured. Only making the capture survive a bounce (`candump -D`, the other half) closes it.
 
@@ -97,9 +134,17 @@ The obvious deeper fix is to stop the service owning the interface: a `systemd-n
 
 ⚠️ **Until it runs, "no hole on a deploy" is a prediction with an argument behind it, not a measurement.** Three things are unverified as this ships, all on the same event — the bike being powered up again:
 
-1. **That `ip -details -json` is available and shaped as assumed on this Pi.** The fixtures in `scripts/check-can-bringup.ts` are **synthetic**, written from the iproute2 output format rather than captured, because the bike was off. If a field name is wrong the parser reads "unreadable", warns, and bounces — safe, but inert. The journal line says which.
-2. **Which controller state this bike sits in when parked.** If it is `ERROR-ACTIVE`/`WARNING`/`PASSIVE` the skip fires; the widened state set exists so that a parked bike is not excluded by construction, but that it is _needed_ is reasoning, not evidence.
-3. **Whether `ctrlmode_supported` is populated.** `usb_8dev` sets it including `LISTEN-ONLY`, and iproute2 prints it from inside the same `if (tb[IFLA_CAN_CTRLMODE])` block the kernel fills unconditionally, while `print_ctrlmode()` early-returns on zero flags. So a healthy ACTIVE link should show `ctrlmode_supported` **with no `ctrlmode`** — positive proof that this `ip` renders ctrlmode arrays at all, which does not depend on any flag being set. That is what turns the absence inference above into evidence, and why it is logged.
+✅ **Settled by the 2026-09-08 gather** (issue #160), which is committed as `CAPTURED_PI_LINK`:
+
+1. **`ip -details -json` works and every field name is right** — `linkinfo.info_kind`, `info_data.state`, `restart_ms`, `bittiming.bitrate`, top-level `flags`/`operstate`. The parser reads the real body and returns `skip=true`.
+2. **`ctrlmode` is absent while `ctrlmode_supported` is present** (`LOOPBACK`, `LISTEN-ONLY`, `ONE-SHOT`, `CC-LEN8-DLC`), which is the positive proof that this `ip` renders ctrlmode arrays at all — so the absence really does mean "no flags set". The riskiest inference in the design is evidence now, not argument.
+3. **The controller state is `ERROR-WARNING`**, which is what makes the widened state set load-bearing rather than defensive.
+
+⚠️ **Still open, and the PR says so:**
+
+- **The live journal line from the service itself.** Everything above is the parser agreeing with a captured string; it is not the service agreeing with its own bus. The run has _happened_ — the 2026-09-08 22:14 rollout restarted the service onto `caea7e7` with the bus awake and `can0` in `ERROR-WARNING`, so the decision executed for real exactly once — but the Pi was keyed off before the journal could be read, so the lines are sitting in its persistent journal under boot `e2609b98` awaiting a `journalctl -b -1`. **Until that paste lands this is UNOBSERVED**, and no claim here rests on it.
+- **What the bus reports during an AC charge.** This Pi loses power at key-off, so a quiet bus with the Pi up happens only while AC charging, and none was running. If a charging bus reports `BUS-OFF`, a deploy during an AC charge still bounces — one of the two cases issue #160 names as costing most. Nothing in the capture half depends on that answer, which is why `-D` is the more durable fix.
+- **The filename can carry a pre-GPS-lock time.** The gather was stamped 20:13 at an uptime of 249 s while journald put the boot at 16:35 — a ~3.6 h clock step mid-boot, which this Pi does because it has no RTC (`src/gps/clock.ts`). The name is chosen once at script start, so under `-D`'s single file per boot it is routinely stamped before the step. The `boot_id` suffix is what keeps it unambiguous — which is exactly what `capture-20600808-220827-0887e861.log`, sitting in that directory from the 2060 incident, exists to demonstrate.
 
 The expected line is:
 
