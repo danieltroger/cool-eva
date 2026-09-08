@@ -6,9 +6,11 @@ import van from "../vendor/van-1.6.1.js";
 //
 // Extracted from views/vcu-write.js so the charge tab's controls reuse the SAME dwell rather
 // than growing a second copy of it: one rule for every second tap that can reach the bus,
-// asserted in one place — scripts/check-arming.ts. ⚠️ Not every second tap on the dashboard:
-// views/service-mode.js still has an arm/fire of its own, with no dwell, in front of the
-// read-only parameter sweep. docs/dashboard-decisions.md §"The other `armed`".
+// asserted in one place — scripts/check-arming.ts. ⚠️ EVERY second tap on the dashboard
+// comes through here now: views/service-mode.js used to have an arm/fire of its own with
+// no dwell, in front of the read-only parameter sweep, and moved onto this gate when the
+// in-service lifetime read put a second control on that sheet. Why it was tolerated until
+// then, and what changed: docs/dashboard-decisions.md §"The other `armed`".
 //
 // ⚠️ `armed` is ONE key for the whole dashboard, and the surfaces are NOT mutually exclusive:
 // the charge tab shows set-current and stop side by side for the whole of a live charge. The

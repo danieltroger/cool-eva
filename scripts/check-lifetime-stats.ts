@@ -208,7 +208,7 @@ check((depthBefore & 0xff) === 59 && (depthAfter & 0xff) === 58, "x & 255 should
 check(((depthBefore >> 8) & 0xff) === 11 && ((depthAfter >> 8) & 0xff) === 100, "x >> 8 & 255 should read 11 then 100");
 console.log("  x & 255 → 59 then 58 (an average moving by one); x >> 8 & 255 → 11 then 100 (not an average)");
 
-// ── §5 The trailing key-cycle counter, and that it stays outside the fields ─
+// ── §5 The trailing cycle counter, and that it stays outside the fields ────
 console.log("\n── §5 the trailing byte ───────────────────────────────────────────");
 
 for (const [label, response, expected] of [
@@ -278,7 +278,7 @@ check(
 );
 check(
   reading.components.every(entry => entry.cyclesSinceStored === 5),
-  "both components should report five key cycles since the record was stored"
+  "both components should report five cycles since the record was stored"
 );
 
 // A sentinel-filled reply is shown as a fault, not clamped into something plausible.
@@ -471,7 +471,7 @@ if (failures.length > 0) {
 console.log(
   "\n✓ both dated readings decode field for field; TotalExchangedAh is refused rather than scaled and Energica's" +
     " ×0.1 is refuted by 7.4× against this pack's own logged current; the charge residue grew by one while 71" +
-    " classified; AvgDOD's two candidate readings are discriminated; the trailing key-cycle counter stays outside" +
+    " classified; AvgDOD's two candidate readings are discriminated; the trailing cycle counter stays outside" +
     " the fields; sentinels are shown as faults and a half reading is labelled"
 );
 

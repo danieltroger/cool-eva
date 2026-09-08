@@ -11,6 +11,7 @@ import { decodeMultiFrameReply, decodeStoredDtcList, toHex } from "../src/vcu/mu
 import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
 import { LIFETIME_COMPONENTS } from "../src/diagnostics/lifetime-stats.ts";
+import { readOneComponent } from "../src/vcu/lifetime-read.ts";
 import { HOW_TO_READ, writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
 
 // The first live test for the multi-frame KWP transport. **This is the only way to
@@ -147,20 +148,18 @@ async function runList(): Promise<void> {
 /**
  * `0x17` — one component's freeze frame, decoded through the tables from #62.
  *
- * Returns what it got in the store's own shape, so `--lifetime --save` writes the same
- * bytes this printed rather than reading the bike a second time to get them.
+ * ⚠️ The READ itself comes from src/vcu/lifetime-read.ts, which is also what the
+ * in-service path uses. Two implementations of one read would have to agree forever
+ * about what lands in one file, on a feature whose premise is that the stored reading is
+ * the interface. This function owns the printing and nothing else.
  */
 async function runFreezeFrame(component: number): Promise<StoredLifetimeReply> {
   console.log(`\n── 0x17 ReadDTCInformation on A8, component ${component} ──`);
-  const outcome = await client.multiFrameRead("A8", { kind: "read-freeze-frame", component });
+  const { reply, outcome } = await readOneComponent(client, component);
   if (!reportRaw(outcome, "0x17")) {
-    return { component, payloadHex: null, failure: outcome.status };
+    return reply;
   }
   const decoded = decodeFreezeFrameResponse(outcome.payload, component);
-  // ⚠️ The three non-frame outcomes still carry bytes, and those bytes are stored:
-  // a refusal or an answer to somebody else's question is evidence, and the store
-  // decodes what it is given rather than only what worked.
-  const reply: StoredLifetimeReply = { component, payloadHex: toHex(outcome.payload), failure: null };
   if (decoded.kind !== "frame") {
     console.log(`  ${decoded.kind}: ${"reason" in decoded ? decoded.reason : ""}`);
     console.log(`  raw: ${toHex(outcome.payload)}`);

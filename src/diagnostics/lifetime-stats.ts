@@ -51,12 +51,12 @@ export interface LifetimeComponentOutcome {
   kind: FreezeFrameResponse["kind"];
   obdCode: string | null;
   /**
-   * The trailing byte: key cycles since this record was stored, not times it happened.
+   * The trailing byte: cycles since this record was stored, not times it happened.
    *
-   * It advances by exactly one per power/ignition cycle with every other byte of the
-   * payload frozen. ⚠️ Not an OBD aging counter — those count fault-free cycles and
-   * reset on recurrence. Measured 2026-09-08 across five components over one VCU reset
-   * and one key-off/key-on; docs/diagnostics-and-checks.md.
+   * At most once per cycle, with every other byte of the payload frozen. ⚠️ The interval
+   * that measured it held both a VCU reset and a key-off/key-on and moved +1, not +2, so
+   * whether a reset alone counts is UNRESOLVED. Not an OBD aging counter either — those
+   * count fault-free cycles and reset on recurrence. docs/diagnostics-and-checks.md.
    */
   cyclesSinceStored: number | null;
   /** Everything the bike sent, so a bad read is still evidence. */

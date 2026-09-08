@@ -2,6 +2,7 @@ import { readFile, readdir } from "fs/promises";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
+import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
 import { IRREVERSIBLE, refreshVcuWrite } from "../public/views/vcu-write.js";
 import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.js";
 
@@ -47,6 +48,7 @@ const STAMP = 1_000_000;
 const EXPORTED_KEYS = new Map([
   ["public/views/charge-current.js", CHARGE_CURRENT_KEY],
   ["public/views/charge-stop.js", CHARGE_STOP_KEY],
+  ["public/views/lifetime-read.js", LIFETIME_READ_KEY],
 ]);
 
 // ⚠️ DISCOVERED, never listed. §7 reads the firing sites out of these files, and a list here
@@ -169,6 +171,14 @@ const ALL_KEYS = [
   // outside the fold, so IRREVERSIBLE does not name it.
   "action:read-service-stamp",
   ...IRREVERSIBLE.filter(entry => entry.action !== "sync-clock").map(entry => `action:${entry.action}`),
+  // ⚠️ The service sheet's two, which §5 could not see until they were added here — and
+  // they are the pair that most needs it: the lifetime read's button sits directly under
+  // the sweep's on one screen, which is exactly the co-visibility this section is about.
+  // Scraped the way vcu-write.js's are a few lines above, rather than imported: this
+  // file is a check OVER the shipped modules, not a consumer of them.
+  ...["public/views/service-mode.js", "public/views/lifetime-read.js"].flatMap(path =>
+    [...sourceOf(path).matchAll(/const \w+_KEY = "([^"]+)"/g)].map(match => match[1])
+  ),
 ];
 check(`no two of the ${ALL_KEYS.length} controls share a key`, new Set(ALL_KEYS).size === ALL_KEYS.length);
 check(
@@ -194,7 +204,7 @@ check(
 // --- 6. what disarms, run for real -------------------------------------------
 //
 // The refreshes are the disarm-on-change path that can be executed without a DOM, and they are
-// the load-bearing pair: all seven controls refresh BEFORE they arm, so a status that lands under
+// the load-bearing pair: all nine controls refresh BEFORE they arm, so a status that lands under
 // an already-armed button has to take the arming with it. Armed AFTER the call and before its
 // answer, which is the ordering that matters — a button armed against 75 must not fire against
 // the 80 the refresh brought with it.
@@ -232,7 +242,7 @@ try {
 // src/http/vcu-write.ts rather than trusting a sentence about it. An eighth firing site, or one
 // that drops a line of the rule, is what this section exists to make loud.
 
-console.log("\n7. the seven firing sites, and the rule each of them repeats");
+console.log("\n7. the nine firing sites, and the rule each of them repeats");
 
 const SITES = ARMING_CONSUMERS.flatMap(path => firingSites(path, sourceOf(path)));
 console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
@@ -243,6 +253,12 @@ console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
 const EXPECTED_SITES = [
   "charge-current.js → performChargeCurrent",
   "charge-stop.js → performChargeStop",
+  // Both arrived with the in-service lifetime read. `performSweep` is the OLDER control:
+  // it had two taps of its own with no dwell and no key-repeat refusal, and §3's scan
+  // used to be scoped away from this file for that reason. Importing arming.js for the
+  // lifetime read brought the sweep with it, which is the migration this check forced.
+  "lifetime-read.js → performLifetimeRead",
+  "service-mode.js → performSweep",
   "vcu-write.js → performAction",
   "vcu-write.js → performAction",
   "vcu-write.js → performAllLights",
@@ -324,10 +340,12 @@ check(
 // unskippable: a key set by hand carries whatever stamp the last arming left behind, so its
 // control fires on the very next tap. Every assignment outside arming.js has to be the empty one.
 //
-// ⚠️ Scoped to the modules that import the SHARED gate, and it has to be: public/views/
-// service-mode.js declares an `armed` of its own — a plain boolean with no dwell and no
-// key-repeat guard, in front of the parameter sweep — so an unscoped scan would be reading two
-// different states as one. That second arming surface is a finding, not this check's subject:
+// ⚠️ Scoped to the modules that import the SHARED gate — which is now all of them. It used to
+// exclude public/views/service-mode.js, which declared an `armed` of its own: a plain boolean
+// with no dwell and no key-repeat guard, in front of the parameter sweep. That second arming
+// surface was a recorded finding rather than this check's subject until the in-service lifetime
+// read needed a button on the same sheet; importing arming.js for it joined this file to
+// ARMING_CONSUMERS and made the sweep's own two taps this check's business.
 // docs/dashboard-decisions.md §"The other `armed`".
 
 const assignments: string[] = [];
@@ -441,7 +459,7 @@ if (failures > 0) {
 } else {
   console.log("✓ two taps 400 ms apart, the second ignored rather than disarmed inside the dwell, one key for the");
   console.log("  whole dashboard with no two controls sharing it, every refresh disarming what it lands under, and");
-  console.log("  all seven firing sites still spelling the same rule — on the injected clock and on the real one");
+  console.log("  all nine firing sites still spelling the same rule — on the injected clock and on the real one");
 }
 
 /**

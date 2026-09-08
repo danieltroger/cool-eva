@@ -3,6 +3,7 @@ import type { DecodedValue } from "./frame.ts";
 import { record } from "./signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { handleTroubleCodeFrame, requestTroubleCodeList } from "./obd-dtc.ts";
+import { parkedForHold } from "./obd-hold.ts";
 import { MODE_PENDING_DTCS, MODE_PERMANENT_DTCS, MODE_STORED_DTCS } from "../diagnostics/obd-dtc.ts";
 import { FREEZE_FRAME_DTC_KEY, recordFreezeFrameDtc, recordTroubleCodeRead } from "../diagnostics/stored-codes.ts";
 
@@ -170,6 +171,12 @@ async function pollOnce(): Promise<void> {
     if (def.everyNthRound && pollRound % def.everyNthRound !== 0) {
       continue;
     }
+    // Park point. Every requestPid above is awaited and single-frame, so stopping here
+    // leaves nothing of ours in flight — and it is what keeps the common-case wait at
+    // one PID timeout rather than a whole round.
+    if (parkedForHold()) {
+      return;
+    }
     const resp = await requestPid(def.pid);
     if (!resp) continue;
     const a = resp[3] ?? 0;
@@ -198,18 +205,35 @@ async function readTroubleCodeLists(): Promise<void> {
   if (!channel || pollRound % STORED_DTC_ROUND_DIVISOR !== 1) {
     return;
   }
+  if (parkedForHold()) {
+    return;
+  }
   recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_STORED_DTCS), "stored");
 
   storedDtcReads += 1;
   if (storedDtcReads % SILENT_MODE_READ_EVERY !== 1) {
     return;
   }
+  // Between the modes as well: each requestTroubleCodeList is awaited and obd-dtc.ts
+  // settles before resolving, so this is the point that keeps the worst case at one
+  // mode (3.98 s) rather than three (11.9 s).
+  if (parkedForHold()) {
+    return;
+  }
   recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_PENDING_DTCS), "pending");
+  if (parkedForHold()) {
+    return;
+  }
   recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_PERMANENT_DTCS), "permanent");
 }
 
 // Self-scheduling loop (avoids overlapping polls if a round runs long).
 // Returns a stop function.
+export { holdObdPoller, obdPollerHeldBy, type ObdPollerHold } from "./obd-hold.ts";
+
+/** How often a parked loop re-checks. Short enough that the cap expires promptly, cheap enough to ignore. */
+const HOLD_POLL_MS = 100;
+
 export function startObdPoller(intervalMs = 1000): () => void {
   let stopped = false;
   const loop = async (): Promise<void> => {
@@ -218,6 +242,11 @@ export function startObdPoller(intervalMs = 1000): () => void {
       // so `intervalMs - elapsed` becomes the size of the step and polling stalls
       // for that long — a minute-sized step means a minute with no OBD data.
       const roundStartedAt = monotonicNow();
+      // Park point, and the one that matters for a hold asked for mid-`sleep`.
+      if (parkedForHold()) {
+        await sleep(HOLD_POLL_MS);
+        continue;
+      }
       try {
         await pollOnce();
       } catch (err) {

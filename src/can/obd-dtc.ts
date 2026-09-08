@@ -138,6 +138,19 @@ interface InFlightRequest {
 
 let inFlight: InFlightRequest | null = null;
 
+/**
+ * Whether a trouble-code transfer is in flight right now.
+ *
+ * ⚠️ Belt and braces for src/can/obd.ts's poller hold, not the mechanism. The hold is
+ * correct because every `requestTroubleCodeList` is awaited and `settle` nulls
+ * `inFlight` and clears the timer BEFORE resolving — so a parked loop already implies
+ * this returns false. Exported so a check can assert that implication directly rather
+ * than trusting the argument for it.
+ */
+export function troubleCodeTransferInFlight(): boolean {
+  return inFlight !== null;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**

@@ -11,13 +11,15 @@ import { loadLatestSnapshot } from "./vcu-params.ts";
 //   POST    start one (refused, not queued, if one is already running)
 //   DELETE  ask a running one to stop, keeping what it has
 //
-// ⚠️ This is the ONE endpoint in this repo that causes traffic on the bike's bus,
-// and since the sweep moved in-process (src/vcu/sweep.ts) it is also the only path
-// from an HTTP request to a CAN frame that exists at all. What stands between the
-// two is src/vcu/service-gate.ts: a POST is refused unless the bike is PROVED
-// stationary and out of drive, and a sweep already running is put out the moment
-// that stops being true. The gate is on the wire below so the page can say why the
-// button is unavailable rather than leaving it to fail.
+// ⚠️ This endpoint causes traffic on the bike's bus. It is NOT the only one — /vcu-probe,
+// /vcu-write and /lifetime-read do too, and this comment claimed otherwise in four files
+// until the fourth of them landed. The list lives in docs/diagnostics-and-checks.md §7,
+// because a COUNT stated in four places rots and a pointer does not.
+//
+// What stands between an HTTP request and a frame here is src/vcu/service-gate.ts: a
+// POST is refused unless the bike is PROVED stationary and out of drive, and a sweep
+// already running is put out the moment that stops being true. The gate is on the wire
+// below so the page can say why the button is unavailable rather than leaving it to fail.
 //
 // ⚠️ Still read-only. A sweep can only ask `10 81`, `3E` and `22`: those three are
 // the whole of param-codec.ts's request union, and its encoder throws on anything

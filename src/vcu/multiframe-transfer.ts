@@ -1,3 +1,4 @@
+import { arrivalLatencyMs, type ArrivalLatency, type FrameArrival } from "../can/frame-arrival.ts";
 import { ExtendedIsoTpReassembler, maxFramesFor } from "../diagnostics/extended-iso-tp.ts";
 import {
   TESTER_ADDRESS,
@@ -32,7 +33,19 @@ import type { VcuTarget } from "./param-codec.ts";
 // wait is a timer. docs/vcu-parameters.md §10.
 
 /** How one multi-frame exchange ended. Resolves; nothing here rejects. */
-export type MultiFrameResult =
+/**
+ * ⚠️ EVERY variant carries the flow-control latency, and `settle` is the ONE place it is
+ * attached. It was copied by hand at six call sites, which is a seventh call site away
+ * from silently un-measuring the read — the exact failure the required `arrival`
+ * argument exists to prevent, in the one spot a type could not catch it.
+ *
+ * `cancelled` and `not-sent` carry it too, usually null: a cancel arriving after a First
+ * Frame really did measure one, and that is worth having.
+ */
+export type MultiFrameResult = MultiFrameOutcome & { flowControlLatency: ArrivalLatency | null };
+
+/** What happened, without the measurement `settle` attaches to every one of them. */
+type MultiFrameOutcome =
   /** A whole reply arrived. `payload` excludes the address and every PCI byte. */
   | { kind: "payload"; payload: Uint8Array; sawFlowControlFromMicro: boolean }
   /**
@@ -99,7 +112,12 @@ export interface RunningMultiFrameTransfer {
    * Safe to call straight off the CAN listener, and it must be: the flow-control
    * answer to a First Frame goes out from inside here.
    */
-  handleFrame: (data: Buffer) => boolean;
+  /**
+   * ⚠️ `arrival` is the KERNEL's stamp for this frame, not ours — see
+   * src/can/frame-arrival.ts. Optional so every other caller of this transport is
+   * unchanged; without it the flow-control latency is simply not measured.
+   */
+  handleFrame: (data: Buffer, arrival?: FrameArrival | null) => boolean;
   /** How it ended. Resolves exactly once. */
   finished: Promise<MultiFrameResult>;
   /** Ends it now with `cancelled`. Safe to call after it has already settled. */
@@ -148,6 +166,7 @@ export function startMultiFrameTransfer(options: MultiFrameTransferOptions): Run
     separationTimeMs: 0,
     sawFlowControlFromMicro: false,
     sawStrayFlowControl: false,
+    flowControlLatency: null,
     framesHandled: 0,
     settled: false,
     settle: () => {},
@@ -174,7 +193,7 @@ export function startMultiFrameTransfer(options: MultiFrameTransferOptions): Run
   }
 
   return {
-    handleFrame: data => handleFrame(context, data),
+    handleFrame: (data, arrival) => handleFrame(context, data, arrival),
     finished,
     cancel: reason => settle(context, { kind: "cancelled", reason }),
   };
@@ -197,6 +216,14 @@ interface TransferContext {
   sawFlowControlFromMicro: boolean;
   /** A flow control arrived with nothing outstanding. Logged, not reported as the above. */
   sawStrayFlowControl: boolean;
+  /**
+   * Kernel arrival of the First Frame → our flow control on the wire.
+   *
+   * ⚠️ THE NUMBER THE IN-SERVICE READ EXISTS TO PRODUCE, and the only one here that
+   * sees the event loop. Null until a First Frame has been answered; `known: false`
+   * when the kernel gave no stamp or the clock stepped.
+   */
+  flowControlLatency: ArrivalLatency | null;
   framesHandled: number;
   settled: boolean;
   settle: (result: MultiFrameResult) => void;
@@ -205,7 +232,7 @@ interface TransferContext {
   pacer: ReturnType<typeof setTimeout> | null;
 }
 
-function handleFrame(context: TransferContext, data: Buffer): boolean {
+function handleFrame(context: TransferContext, data: Buffer, arrival?: FrameArrival | null): boolean {
   if (context.settled) {
     return false;
   }
@@ -220,7 +247,10 @@ function handleFrame(context: TransferContext, data: Buffer): boolean {
   }
   const frameBudget = maxFramesPerExchange(context.options.maxPayloadBytes);
   if (context.framesHandled >= frameBudget) {
-    settle(context, { kind: "abandoned", reason: `more than ${frameBudget} frames in one exchange` });
+    settle(context, {
+      kind: "abandoned",
+      reason: `more than ${frameBudget} frames in one exchange`,
+    });
     return true;
   }
   context.framesHandled += 1;
@@ -243,6 +273,11 @@ function handleFrame(context: TransferContext, data: Buffer): boolean {
       if (!transmit(context, buildFlowControlFrame(context.options.target))) {
         return true;
       }
+      // ⚠️ AFTER the transmit, never before it. This is the measurement the whole
+      // in-service question turns on and it still may not sit between a First Frame
+      // and its answer — `Date.now()` is one syscall and it happens once the frame is
+      // already on the wire, where it cannot cost a transfer.
+      context.flowControlLatency = arrivalLatencyMs(arrival ?? null, Date.now());
       armTimer(context, context.options.transferTimeoutMs, "reply-transfer");
       return true;
     case "incomplete":
@@ -431,7 +466,7 @@ function armTimer(context: TransferContext, ms: number, stage: TransferStage): v
   }, ms);
 }
 
-function settle(context: TransferContext, result: MultiFrameResult): void {
+function settle(context: TransferContext, result: MultiFrameOutcome): void {
   if (context.settled) {
     return;
   }
@@ -445,5 +480,6 @@ function settle(context: TransferContext, result: MultiFrameResult): void {
     context.pacer = null;
   }
   context.reassembler.reset();
-  context.settle(result);
+  // ⚠️ ATTACHED HERE, once, rather than at each call site. See MultiFrameResult.
+  context.settle({ ...result, flowControlLatency: context.flowControlLatency });
 }

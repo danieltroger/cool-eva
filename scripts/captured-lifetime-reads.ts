@@ -2,8 +2,11 @@ import { ExtendedIsoTpReassembler } from "../src/diagnostics/extended-iso-tp.ts"
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 
 // The 2026-09-08 freeze-frame reads — the FIRST ones taken by this project rather
-// than recorded off Energica's tool, four weeks after the stored codes were cleared
-// on 2026-08-09. ./captured-freeze-frames.ts holds the same components read BEFORE
+// than recorded off Energica's tool, four weeks after the stored codes were cleared —
+// `14 FF FF` at 2026-08-08 19:04:28.391939, 25 s after the last freeze-frame read in the
+// capture below, and the only such request in the archive. (This file first dated that
+// clear 2026-08-09; there are none that day. #169.)
+// ./captured-freeze-frames.ts holds the same components read BEFORE
 // that clear, and the pair of dates is what this file exists for: two readings of
 // the same lifetime counters 967.6 km apart.
 //

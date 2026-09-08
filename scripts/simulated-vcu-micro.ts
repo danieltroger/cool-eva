@@ -436,10 +436,21 @@ function addressOf(micro: SimulatedMicro): number {
 }
 
 function deliverFrame(context: BusContext, frame: Uint8Array): void {
+  // ⚠️ A KERNEL-STYLE ARRIVAL STAMP, because src/can/frame-arrival.ts reads one and the
+  // whole in-service measurement is threaded through it. Without this the threading is
+  // untestable: `frameArrival` returns null either way and a check asserting "unmeasured"
+  // passes whether the stamp reaches the transfer or not. The NUMBER is still worthless —
+  // this is an idle laptop answering in 2 ms — but the PLUMBING is now held down.
+  const now = Date.now();
   const data = Buffer.alloc(8);
   Buffer.from(frame).copy(data);
   for (const listener of context.listeners) {
-    listener({ id: canIdsFor(context.micro.target).response, data });
+    listener({
+      id: canIdsFor(context.micro.target).response,
+      data,
+      ts_sec: Math.floor(now / 1000),
+      ts_usec: (now % 1000) * 1000,
+    });
   }
 }
 
