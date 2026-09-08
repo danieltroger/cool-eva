@@ -28,15 +28,32 @@ const TRACK = "#0b1220";
  * centre divider's #475569 in weight on purpose: it has to read as "this part is gone"
  * at a glance without competing with the fill, which is the number being displayed.
  */
-const DERATED = "#334155";
+/**
+ * The dashes over a stretch of bar the BMS has derated away.
+ *
+ * ⚠️ They are drawn ON the track and the track is NOT recoloured underneath them. The
+ * first version painted full-height blocks in a lighter slate instead, and that failed
+ * in a way only a screenshot showed: the gaps between the blocks were the track's own
+ * colour, so a gap and the still-available stretch beside it were the same pixels, and
+ * the eye could not tell whether a dark chunk meant headroom or the space between two
+ * marks. The fix is that the marking is no longer full height — see HATCH_HEIGHT.
+ */
+const DERATED = "#64748b";
 
 /**
- * Hatch geometry, in viewBox x — a period of 3 puts about 33 bands across a full bar
- * and about 8 across a quarter of one, dense enough to read as texture rather than as
- * a row of ticks at every derate worth showing.
+ * Hatch geometry, in viewBox x — a period of 3 puts about 33 dashes across a full bar
+ * and about 8 across a quarter of one, dense enough to read as a rule rather than as a
+ * row of ticks at every derate worth showing.
  */
 const HATCH_DASH = 1.7;
 const HATCH_GAP = 1.3;
+
+/**
+ * How tall the dashes are as a fraction of the bar. Well under 1 is the whole point:
+ * anything the full height of the bar competes with the fill for "this is the bar", and
+ * a short rule down the middle of a stretch cannot be confused with the stretch itself.
+ */
+const HATCH_HEIGHT = 0.3;
 
 /**
  * Narrowest hatched stretch worth drawing, in viewBox units — a bit over one period.
@@ -165,13 +182,8 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
   const isDrive = (value ?? 0) < 0;
   const scale = isDrive ? fullScale.drive : fullScale.regen;
   const magnitude = value == null || scale <= 0 ? 0 : Math.min(Math.abs(value) / scale, 1) * centre;
-  const children = [svgTags.rect({ x: 0, y: 0, width, height, rx: 2, fill: TRACK })];
-  // Under the fill: the hatching is the track saying "not available", and where you
-  // have actually reached into it the fill is the more urgent of the two facts.
-  for (const span of derateSpans({ limits, fullScale, centre })) {
-    children.push(hatching(span, height));
-  }
-  children.push(
+  const children = [
+    svgTags.rect({ x: 0, y: 0, width, height, rx: 2, fill: TRACK }),
     svgTags.rect({
       x: isDrive ? centre : centre - magnitude,
       y: 0,
@@ -179,8 +191,14 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
       height,
       fill: color,
     }),
-    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" })
-  );
+    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }),
+  ];
+  // Over the fill, not under it. A rule marking the unreachable stretch that disappears
+  // the moment you reach into it hides the one reading that needed it; the fill is still
+  // the loudest thing on the bar, since the rule is under a third of its height.
+  for (const span of derateSpans({ limits, fullScale, centre })) {
+    children.push(hatching(span, height));
+  }
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
 }
 
@@ -238,14 +256,13 @@ export function derateSpans({ limits, fullScale, centre }) {
 }
 
 /**
- * One hatched stretch: a single horizontal line as thick as the bar, dashed along its
- * length, which is a run of vertical bands for two attributes and no per-dash geometry.
+ * One hatched stretch: a single dashed horizontal rule down the middle of it, which is
+ * a run of marks for two attributes and no per-dash geometry.
  *
  * Deliberately NOT `vector-effect: non-scaling-stroke`, unlike every other stroke in
- * this file. The stroke width here IS the bar's height, in viewBox units, and the dash
- * period is a fraction of the bar's length — both are meant to stretch with the tile,
- * so the hatching stays the same shape on a phone and on a laptop. The non-scaling
- * strokes elsewhere are hairlines, where stretching is the bug.
+ * this file. Both the stroke width and the dash period here are fractions of the bar's
+ * own dimensions, so the rule keeps its proportions from a 380 px phone to a 1000 px
+ * laptop. The non-scaling strokes elsewhere are hairlines, where stretching is the bug.
  * @param {{ x: number, width: number }} span
  * @param {number} height
  * @returns {Element}
@@ -257,7 +274,7 @@ function hatching(span, height) {
     x2: (span.x + span.width).toFixed(2),
     y2: height / 2,
     stroke: DERATED,
-    "stroke-width": height,
+    "stroke-width": (height * HATCH_HEIGHT).toFixed(2),
     "stroke-dasharray": `${HATCH_DASH} ${HATCH_GAP}`,
   });
 }
