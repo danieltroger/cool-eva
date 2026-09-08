@@ -34,8 +34,8 @@ import { loadCapturedTroubleCodes } from "./captured-dtc-transfer.ts";
 //     --skip <s>    start this many seconds into the capture
 //     --port <n>    default 8080
 //
-// Captures live in ~/Documents/cool-eva-archive and /tmp/ride-captures; see
-// CAPTURES.md for what is in each one.
+// Captures live in ~/Documents/cool-eva-archive (laptop) and /home/pi/ride-captures (Pi,
+// written by scripts/can-capture/ — never /tmp, which is tmpfs); see CAPTURES.md.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");

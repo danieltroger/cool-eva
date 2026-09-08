@@ -13,6 +13,7 @@ Everything below runs **ON THE PI** unless a step says "on the laptop".
   - Board reference resistor is 430 ohm (Adafruit); PT100 nominal 100 ohm.
 - (Optional) Radiator fan: SPAL VA69A-A101-87S on an IBT-2 / BTS7960 half-bridge, driven from hardware PWM0. Off unless `FAN_ENABLED=1`. Pin map, the `config.txt` lines and the udev rule are in §1 below; the wiring reasoning (why VCC is 3.3 V and not 5 V, why idling pulls both enables low) is in `docs/fan-control.md`.
 - 8devices Korlan USB2CAN into the bike's OBD port. Uses the in-kernel `usb_8dev` driver — no driver install. 500 kbit, 11-bit. It presents as can0.
+  - ⚠️ **`sudo apt install can-utils`** if you want the raw capture (`can-capture.service`, installed by the setup script). It is not a default package; without it the installer refuses to enable the unit and says so. The capture is what every decode finding in `docs/` was derived from — see [`docs/can-capture.md`](docs/can-capture.md).
 - (Optional) Energica Connectivity Hub reached over BLE for torque/power, odometer, vehicle state. The Pi's onboard Bluetooth is fine.
 
 ## 1. Base OS setup

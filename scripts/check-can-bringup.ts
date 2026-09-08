@@ -15,12 +15,28 @@ import {
 //
 //     node --experimental-strip-types scripts/check-can-bringup.ts
 //
-// ⚠️ THE FIXTURES ARE SYNTHETIC. Every `ip -details -json link show can0` body below was
-// written by hand from the iproute2 output format, NOT captured from the Pi — the bike was
-// powered down when this was written. So this proves the decision logic is self-consistent;
-// it does NOT prove the field names match what this Pi's `ip` emits. Only the first deploy's
-// journal line can do that. When real output arrives, replace DEFAULT_INFO_DATA with it and
-// this check becomes evidence rather than reasoning. docs/can-capture.md records which.
+// ⚠️ TWO KINDS OF FIXTURE, kept apart on purpose — the split this repo already draws
+// between captured-freeze-frames.ts and freeze-frame-fixtures.ts.
+//
+// CAPTURED_PI_LINK is real `ip` output from the bike, and it is what proves the field names
+// are right. Everything built by link() below is SYNTHETIC, written from the iproute2 output
+// format, and covers the shapes the Pi did not produce — bus-off, listen-only, a malformed
+// ctrlmode, an `ip` too old to render CAN details. Those prove the decision logic is
+// self-consistent and prove nothing about the wire. docs/can-capture.md says which is which.
+
+/**
+ * ⚠️ CAPTURED, byte for byte — `ip -details -json link show can0` on the bike's Pi,
+ * 2026-09-08 20:13 CEST, bus awake, ~4 min after a cold boot, on the pre-#171 code.
+ * Issue #160's gather comment.
+ *
+ * This is the fixture that turns the design's two riskiest bets into evidence. The bus
+ * reads **ERROR-WARNING** (one rx error) rather than ERROR-ACTIVE, so a skip conditioned on
+ * ERROR-ACTIVE alone — which is what this change was originally specified as — would refuse
+ * here and the whole feature would be a no-op that logs. And `ctrlmode` is absent while
+ * `ctrlmode_supported` is present, which is exactly the shape link-config.ts has to read as
+ * "no flags set", now confirmed on the hardware rather than argued from iproute2 source.
+ */
+const CAPTURED_PI_LINK = `[{"ifindex":2,"ifname":"can0","flags":["NOARP","UP","LOWER_UP","ECHO"],"mtu":16,"qdisc":"pfifo_fast","operstate":"UP","linkmode":"DEFAULT","group":"default","txqlen":10,"link_type":"can","promiscuity":0,"allmulti":0,"min_mtu":0,"max_mtu":0,"linkinfo":{"info_kind":"can","info_data":{"ctrlmode_supported":["LOOPBACK","LISTEN-ONLY","ONE-SHOT","CC-LEN8-DLC"],"state":"ERROR-WARNING","berr_counter":{"tx":0,"rx":1},"restart_ms":100,"bittiming":{"bitrate":500000,"sample_point":"0.875","tq":125,"prop_seg":6,"phase_seg1":7,"phase_seg2":2,"sjw":1,"brp":4},"bittiming_const":{"name":"usb_8dev","tseg1":{"min":1,"max":16},"tseg2":{"min":1,"max":8},"sjw":{"min":1,"max":4},"brp":{"min":1,"max":1024},"brp_inc":1},"clock":32000000}},"num_tx_queues":1,"num_rx_queues":1,"gso_max_size":65536,"gso_max_segs":65535,"tso_max_size":65536,"tso_max_segs":65535,"gro_max_size":65536,"gso_ipv4_max_size":65536,"gro_ipv4_max_size":65536,"parentbus":"usb","parentdev":"1-1:1.0"}]`;
 
 /** A healthy, configured, ACTIVE CAN link — what a deploy finds, and what the change is for. */
 const DEFAULT_INFO_DATA: Record<string, unknown> = {
@@ -80,6 +96,22 @@ interface Case {
 }
 
 const CASES: Case[] = [
+  // The real bike, both polarities. Not a variant of the synthetic cases below — this is
+  // the only entry here whose bytes came off the Pi.
+  {
+    name: "the captured Pi link skips when ACTIVE is wanted",
+    json: CAPTURED_PI_LINK,
+    active: true,
+    skip: true,
+    because: "state=ERROR-WARNING",
+  },
+  {
+    name: "the captured Pi link bounces when listen-only is wanted",
+    json: CAPTURED_PI_LINK,
+    active: false,
+    skip: false,
+    because: "listen-only is OFF, wanted ON",
+  },
   { name: "up, ACTIVE, wanted ACTIVE", json: UP_ACTIVE, active: true, skip: true, because: "ERROR-ACTIVE" },
   // ⚠️ The asymmetry, both ways. Two scripts ask for listen-only ON, and a bus left ACTIVE is
   // not an acceptable substitute for one asked to stay silent.
@@ -358,6 +390,28 @@ if (healthy.kind !== "read") {
   failures.push(`the healthy fixture did not parse: ${healthy.why}`);
 } else if (healthy.link.ctrlmodes.length !== 0 || !healthy.link.up || healthy.link.bitrateHz !== CAN_BITRATE_HZ) {
   failures.push(`the healthy fixture parsed wrongly: ${JSON.stringify(healthy.link)}`);
+}
+
+// Every field the decision reads, checked against the real body rather than the verdict —
+// this is what says the JSON key names in link-config.ts match what this Pi's `ip` emits.
+const captured = parseCanLinkConfig(CAPTURED_PI_LINK);
+if (captured.kind !== "read") {
+  failures.push(`the CAPTURED Pi output no longer parses: ${captured.why}`);
+} else {
+  const link = captured.link;
+  if (!link.up || link.operstate !== "UP" || link.bitrateHz !== CAN_BITRATE_HZ || link.restartMs !== CAN_RESTART_MS) {
+    failures.push(`the captured Pi body parsed wrongly: ${JSON.stringify(link)}`);
+  }
+  if (link.deviceState !== "ERROR-WARNING") {
+    failures.push(`the captured Pi body should read ERROR-WARNING, got ${link.deviceState}`);
+  }
+  // The absence that the whole design rests on, and the key that corroborates it.
+  if (link.ctrlmodes.length !== 0) {
+    failures.push(`the captured Pi body should carry NO ctrlmode flags, got [${link.ctrlmodes.join(",")}]`);
+  }
+  if (!link.ctrlmodeSupported?.includes("LISTEN-ONLY")) {
+    failures.push("the captured Pi body should advertise LISTEN-ONLY in ctrlmode_supported");
+  }
 }
 
 // ⚠️ Read src/can/socket.ts as TEXT, because no check can import it: it pulls in `socketcan`,

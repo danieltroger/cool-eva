@@ -1,6 +1,7 @@
 import { execFileSync, execSync } from "child_process";
 import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths, foreignOwner } from "../src/http/update.ts";
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { installCanCaptureUnit } from "./can-capture/install.ts";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -116,6 +117,12 @@ warnIfNoRideLogKey();
 // this exists for, and a garage Pi usually fails the network check below.
 await warnIfGitIsWronglyOwned();
 warnIfRemoteUnreadable();
+
+// ⚠️ LAST, and deliberately after the warnings above. It shells out to systemctl three
+// times; a masked unit or a read-only /etc makes one of those throw, and from up here that
+// would take the poisoned-.git and missing-key warnings down with it — the two things this
+// script exists to say at the one moment someone is standing in front of the Pi.
+installCanCaptureUnit(projectDir);
 
 /**
  * Refuse to install a unit that cannot start. Without this the only symptom is

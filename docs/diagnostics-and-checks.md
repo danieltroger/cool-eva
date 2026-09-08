@@ -581,6 +581,8 @@ The checks predate the runner and were written as scripts, because that is what 
 
 Only checks that pass or fail on their own, with no bike and no local-only files, belong there.
 
+⚠️ **And nothing in the suite reads prose.** `npm test`, `tsc` and `prettier --check` all passed, green, over a `docs/` edit that had destroyed a numbered list — stranding one fact mid-sentence and re-attaching another's conclusion to the wrong paragraph, in a section headed "do not delete this before reading it". Prettier reformats Markdown; it does not know what the text was supposed to say. So "gates green" is evidence about the code, and says nothing at all about a documentation change: check those by reading the rendered file, or by grepping for the structure you expect.
+
 | script | why it is out |
 | --- | --- |
 | `setup-service.ts` | installs a systemd unit, and wants root to do it |
@@ -589,6 +591,8 @@ Only checks that pass or fail on their own, with no bike and no local-only files
 | `replay-capture.ts` | needs a candump capture — gitignored, and one bike's ride history — and serves a dashboard to look at rather than asserting anything, so there is no verdict to collect |
 | `extract-vcu-tables.ts` | needs a copy of the manufacturer's service-tool executable — ~137 MB of somebody else's proprietary install, neither in this repo nor on an Actions runner. It is a GENERATOR anyway: it rewrites `src/vcu/table-catalog.data.ts`. What CI checks is the output, and it checks it hard — `check-vcu-params.ts` §1e rebuilds all 28 tables and compares each against the fingerprint the extractor took from Energica's own bundle, so a delta that has drifted from the `params.ecf` text underneath it fails the build without the exe being anywhere near it |
 | `read-freeze-frame.ts` | **TALKS TO THE BIKE.** It is the live test for the multi-frame KWP transport and the only thing in the repo that opens a socket outside the service, so it must never be in the list — `CHECK_TIMEOUT_MS` exists precisely to catch a check that started waiting on a bus that is not there. Its own replayable half is `scripts/check-kwp-multiframe.ts` |
+
+`scripts/can-capture/` is neither a check nor a fixture: it is the raw-capture unit and shell script that RUN ON THE PI, tracked here since 2026-09 so git is their revert path. `scripts/check-can-capture.ts` guards them; `install.ts` is the installer, split out when `setup-service.ts` passed 400 lines with a second responsibility; and `unit.ts` holds the unit text as a pure function so both of those can drive it — `setup-service.ts` installs a service the moment it is imported, so nothing can import _it_ from a check.
 
 `captured-dtc-transfer.ts`, `captured-vcu-records.ts`, `freeze-frame-fixtures.ts` and `simulated-vcu-micro.ts` are fixtures and a test double: data and a stand-in bus, not checks. The replay scripts in `CHECKS` are what read them. `freeze-frame-fixtures.ts` is the one that is CONSTRUCTED rather than captured — what the check built on it proves is correspondingly narrower.
 
@@ -603,7 +607,7 @@ Only checks that pass or fail on their own, with no bike and no local-only files
 
 **`scripts/captured-freeze-frames.ts`** — the 29 real `0x17` replies from `capture-20260808-182129`, byte for byte, PCI bytes included.
 
-**`scripts/check-can-bringup.ts`** — **⚠️ synthetic, and not yet corroborated by anything.** Its `ip -details -json link show can0` bodies were written by hand from the iproute2 output format; the bike was powered down when the check was written, so not one of them came off this Pi. They prove the bring-up decision is self-consistent — that a healthy link is skipped, that every mismatch and every unparseable body bounces — and they prove **nothing** about whether the field names match what this Pi's `ip` emits. Only the first deploy's journal line can settle that, and `docs/can-capture.md` §"What the first deploy settles" says what to look for. When real output arrives it replaces the healthy fixture verbatim and this entry moves up a tier.
+**`scripts/check-can-bringup.ts`** — **two kinds, kept apart.** `CAPTURED_PI_LINK` is real: `ip -details -json link show can0` on the bike's Pi, 2026-09-08, bus awake ~4 min after a cold boot, committed byte for byte from issue #160's gather. It is what proves the field names, and it carries the finding that mattered — the bus reads `ERROR-WARNING`, not `ERROR-ACTIVE`, so the version of that change which skipped only on `ERROR-ACTIVE` would have been a no-op on this bike. Everything built by `link()` is **synthetic**, written by hand from the iproute2 output format for the shapes the Pi did not produce (bus-off, listen-only, a malformed `ctrlmode`, an `ip` too old to render CAN details). The synthetic ones prove the decision is self-consistent — that every mismatch and every unparseable body bounces — and prove nothing about the wire. ⚠️ What neither kind settles is whether the **service** takes the right decision on a live bus; `docs/can-capture.md` §"What the first deploy settles" tracks that, and it is still open.
 
 **`scripts/freeze-frame-fixtures.ts`** — **⚠️ constructed, not captured. The name of the file says so.** It now holds only the shapes the bike never sent, which is the one thing a capture cannot supply: a refusal, an answer naming the wrong component, a short Consecutive Frame mid-transfer.
 
