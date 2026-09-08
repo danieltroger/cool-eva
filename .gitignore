@@ -195,3 +195,9 @@ rides.db-shm
 rides.db-wal
 rides.db.bak-*
 energica_probe.py
+
+# Screenshots and the built previews behind them, written by scripts/build-service-preview.ts and
+# taken through chrome-devtools for the dashboard gate. Generated, large, and regenerated per
+# review — and an untracked directory of .html is exactly the kind of local-only state that made a
+# green worktree disagree with CI once already.
+preview-shots/
