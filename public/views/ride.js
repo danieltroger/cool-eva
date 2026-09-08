@@ -44,7 +44,7 @@ const { div, span } = van.tags;
  * (−117.3 kW) and the Ribelle's ~126 kW peak. 36 does not contain regen's largest ever
  * (40.9 kW) and is not meant to: 4 of 57 443 positive samples exceed 38 kW, and clamping
  * that tail costs far less than a half that can never come clean.
- * docs/dashboard-decisions.md §"The power bar" has the measurements.
+ * docs/dashboard-decisions.md §"The power meter" has the measurements.
  */
 const POWER_SCALE_KW = { drive: 130, regen: 36 };
 
@@ -73,18 +73,24 @@ export function RideView() {
       className: "span2",
     }),
     PairTile({
-      // Both of the powertrain temperatures the bike broadcasts, which are separate
-      // sensors rather than one at two resolutions — docs/can-decode-findings.md
-      // §"0x020 / 0x022": at rest they agree at ambient, but the garage lap of
-      // 2026-08-02 put PID 05 up 27 → 30 °C in step with 0x020's inverter gate channel
-      // while 0x022's motor sensor moved 27.9 → 28.5. This tile used to show only the
-      // first and call it "Motor", which named the wrong one of the two.
+      // The motor's own sensor beside the bike's OBD temperature — separate sensors, not
+      // one at two resolutions: docs/can-decode-findings.md §"0x020 / 0x022" has the
+      // 2026-08-02 lap putting PID 05 up 27 → 30 °C in step with the inverter gate channel
+      // while 0x022 moved 27.9 → 28.5. This tile showed PID 05 alone under the OTHER one's
+      // name.
+      //
+      // ⚠️ Captioned "OBD", not "coolant": coolant is PID 05's OBD-II label, what the
+      // capture establishes is that it tracks the gate, and the Coolant tile two rows up
+      // is the MAX31865 probes. PID 05 is keys[1] because PairTile colours and charts from
+      // the upper key and it is the more responsive of the two. The inverter IGBT channels
+      // are hotter still and are NOT here — they are inverter readings, and that doc marks
+      // their min/inst/max ordering unverified.
       label: "Motor",
-      keys: ["bike_coolant_temp", "motor_temp_c"],
+      keys: ["motor_temp_c", "bike_coolant_temp"],
       format: value => units.temp(value).toFixed(0),
       unit: units.tempUnit,
       color: colors.temperature,
-      caption: "coolant / motor",
+      caption: "motor / OBD",
       chart: true,
       minSpan: 5,
     }),
@@ -109,19 +115,15 @@ export function RideView() {
 /**
  * Speed, power and the meter as one instrument.
  *
- * The power meter is a strip down the left edge rather than a bar under a card of its
- * own: it runs beside a numeral that is already that tall, so it costs no row, and the
- * riding screen is short of rows rather than of width. The bike's wheel speed sits in
- * the sub-line — it reads high by a few percent like every vehicle speedometer, and
- * seeing both is the only way to know by how much on this bike. Charge sits at the end
- * of the same line: small, because it changes slowly, and here because it is the one
- * number that must not need a scroll.
+ * The meter is a strip down the left edge rather than a band under a card of its own: it
+ * runs beside a numeral already that tall, so it costs no row, and this screen is short
+ * of rows rather than of width. Wheel speed sits in the sub-line because it reads high by
+ * a few percent like every vehicle speedometer, and charge at the end of that line —
+ * small, because it moves slowly, and here because it must never need a scroll.
  *
- * The dashed stretches on the meter are the BMS's own ceilings (lib/power-limits.js) —
- * the part of the scale you can no longer reach. They MOVE: the discharge ceiling
- * averages 91 kW over moving time in the archive against the bike's 126 kW peak, so a
- * rider reading a full-looking meter without them is usually reading a derate as
- * headroom.
+ * The dashed stretches are the BMS's own ceilings (lib/power-limits.js), and they MOVE:
+ * the discharge ceiling averages 91 kW over moving time against the bike's 126 kW peak.
+ * docs/dashboard-decisions.md §"The power meter" has the rest.
  */
 function SpeedHero() {
   return div(

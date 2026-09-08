@@ -16,7 +16,7 @@ import { chargeMode } from "./charge-mode.js";
 // The reader and the staleness test are handed in the way charge-mode.js takes them:
 // that is what lets scripts/check-power-bar.ts run this against literal readings in
 // Node, where store.js's van states have no DOM to live in. Measured ranges over the
-// archive are in docs/dashboard-decisions.md §"The power bar".
+// archive are in docs/dashboard-decisions.md §"The power meter".
 
 /**
  * @typedef {object} PowerLimitsKw

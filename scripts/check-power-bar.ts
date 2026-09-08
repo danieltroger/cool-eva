@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { contrast, readPalettes, resolve, separation } from "./palette.ts";
 import { power } from "../public/lib/colors.js";
 import { FLOW, GOOD, MUTED } from "../public/lib/colors.js";
 import { TRACK, barLayers, ceilingMark, originY, reachable } from "../public/lib/power-bar.js";
@@ -81,38 +81,28 @@ for (const kilowatts of [-0.4, -1, -5, -20, -60, -120]) {
 //
 // The FILL edge is the primary reading and is held higher than the marks: a draft that
 // strengthened the derate edge instead cost the fill 17.9:1 → 2.5:1.
-// docs/dashboard-decisions.md §"The power bar" has both failures in full.
+// docs/dashboard-decisions.md §"The power meter" has both failures in full.
 const MIN_FILL_CONTRAST = 4;
-/**
- * ⚠️ A RATCHET, not a measurement, and the same shape as SEPARATION_FLOOR in
- * check-theme-contrast.ts. Nothing derives 2: it sits just under the shipped worst case,
- * the ceiling mark over the light theme's regen fill at 2.2, so that cannot be
- * compressed further without someone deciding to. If a future palette needs to go under
- * it, move it deliberately and say why in docs/dashboard-decisions.md rather than
- * nudging it. MIN_FILL_CONTRAST has real headroom by comparison; its worst is 4.3.
- */
-const MIN_MARK_CONTRAST = 2;
 /**
  * ⚠️ A RATCHET too, and the reason is the meter's shape: drive grows up out of the origin
  * and regen grows down, so with the strip mostly empty the ONLY thing saying which of the
- * two is happening is the fill's colour. Nothing derives 40; it sits under the shipped
- * 47.6 (dark) and 44.1 (light). Same measure as check-theme-contrast.ts's ramp: the a*b*
+ * two is happening is the fill's colour. Nothing derives 90; it sits under the shipped
+ * 96.9 (dark) and 106.3 (light). Same measure as check-theme-contrast.ts's ramp: the a*b*
  * plane only, because a blue and a green that differ by lightness alone still read as one
  * colour through glare.
  */
-const MIN_FLOW_SEPARATION = 40;
+const MIN_FLOW_SEPARATION = 90;
 const palettes = await readPalettes();
 for (const [themeName, palette] of palettes) {
-  const resolve = (token: string) => palette[token.replace(/^var\(--|\)$/g, "")];
-  const track = resolve(TRACK);
+  const track = resolve(palette, TRACK);
   const fills = [
-    { what: `the drive fill (${DRIVE_KW} kW)`, hex: resolve(power(DRIVE_KW)) },
-    { what: `the regen fill (${REGEN_KW} kW)`, hex: resolve(power(REGEN_KW)) },
+    { what: `the drive fill (${DRIVE_KW} kW)`, hex: resolve(palette, power(DRIVE_KW)) },
+    { what: `the regen fill (${REGEN_KW} kW)`, hex: resolve(palette, power(REGEN_KW)) },
   ];
   for (const fill of fills) {
     // ⚠️ The FILL edge is the primary reading and is held highest: a draft that
     // strengthened the derate edge instead cost the fill 17.9:1 → 2.5:1.
-    // docs/dashboard-decisions.md §"The power bar" has that failure in full.
+    // docs/dashboard-decisions.md §"The power meter" has that failure in full.
     const ratio = contrast(fill.hex, track);
     if (ratio < MIN_FILL_CONTRAST) {
       failures.push(
@@ -120,21 +110,17 @@ for (const [themeName, palette] of palettes) {
           `${MIN_FILL_CONTRAST}:1 floor — that edge is where the rider reads how hard they are pulling`
       );
     }
-    // The ceiling mark is the track's own grey drawn ON the fill, which is the only place
-    // it has to survive: the strip is two colours and one texture, nothing more.
-    if (contrast(track, fill.hex) < MIN_MARK_CONTRAST) {
-      failures.push(
-        `${themeName}: the ceiling mark ${track} over ${fill.what} is ` +
-          `${contrast(track, fill.hex).toFixed(2)}:1, under ${MIN_MARK_CONTRAST}:1 — a rider past the ceiling ` +
-          `could not see that they were`
-      );
-    }
+    // ⚠️ There is no separate floor for the ceiling mark, and that is deliberate rather
+    // than an omission: the mark is the track's own grey drawn ON the fill, so its edge is
+    // the same two colours as the one above, and contrast() is symmetric. A draft shipped
+    // that second check anyway, with a lower floor, in the very commit that repaired two
+    // other checks for asserting nothing.
   }
   // ⚠️ …and the two fills must never be mistaken for each other. Direction is the whole
   // reading on a meter that grows both ways out of one point, and a blue and a green that
   // differ only in hue are a pair a rider in glare cannot separate.
-  const drive = resolve(power(DRIVE_KW));
-  const regen = resolve(power(REGEN_KW));
+  const drive = resolve(palette, power(DRIVE_KW));
+  const regen = resolve(palette, power(REGEN_KW));
   if (separation(drive, regen) < MIN_FLOW_SEPARATION) {
     failures.push(
       `${themeName}: the drive fill ${drive} and the regen fill ${regen} are ` +
@@ -394,14 +380,53 @@ if (wellInside !== null) {
   failures.push(`a fill nowhere near the ceiling must not mark it, got ${wellInside}`);
 }
 
+// 8. Which way each direction GROWS, which §1-§7 left unpinned.
+//
+//    ⚠️ §3 pins where the origin sits and which end each CEILING shortens. Neither touches
+//    the fill, so `isDrive = (value ?? 0) < 0` could be flipped to `> 0` — one character —
+//    with every check here still green while a 120 kW pull drew downward into the regen
+//    half. That is this file's own headline failure, a screen that looks entirely
+//    deliberate, one layer below the colour it was written to catch. Asserted against the
+//    same literals §1 uses rather than anything imported from the module under test.
+for (const side of [
+  { name: "drive", kilowatts: DRIVE_KW, grows: "up" },
+  { name: "regen", kilowatts: REGEN_KW, grows: "down" },
+]) {
+  const layers = barLayers({ value: side.kilowatts, fullScale: FULL_SCALE_KW, color: FLOW, limits: null });
+  const fill = layers.find(layer => layer.name === "fill");
+  if (!fill || fill.to - fill.from <= 0) {
+    failures.push(`${side.kilowatts} kW must draw a fill, got ${fill ? "an empty one" : "none"}`);
+    continue;
+  }
+  const wrongWay = side.grows === "up" ? fill.to > ORIGIN + 1e-9 : fill.from < ORIGIN - 1e-9;
+  if (wrongWay) {
+    failures.push(
+      `${side.kilowatts} kW is ${side.name} and must grow ${side.grows} from the origin (${ORIGIN.toFixed(2)}), ` +
+        `got a fill spanning ${fill.from.toFixed(2)}…${fill.to.toFixed(2)} — the sign convention is inverted`
+    );
+  }
+}
+
+//    …and the clamp, so power past full scale fills its half rather than running off the
+//    end of the viewBox, where it would be clipped and so invisible.
+for (const kilowatts of [DRIVE_KW * 10, REGEN_KW * 10]) {
+  const layers = barLayers({ value: kilowatts, fullScale: FULL_SCALE_KW, color: FLOW, limits: null });
+  const spilt = layers.filter(layer => layer.from < -1e-9 || layer.to > LENGTH + 1e-9);
+  if (spilt.length > 0) {
+    failures.push(
+      `${kilowatts} kW is past full scale and must clamp to its half, got ` +
+        spilt.map(layer => `${layer.name} ${layer.from.toFixed(1)}…${layer.to.toFixed(1)}`).join(", ")
+    );
+  }
+}
+
 console.log(
   `colour: ${REGEN_KW} kW regen is ${power(REGEN_KW)}, ${DRIVE_KW} kW drive is ${power(DRIVE_KW)}; ` +
     palettes
       .map(([name, palette]) => {
-        const resolve = (token: string) => palette[token.replace(/^var\(--|\)$/g, "")];
         return (
-          `${name} fill-over-track ${contrast(resolve(power(DRIVE_KW)), resolve(TRACK)).toFixed(1)}:1, ` +
-          `drive-vs-regen ${separation(resolve(power(DRIVE_KW)), resolve(power(REGEN_KW))).toFixed(0)} in a*b*`
+          `${name} fill-over-track ${contrast(resolve(palette, power(DRIVE_KW)), resolve(palette, TRACK)).toFixed(1)}:1, ` +
+          `drive-vs-regen ${separation(resolve(palette, power(DRIVE_KW)), resolve(palette, power(REGEN_KW))).toFixed(0)} in a*b*`
         );
       })
       .join("; ")
@@ -424,72 +449,8 @@ console.log(
   "✓ regen is green and drive is its own colour at every load, both fills clear their floors over the track and " +
     "stay a long way apart in hue over both palettes, both ceilings convert through the measured pack voltage with 0 A surviving " +
     "and 0 V rejected, both go quiet while a charge is up, each ceiling shortens its own side's far end — end to " +
-    "end — and the wall stays marked once you are through it"
+    "end — the wall stays marked once you are through it, and each direction grows its own way out of " +
+    "the origin"
 );
 
 type Reach = { from: number; to: number };
-
-/**
- * Both palettes out of style.css, so the `var(--token)` strings colors.js and svg.js
- * draw with can be measured. Same shape as scripts/check-theme-contrast.ts, and for the
- * same reason: a check carrying its own copy of the palette passes while the shipped
- * colours are wrong.
- */
-async function readPalettes(): Promise<Array<[string, Record<string, string>]>> {
-  const css = await readFile(new URL("../public/style.css", import.meta.url), "utf8");
-  const read = (opener: string) => {
-    const start = css.indexOf(opener);
-    if (start === -1) {
-      throw new Error(`style.css has no "${opener}" block — has the palette moved?`);
-    }
-    const block = css.slice(start + opener.length, css.indexOf("}", start));
-    const palette: Record<string, string> = {};
-    for (const [, name, value] of block.matchAll(/--([a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
-      palette[name] = value;
-    }
-    return palette;
-  };
-  return [
-    ["dark", read(":root {")],
-    ["light", read(':root[data-theme="light"] {')],
-  ];
-}
-
-/**
- * Distance in the a*b* plane, lightness deliberately excluded — the same measure and the
- * same reason as check-theme-contrast.ts: two marks that differ only in how dark they are
- * do not read as different colours in glare.
- */
-function separation(first: string, second: string): number {
-  const lab = (hex: string): [number, number] => {
-    const [red, green, blue] = [1, 3, 5].map(offset => {
-      const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
-      return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-    });
-    const x = (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047;
-    const y = luminance(hex);
-    const z = (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883;
-    const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
-    return [500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
-  };
-  const [aFirst, bFirst] = lab(first);
-  const [aSecond, bSecond] = lab(second);
-  return Math.hypot(aFirst - aSecond, bFirst - bSecond);
-}
-
-/** WCAG relative luminance of an `#rrggbb` string. */
-function luminance(hex: string): number {
-  const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
-  const linear = channels.map(value => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
-  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-}
-
-/**
- * Contrast between two `#rrggbb` strings. Restated here rather than imported because
- * nothing in the app computes it — style.css states its ratios as measured constants in
- * prose, and a check taking its numbers from the thing it checks would assert nothing.
- */
-function contrast(first: string, second: string): number {
-  const [high, low] = [luminance(first), luminance(second)].sort((a, b) => b - a);
-  return (high + 0.05) / (low + 0.05);
-}

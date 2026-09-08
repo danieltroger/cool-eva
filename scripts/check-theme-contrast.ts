@@ -1,4 +1,5 @@
-import { readFile } from "fs/promises";
+import { DASH_DUTY } from "../public/lib/power-bar.js";
+import { contrast, luminance, parsePalette, separation } from "./palette.ts";
 
 // Measures both palettes in public/style.css against the floors that file commits to,
 // so "if you darken any of these, measure it first" is enforced rather than hoped for.
@@ -33,17 +34,43 @@ const MARK_TOKENS = ["track"];
  * invisible: exactly the failure style.css warns about in words at the --track note.
  *
  * A RATCHET, not a measurement, in the same shape as SEPARATION_FLOOR below. Nothing
- * derives 1.25; it sits under the shipped 1.29 and 1.48.
+ * derives 1.5; it sits just under the shipped 1.53 and 1.66. ⚠️ It was 1.25 in a draft,
+ * quoting the values from BEFORE this palette moved — which left it permitting 1.254, i.e.
+ * a regression past the 1.3:1 the --track note calls the defect it was fixing. A ratchet
+ * seated under the wrong number is a ratchet that does not hold.
  */
-const MARK_FLOORS: Record<string, number> = { "track": 1.25 };
+const MARK_FLOORS: Record<string, number> = { "track": 1.5 };
 
 /**
- * ⚠️ And the two blues, which are not in the ramp below and so were not being held apart
- * by anything. --cold is a temperature and --flow is drive power; they never sit side by
- * side, but a palette edit that walked them together would make the coldest reading on
- * the screen and a hard pull the same colour. A ratchet under the shipped 17.1 / 47.4.
+ * …and the two the DASHED stretch has to clear, which are not the same question.
+ *
+ * ⚠️ The meter has no second colour for a derate: the taken stretch is --track itself,
+ * dashed, with the tile showing through the gaps. So there is no dash-ink-against-track
+ * ratio to measure — the dash and the track are one colour — and what a rider actually
+ * sees over a dashed run is the two averaged by the dash's duty cycle. Both numbers below
+ * are that average: against the ground the meter sits on, which is how visible a derate
+ * is at all, and against the solid track, which is what says the stretch is gone.
+ *
+ * RATCHETS under the shipped worst cases, both of which are the light theme: 1.290 and
+ * 1.285. They are small numbers and that is the honest picture — this design carries the
+ * derate as a texture rather than as a step in tone, which is a trade
+ * docs/dashboard-decisions.md §"The power meter" states in full.
  */
-const BLUE_SEPARATION_FLOOR = 15;
+const DASHED_ON_GROUND_FLOOR = 1.25;
+const DASHED_VS_SOLID_FLOOR = 1.15;
+
+/**
+ * ⚠️ --flow against EVERY other ink, not against one named partner.
+ *
+ * It is the only ink outside the four-step ramp below, so nothing was holding it apart
+ * from anything. A draft guarded it against --cold alone — and this palette has three
+ * blues: --flow at #5ccfd6 clears --cold by 29.6 and lands 5.7 from --cool, the 5-20 °C
+ * band, with every check green. Naming one partner guards one pair; the failure is that a
+ * fill and a temperature read as the same colour, and any ink can be that partner.
+ *
+ * A ratchet under the shipped worst case, --cold at 17.1 on dark.
+ */
+const FLOW_SEPARATION_FLOOR = 15;
 
 /**
  * The floors style.css declares. Values clear 11:1 and everything else 6:1; the dark
@@ -65,7 +92,9 @@ const EXEMPT = new Set(["dark:bad on tile"]);
 
 const RAMP = ["good", "watch", "warn", "bad"];
 
-const source = await readFile(new URL("../public/style.css", import.meta.url), "utf8");
+const source = await (
+  await import("node:fs/promises")
+).readFile(new URL("../public/style.css", import.meta.url), "utf8");
 const dark = parsePalette(source, ":root {");
 const light = parsePalette(source, ':root[data-theme="light"] {');
 
@@ -98,6 +127,30 @@ if (incomplete.length > 0) {
   process.exit(1);
 }
 
+/**
+ * Two colours averaged in LINEAR light by a coverage fraction — what a dashed run of one
+ * over the other averages to at a glance. Linear rather than sRGB because that is what the
+ * eye integrates and what luminance() already works in.
+ */
+function mix(ink: string, ground: string, coverage: number): string {
+  const blended = coverage * luminance(ink) + (1 - coverage) * luminance(ground);
+  // Back to a channel value so contrast() can take it: the inverse of the sRGB transfer
+  // curve, applied to the grey of that luminance.
+  const channel = blended <= 0.0031308 ? blended * 12.92 : 1.055 * blended ** (1 / 2.4) - 0.055;
+  const byte = Math.round(Math.max(0, Math.min(1, channel)) * 255)
+    .toString(16)
+    .padStart(2, "0");
+  return `#${byte}${byte}${byte}`;
+}
+
+/** The ink --flow sits closest to in the a*b* plane, named — the pair a ratchet protects. */
+function nearestToFlow(palette: Record<string, string>): string {
+  const [closest] = INK_TOKENS.filter(token => token !== "flow")
+    .map(token => ({ token, apart: separation(palette["flow"], palette[token]) }))
+    .sort((first, second) => first.apart - second.apart);
+  return `${closest.token} ${closest.apart.toFixed(1)}`;
+}
+
 const failures: string[] = [];
 for (const [themeName, palette] of palettes) {
   for (const ground of ["bg", "tile"] as const) {
@@ -119,12 +172,31 @@ for (const [themeName, palette] of palettes) {
       );
     }
   }
-  const blues = separation(palette["flow"], palette["cold"]);
-  if (blues < BLUE_SEPARATION_FLOOR) {
-    failures.push(
-      `${themeName}: --flow and --cold are ${blues.toFixed(1)} apart in a*b*, under ${BLUE_SEPARATION_FLOOR} — ` +
-        `drive power and a cold pack would read as the same blue`
-    );
+  // The dashed stretch, duty-weighted — see DASHED_ON_GROUND_FLOOR.
+  const dashed = mix(palette["track"], palette["tile"], DASH_DUTY);
+  for (const against of [
+    { what: "the tile it is drawn on", hex: palette["tile"], floor: DASHED_ON_GROUND_FLOOR },
+    { what: "the solid track beside it", hex: palette["track"], floor: DASHED_VS_SOLID_FLOOR },
+  ]) {
+    const measured = contrast(dashed, against.hex);
+    if (measured < against.floor) {
+      failures.push(
+        `${themeName}: a dashed stretch averages ${measured.toFixed(3)}:1 against ${against.what}, under ` +
+          `${against.floor}:1 — a derate would not read`
+      );
+    }
+  }
+  for (const token of INK_TOKENS) {
+    if (token === "flow") {
+      continue;
+    }
+    const apart = separation(palette["flow"], palette[token]);
+    if (apart < FLOW_SEPARATION_FLOOR) {
+      failures.push(
+        `${themeName}: --flow and --${token} are ${apart.toFixed(1)} apart in a*b*, under ` +
+          `${FLOW_SEPARATION_FLOOR} — the power meter's fill and a reading would be the same colour`
+      );
+    }
   }
   for (let step = 0; step < RAMP.length - 1; step++) {
     const [from, to] = [RAMP[step], RAMP[step + 1]];
@@ -147,7 +219,9 @@ for (const [themeName, palette] of palettes) {
   console.log(
     `  marks on --tile   ` +
       MARK_TOKENS.map(token => `${token} ${contrast(palette[token], palette["tile"]).toFixed(2)}`).join("  ") +
-      `   --flow vs --cold ${separation(palette["flow"], palette["cold"]).toFixed(1)}`
+      `  dashed ${contrast(mix(palette["track"], palette["tile"], DASH_DUTY), palette["tile"]).toFixed(3)} on tile` +
+      ` / ${contrast(mix(palette["track"], palette["tile"], DASH_DUTY), palette["track"]).toFixed(3)} vs solid` +
+      `   --flow's nearest ink ${nearestToFlow(palette)}`
   );
   const steps = RAMP.slice(0, -1)
     .map(
@@ -166,67 +240,7 @@ if (failures.length > 0) {
 }
 console.log(
   `\n✓ both palettes clear their floors — values ${VALUE_FLOOR}:1, text and status inks ${TEXT_FLOOR}:1 on ` +
-    `both grounds, the meter's track visible against the card it is drawn on, the two blues apart, and no two ` +
+    `both grounds, the meter's track and its dashed stretches visible against the card they are drawn on, ` +
+    `--flow apart from every other ink, and no two ` +
     `ramp steps closer than ${SEPARATION_FLOOR} in a*b*`
 );
-
-/**
- * The custom properties declared in one `:root` block of style.css.
- *
- * Reads to the first `}` after the opening, which is what makes a block-scoped rule
- * parse correctly; the palette blocks contain no nested braces.
- */
-function parsePalette(css: string, opener: string): Record<string, string> {
-  const start = css.indexOf(opener);
-  if (start === -1) {
-    throw new Error(`style.css has no "${opener}" block — has the palette moved?`);
-  }
-  const block = css.slice(start + opener.length, css.indexOf("}", start));
-  const palette: Record<string, string> = {};
-  for (const [, name, value] of block.matchAll(/--([a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
-    palette[name] = value;
-  }
-  return palette;
-}
-
-/** WCAG 2.x relative luminance. */
-function luminance(hex: string): number {
-  const channels = [1, 3, 5].map(offset => {
-    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-}
-
-function contrast(a: string, b: string): number {
-  const [lighter, darker] = [luminance(a), luminance(b)].sort((first, second) => second - first);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
-/** CIELAB, D65. Only the two chroma axes are used — see separation(). */
-function lab(hex: string): [number, number, number] {
-  const [red, green, blue] = [1, 3, 5].map(offset => {
-    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  const x = (0.4124 * red + 0.3576 * green + 0.1805 * blue) / 0.95047;
-  // The same quantity contrast() measures, so it is taken from there rather than
-  // written a second time — two copies of the sRGB coefficients can drift apart.
-  const y = luminance(hex);
-  const z = (0.0193 * red + 0.1192 * green + 0.9505 * blue) / 1.08883;
-  const f = (t: number) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
-  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
-}
-
-/**
- * Distance in the a*b* plane only, with lightness deliberately excluded.
- *
- * A full ΔE would let a ramp "separate" by making one step much darker than its
- * neighbour, which reads as noise rather than as a progression — an optimiser handed
- * ΔE picks exactly that. What has to differ between WATCH and WARN is the hue.
- */
-function separation(a: string, b: string): number {
-  const [, aStar1, bStar1] = lab(a);
-  const [, aStar2, bStar2] = lab(b);
-  return Math.hypot(aStar1 - aStar2, bStar1 - bStar2);
-}

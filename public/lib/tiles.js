@@ -222,12 +222,18 @@ export function PairTile({
         },
       },
       () => {
+        // Each half stands alone. ⚠️ A missing half used to blank the WHOLE pair, which
+        // is wrong wherever the two come from different places: the Motor tile pairs an
+        // OBD poll with a 10 Hz stream, so the poller going quiet hid a motor temperature
+        // that was still arriving, and one dead MAX31865 hides the surviving probe. Same
+        // reasoning as the OR in the staleness class above — half a pair is still half a
+        // pair, and the dash says which half is gone rather than that both are.
         const low = first.val;
         const high = second.val;
-        if (!low || !high) {
+        if (!low && !high) {
           return "–";
         }
-        return `${format(low.value)} / ${format(high.value)}`;
+        return `${low ? format(low.value) : "–"} / ${high ? format(high.value) : "–"}`;
       },
       unit ? span({ class: "unit" }, unit) : null
     ),

@@ -57,25 +57,24 @@
   --cold: #38bdf8;
   --cool: #67e8f9; /* the 5-20 °C step between --cold and --good */
 
-  /* Marks in public/lib/svg.js. Sized by VISIBILITY, not readability — an unfilled
-     bar has to be findable, not legible — so these are the one group not held to the
-     6:1 floor, and the light values match their dark counterparts' ratios instead.
-     (The limit marker on a bar is colors.CALM, not a token: svg.js already imports it
-     for the other marker of the same kind.) */
-  /* The meter's own grey, and the ONE knob that sets how legible a derate is: the
-     limited stretch is this same grey dashed against the tile showing through, so
-     dash-against-gap IS track-against-tile. Raising it makes the derate clearer and the
-     fill's edge weaker, and 1.5:1 is where the drive fill still clears its 4:1 floor
-     (4.4:1). At the 1.3:1 this replaced, the dashes measured 1.15:1 through the visor
-     simulation and were carried by texture alone. */
+  /* The unfilled part of every bar and ring, and the power meter's own grey. Sized by
+     VISIBILITY rather than readability, so it is the one mark not held to the 6:1 floor —
+     but it IS held, by MARK_FLOORS in scripts/check-theme-contrast.ts, because nothing
+     did until 2026-09-08 and a value walked towards --tile passed every check while
+     making the meter invisible.
+     It is also the ONE knob that sets how legible a derate is: the limited stretch is
+     this same grey dashed against the tile showing through, so dash-against-gap IS
+     track-against-tile. Raising it makes the derate clearer and the fill's edge weaker.
+     1.53:1 is where the drive fill still clears its 4:1 floor, at 4.44:1. */
   --track: #39465b;
   /* Drive: the meter's fill, and the kW figure beside it. Its own token because drive
      used to be --fg, which drew the loudest thing on the hero in the same ink as the
      numbers. A blue because green is regen and red and amber mean a fault here — and the
      LIGHTER blue of the pair on this ground, since a saturated mid-blue on a dark tile is
      what a navy is on a white one. ⚠️ It is INK as well as a fill, so it carries the 6:1
-     floor: 6.8:1 / 8.9:1, and 5.3:1 against the track it grows out of. 17.1 apart from
-     --cold in a*b*, which is the only other blue here and never sits beside it. */
+     floor: 6.8:1 on --tile and 8.9:1 on --bg, and 4.44:1 against the track it grows out
+     of. Its nearest ink in a*b* is --cold at 17.1; check-theme-contrast.ts holds it apart
+     from every ink rather than from that one, because this palette has three blues. */
   --flow: #7cb4fb;
 
   /* Ink on the toast, which is painted --good or --bad rather than --tile. 10.3:1 on
@@ -95,10 +94,12 @@
  * Same token names, different ground. This exists because the dark screen washes out
  * in direct sun; docs/dashboard-decisions.md has the ramp measurements and the trade.
  *
- * Two rules to keep if you touch it. Every value here was measured against #f1f5f9 —
- * the GROUND here, and the tile colour before the two surfaces were swapped — and the
- * accents sit at the Tailwind 800/900 step because that is the FIRST step that clears
- * 6:1 on it; the 700 step tops out at 5.91 and fails.
+ * Two rules to keep if you touch it. The accents sit at the Tailwind 800/900 step
+ * because that is the FIRST step clearing 6:1 on #f1f5f9 — the GROUND here, and the tile
+ * colour before the two surfaces were swapped; the 700 step tops out at 5.91 and fails.
+ * ⚠️ The ratios written beside each value below are against --tile (#ffffff), which is
+ * the easier of the two grounds. The 6:1 derivation is against #f1f5f9, and
+ * scripts/check-theme-contrast.ts measures every ink against both.
  * Darkening yellow and orange that far walks them towards each other, so --watch and
  * --warn are further apart here than the obvious amber/orange pair would be, and
  * scripts/check-theme-contrast.ts pins both the ratio and the separation. */
@@ -118,8 +119,8 @@
   --watch: #854d0e; /* 6.9:1 */
   --cold: #075985; /* 7.6:1 */
   --cool: #155e75; /* 7.3:1 */
-  --track: #bfcad9; /* 1.7:1 on --tile, matching the dark theme's 1.5 — see the note there */
-  --flow: #1e40af; /* 8.7:1 / 8.0:1 as ink, 5.9:1 against the track, 47 from --cold */
+  --track: #bfcad9; /* 1.66:1 on --tile, against the dark theme's 1.53 — see the note there */
+  --flow: #1e40af; /* 8.7:1 / 8.0:1 as ink, 5.26:1 against the track, nearest ink --cold 47.4 */
   --toast-ink: #ffffff; /* 7.1:1 on --good, 10.0:1 on --bad */
   --tabs-bg: rgba(241, 245, 249, 0.94);
 }

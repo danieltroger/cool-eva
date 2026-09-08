@@ -12,7 +12,7 @@ import van from "../vendor/van-1.6.1.js";
 //
 // The pure pieces are exported so scripts/check-power-bar.ts can walk them in Node, where
 // van's tags have no document.createElementNS to call. docs/dashboard-decisions.md
-// §"The power bar" has the measurements and the four designs this one replaces.
+// §"The power meter" has the measurements and the four designs this one replaces.
 
 const svgTags = van.tags("http://www.w3.org/2000/svg");
 
@@ -37,6 +37,16 @@ export const TRACK = "var(--track)";
 /** Dash geometry down the strip, in viewBox y. */
 const DASH = 3.4;
 const DASH_GAP = 2.6;
+
+/**
+ * How much of a dashed stretch is ink rather than the tile showing through.
+ *
+ * Exported because it is half of how visible a derate is, and the check that measures
+ * that must not carry its own copy of it: scripts/check-theme-contrast.ts weighs --track
+ * against the ground by this figure to get what the eye actually averages over a dashed
+ * run. Change the dash period and the floors move with it.
+ */
+export const DASH_DUTY = DASH / (DASH + DASH_GAP);
 
 /** The notch that marks zero, and the mark for a ceiling the fill has gone past. */
 const ORIGIN_NOTCH = 1.6;
