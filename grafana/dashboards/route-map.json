@@ -1,0 +1,825 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "text",
+      "title": "About this dashboard",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "Where the bike went and where it charged, off the decrypted ride log. Both tables drill down: click a **Started** timestamp to open that ride or that charge session, with the time range already set, in the dashboard that covers it in detail. See `docs/route-map.md` for how the track is reconstructed and what the charge-stop positions actually mean."
+      },
+      "transparent": true,
+      "id": 1
+    },
+    {
+      "type": "geomap",
+      "title": "Route and charge stops",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 19,
+        "w": 18,
+        "x": 0,
+        "y": 4
+      },
+      "description": "Every GPS fix the bike logged in the window, coloured by speed, with charge stops drawn on top — sized by energy added and coloured by how stale their position is.\n\n**The track is points, not a line, on purpose.** A line has to decide what happens across a gap, and the honest answer is *nothing*: where the bike was on a trailer, or parked with the hub asleep, there is no route to draw. Points simply stop and resume. At 1 Hz they read as a continuous track anyway.\n\n**A charge pin is not a measured position.** This bike logs almost no GPS while charging — the Connectivity Hub sleeps — so a stop is drawn at the last fix from before it was plugged in. Green is under half an hour stale and worth trusting; red is over six hours and means only *that the bike charged*, not that it charged there.\n\nZoomed out the track is thinned to keep the panel responsive; narrow the range and every fix comes back. `docs/route-map.md` has the details.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "unit": "velocitykmh",
+          "decimals": 0,
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fix age (min)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "m"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 360
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kWh added"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "kwatth"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(lat|lon|start_ms|end_ms)"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "view": {
+          "id": "fit",
+          "allLayers": true,
+          "padding": 10,
+          "zoom": 18
+        },
+        "controls": {
+          "showZoom": true,
+          "mouseWheelZoom": true,
+          "showAttribution": true,
+          "showScale": true,
+          "showMeasure": false,
+          "showDebug": false
+        },
+        "basemap": {
+          "type": "osm-standard",
+          "name": "Basemap",
+          "config": {}
+        },
+        "tooltip": {
+          "mode": "details"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "Track",
+            "tooltip": true,
+            "location": {
+              "mode": "coords",
+              "latitude": "lat",
+              "longitude": "lon"
+            },
+            "filterData": {
+              "id": "byRefId",
+              "options": "A"
+            },
+            "config": {
+              "showLegend": false,
+              "style": {
+                "color": {
+                  "field": "speed",
+                  "fixed": "dark-green"
+                },
+                "opacity": 0.85,
+                "size": {
+                  "fixed": 3,
+                  "min": 2,
+                  "max": 3
+                },
+                "symbol": {
+                  "fixed": "img/icons/marker/circle.svg",
+                  "mode": "fixed"
+                },
+                "symbolAlign": {
+                  "horizontal": "center",
+                  "vertical": "center"
+                },
+                "textConfig": {
+                  "fontSize": 12,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                },
+                "rotation": {
+                  "fixed": 0,
+                  "mode": "mod",
+                  "max": 360,
+                  "min": -360
+                }
+              }
+            }
+          },
+          {
+            "type": "markers",
+            "name": "Charge stops",
+            "tooltip": true,
+            "location": {
+              "mode": "coords",
+              "latitude": "stop_lat",
+              "longitude": "stop_lon"
+            },
+            "filterData": {
+              "id": "byRefId",
+              "options": "B"
+            },
+            "config": {
+              "showLegend": true,
+              "style": {
+                "color": {
+                  "field": "Fix age (min)",
+                  "fixed": "dark-orange"
+                },
+                "opacity": 0.9,
+                "size": {
+                  "field": "kWh added",
+                  "fixed": 6,
+                  "min": 7,
+                  "max": 22
+                },
+                "symbol": {
+                  "fixed": "img/icons/marker/circle.svg",
+                  "mode": "fixed"
+                },
+                "symbolAlign": {
+                  "horizontal": "center",
+                  "vertical": "center"
+                },
+                "textConfig": {
+                  "fontSize": 12,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                },
+                "rotation": {
+                  "fixed": 0,
+                  "mode": "mod",
+                  "max": 360,
+                  "min": -360
+                }
+              }
+            }
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "-- Route points, one per second, spikes removed.\n--\n-- gps_lat and gps_lon are SEPARATE log-on-change signals. They share a millisecond\n-- whenever the decoder completes a fix and both moved, but a heading that only moves\n-- one of them logs only that one: over the archive 53 872 lat rows and 55 191 lon rows\n-- share an exact timestamp just 45 130 times. So each is carried forward onto the\n-- other's timestamps rather than inner-joined, which would drop ~16 % of the track.\n--\n-- The 10-minute reach below $__from is the seed that carry-forward needs (see\n-- grafana/README.md \"Carry-forward joins need seeding from before $__from\"): a window\n-- opening mid-ride otherwise starts with a lat and no lon and draws nothing.\nWITH raw AS (\n  SELECT r.ts AS ts,\n         MAX(CASE WHEN s.key = 'gps_lat'       THEN r.value END) AS lat,\n         MAX(CASE WHEN s.key = 'gps_lon'       THEN r.value END) AS lon,\n         -- Gated to public/lib/bounds.js's declared range for this signal. Grafana gates\n         -- nothing on its own, and one 0xFFFF-ish sample destroys the colour scale for the\n         -- whole track. Out of range becomes NULL (no colour), never a clamped value.\n         MAX(CASE WHEN s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300\n                  THEN r.value END) AS speed\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('gps_lat', 'gps_lon', 'gps_speed_kmh')\n    AND r.ts BETWEEN $__from - 600000 AND $__to\n    AND r.ts < 2000000000000\n  GROUP BY r.ts\n),\n-- SQLite has no IGNORE NULLS, so carry-forward is \"the timestamp of the last non-null\",\n-- joined back to the row that holds it.\nheld AS (\n  SELECT ts,\n         MAX(CASE WHEN lat   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lat_ts,\n         MAX(CASE WHEN lon   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lon_ts,\n         MAX(CASE WHEN speed IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS speed_ts\n  FROM raw\n),\npaired AS (\n  SELECT h.ts AS ts, la.lat AS lat, lo.lon AS lon, sp.speed AS speed\n  FROM held h\n  JOIN raw la ON la.ts = h.lat_ts\n  JOIN raw lo ON lo.ts = h.lon_ts\n  LEFT JOIN raw sp ON sp.ts = h.speed_ts\n),\n-- One point per second, keeping the exact last sample of each second. Without this the\n-- per-millisecond pivot emits a row at each signal's own timestamp, so a lat row and a\n-- lon row 1 ms apart become two points a few metres apart -- a staircase that makes\n-- every implied speed nonsense (7 m in 1 ms reads as 25 000 km/h) and tricks any\n-- speed-based outlier test into rejecting 2 561 perfectly good fixes.\nper_second AS (\n  SELECT ts, lat, lon, speed FROM (\n    SELECT ts, lat, lon, speed,\n           ROW_NUMBER() OVER (PARTITION BY ts / 1000 ORDER BY ts DESC) AS rn\n    FROM paired\n  ) WHERE rn = 1\n),\nneighbours AS (\n  SELECT ts, lat, lon, speed,\n         (ts - LAG(ts) OVER (ORDER BY ts)) / 1000.0        AS dt_prev,\n         lat - LAG(lat)  OVER (ORDER BY ts)                AS dlat_prev,\n         lon - LAG(lon)  OVER (ORDER BY ts)                AS dlon_prev,\n         LEAD(lat) OVER (ORDER BY ts) - lat                AS dlat_next,\n         LEAD(lon) OVER (ORDER BY ts) - lon                AS dlon_next,\n         LEAD(lat) OVER (ORDER BY ts) - LAG(lat) OVER (ORDER BY ts) AS dlat_span,\n         LEAD(lon) OVER (ORDER BY ts) - LAG(lon) OVER (ORDER BY ts) AS dlon_span\n  FROM per_second\n),\n-- Spike rejection, and deliberately NOT a coordinate range gate. The bad decode produces a\n-- longitude carrying an extra leading digit, landing it roughly 100 deg from the fixes one\n-- second either side of it -- and such a value is still a perfectly valid longitude, so a\n-- range test is really a geography test. It would also bake this bike's riding region into\n-- a committed file, which is why no coordinate appears anywhere in this query.\n--\n-- A spike is defined by SHAPE instead: the point sits far from both neighbours WHILE THE\n-- NEIGHBOURS AGREE WITH EACH OTHER. That third clause is what makes this safe without any\n-- assumption about speed or sampling rate. When the bike is simply carried somewhere between\n-- two fixes -- a ferry, a van, an overnight gap -- the point after the gap is also far from\n-- the point before it, so the neighbours DISAGREE and the real position is kept. Only a\n-- lone excursion away from a track that continues undisturbed is thrown out.\n--\n-- An earlier version gated on the time step instead (skip the test when dt > 120 s, on the\n-- grounds that a long gap can legitimately move a long way). That let exactly two corrupt\n-- fixes through, on 2026-08-09 and 2026-09-07, both in stretches where reception was sparse\n-- enough that the neighbouring steps exceeded the gate. Two points out of 67 851 were enough\n-- to stretch the map's auto-fit to the whole globe, which is the failure mode worth knowing:\n-- a despiker on map data is not judged by the fraction it catches but by whether any survive.\n--\n-- Distances stay SQUARED and in degrees: no SQRT, no POW, no trig, so nothing here depends\n-- on the datasource's SQLite being built with SQLITE_ENABLE_MATH_FUNCTIONS.\n--\n-- The test is SCALE-FREE -- \"sticks out by 5x more than the neighbours are apart\" -- rather\n-- than a tuned distance. A fixed threshold has to be chosen for some assumed speed and\n-- sampling rate, and whatever you pick is too tight when the bike is parked and too loose\n-- when it is moving. The ratio has neither problem.\n--\n-- The 0.000004 (220 m squared, in degrees) floor is NOT a redundant belt: without it the\n-- ratio degenerates exactly where d(prev, next) approaches zero, which is every second the\n-- bike sits still with the hub awake. Measured over the archive's 65 481 points: the ratio\n-- alone rejects 280, the ratio with this floor rejects 17, and the 263 it saves are parked\n-- GPS jitter, not data. 220 m is far above that jitter and far below any real excursion.\nclean AS (\n  SELECT ts, lat, lon, speed, dt_prev\n  FROM neighbours\n  WHERE NOT (dlat_prev IS NOT NULL AND dlat_next IS NOT NULL\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_next * dlat_next + dlon_next * dlon_next)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev) > 0.000004\n             AND (dlat_next * dlat_next + dlon_next * dlon_next) > 0.000004)\n),\n-- Thin the track to a fixed budget of points. Every point is an individually styled\n-- OpenLayers feature, and the whole archive is ~68 000 of them: at that size the layer stops\n-- painting altogether -- tiles load, the canvas stays black, nothing is logged. 12 000 is fine.\n--\n-- The stride comes from the window's own row count rather than being fixed, so this is\n-- self-correcting: zoom out to 90 days and points land ~6 s apart, which is sub-pixel at that\n-- scale; narrow to one ride and the stride falls back to 1 and every fix is drawn.\nbudgeted AS (\n  SELECT ts, lat, lon, speed,\n         ROW_NUMBER() OVER (ORDER BY ts) AS rn,\n         COUNT(*) OVER ()                AS total\n  FROM clean\n  WHERE ts >= $__from\n)\nSELECT ts / 1000.0 AS time, lat, lon, speed\nFROM budgeted\n-- Ceiling division: plain total / 12000 is integer division, so a 23 616-point ride day\n-- gives a stride of 1 and no thinning at all -- twice the budget, and the failure is silent.\n-- (rn - 1) rather than rn so the first point of the window always survives.\nWHERE (rn - 1) % MAX(1, (total + 11999) / 12000) = 0\nORDER BY ts\n",
+          "queryText": "-- Route points, one per second, spikes removed.\n--\n-- gps_lat and gps_lon are SEPARATE log-on-change signals. They share a millisecond\n-- whenever the decoder completes a fix and both moved, but a heading that only moves\n-- one of them logs only that one: over the archive 53 872 lat rows and 55 191 lon rows\n-- share an exact timestamp just 45 130 times. So each is carried forward onto the\n-- other's timestamps rather than inner-joined, which would drop ~16 % of the track.\n--\n-- The 10-minute reach below $__from is the seed that carry-forward needs (see\n-- grafana/README.md \"Carry-forward joins need seeding from before $__from\"): a window\n-- opening mid-ride otherwise starts with a lat and no lon and draws nothing.\nWITH raw AS (\n  SELECT r.ts AS ts,\n         MAX(CASE WHEN s.key = 'gps_lat'       THEN r.value END) AS lat,\n         MAX(CASE WHEN s.key = 'gps_lon'       THEN r.value END) AS lon,\n         -- Gated to public/lib/bounds.js's declared range for this signal. Grafana gates\n         -- nothing on its own, and one 0xFFFF-ish sample destroys the colour scale for the\n         -- whole track. Out of range becomes NULL (no colour), never a clamped value.\n         MAX(CASE WHEN s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300\n                  THEN r.value END) AS speed\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('gps_lat', 'gps_lon', 'gps_speed_kmh')\n    AND r.ts BETWEEN $__from - 600000 AND $__to\n    AND r.ts < 2000000000000\n  GROUP BY r.ts\n),\n-- SQLite has no IGNORE NULLS, so carry-forward is \"the timestamp of the last non-null\",\n-- joined back to the row that holds it.\nheld AS (\n  SELECT ts,\n         MAX(CASE WHEN lat   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lat_ts,\n         MAX(CASE WHEN lon   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lon_ts,\n         MAX(CASE WHEN speed IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS speed_ts\n  FROM raw\n),\npaired AS (\n  SELECT h.ts AS ts, la.lat AS lat, lo.lon AS lon, sp.speed AS speed\n  FROM held h\n  JOIN raw la ON la.ts = h.lat_ts\n  JOIN raw lo ON lo.ts = h.lon_ts\n  LEFT JOIN raw sp ON sp.ts = h.speed_ts\n),\n-- One point per second, keeping the exact last sample of each second. Without this the\n-- per-millisecond pivot emits a row at each signal's own timestamp, so a lat row and a\n-- lon row 1 ms apart become two points a few metres apart -- a staircase that makes\n-- every implied speed nonsense (7 m in 1 ms reads as 25 000 km/h) and tricks any\n-- speed-based outlier test into rejecting 2 561 perfectly good fixes.\nper_second AS (\n  SELECT ts, lat, lon, speed FROM (\n    SELECT ts, lat, lon, speed,\n           ROW_NUMBER() OVER (PARTITION BY ts / 1000 ORDER BY ts DESC) AS rn\n    FROM paired\n  ) WHERE rn = 1\n),\nneighbours AS (\n  SELECT ts, lat, lon, speed,\n         (ts - LAG(ts) OVER (ORDER BY ts)) / 1000.0        AS dt_prev,\n         lat - LAG(lat)  OVER (ORDER BY ts)                AS dlat_prev,\n         lon - LAG(lon)  OVER (ORDER BY ts)                AS dlon_prev,\n         LEAD(lat) OVER (ORDER BY ts) - lat                AS dlat_next,\n         LEAD(lon) OVER (ORDER BY ts) - lon                AS dlon_next,\n         LEAD(lat) OVER (ORDER BY ts) - LAG(lat) OVER (ORDER BY ts) AS dlat_span,\n         LEAD(lon) OVER (ORDER BY ts) - LAG(lon) OVER (ORDER BY ts) AS dlon_span\n  FROM per_second\n),\n-- Spike rejection, and deliberately NOT a coordinate range gate. The bad decode produces a\n-- longitude carrying an extra leading digit, landing it roughly 100 deg from the fixes one\n-- second either side of it -- and such a value is still a perfectly valid longitude, so a\n-- range test is really a geography test. It would also bake this bike's riding region into\n-- a committed file, which is why no coordinate appears anywhere in this query.\n--\n-- A spike is defined by SHAPE instead: the point sits far from both neighbours WHILE THE\n-- NEIGHBOURS AGREE WITH EACH OTHER. That third clause is what makes this safe without any\n-- assumption about speed or sampling rate. When the bike is simply carried somewhere between\n-- two fixes -- a ferry, a van, an overnight gap -- the point after the gap is also far from\n-- the point before it, so the neighbours DISAGREE and the real position is kept. Only a\n-- lone excursion away from a track that continues undisturbed is thrown out.\n--\n-- An earlier version gated on the time step instead (skip the test when dt > 120 s, on the\n-- grounds that a long gap can legitimately move a long way). That let exactly two corrupt\n-- fixes through, on 2026-08-09 and 2026-09-07, both in stretches where reception was sparse\n-- enough that the neighbouring steps exceeded the gate. Two points out of 67 851 were enough\n-- to stretch the map's auto-fit to the whole globe, which is the failure mode worth knowing:\n-- a despiker on map data is not judged by the fraction it catches but by whether any survive.\n--\n-- Distances stay SQUARED and in degrees: no SQRT, no POW, no trig, so nothing here depends\n-- on the datasource's SQLite being built with SQLITE_ENABLE_MATH_FUNCTIONS.\n--\n-- The test is SCALE-FREE -- \"sticks out by 5x more than the neighbours are apart\" -- rather\n-- than a tuned distance. A fixed threshold has to be chosen for some assumed speed and\n-- sampling rate, and whatever you pick is too tight when the bike is parked and too loose\n-- when it is moving. The ratio has neither problem.\n--\n-- The 0.000004 (220 m squared, in degrees) floor is NOT a redundant belt: without it the\n-- ratio degenerates exactly where d(prev, next) approaches zero, which is every second the\n-- bike sits still with the hub awake. Measured over the archive's 65 481 points: the ratio\n-- alone rejects 280, the ratio with this floor rejects 17, and the 263 it saves are parked\n-- GPS jitter, not data. 220 m is far above that jitter and far below any real excursion.\nclean AS (\n  SELECT ts, lat, lon, speed, dt_prev\n  FROM neighbours\n  WHERE NOT (dlat_prev IS NOT NULL AND dlat_next IS NOT NULL\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_next * dlat_next + dlon_next * dlon_next)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev) > 0.000004\n             AND (dlat_next * dlat_next + dlon_next * dlon_next) > 0.000004)\n),\n-- Thin the track to a fixed budget of points. Every point is an individually styled\n-- OpenLayers feature, and the whole archive is ~68 000 of them: at that size the layer stops\n-- painting altogether -- tiles load, the canvas stays black, nothing is logged. 12 000 is fine.\n--\n-- The stride comes from the window's own row count rather than being fixed, so this is\n-- self-correcting: zoom out to 90 days and points land ~6 s apart, which is sub-pixel at that\n-- scale; narrow to one ride and the stride falls back to 1 and every fix is drawn.\nbudgeted AS (\n  SELECT ts, lat, lon, speed,\n         ROW_NUMBER() OVER (ORDER BY ts) AS rn,\n         COUNT(*) OVER ()                AS total\n  FROM clean\n  WHERE ts >= $__from\n)\nSELECT ts / 1000.0 AS time, lat, lon, speed\nFROM budgeted\n-- Ceiling division: plain total / 12000 is integer division, so a 23 616-point ride day\n-- gives a stride of 1 and no thinning at all -- twice the budget, and the failure is silent.\n-- (rn - 1) rather than rn so the first point of the window always survives.\nWHERE (rn - 1) % MAX(1, (total + 11999) / 12000) = 0\nORDER BY ts\n",
+          "timeColumns": []
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "B",
+          "queryType": "table",
+          "rawQueryText": "WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\n-- Deliberately NOT called lat/lon. partitionByValues strips refId from the frames it\n-- creates, so the route layer cannot be bound to its query by refId any more and has to\n-- accept every frame. Giving the charge stops differently-named coordinate columns is\n-- what keeps the route layer from finding coordinates in this frame and drawing a line\n-- through all fifteen charge stops.\nSELECT lat AS stop_lat, lon AS stop_lon,\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND((start_ts - fix_ts) / 60000.0, 1)              AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nWHERE lat IS NOT NULL AND lon IS NOT NULL\nORDER BY start_ts\n",
+          "queryText": "WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\n-- Deliberately NOT called lat/lon. partitionByValues strips refId from the frames it\n-- creates, so the route layer cannot be bound to its query by refId any more and has to\n-- accept every frame. Giving the charge stops differently-named coordinate columns is\n-- what keeps the route layer from finding coordinates in this frame and drawing a line\n-- through all fifteen charge stops.\nSELECT lat AS stop_lat, lon AS stop_lon,\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND((start_ts - fix_ts) / 60000.0, 1)              AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nWHERE lat IS NOT NULL AND lon IS NOT NULL\nORDER BY start_ts\n",
+          "timeColumns": []
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Distance",
+      "description": "Odometer delta across the window. Reads blank when the odometer did not log inside it, which on a log-on-change database means the bike did not move.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: km",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "C",
+          "queryType": "table",
+          "rawQueryText": "-- The bike's own odometer over the window, not an integral of the fixes.\nSELECT ROUND(MAX(r.value) - MIN(r.value), 1) AS \"km\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'odometer_can_km' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000",
+          "queryText": "-- The bike's own odometer over the window, not an integral of the fixes.\nSELECT ROUND(MAX(r.value) - MIN(r.value), 1) AS \"km\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'odometer_can_km' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000",
+          "timeColumns": []
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Charge stops",
+      "description": "Runs where charging current actually flowed, merged across breaks under 30 minutes and counted only past 5 minutes. Built from current, not from charger_enabled — that flag is log-on-change and stays at 1 for days after the bike sleeps mid-session, which merged a 2026-08-04 charge and a 2026-08-07 charge into one 3-day 'session'.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "D",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS \"Charge stops\" FROM (WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\n-- Deliberately NOT called lat/lon. partitionByValues strips refId from the frames it\n-- creates, so the route layer cannot be bound to its query by refId any more and has to\n-- accept every frame. Giving the charge stops differently-named coordinate columns is\n-- what keeps the route layer from finding coordinates in this frame and drawing a line\n-- through all fifteen charge stops.\nSELECT lat AS stop_lat, lon AS stop_lon,\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND((start_ts - fix_ts) / 60000.0, 1)              AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nWHERE lat IS NOT NULL AND lon IS NOT NULL\nORDER BY start_ts\n)",
+          "queryText": "SELECT COUNT(*) AS \"Charge stops\" FROM (WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\n-- Deliberately NOT called lat/lon. partitionByValues strips refId from the frames it\n-- creates, so the route layer cannot be bound to its query by refId any more and has to\n-- accept every frame. Giving the charge stops differently-named coordinate columns is\n-- what keeps the route layer from finding coordinates in this frame and drawing a line\n-- through all fifteen charge stops.\nSELECT lat AS stop_lat, lon AS stop_lon,\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND((start_ts - fix_ts) / 60000.0, 1)              AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nWHERE lat IS NOT NULL AND lon IS NOT NULL\nORDER BY start_ts\n)",
+          "timeColumns": []
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Energy charged",
+      "description": "Sum of the pack's own residual-energy rise across each stop. Negative sessions (the bike drawing down while plugged in) are counted as zero rather than subtracted.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "E",
+          "queryType": "table",
+          "rawQueryText": "SELECT ROUND(SUM(CASE WHEN \"kWh added\" > 0 THEN \"kWh added\" ELSE 0 END), 1) AS \"kWh added\" FROM (WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\n-- Deliberately NOT called lat/lon. partitionByValues strips refId from the frames it\n-- creates, so the route layer cannot be bound to its query by refId any more and has to\n-- accept every frame. Giving the charge stops differently-named coordinate columns is\n-- what keeps the route layer from finding coordinates in this frame and drawing a line\n-- through all fifteen charge stops.\nSELECT lat AS stop_lat, lon AS stop_lon,\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND((start_ts - fix_ts) / 60000.0, 1)              AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nWHERE lat IS NOT NULL AND lon IS NOT NULL\nORDER BY start_ts\n)",
+          "queryText": "SELECT ROUND(SUM(CASE WHEN \"kWh added\" > 0 THEN \"kWh added\" ELSE 0 END), 1) AS \"kWh added\" FROM (WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\n-- Deliberately NOT called lat/lon. partitionByValues strips refId from the frames it\n-- creates, so the route layer cannot be bound to its query by refId any more and has to\n-- accept every frame. Giving the charge stops differently-named coordinate columns is\n-- what keeps the route layer from finding coordinates in this frame and drawing a line\n-- through all fifteen charge stops.\nSELECT lat AS stop_lat, lon AS stop_lon,\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND((start_ts - fix_ts) / 60000.0, 1)              AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nWHERE lat IS NOT NULL AND lon IS NOT NULL\nORDER BY start_ts\n)",
+          "timeColumns": []
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "stat",
+      "title": "GPS points mapped",
+      "description": "Points actually drawn, after pairing lat with lon, collapsing to one per second and rejecting spikes. Compare with 'GPS fixes' in the rides table to see how much the cleanup removed.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "F",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS \"GPS points\" FROM (-- Route points, one per second, spikes removed.\n--\n-- gps_lat and gps_lon are SEPARATE log-on-change signals. They share a millisecond\n-- whenever the decoder completes a fix and both moved, but a heading that only moves\n-- one of them logs only that one: over the archive 53 872 lat rows and 55 191 lon rows\n-- share an exact timestamp just 45 130 times. So each is carried forward onto the\n-- other's timestamps rather than inner-joined, which would drop ~16 % of the track.\n--\n-- The 10-minute reach below $__from is the seed that carry-forward needs (see\n-- grafana/README.md \"Carry-forward joins need seeding from before $__from\"): a window\n-- opening mid-ride otherwise starts with a lat and no lon and draws nothing.\nWITH raw AS (\n  SELECT r.ts AS ts,\n         MAX(CASE WHEN s.key = 'gps_lat'       THEN r.value END) AS lat,\n         MAX(CASE WHEN s.key = 'gps_lon'       THEN r.value END) AS lon,\n         -- Gated to public/lib/bounds.js's declared range for this signal. Grafana gates\n         -- nothing on its own, and one 0xFFFF-ish sample destroys the colour scale for the\n         -- whole track. Out of range becomes NULL (no colour), never a clamped value.\n         MAX(CASE WHEN s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300\n                  THEN r.value END) AS speed\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('gps_lat', 'gps_lon', 'gps_speed_kmh')\n    AND r.ts BETWEEN $__from - 600000 AND $__to\n    AND r.ts < 2000000000000\n  GROUP BY r.ts\n),\n-- SQLite has no IGNORE NULLS, so carry-forward is \"the timestamp of the last non-null\",\n-- joined back to the row that holds it.\nheld AS (\n  SELECT ts,\n         MAX(CASE WHEN lat   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lat_ts,\n         MAX(CASE WHEN lon   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lon_ts,\n         MAX(CASE WHEN speed IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS speed_ts\n  FROM raw\n),\npaired AS (\n  SELECT h.ts AS ts, la.lat AS lat, lo.lon AS lon, sp.speed AS speed\n  FROM held h\n  JOIN raw la ON la.ts = h.lat_ts\n  JOIN raw lo ON lo.ts = h.lon_ts\n  LEFT JOIN raw sp ON sp.ts = h.speed_ts\n),\n-- One point per second, keeping the exact last sample of each second. Without this the\n-- per-millisecond pivot emits a row at each signal's own timestamp, so a lat row and a\n-- lon row 1 ms apart become two points a few metres apart -- a staircase that makes\n-- every implied speed nonsense (7 m in 1 ms reads as 25 000 km/h) and tricks any\n-- speed-based outlier test into rejecting 2 561 perfectly good fixes.\nper_second AS (\n  SELECT ts, lat, lon, speed FROM (\n    SELECT ts, lat, lon, speed,\n           ROW_NUMBER() OVER (PARTITION BY ts / 1000 ORDER BY ts DESC) AS rn\n    FROM paired\n  ) WHERE rn = 1\n),\nneighbours AS (\n  SELECT ts, lat, lon, speed,\n         (ts - LAG(ts) OVER (ORDER BY ts)) / 1000.0        AS dt_prev,\n         lat - LAG(lat)  OVER (ORDER BY ts)                AS dlat_prev,\n         lon - LAG(lon)  OVER (ORDER BY ts)                AS dlon_prev,\n         LEAD(lat) OVER (ORDER BY ts) - lat                AS dlat_next,\n         LEAD(lon) OVER (ORDER BY ts) - lon                AS dlon_next,\n         LEAD(lat) OVER (ORDER BY ts) - LAG(lat) OVER (ORDER BY ts) AS dlat_span,\n         LEAD(lon) OVER (ORDER BY ts) - LAG(lon) OVER (ORDER BY ts) AS dlon_span\n  FROM per_second\n),\n-- Spike rejection, and deliberately NOT a coordinate range gate. The bad decode produces a\n-- longitude carrying an extra leading digit, landing it roughly 100 deg from the fixes one\n-- second either side of it -- and such a value is still a perfectly valid longitude, so a\n-- range test is really a geography test. It would also bake this bike's riding region into\n-- a committed file, which is why no coordinate appears anywhere in this query.\n--\n-- A spike is defined by SHAPE instead: the point sits far from both neighbours WHILE THE\n-- NEIGHBOURS AGREE WITH EACH OTHER. That third clause is what makes this safe without any\n-- assumption about speed or sampling rate. When the bike is simply carried somewhere between\n-- two fixes -- a ferry, a van, an overnight gap -- the point after the gap is also far from\n-- the point before it, so the neighbours DISAGREE and the real position is kept. Only a\n-- lone excursion away from a track that continues undisturbed is thrown out.\n--\n-- An earlier version gated on the time step instead (skip the test when dt > 120 s, on the\n-- grounds that a long gap can legitimately move a long way). That let exactly two corrupt\n-- fixes through, on 2026-08-09 and 2026-09-07, both in stretches where reception was sparse\n-- enough that the neighbouring steps exceeded the gate. Two points out of 67 851 were enough\n-- to stretch the map's auto-fit to the whole globe, which is the failure mode worth knowing:\n-- a despiker on map data is not judged by the fraction it catches but by whether any survive.\n--\n-- Distances stay SQUARED and in degrees: no SQRT, no POW, no trig, so nothing here depends\n-- on the datasource's SQLite being built with SQLITE_ENABLE_MATH_FUNCTIONS.\n--\n-- The test is SCALE-FREE -- \"sticks out by 5x more than the neighbours are apart\" -- rather\n-- than a tuned distance. A fixed threshold has to be chosen for some assumed speed and\n-- sampling rate, and whatever you pick is too tight when the bike is parked and too loose\n-- when it is moving. The ratio has neither problem.\n--\n-- The 0.000004 (220 m squared, in degrees) floor is NOT a redundant belt: without it the\n-- ratio degenerates exactly where d(prev, next) approaches zero, which is every second the\n-- bike sits still with the hub awake. Measured over the archive's 65 481 points: the ratio\n-- alone rejects 280, the ratio with this floor rejects 17, and the 263 it saves are parked\n-- GPS jitter, not data. 220 m is far above that jitter and far below any real excursion.\nclean AS (\n  SELECT ts, lat, lon, speed, dt_prev\n  FROM neighbours\n  WHERE NOT (dlat_prev IS NOT NULL AND dlat_next IS NOT NULL\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_next * dlat_next + dlon_next * dlon_next)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev) > 0.000004\n             AND (dlat_next * dlat_next + dlon_next * dlon_next) > 0.000004)\n),\n-- Thin the track to a fixed budget of points. Every point is an individually styled\n-- OpenLayers feature, and the whole archive is ~68 000 of them: at that size the layer stops\n-- painting altogether -- tiles load, the canvas stays black, nothing is logged. 12 000 is fine.\n--\n-- The stride comes from the window's own row count rather than being fixed, so this is\n-- self-correcting: zoom out to 90 days and points land ~6 s apart, which is sub-pixel at that\n-- scale; narrow to one ride and the stride falls back to 1 and every fix is drawn.\nbudgeted AS (\n  SELECT ts, lat, lon, speed,\n         ROW_NUMBER() OVER (ORDER BY ts) AS rn,\n         COUNT(*) OVER ()                AS total\n  FROM clean\n  WHERE ts >= $__from\n)\nSELECT ts / 1000.0 AS time, lat, lon, speed\nFROM budgeted\n-- Ceiling division: plain total / 12000 is integer division, so a 23 616-point ride day\n-- gives a stride of 1 and no thinning at all -- twice the budget, and the failure is silent.\n-- (rn - 1) rather than rn so the first point of the window always survives.\nWHERE (rn - 1) % MAX(1, (total + 11999) / 12000) = 0\nORDER BY ts\n)",
+          "queryText": "SELECT COUNT(*) AS \"GPS points\" FROM (-- Route points, one per second, spikes removed.\n--\n-- gps_lat and gps_lon are SEPARATE log-on-change signals. They share a millisecond\n-- whenever the decoder completes a fix and both moved, but a heading that only moves\n-- one of them logs only that one: over the archive 53 872 lat rows and 55 191 lon rows\n-- share an exact timestamp just 45 130 times. So each is carried forward onto the\n-- other's timestamps rather than inner-joined, which would drop ~16 % of the track.\n--\n-- The 10-minute reach below $__from is the seed that carry-forward needs (see\n-- grafana/README.md \"Carry-forward joins need seeding from before $__from\"): a window\n-- opening mid-ride otherwise starts with a lat and no lon and draws nothing.\nWITH raw AS (\n  SELECT r.ts AS ts,\n         MAX(CASE WHEN s.key = 'gps_lat'       THEN r.value END) AS lat,\n         MAX(CASE WHEN s.key = 'gps_lon'       THEN r.value END) AS lon,\n         -- Gated to public/lib/bounds.js's declared range for this signal. Grafana gates\n         -- nothing on its own, and one 0xFFFF-ish sample destroys the colour scale for the\n         -- whole track. Out of range becomes NULL (no colour), never a clamped value.\n         MAX(CASE WHEN s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300\n                  THEN r.value END) AS speed\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key IN ('gps_lat', 'gps_lon', 'gps_speed_kmh')\n    AND r.ts BETWEEN $__from - 600000 AND $__to\n    AND r.ts < 2000000000000\n  GROUP BY r.ts\n),\n-- SQLite has no IGNORE NULLS, so carry-forward is \"the timestamp of the last non-null\",\n-- joined back to the row that holds it.\nheld AS (\n  SELECT ts,\n         MAX(CASE WHEN lat   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lat_ts,\n         MAX(CASE WHEN lon   IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS lon_ts,\n         MAX(CASE WHEN speed IS NOT NULL THEN ts END) OVER (ORDER BY ts) AS speed_ts\n  FROM raw\n),\npaired AS (\n  SELECT h.ts AS ts, la.lat AS lat, lo.lon AS lon, sp.speed AS speed\n  FROM held h\n  JOIN raw la ON la.ts = h.lat_ts\n  JOIN raw lo ON lo.ts = h.lon_ts\n  LEFT JOIN raw sp ON sp.ts = h.speed_ts\n),\n-- One point per second, keeping the exact last sample of each second. Without this the\n-- per-millisecond pivot emits a row at each signal's own timestamp, so a lat row and a\n-- lon row 1 ms apart become two points a few metres apart -- a staircase that makes\n-- every implied speed nonsense (7 m in 1 ms reads as 25 000 km/h) and tricks any\n-- speed-based outlier test into rejecting 2 561 perfectly good fixes.\nper_second AS (\n  SELECT ts, lat, lon, speed FROM (\n    SELECT ts, lat, lon, speed,\n           ROW_NUMBER() OVER (PARTITION BY ts / 1000 ORDER BY ts DESC) AS rn\n    FROM paired\n  ) WHERE rn = 1\n),\nneighbours AS (\n  SELECT ts, lat, lon, speed,\n         (ts - LAG(ts) OVER (ORDER BY ts)) / 1000.0        AS dt_prev,\n         lat - LAG(lat)  OVER (ORDER BY ts)                AS dlat_prev,\n         lon - LAG(lon)  OVER (ORDER BY ts)                AS dlon_prev,\n         LEAD(lat) OVER (ORDER BY ts) - lat                AS dlat_next,\n         LEAD(lon) OVER (ORDER BY ts) - lon                AS dlon_next,\n         LEAD(lat) OVER (ORDER BY ts) - LAG(lat) OVER (ORDER BY ts) AS dlat_span,\n         LEAD(lon) OVER (ORDER BY ts) - LAG(lon) OVER (ORDER BY ts) AS dlon_span\n  FROM per_second\n),\n-- Spike rejection, and deliberately NOT a coordinate range gate. The bad decode produces a\n-- longitude carrying an extra leading digit, landing it roughly 100 deg from the fixes one\n-- second either side of it -- and such a value is still a perfectly valid longitude, so a\n-- range test is really a geography test. It would also bake this bike's riding region into\n-- a committed file, which is why no coordinate appears anywhere in this query.\n--\n-- A spike is defined by SHAPE instead: the point sits far from both neighbours WHILE THE\n-- NEIGHBOURS AGREE WITH EACH OTHER. That third clause is what makes this safe without any\n-- assumption about speed or sampling rate. When the bike is simply carried somewhere between\n-- two fixes -- a ferry, a van, an overnight gap -- the point after the gap is also far from\n-- the point before it, so the neighbours DISAGREE and the real position is kept. Only a\n-- lone excursion away from a track that continues undisturbed is thrown out.\n--\n-- An earlier version gated on the time step instead (skip the test when dt > 120 s, on the\n-- grounds that a long gap can legitimately move a long way). That let exactly two corrupt\n-- fixes through, on 2026-08-09 and 2026-09-07, both in stretches where reception was sparse\n-- enough that the neighbouring steps exceeded the gate. Two points out of 67 851 were enough\n-- to stretch the map's auto-fit to the whole globe, which is the failure mode worth knowing:\n-- a despiker on map data is not judged by the fraction it catches but by whether any survive.\n--\n-- Distances stay SQUARED and in degrees: no SQRT, no POW, no trig, so nothing here depends\n-- on the datasource's SQLite being built with SQLITE_ENABLE_MATH_FUNCTIONS.\n--\n-- The test is SCALE-FREE -- \"sticks out by 5x more than the neighbours are apart\" -- rather\n-- than a tuned distance. A fixed threshold has to be chosen for some assumed speed and\n-- sampling rate, and whatever you pick is too tight when the bike is parked and too loose\n-- when it is moving. The ratio has neither problem.\n--\n-- The 0.000004 (220 m squared, in degrees) floor is NOT a redundant belt: without it the\n-- ratio degenerates exactly where d(prev, next) approaches zero, which is every second the\n-- bike sits still with the hub awake. Measured over the archive's 65 481 points: the ratio\n-- alone rejects 280, the ratio with this floor rejects 17, and the 263 it saves are parked\n-- GPS jitter, not data. 220 m is far above that jitter and far below any real excursion.\nclean AS (\n  SELECT ts, lat, lon, speed, dt_prev\n  FROM neighbours\n  WHERE NOT (dlat_prev IS NOT NULL AND dlat_next IS NOT NULL\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_next * dlat_next + dlon_next * dlon_next)\n                 > 25 * (dlat_span * dlat_span + dlon_span * dlon_span)\n             AND (dlat_prev * dlat_prev + dlon_prev * dlon_prev) > 0.000004\n             AND (dlat_next * dlat_next + dlon_next * dlon_next) > 0.000004)\n),\n-- Thin the track to a fixed budget of points. Every point is an individually styled\n-- OpenLayers feature, and the whole archive is ~68 000 of them: at that size the layer stops\n-- painting altogether -- tiles load, the canvas stays black, nothing is logged. 12 000 is fine.\n--\n-- The stride comes from the window's own row count rather than being fixed, so this is\n-- self-correcting: zoom out to 90 days and points land ~6 s apart, which is sub-pixel at that\n-- scale; narrow to one ride and the stride falls back to 1 and every fix is drawn.\nbudgeted AS (\n  SELECT ts, lat, lon, speed,\n         ROW_NUMBER() OVER (ORDER BY ts) AS rn,\n         COUNT(*) OVER ()                AS total\n  FROM clean\n  WHERE ts >= $__from\n)\nSELECT ts / 1000.0 AS time, lat, lon, speed\nFROM budgeted\n-- Ceiling division: plain total / 12000 is integer division, so a 23 616-point ride day\n-- gives a stride of 1 and no thinning at all -- twice the budget, and the failure is silent.\n-- (rn - 1) rather than rn so the first point of the window always survives.\nWHERE (rn - 1) % MAX(1, (total + 11999) / 12000) = 0\nORDER BY ts\n)",
+          "timeColumns": []
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "row",
+      "title": "Charge sessions",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "collapsed": false,
+      "panels": [],
+      "id": 7
+    },
+    {
+      "type": "table",
+      "title": "Charge sessions",
+      "description": "One row per run of real charging current. **Fix age** is how old the position on the map was when the session started — green under 30 min, red over 6 h — because the hub sleeps while charging and almost never logs a fix inside a session. Click **Started** to open the Charging dashboard over exactly this session.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(start_ms|end_ms)"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Started"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm"
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open charge sessions in detail",
+                    "targetBlank": false,
+                    "url": "/d/cool-eva-charging/?from=${__data.fields[\"start_ms\"]}&to=${__data.fields[\"end_ms\"]}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fix age (min)"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 360
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "noValue",
+                "value": "no fix ever"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
+          "countRows": false,
+          "fields": ""
+        },
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Started"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "G",
+          "queryType": "table",
+          "rawQueryText": "WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\nSELECT\n       -- Milliseconds, not seconds. The panel formats this with a `time:` display unit,\n       -- which reads its input as epoch MILLIseconds -- handing it seconds renders every\n       -- row as 1970-01-21 rather than erroring. (Distinct from the datasource's own\n       -- `timeColumns` handling, which does want seconds; see grafana/README.md.)\n       start_ts                                             AS \"Started\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND(soc_start, 0)                                  AS \"SOC start\",\n       ROUND(soc_end, 0)                                    AS \"SOC end\",\n       ROUND(max_mains_a, 1)                                AS \"Peak mains A\",\n       ROUND(max_fast_dc_a, 1)                              AS \"Peak DC A\",\n       CASE WHEN fix_ts IS NULL THEN NULL\n            ELSE ROUND((start_ts - fix_ts) / 60000.0, 1) END AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nORDER BY start_ts DESC\n",
+          "queryText": "WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\ndetail AS (\n  SELECT start_ts, end_ts,\n         -- The AC/DC verdict rests on this and not on dc_a, for the reason above.\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'fast_dc_target_a'\n            AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_fast_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'dc_a'    AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_dc_a,\n         (SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'mains_a' AND r.ts BETWEEN sess.start_ts AND sess.end_ts) AS max_mains_a,\n         -- Last known fix BEFORE plug-in, with no lower time bound: this bike logs almost\n         -- no GPS while charging (0 fixes inside 33 of 37 sessions measured), because the\n         -- hub sleeps. The position of a charge stop is therefore always inherited, and\n         -- fix_age_min is how stale it is -- from seconds to over a week. Shown, never hidden:\n         -- a three-day-old position drawn as a confident pin is the same class of lie as\n         -- clamping a dead sensor into a plausible reading.\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lat,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lon' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS lon,\n         (SELECT r.ts FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'gps_lat' AND r.ts <= sess.start_ts AND r.ts < 2000000000000\n          ORDER BY r.ts DESC LIMIT 1) AS fix_ts,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.end_ts\n          ORDER BY r.ts DESC LIMIT 1)\n       - (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'residual_energy_wh' AND r.ts <= sess.start_ts\n          ORDER BY r.ts DESC LIMIT 1) AS wh_added,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.end_ts ORDER BY r.ts DESC LIMIT 1) AS soc_end,\n         (SELECT r.value FROM reading r JOIN signal s ON s.id = r.signal_id\n          WHERE s.key = 'soc' AND r.ts <= sess.start_ts ORDER BY r.ts DESC LIMIT 1) AS soc_start\n  FROM sess\n)\nSELECT\n       -- Milliseconds, not seconds. The panel formats this with a `time:` display unit,\n       -- which reads its input as epoch MILLIseconds -- handing it seconds renders every\n       -- row as 1970-01-21 rather than erroring. (Distinct from the datasource's own\n       -- `timeColumns` handling, which does want seconds; see grafana/README.md.)\n       start_ts                                             AS \"Started\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)              AS \"Minutes\",\n       CASE WHEN COALESCE(max_fast_dc_a, 0) > 2 THEN 'DC' ELSE 'AC' END AS \"Type\",\n       ROUND(COALESCE(wh_added, 0) / 1000.0, 2)             AS \"kWh added\",\n       ROUND(soc_start, 0)                                  AS \"SOC start\",\n       ROUND(soc_end, 0)                                    AS \"SOC end\",\n       ROUND(max_mains_a, 1)                                AS \"Peak mains A\",\n       ROUND(max_fast_dc_a, 1)                              AS \"Peak DC A\",\n       CASE WHEN fix_ts IS NULL THEN NULL\n            ELSE ROUND((start_ts - fix_ts) / 60000.0, 1) END AS \"Fix age (min)\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM detail\nORDER BY start_ts DESC\n",
+          "timeColumns": []
+        }
+      ],
+      "id": 8
+    },
+    {
+      "type": "row",
+      "title": "Rides",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "collapsed": false,
+      "panels": [],
+      "id": 9
+    },
+    {
+      "type": "table",
+      "title": "Rides",
+      "description": "Runs of GPS fixes separated by more than 30 minutes. **km** is the bike's own odometer delta, not an integral of the fixes, so it stays right where reception did not. Click **Started** to open the Ride summary over exactly this ride.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(start_ms|end_ms)"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Started"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm"
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open rides in detail",
+                    "targetBlank": false,
+                    "url": "/d/cool-eva-ride/?from=${__data.fields[\"start_ms\"]}&to=${__data.fields[\"end_ms\"]}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fix age (min)"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 360
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "noValue",
+                "value": "no fix ever"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
+          "countRows": false,
+          "fields": ""
+        },
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Started"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "refId": "H",
+          "queryType": "table",
+          "rawQueryText": "WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\npts AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'gps_lat' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n    AND NOT EXISTS (SELECT 1 FROM sess\n                    WHERE r.ts BETWEEN sess.start_ts AND sess.end_ts)\n),\n-- Merge the fixes with the session starts into one ordered stream, so each fix can see how\n-- recently a charge began without a correlated subquery per row.\nstream AS (\n  SELECT ts, 0 AS is_charge FROM pts\n  UNION ALL\n  SELECT start_ts AS ts, 1 AS is_charge FROM sess\n),\ntagged AS (\n  SELECT ts, is_charge,\n         MAX(CASE WHEN is_charge = 1 THEN ts END) OVER (ORDER BY ts) AS last_charge_ts\n  FROM stream\n),\nfixes AS (SELECT ts, last_charge_ts FROM tagged WHERE is_charge = 0),\nride_flagged AS (\n  SELECT ts,\n         CASE WHEN LAG(ts) OVER (ORDER BY ts) IS NULL THEN 1\n              WHEN ts - LAG(ts) OVER (ORDER BY ts) >= 1800000 THEN 1\n              WHEN last_charge_ts > LAG(ts) OVER (ORDER BY ts) THEN 1\n              ELSE 0 END AS is_new\n  FROM fixes\n),\nride_grouped AS (SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM ride_flagged),\nride AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts, COUNT(*) AS fixes\n  FROM ride_grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n)\nSELECT\n       -- Milliseconds, not seconds. The panel formats this with a `time:` display unit,\n       -- which reads its input as epoch MILLIseconds -- handing it seconds renders every\n       -- row as 1970-01-21 rather than erroring. (Distinct from the datasource's own\n       -- `timeColumns` handling, which does want seconds; see grafana/README.md.)\n       start_ts                                 AS \"Started\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)  AS \"Minutes\",\n       -- The bike's own odometer, not an integral of the fixes: exact, and it needs no\n       -- SQRT, which keeps this query independent of how the datasource's SQLite was built.\n       ROUND((SELECT MAX(r.value) - MIN(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n              WHERE s.key = 'odometer_can_km' AND r.ts BETWEEN ride.start_ts AND ride.end_ts), 1) AS \"km\",\n       ROUND((SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n              WHERE s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300\n                AND r.ts BETWEEN ride.start_ts AND ride.end_ts), 0) AS \"Top km/h\",\n       fixes                                    AS \"GPS fixes\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM ride ORDER BY start_ts DESC\n",
+          "queryText": "WITH evidence AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  -- fast_dc_target_a belongs in here and its absence is not a detail: a DC session sends no\n  -- 0x305/0x306 at all, so it is the ONLY DC-side current on this bus (see docs/charge-manager.md).\n  -- dc_a is NOT that signal -- it is present through AC charging too, reaching 6.7 A on a day\n  -- whose DC leg pulled 73 A. Detecting on mains_a/dc_a alone found 2 stops and 500 Wh across a\n  -- 498 km touring day, silently missing every fast charge that made the day possible.\n  WHERE s.key IN ('mains_a', 'dc_a', 'fast_dc_target_a') AND r.value > 0.5\n    AND r.ts BETWEEN $__from AND $__to\n    AND r.ts < 2000000000000\n),\nflagged AS (\n  SELECT ts, CASE WHEN ts - LAG(ts) OVER (ORDER BY ts) < 1800000 THEN 0 ELSE 1 END AS is_new\n  FROM evidence\n),\ngrouped AS (\n  SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM flagged\n),\nsess AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts\n  FROM grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n),\npts AS (\n  SELECT r.ts AS ts\n  FROM reading r JOIN signal s ON s.id = r.signal_id\n  WHERE s.key = 'gps_lat' AND r.ts BETWEEN $__from AND $__to AND r.ts < 2000000000000\n    AND NOT EXISTS (SELECT 1 FROM sess\n                    WHERE r.ts BETWEEN sess.start_ts AND sess.end_ts)\n),\n-- Merge the fixes with the session starts into one ordered stream, so each fix can see how\n-- recently a charge began without a correlated subquery per row.\nstream AS (\n  SELECT ts, 0 AS is_charge FROM pts\n  UNION ALL\n  SELECT start_ts AS ts, 1 AS is_charge FROM sess\n),\ntagged AS (\n  SELECT ts, is_charge,\n         MAX(CASE WHEN is_charge = 1 THEN ts END) OVER (ORDER BY ts) AS last_charge_ts\n  FROM stream\n),\nfixes AS (SELECT ts, last_charge_ts FROM tagged WHERE is_charge = 0),\nride_flagged AS (\n  SELECT ts,\n         CASE WHEN LAG(ts) OVER (ORDER BY ts) IS NULL THEN 1\n              WHEN ts - LAG(ts) OVER (ORDER BY ts) >= 1800000 THEN 1\n              WHEN last_charge_ts > LAG(ts) OVER (ORDER BY ts) THEN 1\n              ELSE 0 END AS is_new\n  FROM fixes\n),\nride_grouped AS (SELECT ts, SUM(is_new) OVER (ORDER BY ts ROWS UNBOUNDED PRECEDING) AS g FROM ride_flagged),\nride AS (\n  SELECT MIN(ts) AS start_ts, MAX(ts) AS end_ts, COUNT(*) AS fixes\n  FROM ride_grouped GROUP BY g HAVING MAX(ts) - MIN(ts) >= 300000\n)\nSELECT\n       -- Milliseconds, not seconds. The panel formats this with a `time:` display unit,\n       -- which reads its input as epoch MILLIseconds -- handing it seconds renders every\n       -- row as 1970-01-21 rather than erroring. (Distinct from the datasource's own\n       -- `timeColumns` handling, which does want seconds; see grafana/README.md.)\n       start_ts                                 AS \"Started\",\n       ROUND((end_ts - start_ts) / 60000.0, 0)  AS \"Minutes\",\n       -- The bike's own odometer, not an integral of the fixes: exact, and it needs no\n       -- SQRT, which keeps this query independent of how the datasource's SQLite was built.\n       ROUND((SELECT MAX(r.value) - MIN(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n              WHERE s.key = 'odometer_can_km' AND r.ts BETWEEN ride.start_ts AND ride.end_ts), 1) AS \"km\",\n       ROUND((SELECT MAX(r.value) FROM reading r JOIN signal s ON s.id = r.signal_id\n              WHERE s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300\n                AND r.ts BETWEEN ride.start_ts AND ride.end_ts), 0) AS \"Top km/h\",\n       fixes                                    AS \"GPS fixes\",\n       start_ts AS start_ms, end_ts AS end_ms\nFROM ride ORDER BY start_ts DESC\n",
+          "timeColumns": []
+        }
+      ],
+      "id": 10
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": ["cool-eva", "motorcycle", "gps", "route", "charging"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cool Eva — Route & charging map",
+  "uid": "cool-eva-route-map",
+  "version": 1
+}
