@@ -18,10 +18,32 @@ import { readFile } from "fs/promises";
 //     the same brown, and a ramp whose steps cannot be told apart carries no state.
 
 /** Every ink colors.js exports or draws with, and the ground each one lands on. */
-const INK_TOKENS = ["fg", "label", "sub", "good", "watch", "warn", "bad", "cold", "cool"];
+const INK_TOKENS = ["fg", "label", "sub", "good", "watch", "warn", "bad", "cold", "cool", "flow"];
 
-/** Marks sized by visibility rather than readability — see the note in svg.js. */
-const MARK_TOKENS = ["track", "derated"];
+/** Marks sized by visibility rather than readability — see the note in lib/power-bar.js. */
+const MARK_TOKENS = ["track"];
+
+/**
+ * …and what --track has to clear against the tile it is drawn on.
+ *
+ * ⚠️ MARK_TOKENS has been in this file since the palette moved to tokens and, until now,
+ * only ever appeared in the completeness filter — it named the marks and measured none of
+ * them. So nothing in the repo held the power meter against the card it sits on, and a
+ * palette walking --track towards --tile passed every check while making the meter
+ * invisible: exactly the failure style.css warns about in words at the --track note.
+ *
+ * A RATCHET, not a measurement, in the same shape as SEPARATION_FLOOR below. Nothing
+ * derives 1.25; it sits under the shipped 1.29 and 1.48.
+ */
+const MARK_FLOORS: Record<string, number> = { "track": 1.25 };
+
+/**
+ * ⚠️ And the two blues, which are not in the ramp below and so were not being held apart
+ * by anything. --cold is a temperature and --flow is drive power; they never sit side by
+ * side, but a palette edit that walked them together would make the coldest reading on
+ * the screen and a hard pull the same colour. A ratchet under the shipped 17.1 / 47.4.
+ */
+const BLUE_SEPARATION_FLOOR = 15;
 
 /**
  * The floors style.css declares. Values clear 11:1 and everything else 6:1; the dark
@@ -88,6 +110,22 @@ for (const [themeName, palette] of palettes) {
       }
     }
   }
+  for (const token of MARK_TOKENS) {
+    const measured = contrast(palette[token], palette["tile"]);
+    if (measured < MARK_FLOORS[token]) {
+      failures.push(
+        `${themeName}:${token} is ${measured.toFixed(2)}:1 against the tile it is drawn on, under ` +
+          `${MARK_FLOORS[token]}:1 — the meter would disappear into the card`
+      );
+    }
+  }
+  const blues = separation(palette["flow"], palette["cold"]);
+  if (blues < BLUE_SEPARATION_FLOOR) {
+    failures.push(
+      `${themeName}: --flow and --cold are ${blues.toFixed(1)} apart in a*b*, under ${BLUE_SEPARATION_FLOOR} — ` +
+        `drive power and a cold pack would read as the same blue`
+    );
+  }
   for (let step = 0; step < RAMP.length - 1; step++) {
     const [from, to] = [RAMP[step], RAMP[step + 1]];
     const apart = separation(palette[from], palette[to]);
@@ -106,6 +144,11 @@ for (const [themeName, palette] of palettes) {
     const row = INK_TOKENS.map(token => `${token} ${contrast(palette[token], palette[ground]).toFixed(1)}`).join("  ");
     console.log(`  on --${ground.padEnd(4)} ${row}`);
   }
+  console.log(
+    `  marks on --tile   ` +
+      MARK_TOKENS.map(token => `${token} ${contrast(palette[token], palette["tile"]).toFixed(2)}`).join("  ") +
+      `   --flow vs --cold ${separation(palette["flow"], palette["cold"]).toFixed(1)}`
+  );
   const steps = RAMP.slice(0, -1)
     .map(
       (token, step) => `${token}→${RAMP[step + 1]} ${separation(palette[token], palette[RAMP[step + 1]]).toFixed(1)}`
@@ -123,7 +166,8 @@ if (failures.length > 0) {
 }
 console.log(
   `\n✓ both palettes clear their floors — values ${VALUE_FLOOR}:1, text and status inks ${TEXT_FLOOR}:1 on ` +
-    `both grounds, and no two ramp steps closer than ${SEPARATION_FLOOR} in a*b*`
+    `both grounds, the meter's track visible against the card it is drawn on, the two blues apart, and no two ` +
+    `ramp steps closer than ${SEPARATION_FLOOR} in a*b*`
 );
 
 /**
