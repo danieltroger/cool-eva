@@ -292,7 +292,9 @@ const CHECKS: SelfCheck[] = [
       "timeout named only when the kill is at the deadline (an earlier one is an OOM), and one hint per failure " +
       "shape — poisoned .git, refused key, unknown host, divergence, https login, sudo — none of them naming a " +
       "user called pi. \u26a0 The restart is asserted ARMED and never fired: a real ServerResponse would emit " +
-      "'finish' and run `sudo systemctl restart cool-eva` on whatever machine ran npm test",
+      "'finish' and run `sudo systemctl restart cool-eva` on whatever machine ran npm test. \u26a0 The " +
+      "end-to-end sections never take the sudo branch — the temp checkout belongs to whoever runs the suite — so " +
+      "the user switch is proved on the argv, which is the only part testable without a second uid",
   },
   {
     script: "scripts/check-virtual-clock.ts",

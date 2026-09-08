@@ -87,9 +87,11 @@ git clone git@github.com:<your-fork>/cool-eva.git /home/pi/cool-eva
 cd /home/pi/cool-eva
 ```
 
-**⚠️ Never `sudo git pull` in this checkout.** A pull as root leaves root-owned files behind in `.git` (refs, reflogs, objects), and the next pull as `pi` then dies with `unable to append to '.git/logs/refs/remotes/origin/<branch>': Permission denied` — which is quiet in the worst way, because the fast-forward does not happen, the service restarts on the old commit, and the journal looks healthy. If it has already happened: `sudo chown -R pi:pi /home/pi/cool-eva`. The dashboard's Update button runs its pull **as the checkout's owner** (`sudo -u`), never as root, for exactly this reason — even though the service itself is root.
+**⚠️ Never `sudo git pull` in this checkout.** A pull as root leaves root-owned files in `.git`, and the next pull as `pi` then fails — _silently_, so the service restarts on the old commit while the journal looks healthy. If it has already happened: `sudo chown -R pi:pi /home/pi/cool-eva`. The dashboard's Update button pulls as the checkout's owner for exactly this reason, even though the service itself is root.
 
-**Which remote.** Because the pull runs as the owner, `pi`'s own ssh setup is simply in reach and there is nothing special to configure: a **private** fork keeps its `git@github.com:…` remote and uses `pi`'s deploy key at `/home/pi/.ssh/id_ed25519` the ordinary way. A **public** fork can use the https URL and needs no key at all. (What does _not_ work is pulling as root and pointing `HOME` at `/home/pi`: OpenSSH expands `~` from the effective uid's passwd entry, not from `$HOME` — check it with `HOME=/nonexistent ssh -G github.com`. That is what this service used to do, and it is why the button failed with `Host key verification failed.` while a pull as `pi` worked fine.) `scripts/setup-service.ts` proves the remote is readable as the owner at install time, whichever scheme you chose.
+**Which remote.** Because the pull runs as the owner, `pi`'s own ssh setup is in reach and there is nothing special to configure: a **private** fork keeps its `git@github.com:…` remote and uses `pi`'s deploy key at `/home/pi/.ssh/id_ed25519` the ordinary way. A **public** fork can use the https URL and needs no key at all. What does _not_ work is pulling as root with `HOME` pointed at `/home/pi` — OpenSSH expands `~` from the effective uid, not `$HOME` — which is why the button used to fail with `Host key verification failed.` while a pull as `pi` worked fine. `scripts/setup-service.ts` checks both the ownership and the remote at install time.
+
+[`docs/deploy.md`](docs/deploy.md) has the full reasoning, the 2026-09-08 incident it comes from, and the measurements behind it.
 
 ## 4. Install dependencies
 

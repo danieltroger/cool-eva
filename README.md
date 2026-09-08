@@ -231,7 +231,7 @@ git pull && sudo systemctl restart cool-eva
 sudo journalctl -u cool-eva -f    # follow logs
 ```
 
-The dashboard menu's **Update** button does exactly that pull and restart from the phone, showing git's output. It runs the pull as the checkout's **owner** rather than as root, and `--ff-only` — never `sudo git pull`, which poisons `.git` with root-owned files and makes the _next_ pull fail silently. [INSTALL.md §3](INSTALL.md) has the details.
+The dashboard menu's **Update** button does exactly that pull and restart from the phone, showing git's output. It runs the pull as the checkout's **owner** rather than as root — never `sudo git pull`, which poisons `.git` and makes the _next_ pull fail silently. [`docs/deploy.md`](docs/deploy.md) has the why; [INSTALL.md §3](INSTALL.md) has what to type.
 
 > ⚠️ **Don't run `npm install` or `npm ci` on the Pi unless a dependency actually changed.** `package-lock.json` is generated on macOS, where `socketcan`'s Linux-only native build is skipped as an optionalDependency; installing against that lockfile on the Pi deletes the real one, and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan` will insist it's "up to date" even with `--force` — the fix is `rm package-lock.json && npm install` **on the Pi** (~4 min). A plain `git pull` never touches `node_modules` and is always safe.
 

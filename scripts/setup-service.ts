@@ -112,6 +112,9 @@ console.log(`  sudo nano ${ENV_FILE}                   — set COOLANT_ENABLED=0
 
 warnIfNodeIsUserWritable();
 warnIfNoRideLogKey();
+// Local and offline, so it runs unconditionally — the poisoned-.git warning is the one
+// this exists for, and a garage Pi usually fails the network check below.
+warnIfGitIsWronglyOwned();
 warnIfRemoteUnreadable();
 
 /**
@@ -258,16 +261,9 @@ function warnIfRemoteUnreadable(): void {
       currentUid
     );
     execFileSync(command, args, { timeout: LS_REMOTE_TIMEOUT_MS, stdio: ["ignore", "ignore", "pipe"] });
-    // ⚠️ Readable is NOT the same as pullable, and promising otherwise was a lie this
-    // script told: ls-remote writes nothing into .git, so a checkout poisoned by an
-    // earlier root pull passes it while the button still fails.
-    if (warnIfGitIsWronglyOwned(ownerUid)) {
-      return;
-    }
-    console.log(
-      `deploy: ${remoteUrl} is readable as the checkout's owner (uid ${ownerUid}) — the Update button will work`
-    );
-    return;
+    // ⚠️ Readable, and nothing more: ls-remote writes nothing into .git, so it cannot tell
+    // you the pull will succeed. warnIfGitIsWronglyOwned covers the other half.
+    console.log(`deploy: ${remoteUrl} is readable as the checkout's owner (uid ${ownerUid})`);
   } catch (error) {
     reportUnreadableRemote(remoteUrl, error as Error & { stderr?: Buffer | string }, ownerUid);
   }
@@ -301,31 +297,29 @@ function reportUnreadableRemote(
   console.warn(`\u26a0 The Update button (git ${PULL_ARGS.join(" ")}) will NOT be able to pull from ${remoteUrl}.`);
   console.warn(`  ${stderr.split("\n")[0]}`);
   console.warn("");
-  for (const line of hint.split(". ")) {
-    console.warn(`  ${line.trim()}`);
-  }
+  console.warn(`  ${hint}`);
   console.warn("");
 }
 
 /**
- * The state an earlier root pull leaves behind: a pi-owned worktree whose .git belongs to
- * root. The pull then runs as the owner, correctly, and correctly fails — writing nothing,
- * so the service restarts on the old commit and the journal looks healthy.
+ * The state an earlier root pull leaves behind: an owner-owned worktree whose .git belongs
+ * to root, so the pull fails writing nothing and the service restarts on the old commit
+ * with a healthy-looking journal. docs/deploy.md §"What went wrong".
  *
- * This is the one moment someone is standing in front of the Pi, so it is worth two stat()
- * calls. Returns true when it warned, so the caller does not then promise the button works.
+ * This is the one moment someone is standing in front of the Pi, so it is worth the two
+ * stat() calls — and it is offline, so unlike the ls-remote check it runs on a garage Pi.
  */
-function warnIfGitIsWronglyOwned(ownerUid: number): boolean {
+function warnIfGitIsWronglyOwned(): void {
+  const ownerUid = statSync(projectDir).uid;
   const gitPath = join(projectDir, ".git");
-  if (!existsSync(gitPath)) {
-    return false;
-  }
   // .git itself, plus the reflog directory the 2026-09-08 incident actually tripped on.
-  const offenders = [gitPath, join(gitPath, "logs", "refs")].filter(
-    candidate => existsSync(candidate) && statSync(candidate).uid !== ownerUid
-  );
+  // One stat each, keeping the uid that selected the offender — re-statting to print it
+  // could report a different number than the one that failed the comparison.
+  const offenders = [gitPath, join(gitPath, "logs", "refs")]
+    .map(path => ({ path, uid: statSync(path, { throwIfNoEntry: false })?.uid }))
+    .filter((entry): entry is { path: string; uid: number } => entry.uid !== undefined && entry.uid !== ownerUid);
   if (offenders.length === 0) {
-    return false;
+    return;
   }
   console.warn("");
   console.warn(`\u26a0 ${gitPath} is not owned by the checkout's owner (uid ${ownerUid}).`);
@@ -333,11 +327,10 @@ function warnIfGitIsWronglyOwned(ownerUid: number): boolean {
   console.warn("  cannot write refs — the pull silently does nothing and the service restarts on");
   console.warn("  the OLD commit, with a healthy-looking journal.");
   for (const offender of offenders) {
-    console.warn(`    ${offender} is owned by uid ${statSync(offender).uid}`);
+    console.warn(`    ${offender.path} is owned by uid ${offender.uid}`);
   }
   console.warn(`  Repair: sudo chown -R ${ownerUid} ${projectDir}`);
   console.warn("");
-  return true;
 }
 
 /**

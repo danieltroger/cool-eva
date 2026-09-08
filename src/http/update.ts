@@ -7,31 +7,17 @@ import { monotonicNow, since } from "../monotonic.ts";
 const execFileAsync = promisify(execFile);
 
 // POST /update — `git pull` the checkout on the Pi, then restart the service so the new
-// code takes effect.
+// code takes effect. The menu's "Update" button.
 //
-// The menu's "Update" button. Pulls the deploy directory and returns git's own output
-// so the rider sees exactly what moved — or why nothing did. On a successful pull it then
-// restarts cool-eva; the service IS this process, so the restart can only fire AFTER the
-// reply has flushed (the request's response "finish" event) — otherwise the button hangs
-// on a killed connection. See scheduleServiceRestart for why it must be detached.
+// Returns git's own output so the rider sees exactly what moved — or why nothing did. On
+// a successful pull it restarts cool-eva; the service IS this process, so the restart can
+// only fire AFTER the reply has flushed (the response's "finish" event), otherwise the
+// button hangs on a killed connection. See scheduleServiceRestart for why it is detached.
 //
-// ⚠️ THE PULL RUNS AS THE CHECKOUT'S OWNER, NOT AS ROOT, and that is the whole of why
-// this file is shaped the way it is. A root `git pull` over a pi-owned checkout leaves
-// root-owned files behind in .git — refs, reflogs, objects — and the NEXT pull as pi then
-// dies on "unable to append to '.git/logs/refs/remotes/origin/<branch>': Permission
-// denied". That failure is quiet in the worst way: the fast-forward does not happen, the
-// service restarts on the old commit, and the journal looks healthy. It happened on the
-// bike on 2026-09-08 and had to be repaired with chown -R.
-//
-// Matching the user to the owner also retires two workarounds. `-c safe.directory` was
-// only ever needed because the uid did not match the owner, and ssh credentials stop
-// needing a GIT_SSH_COMMAND: OpenSSH resolves ~/.ssh from the EFFECTIVE UID's passwd
-// entry, so switching user is by itself enough to put pi's key and known_hosts in reach.
-// Measured, because the distinction matters below: `sudo -u '#N' ssh -G` reads the target
-// user's known_hosts with or without -H. One mechanism, not three.
-//
-// --ff-only so a diverged checkout fails loudly instead of quietly building a merge
-// commit on the bike, which nobody is there to review.
+// ⚠️ The pull runs as the checkout's OWNER, never as root, and is --ff-only. A root pull
+// poisons .git with root-owned files and the next pull as the owner then fails silently.
+// That incident, and why this shape deletes safe.directory and GIT_SSH_COMMAND rather
+// than adding to them, is docs/deploy.md.
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -59,9 +45,10 @@ export async function handleUpdateEndpoint(
   const startedAt = monotonicNow();
   // Falls back to our own uid only so a failing stat() still has something to name in the
   // reply; the pull itself never runs on that guess.
-  let ownerUid = process.getuid?.() ?? 0;
+  const currentUid = process.getuid?.() ?? 0;
+  let ownerUid = currentUid;
   try {
-    const pull = await pullCommandFor(directory, process.getuid?.() ?? 0);
+    const pull = await pullCommandFor(directory, currentUid);
     ownerUid = pull.ownerUid;
     const { stdout, stderr } = await execFileAsync(pull.command, pull.args, { timeout: PULL_TIMEOUT_MS });
     const output = `${stdout}${stderr}`.trim();
@@ -82,24 +69,14 @@ export async function handleUpdateEndpoint(
 /**
  * The argv that runs a git command as `ownerUid`, from a process running as `currentUid`.
  *
- * Pure and exported so scripts/setup-service.ts verifies the remote exactly the way the
- * button will pull it, and so the check can assert the user-switch without a `pi` on the
- * machine running the test.
+ * Pure, so the check can assert the user-switch on a machine with no second user; the uid
+ * is derived from the checkout rather than a hardcoded `pi`, and `-H` is for git's own
+ * ~/.gitconfig rather than for ssh. Both of those are load-bearing and neither is obvious:
+ * docs/deploy.md §"What matching the user to the owner bought".
  *
- * The uid is taken from the checkout rather than hardcoding `pi`, because the invariant
- * that matters is "the puller IS the owner" — a hardcoded name reintroduces the same bug
- * mirrored the moment a checkout belongs to anyone else. `#1000` is sudo's own syntax for
- * a numeric uid. `-n` so a sudo that would need a password fails at once instead of
- * hanging until the timeout on a prompt no phone can answer — verified: it exits
- * immediately with "sudo: a password is required".
- *
- * ⚠️ `-H` is NOT what fixes ssh, which is easy to assume and wrong: ssh follows the
- * effective uid, and without -H sudo leaves HOME pointing at the INVOKING user's home
- * (root's). -H is here for what genuinely does read $HOME — git's own ~/.gitconfig and
- * any credential helper — so the pull sees the owner's git config rather than root's.
- *
- * When we already ARE the owner there is nothing to switch to, so sudo is skipped
- * entirely — which is also what lets the check drive the real path in CI.
+ * `#1000` is sudo's syntax for a numeric uid. `-n` so a sudo needing a password fails at
+ * once instead of hanging until the timeout on a prompt no phone can answer. When we are
+ * already the owner there is nothing to switch to, so sudo is skipped entirely.
  */
 export function asOwnerCommand(
   gitArgs: string[],
@@ -118,16 +95,14 @@ export const PULL_ARGS = ["pull", "--ff-only"];
 /**
  * The pull, aimed at a real checkout: the owner uid comes from the directory itself.
  *
- * ⚠️ This one line — where the uid comes from — IS the bug from 2026-09-08, and it is why
- * this is exported rather than inlined. A check that only exercises asOwnerCommand() with
- * literal uids passes on a build that pulls as root, because on any machine running the
- * suite the checkout is owned by whoever runs it and the sudo branch is never taken.
+ * ⚠️ This one line — where the uid comes from — IS the 2026-09-08 bug, which is why it is
+ * exported rather than inlined: a check that only exercises asOwnerCommand() with literal
+ * uids passes on a build that pulls as root, because on any machine running the suite the
+ * checkout is owned by whoever runs it and the sudo branch is never taken.
  *
- * ⚠️ It stats the WORKTREE root. The invariant is really about the object store, and the
- * two diverge in a linked `git worktree` (where .git is a file pointing elsewhere) and in
- * a checkout whose .git was chowned separately — which is exactly the poisoned state this
- * branch is about. deployHint() names that state when git reports it; the installer
- * checks for it directly.
+ * ⚠️ It stats the WORKTREE root, while the invariant is about the object store; they
+ * diverge in a linked `git worktree` and in a checkout whose .git was chowned separately.
+ * docs/deploy.md §"Other decisions".
  */
 export async function pullCommandFor(
   directory: string,
@@ -163,13 +138,14 @@ export function describePullFailure(err: unknown, elapsedMs: number, deploy: Dep
 }
 
 /**
- * A kill at or past the deadline is exec's own timer firing — once it has elapsed there
- * is no other explanation. No skew margin: `startedAt` is taken before the spawn and the
- * elapsed time is read after the rejection has propagated, so it is necessarily past
- * libuv's deadline already. A margin could only widen the window in which an OOM kill
- * gets misreported as a timeout, which is the very thing this exists to prevent. A kill BEFORE it is something else (an OOM on a Pi Zero is
- * the likely one) and must not be called a timeout. Elapsed time is the only thing that
- * separates the two: `killed` and `signal` read identically either way.
+ * Elapsed time is the only thing that separates a timeout from any other kill: `killed`
+ * and `signal` read identically either way. A kill at or past the deadline is exec's own
+ * timer; a kill before it is something else, most likely an OOM on a Pi Zero, and calling
+ * that "bad wifi" would be a confident wrong answer.
+ *
+ * No skew margin: `startedAt` is taken before the spawn and elapsed is read after the
+ * rejection propagates, so it is necessarily past libuv's deadline already. A margin could
+ * only widen the window in which an OOM gets misreported.
  */
 function wasKilledByTimeout(failure: { killed?: boolean; signal?: string | null }, elapsedMs: number): boolean {
   const killed = failure.killed === true || typeof failure.signal === "string";
@@ -187,16 +163,10 @@ export interface DeployContext {
  * useful to add. Shared with scripts/setup-service.ts so the installer and the button
  * never give different advice about the same state.
  *
- * ⚠️ Nothing here hardcodes `pi` or `/home/pi`. The hint for a wrongly-owned checkout that
- * told you to run `sudo -u pi ssh-keyscan … >> /home/pi/.ssh/known_hosts` would create a
- * ROOT-OWNED file in pi's ~/.ssh, because `>>` is performed by the invoking shell — the
- * same ownership bug this branch exists to fix, one directory over, caused by the repair
- * instruction. The commands below run the redirect inside the target user's own shell.
- *
- * ⚠️ The ssh arms match OpenSSH's words, not git's: OpenSSH ships no NLS at all, so they
- * are byte-identical under every locale, while git's `fatal:`/`error:` lines move with
- * LC_ALL. The method list in `Permission denied (publickey,password)` varies with what the
- * server offered, so that match stops before the closing paren.
+ * ⚠️ Nothing here hardcodes `pi` or `/home/pi`, and the shell redirects run inside the
+ * target user's own shell — advice that writes a root-owned file into the owner's ~/.ssh
+ * would be this branch's own bug, one directory over. The ssh arms match OpenSSH's words
+ * rather than git's, which are localised. docs/deploy.md has the why for both.
  */
 export function deployHint(streams: string, deploy: DeployContext): string | null {
   const owner = `'#${deploy.ownerUid}'`;
@@ -238,7 +208,8 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
   if (/^sudo:/m.test(streams)) {
     return (
       `sudo could not switch to the checkout's owner (uid ${deploy.ownerUid}). The service ` +
-      "runs as root, which needs no password — if this is not root, that is the problem."
+      "runs as root, which needs no password, so this means it is not running as root — " +
+      `check \`User=\` in the unit, or give that user a NOPASSWD line for \`git\`.`
     );
   }
   return null;
@@ -250,12 +221,20 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
 // process pinned open waiting on it. sudo because the button may be reached as a non-root
 // user, and it is a no-op passthrough when the service already runs as root.
 function scheduleServiceRestart(): void {
-  const restart = spawn("sudo", ["systemctl", "restart", "--no-block", "cool-eva"], {
+  // -n and the exit listener for the same reason the pull has them: a sudo that wants a
+  // password must fail visibly rather than sit on a prompt, and a non-zero exit here used
+  // to be silent — the reply has already promised the rider a restart by this point.
+  const restart = spawn("sudo", ["-n", "systemctl", "restart", "--no-block", "cool-eva"], {
     detached: true,
     stdio: "ignore",
   });
   restart.on("error", err => {
     console.warn("update: could not spawn service restart:", err);
+  });
+  restart.on("exit", code => {
+    if (code !== 0) {
+      console.warn(`update: service restart exited ${code} — the new code is on disk but not running`);
+    }
   });
   restart.unref();
 }

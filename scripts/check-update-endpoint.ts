@@ -94,9 +94,9 @@ function parseReply(recorded: FakeResponse): UpdateReply {
   return JSON.parse(recorded.body) as UpdateReply;
 }
 
-/** git needs an identity to commit, and CI checkouts have no global one. */
 const DEPLOY = { directory: "/home/pi/cool-eva", ownerUid: 1000 };
 
+/** git needs an identity to commit, and CI checkouts have no global one. */
 const GIT_IDENTITY = ["-c", "user.email=check@cool-eva.invalid", "-c", "user.name=cool-eva check"];
 
 const workDir = await mkdtemp(join(tmpdir(), "cool-eva-update-check-"));
@@ -220,7 +220,7 @@ try {
   // same ownership bug this branch exists to fix, caused by the repair instruction.
   check("run as the owner, with the redirect inside their shell, not the caller's", /sh -c '.*>>.*'/.test(hostKeyHint));
   check("and names nobody called pi — the owner is whoever owns the checkout", !/pi/.test(hostKeyHint));
-  check("and does not blame the key, which is a different failure", !/deploy key was refused/.test(hostKeyHint));
+  check("and does not blame the key, which is a different failure", !/deploy key/.test(hostKeyHint));
 
   // OpenSSH prints the METHODS THE SERVER OFFERED, so the real string is often
   // `(publickey,password)`. Matching through the closing paren would miss every
@@ -281,9 +281,6 @@ try {
   check("with -H, so git reads the owner's config rather than root's", switched.args.includes("-H"));
   check("and sudo never waits for a password no phone can type", switched.args.includes("-n"));
   check("git is what sudo runs", switched.args[switched.args.indexOf("-H") + 1] === "git");
-
-  const same = asOwnerCommand(["-C", "/srv/cool-eva", ...PULL_ARGS], 1000, 1000);
-  check("when we ALREADY are the owner there is nothing to switch to", same.command === "git");
 
   // ⚠️ THE ASSERTION THAT WAS MISSING, and the reason this file exists. Everything above
   // calls asOwnerCommand() with literal uids, which passes on a build whose CALL SITE
