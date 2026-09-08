@@ -245,7 +245,7 @@ export function parseWriteRequest(
           reason: `Commanding the charge current actuates the bike's charging. Pass confirm=charge-current-${amps} to confirm ${amps} A.`,
         };
       }
-      return { ok: true, request: { kind: "charge-current", amps } };
+      return { ok: true, request: { kind: "charge-current", amps, origin: "manual" } };
     }
     case "charge-stop":
       // Stopping actuates the bike's charging (the benign direction — it ends a charge), so it

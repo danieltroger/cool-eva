@@ -249,6 +249,10 @@ const vcuWriteRunner = createVcuWriteRunner({
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
   // opinions about whether a motorcycle is safe to touch is one opinion too many.
   gate: () => vcuReadRunner.gate(),
+  // ⚠️ A charge current the RIDER set by hand stands the automatic controller down for the session,
+  // exactly as the dial on the bike does. Called from the runner's own send path, so a POST refused
+  // for a bad header or a stale confirm token stands nothing down.
+  onManualChargeCurrent: () => chargeAutomatic.noteManualCommand(),
   // ⚠️ The last sweep's snapshot, which the write half asks two things of.
   //
   // Which of Energica's parameter tables this bike runs: a parameter is written BY INDEX
@@ -436,18 +440,14 @@ const server = createServer(async (req, res) => {
   // Duty and mode for the cooling fan. The Pi's own GPIO and PWM; it cannot reach the
   // bike's bus. Routed only when FAN_ENABLED=1, so a Pi with no fan 404s here instead of
   // offering a control that could never work.
-  // ⚠️ A charge current set BY HAND stands the controller down, the same as the dial on the bike.
-  // Placed on the route rather than inside the runner so the controller learns about the rider's
-  // POST and not about its own — they go through the same action.
-  if (url.pathname === "/vcu-write" && req.method === "POST" && url.searchParams.get("action") === "charge-current") {
-    chargeAutomatic.noteManualCommand();
-  }
-  if (url.pathname === "/charge-auto") {
-    await handleChargeAutoEndpoint(req, res, url, chargeAutomatic);
-    return;
-  }
   if (fanController.configured && url.pathname === "/fan") {
     await handleFanEndpoint(req, res, url, { controller: fanController, automatic: fanAutomatic });
+    return;
+  }
+  // The automatic DC charge-current controller's on/off switch. Never commands a current itself —
+  // everything that reaches the bus goes through /vcu-write. docs/charge-auto.md.
+  if (url.pathname === "/charge-auto") {
+    await handleChargeAutoEndpoint(req, res, url, chargeAutomatic);
     return;
   }
   if (url.pathname === "/dtc-table") {
@@ -531,7 +531,7 @@ server.listen(PORT, "0.0.0.0", () => {
 const chargeAutomatic = startChargeAutomatic(
   {
     commandChargeCurrent: async amps => {
-      const answer = await vcuWriteRunner.perform({ kind: "charge-current", amps });
+      const answer = await vcuWriteRunner.perform({ kind: "charge-current", amps, origin: "automatic" });
       return answer.ok
         ? { succeeded: answer.result.succeeded, message: answer.result.message }
         : { succeeded: false, message: answer.reason };

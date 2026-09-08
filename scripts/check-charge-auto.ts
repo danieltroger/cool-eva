@@ -19,7 +19,6 @@ import {
   replayCharge,
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
-import { REASON_TEXT } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
 
 // The automatic DC charge-current controller, driven through the three real stops of 2026-09-07 and
@@ -86,8 +85,6 @@ for (const guard of FAIL_SAFE) {
 const flat = estimateHeatingRate(steady(51, RATE_WINDOW_MS), RATE_WINDOW_MS);
 if (flat.kind !== "bounded") {
   failures.push(`§2 a pack sitting still for the whole window reads ${flat.kind}, not a bounded rate`);
-} else if (flat.perMinute > 0.11) {
-  failures.push(`§2 a flat pack's bound is ${flat.perMinute.toFixed(3)} K/min — too loose to be worth having`);
 }
 // ⚠️ The bound's VALUE, two-sided. Only checking it is not too loose misses the dangerous direction:
 // an optimistic bound understates how fast the pack may be moving, and the controller then thinks
@@ -349,21 +346,17 @@ for (const [name, code] of Object.entries(CHARGE_AUTO_REASON)) {
 
 // ── §8 the dashboard's copy of the reason codes has not drifted ───────────
 //
-// ⚠️ The page cannot import the enum — no build step — so public/views/charge-auto.js keeps a
-// hand-written mirror, exactly as public/lib/fan-display.js does for FAN_REASON. A code added here
-// and not there renders as nothing at all, which is how a rider ends up watching a blank line while
-// the controller does something.
+// The sentence travels on the wire, so there is one copy of it. This asserts every code has one and
+// that none is left over: a code added to the enum and not to the table renders as a blank line
+// while the controller is doing something.
 for (const [name, code] of Object.entries(CHARGE_AUTO_REASON)) {
-  if (REASON_TEXT[code] === undefined) {
-    failures.push(`§8 public/views/charge-auto.js has no wording for CHARGE_AUTO_REASON.${name} (${code})`);
-  }
-  if (CHARGE_AUTO_REASON_TEXT[code] === undefined) {
+  if (!CHARGE_AUTO_REASON_TEXT[code]) {
     failures.push(`§8 src/http/charge-auto.ts has no wording for CHARGE_AUTO_REASON.${name} (${code})`);
   }
 }
-for (const code of Object.keys(REASON_TEXT)) {
+for (const code of Object.keys(CHARGE_AUTO_REASON_TEXT)) {
   if (!Object.values(CHARGE_AUTO_REASON).includes(Number(code) as never)) {
-    failures.push(`§8 the page has wording for reason ${code}, which CHARGE_AUTO_REASON no longer defines`);
+    failures.push(`§8 there is wording for reason ${code}, which CHARGE_AUTO_REASON no longer defines`);
   }
 }
 
@@ -382,7 +375,7 @@ console.log(
     `at best ${(-bestSaving).toFixed(1)}; DC2 finishes ${saved.toFixed(1)} min sooner and under the cliff, which ` +
     `neither a controller stuck at the ceiling nor one stuck at the floor can do; the floor stays above the ` +
     `${breakEven.toFixed(1)} A break-even; every branch is exercised, every reason code is inside bounds.js, ` +
-    `and the dashboard's copy of the reason wording has not drifted`
+    `and every reason code has wording`
 );
 
 /** A whole-degree ramp over ten minutes, sampled when the integer changes, as the bike delivers it. */

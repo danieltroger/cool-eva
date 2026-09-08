@@ -4,7 +4,6 @@ import { isPackTemperaturePlausible } from "../fan/curve.ts";
 import { RATE_WINDOW_MS, type TemperatureSample } from "./rate.ts";
 import {
   CHARGE_AUTO_REASON,
-  CHARGE_MANAGER_STATE_DC,
   decideChargeCurrent,
   type ChargeAutoDecision,
   type ChargeAutoReason,
@@ -38,8 +37,6 @@ export interface ChargeAutoState {
   reason: ChargeAutoReason;
   /** What it last commanded this session, or null. */
   commandedAmps: number | null;
-  /** True once the rider has moved the dial on the bike; cleared when the session ends. */
-  riderOverride: boolean;
 }
 
 /** What the controller needs from the write runner, narrowed to the one action it uses. */
@@ -48,8 +45,6 @@ export interface ChargeCommandSink {
 }
 
 export interface ChargeAutomaticOptions {
-  /** Turned down by scripts/check-charge-auto.ts so a whole stop replays inside one check. */
-  tickMs?: number;
   /** Whether the controller may act at all — `CHARGE_AUTO_ENABLED`, read once in src/index.ts. */
   enabled?: boolean;
 }
@@ -58,8 +53,6 @@ export interface ChargeAutomatic {
   state: () => ChargeAutoState;
   /** Switches the controller on or off from the dashboard. In memory only. */
   setMode: (mode: ChargeAutoMode) => void;
-  /** Runs one evaluation now. The tick calls it; the check drives it directly. */
-  tick: () => Promise<void>;
   /**
    * Told when a charge current was commanded by HAND, from the phone.
    *
@@ -79,9 +72,22 @@ export interface ChargeAutomatic {
  * imported, so the check can drive a whole replayed stop without a bus.
  */
 export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAutomaticOptions = {}): ChargeAutomatic {
+  if (options.enabled === false) {
+    // ⚠️ Inert, not merely held: with the env switch off there is nothing to subscribe to, no ring
+    // worth filling and no rule worth running every minute for the life of the bike. One mode
+    // record so the ride log says why nothing happened. src/fan/auto.ts does the same when the fan
+    // cannot be driven at all.
+    record("charge_auto_mode", CHARGE_AUTO_MODE_CODE.off);
+    record("charge_auto_reason", CHARGE_AUTO_REASON.DISABLED);
+    return {
+      state: () => ({ mode: "off", reason: CHARGE_AUTO_REASON.DISABLED, commandedAmps: null }),
+      setMode: () => console.warn("charge-auto: ignoring a mode change — CHARGE_AUTO_ENABLED is 0"),
+      noteManualCommand: () => {},
+      stop: () => {},
+    };
+  }
   const context: AutoContext = {
     sink,
-    enabled: options.enabled ?? true,
     mode: "automatic",
     reason: CHARGE_AUTO_REASON.NO_HISTORY,
     commandedAmps: null,
@@ -112,9 +118,9 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
       forgetSession(context);
     }
   });
-  context.timer = setInterval(() => void runTick(context), options.tickMs ?? AUTO_TICK_MS);
+  context.timer = setInterval(() => void runTick(context), AUTO_TICK_MS);
   context.timer.unref?.();
-  record("charge_auto_mode", CHARGE_AUTO_MODE_CODE[context.mode]);
+  publishMode(context);
   return {
     state: () => stateOf(context),
     setMode: mode => {
@@ -123,10 +129,9 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
       if (mode === "automatic") {
         context.riderOverride = false;
       }
-      record("charge_auto_mode", CHARGE_AUTO_MODE_CODE[mode]);
+      publishMode(context);
       console.warn(`charge-auto: mode set to ${mode}`);
     },
-    tick: () => runTick(context),
     noteManualCommand: () => {
       context.riderOverride = true;
       console.warn("charge-auto: a charge current was set by hand — standing down for this charge");
@@ -144,7 +149,6 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
 
 interface AutoContext {
   sink: ChargeCommandSink;
-  enabled: boolean;
   mode: ChargeAutoMode;
   reason: ChargeAutoReason;
   commandedAmps: number | null;
@@ -191,7 +195,7 @@ async function runTick(context: AutoContext): Promise<void> {
 function decide(context: AutoContext): ChargeAutoDecision {
   const packTemperatureC = latestValue("batt_temp_hi");
   return decideChargeCurrent({
-    enabled: context.enabled && context.mode === "automatic",
+    enabled: context.mode === "automatic",
     packTemperatureC,
     packTemperatureAgeMs: ageMs("batt_temp_hi"),
     packTemperaturePlausible: isPackTemperaturePlausible(packTemperatureC),
@@ -236,11 +240,21 @@ function forgetSession(context: AutoContext): void {
   context.samples.length = 0;
 }
 
+/**
+ * Publishes the EFFECTIVE mode, not the requested one.
+ *
+ * ⚠️ `CHARGE_AUTO_ENABLED=0` pins the mode off, so recording `context.mode` made the signal say
+ * `automatic` while /charge-auto said `off` — two sources of truth for one fact, and the ride log
+ * would have carried the wrong one. src/fan/auto.ts publishes through one helper for the same reason.
+ */
+function publishMode(context: AutoContext): void {
+  record("charge_auto_mode", CHARGE_AUTO_MODE_CODE[stateOf(context).mode]);
+}
+
 function stateOf(context: AutoContext): ChargeAutoState {
   return {
-    mode: context.enabled ? context.mode : "off",
+    mode: context.mode,
     reason: context.reason,
     commandedAmps: context.commandedAmps,
-    riderOverride: context.riderOverride,
   };
 }

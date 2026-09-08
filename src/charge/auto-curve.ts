@@ -1,4 +1,5 @@
-import { estimateHeatingRate, type HeatingRate, type TemperatureSample } from "./rate.ts";
+import { estimateHeatingRate, type TemperatureSample } from "./rate.ts";
+import { CHARGE_MANAGER_STATE_DC } from "../fan/curve.ts";
 
 // What current to command during a DC fast charge, so the pack does not reach the cliff. Pure —
 // readings in, a decision out, no I/O and no clock read. The half that touches the world is
@@ -55,10 +56,8 @@ export type ChargeAutoReason = (typeof CHARGE_AUTO_REASON)[keyof typeof CHARGE_A
  * temperature, and the DC current collapses to ~19.5 A — measured 2026-09-07, twice, at a cost of
  * 42 minutes over two stops.
  *
- * ⚠️ A DERIVATION, not a preference: 55 is `LIMP_B_TEMP` and the clamp's release point. It moves if
- * the BMS config or that parameter moves. (`DC_CURVE_TOP_C = 54` in src/fan/curve.ts is one degree
- * under it; whether that was the same derivation or a coincidence is #124's question, not this
- * module's, and nothing here reads it.)
+ * ⚠️ A DERIVATION, not a preference: 55 is `LIMP_B_TEMP` and the clamp's release point, and it moves
+ * if the BMS config or that parameter moves.
  */
 export const CLIFF_C = 55;
 
@@ -106,8 +105,14 @@ export const RELEASE_FACTOR = 1.5;
  */
 export const TEMPERATURE_MAX_AGE_MS = 5_000;
 
-/** `charge_manager_state` (0x610 b7) for a settled DC session. AC is not commanded automatically. */
-export const CHARGE_MANAGER_STATE_DC = 0x23;
+/**
+ * `charge_manager_state` (0x610 b7) for a settled DC session. AC is not commanded automatically.
+ *
+ * Re-exported from src/fan/curve.ts rather than re-typed: this was the fifth private copy of the
+ * byte, and unlike src/charge/ack-watch.ts's — which says why it keeps its own — nothing here
+ * justified a sixth, since this module's runner already imports from that file.
+ */
+export { CHARGE_MANAGER_STATE_DC } from "../fan/curve.ts";
 
 /** How old that state may be before the session counts as gone. The same 5 s the write runner uses. */
 export const CHARGE_SESSION_MAX_AGE_MS = 5_000;
@@ -187,7 +192,7 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
     }
     return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
   }
-  const minutesToCliff = timeToCliffMinutes(temperature, rate);
+  const minutesToCliff = timeToCliffMinutes(temperature, rate.perMinute);
   if (minutesToCliff <= HORIZON_MIN) {
     return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.CLOSING);
   }
@@ -201,11 +206,10 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
  * How long until the pack reaches the cliff at the rate observed, in minutes.
  *
  * A pack that is flat or cooling is never closing, so it gets an infinite answer rather than a
- * division. A `bounded` rate is used exactly as a measured one — it is the most the pack CAN be
- * doing, which is the conservative direction for a question about how long there is left.
+ * division. A `bounded` rate is passed in exactly as a measured one — it is the most the pack CAN
+ * be doing, which is the conservative direction for a question about how long there is left.
  */
-function timeToCliffMinutes(temperature: number, rate: HeatingRate): number {
-  const perMinute = rate.kind === "unknown" ? 0 : rate.perMinute;
+function timeToCliffMinutes(temperature: number, perMinute: number): number {
   if (perMinute <= 0) {
     return Number.POSITIVE_INFINITY;
   }
@@ -219,7 +223,13 @@ function timeToCliffMinutes(temperature: number, rate: HeatingRate): number {
  * nothing, so the descent stops there and says `AT_FLOOR` rather than pretending it acted.
  */
 function stepTo(wanted: number, current: number, ceiling: number, reason: ChargeAutoReason): ChargeAutoDecision {
-  const amps = Math.max(MIN_COMMAND_A, Math.min(ceiling, wanted));
+  // ⚠️ A station offering less than the floor leaves nothing to give up: clamping the floor LAST
+  // would command 35 A into a 20 A ceiling, which is above the station's own maximum and a frame the
+  // builder refuses outright. Hold instead of asking for something invalid every minute.
+  if (ceiling <= MIN_COMMAND_A) {
+    return { kind: "hold", reason: CHARGE_AUTO_REASON.AT_FLOOR };
+  }
+  const amps = Math.min(ceiling, Math.max(MIN_COMMAND_A, wanted));
   if (amps === current) {
     return { kind: "hold", reason: amps === MIN_COMMAND_A ? CHARGE_AUTO_REASON.AT_FLOOR : CHARGE_AUTO_REASON.SETTLED };
   }

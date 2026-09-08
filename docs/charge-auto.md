@@ -6,7 +6,7 @@ Holds the pack under the thermal cliff during a DC fast charge by lowering the c
 
 At a **true 55 °C** the config-15 BMS clamp releases, the VCU finally sees the real pack temperature, and the DC current collapses to **~19.5 A**. Measured 2026-09-07 at two stops: **42 minutes lost**. The pack reached exactly 55.0 and never exceeded it.
 
-⚠️ 55 is a **derivation, not a preference**: it is `LIMP_B_TEMP` and the clamp's release point, and it moves if the BMS config or that parameter moves. (`DC_CURVE_TOP_C = 54` in `src/fan/curve.ts` sits one degree under it. Whether that was the same derivation or a coincidence is [#124]'s question; nothing here reads it.)
+⚠️ 55 is a **derivation, not a preference**: it is `LIMP_B_TEMP` and the clamp's release point, and it moves if the BMS config or that parameter moves.
 
 ## The rule, whole
 
@@ -50,7 +50,7 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 | **`MIN_COMMAND_A`** | **35 A** | ⚠️ **The one knob that matters.** Capping below this is worse than not acting: the cliff's saw-tooth averages a measured **35.3 A** duty-weighted (1.30 min/SOC-point), so break-even is `0.53 × 72.6 / 1.30 = 29.6 A`, and a 25 A floor would be **18 % slower than doing nothing**. 35 A is 15 % faster than the saw-tooth and on the dial's own grid. |
 | `STEP_A` | 5 A | The dash's dial granularity, so a rider taking over sees the same numbers. |
 | `RATE_WINDOW_MS` | 10 min | ≥3 periods of the longest (1–3 min) saw-tooth, so the slope is bulk drift rather than oscillation. Fitting to the saw-tooth over-predicts the real climb by **3.5×**. |
-| `UPDATE_PERIOD_S` | 60 | The input changes every 1.5–2.5 min on a steady charge; updating faster than that adds bus frames and dash flicker for nothing. |
+| `AUTO_TICK_MS` | 60 s | The input changes every 1.5–2.5 min on a steady charge; updating faster than that adds bus frames and dash flicker for nothing. |
 | `RELEASE_FACTOR` | 1.5 | The hysteresis. Give current back only when the cliff is comfortably far, or the controller chatters around the threshold. |
 
 ## Fail-safe
@@ -81,5 +81,3 @@ Three real stops of 2026-09-07 (arrival temperature, ambient and SOC band all me
 ⚠️ **The replays alone could not see over-throttling at all.** Under the fitted constants, equilibrium at full current is `ambient + 83.7 K`, so every stop in the 2026-09-07 set is doomed to cross 55 °C whatever the controller does — which makes "throttled a charge it should have left alone" _unrepresentable_. Six mutations survived the check until two **cold plants** were added, on which full current never approaches the cliff and the right answer is to do nothing: the check now asserts zero cap events and no time cost on those. A third plant arrives hot on a cold day and cools, which is the only thing that exercises giving the current back.
 
 ⚠️ Buying "never crosses the cliff" **costs time on the stops that would have got away with it**. DC3 arrived at 42 °C and never reached 55; the controller still throttles it and pays a few minutes. That is the trade, it is bounded, and the check asserts the bound rather than pretending it is zero.
-
-[#124]: https://github.com/danieltroger/cool-eva/issues/124

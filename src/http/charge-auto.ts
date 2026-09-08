@@ -23,6 +23,8 @@ export const CHARGE_AUTO_HEADER_VALUE = "charge-auto";
 
 export interface ChargeAutoResponse {
   state: ChargeAutoState;
+  /** The reason as one sentence. On the wire so the browser needs no copy of the enum's prose. */
+  reasonText: string;
   /** The floor it will never command below, so the page can say what "at the floor" means. */
   floorAmps: number;
   /** Why nothing was changed, when a POST was refused. */
@@ -62,12 +64,24 @@ export async function handleChargeAutoEndpoint(
 }
 
 function respond(res: ServerResponse, status: number, state: ChargeAutoState, message: string | null): void {
-  const body: ChargeAutoResponse = { state, floorAmps: MIN_COMMAND_A, message };
+  const body: ChargeAutoResponse = {
+    state,
+    reasonText: CHARGE_AUTO_REASON_TEXT[state.reason] ?? "",
+    floorAmps: MIN_COMMAND_A,
+    message,
+  };
   res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   res.end(JSON.stringify(body));
 }
 
-/** One sentence per reason, for the charge tab. Kept beside the endpoint so the wire and words agree. */
+/**
+ * One sentence per reason, for the charge tab.
+ *
+ * ⚠️ The ONLY copy of this prose. It used to be mirrored by hand in public/views/charge-auto.js as
+ * well, on the fan's `FAN_REASON`/`fan-display.js` precedent — but that pair exists because the fan's
+ * codes never travel over HTTP. These do, so sending the sentence is strictly better than keeping a
+ * second table in a file that cannot import the enum.
+ */
 export const CHARGE_AUTO_REASON_TEXT: Record<number, string> = {
   [CHARGE_AUTO_REASON.DISABLED]: "Off — the bike charges as it normally would.",
   [CHARGE_AUTO_REASON.NOT_DC]: "Waiting for a DC fast charge.",

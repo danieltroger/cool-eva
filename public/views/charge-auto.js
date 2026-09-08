@@ -20,17 +20,33 @@ const { button, div } = van.tags;
 
 /** @typedef {import("../../src/http/charge-auto.ts").ChargeAutoResponse} ChargeAutoResponse */
 
-const status = van.state(/** @type {ChargeAutoResponse | null} */ (null));
-
+// Primitive states, assigned in one place, so an unchanged refresh costs nothing. ⚠️ A single state
+// holding the payload would rebuild the whole tile — button included — on every fetch, because
+// `response.json()` is a new object each time. That is the churn public/lib/charge-write.js
+// documents and removes; a tile that rebuilds under a thumb is how a tap gets lost.
+const mode = van.state(/** @type {"automatic" | "off"} */ ("off"));
+const reasonSentence = van.state("");
+const commandedAmps = van.state(/** @type {number | null} */ (null));
+const floorAmps = van.state(0);
 const busy = van.state(false);
 const failure = van.state("");
+const loaded = van.state(false);
 
 // The controller records `charge_auto_reason` every tick, so the page learns it moved over the
-// WebSocket for free and re-reads the Pi's own phrasing once. ⚠️ Never a poll: /charge-auto is
-// cheap, but the reason a poll would be watching for is already being pushed.
+// WebSocket and re-reads the Pi's phrasing once.
+//
+// ⚠️ GUARDED on the VALUE, not on the state changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s and
+// store.js assigns a freshly parsed object, so this signal's identity changes every heartbeat
+// whether or not the number moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
+// exactly what the comment here used to claim it was not. charge-write.js guards the same way.
+let lastReason = /** @type {number | null} */ (null);
 van.derive(() => {
   const reason = valueOf("charge_auto_reason");
-  if (reason !== null && chargeType.val === "dc" && writesEnabled()) {
+  if (reason === null || reason === lastReason) {
+    return;
+  }
+  lastReason = reason;
+  if (chargeType.val === "dc" && writesEnabled()) {
     void refresh();
   }
 });
@@ -44,80 +60,65 @@ export function ChargeAutoControl() {
     if (chargeType.val !== "dc" || !writesEnabled()) {
       return div();
     }
-    const current = status.val;
-    if (current === null) {
+    if (!loaded.val) {
       void refresh();
       return div({ class: "tile span2" }, div({ class: "label" }, "Automatic charge current"));
     }
+    // ⚠️ The tile itself is built ONCE per visibility change; everything that moves is a thunk
+    // inside it, so a refresh updates text in place instead of replacing the button under a thumb.
     return div(
       { class: "tile span2" },
       div({ class: "label" }, "Automatic charge current"),
-      div({ class: "action-note", style: `color:${current.state.mode === "automatic" ? GOOD : MUTED}` }, () =>
-        reasonText(current)
+      div({ class: "action-note" }, () =>
+        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, sentence())
       ),
-      ToggleButton(current),
-      failure.val ? div({ class: "action-note", style: `color:${WARN}` }, failure.val) : div()
+      ToggleButton(),
+      div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
     );
   });
 }
 
-/** @param {ChargeAutoResponse} current */
-function ToggleButton(current) {
-  const wanted = current.state.mode === "automatic" ? "off" : "automatic";
+function ToggleButton() {
   return div(
     button(
       {
         class: "action",
         disabled: () => busy.val,
-        onclick: () => void toggle(wanted),
+        // Read at click time, not captured: the mode moves under the button between renders.
+        onclick: () => void toggle(mode.val === "automatic" ? "off" : "automatic"),
       },
-      () => (busy.val ? "⏳  …" : wanted === "off" ? "Switch off for this charge" : "Let the Pi manage the current")
+      () => {
+        if (busy.val) {
+          return "⏳  …";
+        }
+        return mode.val === "automatic" ? "Switch off for this charge" : "Let the Pi manage the current";
+      }
     ),
     div(
       { class: "action-note", style: `color:${MUTED}` },
-      `It only ever lowers the current, never below ${current.floorAmps} A, and moving the dial on the bike ` +
-        "stands it down for the rest of the charge."
+      () =>
+        `It only ever lowers the current, never below ${floorAmps.val} A, and setting the current yourself — ` +
+        "on the bike or from here — stands it down for the rest of the charge."
     )
   );
 }
 
-/** @param {ChargeAutoResponse} current */
-function reasonText(current) {
-  if (current.state.riderOverride) {
-    return "You set the current on the bike — stood down for this charge.";
-  }
-  const commanded = current.state.commandedAmps;
-  const suffix = commanded === null ? "" : ` Commanding ${commanded} A.`;
-  return `${current.message ?? REASON_TEXT[current.state.reason] ?? "Watching."}${suffix}`;
-}
-
 /**
- * The reason codes as words.
+ * What the controller is doing, in words.
  *
- * ⚠️ A hand-kept mirror of CHARGE_AUTO_REASON in src/charge/auto-curve.ts, the same way
- * public/lib/fan-display.js mirrors FAN_REASON — the dashboard has no build step, so it cannot
- * import the enum. scripts/check-charge-auto.ts asserts the two agree code for code.
- * @type {Record<number, string>}
+ * ⚠️ No special case for the rider override: the controller already reports it as its REASON, and a
+ * branch here beat that — with the toggle off and an override latched the tile said "you set the
+ * current on the bike" instead of "off".
  */
-export const REASON_TEXT = {
-  0: "Off — the bike charges as it normally would.",
-  1: "Waiting for a DC fast charge.",
-  2: "No trustworthy pack temperature — not commanding anything.",
-  3: "The DC ceiling has not arrived, so there is nothing to command against.",
-  4: "You set the current on the bike — stood down for this charge.",
-  5: "Watching. Not enough temperature history yet to see a trend.",
-  6: "Arrived hot with no trend yet — easing the current down.",
-  7: "Close to the limit — holding the current down.",
-  8: "Heating towards the limit — reducing the current.",
-  9: "Plenty of thermal room — giving current back.",
-  10: "Holding — this current keeps the pack where it should be.",
-  11: "At the floor — going lower would be slower than not acting at all.",
-};
+function sentence() {
+  const suffix = commandedAmps.val === null ? "" : ` Commanding ${commandedAmps.val} A.`;
+  return `${reasonSentence.val}${suffix}`;
+}
 
 async function refresh() {
   try {
     const response = await fetch("/charge-auto", { cache: "no-store" });
-    status.val = /** @type {ChargeAutoResponse} */ (await response.json());
+    apply(/** @type {ChargeAutoResponse} */ (await response.json()));
   } catch (error) {
     // Loud but not fatal: with no status the control renders its label and nothing else, which is
     // the safe direction — it never claims the controller is on when it does not know.
@@ -125,21 +126,31 @@ async function refresh() {
   }
 }
 
-/** @param {"automatic" | "off"} mode */
-async function toggle(mode) {
+/**
+ * The one place the payload is unpacked, so the primitives cannot drift from each other.
+ * @param {ChargeAutoResponse} payload
+ */
+function apply(payload) {
+  mode.val = payload.state.mode;
+  reasonSentence.val = payload.reasonText;
+  commandedAmps.val = payload.state.commandedAmps;
+  floorAmps.val = payload.floorAmps;
+  failure.val = payload.message ?? "";
+  loaded.val = true;
+}
+
+/** @param {"automatic" | "off"} wanted */
+async function toggle(wanted) {
   busy.val = true;
   failure.val = "";
   try {
-    const response = await fetch(`/charge-auto?mode=${mode}`, {
+    const response = await fetch(`/charge-auto?mode=${wanted}`, {
       method: "POST",
       cache: "no-store",
       headers: { "X-Cool-Eva": "charge-auto" },
     });
     const payload = /** @type {ChargeAutoResponse} */ (await response.json());
-    status.val = payload;
-    if (payload.message) {
-      failure.val = payload.message;
-    }
+    apply(payload);
   } catch (error) {
     failure.val = `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}.`;
     console.warn("charge-auto: toggle failed", error);

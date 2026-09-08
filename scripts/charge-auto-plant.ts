@@ -1,4 +1,4 @@
-import { decideChargeCurrent, MIN_COMMAND_A, type ChargeAutoReason } from "../src/charge/auto-curve.ts";
+import { CHARGE_MANAGER_STATE_DC, decideChargeCurrent, type ChargeAutoReason } from "../src/charge/auto-curve.ts";
 import type { TemperatureSample } from "../src/charge/rate.ts";
 
 // A simulated pack, so the controller can be driven through a whole DC stop in a check. Data and
@@ -34,7 +34,6 @@ export interface PlantRun {
   minutes: number;
   /** How many ticks took each reason, so a check can assert no branch is dead. */
   reasons: Map<ChargeAutoReason, number>;
-  minutesPerPoint: number;
   /** Every current commanded, in order. Lets a check see step size and chatter, which peak and time cannot. */
   commands: number[];
 }
@@ -49,7 +48,6 @@ export interface PlantOptions {
   control?: boolean;
   /** A deliberately broken controller, for the assertion that a stuck one fails. */
   stuckAt?: number;
-  tickSeconds?: number;
 }
 
 /**
@@ -58,7 +56,7 @@ export interface PlantOptions {
  */
 export function replayCharge(options: PlantOptions): PlantRun {
   const cooling = options.cooling ?? COOLING_NOMINAL;
-  const tickSeconds = options.tickSeconds ?? 60;
+  const tickSeconds = 60;
   const stepSeconds = 1;
   let temperature = options.arrivalC;
   let soc = options.fromSoc;
@@ -86,7 +84,7 @@ export function replayCharge(options: PlantOptions): PlantRun {
         packTemperatureC: whole,
         packTemperatureAgeMs: 100,
         packTemperaturePlausible: true,
-        chargeManagerState: 0x23,
+        chargeManagerState: CHARGE_MANAGER_STATE_DC,
         chargeManagerStateAgeMs: 100,
         ceilingAmps: FULL_CURRENT_A,
         commandedAmps: commanded,
@@ -112,7 +110,7 @@ export function replayCharge(options: PlantOptions): PlantRun {
     elapsed += stepSeconds;
   }
   const minutes = elapsed / 60;
-  return { peakC, minutes, reasons, commands, minutesPerPoint: minutes / (options.toSoc - options.fromSoc) };
+  return { peakC, minutes, reasons, commands };
 }
 
 /** The three real DC stops of 2026-09-07: arrival temperature, ambient and SOC band, all measured. */
@@ -167,6 +165,3 @@ export const RECOVERY_PLANT = {
 export function minutesPerPointAt(amps: number): number {
   return (MIN_PER_POINT_AT_FULL * FULL_CURRENT_A) / amps;
 }
-
-/** The floor the controller ships with, re-exported so the check reads one number. */
-export const FLOOR_A = MIN_COMMAND_A;
