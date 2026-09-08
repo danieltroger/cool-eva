@@ -159,6 +159,53 @@ sudo systemctl start cool-eva
 
 ⚠️ **If the frames matter, start an independent `candump` first — and do not bounce the link.** That is how the 2026-09-08 frames for components 51 and 52 were lost: the interface went down, the capture unit's `Restart=on-failure` / `RestartSec=5` opened a new file five seconds later, and the two reads fell in the hole. Issues #160 and #171.
 
+## Reading it in-service
+
+`POST /lifetime-read` reads components 51 and 52 from inside the running service, behind the same gate and the same single-flight as a parameter sweep, and stores what comes back. The stopped-service script still works and writes the same file; this is the same read, shared (`src/vcu/lifetime-read.ts`), not a second one.
+
+### Why the service can be the tester
+
+The script needs the stop for **socket ownership** — two testers on one bus, answered on one id with no request tag. When the service is the single tester that reason is gone, and the transport was built for it: `src/vcu/multiframe-transfer.ts` is documented as safe to call straight off the CAN listener, and `src/can/obd-dtc.ts` already answers a First Frame from inside the frame handler in production, today, for OBD mode 03.
+
+### The poller is parked, and that is the point
+
+The 2 Hz OBD poller is **not** under `src/vcu/bus-lease.ts` and cannot be — the lease is per operation and that loop runs forever. It is also the documented cause of this channel's 25-70 % completion rate: `docs/can-decode-findings.md:1196` measures it sharing the bus and `:1206` has the tell — a completed transfer had **zero** mode-01 replies interleaved and a failed one **50+**.
+
+So `holdObdPoller` parks it, and parking it is not merely hazard mitigation: it is what gives an in-service read the quiet bus (of _our_ traffic — the bike's own broadcasts are still there) that a stopped-service script gets for free.
+
+- **An acknowledgement, not a flag.** It resolves only once the loop has parked, because a boolean set from an HTTP handler cannot unwind a trouble-code transfer four retries deep.
+- **Parked at three points** — the top of the loop, between PIDs, and between the three trouble-code modes. Every one of those calls is awaited and `obd-dtc.ts` settles before resolving, so "parked" implies nothing of ours is in flight at each of them. That keeps the worst wait at one mode's **3.98 s** rather than a whole round's 14.2, and the common case at one PID timeout, since 119 rounds in 120 are PIDs only.
+- **Fail-safe.** A loop that never parks means the hold times out and the read is refused. There is no arrangement in which it falsely grants a busy bus.
+- ⚠️ **And the hold is capped by the loop, not by the holder.** A leaked hold would take speed, rpm, the temperatures, the 12 V rail, the trip counters and the whole stored-DTC list off the dashboard **and out of the log**, with a healthy-looking journal, on a bike parked where there is no reception. That is worse than anything the hold prevents, so the poller resumes on its own past the cap and says so.
+
+### What it measures about itself, and why the obvious instrument is worthless
+
+The question this path exists to settle is whether the service's listener can answer a First Frame in time. That is a property of this process's event loop, and **a timestamp taken inside the frame handler cannot see it** — the handler runs after libuv has already delayed it, so a `monotonicNow()` pair there brackets our own arithmetic and reads tens of microseconds under every load, including the loads where the loop is the problem. It would print `0.04 ms` and be written down here as proof.
+
+Two instruments instead, both stored, neither trusted alone:
+
+|                                          | what it sees         | needs                                              |
+| ---------------------------------------- | -------------------- | -------------------------------------------------- |
+| **kernel arrival → our flow control**    | the real number      | the kernel's own stamp, `src/can/frame-arrival.ts` |
+| **worst event-loop delay over the read** | an independent bound | nothing threaded anywhere — `perf_hooks`           |
+
+The kernel has been stamping every frame all along: `src/can/socket.ts` opens the channel with receive timestamps on and `src/types.d.ts` declares `ts_sec`/`ts_usec`. Nothing read them until this.
+
+⚠️ **The stamp is `CLOCK_REALTIME`** — the clock `src/gps/clock.ts` steps with `date -u -s`, because this Pi has no RTC. So this is the one duration in the repo deliberately not taken with `monotonicNow()`, and `arrivalLatencyMs` refuses rather than answers when the result is negative or over five seconds. A clock step during a ~100 ms read is vanishingly unlikely; a silent −40-minute flow-control gap in this document is not a risk worth carrying.
+
+⚠️ **And an absent stamp is not zero.** Nothing has ever read these fields and no laptop can verify this build of `socketcan` populates them, so a missing stamp is reported as _"the kernel supplied no arrival timestamp"_ — never as `0.0 ms`, which is exactly what success would look like. **The first thing to check on the first real run is that the number is not that.**
+
+### What is proven, and what the first run has to answer
+
+`scripts/check-lifetime-read.ts` drives the whole read against `scripts/simulated-vcu-micro.ts` — session, request, First Frame, our flow control, Consecutive Frames, reassembly, decode, store — through the real client and the real reassembler, with the captured 2026-09-08 payloads as what the double serves. Both components segment, so the flow control genuinely goes out.
+
+⚠️ That proves the client is well-behaved against the framing this repo believes in. It proves **nothing** about the timing: the double emits no kernel stamp and answers in 2 ms on an idle laptop. The number comes from the bike, once, and until then this path ships with the stopped-service script as its fallback.
+
+- **Under ~10 ms** — the design is sound and this section records the measurement.
+- **Tens of ms** — that is the negative result, quantified, and `--lifetime --save` remains the way to take a reading.
+
+Named up front as the thing to suspect if it is bad: `better-sqlite3` is this repo's one sanctioned synchronous API, and a log write landing between a First Frame and its answer is precisely the "nothing may sit between" that `multiframe-transfer.ts` forbids. It is mitigated by _when_ this runs — parked, gated, bus quiet, log-on-change at its floor — but it is the first place to look.
+
 ## What the store keeps, and why it keeps bytes
 
 `vcu-params/lifetime.json` holds the **payloads**, not the rendered numbers. The decode is an inference and this repo has already changed its mind about one field's scaling; storing today's reading of the bytes would freeze it into a file nobody would think to re-examine. Bytes re-decode. `src/vcu/lifetime-store.ts`.

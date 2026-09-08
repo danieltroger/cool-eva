@@ -229,7 +229,7 @@ try {
 // src/http/vcu-write.ts rather than trusting a sentence about it. An eighth firing site, or one
 // that drops a line of the rule, is what this section exists to make loud.
 
-console.log("\n7. the seven firing sites, and the rule each of them repeats");
+console.log("\n7. the nine firing sites, and the rule each of them repeats");
 
 const SITES = ARMING_CONSUMERS.flatMap(path => firingSites(path, sourceOf(path)));
 console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
@@ -240,6 +240,12 @@ console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
 const EXPECTED_SITES = [
   "charge-current.js → performChargeCurrent",
   "charge-stop.js → performChargeStop",
+  // Both arrived with the in-service lifetime read. `performSweep` is the OLDER control:
+  // it had two taps of its own with no dwell and no key-repeat refusal, and §3's scan
+  // used to be scoped away from this file for that reason. Importing arming.js for the
+  // lifetime read brought the sweep with it, which is the migration this check forced.
+  "service-mode.js → performLifetimeRead",
+  "service-mode.js → performSweep",
   "vcu-write.js → performAction",
   "vcu-write.js → performAction",
   "vcu-write.js → performAllLights",
@@ -321,10 +327,12 @@ check(
 // unskippable: a key set by hand carries whatever stamp the last arming left behind, so its
 // control fires on the very next tap. Every assignment outside arming.js has to be the empty one.
 //
-// ⚠️ Scoped to the modules that import the SHARED gate, and it has to be: public/views/
-// service-mode.js declares an `armed` of its own — a plain boolean with no dwell and no
-// key-repeat guard, in front of the parameter sweep — so an unscoped scan would be reading two
-// different states as one. That second arming surface is a finding, not this check's subject:
+// ⚠️ Scoped to the modules that import the SHARED gate — which is now all of them. It used to
+// exclude public/views/service-mode.js, which declared an `armed` of its own: a plain boolean
+// with no dwell and no key-repeat guard, in front of the parameter sweep. That second arming
+// surface was a recorded finding rather than this check's subject until the in-service lifetime
+// read needed a button on the same sheet; importing arming.js for it joined this file to
+// ARMING_CONSUMERS and made the sweep's own two taps this check's business.
 // docs/dashboard-decisions.md §"The other `armed`".
 
 const assignments: string[] = [];
@@ -438,7 +446,7 @@ if (failures > 0) {
 } else {
   console.log("✓ two taps 400 ms apart, the second ignored rather than disarmed inside the dwell, one key for the");
   console.log("  whole dashboard with no two controls sharing it, every refresh disarming what it lands under, and");
-  console.log("  all seven firing sites still spelling the same rule — on the injected clock and on the real one");
+  console.log("  all nine firing sites still spelling the same rule — on the injected clock and on the real one");
 }
 
 /**

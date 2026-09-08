@@ -341,6 +341,16 @@ const CHECKS: SelfCheck[] = [
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
   },
   {
+    script: "scripts/check-lifetime-read.ts",
+    covers:
+      "the IN-SERVICE lifetime read, end to end against a simulated A8: session, request, First Frame, our flow " +
+      "control, Consecutive Frames, reassembly, decode and store, through the real client and the real reassembler " +
+      "with the captured 2026-09-08 payloads as what the double serves. That a micro which says nothing produces a " +
+      "failure per component rather than a throw or a silently empty reading. And the arrival arithmetic the whole " +
+      "measurement rests on — that an absent kernel stamp and a stepped CLOCK_REALTIME are each refused BY NAME " +
+      "rather than reported as 0.0 ms, which is what success would look like",
+  },
+  {
     script: "scripts/check-lifetime-stats.ts",
     covers:
       "the bike's lifetime battery statistics against the only two readings that exist — components 51 and 52 " +

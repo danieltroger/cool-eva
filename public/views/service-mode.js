@@ -1,6 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
+import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { monotonicNow, since } from "../lib/clock.js";
 import { ageInWords, duration } from "../lib/format.js";
 import { MUTED } from "../lib/colors.js";
@@ -28,9 +29,22 @@ const { a, button, div, h3 } = van.tags;
 /** @typedef {import("../../src/vcu/read-runner.ts").VcuReadState} VcuReadState */
 /** @typedef {import("../../src/vcu/read-runner.ts").VcuReadTally} VcuReadTally */
 /** @typedef {import("../../src/vcu/service-gate.ts").ServiceGateVerdict} ServiceGateVerdict */
+/** @typedef {import("../../src/http/lifetime-read.ts").LifetimeReadResponse} LifetimeReadResponse */
 
 const state = van.state(/** @type {VcuReadResponse | null} */ (null));
-const armed = van.state(false);
+/**
+ * ⚠️ The sweep used to declare an `armed` of its own here, with no dwell and no
+ * key-repeat refusal, and `scripts/check-arming.ts` scoped its scan AWAY from this file
+ * to avoid reading two different states as one. Importing ../lib/arming.js for the
+ * lifetime read below joins this file to ARMING_CONSUMERS automatically, which is what
+ * forced the migration — and the sweep gains the 400 ms dwell it never had.
+ * docs/dashboard-decisions.md § "The other `armed`".
+ */
+const SWEEP_KEY = "service-mode:sweep";
+const LIFETIME_KEY = "service-mode:lifetime";
+
+const lifetimeBusy = van.state(false);
+const lifetimeMessage = van.state("");
 const message = van.state("");
 /** Bumped once a second while a sweep runs, purely so the elapsed line re-renders. */
 const tick = van.state(0);
@@ -54,6 +68,7 @@ export function ServiceMode() {
     () => (message.val ? div({ class: "action-note" }, message.val) : div()),
     ProgressNote(),
     ExportButton(),
+    LifetimeReadButton(),
     div(
       { class: "action-note" },
       a({ href: "/params.html", style: `color:${MUTED}` }, "Open the full parameter table →")
@@ -117,17 +132,22 @@ function ReadButton() {
       // reads `isRunning()` first. Both reasons to be disabled are the server's,
       // read off the last response; the page decides nothing here.
       disabled: () => !isRunning() && state.val !== null && (!state.val.enabled || !state.val.gate.safe),
+      // One held Enter must not arm and then fire. See ../lib/arming.js.
+      onkeydown: refuseKeyRepeat,
       onclick: () => {
         if (isRunning()) {
           void request("DELETE");
           return;
         }
-        if (!armed.val) {
-          armed.val = true;
+        if (armed.val !== SWEEP_KEY) {
+          arm(SWEEP_KEY);
           return;
         }
-        armed.val = false;
-        void request("POST");
+        if (!armDwellElapsed()) {
+          return;
+        }
+        armed.val = "";
+        void performSweep();
       },
     },
     () => {
@@ -142,7 +162,7 @@ function ReadButton() {
         // and a button caption is the wrong place for four of them.
         return "🚫  The bike is not parked and out of drive";
       }
-      if (armed.val) {
+      if (armed.val === SWEEP_KEY) {
         return "⚠  Tap again — this puts ~277 requests on the bus";
       }
       // 🔎, not 🔧. The wrench was on this button AND on "say a service was
@@ -341,6 +361,91 @@ const POLL_INTERVAL_MS = 1000;
 /** @type {() => boolean} */
 let sheetIsOpen = () => false;
 
+/** The sweep's firing site. Named so scripts/check-arming.ts can find and scan it. */
+async function performSweep() {
+  await request("POST");
+}
+
+/**
+ * The lifetime read's firing site.
+ *
+ * ⚠️ Two multi-frame exchanges, and it PARKS THE 2 Hz OBD POLLER while they run —
+ * which nothing else on this sheet does. That is why it arms like an irreversible
+ * action rather than like the sweep's old two taps: the sweep's excuse was that the
+ * worst an unmeant double-tap buys is 277 read requests, and this one also takes
+ * telemetry off the dashboard for the duration. src/vcu/lifetime-read.ts.
+ */
+async function performLifetimeRead() {
+  lifetimeBusy.val = true;
+  lifetimeMessage.val = "";
+  try {
+    const response = await fetch("/lifetime-read", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "X-Cool-Eva": "service-mode" },
+    });
+    const payload = /** @type {LifetimeReadResponse} */ (await response.json());
+    // ⚠️ The measurement is shown whatever it says, including "unmeasured". A reading
+    // that could not be taken is the answer this path exists to surface — see
+    // docs/lifetime-battery-statistics.md.
+    lifetimeMessage.val =
+      payload.message ?? `Read ${payload.answered ?? 0}/2 components · ${payload.measurement ?? "no measurement"}`;
+  } catch (error) {
+    // ⚠️ A request that did not come back may still have reached the bike — the frames
+    // go out before the response — and the reading may well be stored. Says so rather
+    // than implying nothing happened.
+    lifetimeMessage.val =
+      `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}. ` +
+      "The read may have completed anyway; the All tab shows the age of what is stored.";
+  } finally {
+    lifetimeBusy.val = false;
+  }
+}
+
+/** The lifetime read's button, beside the sweep. */
+function LifetimeReadButton() {
+  return div(
+    button(
+      {
+        class: "action",
+        onkeydown: refuseKeyRepeat,
+        disabled: () => lifetimeBusy.val || (state.val !== null && (!state.val.enabled || !state.val.gate.safe)),
+        onclick: () => {
+          if (armed.val !== LIFETIME_KEY) {
+            arm(LIFETIME_KEY);
+            return;
+          }
+          if (!armDwellElapsed()) {
+            return;
+          }
+          armed.val = "";
+          void performLifetimeRead();
+        },
+      },
+      () => {
+        if (lifetimeBusy.val) {
+          return "⏳  Reading components 51 and 52…";
+        }
+        if (state.val !== null && !state.val.enabled) {
+          return "🔒  Reads are off on this Pi (SERVICE_MODE_ENABLED=0)";
+        }
+        if (state.val !== null && !state.val.gate.safe) {
+          return "🚫  The bike is not parked and out of drive";
+        }
+        if (armed.val === LIFETIME_KEY) {
+          return "⚠  Tap again — this parks the OBD poller while it reads";
+        }
+        return "🔎  Read the lifetime battery statistics";
+      }
+    ),
+    () => (lifetimeMessage.val ? div({ class: "action-note" }, lifetimeMessage.val) : div()),
+    div(
+      { class: "action-note", style: `color:${MUTED}` },
+      "Components 51 and 52 — charges, charge moved, pack health. Shown on the All tab with the age of the reading."
+    )
+  );
+}
+
 /**
  * Called once by ./sheet.js when the sheet opens: refresh, and let this module
  * know how to tell whether it is still open.
@@ -349,7 +454,7 @@ let sheetIsOpen = () => false;
  */
 export function refreshServiceMode(isOpen) {
   sheetIsOpen = isOpen;
-  armed.val = false;
+  armed.val = "";
   void request("GET");
   // The write section keeps its own state and its own endpoint, so it is refreshed
   // alongside rather than folded in — and its refresh DISARMS every button it has,

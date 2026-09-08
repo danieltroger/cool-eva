@@ -735,6 +735,8 @@ It is the only control in the dashboard that causes traffic on the bike's bus. I
 
 ### The other `armed` — and what the sweep's two taps do not have
 
+⚠️ **Resolved 2026-09-08, and not by anyone deciding to.** The in-service lifetime read (#156) needed a button on this same sheet, and importing `lib/arming.js` for it put `service-mode.js` into `check-arming.ts`'s `ARMING_CONSUMERS` automatically — at which point the sweep's own `armed.val = true` failed the "every assignment outside arming.js disarms" scan. So the sweep moved onto the shared gate too, and gained the 400 ms dwell and the key-repeat refusal it never had. The section below is kept because the argument for tolerating it — that the worst an unmeant double-tap bought was 277 read requests — is exactly the argument that stopped applying when a control on the same sheet also parks the OBD poller.
+
 ⚠️ **This button does not use `public/lib/arming.js`.** `views/service-mode.js` declares an `armed` of its own — `van.state(false)`, a boolean rather than a key — and its `onclick` is the arm/fire pattern as it stood before 2026-08-19: `if (!armed.val) { armed.val = true; return; }` and then straight into the request. So the sweep has **no `ARM_DWELL_MS`** (two synchronous clicks arm it and fire it, which is exactly the gesture measured against `31 FC`), **no `refuseKeyRepeat`** on the button, and no shared key — arming it disarms nothing else, and arming anything else does not disarm it.
 
 Found 2026-08-30 while writing `scripts/check-arming.ts`, which is why that check scopes its "every `armed.val =` disarms" scan to the modules that import the shared gate: unscoped, it reads two different states as one.
