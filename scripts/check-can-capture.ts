@@ -63,8 +63,11 @@ if (candumpLine && !/\s-tA(\s|$)/.test(candumpLine)) {
 
 // ⚠️ -D promoted this to the ONLY bound on a capture file's size: nothing else now ends
 // one. Without it a single boot writes until the card fills.
-if (candumpLine && !/\btimeout\s+\d+/.test(candumpLine)) {
-  failures.push("the candump invocation has lost its `timeout` — with -D nothing else ever closes a capture file");
+if (candumpLine && !/\btimeout\s+28800\b/.test(candumpLine)) {
+  failures.push(
+    `the candump invocation has lost its 8 h \`timeout 28800\` — with -D nothing else ever closes a capture ` +
+      `file, so this is the only bound on how big one gets: ${candumpLine.trim()}`
+  );
 }
 
 if (candumpLine && !/>\s*"\$OUTPUT"/.test(candumpLine)) {
@@ -97,6 +100,8 @@ if (!/^OUTPUT="\$DIRECTORY\//m.test(script)) {
 // empty capture per restart in the directory the archive is swept from.
 if (!/if ! command -v candump/.test(script)) {
   failures.push("capture.sh no longer checks that candump exists before creating the output file");
+} else if (!/command -v candump[\s\S]{0,200}?\bexit 1\b/.test(script)) {
+  failures.push("the candump guard no longer exits — it has to stop before the redirect, or it does nothing at all");
 }
 
 // The name has to stay unique per boot without trusting the clock: this Pi has no RTC and

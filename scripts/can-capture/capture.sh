@@ -31,7 +31,8 @@ done
 # Checked HERE, before the redirect below exists: `exec … > "$OUTPUT"` is set up by the
 # shell and truncates the file BEFORE exec'ing, so a missing binary would leave one empty
 # capture per restart — ~17 000 a day at RestartSec=5, into the directory the archive is
-# swept from. Exiting first leaves no file and one clear line in the journal.
+# swept from. Exiting first leaves no file — one journal line per restart attempt, which
+# at RestartSec=5 is a visible loop rather than a silent one.
 if ! command -v candump >/dev/null 2>&1; then
   echo "candump not found — install it with: sudo apt install can-utils" >&2
   exit 1

@@ -103,8 +103,6 @@ execSync("systemctl daemon-reload");
 execSync(`systemctl enable ${SERVICE_NAME}`);
 execSync(`systemctl restart ${SERVICE_NAME}`);
 
-installCanCaptureUnit(projectDir);
-
 console.log("Service installed, enabled at boot, and started.");
 console.log("");
 console.log(`  sudo systemctl status ${SERVICE_NAME}   — check status`);
@@ -119,6 +117,12 @@ warnIfNoRideLogKey();
 // this exists for, and a garage Pi usually fails the network check below.
 await warnIfGitIsWronglyOwned();
 warnIfRemoteUnreadable();
+
+// ⚠️ LAST, and deliberately after the warnings above. It shells out to systemctl three
+// times; a masked unit or a read-only /etc makes one of those throw, and from up here that
+// would take the poisoned-.git and missing-key warnings down with it — the two things this
+// script exists to say at the one moment someone is standing in front of the Pi.
+installCanCaptureUnit(projectDir);
 
 /**
  * Refuse to install a unit that cannot start. Without this the only symptom is

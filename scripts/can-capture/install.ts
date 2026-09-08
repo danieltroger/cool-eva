@@ -23,7 +23,9 @@ export function installCanCaptureUnit(projectDir: string): void {
   // but it is still a red unit nobody asked for. Say it here, where it is cheap to fix.
   if (!hasCandump()) {
     console.warn("");
-    console.warn(`⚠ candump is not installed, so ${CAN_CAPTURE_SERVICE} was NOT enabled or started.`);
+    console.warn(`⚠ candump is not installed, so ${CAN_CAPTURE_SERVICE} was not enabled or started here.`);
+    console.warn("  If an earlier install already enabled it, it will restart-loop from the next boot —");
+    console.warn("  harmlessly, since capture.sh refuses before creating a file, but visibly in the journal.");
     console.warn("  The raw capture is the evidence base for every decode finding in docs/. To get it:");
     console.warn(`    sudo apt install can-utils && sudo systemctl enable --now ${CAN_CAPTURE_SERVICE}`);
     console.warn("");
