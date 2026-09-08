@@ -21,7 +21,8 @@ import type { StoredLifetimeReply } from "./lifetime-store.ts";
 
 /** One read in flight. Same shape as ./probe.ts's, so ./read-runner.ts drives all three alike. */
 export interface RunningLifetimeRead {
-  handleFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
+  /** ⚠️ `arrival` is REQUIRED — dropping it un-measures the read and no check can see that. */
+  handleFrame: (id: number, data: Buffer, arrival: FrameArrival | null) => boolean;
   abort: (reason: string) => void;
   finished: Promise<LifetimeReadResult>;
 }
@@ -74,8 +75,20 @@ export function startLifetimeRead(options: LifetimeReadOptions): RunningLifetime
   });
   return {
     handleFrame: (id, data, arrival) => client.handleFrame(id, data, arrival),
-    abort: () => client.stop(),
-    finished: finished.then(partial => ({ ...partial, loopDelayMs: loopDelay.max / 1e6 })),
+    abort: reason => {
+      // The reason reaches the journal rather than only the caller: a gate-closed abort
+      // and a shutdown both store `failure: "cancelled"`, and which it was is the part
+      // worth knowing on a bike you cannot attach a debugger to.
+      console.log(`lifetime: read aborted — ${reason}`);
+      client.stop();
+    },
+    // ⚠️ `max` on an EMPTY histogram is 0, which is exactly the "0.0 ms is what success
+    // looks like" trap ./frame-arrival.ts refuses for the other instrument. A read that
+    // finished before the first 1 ms tick has not measured the loop; it says so.
+    finished: finished.then(partial => ({
+      ...partial,
+      loopDelayMs: loopDelay.count === 0 ? null : loopDelay.max / 1e6,
+    })),
   };
 }
 
@@ -87,13 +100,19 @@ export async function readOneComponent(
   client: ReturnType<typeof createVcuKwpClient>,
   component: number,
   attempts = DEFAULT_ATTEMPTS
-): Promise<{ reply: StoredLifetimeReply; outcome: VcuMultiFrameOutcome }> {
+): Promise<{ reply: StoredLifetimeReply; outcome: VcuMultiFrameOutcome; latency: ArrivalLatency | null }> {
   let outcome = await client.multiFrameRead("A8", { kind: "read-freeze-frame", component });
+  // ⚠️ EVERY attempt's latency, worst kept — not just the last one's. A First Frame
+  // answered late and then stalling is the failure docs/can-decode-findings.md:1206
+  // describes, and a retry that succeeds would otherwise replace the slow attempt's
+  // number with the fast one's, hiding the only reading worth having.
+  let latency = latencyOf(outcome);
   for (let attempt = 1; attempt < attempts && shouldRetry(outcome); attempt += 1) {
     console.log(`lifetime: component ${component} came back ${outcome.status} — asking once more`);
     outcome = await client.multiFrameRead("A8", { kind: "read-freeze-frame", component });
+    latency = worseOf(latency, latencyOf(outcome));
   }
-  return { reply: toStoredReply(component, outcome), outcome };
+  return { reply: toStoredReply(component, outcome), outcome, latency };
 }
 
 /**
@@ -105,6 +124,13 @@ export async function readOneComponent(
  */
 function shouldRetry(outcome: VcuMultiFrameOutcome): boolean {
   return outcome.status === "no-response" || outcome.status === "abandoned";
+}
+
+/** The latency this outcome measured, whether or not the transfer went on to complete. */
+function latencyOf(outcome: VcuMultiFrameOutcome): ArrivalLatency | null {
+  return outcome.status === "reply" || outcome.status === "no-response" || outcome.status === "abandoned"
+    ? outcome.flowControlLatency
+    : null;
 }
 
 /** The outcome in the store's own shape. A non-frame reply still carries its bytes. */
@@ -122,11 +148,9 @@ async function readBothComponents(
   const replies: StoredLifetimeReply[] = [];
   let flowControl: ArrivalLatency | null = null;
   for (const component of [LIFETIME_COMPONENTS.packState, LIFETIME_COMPONENTS.counters]) {
-    const { reply, outcome } = await readOneComponent(client, component, attempts);
+    const { reply, latency } = await readOneComponent(client, component, attempts);
     replies.push(reply);
-    if (outcome.status === "reply") {
-      flowControl = worseOf(flowControl, outcome.flowControlLatency);
-    }
+    flowControl = worseOf(flowControl, latency);
   }
   return { replies, flowControl };
 }
@@ -137,7 +161,7 @@ async function readBothComponents(
  * An unusable reading beats a known one: "we could not measure it" is the answer that
  * must reach the doc, rather than being averaged away by the transfer that did.
  */
-function worseOf(left: ArrivalLatency | null, right: ArrivalLatency | null): ArrivalLatency | null {
+export function worseOf(left: ArrivalLatency | null, right: ArrivalLatency | null): ArrivalLatency | null {
   if (left === null) {
     return right;
   }

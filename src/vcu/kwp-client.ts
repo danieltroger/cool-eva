@@ -127,7 +127,7 @@ export type VcuMultiFrameOutcome =
       flowControlLatency: ArrivalLatency | null;
     }
   /** A session was open and the exchange got silence. `stage` says where it stopped. */
-  | { status: "no-response"; stage: TransferStage }
+  | { status: "no-response"; stage: TransferStage; flowControlLatency: ArrivalLatency | null }
   /**
    * A reply arrived and was DISCARDED as unusable — a sequence gap, a Consecutive
    * Frame that under-filled, a declared length over the cap.
@@ -136,7 +136,7 @@ export type VcuMultiFrameOutcome =
    * declared length with shifted bytes, which decodes into plausible numbers. A
    * review already caught exactly that in the freeze-frame decoder.
    */
-  | { status: "abandoned"; reason: string }
+  | { status: "abandoned"; reason: string; flowControlLatency: ArrivalLatency | null }
   /** The micro would not open a session, so nothing was even asked of it. */
   | { status: "no-session"; reason: string }
   /** The caller stopped it — a cancel, a shutdown, or a gate closing. */
@@ -438,9 +438,12 @@ async function multiFrameExchange(
       // position, so asking again after a timeout could skip a block or replay
       // one, and the caller would have no way to tell which. ./freeze-frame-log.ts
       // ends the transfer instead, which is the recoverable move.
-      return { status: "no-response", stage: result.stage };
+      // ⚠️ The latency is carried even here — ESPECIALLY here. A First Frame answered
+      // late and then stalling is the failure this measurement exists to catch, and
+      // dropping it would lose the one reading worth having.
+      return { status: "no-response", stage: result.stage, flowControlLatency: result.flowControlLatency };
     case "abandoned":
-      return { status: "abandoned", reason: result.reason };
+      return { status: "abandoned", reason: result.reason, flowControlLatency: result.flowControlLatency };
     case "cancelled":
       return { status: "cancelled", reason: result.reason };
     case "not-sent":

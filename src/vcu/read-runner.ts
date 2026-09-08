@@ -96,7 +96,8 @@ export interface VcuReadRunner {
    * the service's frame router pays one null check per OBD-range frame and nothing
    * at all the rest of the time.
    */
-  handleCanFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
+  /** ⚠️ `arrival` is REQUIRED — see `OneShotBusModule.handleFrame`. */
+  handleCanFrame: (id: number, data: Buffer, arrival: FrameArrival | null) => boolean;
   /**
    * Stops any running sweep, for shutdown. Resolves once it has written itself
    * down — await it, or `process.exit()` takes the archive with it.
@@ -299,6 +300,30 @@ function checkPreconditions(
   context: RunnerContext,
   what: string
 ): { ok: true; channel: RawChannel; lease: BusLease } | { ok: false; reason: string } {
+  const ready = checkBusFreeRefusals(context);
+  if (!ready.ok) {
+    return ready;
+  }
+  const lease = acquireBus(what);
+  if (!lease.ok) {
+    return { ok: false, reason: `${lease.heldBy} is using the bus — one thing at a time` };
+  }
+  return { ok: true, channel: ready.channel, lease: lease.lease };
+}
+
+/**
+ * Every reason to refuse that costs nothing to find out.
+ *
+ * ⚠️ SEPARATE SO THEY CAN BE ANSWERED FIRST. The lifetime read parks the OBD poller
+ * before it opens a session, and parking it to discover that CAN is switched off means
+ * a six-second wait for a loop that does not exist, answered with a sentence about the
+ * poller — while the true reason sits right here. Worse on a Pi where the poller IS
+ * running: a refusal that was always going to be a refusal costs the rest of a poll
+ * round, and a whole trouble-code cycle if it lands on the round that reads them.
+ */
+function checkBusFreeRefusals(
+  context: RunnerContext
+): { ok: true; channel: RawChannel } | { ok: false; reason: string } {
   if (context.sweep) {
     return { ok: false, reason: "a parameter read is already running" };
   }
@@ -319,14 +344,7 @@ function checkPreconditions(
   if (!verdict.safe) {
     return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
   }
-  // Taken LAST, so no refusal above holds the bus while it is reported. This is what
-  // excludes a service WRITE, which runs from another file and so cannot be seen by
-  // the two nullable fields above.
-  const lease = acquireBus(what);
-  if (!lease.ok) {
-    return { ok: false, reason: `${lease.heldBy} is using the bus — one thing at a time` };
-  }
-  return { ok: true, channel, lease: lease.lease };
+  return { ok: true, channel };
 }
 
 /**
@@ -343,8 +361,14 @@ function checkPreconditions(
  * transmits for long.
  */
 async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promise<VcuProbeOutcomeOrRefusal> {
+  // ⚠️ Logged HERE as well as by the shared runner, and with the `vcu-probe:` prefix a
+  // journal is grepped by: the shared line cannot name an identifier it knows nothing
+  // about, and a probe that hangs or is aborted by the gate watchdog would otherwise
+  // never say which one it was — on a bike you cannot attach a debugger to.
+  console.log(`vcu-probe: reading bank ${request.bank} index ${request.index} off ${request.target}`);
   const outcome = await runOneShotBusModule(context, "a probe", channel => startProbe({ ...request, channel }));
   if (!outcome.ok) {
+    console.log(`vcu-probe: ${request.target} bank ${request.bank} index ${request.index} — ${outcome.reason}`);
     return outcome;
   }
   console.log(`vcu-probe: ${request.target} 0x${outcome.result.identifier.toString(16)} → ${outcome.result.status}`);
@@ -362,22 +386,24 @@ async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promi
  */
 async function runLifetimeRead(context: RunnerContext): Promise<LifetimeReadOutcomeOrRefusal> {
   const what = "a lifetime-statistics read";
-  const hold = await holdObdPoller(what);
-  if (!hold) {
-    return { ok: false, reason: "the OBD poller would not go quiet — a multi-frame read needs the bus to itself" };
-  }
-  try {
-    const outcome = await runOneShotBusModule(context, what, channel => startLifetimeRead({ channel }));
-    if (outcome.ok) {
-      console.log(
-        `vcu-read: lifetime statistics — ${describeFlowControl(outcome.result)}, ` +
-          `worst event-loop delay ${outcome.result.loopDelayMs?.toFixed(1) ?? "?"} ms`
-      );
+  const outcome = await runOneShotBusModule(
+    context,
+    what,
+    channel => startLifetimeRead({ channel }),
+    async () => {
+      const hold = await holdObdPoller(what);
+      return hold
+        ? { ok: true, release: () => hold.release() }
+        : { ok: false, reason: "the OBD poller would not go quiet — a multi-frame read needs the bus to itself" };
     }
-    return outcome;
-  } finally {
-    hold.release();
+  );
+  if (outcome.ok) {
+    console.log(
+      `vcu-read: lifetime statistics — ${describeFlowControl(outcome.result)}, ` +
+        `worst event-loop delay ${outcome.result.loopDelayMs?.toFixed(1) ?? "not sampled"} ms`
+    );
   }
+  return outcome;
 }
 
 /** The measurement, in one line, however it came out. */
@@ -392,7 +418,12 @@ function describeFlowControl(result: LifetimeReadResult): string {
 
 /** A probe or a lifetime read: one bounded exchange, driven the same way. */
 export interface OneShotBusModule<T = unknown> {
-  handleFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
+  /**
+   * ⚠️ `arrival` is REQUIRED here, unlike on the transports underneath. Dropping it
+   * anywhere on this path silently un-measures the one thing the in-service read exists
+   * to measure, and a check cannot see the difference — so the type is what stops it.
+   */
+  handleFrame: (id: number, data: Buffer, arrival: FrameArrival | null) => boolean;
   abort: (reason: string) => void;
   finished: Promise<T>;
 }
@@ -401,26 +432,47 @@ export interface OneShotBusModule<T = unknown> {
  * Preconditions → start → watchdog → await → release, for the modules that are one
  * bounded exchange rather than a 277-read sweep.
  *
- * ⚠️ Factored rather than copied, and the copy is why: `runProbe` and the lifetime read
- * are structurally identical, and this file is already past the ~400-line guideline —
- * so the second one had to make the file SMALLER or it should not have been added here.
- * The gate watchdog, the `finally` that always releases both the slot and the lease,
- * and the refusal-rather-than-throw contract are the parts that must not diverge.
+ * ⚠️ Factored rather than copied: `runProbe` and the lifetime read are structurally
+ * identical, and the gate watchdog, the `finally` that releases everything, and the
+ * refusal-rather-than-throw contract are the parts that must not diverge.
+ *
+ * ⚠️ It did NOT shrink this file — 505 lines to ~600, and an earlier draft of this
+ * comment claimed the opposite. The win is that a second kind of one-shot read cannot
+ * inherit the first one's refusal message or forget one of its releases. The file is
+ * past the ~400 guideline and splitting it is its own migration, not this one's.
  */
 async function runOneShotBusModule<T>(
   context: RunnerContext,
   what: string,
-  start: (channel: RawChannel) => OneShotBusModule<T>
+  start: (channel: RawChannel) => OneShotBusModule<T>,
+  prepare?: () => Promise<PreparedResource>
 ): Promise<{ ok: true; result: T } | { ok: false; reason: string }> {
+  // ⚠️ FIRST, and before `prepare` — every refusal that costs nothing to find out. A
+  // read refused for a switched-off bus must say so, not park the OBD poller for six
+  // seconds and then blame the poller.
+  const free = checkBusFreeRefusals(context);
+  if (!free.ok) {
+    return free;
+  }
+  const prepared = prepare ? await prepare() : { ok: true as const, release: () => {} };
+  if (!prepared.ok) {
+    return { ok: false, reason: prepared.reason };
+  }
+  // The lease comes after `prepare`, so the poller is already quiet before a session is
+  // opened — the ordering the lifetime read's own header argues for.
   const ready = checkPreconditions(context, what);
   if (!ready.ok) {
+    prepared.release();
     return { ok: false, reason: ready.reason };
   }
-  const module = start(ready.channel);
-  context.oneShot = { name: what, module };
-  const watchdog = startWatchdog(reason => module.abort(reason));
-  console.log(`vcu-read: ${what} started — the bike checked out as safe to service`);
+  const watchdog = startWatchdog(reason => context.oneShot?.module.abort(reason));
   try {
+    // ⚠️ INSIDE the try. `start` does real work before it returns — a KWP client and an
+    // event-loop histogram — and the lease is already held, so a throw out here would
+    // wedge service mode for the life of the process with nothing to say why.
+    const module = start(ready.channel);
+    context.oneShot = { name: what, module };
+    console.log(`vcu-read: ${what} started — the bike checked out as safe to service`);
     return { ok: true, result: await module.finished };
   } catch (err) {
     // Never swallowed, and never allowed to reject into the HTTP handler: a read that
@@ -431,8 +483,12 @@ async function runOneShotBusModule<T>(
     clearInterval(watchdog);
     context.oneShot = null;
     ready.lease.release();
+    prepared.release();
   }
 }
+
+/** Something held for the duration of a read — today, the parked OBD poller. */
+type PreparedResource = { ok: true; release: () => void } | { ok: false; reason: string };
 
 function cancel(context: RunnerContext): boolean {
   if (!context.sweep) {

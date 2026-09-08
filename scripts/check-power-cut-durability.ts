@@ -292,6 +292,7 @@ async function checkCounters(): Promise<void> {
   const afterRefused = durabilityCounters();
   check("a zero-answer reading is refused", !refused.stored);
   check("…and its archive is still flushed", afterRefused.flushes - afterLifetime.flushes === 1);
+  check("…and the directory that holds it", afterRefused.directorySyncs - afterLifetime.directorySyncs === 1);
 }
 
 /** The smallest row that counts as a real value, so rule 5 lets latest.json be replaced. */

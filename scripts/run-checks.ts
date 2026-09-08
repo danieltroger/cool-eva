@@ -341,6 +341,16 @@ const CHECKS: SelfCheck[] = [
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
   },
   {
+    script: "scripts/check-obd-poller-hold.ts",
+    covers:
+      "the OBD poller's hold, against the real poll loop with no channel so nothing reaches a bus: that it is " +
+      "granted only once the loop has PARKED and no trouble-code transfer is in flight at that point, that a second " +
+      "holder is refused by name rather than stealing it, that releasing twice is safe, and — the one that matters — " +
+      "that a hold nobody releases is taken back BY THE LOOP at its cap and leaves the poller usable. A leaked hold " +
+      "would take speed, rpm, the temperatures and the whole DTC list off the dashboard and out of the log with a " +
+      "healthy-looking journal, on a bike parked where there is no reception",
+  },
+  {
     script: "scripts/check-lifetime-read.ts",
     covers:
       "the IN-SERVICE lifetime read, end to end against a simulated A8: session, request, First Frame, our flow " +

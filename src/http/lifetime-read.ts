@@ -84,6 +84,9 @@ export async function handleLifetimeReadEndpoint(
     replies: outcome.result.replies,
   });
   const answered = outcome.result.replies.filter(reply => reply.payloadHex !== null).length;
+  // ⚠️ The measurement goes back WHATEVER happened to the store. A read that answered
+  // 1 of 2 and was correctly refused storage is exactly the run whose flow-control
+  // number is worth having, and putting only the refusal here hid it.
   await respond(res, 200, options, {
     measurement: describeMeasurement(outcome.result),
     answered,

@@ -47,7 +47,7 @@ export type MultiFrameResult =
    * silence after a First Frame is a stalled transfer, and silence where a flow
    * control was expected is a micro that never agreed to hear the rest.
    */
-  | { kind: "timeout"; stage: TransferStage }
+  | { kind: "timeout"; stage: TransferStage; flowControlLatency: ArrivalLatency | null }
   /**
    * The reply was unusable and has been discarded — a sequence gap, a Consecutive
    * Frame that under-filled, a declared length over the cap, too many frames.
@@ -57,7 +57,7 @@ export type MultiFrameResult =
    * the freeze-frame decoder: every later field shifts, `trailingHex` comes out
    * empty, and the answer looks perfect and is wrong.
    */
-  | { kind: "abandoned"; reason: string }
+  | { kind: "abandoned"; reason: string; flowControlLatency: ArrivalLatency | null }
   /** Never reached the bus — our socket, not the bike. */
   | { kind: "not-sent"; reason: string }
   /** The caller stopped it: a cancel, a shutdown, or the service gate closing. */
@@ -240,7 +240,11 @@ function handleFrame(context: TransferContext, data: Buffer, arrival?: FrameArri
   }
   const frameBudget = maxFramesPerExchange(context.options.maxPayloadBytes);
   if (context.framesHandled >= frameBudget) {
-    settle(context, { kind: "abandoned", reason: `more than ${frameBudget} frames in one exchange` });
+    settle(context, {
+      kind: "abandoned",
+      reason: `more than ${frameBudget} frames in one exchange`,
+      flowControlLatency: context.flowControlLatency,
+    });
     return true;
   }
   context.framesHandled += 1;
@@ -288,7 +292,7 @@ function handleFrame(context: TransferContext, data: Buffer, arrival?: FrameArri
       // commonest abandonment is a Consecutive Frame that under-filled — a real
       // bug this repo has already shipped once — and continuing to wait would let
       // the NEXT frame's bytes land at the wrong offset if the transfer resumed.
-      settle(context, { kind: "abandoned", reason: result.reason });
+      settle(context, { kind: "abandoned", reason: result.reason, flowControlLatency: context.flowControlLatency });
       return true;
     case "ignored":
       // Another tester's traffic, a mode-01 reply on the same id range, or a
@@ -358,12 +362,14 @@ function handleFlowControlFromMicro(context: TransferContext, flowControl: VcuFl
       settle(context, {
         kind: "abandoned",
         reason: `${context.options.target} answered our request with flow-control OVERFLOW — it cannot hold the request`,
+        flowControlLatency: context.flowControlLatency,
       });
       return true;
     case "unrecognised":
       settle(context, {
         kind: "abandoned",
         reason: `flow control with undefined status 0x${flowControl.flowStatus.toString(16)}`,
+        flowControlLatency: context.flowControlLatency,
       });
       return true;
   }
@@ -453,7 +459,7 @@ function armTimer(context: TransferContext, ms: number, stage: TransferStage): v
       onRequestFlowControlTimeout(context);
       return;
     }
-    settle(context, { kind: "timeout", stage });
+    settle(context, { kind: "timeout", stage, flowControlLatency: context.flowControlLatency });
   }, ms);
 }
 

@@ -1,7 +1,8 @@
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 import { LIFETIME_READ_PAYLOADS } from "./captured-lifetime-reads.ts";
-import { startLifetimeRead } from "../src/vcu/lifetime-read.ts";
+import { readFile } from "node:fs/promises";
+import { startLifetimeRead, worseOf } from "../src/vcu/lifetime-read.ts";
 import { arrivalLatencyMs, frameArrival } from "../src/can/frame-arrival.ts";
 import { loadLifetimeStatistics, writeLifetimeRead } from "../src/vcu/lifetime-store.ts";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -92,7 +93,9 @@ console.log("\n── §2 the retry ──────────────�
 // their status — never a throw into the caller, and never a silent empty reading.
 const silent = simulateVcuMicros([{ target: "A8", records: new Map(), silentServices: [0x17] }]);
 const silentRead = startLifetimeRead({ channel: silent.channel, attempts: 2 });
-silent.channel.addListener("onMessage", message => silentRead.handleFrame(message.id, message.data));
+silent.channel.addListener("onMessage", message =>
+  silentRead.handleFrame(message.id, message.data, frameArrival(message))
+);
 const silentResult = await silentRead.finished;
 check(silentResult.replies.length === 2, "a silent micro still produces one reply record per component");
 check(
@@ -135,23 +138,79 @@ console.log("  7 ms reads as 7; a backwards step, a forwards step and an absent 
 // ── §4 The measurement's plumbing — and ONLY its plumbing ──────────────────
 console.log("\n── §4 the measurement, plumbing only ─────────────────────────────");
 
-// ⚠️ READ THIS BEFORE BELIEVING THE NUMBER BELOW. The double emits frames with no
-// `ts_sec`, so `frameArrival` returns null and the latency is correctly "unmeasured".
-// That is the assertion worth making here: the path carries the refusal rather than a
-// zero. The real number needs a kernel stamp on a real socket, which needs the bike.
+// ⚠️ READ THIS BEFORE BELIEVING THE NUMBER BELOW. It is an idle laptop answering in
+// 2 ms and it is worth NOTHING as evidence about the Pi. What these assertions hold down
+// is the PLUMBING: that the stamp the double puts on a frame reaches the transfer
+// through index.ts → read-runner → kwp-client → multiframe-transfer, and that the
+// measurement is taken after the transmit rather than before it. Without a stamp on the
+// double's frames every one of these passed whether the chain was connected or not.
+check(result.flowControl !== null, "a segmented reply must produce a flow-control latency record");
 check(
-  result.flowControl !== null,
-  "a segmented reply must produce a flow-control latency record, even an unmeasured one"
+  result.flowControl !== null && result.flowControl.known,
+  `the double stamps its frames, so the chain must deliver a real latency, got ${JSON.stringify(result.flowControl)}`
 );
+// A plausible dispatch delay: not negative, and not the seconds a broken chain or a
+// stepped clock would produce.
 check(
-  result.flowControl !== null && !result.flowControl.known,
-  `the double supplies no kernel stamp, so this must read as unmeasured, got ${JSON.stringify(result.flowControl)}`
+  result.flowControl?.known === true && result.flowControl.ms >= 0 && result.flowControl.ms < 1000,
+  `an idle laptop's dispatch should be well under a second, got ${JSON.stringify(result.flowControl)}`
 );
-check(typeof result.loopDelayMs === "number", "the event-loop delay is always available — it needs no stamp");
+check(result.loopDelayMs === null || result.loopDelayMs >= 0, "the event-loop delay is a duration or nothing");
 console.log(
-  `  latency correctly unmeasured against the double; event-loop delay ${result.loopDelayMs?.toFixed(2)} ms` +
-    " (an idle laptop, and worth nothing as evidence about the Pi)"
+  `  flow control measured ${result.flowControl?.known ? `${result.flowControl.ms.toFixed(2)} ms` : "NOT AT ALL"}` +
+    ` after the double's own stamp; event-loop delay ${result.loopDelayMs?.toFixed(2) ?? "not sampled"} ms` +
+    " — plumbing only, an idle laptop, no evidence about the Pi"
 );
+
+// And the absent-stamp path, which no longer happens by accident: a frame with no
+// `ts_sec` must still read as unmeasured rather than as 0.0 ms.
+const unstamped = simulateVcuMicros([{ target: "A8", records: new Map(), freezeFrames: FREEZE_FRAMES }]);
+const unstampedRead = startLifetimeRead({ channel: unstamped.channel });
+// ⚠️ Deliberately NOT passing the arrival: this is the listener that has no stamp to give.
+unstamped.channel.addListener("onMessage", message => unstampedRead.handleFrame(message.id, message.data, null));
+const unstampedResult = await unstampedRead.finished;
+check(
+  unstampedResult.flowControl !== null && !unstampedResult.flowControl.known,
+  `a frame with no stamp must read as unmeasured, got ${JSON.stringify(unstampedResult.flowControl)}`
+);
+console.log(
+  `  and with no stamp threaded: "${unstampedResult.flowControl?.known ? "?" : unstampedResult.flowControl?.reason}"`
+);
+
+// ── §5 The ordering no runtime check can see ───────────────────────────────
+console.log("\n── §5 the measurement stays after the transmit ───────────────────");
+
+// ⚠️ ASSERTED AGAINST THE SOURCE, the way scripts/check-arming.ts asserts the shape of
+// its firing sites, because no runtime observation distinguishes a Date.now() taken
+// microseconds before a transmit from one taken microseconds after — and the rule that
+// nothing may sit between a First Frame and its answer is the one this transport is
+// built around. Moving the measurement up would pass every other check in this file.
+const transfer = await readFile(new URL("../src/vcu/multiframe-transfer.ts", import.meta.url), "utf-8");
+const flowControlCase = transfer.slice(transfer.indexOf('case "flow-control-required":'));
+const transmitAt = flowControlCase.indexOf("transmit(context, buildFlowControlFrame");
+const measureAt = flowControlCase.indexOf("flowControlLatency = arrivalLatencyMs");
+check(transmitAt !== -1, "the flow-control case must still transmit");
+check(measureAt !== -1, "…and must still measure");
+check(
+  transmitAt !== -1 && measureAt !== -1 && measureAt > transmitAt,
+  "the measurement must come AFTER the transmit — nothing may sit between a First Frame and its answer"
+);
+console.log("  the Date.now() sits after the flow control is on the wire, not before it");
+
+// ── §6 worseOf, which decides which number survives ────────────────────────
+console.log("\n── §6 the worst latency wins ─────────────────────────────────────");
+
+const known = (ms: number) => ({ known: true as const, ms });
+const unknown = { known: false as const, reason: "no stamp", arrival: null };
+check(worseOf(known(3), known(9))?.known === true, "two known readings still give a known one");
+check((worseOf(known(3), known(9)) as { ms: number }).ms === 9, "…and it is the SLOWER of the two");
+check((worseOf(known(9), known(3)) as { ms: number }).ms === 9, "…whichever order they arrive in");
+// ⚠️ An unmeasured reading beats a measured one. "We could not measure it" is the answer
+// that has to reach the doc, rather than being hidden by the transfer that could.
+check(worseOf(known(3), unknown)?.known === false, "an unmeasured reading beats a measured one");
+check(worseOf(unknown, known(3))?.known === false, "…in either order");
+check(worseOf(null, known(3))?.known === true, "and nothing at all yields to something");
+console.log("  the slower reading wins, and an unmeasured one beats both");
 
 if (failures.length > 0) {
   console.error("\nFAILED:");

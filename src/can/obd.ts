@@ -161,31 +161,18 @@ function requestPid(pid: number, timeoutMs = 200): Promise<Buffer | null> {
   });
 }
 
-// ── Parking the poller, so a multi-frame read on the KWP channel gets a quiet bus ──
+// ── Parking the poller, so a multi-frame read gets a quiet bus of OUR traffic ──
 //
-// ⚠️ THE POLLER IS NOT UNDER src/vcu/bus-lease.ts and cannot be: the lease is per
-// operation and this loop runs forever. It is also the documented cause of the KWP
-// channel's 25-70 % completion rate — docs/can-decode-findings.md:1196 measures it
-// sharing the bus, and :1206 has the tell: a completed transfer had ZERO mode-01
-// replies interleaved and a failed one 50+. So parking it is not merely a hazard
-// mitigation; it is what gives an in-service read the quiet bus (of OUR traffic — the
-// bike's own broadcasts are still there) that a stopped-service script gets for free.
-//
-// ⚠️ AN ACKNOWLEDGEMENT, NOT A FLAG. `holdObdPoller` resolves only once the loop has
+// ⚠️ AN ACKNOWLEDGEMENT, NOT A FLAG: `holdObdPoller` resolves only once the loop has
 // PARKED, because a boolean set from an HTTP handler cannot unwind a trouble-code
-// transfer already four retries deep. And parked-at-a-park-point implies nothing of
-// ours is in flight: every `requestPid` and every `requestTroubleCodeList` is awaited,
-// and obd-dtc.ts's `settle` nulls its in-flight request and clears its timer before
-// resolving. Traced in the review on issue #156.
+// transfer four retries deep. Fail-safe — a loop that never parks means a refusal, never
+// a false grant. And ⚠️ THE HOLD IS CAPPED BY THE LOOP, not by the holder: a leaked one
+// would take speed, rpm, the temperatures and the whole DTC list off the dashboard AND
+// out of the log, with a healthy journal, on a bike where there is no reception.
 //
-// ⚠️ FAIL-SAFE: if the loop never parks, the hold times out and the caller is refused.
-// There is no arrangement in which it falsely grants a bus that is still busy.
-//
-// ⚠️ AND THE HOLD ITSELF IS CAPPED, BY THE LOOP. A leaked hold would take speed, rpm,
-// the temperatures, the 12 V rail, the trip counters and the whole stored-DTC list off
-// the dashboard AND out of the log, with a healthy-looking journal, on a bike parked
-// where there is no reception. That is worse than anything the hold exists to prevent,
-// so the loop resumes on its own past MAX_HOLD_MS whatever the holder does.
+// Why the poller is worth parking at all, why parked implies nothing of ours is in
+// flight, and where the three park points are: docs/lifetime-battery-statistics.md
+// § "The poller is parked, and that is the point".
 
 /** A parked poller. Releasing twice is safe, which is what a `finally` on a retried path does. */
 export interface ObdPollerHold {
@@ -217,19 +204,32 @@ const HOLD_WAIT_MS = 6000;
 /** How often a parked loop re-checks. Short enough that the cap expires promptly, cheap enough to ignore. */
 const HOLD_POLL_MS = 100;
 
-let hold: { name: string; parked: boolean; announce: (() => void) | null; expiresAt: number } | null = null;
+let hold: {
+  name: string;
+  parked: boolean;
+  announce: (() => void) | null;
+  expiresAt: number;
+  maxHoldMs: number;
+} | null = null;
 
 /**
  * Parks the 2 Hz poller and resolves once it has actually stopped, or null on timeout.
  *
  * `reason` is shown to a person, so it is a phrase: "a lifetime-statistics read".
  */
-export async function holdObdPoller(reason: string, waitMs = HOLD_WAIT_MS): Promise<ObdPollerHold | null> {
+export async function holdObdPoller(
+  reason: string,
+  waitMs = HOLD_WAIT_MS,
+  // Injectable for the same reason `waitMs` is: scripts/check-obd-poller-hold.ts has to
+  // watch the loop take the poller back, and waiting out the real cap would put fifteen
+  // seconds into a suite that runs in ten. No production caller passes it.
+  maxHoldMs = MAX_HOLD_MS
+): Promise<ObdPollerHold | null> {
   if (hold) {
     console.warn(`obd: refusing to park for ${reason} — ${hold.name} already has it`);
     return null;
   }
-  const mine = { name: reason, parked: false, announce: null as (() => void) | null, expiresAt: 0 };
+  const mine = { name: reason, parked: false, announce: null as (() => void) | null, expiresAt: 0, maxHoldMs };
   hold = mine;
   const parked = await new Promise<boolean>(resolve => {
     const timer = setTimeout(() => {
@@ -247,7 +247,7 @@ export async function holdObdPoller(reason: string, waitMs = HOLD_WAIT_MS): Prom
     console.warn(`obd: the poller did not park within ${waitMs} ms — refusing ${reason}`);
     return null;
   }
-  mine.expiresAt = monotonicNow() + MAX_HOLD_MS;
+  mine.expiresAt = monotonicNow() + maxHoldMs;
   console.log(`obd: parked for ${reason}`);
   return {
     release: () => {
@@ -278,7 +278,7 @@ function parkedForHold(): boolean {
     return false;
   }
   if (hold.parked && hold.expiresAt > 0 && monotonicNow() > hold.expiresAt) {
-    console.warn(`obd: ${hold.name} held the poller past ${MAX_HOLD_MS} ms — resuming anyway`);
+    console.warn(`obd: ${hold.name} held the poller past ${hold.maxHoldMs} ms — resuming anyway`);
     hold = null;
     return false;
   }
