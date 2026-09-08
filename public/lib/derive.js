@@ -1,6 +1,7 @@
 // @ts-check
 
 import { peek, valueOf } from "./store.js";
+import { packResistanceWith } from "./pack-resistance.js";
 import { ringFor } from "./ring.js";
 // Series count lives with everything else about the pack's cells, so the sag
 // divisor and the strip's "n of 81" cannot disagree.
@@ -76,6 +77,24 @@ function positiveOrNull(key) {
 }
 
 /**
+ * Pack resistance and its provenance, subscribing to what it reads.
+ */
+
+/** @returns {import("./pack-resistance.js").PackResistance} */
+export function packResistance() {
+  return packResistanceWith(valueOf);
+}
+
+/**
+ * The same, sampled rather than subscribed — for the chart tick in views/hypermile.js,
+ * whose comment says why nothing there may be read reactively.
+ * @returns {import("./pack-resistance.js").PackResistance}
+ */
+export function packResistanceSampled() {
+  return packResistanceWith(peek);
+}
+
+/**
  * Watts burned in the pack's own internal resistance — I²R.
  *
  * This is simultaneously the range you are throwing away and the heat the coolant
@@ -83,20 +102,18 @@ function positiveOrNull(key) {
  * just the hypermiling one. Because it goes as current squared, halving the current
  * quarters it: the most direct possible argument for a gentle throttle.
  *
- * Caveat worth keeping in mind when reading it: `pack_resistance_mohm` is the BMS's
- * own estimate and includes cabling and contactors, so some of these watts are shed
- * outside the cells. It is an upper bound on cell heating, not a measurement of it.
+ * Caveat worth keeping in mind when reading it: R covers cabling and contactors as
+ * well as the cells, so some of these watts are shed outside them. It is an upper
+ * bound on cell heating, not a measurement of it. Where R comes from, and how good it
+ * is: packResistance() above and docs/pack-resistance.md.
  * @returns {number | null}
  */
 export function resistiveLossWatts() {
   const amps = valueOf("pack_a");
-  // A pack with zero internal resistance does not exist; a zero here means the BMS
-  // is not estimating one right now, which is not the same as "no losses" and must
-  // not be drawn as a confident 0 W.
-  const milliohms = positiveOrNull("pack_resistance_mohm");
-  if (amps == null || milliohms == null) {
+  if (amps == null) {
     return null;
   }
+  const { milliohms } = packResistance();
   // A² × mΩ = mW × 1000 ⇒ /1000 gives watts. Squaring drops the sign, so this is
   // correct for regen too, where the same loss applies to current going in.
   return (amps * amps * milliohms) / 1000;
@@ -130,10 +147,10 @@ export function resistiveLossPercent() {
  */
 export function sagPerCellMv() {
   const amps = dischargeAmps();
-  const milliohms = positiveOrNull("pack_resistance_mohm");
-  if (amps == null || milliohms == null) {
+  if (amps == null) {
     return null;
   }
+  const { milliohms } = packResistance();
   return (amps * milliohms) / CELL_COUNT;
 }
 

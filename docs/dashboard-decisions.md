@@ -485,7 +485,7 @@ Independently supported, which is why it is worth showing at all: an energy bala
 
 I²R is simultaneously the range you are throwing away and the heat the coolant loop has to carry off, which is why it earns a place on the riding screen and not just the hypermiling one. Because it goes as current squared, halving the current quarters it: the most direct possible argument for a gentle throttle. Squaring drops the sign, so it is correct for regen too.
 
-Caveat worth keeping in mind when reading it: `pack_resistance_mohm` is the BMS's own estimate and includes cabling and contactors, so some of these watts are shed outside the cells. It is an upper bound on cell heating, not a measurement of it. Below a few hundred watts of output the loss _percentage_ is dominated by its own rounding and swings between nothing and everything while parked, so it reports null instead.
+Caveat worth keeping in mind when reading it: R covers cabling and contactors as well as the cells, so some of these watts are shed outside them. It is an upper bound on cell heating, not a measurement of it. R itself is measured live by regression where the current is varying enough to fit one, and modelled off pack temperature otherwise — the tile says which, and `docs/pack-resistance.md` says why the BMS's own `pack_resistance_mohm` is not used. Below a few hundred watts of output the loss _percentage_ is dominated by its own rounding and swings between nothing and everything while parked, so it reports null instead.
 
 ### The under-voltage dwell — `lib/dwell.js`
 

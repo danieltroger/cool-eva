@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { isPlausible } from "./bounds.js";
 import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
+import { observeFrame } from "./pack-resistance.js";
 import { POLL_MS, createConnection } from "./connection.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
@@ -253,11 +254,22 @@ export function connect() {
 const CHART_TICK_MS = 500;
 
 /**
+ * Folds one server message into the store.
+ *
+ * Exported for scripts/check-pack-resistance.ts §7, which drives it with a real
+ * DashboardMessage: the plausibility gate and the accumulate below are one `continue`
+ * apart, and that seam is the likeliest way the pack-resistance buffer would silently
+ * start pairing readings the rest of the dashboard rejected.
  * @param {DashboardMessage} message
  */
-function apply(message) {
+export function apply(message) {
   serverTime.val = message.ts;
   let added = false;
+  // Readings that survive the plausibility gate below, offered to the pack-resistance
+  // buffer as one frame. It pairs pack_v with pack_a only when both are in here, which
+  // is what proves they came from the same 0x200 — see pack-resistance.js.
+  /** @type {Record<string, LiveValue>} */
+  const accepted = {};
   for (const [key, reading] of Object.entries(message.signals)) {
     // Tracked here, and NOT via `states`, because `states` is not a record of what
     // the bike has sent: signalState() is also called while a view is being built
@@ -293,7 +305,9 @@ function apply(message) {
     // only for a backwards clock step. See docs/dashboard-decisions.md §`seenKeys`.
     const serverAgeMs = Math.max(0, message.ts - reading.ts);
     ringFor(key).push(monotonicNow() - serverAgeMs, reading.value);
+    accepted[key] = reading;
   }
+  observeFrame(accepted);
   if (added) {
     knownKeys.val = [...seenKeys].sort();
   }

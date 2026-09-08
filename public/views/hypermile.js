@@ -11,11 +11,14 @@ import {
   limitFraction,
   remainingWh,
   resistiveLossPercent,
+  packResistance,
+  packResistanceSampled,
   restingHeadroomMv,
   rollingConsumption,
   rollingRangeKm,
   sagPerCellMv,
 } from "../lib/derive.js";
+import { resistanceNote } from "../lib/pack-resistance.js";
 import { CUTOFF_TIMER_S, dwellSeconds, secondsRemaining } from "../lib/dwell.js";
 import { Fact, Missing, SectionLabel, SignalTile } from "../lib/tiles.js";
 import { barStrip, meter, sparkline } from "../lib/svg.js";
@@ -77,12 +80,13 @@ function HeadroomHero() {
       const resting = restingHeadroomMv();
       const sag = sagPerCellMv();
       if (resting == null || sag == null) {
-        // Sag compensation needs a pack resistance, which the BMS only estimates
-        // under load — say which half is missing rather than repeating the cut-off
-        // that the line below already gives.
-        return "sag compensation needs a pack resistance estimate";
+        // A pack resistance is now always available, so the only way here is no
+        // current reading at all — say that rather than blaming the resistance.
+        return "sag compensation needs a pack current reading";
       }
-      return `${Math.round(resting)} mV at rest · ${Math.round(sag)} mV of sag right now`;
+      const note = resistanceNote(packResistance());
+      const qualifier = note === "" ? "" : ` (${note})`;
+      return `${Math.round(resting)} mV at rest · ${Math.round(sag)} mV of sag right now${qualifier}`;
     }),
     div({ class: "sub" }, () => {
       const weakest = valueOf("cell_lowest_v_idx");
@@ -233,12 +237,10 @@ function LossTile() {
       // the redraw to a signal with no deadband and pace it at frame rate, which is
       // exactly what the tick is meant to prevent.
       chartTick.val;
-      const milliohms = peek("pack_resistance_mohm");
-      // Charting zero watts because the resistance is unknown draws a flat line that
-      // looks like a measurement of "no losses". Draw the empty placeholder instead.
-      if (milliohms == null || milliohms <= 0) {
-        return sparkline({ values: [], color: colors.MUTED });
-      }
+      // Sampled, not subscribed: packResistanceSampled() reads batt_temp_hi in its
+      // modelled branch, and reading it reactively here would pace this redraw at the
+      // signal's rate — the thing the tick exists to prevent.
+      const { milliohms } = packResistanceSampled();
       const amps = ringFor("pack_a").since(10 * 60_000, monotonicNow());
       const watts = amps.values.map(value => (value * value * milliohms) / 1000);
       const packKilowatts = peek("pack_kw");
@@ -248,11 +250,10 @@ function LossTile() {
       return sparkline({ values: watts, color: colors.lossFraction(percent), minSpan: 100 });
     },
     div({ class: "sub" }, () => {
-      const milliohms = valueOf("pack_resistance_mohm");
-      if (milliohms == null || milliohms <= 0) {
-        return "waiting for a pack resistance estimate — the BMS only reports one under load";
-      }
-      return `pack ${milliohms.toFixed(0)} mΩ · halving current quarters this`;
+      const resistance = packResistance();
+      const note = resistanceNote(resistance);
+      const source = note === "" ? "measured" : note;
+      return `pack ${resistance.milliohms.toFixed(0)} mΩ ${source} · halving current quarters this`;
     })
   );
 }

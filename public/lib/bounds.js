@@ -66,7 +66,11 @@ const BY_KEY = {
   "pack_v": [0, 450],
   "pack_a": [-600, 600],
   "pack_kw": [-200, 200],
-  "pack_resistance_mohm": [0, 5000],
+  // The BMS's own ΔV/ΔI estimate, still logged but no longer driving anything on
+  // screen (docs/pack-resistance.md). 500 rather than a tight band around the ~61-115
+  // mΩ this pack measures: a rejected value is drawn as a FAULT, and a genuinely cold
+  // pack can exceed 300 mΩ, so a correct reading must not be flagged as one.
+  "pack_resistance_mohm": [0, 500],
   "residual_energy_wh": [0, 30_000],
   "gps_altitude_m": [-500, 9000],
   "gps_speed_kmh": [0, 300],

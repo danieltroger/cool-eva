@@ -30,7 +30,7 @@ sag_mv_per_cell  ≈ pack_current_a × pack_resistance_mohm / 81
 cell_min_rest_mv ≈ cell_min_mv + sag_mv_per_cell        (while discharging)
 ```
 
-`pack_resistance_mohm` is `0x206` bytes 0–1; `pack_current_a` is `0x200` bytes 6–7 (check the sign convention in `decode.ts` — it's signed, charge vs discharge). Amps × milliohms gives millivolts directly, so the units work out with no scaling factor.
+`pack_resistance_mohm` here is **not** the BMS's `0x206` b0-1 estimate, which is unusable — see `docs/pack-resistance.md`. It is measured by regression of `pack_v` on `pack_a`, or modelled off pack temperature. `pack_current_a` is `0x200` bytes 6–7 (check the sign convention in `decode.ts` — it's signed, charge vs discharge). Amps × milliohms gives millivolts directly, so the units work out with no scaling factor.
 
 This matters more than it sounds: at 100 A with a 100 mΩ pack that's ~123 mV per cell of pure sag — comparable to the entire margin you're watching. Show **both**: instantaneous (what the BMS sees, what will actually trip) and sag-compensated (what you actually have left).
 
@@ -109,4 +109,4 @@ This also ties into the watercooling project: that 1 kW is exactly what the loop
 - **Don't treat 0 mV as a cell reading.** LMUs 5–11 have only 7 cells, so the cell-8 slot is meaningless for them.
 - **`charge_state` is a bitfield, not an enum.** `1` = Discharge, `2` = Charge, `16` = Idle. Testing `!== 1` for "charging" flags Idle as charging.
 - **Rate mismatch.** `0x200`/`0x203` are 20 Hz, `0x202` 10 Hz, `0x205`/`0x206`/`0x660`/`0x661`/ `0x665` 1 Hz. Anything combining a 20 Hz and a 1 Hz signal is only as fresh as the slow one — don't present a 1 Hz-derived number as instantaneous.
-- **Sag compensation is a model, not a measurement.** `pack_resistance` is the BMS's own estimate and lumps in cabling and contactors. Treat the compensated figure as an aid, never as the authority on whether you're about to cut out — the instantaneous value is what trips the BMS.
+- **Sag compensation is a model, not a measurement.** `pack_resistance` lumps in cabling and contactors, and is itself either a live regression or a curve read off pack temperature (`docs/pack-resistance.md`). Treat the compensated figure as an aid, never as the authority on whether you're about to cut out — the instantaneous value is what trips the BMS.
