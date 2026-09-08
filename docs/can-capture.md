@@ -4,6 +4,8 @@ The Pi runs a `candump` alongside the service, writing every frame on `can0` to 
 
 This file is why the service used to punch a hole in it on every deploy, what changed, and what a hole still looks like.
 
+> ⚠️ **How to check the claims in this file.** Nearly everything below cites kernel, iproute2, systemd or can-utils source. Every citation here was verified by fetching the file — but four of them were wrong anyway, because the fetch was asked to _characterise_ the code ("is X guarded?") and a summariser answered confidently and incorrectly, once contradicting itself inside a single reply. Two true sentences were replaced with false ones that way. **Ask for the block verbatim, then read it yourself.** The `restart_ms` guard below was restored after exactly that mistake, and the kernel had stated the rule in a comment the whole time.
+
 ## The mechanism, measured twice
 
 `bringUpCan()` took `can0` **down** before bringing it up, on every service start. `ip link set can0 down` ends the `candump` behind `can-capture.service`, whose unit carries `Restart=on-failure` / `RestartSec=5` — ⚠️ quoted from issue #160, not read here: the unit and `capture.sh` are tracked nowhere in this repo and PR 2 gathers them — so systemd waited five seconds and `capture.sh` opened a **new file**. The two gaps below were measured; the directives explaining them were not.
@@ -13,13 +15,15 @@ This file is why the service used to punch a hole in it on every deploy, what ch
 | the documented freeze-frame procedure | **5 s**, 13:18:44 → 13:18:49 | `capture-20260908-131849-db6cbfba.log`; components 51 and 52 completed inside the hole and were never captured |
 | a routine deploy, `dd8acac` → `16a7282` | **~6 s**, 15:08:48 → 15:08:54 | `capture-20260908-150854-59eceef8.log`, two `can-capture` restart events in the window |
 
+⚠️ Those two rows are the one thing in this file that cannot be checked from a laptop: they were measured on the Pi against the capture archive, and are reproduced from issue #160 rather than re-derived here.
+
 ⚠️ It was never the `After=cool-eva.service` ordering, and stopping the service alone would not have done it. It was the interface going down. **A deploy is a service restart**, which made this the common case rather than the exotic one — and the two occasions it costs most are a deploy during a DC charge and a deploy mid-ride, which are the scarcest data this project has. Issue #160.
 
 ## Why the bounce existed — do not delete this before reading it
 
 Two facts, and the second is the one that makes the first non-obvious:
 
-1. **The kernel refuses to reconfigure a live CAN device.** `can_changelink()` in `drivers/net/can/dev/netlink.c` returns `-EBUSY` while `IFF_UP` is set for **ctrlmode** and for **bittiming** (arbitration, plus the FD and XL data phases) — four `if (dev->flags & IFF_UP)` guards. ⚠️ `restart_ms` is **not** one of them and can be set on a running device; an earlier draft here claimed it was. It makes no difference to the bounce, because `bringUpCan` sets it in the same `ip link set … type can …` command that carries the bitrate, and that command needs the device down for the bitrate's sake. So taking the interface down is the _only_ way to set any of them.
+1. **The kernel refuses to reconfigure a live CAN device.** `can_changelink()` in `drivers/net/can/dev/netlink.c` returns `-EBUSY` while `IFF_UP` is set, in four guards: ctrlmode, arbitration bittiming, data bittiming (one guard covering both the FD and XL phases), and `restart_ms` — where the kernel states the rule in English, `/* Do not allow changing restart delay while running */`. **All three arguments `canConfigureArgs()` sets — bitrate, restart-ms, listen-only — need the device down.** There is a fifth guard pointing the other way: `IFLA_CAN_RESTART` returns `-EINVAL` unless `IFF_UP` (`/* Do not allow a restart while not running */`), which is why `restartCanLink()` is right to bring the link up without downing it first. So taking the interface down is the _only_ way to set any of them.
 2. **`listen-only` is STICKY on this adapter.** `ip link set can0 type can bitrate 500000 …` does not clear it, which is why `bringUpCan` passes the flag explicitly every time (`src/can/socket.ts`). A bring-up that assumed the flag was already right could leave the bike silently unable to transmit — the bus looks fine, and every OBD read times out.
 
 So the down/up is not defensive habit. What makes skipping it safe is narrower than "the bounce is unnecessary": it is that **when the link already matches what the bounce would set, running it changes nothing except killing every other socket on the bus.**
@@ -151,7 +155,7 @@ The obvious deeper fix is to stop the service owning the interface: a `systemd-n
 ✅ **Settled by the 2026-09-08 gather** (issue #160), which is committed as `CAPTURED_PI_LINK`:
 
 1. **`ip -details -json` works and every field name is right** — `linkinfo.info_kind`, `info_data.state`, `restart_ms`, `bittiming.bitrate`, top-level `flags`/`operstate`. The parser reads the real body and returns `skip=true`.
-2. **`ctrlmode` is absent while `ctrlmode_supported` is present** (`LOOPBACK`, `LISTEN-ONLY`, `ONE-SHOT`, `CC-LEN8-DLC`). The two come from different netlink attributes — `IFLA_CAN_CTRLMODE` and `IFLA_CAN_CTRLMODE_EXT` — but iproute2 renders **both through the same `print_ctrlmode()`**, which early-returns on zero flags. So seeing `ctrlmode_supported` rendered proves that function is present and working in this build, and therefore that a non-zero `ctrlmode` would have been rendered too: the absence really does mean "no flags set". The riskiest inference in the design is evidence now, not argument.
+2. **`ctrlmode` is absent while `ctrlmode_supported` is present** (`LOOPBACK`, `LISTEN-ONLY`, `ONE-SHOT`, `CC-LEN8-DLC`). `can_print_ctrlmode_ext()` is called **inside** `if (tb[IFLA_CAN_CTRLMODE])`, on the line immediately after `print_ctrlmode(PRINT_ANY, cm->flags, "ctrlmode")`. So `ctrlmode_supported` appearing in the gather proves the call that would have printed the flags **ran and printed nothing** — `print_ctrlmode()` early-returns on zero flags. That is not an inference about this build; it is the same code path, three lines apart. The riskiest inference in the design is evidence now, not argument.
 3. **The controller state is `ERROR-WARNING`**, which is what makes the widened state set load-bearing rather than defensive.
 
 ⚠️ **Still open, and the PR says so:**
