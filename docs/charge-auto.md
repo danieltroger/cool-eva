@@ -36,6 +36,10 @@ The estimator returns three things instead of two:
 
 The span is measured **to now**, not to the newest sample: samples arrive only when the reading changes, so measuring between them would make the stillest pack look like the one we know least about.
 
+⚠️ **And the window is anchored.** The same mistake has a second timescale: a pack holding one whole degree emits nothing at all, so after ten minutes the window simply _empties_ and the answer flips back to `unknown` — firing exactly when the controller **succeeds**, because a current low enough to hold the temperature steady is a current that stops the reading ticking. Measured on the shipped modules before the fix: 74 A → 35 A in eight minutes on a pack whose own history proves it is not heating. So the estimator keeps the newest sample from _before_ the window as an anchor, and `src/charge/auto.ts` keeps one such sample in the ring rather than trimming it away.
+
+⚠️ **`HARD_CEILING_C` is evaluated on temperature alone, and first.** It sat after the `unknown` branch, so whether it applied depended on whether a rate happened to be measurable — the same "gated behind an estimate" bug caught in the plan review, structurally back, and masked only by `BLIND_DESCENT_FROM_C` happening to sit below it. `scripts/check-charge-auto.ts` §6 now asserts that ordering rather than leaving it to luck.
+
 ## The numbers, and where each comes from
 
 |  | value | why |
@@ -55,7 +59,7 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 
 That is the whole safety posture, and it is what makes the feature bounded: **it can only ever improve on the status quo, never worsen it.** `scripts/check-charge-auto.ts` §1 asserts all nine branches hold and that none of them produces a current.
 
-⚠️ **The rider always wins.** A `dc_charge_limit_selected_a` event stands the controller down for the rest of the session. That event is necessarily the rider and never our own echo: this Pi does not hear its own transmissions (`createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS`) — proven 2026-09-07, when three Pi sends produced no decoded row while all twelve of the dash's did.
+⚠️ **The rider always wins**, from either direction. A `dc_charge_limit_selected_a` event — the dial on the bike — stands the controller down for the rest of the session, and so does a charge current set by hand from the phone: both are the rider saying what they want, and a controller that overrode either three seconds later is the thing that gets a Pi ripped out. Switching the toggle back to automatic is an explicit "you take it again" and clears the stand-down. That event is necessarily the rider and never our own echo: this Pi does not hear its own transmissions (`createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS`) — proven 2026-09-07, when three Pi sends produced no decoded row while all twelve of the dash's did.
 
 ## What it is allowed to do
 
@@ -73,6 +77,8 @@ Three real stops of 2026-09-07 (arrival temperature, ambient and SOC band all me
 - DC2 finishes **9.3 minutes sooner** and stays under the cliff — and neither a controller stuck at the ceiling nor one stuck at the floor can do that, which is the assertion that keeps the rest honest.
 
 ⚠️ **The limit, and it is not small.** The plant is the two-anchor model from one day, and the controller is designed precisely not to depend on it. So this shows the rule behaves across a 4× spread of cooling — the "works for one day's `b`" failure it exists to avoid — and it shows **nothing about the real bike**. Only a live charge does that.
+
+⚠️ **The replays alone could not see over-throttling at all.** Under the fitted constants, equilibrium at full current is `ambient + 83.7 K`, so every stop in the 2026-09-07 set is doomed to cross 55 °C whatever the controller does — which makes "throttled a charge it should have left alone" _unrepresentable_. Six mutations survived the check until two **cold plants** were added, on which full current never approaches the cliff and the right answer is to do nothing: the check now asserts zero cap events and no time cost on those. A third plant arrives hot on a cold day and cools, which is the only thing that exercises giving the current back.
 
 ⚠️ Buying "never crosses the cliff" **costs time on the stops that would have got away with it**. DC3 arrived at 42 °C and never reached 55; the controller still throttles it and pays a few minutes. That is the trade, it is bounded, and the check asserts the bound rather than pretending it is zero.
 

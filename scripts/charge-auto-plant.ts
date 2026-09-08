@@ -35,6 +35,8 @@ export interface PlantRun {
   /** How many ticks took each reason, so a check can assert no branch is dead. */
   reasons: Map<ChargeAutoReason, number>;
   minutesPerPoint: number;
+  /** Every current commanded, in order. Lets a check see step size and chatter, which peak and time cannot. */
+  commands: number[];
 }
 
 export interface PlantOptions {
@@ -67,6 +69,7 @@ export function replayCharge(options: PlantOptions): PlantRun {
   let lastWholeDegree: number | null = null;
   const samples: TemperatureSample[] = [];
   const reasons = new Map<ChargeAutoReason, number>();
+  const commands: number[] = [];
 
   while (soc < options.toSoc && elapsed < 200 * 60) {
     // The sensor: whole degrees, and a sample only when that integer moves — which is what makes
@@ -94,6 +97,7 @@ export function replayCharge(options: PlantOptions): PlantRun {
       reasons.set(decision.reason, (reasons.get(decision.reason) ?? 0) + 1);
       if (decision.kind === "command") {
         commanded = decision.amps;
+        commands.push(decision.amps);
       }
     }
     const cap = options.stuckAt ?? commanded ?? FULL_CURRENT_A;
@@ -108,7 +112,7 @@ export function replayCharge(options: PlantOptions): PlantRun {
     elapsed += stepSeconds;
   }
   const minutes = elapsed / 60;
-  return { peakC, minutes, reasons, minutesPerPoint: minutes / (options.toSoc - options.fromSoc) };
+  return { peakC, minutes, reasons, commands, minutesPerPoint: minutes / (options.toSoc - options.fromSoc) };
 }
 
 /** The three real DC stops of 2026-09-07: arrival temperature, ambient and SOC band, all measured. */
@@ -125,6 +129,39 @@ export const PLANTS = [
   { name: "b*2", cooling: COOLING_NOMINAL * 2, ambientOffset: 0 },
   { name: "amb+10", cooling: COOLING_NOMINAL, ambientOffset: 10 },
 ];
+
+/**
+ * Cold days on which full current NEVER reaches the cliff, so the right answer is to do nothing.
+ *
+ * ⚠️ These exist because without them the check cannot see over-throttling AT ALL. Under the fitted
+ * constants, equilibrium at full current is `ambient + 83.7 K`, so every stop in REPLAY_SESSIONS is
+ * doomed to cross 55 °C whatever the controller does — and a controller that throttles a charge it
+ * should have left alone is then unrepresentable. Six mutations survived the check until these were
+ * added. The approved plan asked for this case (#142 §3.7 item 7, "zero cap events and mean
+ * commanded current = the ceiling") and it was dropped; this is it.
+ *
+ * The cooling needed is real, not contrived: holding 75 A under 55 °C wants `b > a·75²/(55 − amb)`,
+ * which is 1.8× the fitted value at 5 °C ambient and 2.2× at 15 °C — plausible for a Swedish
+ * autumn, and absent at the 30-40 °C the constants were fitted at.
+ */
+export const COLD_PLANTS = [
+  { name: "amb 5 °C, 2× cooling", arrivalC: 20, ambientC: 5, cooling: COOLING_NOMINAL * 2 },
+  { name: "amb 15 °C, 2.5× cooling", arrivalC: 25, ambientC: 15, cooling: COOLING_NOMINAL * 2.5 },
+];
+
+/**
+ * Arrives hot enough to be throttled, then cools fast enough to earn the current back.
+ *
+ * ⚠️ Nothing else exercises the CLEAR branch, so without this the "give it back" half of the rule
+ * would ship untested and a controller that only ever ratchets DOWN would pass every other
+ * assertion in the check. Kept apart from COLD_PLANTS because this one is supposed to act.
+ */
+export const RECOVERY_PLANT = {
+  name: "hot arrival on a cold day",
+  arrivalC: 54,
+  ambientC: 10,
+  cooling: COOLING_NOMINAL * 2,
+};
 
 /** Minutes per SOC point at a steady cap — the measured relation, for the floor sweep. */
 export function minutesPerPointAt(amps: number): number {

@@ -172,17 +172,20 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   const current = input.commandedAmps ?? ceiling;
   const rate = estimateHeatingRate(input.samples, input.nowMs);
 
+  // ⚠️ FIRST, and on temperature ALONE. This used to sit after the `unknown` branch, so whether the
+  // ceiling applied depended on whether a rate happened to be measurable — the same mistake as
+  // gating it behind an estimate, which only looked safe because BLIND_DESCENT_FROM_C happens to be
+  // below it. The check asserts that ordering rather than leaving it to luck.
+  if (temperature >= HARD_CEILING_C) {
+    return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.HARD_CEILING);
+  }
   if (rate.kind === "unknown") {
-    // Cannot see yet. Acting blind is justified only by the pack already being hot — otherwise
-    // waiting costs nothing, because a cool pack is minutes of climbing away from mattering.
+    // Cannot see. Acting blind is justified only by the pack already being hot — otherwise waiting
+    // costs nothing, because a cool pack is minutes of climbing away from mattering.
     if (temperature < BLIND_DESCENT_FROM_C) {
       return { kind: "hold", reason: CHARGE_AUTO_REASON.NO_HISTORY };
     }
     return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
-  }
-  if (temperature >= HARD_CEILING_C) {
-    // Too close to trust a bound, and close enough that stepping back up would be the wrong bet.
-    return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.HARD_CEILING);
   }
   const minutesToCliff = timeToCliffMinutes(temperature, rate);
   if (minutesToCliff <= HORIZON_MIN) {

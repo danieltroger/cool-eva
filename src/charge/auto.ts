@@ -60,6 +60,14 @@ export interface ChargeAutomatic {
   setMode: (mode: ChargeAutoMode) => void;
   /** Runs one evaluation now. The tick calls it; the check drives it directly. */
   tick: () => Promise<void>;
+  /**
+   * Told when a charge current was commanded by HAND, from the phone.
+   *
+   * ⚠️ Stands the controller down for the rest of the session, the same as the dial on the bike —
+   * both are the rider saying what they want, and a controller that overrode either three seconds
+   * later is the thing that gets a Pi ripped out. Switching the toggle back to automatic clears it.
+   */
+  noteManualCommand: () => void;
   /** Stops the loop and unsubscribes. Called from index.ts's shutdown. */
   stop: () => void;
 }
@@ -80,6 +88,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     riderOverride: false,
     samples: [],
     inFlight: false,
+    lastSessionState: null,
     timer: null,
     unsubscribe: null,
   };
@@ -94,8 +103,12 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     if (changed["dc_charge_limit_selected_a"] !== undefined) {
       context.riderOverride = true;
     }
+    // ⚠️ Reset on ENTERING a DC session as well as leaving one. Resetting only on exit leaves the
+    // ring full of temperatures from the ride in — a hot pack cooling on the way to the charger
+    // reads as a falling rate, and the first tick of the new charge decides on it.
     const session = changed["charge_manager_state"];
-    if (session !== undefined && session.value !== CHARGE_MANAGER_STATE_DC) {
+    if (session !== undefined && session.value !== context.lastSessionState) {
+      context.lastSessionState = session.value;
       forgetSession(context);
     }
   });
@@ -106,10 +119,18 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     state: () => stateOf(context),
     setMode: mode => {
       context.mode = mode;
+      // Switching back to automatic is an explicit "you take it again", so it clears a stand-down.
+      if (mode === "automatic") {
+        context.riderOverride = false;
+      }
       record("charge_auto_mode", CHARGE_AUTO_MODE_CODE[mode]);
       console.warn(`charge-auto: mode set to ${mode}`);
     },
     tick: () => runTick(context),
+    noteManualCommand: () => {
+      context.riderOverride = true;
+      console.warn("charge-auto: a charge current was set by hand — standing down for this charge");
+    },
     stop: () => {
       if (context.timer) {
         clearInterval(context.timer);
@@ -131,6 +152,8 @@ interface AutoContext {
   samples: TemperatureSample[];
   /** True while a command is in flight, so a slow POST cannot overlap the next tick. */
   inFlight: boolean;
+  /** The last `charge_manager_state` seen, so entering and leaving a session are both edges. */
+  lastSessionState: number | null;
   timer: ReturnType<typeof setInterval> | null;
   unsubscribe: (() => void) | null;
 }
@@ -183,10 +206,20 @@ function decide(context: AutoContext): ChargeAutoDecision {
 }
 
 function remember(context: AutoContext, celsius: number): void {
+  // ⚠️ Gated, like everything else that reaches a decision. A single implausible frame — the pack
+  // reporting 0 °C, which this bus does — would otherwise turn a gentle climb into a steep fall and
+  // step the current UP. public/lib/bounds.js exists for the same reason on the display side.
+  if (!isPackTemperaturePlausible(celsius)) {
+    console.warn(`charge-auto: ignoring an implausible pack temperature of ${celsius} °C`);
+    return;
+  }
   const atMs = monotonicNow();
   context.samples.push({ atMs, celsius });
+  // ⚠️ Keeps ONE sample older than the window: the estimator anchors on it, because a pack holding
+  // a single whole degree emits nothing and the window would otherwise empty into `unknown`. Trim
+  // to the second-oldest instead of the oldest, so exactly one survives.
   const oldest = atMs - RATE_WINDOW_MS;
-  while (context.samples.length > 0 && context.samples[0].atMs < oldest) {
+  while (context.samples.length > 1 && context.samples[1].atMs < oldest) {
     context.samples.shift();
   }
 }

@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
-import { chargeType } from "../lib/charge-write.js";
+import { chargeType, writesEnabled } from "../lib/charge-write.js";
 import { valueOf } from "../lib/store.js";
 
 const { button, div } = van.tags;
@@ -30,7 +30,7 @@ const failure = van.state("");
 // cheap, but the reason a poll would be watching for is already being pushed.
 van.derive(() => {
   const reason = valueOf("charge_auto_reason");
-  if (reason !== null && chargeType.val === "dc") {
+  if (reason !== null && chargeType.val === "dc" && writesEnabled()) {
     void refresh();
   }
 });
@@ -38,7 +38,10 @@ van.derive(() => {
 /** Fetched on the session edge and after every toggle — never polled; the reason rides the WebSocket. */
 export function ChargeAutoControl() {
   return div(() => {
-    if (chargeType.val !== "dc") {
+    // ⚠️ Gated on writesEnabled() like the two sibling controls: the controller transmits through
+    // /vcu-write, so on a phone that never enabled writes it is inert and offering a switch for it
+    // would be offering a switch that does nothing. Hidden, not disabled, for the same reason.
+    if (chargeType.val !== "dc" || !writesEnabled()) {
       return div();
     }
     const current = status.val;

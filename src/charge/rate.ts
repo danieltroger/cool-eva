@@ -57,14 +57,25 @@ export const RATE_WINDOW_MS = 600_000;
  * caller's ring does not have to be trimmed exactly.
  */
 export function estimateHeatingRate(samples: TemperatureSample[], nowMs: number): HeatingRate {
-  const window = samples.filter(sample => sample.atMs >= nowMs - RATE_WINDOW_MS && sample.atMs <= nowMs);
+  const from = nowMs - RATE_WINDOW_MS;
+  const inWindow = samples.filter(sample => sample.atMs >= from && sample.atMs <= nowMs);
+  // ⚠️ ANCHORED on the newest sample from BEFORE the window, when there is one. These arrive only
+  // when the whole degree changes, so a pack holding one degree emits nothing at all — and without
+  // the anchor the window simply empties after RATE_WINDOW_MS and the answer flips to `unknown`.
+  // That is the same "silence is not blindness" mistake this file was written to fix, one timescale
+  // up: it would fire exactly when the controller SUCCEEDS, because a current low enough to hold
+  // the temperature steady is a current that stops the reading ticking.
+  const anchor = samples.filter(sample => sample.atMs < from).at(-1);
+  const window = anchor ? [anchor, ...inWindow] : inWindow;
   if (window.length === 0) {
     return { kind: "unknown" };
   }
   // ⚠️ Measured to NOW, not to the newest sample. These arrive only when the whole degree changes,
   // so a pack sitting still produces none at all — and taking the span between samples would make
   // the stillest pack look like the one we know least about, which is backwards.
-  const spanMs = nowMs - window[0].atMs;
+  // Clamped to the window: an anchor may be much older, and the pack cannot be held to account for
+  // a band it stayed inside long before we started looking.
+  const spanMs = Math.min(nowMs - window[0].atMs, RATE_WINDOW_MS);
   if (spanMs < RATE_MIN_SPAN_MS) {
     return { kind: "unknown" };
   }

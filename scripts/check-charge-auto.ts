@@ -1,4 +1,5 @@
 import {
+  BLIND_DESCENT_FROM_C,
   CHARGE_AUTO_REASON,
   CLIFF_C,
   HARD_CEILING_C,
@@ -9,7 +10,9 @@ import {
 } from "../src/charge/auto-curve.ts";
 import { estimateHeatingRate, RATE_MIN_SPAN_MS, RATE_WINDOW_MS, type TemperatureSample } from "../src/charge/rate.ts";
 import {
+  COLD_PLANTS,
   PLANTS,
+  RECOVERY_PLANT,
   REPLAY_SESSIONS,
   SAWTOOTH_MIN_PER_POINT,
   minutesPerPointAt,
@@ -86,6 +89,54 @@ if (flat.kind !== "bounded") {
 } else if (flat.perMinute > 0.11) {
   failures.push(`§2 a flat pack's bound is ${flat.perMinute.toFixed(3)} K/min — too loose to be worth having`);
 }
+// ⚠️ The bound's VALUE, two-sided. Only checking it is not too loose misses the dangerous direction:
+// an optimistic bound understates how fast the pack may be moving, and the controller then thinks
+// it has more time than it does.
+if (flat.kind === "bounded") {
+  const expected = (1 * 60_000) / RATE_WINDOW_MS;
+  if (Math.abs(flat.perMinute - expected) > 1e-9) {
+    failures.push(
+      `§2 one distinct reading over ${RATE_WINDOW_MS / 60_000} min should bound the rate at ` +
+        `${expected.toFixed(3)} K/min, got ${flat.perMinute.toFixed(3)} — an optimistic bound is the unsafe direction`
+    );
+  }
+}
+// ⚠️ And that a bound is USED. Treating it as "no rate" downstream would quietly undo the fix it
+// exists to be: this pack is 1 °C from the cliff with a bound that says it arrives inside the horizon.
+const boundedClosing = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 52,
+  commandedAmps: 70,
+  // Two distinct degrees across five minutes bounds the rate at 0.4 K/min, which puts a pack 3 K
+  // from the cliff 7.5 minutes away — inside the horizon.
+  samples: [
+    { atMs: 100_000, celsius: 51 },
+    { atMs: 200_000, celsius: 52 },
+  ],
+  nowMs: 400_000,
+});
+if (boundedClosing.kind !== "command" || boundedClosing.reason !== CHARGE_AUTO_REASON.CLOSING) {
+  failures.push(
+    `§2 a bounded rate that puts the cliff inside the horizon must still close: got ${JSON.stringify(boundedClosing)}`
+  );
+}
+// ⚠️ The hysteresis band itself, which no replay can see: a pack whose time-to-cliff sits BETWEEN
+// the horizon and the release threshold must HOLD. Without the band every tick either steps up or
+// down, and the current oscillates around the threshold for the whole charge — a frame on the bus
+// and a number moving on the rider's dash each time, while "never crosses the cliff" stays true.
+const inBand = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 50,
+  commandedAmps: 60,
+  samples: climbing(45, 50),
+  nowMs: 700_000,
+});
+if (inBand.kind !== "hold" || inBand.reason !== CHARGE_AUTO_REASON.SETTLED) {
+  failures.push(
+    `§2 a pack ${HORIZON_MIN}-${HORIZON_MIN * 1.5} min from the cliff is inside the hysteresis band and must hold: ` +
+      `got ${JSON.stringify(inBand)}`
+  );
+}
 const early = estimateHeatingRate(climbing(48, 50).slice(0, 3), 40_000);
 if (early.kind !== "unknown") {
   failures.push(`§2 ${RATE_MIN_SPAN_MS / 1000} s of history should read unknown, got ${early.kind}`);
@@ -143,9 +194,13 @@ if (worstPenalty > 6) {
 // ── §4 ⚠️ THE ASSERTION A BROKEN CONTROLLER FAILS ──────────────────────────
 //
 // §3's two properties are comparison-principle theorems: a controller stuck at the ceiling satisfies
-// both, trivially, by being the baseline. The discriminator is the DC2 speedup — avoiding the cliff
-// is worth real minutes, and neither a stuck-at-ceiling nor a stuck-at-floor controller can produce
-// it. Without this section the whole check passes on a controller that does nothing.
+// both, trivially, by being the baseline. This kills that one — the DC2 speedup needs the cliff
+// avoided, which the baseline cannot do.
+//
+// ⚠️ It is NOT sufficient on its own, and the comment here used to claim it was. A controller stuck
+// at a flat 38-41 A also passes; a flat 40 A even saves MORE on DC2 than the real one. What kills a
+// constant is §4b (it would throttle a cold pack that needed nothing), §3's time bound and §6's
+// coverage. Read the four together.
 const dc2 = REPLAY_SESSIONS[1];
 const dc2Setup = { arrivalC: dc2.arrivalC, ambientC: dc2.ambientC, fromSoc: dc2.fromSoc, toSoc: dc2.toSoc };
 const dc2Baseline = replayCharge({ ...dc2Setup, control: false });
@@ -162,6 +217,39 @@ for (const stuck of [72.6, MIN_COMMAND_A]) {
   if (dc2Baseline.minutes - broken.minutes >= 5 && broken.peakC < CLIFF_C) {
     failures.push(
       `§4 a controller stuck at ${stuck} A also passes — §4 is not discriminating and the check proves nothing`
+    );
+  }
+}
+
+// ── §4b ⚠️ THE CASE WHERE DOING NOTHING IS THE RIGHT ANSWER ────────────────
+//
+// On a cold day full current never reaches the cliff, so a correct controller LEAVES IT ALONE.
+// Without this the check cannot see over-throttling at all: under the fitted constants every stop
+// in REPLAY_SESSIONS is doomed to cross 55 °C whatever happens, so a controller that throttles a
+// charge it should not have is unrepresentable — six mutations survived until this was added, and
+// the approved plan (#142 §3.7 item 7) asked for it and it was dropped.
+for (const cold of COLD_PLANTS) {
+  const setup = { arrivalC: cold.arrivalC, ambientC: cold.ambientC, fromSoc: 20, toSoc: 80, cooling: cold.cooling };
+  const baseline = replayCharge({ ...setup, control: false });
+  const controlled = replayCharge(setup);
+  if (baseline.peakC >= CLIFF_C) {
+    failures.push(
+      `§4b "${cold.name}" is not actually a cold plant — full current peaks at ${baseline.peakC.toFixed(1)} °C`
+    );
+  }
+  const capped = [...controlled.reasons.entries()]
+    .filter(([reason]) => reason !== CHARGE_AUTO_REASON.NO_HISTORY && reason !== CHARGE_AUTO_REASON.SETTLED)
+    .reduce((total, [, count]) => total + count, 0);
+  if (capped > 0) {
+    failures.push(
+      `§4b "${cold.name}": the controller acted ${capped} time(s) on a charge that never approaches the cliff — ` +
+        `it must leave a cold pack alone`
+    );
+  }
+  if (controlled.minutes > baseline.minutes + 0.1) {
+    failures.push(
+      `§4b "${cold.name}": ${(controlled.minutes - baseline.minutes).toFixed(1)} min slower than doing nothing, ` +
+        `on a charge where doing nothing was right`
     );
   }
 }
@@ -187,6 +275,42 @@ for (const session of REPLAY_SESSIONS) {
     exercised.add(reason);
   }
 }
+// ⚠️ CLEAR lives only here: the 2026-09-07 stops all stay hot once throttled, so nothing in them
+// ever earns current back. A controller that only ratchets down would otherwise pass everything.
+const recovery = replayCharge({ ...RECOVERY_PLANT, fromSoc: 20, toSoc: 80 });
+for (const reason of recovery.reasons.keys()) {
+  exercised.add(reason);
+}
+// ⚠️ Step size and chatter, which peak temperature and total time cannot see. A coarse step turns
+// the controller into a bang-bang switch between the ceiling and the floor, and no hysteresis makes
+// it oscillate — both of which "never crosses the cliff" is perfectly happy with.
+const distinctCommands = new Set(recovery.commands).size;
+if (distinctCommands < 3) {
+  failures.push(
+    `§6 the recovery plant only ever commanded ${distinctCommands} distinct current(s) — with STEP_A this coarse ` +
+      `the controller is a switch between the ceiling and the floor, not a controller`
+  );
+}
+let reversals = 0;
+for (let at = 2; at < recovery.commands.length; at += 1) {
+  const before = Math.sign(recovery.commands[at - 1] - recovery.commands[at - 2]);
+  const after = Math.sign(recovery.commands[at] - recovery.commands[at - 1]);
+  if (before !== 0 && after !== 0 && before !== after) {
+    reversals += 1;
+  }
+}
+if (reversals > 2) {
+  failures.push(
+    `§6 the commanded current changed direction ${reversals} times on one charge — the hysteresis is not ` +
+      `holding it, and every reversal is a frame on the bus and a number moving on the rider's dash`
+  );
+}
+if ((recovery.reasons.get(CHARGE_AUTO_REASON.CLEAR) ?? 0) === 0) {
+  failures.push(
+    `§6 the recovery plant never gives current back — the CLEAR half of the rule is untested, and a ` +
+      `controller that only ever steps down would pass this check`
+  );
+}
 for (const name of ["BLIND_DESCENT", "HARD_CEILING", "CLOSING", "CLEAR"] as const) {
   if (!exercised.has(CHARGE_AUTO_REASON[name])) {
     failures.push(`§6 no replay ever reaches ${name} — either it is dead or the replays stopped covering it`);
@@ -200,6 +324,16 @@ if (HORIZON_MIN * 60_000 < RATE_WINDOW_MS / 2) {
 }
 if (HARD_CEILING_C >= CLIFF_C) {
   failures.push(`§6 HARD_CEILING_C (${HARD_CEILING_C}) must sit below the cliff (${CLIFF_C})`);
+}
+// ⚠️ Asserted rather than left to luck. The hard ceiling is evaluated on temperature ALONE and
+// before the rate branch, but if the blind-descent threshold ever rose above it there would be a
+// band where a pack too hot to see is neither descended nor ceilinged — which is the "54.16 °C and
+// the controller never acted" scenario the plan review caught in an earlier draft.
+if (BLIND_DESCENT_FROM_C > HARD_CEILING_C) {
+  failures.push(
+    `§6 BLIND_DESCENT_FROM_C (${BLIND_DESCENT_FROM_C}) is above HARD_CEILING_C (${HARD_CEILING_C}), leaving a band ` +
+      `where a pack with no usable rate is neither descended nor held down`
+  );
 }
 
 // ── §7 the reason codes survive the dashboard's plausibility gate ──────────
