@@ -8,6 +8,8 @@ import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 import { power, whole } from "../lib/format.js";
 import { COOLANT_FLOW_LPH, coolantDelta, coolantHeatRemovedWatts, resistiveLossWatts } from "../lib/derive.js";
+import { resistanceNote } from "../lib/pack-resistance.js";
+import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { ChargeCurrentControl } from "./charge-current.js";
 import { ChargeStopControl } from "./charge-stop.js";
@@ -413,10 +415,10 @@ function DerateTile() {
 /**
  * Heat going into the pack against heat the loop is taking out.
  *
- * The two halves are not equally solid and the caption says so. Heat in is
- * I²R from the BMS's own resistance estimate, which is sparse and swings several
- * fold. Heat out is ṁ·cp·ΔT with ṁ assumed from the pump's rating — the ΔT is
- * measured, the flow is not. Together they still answer the question the loop was
+ * The two halves are not equally solid and the caption says so. Heat in is I²R, with
+ * R measured live where the current is varying enough to fit one and modelled off pack
+ * temperature otherwise — the tile says which. Heat out is ṁ·cp·ΔT with ṁ assumed from
+ * the pump's rating — the ΔT is measured, the flow is not. Together they still answer the question the loop was
  * built to answer, which no single number does: is it keeping up.
  */
 function ThermalBalanceTile() {
@@ -425,7 +427,7 @@ function ThermalBalanceTile() {
       // Both halves have their own inputs; the tile is only old when nothing feeding
       // either of them is current.
       class: () =>
-        `tile span2${inputsStale(["pack_a", "pack_resistance_mohm", "coolant_in", "coolant_out"]) ? " stale" : ""}`,
+        `tile span2${inputsStale(["pack_a", "pack_v", "batt_temp_hi", "coolant_in", "coolant_out"]) ? " stale" : ""}`,
     },
     div({ class: "label" }, "Heat in / out"),
     div(
@@ -454,7 +456,9 @@ function ThermalBalanceTile() {
       const delta = coolantDelta();
       const deltaText =
         delta == null ? "no coolant probes" : `coolant ΔT ${units.tempDelta(delta).toFixed(2)} ${units.tempUnit()}`;
-      return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h`;
+      const note = resistanceNote(packResistance.val);
+      const inNote = note === "" ? "" : ` · in uses ${note}`;
+      return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h${inNote}`;
     })
   );
 }

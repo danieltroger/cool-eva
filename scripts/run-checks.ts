@@ -56,6 +56,19 @@ const CHECKS: SelfCheck[] = [
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
+    script: "scripts/check-pack-resistance.ts",
+    covers:
+      "the pack-resistance estimator that replaced the BMS's own unusable 0x206 figure, driven by real 0x200 " +
+      "frames re-encoded from the 2026-09-07 ride: that a genuine load window fits the resistance those same " +
+      "frames were measured to have, that an at-rest window falls back to the modelled curve instead of " +
+      "reporting a stale measurement, that the hold expires on the stated interval, that only pairs from ONE " +
+      "frame enter the buffer (a missing half, a stamp skew and the 5 s heartbeat's repeat are each refused), " +
+      "that the modelled curve is monotone and holds its endpoints, that the answer is never null so no " +
+      "consumer needs a null branch, and that store.js hands the buffer only readings which passed the same " +
+      "plausibility gate the rest of the dashboard uses — the sign of the slope and the same-frame rule are " +
+      "the two ways this can be silently wrong, and a wrong sign yields a plausible-looking ~1 mOhm",
+  },
+  {
     script: "scripts/check-charge-mode.ts",
     covers:
       "the dashboard's one charge rule, driven by real frames through the real decoders: that a parked bike and a " +

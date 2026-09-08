@@ -1,6 +1,7 @@
 // @ts-check
 
 import { peek, valueOf } from "./store.js";
+import { packResistance } from "./pack-resistance-live.js";
 import { ringFor } from "./ring.js";
 // Series count lives with everything else about the pack's cells, so the sag
 // divisor and the strip's "n of 81" cannot disagree.
@@ -62,10 +63,9 @@ export function coolantDelta() {
  * A signal's value only if it is above zero, else null.
  *
  * Several BMS fields sit at exactly 0 when the BMS is not producing them — the 1 Wh
- * remaining-energy field reads 0 until the extended config has something to report,
- * and pack resistance reads 0 while the pack is idle and not being estimated. `??`
- * does not catch that, because 0 is not nullish, so a naive fallback chain picks the
- * zero over the good value behind it and the screen says "0.0 kWh left" on a pack
+ * remaining-energy field reads 0 until the extended config has something to report.
+ * `??` does not catch that, because 0 is not nullish, so a naive fallback chain picks
+ * the zero over the good value behind it and the screen says "0.0 kWh left" on a pack
  * that has 4.8 kWh in it. Every fallback below goes through here.
  * @param {string} key
  * @returns {number | null}
@@ -76,6 +76,10 @@ function positiveOrNull(key) {
 }
 
 /**
+ * Pack resistance and its provenance, subscribing to what it reads.
+ */
+
+/**
  * Watts burned in the pack's own internal resistance — I²R.
  *
  * This is simultaneously the range you are throwing away and the heat the coolant
@@ -83,20 +87,18 @@ function positiveOrNull(key) {
  * just the hypermiling one. Because it goes as current squared, halving the current
  * quarters it: the most direct possible argument for a gentle throttle.
  *
- * Caveat worth keeping in mind when reading it: `pack_resistance_mohm` is the BMS's
- * own estimate and includes cabling and contactors, so some of these watts are shed
- * outside the cells. It is an upper bound on cell heating, not a measurement of it.
+ * Caveat worth keeping in mind when reading it: R covers cabling and contactors as
+ * well as the cells, so some of these watts are shed outside them. It is an upper
+ * bound on cell heating, not a measurement of it. Where R comes from, and how good it
+ * is: ./pack-resistance-live.js and docs/pack-resistance.md.
  * @returns {number | null}
  */
 export function resistiveLossWatts() {
   const amps = valueOf("pack_a");
-  // A pack with zero internal resistance does not exist; a zero here means the BMS
-  // is not estimating one right now, which is not the same as "no losses" and must
-  // not be drawn as a confident 0 W.
-  const milliohms = positiveOrNull("pack_resistance_mohm");
-  if (amps == null || milliohms == null) {
+  if (amps == null) {
     return null;
   }
+  const { milliohms } = packResistance.val;
   // A² × mΩ = mW × 1000 ⇒ /1000 gives watts. Squaring drops the sign, so this is
   // correct for regen too, where the same loss applies to current going in.
   return (amps * amps * milliohms) / 1000;
@@ -130,10 +132,10 @@ export function resistiveLossPercent() {
  */
 export function sagPerCellMv() {
   const amps = dischargeAmps();
-  const milliohms = positiveOrNull("pack_resistance_mohm");
-  if (amps == null || milliohms == null) {
+  if (amps == null) {
     return null;
   }
+  const { milliohms } = packResistance.val;
   return (amps * milliohms) / CELL_COUNT;
 }
 
