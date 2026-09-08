@@ -408,73 +408,82 @@ after    01 00 A0 80 00 00 10 01
 
 ⚠️ Not caused by this project: there was no KWP traffic from the Pi at 13:45:47, the last transmit having been a freeze-frame read 27 minutes earlier.
 
-### ✅ `0x101` b1 is b0 quantised — and two claims made here first were wrong
+### ⚠️ `0x101` is `VCU_VEHICLE_STS`, and the name was in this repo the whole time
 
-`0x101` is **undecoded** and sits on the inventory of unmapped frames, recorded there as "was constant parked", with b0 spanning `29-96` (12 distinct values) and b1 spanning `28-3C` — **two distinct values in 40 878 frames.**
+**Everything under this heading replaces a decode that was merged into `main` on 2026-09-08 and was wrong.** Two independent reviews plus an archive sweep of **15 006 844 `0x101` frames** — every capture in `~/Documents/cool-eva-archive` — took it apart. The correction is recorded in full rather than quietly rewritten, because how it went wrong is more useful than the answer.
 
-Across the blocking fault above, exactly **two** ids changed persistently: `0x100`, and `0x101`. That observation stands and is the reason to look at this frame at all.
-
-**But the relationship between its two bytes is now settled, and it is not interesting in the way first claimed:**
+**It was never a decode problem.** The 2024 service-tool analysis in `obd-garage/`, §`0x101` `VCU_VEHICLE_STS`, names the frame and all eight of its signals:
 
 ```
-b1 == floor(b0 / 20) * 20        344 957 of 344 957 frames        zero exceptions
+0x101  VCU_VEHICLE_STS
+  b0        V_VEHICLE_SUBSTATE
+  b1        V_VEHICLE_STATE
+  b2        V_DRIVE_VSM
+  b3 &0x03  V_DRIVE_VSM       &0x04 V_LIMP_MODE_STATUS   &0x08 V_LIMP_RES_VALID
+  b4-5 LE   V_LIMP_PACK_RES   (short)
+  b6-7 LE   V_LIMP_MODULE_STS (short)
 ```
 
-Measured across six archive captures, and it also holds for all three of the 2026-09-08 samples (43/40, 62/60, 83/80). **b1 carries no information that b0 does not.** It is b0 rounded down to the nearest 20 — the shape of a coarse display level derived from a fine value, which is why it looks quantised and why it appears to "track" b0.
+That file is in this repository. It was not consulted, and days of statistics went into re-deriving a worse version of a table already on disk. ⚠️ **Before analysing an unknown frame, grep `obd-garage/` for its id.** The inventory of "unmapped frames" is a list of frames nobody looked up, not a list of frames without names.
 
-⚠️ **Two claims recorded here on 2026-09-08 were refuted the same day, by the archive:**
-
-- ❌ _"b1 reached `0x50` (80), outside its entire observed range."_ False. That rested on the inventory's `28-3C` figure, which came from **one parked survey**. Across the archive b1 takes `20`, `60` and `100` — and `100` appears in **184 936 frames**. 80 is unremarkable; it is simply a value that parked survey never sampled.
-- ❌ _"b0 tracks 2-3 counts above b1 every time."_ False, and it was never a fact about the bike: `b0 - b1` is `b0 mod 20` by construction, so it spans 0-19. It looked like a constant offset because the two most common values, b0=101/b1=100 and b0=62/b1=60, happen to sit just above a boundary.
-
-Both errors have the same cause — treating a narrow parked sample as the full observed range without checking the archive. The inventory line says "was constant parked", which was the warning.
-
-**What is left open** is b0 alone: it spans at least 20-112, it moved with vehicle activity and it moved at the blocking fault, and no source names it. The useful consequence of the above is that this is now **one** unknown byte rather than two.
-
-### 🟡 b0 is a discrete state code, not a measurement — and it is not SOC or temperature
-
-Tested against a 147 km/h road capture (`capture-20260802-210358-346ecdd5.log`) and a parked/charging one, aligning b0 with the signals this repo already decodes.
-
-**The shape rules out a physical quantity.** Across **324 970 aligned ride samples** b0 takes **13 distinct values** — `41 42 43 46 47 51 52 53 59 62 63 143 150` — and is overwhelmingly concentrated on two of them:
-
-| b0                                   | when                              | samples                      |
-| ------------------------------------ | --------------------------------- | ---------------------------- |
-| **43**                               | riding                            | ~110 000                     |
-| **62**                               | riding **and parked** (see below) | ~31 000                      |
-| 52 / 53                              | riding                            | ~5 000 each                  |
-| **101**                              | parked / charging                 | dominant for a whole capture |
-| **83**                               | during the blocking fault above   | —                            |
-| 41, 42, 46, 47, 51, 59, 63, 143, 150 | transient                         | 2 to a few hundred each      |
-
-A temperature, a range estimate or a state of charge moves continuously. This sits on a value, jumps, and sits again — with a gap from 63 straight to 143.
-
-**Two tempting readings are refuted outright:**
-
-| hypothesis | test | result |
-| --- | --- | --- |
-| b0 is **state of charge** | 230 620 aligned samples | ❌ `b0 == soc` in **0** of them; correlation **−0.07**; the ranges do not even overlap (SOC 34-40, b0 41-150) |
-| b0 is **motor temperature** | same capture | ❌ correlation **−0.15**, while motor temperature only spanned 26.0-42.8 °C |
-
-⚠️ **And a correlation that must not be over-read.** b0 correlates **−0.57 with both speed and rpm**, and −0.38 with throttle. That looks like a measurement of something that falls as the bike speeds up. It is almost certainly not: with only 13 discrete values, a negative correlation is what you get when one state happens to hold while moving and another while stopped. **Do not decode b0 as a speed-derived quantity on the strength of that number** — the discreteness is the stronger evidence and it points the other way.
-
-#### The 2026-09-08 VCU reset: what it did and did not establish
-
-A VCU reset (`ECUReset 11 02`) was triggered from the Pi at 15:19:31.109. The Pi shares the rail and died with it 0.85 s later, so the boot sequence itself is unrecorded — but the first minute of frames after it came back was pulled, plus the last 40 before the cut. **1 072 frames, checked here rather than taken on report.**
-
-Every one of them is byte-identical:
+#### ❌ The merged formula is false
 
 ```
-3E 3C 04 00 4B 00 00 00      1 072 / 1 072 frames, 2026-09-08 post-reset
-3E 3C 04 04 64 00 00 00      8 999 / 8 999 frames, obd-garage/captures/2026-08-02_bms_90s.log
+b1 == floor(b0 / 20) * 20     claimed: 344 957 of 344 957 frames, zero exceptions
+                              actual:  1 992 exception frames archive-wide
 ```
 
-❌ **This falsifies the "riding" label on b0 = 62 above.** Both captures are a stationary bike — one just-rebooted in the garage, one a parked BMS survey five weeks earlier — and both sit on 62 for every frame. 62 is not a riding value that also occurs parked; it is simply common to both. The label in the table is corrected accordingly, and the same caution applies to every other "when" in it: those are the conditions the value was _seen_ in, not conditions it is _specific to_.
+Seven b0 values break it — `2, 3, 6, 9` (b1 = 1, predicted 0) and `143, 144, 150` (b1 = 40, 100, 40, predicted 140). It was measured over six captures that happened to contain none of them. ⚠️ **A counterexample was named two paragraphs above the claim**: the inventory line quoted b0 spanning `29-96`, and `0x96` is 150.
 
-⚠️ **And this is a much weaker test of `b1 = floor(b0/20)*20` than the frame count suggests.** It was requested precisely as out-of-sample data — a power-on nobody selected for the formula. It holds (62 → 60). But 1 072 frames carrying **one** value pair is **n = 1**, not n = 1072, and a formula that survives one value has barely been tested. The frame count is not the sample size. Whoever next has a capture spanning a b0 _transition_ should re-check it there; that is where a derived byte would lag if the relationship is anything softer than arithmetic.
+A first correction offered in review — _"it holds wherever b0 < 128"_ — **is also false**: b0 = 2, 3, 6, 9 are all below 128 and all break it. Recorded because the near-miss fix is the tempting one.
 
-🔎 **New, and unexamined: b3 and b4 are not constant.** Between those two captures b3 goes 4 → 0 and **b4 goes 100 → 75**, while b2 stays 4 and b5-7 stay 0. Two observations is not a decode, but 100 and 75 are suggestive of a percentage, and there is a cheap test that has not been run: **b4 against SOC across the ride captures**, where SOC spanned 34-40. If b4 tracks it, the frame carries an SOC field and this whole section is looking at the wrong byte.
+#### ✅ What actually holds
 
-**Where that leaves it:** a small state vocabulary, no name in any source, distinct values for riding / parked / faulted, and one value (83) so far seen only when the VCU raised a blocking fault. That is a sharper target than "an unknown byte", and the fault value is the thread worth pulling — but three observations of it is not a decode.
+b1 is a **state** and b0 its **substate**, so the arithmetic was a numbering convention misread as a computation. b1 takes exactly **six values in 15 million frames — `1, 20, 40, 60, 80, 100`** — and each owns a band of substates:
+
+| b1 (`V_VEHICLE_STATE`) | b0 seen in that band (`V_VEHICLE_SUBSTATE`)      |
+| ---------------------- | ------------------------------------------------ |
+| 1                      | 2, 3, 6, 9                                       |
+| 20                     | 20, 22, 23, 26, 28, 31, 32, 33, 34               |
+| 40                     | 41, 42, 43, 46, 47, 51, 52, 53, 59               |
+| 60                     | 62, 63                                           |
+| 80                     | 83                                               |
+| 100                    | 101, 102, 104, 105, 106, 107, 109, 110, 112, 113 |
+
+`floor(b0/20)*20` fits the middle of that table by coincidence of numbering and fails at both ends — at the bottom because state 1 is not state 0, at the top because **b1 is capped at 100 and b0 is not**.
+
+✅ **The out-of-band case has a clean rule of its own.** Whenever b0 has bit 7 set (143, 144, 150), b1 **holds its previous value** instead of following:
+
+```
+b0 >= 128:  b1 unchanged from the preceding frame     1 748 / 1 748 frames, zero exceptions
+```
+
+143 → 40 and 150 → 40 in a capture sitting in state 40; 144 → 100 in one sitting in state 100. A substate with bit 7 set does not belong to a state band at all — the state latches while it is present.
+
+#### ✅ Substate 83 is the blocking fault
+
+Aligned against `0x100` byte 3 bit 7 (`vcu_err_system_blocking_fault`) across the whole archive, last-seen alignment:
+
+```
+b0 = 83 while the blocking fault is set     194 947 frames
+b0 = 83 while it is clear                        40 frames  (0.02%)
+any other b0 while the fault is set               1 frame
+```
+
+**194 947 of 194 948 fault frames are substate 83**, and state 80 exists for essentially nothing else in 15 million frames. ⚠️ This section previously called that "three observations of it is not a decode" — a statement about the sample that had been looked at, which is the same error as the formula above, made twice in one section.
+
+#### ❌ Two of my own refutations did not survive
+
+- ❌ _"b0 is not SOC — `b0 == soc` in 0 of 230 620 samples, ranges disjoint."_ **Scoped far too widely from one capture.** In `capture-20260808-211445` the two are equal in 32 341 of 230 020 samples, r = +0.493. b0 is not SOC — it is a named substate — but the numbers offered as proof were an artefact of the capture chosen. The vendor name is the evidence; the statistics never were.
+- ⚠️ _"b0 correlates −0.57 with speed and rpm."_ The warning attached to it was right and is kept, but the figure is capture-specific: archive-wide it ranges **−0.40 to −0.87**. It is now explained rather than merely distrusted — substates encode drive states, and drive states co-occur with speed. A correlation between a state enumeration and a physical quantity measures the schedule of the states, not a relationship between them.
+
+#### ❌ b4 is not SOC either — it is `V_LIMP_PACK_RES`
+
+Checked because b4 moved 100 → 75 between two captures and looked like a percentage. It is not: across eight captures b4 sits **dead constant while SOC sweeps** — 75 through SOC 25→60 (1 775 661 frames), 85 through 63→89, 146 through 29→39 — and it exceeds 100, which SOC cannot. The two exact-equality hits are b4 resting on 85 while SOC happened to cross it. 🟡 b5-7 are 0 in all 2 105 072 frames of the widest capture, so the `b4-5` short equals b4, and its 75-146 range sits in the plausible band for pack resistance (`docs/pack-resistance.md`). The b3 `4 → 0` on the fresh boot is `V_LIMP_MODE_STATUS` clearing — a flag, not a number.
+
+#### What is actually left open
+
+The **meanings** of the six states and their substates. The names give the structure, not the vocabulary: nothing yet says which state is "ready", which is "charging", or what separates substate 43 from 62. That wants a capture with deliberate, logged mode changes — key-on, drive, reverse, charge, fault — not more correlation against the archive.
 
 ## 0x102 — body, lights, vehicle state and attitude
 
