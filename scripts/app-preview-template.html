@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Cool Eva</title>
+    <!-- Copied from public/index.html, where its comment explains the cost on the bike. Here it
+         buys something else: without it Chrome's automatic /favicon.ico request is a console
+         error on every load (an "unsafe attempt to load URL" over file://), and "the console is
+         clean" has to be a gate somebody can actually read. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧊</text></svg>"
+    />
     <style>
       html,
       body {
@@ -49,6 +57,11 @@ __CSS__
     <script>
       // Generated from the repo's own tables by scripts/build-service-preview.ts.
       const __TABLES = __TABLES__;
+
+      // The numbers and prose the Pi owns — the fan's policy, the charge controller's reason codes
+      // and their sentences, the WebSocket heartbeat — injected by the same builder rather than
+      // written out again here. See its comment for why a second copy is the failure, not the fix.
+      const SERVER = __SERVER_FACTS__;
 
       const __MODULES = {
 __MODULES__
@@ -251,7 +264,19 @@ __MODULES__
 
       const WRITE_STATUS = {
         enabled: true,
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [], readings: {} },
+        // ⚠️ Both of these were missing until 2026-09-08, and the first one is why this file now
+        // has a check of its own: views/vcu-write.js destructures `runningVersion`, so the binding
+        // threw, the section froze on Availability()'s "waiting for an answer" ellipsis, and the
+        // safety-gate line and ⚙️ Running were absent from twelve days of screenshots. A FIXED
+        // label rather than this checkout's real commit: a review instrument whose text — and
+        // whose amber +dirty colour — changed with the reader's git state would be worse.
+        runningVersion: { commit: "7f6dbcd", dirty: false, trustworthy: true, label: "7f6dbcd" },
+        // Null is "nothing commanded this session", which is the honest answer off a charge. The
+        // DC scene replaces it with a settled verdict, since that is the line #153 added.
+        chargeAck: null,
+        // ⚠️ No `readings` here. It is on ServiceGateEvidence, the gate's INPUT, and never on the
+        // verdict the Pi sends — one of three fields the fixture had invented.
+        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
         tableGate: {
           state: "confirmed",
           writesAllowed: true,
@@ -261,11 +286,12 @@ __MODULES__
           outstanding: [],
           tableType: 16407,
         },
+        // ⚠️ PiClockVerdict is a UNION, and `reasons` belongs to its untrustworthy arm alone. A
+        // trustworthy verdict carrying an empty `reasons` is a shape the Pi cannot produce.
         clock: {
           trustworthy: true,
           iso: new Date(NOW).toISOString(),
           offsetFromGpsSeconds: 0.2,
-          reasons: [],
         },
         targets: TARGETS,
         recent: JOURNAL,
@@ -294,12 +320,14 @@ __MODULES__
        * panel is the same sweep every other panel would be watching.
        */
       const READ_STATE = {
+        // ⚠️ No `expected` on a finished sweep: VcuReadState's `finished` arm does not carry it,
+        // only `running` does. Nothing on screen changes — views/service-mode.js reads it in the
+        // running branch alone — which is exactly why it sat here unnoticed.
         run: {
           phase: "finished",
           startedAt: SWEPT_AT,
           finishedAt: SWEPT_AT + 41000,
           complete: true,
-          expected: 277,
           tally: {
             total: 277,
             read: 233,
@@ -316,43 +344,237 @@ __MODULES__
         message: null,
       };
 
-      /** One WebSocket snapshot, in the shape src/ws.ts broadcasts. */
-      function snapshot() {
-        const at = NOW;
-        const signal = (value, unit, group) => ({ value, unit, group, ts: at });
-        return {
-          type: "snapshot",
-          ts: at,
+      // ── the bike on the wire ─────────────────────────────────────────────────────
+      //
+      // `[value, unit, group]`, and optionally the moment it was recorded. Left off, a reading is
+      // stamped when the message carrying it goes out — which is what src/can/signals.ts's
+      // record() does for anything whose frame keeps arriving, and why a parked bike's tiles do
+      // not dim. Given, the reading is an EVENT: the waypoint trio keeps the moment it was saved,
+      // because views/trip-stats.js PRINTS that time, and re-stamping it would walk the clock in
+      // the Waypoints tile forward by five seconds every five seconds.
+
+      const PARKED_SIGNALS = {
+        "soc": [58, "%", "battery"],
+        "pack_v": [346.8, "V", "battery"],
+        "pack_kw": [0.1, "kW", "battery"],
+        "cell_min_mv": [3612, "mV", "cells"],
+        "cell_max_mv": [3641, "mV", "cells"],
+        "cell_spread_mv": [29, "mV", "cells"],
+        "range_km": [96, "km", "battery"],
+        "coolant_in": [31.4, "°C", "coolant"],
+        "coolant_out": [34.9, "°C", "coolant"],
+        "odometer_can_km": [14849.4, "km", "drive"],
+        "gps_speed_kmh": [0, "km/h", "gps"],
+        "gps_altitude_m": [84, "m", "gps"],
+        "gps_course_deg": [228, "°", "gps"],
+        "gps_satellites": [11, "", "gps"],
+        // A waypoint, so the Waypoints tile has something to draw in the preview.
+        // Greenwich, deliberately: a coordinate everyone recognises as a fixture, and
+        // one nobody can mistake for where this bike is kept. docs/route-map.md
+        // §"No coordinates anywhere" is why it is not a real one.
+        "waypoint_seq": [4, "", "waypoint", NOW - 6 * MINUTE],
+        "waypoint_lat": [51.4779, "°", "waypoint", NOW - 6 * MINUTE],
+        "waypoint_lon": [-0.0015, "°", "waypoint", NOW - 6 * MINUTE],
+        // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
+        // and permanent on this bike, because the coolant pump is wired to the
+        // heated-grip output and the VCU's own pump driver is left open.
+        "dtc_0044_0": [1, "", "diag"],
+        "dtc_0002_0": [1, "", "diag"],
+        "dtc_count": [2, "", "diag"],
+      };
+
+      /**
+       * Which bike this preview is standing in for, chosen with `?scene=` in the URL.
+       *
+       * ⚠️ A query string and not the hash: the hash is the app's tab router, and the preview
+       * hands `location.hash` straight to it. A control on the page was the alternative and was
+       * rejected — this file's claim is that what you see is what the bike serves, and chrome of
+       * its own weakens that for every screenshot taken through it.
+       *
+       * Parked is the fixture this file has always shown, value for value, so a screenshot taken
+       * before the scenes existed still matches. The other two exist because the panels added
+       * over the last week — the DC set-current control, #176's stand-down, the power bar's
+       * derate hatching — render NOTHING off a parked bike, and a design gate blind to the panel
+       * it is gating is not a gate.
+       */
+      const SCENES = {
+        parked: { label: "parked in the garage", signals: {} },
+        dc: {
+          label: "a DC session at 42 A, with the rider having taken the current back",
+          // ⚠️ `charge_manager_state` alone is NOT a DC session. It drives the AC/DC label and the
+          // write controls' visibility (lib/charge-write.js), while lib/charge-mode.js — which the
+          // delivery tile and the power bar's "claim nothing while charging" rule both read —
+          // keys on `fast_dc_contactor`. Setting one without the other renders the set-current
+          // control above a tile still saying "plug in to see delivery".
           signals: {
-            "soc": signal(58, "%", "battery"),
-            "pack_v": signal(346.8, "V", "battery"),
-            "pack_kw": signal(0.1, "kW", "battery"),
-            "cell_min_mv": signal(3612, "mV", "cells"),
-            "cell_max_mv": signal(3641, "mV", "cells"),
-            "cell_spread_mv": signal(29, "mV", "cells"),
-            "range_km": signal(96, "km", "battery"),
-            "coolant_in": signal(31.4, "°C", "coolant"),
-            "coolant_out": signal(34.9, "°C", "coolant"),
-            "odometer_can_km": signal(14849.4, "km", "drive"),
-            "gps_speed_kmh": signal(0, "km/h", "gps"),
-            "gps_altitude_m": signal(84, "m", "gps"),
-            "gps_course_deg": signal(228, "°", "gps"),
-            "gps_satellites": signal(11, "", "gps"),
-            // A waypoint, so the Waypoints tile has something to draw in the preview.
-            // Greenwich, deliberately: a coordinate everyone recognises as a fixture, and
-            // one nobody can mistake for where this bike is kept. docs/route-map.md
-            // §"No coordinates anywhere" is why it is not a real one.
-            "waypoint_seq": signal(4, "", "waypoint"),
-            "waypoint_lat": signal(51.4779, "°", "waypoint"),
-            "waypoint_lon": signal(-0.0015, "°", "waypoint"),
-            // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
-            // and permanent on this bike, because the coolant pump is wired to the
-            // heated-grip output and the VCU's own pump driver is left open.
-            "dtc_0044_0": signal(1, "", "diag"),
-            "dtc_0002_0": signal(1, "", "diag"),
-            "dtc_count": signal(2, "", "diag"),
+            "soc": [62, "%", "battery"],
+            "pack_v": [358.4, "V", "battery"],
+            "pack_a": [42.1, "A", "battery"],
+            "pack_kw": [15.1, "kW", "battery"],
+            "range_km": [103, "km", "battery"],
+            "batt_temp_lo": [43, "°C", "battery"],
+            "batt_temp_hi": [47, "°C", "battery"],
+            "coolant_in": [34.8, "°C", "coolant"],
+            "coolant_out": [38.2, "°C", "coolant"],
+            "charge_manager_state": [0x23, "", "charge"],
+            "fast_dc_contactor": [1, "", "charge"],
+            "dc_charging": [1, "", "charge"],
+            "bms_state_charge": [1, "", "bms"],
+            "charger_enabled": [1, "", "charge"],
+            "fast_dc_limit_max_a": [75, "A", "charge"],
+            "fast_dc_limit_a": [42, "A", "charge"],
+            "fast_dc_target_a": [42, "A", "charge"],
+            "fast_dc_target_v": [372, "V", "charge"],
+            "charger_max_dc_a": [125, "A", "charge"],
+            "charger_max_dc_v": [500, "V", "charge"],
+            "charge_cmd_a": [42, "A", "charge"],
+            "charge_cmd_ack": [1, "", "charge"],
+            "charge_cmd_ack_ms": [1840, "ms", "charge"],
+            "charge_auto_mode": [1, "", "charge"],
+            "charge_auto_target_a": [42, "A", "charge"],
           },
-        };
+          // The stand-down #176 is about: the controller is still on, and standing back because
+          // the rider set a current themselves. Its reason code and its sentence both come from
+          // the Pi's own table rather than being written again here.
+          chargeAutoReason: SERVER.chargeAutoReason.RIDER,
+          commandedAmps: 42,
+          // ⚠️ The gate's charging branch, which is deliberately NOT the stationary one: the DC
+          // charge parameters cannot be tested unplugged, so a charging bike is allowed to write.
+          gate: { chargingEvidence: "the charge manager reports a DC session" },
+          // Phrasing mirrors describeChargeAck()'s `took` branch in src/charge/acknowledge.ts.
+          chargeAck: {
+            verdict: { kind: "took", fromAmps: 68, toAmps: 42, latencyMs: 1840 },
+            message: "Command took: request 68 → 42 A in 1.8 s.",
+          },
+          // 100 % for the whole of a DC session, whatever the pack temperature — src/fan/curve.ts.
+          fan: { dutyPercent: 100, targetPercent: 100, driverEnabled: true, phase: "running" },
+          fanAuto: { reason: SERVER.fanReason.DC_SESSION, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 47, temperatureAgeMs: 310 },
+        },
+        riding: {
+          label: "riding at 72 km/h with the pack derating both ways",
+          // Both halves of the power bar hatch here, which is the case lib/svg.js's derateSpans()
+          // and lib/power-limits.js exist for and which no parked fixture can reach: 210 A at
+          // 340 V is 71 kW against the drive half's 130, and 55 A is 19 kW against regen's 36.
+          // Drive is the NEGATIVE direction on pack_kw — the archive's deepest sample is −117.3.
+          signals: {
+            "soc": [46, "%", "battery"],
+            "pack_v": [340.2, "V", "battery"],
+            "pack_a": [-142, "A", "battery"],
+            "pack_kw": [-48.3, "kW", "battery"],
+            "range_km": [71, "km", "battery"],
+            "allowed_discharge_a": [210, "A", "battery"],
+            "allowed_regen_a": [55, "A", "battery"],
+            "batt_temp_lo": [38, "°C", "battery"],
+            "batt_temp_hi": [41, "°C", "battery"],
+            "coolant_in": [36.5, "°C", "coolant"],
+            "coolant_out": [41.2, "°C", "coolant"],
+            "cell_min_mv": [3489, "mV", "cells"],
+            "cell_max_mv": [3527, "mV", "cells"],
+            "cell_spread_mv": [38, "mV", "cells"],
+            "gps_speed_kmh": [72, "km/h", "gps"],
+            "speed_can_kmh": [74, "km/h", "drive"],
+            "gps_course_deg": [113, "°", "gps"],
+            "motor_rpm": [4210, "rpm", "obd"],
+            "throttle_pct": [34, "%", "drive"],
+            "go": [1, "", "controls"],
+          },
+          // On the riding curve rather than the speed gate: that opens at 90 km/h and this is 72.
+          fan: { dutyPercent: 62, targetPercent: 62, driverEnabled: true, phase: "running" },
+          fanAuto: { reason: SERVER.fanReason.PACK_TEMPERATURE, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 41, temperatureAgeMs: 240 },
+          funGate: SERVER.funGate.GO_SET,
+        },
+      };
+
+      const WANTED_SCENE = new URLSearchParams(window.location.search).get("scene");
+      // ⚠️ hasOwn, not a bare lookup: `?scene=constructor` would otherwise select a function.
+      const SCENE_NAME = WANTED_SCENE !== null && Object.hasOwn(SCENES, WANTED_SCENE) ? WANTED_SCENE : "parked";
+      if (WANTED_SCENE !== null && WANTED_SCENE !== SCENE_NAME) {
+        console.warn(`preview: there is no scene called "${WANTED_SCENE}" — showing parked. Try ${Object.keys(SCENES).join(", ")}.`);
+      }
+      const SCENE = SCENES[SCENE_NAME];
+
+      /** Everything the bike is broadcasting right now. Patches write here, so a snapshot carries them. */
+      const LIVE = Object.assign({}, PARKED_SIGNALS, SCENE.signals);
+
+      /**
+       * What the cooling fan is doing, in the shape src/http/fan.ts answers with.
+       *
+       * `limits` is the endpoint's OWN fanLimits() — nine constants src/fan/curve.ts owns, injected
+       * at build time rather than copied here, because a preview quoting a threshold this Pi does
+       * not use is exactly the drift the rest of this file is about.
+       */
+      const FAN = {
+        dutyPercent: 0,
+        targetPercent: 0,
+        driverEnabled: false,
+        phase: "idle",
+        mode: "automatic",
+        // Parked, this fixture broadcasts no pack temperature, so the honest automatic state is
+        // the one with nothing to decide on rather than an invented reading.
+        auto: {
+          reason: SERVER.fanReason.NO_READING_YET,
+          temperatureInput: SERVER.fanTemperatureInput.NONE,
+          temperatureC: null,
+          temperatureAgeMs: 4200,
+        },
+        // Never available in the preview: fun mode needs a live throttle and a bike that cannot
+        // move, and claiming it would offer a control that commands nothing.
+        fun: { available: false, gate: SERVER.funGate.GO_UNKNOWN },
+        fault: null,
+        limits: SERVER.fanLimits,
+        message: null,
+      };
+
+      /** The automatic charge-current controller, in the shape src/http/charge-auto.ts answers with. */
+      const CHARGE_AUTO = {
+        state: { mode: "off", reason: SERVER.chargeAutoReason.NOT_DC, commandedAmps: null },
+        reasonText: SERVER.chargeAutoReasonText[SERVER.chargeAutoReason.NOT_DC],
+        floorAmps: SERVER.chargeAutoFloorAmps,
+        message: null,
+      };
+
+      // The scene's own answers, laid over the fixtures above. Kept here rather than written into
+      // each fixture so the literals stay complete — scripts/check-preview-fixtures.ts reads THEM,
+      // and a fixture assembled per scene would be a fixture it could no longer check.
+      Object.assign(WRITE_STATUS.gate, SCENE.gate ?? {});
+      Object.assign(FAN, SCENE.fan ?? {});
+      Object.assign(FAN.auto, SCENE.fanAuto ?? {});
+      if (SCENE.funGate !== undefined) {
+        FAN.fun.gate = SCENE.funGate;
+      }
+      if (SCENE.chargeAck !== undefined) {
+        WRITE_STATUS.chargeAck = SCENE.chargeAck;
+      }
+      if (SCENE.chargeAutoReason !== undefined) {
+        CHARGE_AUTO.state = { mode: "automatic", reason: SCENE.chargeAutoReason, commandedAmps: SCENE.commandedAmps };
+        CHARGE_AUTO.reasonText = SERVER.chargeAutoReasonText[SCENE.chargeAutoReason];
+      }
+
+      // The fan broadcasts as well as answering, and the sheet reads the BROADCAST for what it is
+      // doing right now ("the reply is only as fresh as the fetch" — views/fan.js). Derived from
+      // the reply above rather than written a second time in the scene, so the two cannot disagree:
+      // without these the section rendered "the fan driver has not reported yet" over a live one.
+      Object.assign(LIVE, {
+        fan_duty_pct: [FAN.dutyPercent, "%", "fan"],
+        fan_target_pct: [FAN.targetPercent, "%", "fan"],
+        fan_driver_enabled: [FAN.driverEnabled ? 1 : 0, "", "fan"],
+        // FAN_MODE_CODE in public/lib/fan-display.js, which is itself the browser's copy of
+        // src/fan/auto.ts's — scripts/check-fan-fun.ts is what keeps those two in step.
+        fan_auto_mode: [{ manual: 0, automatic: 1, fun: 2 }[FAN.mode], "", "fan"],
+        fan_auto_reason: [FAN.auto.reason, "", "fan"],
+        fan_temp_input: [FAN.auto.temperatureInput, "", "fan"],
+        fan_fun_available: [FAN.fun.available ? 1 : 0, "", "fan"],
+        fan_fun_gate: [FAN.fun.gate, "", "fan"],
+      });
+
+      /** One WebSocket message, in the shape src/ws.ts broadcasts. */
+      function message(type, readings) {
+        const at = Date.now();
+        const signals = {};
+        for (const [key, reading] of Object.entries(readings)) {
+          signals[key] = { value: reading[0], unit: reading[1], group: reading[2], ts: reading[3] ?? at };
+        }
+        return { type, ts: at, signals };
       }
 
       // ── the Pi, stubbed ──────────────────────────────────────────────────────────
@@ -539,10 +761,13 @@ __MODULES__
           // writes them and ws.ts patches them to every client. Without this the preview
           // shows a permanently half-saved waypoint — the button's note claiming a save
           // the Waypoints tile above it has never been told about.
+          // Stamped with the moment of the save and holding it, because that is the time the
+          // Waypoints tile prints — the Pi's record() only touches these three when one is saved.
+          const savedAt = Date.now();
           pushPatch({
-            waypoint_seq: { value: STATUS.waypoints, unit: "", group: "waypoint", ts: Date.now() },
-            waypoint_lat: { value: 51.4779, unit: "°", group: "waypoint", ts: Date.now() },
-            waypoint_lon: { value: -0.0015, unit: "°", group: "waypoint", ts: Date.now() },
+            waypoint_seq: [STATUS.waypoints, "", "waypoint", savedAt],
+            waypoint_lat: [51.4779, "°", "waypoint", savedAt],
+            waypoint_lon: [-0.0015, "°", "waypoint", savedAt],
           });
           return json({
             saved: true,
@@ -562,6 +787,55 @@ __MODULES__
               "fatal: unable to access 'https://github.com/danieltroger/cool-eva.git/': " +
               "Failed to connect to github.com port 443 after 60000 ms: Couldn't connect to server",
           });
+        }
+        // ⚠️ The fan and the charge controller HOLD what a command did, rather than answering with
+        // the fixture every time. views/fan.js adopts the reply into its own states, so a constant
+        // one springs the slider back to the fixture's duty on every drag; views/charge-auto.js
+        // does the same, so the button would still read "Take the current back" after the tap that
+        // exists to demonstrate it. A preview that undoes the gesture being reviewed is worse than
+        // no preview of it.
+        if (path === "/fan") {
+          if (method === "POST") {
+            const duty = url.searchParams.get("duty");
+            const mode = url.searchParams.get("mode");
+            if (duty !== null) {
+              FAN.mode = "manual";
+              FAN.dutyPercent = Number(duty);
+              FAN.targetPercent = Number(duty);
+              FAN.driverEnabled = Number(duty) > 0;
+              FAN.phase = Number(duty) > 0 ? "running" : "idle";
+              FAN.auto.reason = SERVER.fanReason.MANUAL;
+              FAN.message = null;
+            } else if (mode !== null) {
+              FAN.mode = mode;
+              FAN.message = mode === "fun" ? "Fun mode is refused here: the preview has no throttle to steer the fan with." : null;
+            }
+            pushPatch({
+              fan_duty_pct: [FAN.dutyPercent, "%", "fan"],
+              fan_target_pct: [FAN.targetPercent, "%", "fan"],
+              fan_driver_enabled: [FAN.driverEnabled ? 1 : 0, "", "fan"],
+            });
+          }
+          return json(FAN);
+        }
+        if (path === "/charge-auto") {
+          if (method === "POST") {
+            const mode = url.searchParams.get("mode");
+            // `mode=automatic` is what clears a stand-down on the Pi too (src/charge/auto.ts), which
+            // is the whole of why #176's third button state is one tap and not two.
+            CHARGE_AUTO.state = {
+              mode: mode === "automatic" ? "automatic" : "off",
+              reason: mode === "automatic" ? SERVER.chargeAutoReason.SETTLED : SERVER.chargeAutoReason.DISABLED,
+              commandedAmps: mode === "automatic" ? CHARGE_AUTO.state.commandedAmps : null,
+            };
+            CHARGE_AUTO.reasonText = SERVER.chargeAutoReasonText[CHARGE_AUTO.state.reason];
+            pushPatch({ charge_auto_reason: [CHARGE_AUTO.state.reason, "", "charge"] });
+          }
+          return json(CHARGE_AUTO);
+        }
+        if (path === "/can-restart") {
+          toast("Preview — nothing was sent. A Pi would have re-run the two ip link commands.");
+          return json({ ok: true, message: "can0 restarted at 500 kbit/s." });
         }
         if (path === "/vcu-read") {
           if (method === "POST") {
@@ -697,30 +971,63 @@ __MODULES__
       /** The socket the page is holding, so a stubbed action can patch it as the Pi would. */
       let liveSocket = null;
 
-      /** One patch to the page, in the shape src/ws.ts broadcasts. */
-      function pushPatch(signals) {
+      /**
+       * One patch to the page, in the shape src/ws.ts broadcasts.
+       *
+       * ⚠️ Written into LIVE first. Without that the next snapshot re-sent the fixture's own
+       * constant over the top: tapping "Save waypoint here" moved the tile to #5 and the
+       * reconnect a few seconds later put it back to #4, which is a preview undoing the one
+       * thing the tester just did.
+       */
+      function pushPatch(readings) {
+        Object.assign(LIVE, readings);
         if (liveSocket && liveSocket.onmessage) {
-          liveSocket.onmessage({ data: JSON.stringify({ type: "patch", ts: Date.now(), signals }) });
+          liveSocket.onmessage({ data: JSON.stringify(message("patch", readings)) });
         }
       }
 
-      /** Delivers one snapshot and then goes quiet — the bike is parked. */
+      /**
+       * The Pi's end of the WebSocket: a snapshot on connect, and one every HEARTBEAT_MS after.
+       *
+       * ⚠️ The heartbeat is not decoration. It is what src/ws.ts does, and lib/connection.js
+       * declares a link dead after SILENCE_LIMIT_MS of quiet — so a stub that sent one snapshot
+       * and stopped had the header flapping live → offline → live for ever, and isStaleWith()
+       * calls EVERY signal stale while the link is down. Measured on the old fixture: the page
+       * read `offline` in 20 of 60 samples, with dimmed tiles in exactly those 20. One screenshot
+       * in three off the instrument this project gates dashboard merges with was a photograph of
+       * a dropout. It is also what keeps the DC scene mounted at all: lib/charge-write.js drops
+       * the whole charge control set when charge_manager_state ages past 12 s.
+       */
       window.WebSocket = class PreviewWebSocket {
         constructor(url) {
           this.url = url;
           this.readyState = 1;
           liveSocket = this;
+          this.beat = setInterval(() => this.deliver(message("snapshot", LIVE)), SERVER.heartbeatMs);
           queueMicrotask(() => {
             if (this.onopen) {
               this.onopen();
             }
-            if (this.onmessage) {
-              this.onmessage({ data: JSON.stringify(snapshot()) });
+            this.deliver(message("snapshot", LIVE));
+          });
+        }
+        deliver(payload) {
+          if (this.readyState === 1 && this.onmessage) {
+            this.onmessage({ data: JSON.stringify(payload) });
+          }
+        }
+        send() {}
+        close() {
+          // A real socket's close event is asynchronous, and connection.js schedules the next
+          // connection off it — firing it inside close() would reconnect from inside the teardown.
+          clearInterval(this.beat);
+          this.readyState = 3;
+          queueMicrotask(() => {
+            if (this.onclose) {
+              this.onclose();
             }
           });
         }
-        send() {}
-        close() {}
         addEventListener() {}
         removeEventListener() {}
       };

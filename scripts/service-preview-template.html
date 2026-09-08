@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Cool Eva — service sheet preview</title>
+    <!-- Copied from public/index.html, where its comment explains the cost on the bike. Here it
+         buys something else: without it Chrome's automatic /favicon.ico request is a console
+         error on every load (an "unsafe attempt to load URL" over file://), and "the console is
+         clean" has to be a gate somebody can actually read. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧊</text></svg>"
+    />
     <style>
       /* The artifact host supplies a reset and a ground; opened as a file, this has to.
      Painted explicitly rather than left transparent so the page holds its own dark
@@ -494,7 +502,16 @@
 
       const WRITE_STATUS = {
         enabled: true,
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [], readings: {} },
+        // ⚠️ Four corrections made in both templates on 2026-09-08, because both carry their own
+        // copy of this fixture (#170). `runningVersion` is the one that mattered: vcu-write.js
+        // destructures it, so every panel here threw at render — seven of them, while this
+        // sheet's own guard reported `data-preview-failed="0"`. A FIXED commit label rather than
+        // this checkout's real one: a review instrument whose text and whose amber +dirty colour
+        // changed with the reader's git state would be worse than one that says a stable thing.
+        runningVersion: { commit: "7f6dbcd", dirty: false, trustworthy: true, label: "7f6dbcd" },
+        chargeAck: null,
+        // ⚠️ No `readings`: that is on the gate's INPUT type, never on the verdict the Pi sends.
+        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
         tableGate: {
           state: "confirmed",
           writesAllowed: true,
@@ -504,11 +521,11 @@
           outstanding: [],
           tableType: 16407,
         },
+        // ⚠️ PiClockVerdict is a UNION, and `reasons` belongs to its untrustworthy arm alone.
         clock: {
           trustworthy: true,
           iso: new Date(NOW).toISOString(),
           offsetFromGpsSeconds: 0.2,
-          reasons: [],
         },
         targets: TARGETS,
         recent: JOURNAL,
@@ -537,12 +554,12 @@
        * panel is the same sweep every other panel would be watching.
        */
       const READ_STATE = {
+        // ⚠️ No `expected` on a finished sweep: VcuReadState's `finished` arm does not carry it.
         run: {
           phase: "finished",
           startedAt: SWEPT_AT,
           finishedAt: SWEPT_AT + 41000,
           complete: true,
-          expected: 277,
           tally: {
             total: 277,
             read: 233,

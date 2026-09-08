@@ -35,8 +35,12 @@ export function AllView() {
     div(
       { class: "filter" },
       input({
-        type: "search",
-        placeholder: "filter signals…",
+        "type": "search",
+        // Named for the same DevTools issue as the two write controls; there is nothing to
+        // autofill a signal filter from, and a remembered list over it would only be in the way.
+        "name": "signal-filter",
+        "autocomplete": "off",
+        "placeholder": "filter signals…",
         value: filter,
         oninput: (/** @type {Event} */ event) => {
           const target = event.target;

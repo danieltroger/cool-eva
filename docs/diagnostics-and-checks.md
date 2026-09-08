@@ -855,6 +855,52 @@ None of the three guards below was in the first version of the repair. Each exis
 
 **What is still uncovered: whether a panel renders at all.** That needs a browser in the suite, and there is not one — not for the reason §11.1 gives about test frameworks, but because a headless browser is a dependency tree and a second runtime for a design tool nobody deploys, against a suite whose whole claim is that it runs anywhere with no bike and two devDependencies. The trade is deliberate and it is the reason this section exists. What `check-service-preview.ts` covers instead is the **rename**, which is the likeliest way to break this again, and it now counts `form` panels — its `kind:` alternation had been silently omitting them, so a floor of five was being cleared by five of seven. ⚠ Adding `form` without moving the floor would have made that guard WEAKER than it was: seven counted against a floor of five passes a sheet with two panels deleted. The floor is what the sheet declares today, so a panel removed on purpose edits the check and one lost by accident goes red. Until the suite can open a page, the annotated preview is checked by a person looking at it — `npm run preview` builds the whole dashboard, `npm run preview -- --annotated` the design-review sheet — and this is written down so the next reader knows what the ✓ means. The page stamps `data-preview-failed` on `<html>` with the number of panels that did not render, so "did it work" is one ctrl-F rather than a scroll.
 
+⚠️ **And on 2026-09-08 that stamp read `0` while all seven panels were broken.** `views/vcu-write.js` destructures `status.runningVersion`, a field `VcuWriteStatus` has carried since #153 and the fixture never had. The destructure throws inside a VanJS binding, VanJS leaves the previous DOM in place, and the previous DOM was `Availability()`'s "waiting for an answer" ellipsis — so the sheet showed the state that placeholder's own comment says must stand down the moment an answer arrives, seven times, under a guard reporting no failures. **A panel that throws does not look like a panel that failed to render; it looks like a panel still loading.** That is the correction this section needed: the runtime guard counts panels that never mounted, and nothing counted panels that mounted and then threw.
+
+### 11.7 What the preview stands in for, and `check-preview-fixtures.ts`
+
+The failure above is not about panels. It is about the FIXTURE — the preview's stand-in for the Pi — drifting from the payloads the Pi actually serves, which no amount of looking at the page reliably catches, because the symptom is a missing line rather than a wrong one. `scripts/check-preview-fixtures.ts` compares the two directly. It parses with TypeScript's own parser (already a devDependency, already what `npm run typecheck` runs) rather than the bracket-counting `panelsArray()` and `check-arming.ts`'s `blockAt()` use, because [#170](https://github.com/danieltroger/cool-eva/issues/170) records that both of those share one blind spot: neither skips string literals or comments.
+
+Two assertions:
+
+- **Every fixture matches its payload type**, member by member and down through nested objects and unions. A field the Pi always sends and the fixture lacks is red; so is a field the fixture invents. Unions must match exactly ONE arm — merged members would accept a value the type cannot produce.
+- **Every path `public/` fetches has an answer** in the whole-dashboard template. Applied only to a template that calls `imp("app.js")`: the annotated sheet mounts a chosen set of panels rather than the app, which is a different contract.
+
+Pointed at `origin/main`'s template it reports ten failures. Five are fields:
+
+|  |  |
+| --- | --- |
+| `WRITE_STATUS.runningVersion` | missing — the one that threw |
+| `WRITE_STATUS.chargeAck` | missing. Invisible: `charge-write.js:188` reads it as `?? null`, so an absent field and a correct `null` render identically, and it would have silently swallowed #153's verdict line in the first DC screenshot anyone took |
+| `WRITE_STATUS.gate.readings` | invented. `readings` is on the gate's INPUT type, never on the verdict |
+| `WRITE_STATUS.clock.reasons` | invented. `PiClockVerdict` is a union and `reasons` belongs to the untrustworthy arm alone |
+| `READ_STATE.run.expected` | invented. `VcuReadState`'s `finished` arm does not carry it; only `running` does |
+
+The other five are the missing `/fan`, `/charge-auto` and `/can-restart` stubs and the two fixtures behind them. Both templates carry their own copy of `WRITE_STATUS`, so the first four were fixed twice — the tax [#170](https://github.com/danieltroger/cool-eva/issues/170) exists to remove.
+
+**What it cannot see is printed on every run, not only on failure**, because a fixture field nobody was looking at is the whole failure above. Today that list is the arrays of records (`gate.checks`, `targets`, `recent`, `tally.micros`), the two `Record<>` maps, and `FAN.limits`, which is injected at build time.
+
+#### The scenes
+
+The shipped fixture is a parked bike, and every panel added over the week of 2026-09-01 renders NOTHING on one: the DC set-current control, the stop control, #176's stand-down, and the power bar's derate hatching, whose whole geometry (`lib/svg.js` `derateSpans()`, `lib/power-limits.js`) was unreachable. `?scene=` in the URL picks one of three — `parked` (the default, value for value what this file has always shown), `dc` (a 42 A session with the controller stood down by the rider) and `riding` (72 km/h with both halves of the bar hatched). A query string rather than the hash, because the hash is the app's tab router; and no control on the page, because the preview's claim is that what you see is what the bike serves.
+
+⚠️ **`charge_manager_state` alone is not a DC session.** It drives the AC/DC label and the write controls' visibility (`lib/charge-write.js`), while `lib/charge-mode.js` — which the delivery tile and the power bar's "claim nothing while charging" rule both read — keys on `fast_dc_contactor`. A scene setting one without the other renders the set-current control above a tile still saying "plug in to see delivery".
+
+#### The heartbeat, and why a third of the instrument was a photograph of a dropout
+
+`src/ws.ts` sends a full snapshot every `HEARTBEAT_MS`; the old stub sent one and went quiet. `lib/connection.js` declares a link dead after `SILENCE_LIMIT_MS`, reconnects after `RECONNECT_DELAY_MS`, and the new socket sent one more and stopped — so the header cycled live → offline → live for ever. Measured on main's build over 80 s: **the header read `offline` in 32 of 200 samples, with `.stale` tiles in exactly those same 32** (an independent run put it at 18.4%; the cycle is ~16 s and carries two dips, so a window under a minute does not pin it). `isStaleWith()` calls every signal stale while the link is down, so roughly one screenshot in six taken off the instrument this project gates dashboard merges with was a picture of the dashboard's dropout appearance. With the heartbeat: 155 of 155 samples over 62 s read `live`, zero stale tiles.
+
+The heartbeat re-stamps each reading's `ts` as it goes out, which is what `record()` does on the Pi for anything whose frame keeps arriving (`src/can/signals.ts` — `liveState` is refreshed on EVERY frame; only the logging and the change patch are change-gated). ⚠️ **Except the waypoint trio, which keeps the moment it was saved**, because `views/trip-stats.js` prints that time — re-stamping it walks the Waypoints tile's clock forward by five seconds every five seconds. And patches are written into the live map before they are sent, so a snapshot carries them: without that, tapping "Save waypoint here" moved the tile to #5 and the next reconnect put it back to #4.
+
+The annotated sheet deliberately has no heartbeat: its panels render neither the link dot nor any `.stale` tile, and a five-second re-render would only add flake to close-up assertions that run against a settled DOM.
+
+#### Two things the scenes found on their first run
+
+- **A temporal dead zone in `views/charge-current.js`.** `CHARGE_ACK_WAITING` was declared below the `van.derive` that reads it. `van.derive` runs its body once immediately, so a store that already held `charge_cmd_ack` threw `Cannot access 'CHARGE_ACK_WAITING' before initialization` and took the charge tab with it. On the bike it is unreachable — `app.js` imports every view before `connect()`, so the store is always empty at that moment — which means it survived by import order rather than by design. The preview seeds before it mounts and hit it on the first DC fixture ever rendered. The declaration now sits above its use.
+- **`A form field element should have an id or name attribute`**, twice on the shipped fixture and **twelve times on the annotated sheet**, which mounts the module graph once per panel. That count is why the fix is `name` and not `id`: seven copies of one control cannot have unique ids, and the DevTools issue asks for either. `autocomplete="off"` rides along, because a name is also what Chrome keys autofill history on and a remembered value offered on the control that commands current into the pack is a number nobody typed.
+
+A `<link rel="icon">` copied from `public/index.html` silences the last console line: Chrome's automatic `/favicon.ico` request, which over `file://` surfaces as an `Unsafe attempt to load URL` error. "The console is clean" is only a usable gate if it can actually be reached — it now is, on all three scenes, on all five tabs, and on the sheet.
+
 ## 12. Extracting Energica's VCU parameter tables
 
 `scripts/extract-vcu-tables.ts` pulls the tables out of the manufacturer's service-tool executable and writes `src/vcu/table-catalog.data.ts`. README §"Adding your bike's VCU parameter table" is the operator-facing walkthrough.

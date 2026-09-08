@@ -3,6 +3,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
 import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
+import { fanLimits } from "../src/http/fan.ts";
+import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
+import { CHARGE_AUTO_REASON, MIN_COMMAND_A } from "../src/charge/auto-curve.ts";
+import { FAN_REASON, FAN_TEMPERATURE_INPUT } from "../src/fan/curve.ts";
+import { FUN_GATE } from "../src/fan/fun.ts";
+import { HEARTBEAT_MS } from "../src/ws.ts";
 import type { LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
 import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
@@ -186,14 +192,18 @@ const css = await readFile(join(PUBLIC, "style.css"), "utf8");
 // String.replace no-ops SILENTLY when the pattern is absent. Deleting either
 // placeholder produced "✓ 32 modules" and an empty registry that renders nothing —
 // the same outcome as the `},,` bug, reached a different way.
-if (!template.includes("__CSS__")) {
-  throw new Error("build-service-preview: the template has no __CSS__ placeholder");
+//
+// Required PER TEMPLATE rather than of both: only the whole-dashboard one stubs /fan and
+// /charge-auto, so only it needs the Pi's constants, and a placeholder the annotated sheet
+// carried unused would be a line nothing could notice the loss of.
+const required = ["__CSS__", "__TABLES__", ...(annotated ? [] : ["__SERVER_FACTS__"])];
+for (const placeholder of required) {
+  if (!template.includes(placeholder)) {
+    throw new Error(`build-service-preview: ${templateFile} has no ${placeholder} placeholder`);
+  }
 }
 if (!/__MODULES__,?/.test(template)) {
-  throw new Error("build-service-preview: the template has no __MODULES__ placeholder");
-}
-if (!template.includes("__TABLES__")) {
-  throw new Error("build-service-preview: the template has no __TABLES__ placeholder");
+  throw new Error(`build-service-preview: ${templateFile} has no __MODULES__ placeholder`);
 }
 // Function replacements, not strings: a `$&` or `$1` inside the substituted CSS or JS
 // would otherwise be read as a replacement pattern and silently corrupt the output.
@@ -211,10 +221,28 @@ const tables = JSON.stringify({
   "/lifetime-stats": buildLifetimePreview(),
 });
 
+// Numbers and prose the Pi owns, handed to the fixtures rather than re-typed beside them. Same
+// argument as the tables above, one layer in: the fan's nine policy constants are src/fan/curve.ts's
+// (through the endpoint's own fanLimits(), so tsc holds the shape), and CHARGE_AUTO_REASON_TEXT's
+// header calls itself "the ONLY copy of this prose" after it was once mirrored by hand into
+// public/views/charge-auto.js. A preview quoting a stale threshold is a preview arguing with the
+// bike about what the bike does.
+const serverFacts = JSON.stringify({
+  heartbeatMs: HEARTBEAT_MS,
+  fanLimits: fanLimits(),
+  fanReason: FAN_REASON,
+  fanTemperatureInput: FAN_TEMPERATURE_INPUT,
+  funGate: FUN_GATE,
+  chargeAutoReason: CHARGE_AUTO_REASON,
+  chargeAutoReasonText: CHARGE_AUTO_REASON_TEXT,
+  chargeAutoFloorAmps: MIN_COMMAND_A,
+});
+
 const html = template
   .replace("__CSS__", () => css)
   .replace(/__MODULES__,?/, () => modules)
-  .replace("__TABLES__", () => tables);
+  .replace("__TABLES__", () => tables)
+  .replace("__SERVER_FACTS__", () => serverFacts);
 
 const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");
@@ -223,3 +251,9 @@ console.log(
   `✓ ${out} — ${annotated ? "annotated sheet" : "whole dashboard"}, ${registry.size} modules, ` +
     `${Math.round(html.length / 1024)} kB, no network at runtime`
 );
+// The scenes are selected in the URL rather than by a control on the page, so they are invisible
+// to anyone who has not read the template. Printed here because this is where somebody looking for
+// them is standing.
+if (!annotated) {
+  console.log(`  ?scene=parked (the default) · ?scene=dc · ?scene=riding — file://${out}?scene=dc`);
+}
