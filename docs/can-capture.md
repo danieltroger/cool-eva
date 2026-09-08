@@ -42,6 +42,8 @@ So the down/up is not defensive habit. What makes skipping it safe is narrower t
 can: can0 needs configuring — link is not UP (operstate DOWN); controller state is STOPPED; bitrate is 0, not 500000; restart-ms is 0, not 100; bringing it down and up
 ```
 
+⚠️ The one cold-boot shape that _does_ read unreadable is `can0` not having enumerated yet: the `ip` call itself fails, `bringUpCan` warns and bounces. That is the bring-up half's path, not the capture's.
+
 An earlier draft of this paragraph said `restart_ms` was absent and that the bitrate failed first. Both were wrong, and the first one re-introduced exactly the confusion `src/can/link-config.ts` was changed to remove: an absent `restart_ms` would make the link **unreadable**, not mismatched. On this bike every boot is a cold boot, because the Pi loses power with the ignition. **The skip therefore only ever fires on a service restart onto a bus that is already up**, which is precisely the deploy case issue #160 was opened about, and nothing is lost at boot because `can-capture.service` is ordered `After=cool-eva.service` and has not bound its socket yet.
 
 Anything else takes the original path, unchanged. Both branches log: the skip line names every field that was read, the bounce line names only the conditions that failed, so one line explains the verdict either way.
@@ -99,7 +101,7 @@ The dashboard's **CAN bus restart** button is unchanged and still there (`src/ht
 
 **`-D` is the whole behavioural change.** `Don't exit if a "detected" can device goes down`: candump keeps the socket, keeps the open file, and keeps writing. The kernel half is `raw_notify()` in `net/can/raw.c` — `NETDEV_DOWN` sets `sk_err = ENETDOWN` and does nothing else, leaving the socket bound with its filters registered, so frames resume by themselves and there is no `NETDEV_UP` case to need. Only `NETDEV_UNREGISTER` (the adapter unplugged) unbinds and reports `ENODEV`, which still exits and still gets a restart — that failure should be loud. `raw_bind()` on a device that **exists but is DOWN** sets the same `ENETDOWN` and returns success, so `-D` also survives _starting_ while the interface is down.
 
-⚠️ **It does not survive starting before the device exists at all.** That path fails `dev_get_by_index` with `-ENODEV`, the bind fails, and candump exits whatever `-D` says. It is reachable: the wait loop gives up after 120×2 s and `exec`s anyway, so a Pi whose adapter never enumerates gets a loud restart roughly every 240 s — which is the behaviour you want, and the reason the wait loop is not redundant with `-D` rather than merely overlapping it.
+⚠️ **It does not survive starting before the device exists at all — and it fails earlier than a socket.** For a named interface candump resolves the ifindex first, so a missing `can0` dies at `ioctl(SIOCGIFINDEX)` with `SIOCGIFINDEX: No such device` and `exit(1)`. No socket is ever bound, `raw_bind()` never runs, and `-D` cannot apply even in principle. That path is reachable: the wait loop gives up after 120×2 s and `exec`s anyway, so a Pi whose adapter never enumerates gets a loud restart roughly every 240 s — which is the behaviour you want, and why the wait loop is **not redundant** with `-D` rather than merely overlapping it. ⚠️ Grep the journal for `SIOCGIFINDEX`, not `bind` — three drafts of this paragraph named the wrong layer, twice in the kernel.
 
 ### ⚠️ `-D` invalidates a forensic rule that is written down elsewhere
 
