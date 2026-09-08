@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { MUTED } from "./colors.js";
+import { CALM, MUTED } from "./colors.js";
 
 // Inline-SVG drawing primitives: sparkline, meter, split bar, ring.
 //
@@ -11,7 +11,8 @@ import { MUTED } from "./colors.js";
 // (axes, ticks, legends, tooltips) are all things this screen deliberately does not
 // have: at 90 km/h the only readable chart is a bare shape with one number on it.
 //
-// Everything below takes plain numbers and returns an element. No state, no
+// Everything below takes plain numbers and returns an element, or — for
+// limitMarkerPositions() — the geometry an element is built from. No state, no
 // subscriptions — the views decide when to redraw, which is the 2 Hz chartTick
 // rather than the 20 Hz frame rate of the underlying signals.
 
@@ -21,6 +22,13 @@ const svgTags = van.tags("http://www.w3.org/2000/svg");
 // that was the first version, and it made every bar invisible until it was more
 // than half full, which is exactly when you no longer need to look at it.
 const TRACK = "#0b1220";
+
+/**
+ * How far from either end a limit marker may be drawn, in viewBox units. Small enough
+ * to read as "at the end" on a 280 px phone bar and large enough that the whole stroke
+ * is inside the viewBox on a 1000 px one.
+ */
+const MARKER_INSET = 0.6;
 
 /**
  * A bare trace with no axes. Autoscales to its own window, with a floor on the
@@ -109,20 +117,21 @@ export function meter({ fraction, color, height = 10, marker = null }) {
  * is the one number where direction matters as much as magnitude, and a signed
  * digit is much slower to read than a bar that moves the other way.
  *
- * `driveLimit` and `regenLimit` are drawn as dashed lines across the bar — where the
- * BMS is cutting you off, against where you are. Both are positive magnitudes in the
- * same units as `value`; the side each belongs on is this function's business, not the
- * caller's, for the same reason `fullScale` is a magnitude and not a range.
+ * `limits` draws the two ceilings as dashed lines — where you are cut off, against
+ * where you are. Both are positive magnitudes in the same units as `value`, and they
+ * arrive as ONE object rather than as two parameters on purpose: two would be a pair
+ * of same-typed arguments a caller can cross, and a crossed pair draws a plausible
+ * screen rather than a broken one. Which side each lands on is this function's
+ * business, the same way `fullScale` being a magnitude rather than a range is.
  * @param {object} options
  * @param {number | null} options.value
  * @param {number} options.fullScale largest magnitude the bar can show, per side
  * @param {string} options.color
- * @param {number | null} [options.driveLimit] dashed line this far right of centre
- * @param {number | null} [options.regenLimit] dashed line this far left of centre
+ * @param {import("./power-limits.js").PowerLimitsKw | null} [options.limits]
  * @param {number} [options.height]
  * @returns {Element}
  */
-export function splitBar({ value, fullScale, color, driveLimit = null, regenLimit = null, height = 14 }) {
+export function splitBar({ value, fullScale, color, limits = null, height = 14 }) {
   const width = 100;
   const centre = width / 2;
   const magnitude = value == null ? 0 : Math.min(Math.abs(value) / fullScale, 1) * centre;
@@ -141,7 +150,7 @@ export function splitBar({ value, fullScale, color, driveLimit = null, regenLimi
     svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }),
   ];
   // After the fill, so a limit the bar has run past is still legible on top of it.
-  for (const x of limitMarkerPositions({ driveLimit, regenLimit, fullScale, centre })) {
+  for (const x of limitMarkerPositions({ limits, fullScale, centre })) {
     children.push(limitMarker(x, height));
   }
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
@@ -149,37 +158,51 @@ export function splitBar({ value, fullScale, color, driveLimit = null, regenLimi
 
 /**
  * Where the dashed limit lines land, in viewBox x. Drive is right of centre and regen
- * is left, matching the fill.
+ * is left, matching the fill. A ceiling wider than the bar is PINNED to the end.
  *
- * ⚠️ A limit wider than the bar is DROPPED rather than pinned to the end. Pinning would
- * put it under the border where it reads as nothing anyway, and it would make "the pack
- * allows more than the bike can take" — the one case with nothing to warn about — look
- * identical to a limit sitting exactly at full scale. Rare either way: measured over the
- * archive the discharge ceiling is past 130 kW for 0.83% of covered time and the regen
- * ceiling never is (docs/dashboard-decisions.md §"The power bar").
+ * ⚠️ It was dropped instead until the numbers behind that were re-measured. Dropping
+ * makes "the pack allows more than the bike can take" and "0x202 has not arrived" the
+ * same picture, and that is not the rare collision it was argued to be: weighted by
+ * elapsed time rather than by the deadbanded signal's own rows, the discharge ceiling
+ * is off a 130 kW bar for 5-11% of moving time. Pinning is ambiguous too — a line at
+ * the end could be a ceiling AT full scale or past it — but both of those readings say
+ * "the pack is not what is limiting you", so they lead a rider to the same place, while
+ * absence-or-no-data does not. docs/dashboard-decisions.md §"The power bar" has the
+ * measurement and the estimator that got it wrong.
  *
  * Pure, and exported, so scripts/check-power-bar.ts can assert which side each lands on
  * without a DOM — van's tags need document.createElementNS and Node has neither.
  * @param {object} options
- * @param {number | null} options.driveLimit
- * @param {number | null} options.regenLimit
+ * @param {import("./power-limits.js").PowerLimitsKw | null} options.limits
  * @param {number} options.fullScale
  * @param {number} options.centre half the bar's width, in viewBox units
  * @returns {number[]}
  */
-export function limitMarkerPositions({ driveLimit, regenLimit, fullScale, centre }) {
+export function limitMarkerPositions({ limits, fullScale, centre }) {
+  if (limits == null || fullScale <= 0) {
+    return [];
+  }
   const sides = [
-    { value: driveLimit, direction: 1 },
-    { value: regenLimit, direction: -1 },
+    { value: limits.drive, direction: 1 },
+    { value: limits.regen, direction: -1 },
   ];
   const positions = [];
   for (const side of sides) {
-    if (side.value == null || fullScale <= 0 || side.value > fullScale) {
+    if (side.value == null) {
       continue;
     }
-    positions.push(centre + side.direction * (side.value / fullScale) * centre);
+    const fraction = Math.min(side.value / fullScale, 1);
+    // Half a stroke would fall outside the viewBox at the extremes and be clipped away
+    // by the SVG's own bounds, so the pinned case — the one this inset exists for —
+    // would draw at half width or vanish.
+    positions.push(clamp(centre + side.direction * fraction * centre, MARKER_INSET, 2 * centre - MARKER_INSET));
   }
   return positions;
+}
+
+/** @param {number} value @param {number} low @param {number} high */
+function clamp(value, low, high) {
+  return Math.max(low, Math.min(high, value));
 }
 
 /**
@@ -194,7 +217,7 @@ function limitMarker(x, height) {
     y1: 0,
     x2: x.toFixed(2),
     y2: height,
-    stroke: "#e2e8f0",
+    stroke: CALM,
     "stroke-width": 1.2,
     "stroke-dasharray": "2 2",
     // preserveAspectRatio="none" stretches the viewBox to the tile, and for a vertical

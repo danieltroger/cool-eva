@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
+import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
@@ -121,9 +121,9 @@ function SpeedHero() {
  *
  * The dashed lines are the BMS's own ceilings (lib/power-limits.js). They are what
  * turns the bar from "how hard am I pulling" into "how much is left before the pack
- * says no", and they MOVE — the discharge ceiling averages 85 kW over the archive
- * against the bike's 126 kW peak, so a rider reading a full-looking bar without them
- * is usually reading a derate as headroom.
+ * says no", and they MOVE — the discharge ceiling averages 91 kW over moving time in
+ * the archive against the bike's 126 kW peak, so a rider reading a full-looking bar
+ * without them is usually reading a derate as headroom.
  */
 function PowerRow() {
   return div(
@@ -136,13 +136,12 @@ function PowerRow() {
     ),
     () => {
       const kilowatts = valueOf("pack_kw");
-      const limits = powerLimitsKw(valueOf);
+      const limits = powerLimitsKw(valueOf, isStale);
       return splitBar({
         value: kilowatts,
         fullScale: POWER_LIMIT_KW,
         color: colors.power(kilowatts),
-        driveLimit: limits.drive,
-        regenLimit: limits.regen,
+        limits,
       });
     },
     div({ class: "sub" }, () => {
