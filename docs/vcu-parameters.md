@@ -507,6 +507,27 @@ Since the bank is a parameter, the identifier is something a caller can choose. 
 
 Bank 1 is the EEPROM calibration the parameter table describes. Bank 2 is live data. Both are read the same way; the difference is only which numbers come back.
 
+## ✅ Bank 2 — mapped for the first time, 2026-09-08
+
+Bank 2 (`0x2000 | index`, the RUNNING values as against bank 1's stored settings) had never been read. Swept on the bike with the service running, through `/vcu-probe` — so **no service stop is needed for parameter reads**, only for freeze frames.
+
+**A9 answers `0…197` and refuses `198+`** with NRC `0x31` (requestOutOfRange). That is a hard edge, not a scatter: 150 consecutive reads answered, then every index from 198 up refused. A8 refuses bank 2 at the one index tried (258). Bank-1 index 258 (`MAX_DC_CHG_CURRENT`) is therefore **past the end of bank 2**, which is why an early attempt at it returned nothing.
+
+⚠️ Most answering ids return `00` — a single zero byte. The width and sign of a bank-2 record are **not** known, and the name table does not describe these identifiers, so the decoder reports the raw bytes and refuses to interpret them. Do not assume bank 2 shares bank 1's widths.
+
+### ✅ Two ids identified outright, against the live bus
+
+Indices **138** and **139** (`0x8A`, `0x8B`) are **roll and pitch in 0.1°**, confirmed by simultaneous comparison with the broadcast attitude on `0x102`:
+
+|       | bank 2                  | live on `0x102` |
+| ----- | ----------------------- | --------------- |
+| roll  | idx 138 = `FF B0` = −80 | **−8.0°**       |
+| pitch | idx 139 = `FF C1` = −63 | **−6.3°**       |
+
+Exact on both axes. This closes the standing question of whether the broadcast attitude pair **is** that bank-2 block or an independent copy — it is the same data. (The stronger test, tilting the bike and watching them move in lockstep, was not run; two axes agreeing to 0.1° while the bike sat on its side stand is what is claimed here.)
+
+Other non-zero ids worth chasing, all unnamed: `113-117` (`0A BD`, `0B B7`, `10 CC`, `0D CD`, `08 80` — the `10 CC`/`0D CD` pair look like millivolts), `154` (`02 58` = 600), `168` (`FF FC` = −4, matching `WaterPump_ModuleSts` in the freeze frame), `193` (`13 75`), `195` (`01 5D` = 349, matching the freeze frame's IGBT temperature of 34.9 °C).
+
 ### The framing
 
 ```

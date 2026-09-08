@@ -387,6 +387,43 @@ Energica's `FramesDB.ParseVCU_VEHICLE_FLAGS` names all 64 bits of it — byte 0 
 
 ---
 
+## 0x100 / 0x101 — a blocking fault with no stored code, 2026-09-08
+
+An "undefined error" on the dash with the red triangle lit, and the bike refusing to start. Captured in full because the bike happened to be logging.
+
+**At 13:45:47 three bits set together on `0x100`, and stayed set:**
+
+```
+before   00 00 80 00 00 00 10 01
+after    01 00 A0 80 00 00 10 01
+```
+
+| byte.bit    | signal                          |                         |
+| ----------- | ------------------------------- | ----------------------- |
+| `data[0]`.0 | `vcu_err_system_fault`          | 0 → 1                   |
+| `data[3]`.7 | `vcu_err_system_blocking_fault` | 0 → 1                   |
+| `data[2]`.5 | **not decoded**                 | 0 → 1 (`0x80` → `0xA0`) |
+
+`blocking_fault` is what refuses drive, so that is the failed start. ✅ **No DTC was stored** — the list was the same 41 codes before and after — which is exactly why the dash could only say "undefined error": there was nothing to name. A full power cycle cleared it (`system_fault=0`, `blocking=0` at 14:29:52) and reverse worked afterwards.
+
+⚠️ Not caused by this project: there was no KWP traffic from the Pi at 13:45:47, the last transmit having been a freeze-frame read 27 minutes earlier.
+
+### 🟡 `0x101` b0/b1 — the first correlate that frame has ever had
+
+`0x101` is **undecoded** and sits on the inventory of unmapped frames, recorded there as "was constant parked" with b0 spanning `29-96` (12 distinct values) and **b1 spanning `28-3C` — only two distinct values in 40 878 frames**.
+
+Across the fault instant, exactly **two** ids changed persistently: `0x100` above, and `0x101`. And it moved again, independently, across the reverse-gear sequence later the same afternoon:
+
+| moment                    | b0        | b1            |
+| ------------------------- | --------- | ------------- |
+| before reverse            | `2B` (43) | `28` (**40**) |
+| after reverse             | `3E` (62) | `3C` (**60**) |
+| during the blocking fault | `53` (83) | `50` (**80**) |
+
+Two things fall out. **b1 reached `0x50` (80), outside its entire observed range** — the survey had never seen it above 60. And b1 is **quantised in steps of 20** across three values now (40 / 60 / 80) while **b0 tracks 2-3 counts above b1 every time**, so the two bytes are a coupled pair rather than independent fields.
+
+That is the best handle `0x101` has ever had: it moves with vehicle activity _and_ it moves with a blocking fault. 🟡 A discrete level pair rather than a temperature is the natural reading of a 20-step quantisation, but three samples do not settle it, and no name for either byte exists in any source.
+
 ## 0x102 — body, lights, vehicle state and attitude
 
 `src/can/decode.ts` (bytes 0-3) and `src/can/attitude.ts` (bytes 4-7). 100 Hz.
@@ -567,6 +604,27 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 ---
 
 ## 0x104 — odometer / speed / rpm
+
+### ✅ `reverse_gear` (bit 63) — measured on the bike, and it is a PULSE not a level
+
+Settled 2026-09-08 with the bike connected: reverse selected deliberately twice, against a **195 868-frame** capture of `0x104`.
+
+```
+14:36:59.474  b7 0x40 → 0xC0   bit63=1   bits60-62=4
+14:36:59.485  b7 0xC0 → 0x40   bit63=0   bits60-62=4    (11 ms)
+14:37:05.164  b7 0x40 → 0xC0   bit63=1   bits60-62=4
+14:37:05.174  b7 0xC0 → 0x40   bit63=0   bits60-62=4    (10 ms)
+```
+
+**Exactly four transitions in 195 868 frames** — two pulses, on the only two occasions reverse was touched, and nothing else in the whole capture.
+
+✅ **This refutes the tachometer objection.** The standing dispute was that 406 of 1122 historical frames "belonged to the tachometer field at bits 60-62", casting doubt on the bit. Here **bits 60-62 held constant at `4` across all 195 868 frames** while bit 63 moved twice on cue. The bit position is right, and it is not tachometer bleed.
+
+⚠️ **But the SEMANTICS in `decode.ts` are wrong.** Reverse was held for seconds; the bit was high for **eleven milliseconds**. It is a momentary "reverse selected" event, not a sustained "in reverse" state. Decoded as a level (`bitFieldLe(data, 63, 1)`), a consumer that samples rather than watches every frame will essentially never see it — the dashboard cannot render reverse from this, though log-on-change does capture both edges.
+
+🟡 **And there appears to be no sustained reverse state anywhere on the bus.** Comparing every id across three windows — before the first pulse, between the two, after the second — **nothing state-like held a distinct value between them**. Had the two pulses been the entry and exit of one engagement, the bike would have been in reverse for those 5.7 s and something should have said so. Nothing did, which is also what confirms these were two separate selections rather than one bracketed engagement. ⚠️ The window test only covers frames that are state-like (≤2 distinct values in a window); a reverse indicator hiding inside a continuously-changing frame would not have been caught.
+
+**What this leaves open:** whether a consumer should latch the pulse (and for how long) is a design decision, not a decode one, and is deliberately not made here.
 
 `src/can/decode.ts`. LE and not byte-aligned, at 100 Hz.
 

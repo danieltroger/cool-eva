@@ -660,10 +660,21 @@ The single sharpest reply is component 44, `P0A07`: `ai_WaterPumpCurrent_In` rea
 
 **The trailing byte is not decoded.** It is not a checksum, and this was tested exhaustively rather than casually: the entire CRC-8 space (256 polynomials × 256 inits × 256 xorouts × 4 reflection combinations × 7 byte ranges), nine accumulator variants (sum mod 256, sum mod 255, end-around carry, one's and two's complement, XOR, XOR complement, LRC, byte count) and 18 named CRC-8 presets. **Nothing beats a degenerate 6 of 29** — polynomial 0 with xorout `FF`, which only reproduces the six `0xFF` values and would match any data containing six `0xFF`s.
 
-Values are small integers (1, 2, 3, 5…61, 118) plus `0xFF` on six replies. Two readings fit, and the evidence does not separate them:
+✅ **SETTLED 2026-09-08: it is a saturating occurrence counter.** The first live freeze-frame read off this bike, four weeks after the codes were cleared, decides it — and it decides it the hard way, because the two readings made opposite predictions and only one survived.
 
-- **A saturating occurrence counter.** Component 44 — this bike's permanent standing fault — is one of the `0xFF`s.
-- **A "not applicable" sentinel.** Three of the six `0xFF`s sit on components 51, 52 and 60: `P1050`, `P1051` and `P1052`, _Battery statistics info 1/2/3_. Those are informational pseudo-codes, not faults that "occur" — a saturated occurrence count on a statistics record is odd, where a sentinel is natural. The distribution, topping out at 118 and then jumping to 255, suits either.
+| component  | before the clear (2026-08-08) | after it (2026-09-08) |
+| ---------- | ----------------------------- | --------------------- |
+| 44 `P0A07` | `FF`                          | **`08`**              |
+| 51 `P1050` | `FF`                          | **`05`**              |
+| 52 `P1051` | `FF`                          | **`05`**              |
+| 60 `P1052` | `FF`                          | **`05`**              |
+| 53 `P0601` | `07`                          | **`01`**              |
+
+The codes were cleared at 2026-08-09 14:42:32 by the factory tool's `14 FF FF` (recorded above as the thing that compromised the naive re-read test). A **counter** predicts exactly this: saturated at 255 before, reset to zero by the clear, and recounted to single digits in the weeks since. A **sentinel** predicts `FF` stays `FF` — "not applicable" does not become 5 because a technician cleared some codes. All four `FF`s moved. The sentinel reading is refuted.
+
+⚠️ Note this closes the question **despite** the compromised test, not by escaping it. The earlier worry was that a clear would reset a counter and make unchanged-or-low values consistent with both readings. What rescued it is that the sentinel reading predicts _no change at all_ — so the clear, which looked like it destroyed the experiment, is the very thing that separated the two hypotheses.
+
+The historical values (1, 2, 3, 5…61, 118, and six `0xFF`s) now read as counts on a bike whose codes had not been cleared in a long time, with the most persistent faults saturated.
 
 ⚠️ Do NOT reason from "components seen once read `01`". Nothing in the capture measures how many times a component was seen; that sentence is the counter hypothesis restated as if it corroborated itself, and it stood here until a review caught it. The `0x58` list carries no per-DTC counter — exactly three bytes per record — so there is no second source.
 
