@@ -168,15 +168,11 @@
  * and left bound — cutting a node out of a VanJS tree leaves the panel showing a copy
  * nothing updates any more — so the blocks a panel is not about are hidden instead.
  *
- * Only the sheet's PREAMBLE is hidden here: VcuWrite() returns five children and the
- * first four (heading, its note, availability, the failure line) are no part of any
- * close-up. WHICH block a panel keeps is a rule GENERATED from PANEL_BLOCK at boot, so
- * the marker that picks it is written down once — see installPanelScoping. It used to
- * be four hand-written :nth-child selectors, against a section that had three blocks;
- * it has had six since 2026-08-27, and every close-up then framed the wrong thing. */
-      .pv-scope > div > :nth-child(-n + 4) {
-        display: none;
-      }
+ * Both rules are GENERATED at boot, from SHEET_PREAMBLE and PANEL_BLOCK — see
+ * installPanelScoping — so the counts and the markers are each written down once, and
+ * nothing here can drift from what the runtime asserts. They were hand-written
+ * :nth-child selectors against a section that had three blocks; it has had six since
+ * 2026-08-27, and every close-up then framed something other than its own caption. */
 
       /* ---------- the tier key ---------- */
 
@@ -995,10 +991,15 @@
        * when the section held three blocks; it has held six since 2026-08-27 (7c1df26,
        * a17bddd, 213f7fc added the headlight, reset and all-lights controls), and from that
        * day every close-up framed the wrong blocks under an unchanged caption. A marker
-       * inside the block moves with it. Both are unique within the section: the parameter
-       * form owns the only `select`, and the fold is the only `.risk-fold`.
+       * inside the block moves with it.
+       *
+       * ⚠️ Each is written exactly ONCE in the view, which check-service-preview.ts asserts.
+       * `select.probe-input` was the obvious pick for the form and is the wrong one: that
+       * pair is built twice (the parameter picker and the bits value control), so renaming
+       * the picker alone left the check green while both form panels died at render. The
+       * readout is the sheet's one un-editable field-shaped thing, and there is only one.
        */
-      const PANEL_BLOCK = { form: "select.probe-input", actions: "button.risk-fold" };
+      const PANEL_BLOCK = { form: "div.readout", actions: "button.risk-fold" };
 
       /**
        * Writes one hiding rule per close-up kind, from PANEL_BLOCK.
@@ -1010,29 +1011,37 @@
        */
       function installPanelScoping() {
         const sheet = document.createElement("style");
-        sheet.textContent = Object.entries(PANEL_BLOCK)
-          .map(
+        sheet.textContent = [
+          // The sheet's preamble — heading, its note, availability, the failure line — is no
+          // part of any close-up. Generated from the same constant the settle guard counts
+          // against, so the rule and the guard cannot come to say different numbers.
+          `.pv-scope > div > :nth-child(-n + ${SHEET_PREAMBLE}) { display: none; }`,
+          ...Object.entries(PANEL_BLOCK).map(
             ([kind, marker]) =>
               `.pv-scope-${kind} > div > :nth-child(${SHEET_PREAMBLE + 1}) > :not(:has(${marker})) { display: none; }`
-          )
-          .join("\n");
+          ),
+        ].join("\n");
         document.head.appendChild(sheet);
       }
 
       /**
-       * That the rule above picks out exactly one block, checked once per panel.
+       * That the panel really is showing one block, and the right one.
        *
-       * ⚠️ The rule itself cannot fail loudly — a selector that matches nothing hides
-       * nothing and a panel simply shows the whole section, which is what the old positional
-       * selectors did for twelve days. So the invariant it rests on is asserted here: a
-       * marker matching none (renamed) or several (copied into a second block) throws, and
-       * boot() paints the reason into the panel instead of a plausible wrong picture.
+       * ⚠️ Asserted on the COMPUTED result, not just on the marker. Everything between a
+       * good marker and what a reader sees can fail in silence: a wrong :nth-child in the
+       * generated rule hides nothing, and a browser without :has() drops the rule entirely
+       * for the same outcome — six blocks under a caption naming one, which is byte for byte
+       * the 2026-08-27 bug. The marker is counted too, so the diagnosis stays in the message:
+       * with :not(:has(…)) a marker matching NO block hides all six rather than none.
        */
-      function assertOneBlockMatches(blocks, marker) {
+      function assertScopedToOneBlock(blocks, marker) {
         const matched = [...blocks.children].filter(block => block.querySelector(marker) !== null);
-        if (matched.length !== 1) {
+        const visible = [...blocks.children].filter(block => getComputedStyle(block).display !== "none");
+        if (matched.length !== 1 || visible.length !== 1 || visible[0] !== matched[0]) {
           throw new Error(
-            `preview: ${matched.length} of the write section's ${blocks.children.length} blocks match ${marker} — the section's shape has moved`
+            `preview: ${marker} matches ${matched.length} of the write section's ${blocks.children.length} ` +
+              `blocks and ${visible.length} of them ${visible.length === 1 ? "is" : "are"} visible — ` +
+              "this panel is not showing the block its caption names"
           );
         }
       }
@@ -1155,7 +1164,7 @@
        *
        * The whole section is rendered — it is one bound tree and cutting a node out of it
        * would leave the panel showing a copy VanJS had stopped updating — and the blocks
-       * this panel is not about are then hidden by scopeToBlock.
+       * this panel is not about are then hidden by installPanelScoping's rules.
        */
       async function renderWriteSection(stage, panel) {
         const imp = instantiate();
@@ -1190,12 +1199,18 @@
           return candidate.children.length > 0 ? candidate : null;
         }, "the write section's controls");
         const marker = PANEL_BLOCK[panel.kind];
+        if (marker === undefined) {
+          // Otherwise this waits four seconds for the selector "undefined" and reports it as
+          // a timeout, which reads as the sheet being slow rather than as a panel nobody
+          // gave a block to.
+          throw new Error(`preview: no PANEL_BLOCK marker for a panel of kind ${panel.kind}`);
+        }
         // Waited for separately from the blocks: the parameter <select> is itself behind a
         // binding, so this panel's marker can arrive a tick after the block holding it. A
         // marker that never arrives now times out saying WHICH marker, which is the whole
         // difference between this failing legibly and failing the way it did.
         await settle(() => blocks.querySelector(marker), `${marker} — this panel's block marker`);
-        assertOneBlockMatches(blocks, marker);
+        assertScopedToOneBlock(blocks, marker);
 
         if (panel.open) {
           (await settle(() => body.querySelector("button.risk-fold"))).click();

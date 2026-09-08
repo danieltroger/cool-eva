@@ -92,11 +92,15 @@ if (!annotated.includes("pv-panels")) {
 if (!/const PANELS = \[\s*\{/.test(annotated)) {
   failures.push("the annotated sheet's PANELS array is empty — it would render no panels");
 }
-// ⚠️ `form` belongs in this alternation. It was missing, so the two parameter-write
-// panels were never counted and the floor of five was being cleared by five of seven.
+// ⚠️ `form` belongs in this alternation. It was missing, so the two parameter-write panels
+// were never counted — and the floor has to move with it, or the fix WEAKENS this guard:
+// five was one below a count of five, and against a count of seven it would pass a sheet
+// with two panels deleted. The floor is what the sheet declares today, so a panel removed
+// on purpose edits this line and a panel lost by accident goes red. Adding one is free.
+const PANELS_DECLARED = 7;
 const panelCount = (annotated.match(/^\s*kind: "(key|sheet|actions|form)",$/gm) ?? []).length;
-if (panelCount < 5) {
-  failures.push(`the annotated sheet declares only ${panelCount} panels`);
+if (panelCount < PANELS_DECLARED) {
+  failures.push(`the annotated sheet declares ${panelCount} panels, fewer than the ${PANELS_DECLARED} it should`);
 }
 
 // ⚠️ A close-up finds its block by a MARKER INSIDE it (PANEL_BLOCK) rather than by
@@ -114,14 +118,27 @@ if (!declaration) {
   if (markers.length === 0) {
     failures.push("PANEL_BLOCK is empty — every close-up would show the whole write section");
   }
-  const view = await readFile("public/views/vcu-write.js", "utf8");
+  const view = await readFile(new URL("../public/views/vcu-write.js", import.meta.url), "utf8");
   for (const marker of markers) {
-    // `select.probe-input` → `probe-input`, and the class has to be a WHOLE token in the
-    // attribute: `\brisk-fold\b` alone is also satisfied by `risk-fold-caret`, which is a
-    // span on the same control and would keep this green through the rename it exists for.
-    const token = marker.slice(marker.indexOf(".") + 1);
-    if (!new RegExp(`class: "(?:[^"]*\\s)?${token}(?:\\s[^"]*)?"`).test(view)) {
-      failures.push(`the close-ups scope by ${marker}, but public/views/vcu-write.js writes no class ${token}`);
+    // ⚠️ Matched as tag PLUS class PLUS a count of exactly one, and every part was bought
+    // with a mutation that got past the version before it. The class must be a whole token
+    // (`\brisk-fold\b` is also satisfied by `risk-fold-caret`, a span on the same control).
+    // The tag must be there (`probe-input` is written three times: a <select>, a <div> and
+    // an <input>). And the count must be ONE, because tag-plus-class is written twice for
+    // `select.probe-input` — so renaming just the picker a close-up holds left this green
+    // while both form panels died at render. Uniqueness is what makes a rename unmissable.
+    const [tag, className] = marker.split(".");
+    const token = className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const built = (
+      view.match(new RegExp(`\\b${tag}\\(\\s*\\{[^{}]*class: "(?:[^"]*\\s)?${token}(?:\\s[^"]*)?"`, "g")) ?? []
+    ).length;
+    if (built !== 1) {
+      failures.push(
+        built === 0
+          ? `the close-ups scope by ${marker}, but public/views/vcu-write.js builds no <${tag}> with class ${className}`
+          : `${marker} is built ${built} times in public/views/vcu-write.js, so this check can no longer see a rename of ` +
+              "the one a close-up holds — give that element a class of its own, or pick a marker written once"
+      );
     }
   }
   if (!failures.some(failure => failure.includes("PANEL_BLOCK") || failure.includes("close-ups scope by"))) {
