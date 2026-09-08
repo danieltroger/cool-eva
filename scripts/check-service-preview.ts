@@ -15,8 +15,8 @@ import { promisify } from "node:util";
 // page in a browser to find. `new Script()` catches exactly that with no browser and no
 // dependency: it parses without running, so none of the page's own code executes.
 //
-// Both variants are built. The annotated one is only reachable with a flag, which is
-// precisely how it would rot without anyone noticing.
+// Every variant is built. The two behind flags are only reachable with a flag, which is
+// precisely how they would rot without anyone noticing.
 
 const run = promisify(execFile);
 const out = join(tmpdir(), "cool-eva-preview-check.html");
@@ -24,15 +24,20 @@ const failures: string[] = [];
 const built = new Map<string, string>();
 
 console.log("\n──── scripts/check-service-preview.ts ──────────────────────────────────────────");
-console.log("     that both generated design previews are syntactically valid JavaScript");
+console.log("     that every generated design preview is syntactically valid JavaScript");
 
-for (const flags of [[], ["--annotated"]]) {
-  const label = flags.length > 0 ? "annotated sheet" : "whole dashboard";
+const VARIANTS: Array<{ label: string; flags: string[] }> = [
+  { label: "whole dashboard", flags: [] },
+  { label: "annotated sheet", flags: ["--annotated"] },
+  { label: "whole dashboard + controls", flags: ["--controls"] },
+];
+
+for (const { label, flags } of VARIANTS) {
   await run("node", ["--experimental-strip-types", "scripts/build-service-preview.ts", out, ...flags]);
   const html = await readFile(out, "utf8");
   await unlink(out).catch(() => {});
 
-  for (const placeholder of ["__CSS__", "__MODULES__"]) {
+  for (const placeholder of ["__CSS__", "__MODULES__", "__CONTROLS__"]) {
     if (html.includes(placeholder)) {
       failures.push(`${label}: ${placeholder} survived into the output — a substitution did not happen`);
     }
@@ -69,8 +74,40 @@ for (const flags of [[], ["--annotated"]]) {
 // annotated sheet could rot to nothing and this check would applaud.
 const whole = built.get("whole dashboard") ?? "";
 const annotated = built.get("annotated sheet") ?? "";
+const controlled = built.get("whole dashboard + controls") ?? "";
 if (whole === annotated) {
   failures.push("both variants produced identical output — the --annotated flag is not selecting a different template");
+}
+if (whole === controlled) {
+  failures.push("--controls produced the same file as no flag, so it is injecting nothing");
+}
+
+// ⚠️ The same "the host existing is not the host being filled" hole as the two below,
+// and one more beyond it: a panel that is present but never handed `imp` writes into a
+// second, unmounted copy of the store, so every slider moves and NOTHING on the page
+// changes. Both halves are asserted because either alone passes while the panel is dead.
+if (!controlled.includes("pc-panel")) {
+  failures.push("--controls injected no panel markup");
+}
+if (!/window\.__previewControls\(imp\)/.test(controlled)) {
+  failures.push("the controls panel is never handed the module registry, so its sliders would drive nothing");
+}
+// ⚠️ Asserted INSIDE the panel's own script block, not across the file. Everything ends
+// up in one document, `public/lib/store.js` is bundled into it, and store.js writes
+// `signalState(key).val = reading` itself — so a whole-file match for the panel writing
+// to the store is satisfied by the app's own code and stays green with the panel's
+// setter gutted. Found by mutating it; two looser spellings passed before this one.
+const panelBlock = [...controlled.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+  .map(match => match[1])
+  .find(source => source.includes("__previewControls = function"));
+if (panelBlock === undefined) {
+  failures.push("no script block defines __previewControls, so the injected panel is inert markup");
+} else if (!/signalState\([^)]+\)\.val\s*=/.test(panelBlock)) {
+  failures.push("the controls panel never writes to the signal store, so it cannot move the dashboard");
+}
+// …and the plain build must stay clean, or the flag is decorative.
+if (whole.includes("pc-panel")) {
+  failures.push("the panel is in the default preview too — --controls is not what puts it there");
 }
 
 // ⚠️ And the whole-app page must actually MOUNT the app. Deleting the one line this
@@ -104,4 +141,4 @@ if (failures.length > 0) {
   }
   process.exit(1);
 }
-console.log("\n\u2713 both previews parse, no placeholder left unreplaced");
+console.log(`\n\u2713 all ${VARIANTS.length} previews parse, no placeholder left unreplaced`);

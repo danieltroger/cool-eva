@@ -26,3 +26,8 @@ obd-garage
 # in this repo catches, because nothing here executes the bundle.
 scripts/service-preview-template.html
 scripts/app-preview-template.html
+
+# Injected into that template verbatim at __CONTROLS__, so it is part of the same shell
+# and inherits the same hazard: it carries a <script> block that ends up inside the
+# generated bundle, where a reformat has already once produced code no check executed.
+scripts/preview-controls.html

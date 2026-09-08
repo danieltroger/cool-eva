@@ -1,0 +1,254 @@
+<!-- Slider panel for the whole-dashboard preview, injected verbatim into
+     app-preview-template.html by scripts/build-service-preview.ts under --controls.
+
+     ⚠️ Do not write the controls placeholder's own name anywhere in this file. It is
+     substituted INTO the page, so a copy of the token in here survives into the output
+     and check-service-preview.ts reads that — correctly — as a substitution that never
+     happened. That is not hypothetical; it is why this paragraph exists.
+
+     The point of it: the states worth looking at on this dashboard are the ones a parked
+     bike never shows. The default preview seeds one snapshot of a bike sitting in a
+     garage, so a derate, a charge or a hard pull cannot be seen at all — and those are
+     exactly the states a design change has to be judged in. The power bar's hatching
+     shipped a version whose gaps were the same colour as the available track, and no
+     amount of reading the code found it; one screenshot at 130 A did, immediately.
+
+     It drives the REAL modules — these sliders write into the store the WebSocket writes
+     into, so what renders is the shipped code and not a mock. -->
+<style>
+  body {
+    padding-right: 320px;
+  }
+  @media (max-width: 900px) {
+    body {
+      padding-right: 0;
+      padding-bottom: 340px;
+    }
+  }
+  .pc-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 320px;
+    height: 100vh;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 0.9rem 1rem 2rem;
+    background: #111c2e;
+    border-left: 1px solid #24334a;
+    color: #e2e8f0;
+    z-index: 200;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  @media (max-width: 900px) {
+    .pc-panel {
+      top: auto;
+      bottom: 0;
+      width: 100%;
+      height: 330px;
+      border-left: 0;
+      border-top: 1px solid #24334a;
+    }
+  }
+  .pc-panel h1 {
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #9aa9bf;
+    margin: 0 0 0.9rem;
+  }
+  .pc-row {
+    margin-bottom: 0.85rem;
+  }
+  .pc-row label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: #9aa9bf;
+    margin-bottom: 0.2rem;
+  }
+  .pc-row label b {
+    color: #e2e8f0;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .pc-row input[type="range"] {
+    width: 100%;
+    accent-color: #4ade80;
+  }
+  .pc-derived {
+    background: #0b1220;
+    border-radius: 0.5rem;
+    padding: 0.6rem 0.7rem;
+    margin: 0.9rem 0;
+    font-size: 0.8rem;
+  }
+  .pc-derived div {
+    display: flex;
+    justify-content: space-between;
+    margin: 0.15rem 0;
+  }
+  .pc-derived span:first-child {
+    color: #9aa9bf;
+  }
+  .pc-derived span:last-child {
+    font-variant-numeric: tabular-nums;
+  }
+  .pc-presets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+  }
+  .pc-presets button {
+    background: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 0.45rem;
+    padding: 0.45rem 0.3rem;
+    font-size: 0.74rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .pc-presets button:hover {
+    background: #334155;
+  }
+  .pc-note {
+    color: #9aa9bf;
+    font-size: 0.72rem;
+    margin-top: 0.9rem;
+    line-height: 1.5;
+  }
+</style>
+<div class="pc-panel">
+  <h1>Preview controls</h1>
+  <div class="pc-row">
+    <label>Pack power <b id="pc-v-kw"></b></label><input type="range" id="pc-kw" min="-130" max="50" step="1" />
+  </div>
+  <div class="pc-row">
+    <label>allowed_discharge_a <b id="pc-v-dis"></b></label><input type="range" id="pc-dis" min="0" max="400" step="5" />
+  </div>
+  <div class="pc-row">
+    <label>allowed_regen_a <b id="pc-v-reg"></b></label><input type="range" id="pc-reg" min="0" max="120" step="2" />
+  </div>
+  <div class="pc-row">
+    <label>pack_v <b id="pc-v-volt"></b></label><input type="range" id="pc-volt" min="248" max="345" step="1" />
+  </div>
+  <div class="pc-row">
+    <label style="cursor: pointer"><span>DC fast charging</span><input type="checkbox" id="pc-dc" /></label>
+  </div>
+  <div class="pc-derived">
+    <div><span>drive ceiling</span><span id="pc-d-drive"></span></div>
+    <div><span>regen ceiling</span><span id="pc-d-regen"></span></div>
+  </div>
+  <div class="pc-presets">
+    <button data-preset="pull">Hard pull</button>
+    <button data-preset="regen">Regen</button>
+    <button data-preset="derated">Hot / 12% SOC</button>
+    <button data-preset="cold">Cold pack</button>
+    <button data-preset="fresh">Full &amp; cool</button>
+    <button data-preset="overdrawn">Past the ceiling</button>
+    <button data-preset="dc">DC charging</button>
+    <button data-preset="nodata">No 0x202 yet</button>
+  </div>
+  <p class="pc-note">
+    These write into the real signal store, so what you see is the shipped code. The power bar is on Ride; Hypermile
+    shows the same two ceilings as numbers.
+  </p>
+</div>
+<script>
+  // Named for what the bike is doing, not for what the bar should look like — a preset
+  // that encodes the expected picture cannot show you a wrong one.
+  const PC_PRESETS = {
+    pull: { pack_kw: -95, allowed_discharge_a: 300, allowed_regen_a: 120, pack_v: 320, dc: false },
+    regen: { pack_kw: 25, allowed_discharge_a: 300, allowed_regen_a: 120, pack_v: 330, dc: false },
+    derated: { pack_kw: -34, allowed_discharge_a: 130, allowed_regen_a: 20, pack_v: 300, dc: false },
+    cold: { pack_kw: -18, allowed_discharge_a: 200, allowed_regen_a: 0, pack_v: 310, dc: false },
+    fresh: { pack_kw: -60, allowed_discharge_a: 400, allowed_regen_a: 120, pack_v: 341, dc: false },
+    overdrawn: { pack_kw: -120, allowed_discharge_a: 280, allowed_regen_a: 90, pack_v: 320, dc: false },
+    dc: { pack_kw: 22, allowed_discharge_a: 0, allowed_regen_a: 0, pack_v: 341, dc: true },
+    nodata: { pack_kw: -40, allowed_discharge_a: null, allowed_regen_a: null, pack_v: 320, dc: false },
+  };
+
+  // How often the panel re-asserts its values over the stubbed socket. The preview's
+  // WebSocket redelivers its parked-bike snapshot every time the dashboard's own silence
+  // watchdog reconnects it, which walks every slider back to 0.1 kW mid-look.
+  const PC_REASSERT_MS = 250;
+
+  window.__previewControls = function (imp) {
+    const store = imp("lib/store.js");
+    const state = { ...PC_PRESETS.derated };
+    const el = id => document.getElementById(id);
+
+    function push() {
+      const at = Date.now();
+      const set = (key, value, unit, group) => {
+        store.signalState(key).val = { value, unit, group, ts: at };
+      };
+      set("pack_kw", state.pack_kw, "kW", "battery");
+      set("pack_v", state.pack_v, "V", "battery");
+      set("pack_a", Math.round((state.pack_kw * 1000000) / state.pack_v) / 1000, "A", "battery");
+      set("pack_resistance_mohm", 55, "mΩ", "battery");
+      set("fast_dc_contactor", state.dc ? 1 : 0, "", "charge");
+      set("bms_state_charge", state.dc ? 1 : 0, "", "bms");
+      if (state.allowed_discharge_a == null) {
+        // A bike that has never sent 0x202 has no reading for these at all, which is a
+        // different thing from a reading of zero and has to be previewable as such.
+        store.signalState("allowed_discharge_a").val = null;
+        store.signalState("allowed_regen_a").val = null;
+      } else {
+        set("allowed_discharge_a", state.allowed_discharge_a, "A", "battery");
+        set("allowed_regen_a", state.allowed_regen_a, "A", "battery");
+      }
+      const kmh = state.dc ? 0 : Math.min(160, Math.round(Math.abs(state.pack_kw) * 1.3 + 20));
+      set("gps_speed_kmh", kmh, "km/h", "gps");
+      set("speed_can_kmh", kmh + 3, "km/h", "drive");
+      paint();
+    }
+
+    function paint() {
+      el("pc-kw").value = state.pack_kw;
+      el("pc-dis").value = state.allowed_discharge_a ?? 0;
+      el("pc-reg").value = state.allowed_regen_a ?? 0;
+      el("pc-volt").value = state.pack_v;
+      el("pc-dc").checked = state.dc;
+      el("pc-v-kw").textContent = state.pack_kw + " kW";
+      el("pc-v-dis").textContent = state.allowed_discharge_a == null ? "—" : state.allowed_discharge_a + " A";
+      el("pc-v-reg").textContent = state.allowed_regen_a == null ? "—" : state.allowed_regen_a + " A";
+      el("pc-v-volt").textContent = state.pack_v + " V";
+      const ceiling = amps => {
+        if (state.dc) {
+          return "hidden — charging";
+        }
+        return amps == null ? "no 0x202 yet" : ((amps * state.pack_v) / 1000).toFixed(1) + " kW";
+      };
+      el("pc-d-drive").textContent = ceiling(state.allowed_discharge_a);
+      el("pc-d-regen").textContent = ceiling(state.allowed_regen_a);
+    }
+
+    const bindSlider = (id, key) =>
+      el(id).addEventListener("input", event => {
+        state[key] = Number(event.target.value);
+        push();
+      });
+    bindSlider("pc-kw", "pack_kw");
+    bindSlider("pc-dis", "allowed_discharge_a");
+    bindSlider("pc-reg", "allowed_regen_a");
+    bindSlider("pc-volt", "pack_v");
+    el("pc-dc").addEventListener("change", event => {
+      state.dc = event.target.checked;
+      push();
+    });
+    for (const button of document.querySelectorAll(".pc-presets button")) {
+      button.addEventListener("click", () => {
+        Object.assign(state, PC_PRESETS[button.dataset.preset]);
+        // The bar is on Ride, and view-rules.js moves you to Charge on the leading edge
+        // of a charge — so a preset that starts one lands you where you cannot see it.
+        location.hash = "#ride";
+        push();
+      });
+    }
+
+    push();
+    setInterval(push, PC_REASSERT_MS);
+  };
+</script>

@@ -219,7 +219,11 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-service-preview.ts",
     covers:
-      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output",
+      "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure " +
+      "mode nothing else here can see, since no other check executes generated output — for all three variants, " +
+      "and that each is actually wired: the whole-app one mounts the app, the annotated one declares panels, and " +
+      "the --controls one both injects its slider panel and is handed the module registry so the sliders reach " +
+      "the same store the app mounted against, rather than a second dead copy of it",
   },
   {
     script: "scripts/check-freeze-frame.ts",

@@ -8,6 +8,21 @@ Related documents: `README.md` (overview), `HYPERMILING.md` (the pack model the 
 
 ---
 
+## Looking at a change before riding out to the garage — `scripts/build-service-preview.ts`
+
+    node --experimental-strip-types scripts/build-service-preview.ts out.html --controls
+
+builds the whole dashboard into one self-contained file with the Pi stood in for, plus a slider panel that writes into the live signal store. The stylesheet and every module are the shipped ones, so what the page looks like is what the bike serves. `--annotated` gives the design-review sheet instead; no flag gives the plain app.
+
+`--controls` exists because **the states worth judging are the ones a parked bike never shows.** The plain preview seeds one snapshot of a bike in a garage, so a derate, a hard pull or a charge cannot be looked at — and those are exactly the states a change to the power bar or the thermal tiles has to be judged in. It is not a nicety: the derate marking described below shipped a version whose gaps were the same colour as the available track, and reading the code never found it, while one screenshot at 130 A did immediately.
+
+The panel is `scripts/preview-controls.html`, injected verbatim. Adding a slider is a `<input type="range">` and a line in `push()`. Two traps it already fell into, both now held by `scripts/check-service-preview.ts`:
+
+- **A panel that is present but never handed `imp`** writes into a second, unmounted copy of the store — every slider moves and nothing on the page changes, with no error anywhere.
+- **Do not write the controls placeholder's own name inside the fragment.** It is substituted _into_ the page, so a copy of the token survives into the output and the check reads that, correctly, as a substitution that never happened.
+
+---
+
 ## Routing — `lib/router.js`, `app.js`
 
 The tab bar is in the URL. Until that existed the tab lived in a module-level state and nowhere else, so the phone's Back button had nothing to walk back through: it left the dashboard from whichever screen you were on, which on a bike is the one moment you are least able to find your way back.

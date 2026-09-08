@@ -153,6 +153,18 @@ const modules = [...registry]
 // mounted one state per panel with prose explaining each, which is only useful while
 // arguing about a specific design decision.
 const annotated = process.argv.includes("--annotated");
+// `--controls` adds a slider panel that writes into the live signal store, so the states
+// a parked bike never produces — a derate, a hard pull, a charge — can be looked at.
+// That is not a nicety: the power bar shipped a derate marking whose gaps were the same
+// colour as the available track, and reading the code never found it while one
+// screenshot at 130 A did. Not offered on the annotated sheet, which mounts fixed states
+// per panel and has nothing for a slider to move.
+const controls = process.argv.includes("--controls");
+if (annotated && controls) {
+  throw new Error(
+    "build-service-preview: --controls drives the live app; the annotated sheet has no live app to drive"
+  );
+}
 const templateFile = annotated ? "service-preview-template.html" : "app-preview-template.html";
 const template = await readFile(join(HERE, templateFile), "utf8");
 const css = await readFile(join(PUBLIC, "style.css"), "utf8");
@@ -168,6 +180,11 @@ if (!/__MODULES__,?/.test(template)) {
 if (!template.includes("__TABLES__")) {
   throw new Error("build-service-preview: the template has no __TABLES__ placeholder");
 }
+// Same silent-no-op trap as the three above: without this, a renamed placeholder makes
+// --controls print its usual success line and produce a page with no panel on it.
+if (controls && !template.includes("__CONTROLS__")) {
+  throw new Error("build-service-preview: --controls was given but the template has no __CONTROLS__ placeholder");
+}
 // Function replacements, not strings: a `$&` or `$1` inside the substituted CSS or JS
 // would otherwise be read as a replacement pattern and silently corrupt the output.
 // The Faults tab fetches these two, and they are TABLES rather than bike state — so the
@@ -176,15 +193,18 @@ if (!template.includes("__TABLES__")) {
 // exactly the failure src/http/dtc-table.ts's own header warns about.
 const tables = JSON.stringify({ "/dtc-table": buildDtcTable(), "/fault-infokeys": buildFaultInfokeys() });
 
+const panel = controls ? await readFile(join(HERE, "preview-controls.html"), "utf8") : "";
+
 const html = template
   .replace("__CSS__", () => css)
   .replace(/__MODULES__,?/, () => modules)
-  .replace("__TABLES__", () => tables);
+  .replace("__TABLES__", () => tables)
+  .replace("__CONTROLS__", () => panel);
 
 const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");
 await writeFile(out, html, "utf8");
+const variant = annotated ? "annotated sheet" : controls ? "whole dashboard + controls" : "whole dashboard";
 console.log(
-  `✓ ${out} — ${annotated ? "annotated sheet" : "whole dashboard"}, ${registry.size} modules, ` +
-    `${Math.round(html.length / 1024)} kB, no network at runtime`
+  `✓ ${out} — ${variant}, ${registry.size} modules, ${Math.round(html.length / 1024)} kB, no network at runtime`
 );
