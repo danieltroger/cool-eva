@@ -63,15 +63,6 @@ const MOST_PLAUSIBLE_MOHM = 400;
 const MEASURED_HOLD_MS = 20_000;
 
 /**
- * How long batt_temp_hi must be missing before R is assumed rather than modelled.
- *
- * Twice src/can/pack-temperature.ts's THERMAL_FRAME_WAIT_MS, so the 5 s a healthy bike
- * spends deciding which frame owns the true temperature never shows the rider an
- * "assuming" tile on connect.
- */
-const ASSUMED_AFTER_MS = 10_000;
-
-/**
  * R when there is no pack temperature at all. The pooled median of the measured
  * windows. It errs low against a cold pack, which understates heat on the informational
  * tiles and is the conservative direction on the headroom one: R enters sagPerCellMv as
@@ -129,12 +120,10 @@ export function packResistanceWith(read, nowMs = monotonicNow()) {
   }
   const packCelsius = read("batt_temp_hi");
   if (packCelsius != null) {
-    lastTemperatureAtMs = nowMs;
     return { milliohms: modelledMilliohms(packCelsius), provenance: "modelled" };
   }
-  if (lastTemperatureAtMs != null && nowMs - lastTemperatureAtMs < ASSUMED_AFTER_MS) {
-    return { milliohms: modelledMilliohms(lastTemperatureCelsius), provenance: "modelled" };
-  }
+  // Reachable on a real bike, not just at startup: pack-temperature.ts leaves
+  // batt_temp_hi permanently unlogged under CUSTOM_BMS_CONFIG when 0x660 never arrives.
   return { milliohms: ASSUMED_MOHM, provenance: "assumed" };
 }
 
@@ -176,8 +165,6 @@ export function resetPackResistance() {
   lastPairedTs = null;
   measuredMilliohms = null;
   measuredAtMs = null;
-  lastTemperatureAtMs = null;
-  lastTemperatureCelsius = 25;
 }
 
 const sampleVolts = new Float64Array(CAPACITY);
@@ -191,9 +178,6 @@ let lastPairedTs = null;
 let measuredMilliohms = null;
 /** @type {number | null} */
 let measuredAtMs = null;
-/** @type {number | null} */
-let lastTemperatureAtMs = null;
-let lastTemperatureCelsius = 25;
 
 /**
  * @param {number} volts
@@ -306,7 +290,6 @@ function fitWindow(sinceMs) {
  * @returns {number}
  */
 function modelledMilliohms(packCelsius) {
-  lastTemperatureCelsius = packCelsius;
   const first = RESISTANCE_BY_TEMPERATURE[0];
   const last = RESISTANCE_BY_TEMPERATURE[RESISTANCE_BY_TEMPERATURE.length - 1];
   if (packCelsius <= first[0]) {

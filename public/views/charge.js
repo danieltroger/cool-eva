@@ -461,7 +461,11 @@ function ThermalBalanceTile() {
       const delta = coolantDelta();
       const deltaText =
         delta == null ? "no coolant probes" : `coolant ΔT ${units.tempDelta(delta).toFixed(2)} ${units.tempUnit()}`;
-      return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h`;
+      // coolantDelta() above reads through valueOf, so this binding has a dependency and
+      // re-runs — unlike the Hypermile sub-line, which needed chartTick for that.
+      const note = resistanceNote(packResistance());
+      const inNote = note === "" ? "" : ` · in uses ${note}`;
+      return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h${inNote}`;
     })
   );
 }

@@ -24,6 +24,7 @@ import { LOAD_WINDOW, LOAD_WINDOW_MOHM, REST_WINDOW, type CapturedFrame } from "
 //   §3 a measurement goes stale on the stated interval
 //   §4 only same-frame pairs enter the buffer
 //   §5 the modelled curve is monotone, interpolates, and holds its endpoints
+//   §8 the three gates that a fit has to clear, each shown to be load-bearing
 //   §6 with no pack temperature at all the answer is `assumed`, never null
 //   §7 store.js hands the buffer only readings that passed the plausibility gate
 
@@ -191,6 +192,66 @@ check(
   packResistanceWith(noTemperature, monotonicNow()).provenance !== "measured",
   "readings apply() rejects as implausible never reach the buffer"
 );
+
+// §8 — the gates, each with a window that ONLY that gate rejects
+console.log("\n──── §8 every gate is load-bearing ────");
+
+/** A synthetic 0x200 payload. Real bytes, so it goes through the real decoder. */
+function frameFor(volts: number, amps: number, afterMs: number): CapturedFrame {
+  const tenthVolts = Math.round(volts * 10);
+  const tenthAmps = Math.round(amps * 10) & 0xffff;
+  return {
+    afterMs,
+    data: [25, 50, 100, 35, tenthVolts >> 8, tenthVolts & 0xff, tenthAmps >> 8, tenthAmps & 0xff],
+  };
+}
+
+/** V = OCV + I·R with an optional deterministic wobble on the voltage. */
+function ohmicWindow(count: number, spreadAmps: number, milliohms: number, wobbleVolts: number) {
+  const frames: CapturedFrame[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const amps = -spreadAmps / 2 + (spreadAmps * i) / (count - 1);
+    const wobble = wobbleVolts * (i % 2 === 0 ? 1 : -1);
+    frames.push(frameFor(300 + (amps * milliohms) / 1000 + wobble, amps, i * 200));
+  }
+  return frames;
+}
+
+// Enough samples, a clean fit, a plausible answer — and 10 A of spread. Only
+// LEAST_SPREAD_A can reject it.
+const tooFlat = replay(ohmicWindow(40, 10, 65, 0), noTemperature);
+check(tooFlat.provenance !== "measured", "40 clean samples across only 10 A are refused (LEAST_SPREAD_A)");
+
+// 200 A of spread and a plausible slope, but the voltage is noisy enough that the slope
+// is not resolved. Only MOST_RELATIVE_ERROR can reject it.
+const tooNoisy = replay(ohmicWindow(40, 200, 65, 4), noTemperature);
+check(tooNoisy.provenance !== "measured", "40 samples over 200 A with a badly-resolved slope are refused (SE gate)");
+// ...and the same window without the noise IS accepted, so the gate is not just refusing
+// everything synthetic.
+const clean = replay(ohmicWindow(40, 200, 65, 0), noTemperature);
+check(
+  clean.provenance === "measured" && Math.abs(clean.milliohms - 65) < 1,
+  `the same window without the wobble fits ${clean.milliohms.toFixed(1)} mΩ against the 65 built into it`
+);
+
+// 19 distinct frames — one short of LEAST_SAMPLES — each re-sent five times as the 5 s
+// heartbeat does. Deduped that is 19 samples and no fit; not deduped it is 95 and one.
+resetPackResistance();
+const nineteen = ohmicWindow(19, 200, 65, 0);
+for (const frame of nineteen) {
+  for (let repeat = 0; repeat < 5; repeat += 1) {
+    observeFrame(liveValuesFor(frame), frame.afterMs + repeat);
+  }
+}
+check(
+  packResistanceWith(noTemperature, 19 * 200).provenance !== "measured",
+  "19 frames re-sent five times each stay 19 samples, not 95 (heartbeat dedupe)"
+);
+
+// A clean, well-spread, well-resolved fit at a resistance no pack has. Only the
+// sanity band can reject it — the SE gate cannot, because the fit is perfect.
+const impossible = replay(ohmicWindow(40, 200, 500, 0), noTemperature);
+check(impossible.provenance !== "measured", "a perfectly-fitted 500 mΩ is refused as impossible (sanity band)");
 
 console.log("");
 if (failures.length > 0) {

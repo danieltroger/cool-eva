@@ -250,7 +250,13 @@ function LossTile() {
       return sparkline({ values: watts, color: colors.lossFraction(percent), minSpan: 100 });
     },
     div({ class: "sub" }, () => {
-      const resistance = packResistance();
+      // ⚠️ chartTick is the DEPENDENCY, not decoration. packResistanceSampled() returns
+      // on its first line while a measurement is fresh, reading no VanJS state at all —
+      // and a binding whose run reads nothing is registered to nothing and never runs
+      // again. Without this the line froze on its first measured value for the rest of
+      // the ride, through both staleness and a 43→50 °C swing.
+      chartTick.val;
+      const resistance = packResistanceSampled();
       const note = resistanceNote(resistance);
       const source = note === "" ? "measured" : note;
       return `pack ${resistance.milliohms.toFixed(0)} mΩ ${source} · halving current quarters this`;
