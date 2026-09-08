@@ -21,7 +21,7 @@ import {
   replayCharge,
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
-import { COOLING_AT_53_MS, COOLING_EPISODE } from "./charge-auto-episode.ts";
+import { COOLING_AT_53_MS, COOLING_EPISODE, DRIFTING_AT_53_MS, DRIFTING_EPISODE } from "./charge-auto-episode.ts";
 import { REASON_RIDER, toggleAction } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
 
@@ -421,6 +421,9 @@ if (!/you set the current/i.test(stoodDown.note)) {
 // (scripts/charge-auto-episode.ts) and it is the ONLY thing that would notice either tier going
 // away. Behaviour is asserted, never the reason code: two of an earlier draft's three fixtures
 // passed with the tier deleted because only the code changed.
+/** Reasons the real-episode fixtures produce, checked below against the ones §6 could not reach. */
+const exercisedByEpisode: number[] = [];
+
 const coolingAt53 = decideChargeCurrent({
   ...HEALTHY,
   packTemperatureC: 53,
@@ -428,11 +431,12 @@ const coolingAt53 = decideChargeCurrent({
   samples: COOLING_EPISODE,
   nowMs: COOLING_AT_53_MS,
 });
+exercisedByEpisode.push(coolingAt53.reason);
 if (coolingAt53.kind !== "hold") {
   failures.push(
     `§10 the pack read 53 °C while FALLING (13:51 on 2026-08-08, on its way to 50) and the controller ` +
-      `${coolingAt53.kind === "command" ? `cut to ${coolingAt53.amps} A` : "acted"} — the old single ceiling ` +
-      `throttled this three ticks running, which is the whole reason for the no-raise tier`
+      `moved to ${coolingAt53.kind === "command" ? `${coolingAt53.amps} A` : "act"} — the old single ceiling ` +
+      `throttled this four ticks running, which is the whole reason for the no-raise tier`
   );
 }
 // ⚠️ STEP_DOWN_FROM_C's remaining unique job. From NO_RAISE_FROM_C upward the time-to-cliff test
@@ -452,6 +456,25 @@ if (coolingAt54.kind !== "command" || coolingAt54.amps >= 60) {
       `54.99 and no signal on this bus resolves that. Got ${JSON.stringify(coolingAt54)}`
   );
 }
+// ⚠️ THE TIER'S HEADLINE JOB, and the one an earlier draft left unasserted: a pack at a reading of
+// 53 drifting slowly UP must not have its current RAISED. Only rates below 0.0833 K/min decide
+// anything here — above that the time-to-cliff test acts anyway — so this is the band, on real
+// logged data. Adding `&& rate.perMinute <= 0` to the hold passes every other assertion.
+const driftingAt53 = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 53,
+  commandedAmps: 60,
+  samples: DRIFTING_EPISODE,
+  nowMs: DRIFTING_AT_53_MS,
+});
+exercisedByEpisode.push(driftingAt53.reason);
+if (driftingAt53.kind !== "hold") {
+  failures.push(
+    `§10 a pack reading 53 °C and drifting slowly UP (2026-09-07 15:26, +0.037 K/min) must not have its ` +
+      `current raised — it may already be at 53.99. Got ${JSON.stringify(driftingAt53)}`
+  );
+}
+
 // The no-raise tier must not become a no-DESCEND tier: a pack at 53 closing fast still steps down.
 const risingAt53 = decideChargeCurrent({
   ...HEALTHY,
@@ -464,7 +487,14 @@ if (risingAt53.kind !== "command" || risingAt53.amps >= 60) {
   failures.push(`§10 a pack at 53 °C climbing fast must still be reduced, got ${JSON.stringify(risingAt53)}`);
 }
 
-// ── §11 the crossing count over a frozen grid ──────────────────────────────
+// ⚠️ NEAR_CEILING is produced only by the real-episode fixtures — the plant never reaches it — so
+// it is asserted here rather than in §6, which runs before them. A reason nothing emits is a reason
+// nobody will ever see on the dash.
+if (!exercisedByEpisode.includes(CHARGE_AUTO_REASON.NEAR_CEILING)) {
+  failures.push("§10 no fixture ever produces NEAR_CEILING — the no-raise tier is not being reached");
+}
+
+// ── §11 the crossing set over a frozen grid ────────────────────────────────
 //
 // ⚠️ THE ONE ASSERTION THAT NOTICES A RULE GETTING LESS SAFE WITHOUT GETTING WRONG. Every other
 // section here judges the controller against the do-nothing baseline or against a fixture; none of
@@ -474,8 +504,38 @@ if (risingAt53.kind !== "command" || risingAt53.amps >= 60) {
 //
 // A golden count over a FROZEN grid, because the alternative is keeping the old rule alive in the
 // tree forever to diff against. If the grid moves the number is meaningless — see CROSSING_GRID.
-const EXPECTED_CROSSINGS = 24;
-let crossings = 0;
+// ⚠️ The SET, not just the count. A count alone blames the rule for anything that moves the grid —
+// a plant refit, a different rate window, a different horizon — and reports it as "less safe" with
+// a confident and wrong diagnosis. Naming which plants cross says whether the change added new ones
+// or merely moved the boundary, which are different findings. The old and shipped rules cross on
+// exactly these, worst margin 0.0145 K for both.
+const EXPECTED_CROSSINGS = [
+  "40/39/0.0044",
+  "44/30/0.0044",
+  "44/35/0.0044",
+  "44/39/0.0044",
+  "48/30/0.0044",
+  "48/35/0.0044",
+  "48/39/0.0044",
+  "51/25/0.0044",
+  "51/30/0.0044",
+  "51/35/0.0044",
+  "51/39/0.0044",
+  "51/39/0.0089",
+  "54/10/0.0044",
+  "54/18/0.0044",
+  "54/25/0.0044",
+  "54/25/0.0089",
+  "54/30/0.0044",
+  "54/30/0.0089",
+  "54/35/0.0044",
+  "54/35/0.0089",
+  "54/35/0.0134",
+  "54/39/0.0044",
+  "54/39/0.0089",
+  "54/39/0.0134",
+];
+const crossed: string[] = [];
 for (const arrivalC of CROSSING_GRID.arrivals) {
   for (const ambientC of CROSSING_GRID.ambients) {
     for (const cooling of CROSSING_GRID.coolings) {
@@ -487,20 +547,26 @@ for (const arrivalC of CROSSING_GRID.arrivals) {
         toSoc: CROSSING_GRID.toSoc,
       });
       if (run.peakC >= CLIFF_C) {
-        crossings += 1;
+        crossed.push(`${arrivalC}/${ambientC}/${cooling.toFixed(4)}`);
       }
     }
   }
 }
-if (crossings !== EXPECTED_CROSSINGS) {
+const added = crossed.filter(plant => !EXPECTED_CROSSINGS.includes(plant));
+const removed = EXPECTED_CROSSINGS.filter(plant => !crossed.includes(plant));
+if (added.length > 0) {
   failures.push(
-    `§11 ${crossings} of the ${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} ` +
-      `frozen-grid plants cross ${CLIFF_C} °C, not the expected ${EXPECTED_CROSSINGS}. ` +
-      (crossings > EXPECTED_CROSSINGS
-        ? "The rule got LESS safe — it now crosses where it did not before."
-        : "It got safer, which may be right: re-derive the golden count and say why in the commit.")
+    `§11 the rule now crosses ${CLIFF_C} °C on ${added.length} plant(s) it did not before ` +
+      `(arrival/ambient/cooling: ${added.join(", ")}) — LESS safe than what it replaced`
   );
 }
+if (removed.length > 0 && added.length === 0) {
+  failures.push(
+    `§11 ${removed.length} plant(s) no longer cross (${removed.join(", ")}). That may be an improvement — ` +
+      `re-derive the frozen set and say why in the commit, rather than letting it drift silently`
+  );
+}
+const crossings = crossed.length;
 
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);

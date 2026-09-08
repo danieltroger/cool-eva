@@ -99,7 +99,7 @@ export const NO_RAISE_FROM_C = 53;
  * From NO_RAISE_FROM_C upward the time-to-cliff test already targets THIS value rather than the
  * cliff, which covers a rising pack. What is left uniquely to this tier is the pack that is flat or
  * COOLING at 54 — where the rate says there is all the time in the world and the reading says the
- * pack may be six hundredths of a degree from the cliff.
+ * reading cannot say how near the cliff the pack is.
  */
 export const STEP_DOWN_FROM_C = 54;
 

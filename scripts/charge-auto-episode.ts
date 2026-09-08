@@ -12,7 +12,7 @@ import type { TemperatureSample } from "../src/charge/rate.ts";
 // the two-tier rule the more aggressive of the two.
 //
 // The clearest is 13:51:31 onwards: the pack reads 53 and is FALLING — it reaches 50 over the next
-// twelve minutes — and the old rule throttled it three ticks running for no reason at all.
+// twelve minutes — and the old rule throttled it four ticks running for no reason at all.
 
 /** Milliseconds from the first sample, so the fixture carries no wall clock. */
 export const COOLING_EPISODE: TemperatureSample[] = [
@@ -33,3 +33,26 @@ export const COOLING_EPISODE: TemperatureSample[] = [
 
 /** Where in that episode the reading first comes back down to 53 while still falling. */
 export const COOLING_AT_53_MS = 1113576;
+
+/**
+ * 2026-09-07T15:09-15:26 UTC, inside the DC stops the plant's own constants were fitted from: the
+ * reading comes back to 53 after a 55 excursion and is still drifting UP.
+ *
+ * ⚠️ This is the band NO_RAISE_FROM_C's own comment is about and the cooling episode does not
+ * reach. The reachable rate space at a reading of 53 splits at 1/(RELEASE_FACTOR × HORIZON_MIN) =
+ * 0.0833 K/min: above 0.125 the time-to-cliff test steps down anyway, between them the hold and a
+ * plain SETTLED behave identically, and only BELOW 0.0833 does the tier decide anything — it is the
+ * difference between holding and stepping the current UP. `estimateHeatingRate` reads +0.037 K/min
+ * here, squarely in that band. Without this fixture, adding `&& rate.perMinute <= 0` to the hold
+ * passes the entire check while re-enabling exactly what the tier exists to prevent.
+ */
+export const DRIFTING_EPISODE: TemperatureSample[] = [
+  { atMs: 0, celsius: 53 },
+  { atMs: 557849, celsius: 54 },
+  { atMs: 686054, celsius: 55 },
+  { atMs: 777187, celsius: 54 },
+  { atMs: 955443, celsius: 53 },
+];
+
+/** 15:26:08 UTC — a tick with the reading back at 53 and the fitted slope still positive. */
+export const DRIFTING_AT_53_MS = 1008062;
