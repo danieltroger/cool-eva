@@ -639,6 +639,17 @@ body {
   color: var(--warn);
 }
 
+/* Machine output — git's, from the Update button — rather than prose we wrote.
+   pre-wrap because a pull's summary is multi-line and CSS would otherwise collapse
+   `Updating a1b2..c3d4 / Fast-forward / src/… | 3 +-` into one run-on sentence.
+   overflow-wrap because the long unbroken token in it (a remote URL, a deep path)
+   would push the sheet sideways on a 390 px phone, which reads worse than the
+   collapse did. */
+.action-note.output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* The write section could not be reached at all.
  *
  * ⚠️ Ranked like .no-undo and NOT with it. The header of vcu-write.js calls this "the

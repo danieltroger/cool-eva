@@ -282,6 +282,20 @@ const CHECKS: SelfCheck[] = [
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",
   },
   {
+    script: "scripts/check-update-endpoint.ts",
+    covers:
+      "the menu's Update button end to end without a Pi: that a real `git pull` through the real handler answers " +
+      "200 and hands the phone git's own output, that a failed one answers 500 with git's `fatal:` rather than the " +
+      "exec wrapper's 'Command failed:', and that a GET is refused. Plus the failure text per shape, which is where " +
+      "this endpoint has actually been wrong: a kill AT the deadline is named as a timeout whether or not git " +
+      "managed to write anything first — the non-empty case is the one an earlier draft dropped — a kill BEFORE it " +
+      "is not (that is an OOM on a Pi Zero, and a confident wrong answer is worse than none), and OpenSSH's " +
+      "`Host key verification failed` / `Permission denied (publickey,…` earn the hint that this service runs as " +
+      "root and cannot use pi's key, matched short of the closing paren because the method list varies. " +
+      "\u26a0 The restart is asserted to be ARMED and never fired: a real ServerResponse here would emit 'finish' " +
+      "and `sudo systemctl restart cool-eva` would run on whatever machine ran npm test",
+  },
+  {
     script: "scripts/check-virtual-clock.ts",
     covers:
       "scripts/virtual-clock.ts itself, against real setTimeout as the oracle: that same-instant timers fire in " +

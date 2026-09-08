@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { exec, spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import { promisify } from "util";
+import { monotonicNow, since } from "../monotonic.ts";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // POST /update — `git pull` the checkout on the Pi, then restart the service so the new
 // code takes effect.
@@ -18,11 +19,9 @@ const execAsync = promisify(exec);
 // root-owned; a later by-hand pull as `pi` may want its own safe.directory or a chown.
 // Deploying only through this button keeps ownership consistent.
 //
-// origin is an SSH remote, but root has no deploy key — the key lives in pi's ~/.ssh, so
-// pulling as root gives "Permission denied (publickey)". Point HOME at pi's home for the
-// git call so ssh finds pi's key, config and known_hosts (the last also matters: root's
-// known_hosts is empty, which would fail host-key verification for github.com).
-const PULL_HOME = "/home/pi";
+// The Pi's origin is https, and that is a requirement rather than a taste: this service
+// runs as root, and root cannot borrow pi's ssh key or known_hosts. INSTALL.md §3 has
+// the reason and the one-line fix; credentialHint below says it to whoever hits it.
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -37,6 +36,15 @@ export interface UpdateReply {
 /** git pull can hang on bad garage wifi; don't leave the button spinning forever. */
 const PULL_TIMEOUT_MS = 60_000;
 
+/**
+ * How early a kill may arrive and still be counted as the timeout. `since()` reads
+ * performance.now() while exec's deadline is a libuv timer, so the two disagree by a
+ * hair at the boundary — the margin is for that skew, not for slop. What a zero-margin
+ * comparison between two clocks does under load is on the record in
+ * scripts/check-fan-endpoint.ts §3.
+ */
+const TIMEOUT_SKEW_MS = 250;
+
 export async function handleUpdateEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
@@ -47,11 +55,20 @@ export async function handleUpdateEndpoint(
     res.end("POST to pull the latest code\n");
     return;
   }
+  const startedAt = monotonicNow();
   try {
-    const { stdout, stderr } = await execAsync(`git -C ${directory} -c safe.directory=${directory} pull`, {
-      timeout: PULL_TIMEOUT_MS,
-      env: { ...process.env, HOME: PULL_HOME },
-    });
+    // GIT_TERMINAL_PROMPT=0 turns a remote that wants credentials into git's own
+    // "terminal prompts disabled" rather than its attempt to open /dev/tty, which a
+    // systemd service does not have. ⚠️ The spread is load-bearing: without it git
+    // loses PATH and cannot exec git-remote-https at all.
+    const { stdout, stderr } = await execFileAsync(
+      "git",
+      ["-C", directory, "-c", `safe.directory=${directory}`, "pull"],
+      {
+        timeout: PULL_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }
+    );
     const output = `${stdout}${stderr}`.trim();
     console.log(`update: git pull in ${directory}:\n${output}`);
     const summary = output || "Already up to date.";
@@ -61,10 +78,64 @@ export async function handleUpdateEndpoint(
   } catch (err) {
     // A non-zero git exit (merge conflict, no network, detached head) lands here with
     // its output carried on the error; surface that rather than a bare "failed".
-    const detail = gitErrorText(err);
+    const detail = describePullFailure(err, since(startedAt));
     console.warn(`update: git pull in ${directory} failed:\n${detail}`);
     respond(res, 500, { ok: false, message: detail });
   }
+}
+
+/**
+ * What the rider is shown when the pull failed, git's own output included.
+ *
+ * Pure, and elapsed time arrives as an argument rather than off a clock, so the timeout
+ * case is checkable without waiting a minute for it (scripts/check-update-endpoint.ts).
+ */
+export function describePullFailure(err: unknown, elapsedMs: number): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const failure = err as Error & { stdout?: string; stderr?: string; killed?: boolean; signal?: string | null };
+  const streams = `${failure.stdout ?? ""}${failure.stderr ?? ""}`.trim();
+  // Prepended, never substituted: the streams are the evidence and this is only the
+  // frame to read them in. On a partial transfer they are the whole diagnostic value.
+  const lines = wasKilledByTimeout(failure, elapsedMs)
+    ? [`Stopped after ${Math.round(PULL_TIMEOUT_MS / 1000)} s — bad wifi, or a remote that never answered.`]
+    : [];
+  lines.push(streams || err.message);
+  const hint = credentialHint(streams);
+  if (hint) {
+    lines.push(hint);
+  }
+  return lines.join("\n\n");
+}
+
+/**
+ * A kill at or past the deadline is exec's own timer firing — once it has elapsed there
+ * is no other explanation. A kill BEFORE it is something else (an OOM on a Pi Zero is
+ * the likely one) and must not be called a timeout. Elapsed time is the only thing that
+ * separates the two: `killed` and `signal` read identically either way.
+ */
+function wasKilledByTimeout(failure: { killed?: boolean; signal?: string | null }, elapsedMs: number): boolean {
+  const killed = failure.killed === true || typeof failure.signal === "string";
+  return killed && elapsedMs >= PULL_TIMEOUT_MS - TIMEOUT_SKEW_MS;
+}
+
+/**
+ * The ssh failure this endpoint existed in for months, named at the moment it happens.
+ *
+ * ⚠️ Matched on OpenSSH's words rather than git's: OpenSSH ships no NLS at all, so these
+ * are byte-identical under every locale, while git has a full message catalog and its
+ * `fatal:` lines move with LC_ALL. The method list in `Permission denied (publickey,
+ * password)` varies with what the server offered, so the match stops before it.
+ */
+function credentialHint(streams: string): string | null {
+  if (!/Host key verification failed|Permission denied \(publickey/.test(streams)) {
+    return null;
+  }
+  return (
+    "This service runs as root, and root cannot use pi's ssh key or known_hosts. " +
+    "The Pi's origin should be https — see INSTALL.md §3."
+  );
 }
 
 // Restart the service the moment the reply has flushed. `--no-block` hands the job to
@@ -81,16 +152,6 @@ function scheduleServiceRestart(): void {
     console.warn("update: could not spawn service restart:", err);
   });
   restart.unref();
-}
-
-/** exec's rejection carries the command's stdout/stderr; prefer them over the terse message. */
-function gitErrorText(err: unknown): string {
-  if (err instanceof Error) {
-    const withStreams = err as Error & { stdout?: string; stderr?: string };
-    const streams = `${withStreams.stdout ?? ""}${withStreams.stderr ?? ""}`.trim();
-    return streams || err.message;
-  }
-  return String(err);
 }
 
 function respond(res: ServerResponse, statusCode: number, reply: UpdateReply): void {

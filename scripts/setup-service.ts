@@ -104,6 +104,7 @@ console.log(`  sudo nano ${ENV_FILE}                   — set COOLANT_ENABLED=0
 
 warnIfNodeIsUserWritable();
 warnIfNoRideLogKey();
+warnIfRemoteNeedsSsh();
 
 /**
  * Refuse to install a unit that cannot start. Without this the only symptom is
@@ -213,6 +214,40 @@ function readEnvFile(): Record<string, string> {
     console.log(`(could not read ${ENV_FILE}: ${(error as Error).message})`);
   }
   return values;
+}
+
+/**
+ * The Update button pulls as root, and root cannot use pi's ssh key — OpenSSH resolves
+ * ~/.ssh from the effective uid's passwd entry, so no amount of HOME= reaches it. An ssh
+ * origin therefore works by hand as `pi` and fails from the phone, months later, in a
+ * garage. Say it here instead, where one command fixes it. INSTALL.md §3 has the why.
+ *
+ * ⚠️ -c safe.directory because the checkout is pi-owned and this runs as root: without
+ * it `remote get-url` is refused for dubious ownership, and the warning would never read
+ * the remote on the only machine it exists for.
+ */
+function warnIfRemoteNeedsSsh(): void {
+  let remoteUrl: string;
+  try {
+    remoteUrl = execSync(`git -C ${projectDir} -c safe.directory=${projectDir} remote get-url origin`)
+      .toString()
+      .trim();
+  } catch (error) {
+    // A checkout with no `origin` exits non-zero too, and that must not fail an install
+    // that has already written the unit and started the service.
+    console.log(`(could not read this checkout's origin: ${(error as Error).message})`);
+    return;
+  }
+  if (!/^(ssh:\/\/|[^/]+@[^/]+:)/.test(remoteUrl)) {
+    return;
+  }
+  console.warn("");
+  console.warn(`\u26a0 origin is an SSH remote (${remoteUrl}), and this unit runs as root.`);
+  console.warn('  The dashboard\'s Update button will fail with "Host key verification failed":');
+  console.warn("  root cannot use pi's key or known_hosts, whatever HOME says. The repo is public");
+  console.warn("  and the Pi never pushes, so point it at https:");
+  console.warn(`  git -C ${projectDir} remote set-url origin https://github.com/<your-fork>/cool-eva.git`);
+  console.warn("");
 }
 
 /**
