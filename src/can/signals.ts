@@ -173,6 +173,24 @@ export function latestValue(key: string): number | null {
   return liveState.get(key)?.value ?? null;
 }
 
+/**
+ * A signal's value, or null when it is absent, stale, or not a finite number.
+ *
+ * `ageMs()` and `latestValue()` are meant to be read together — a value with no age
+ * attached is not evidence about the bike — and this is that pair, with the staleness
+ * window the caller must choose. Shared because every consumer of it fails CLOSED on the
+ * null in the same way, and five hand-rolled copies would have to be changed together the
+ * day that rule moves.
+ */
+export function freshValue(key: string, maxAgeMs: number): number | null {
+  const age = ageMs(key);
+  if (age === null || age > maxAgeMs) {
+    return null;
+  }
+  const value = latestValue(key);
+  return value !== null && Number.isFinite(value) ? value : null;
+}
+
 export function snapshot(): Record<string, LiveValue> {
   const out: Record<string, LiveValue> = {};
   for (const [k, v] of liveState) out[k] = v;

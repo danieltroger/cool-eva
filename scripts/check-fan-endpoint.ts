@@ -135,7 +135,13 @@ const controller: FanController = {
 };
 
 let currentMode: FanMode = "automatic";
-const autoState: FanAutoState = { mode: currentMode, decision: null, temperatureAgeMs: 0, funGate: FUN_GATE.READY };
+const autoState: FanAutoState = {
+  mode: currentMode,
+  targetPercent: 0,
+  decision: null,
+  temperatureAgeMs: 0,
+  funGate: FUN_GATE.READY,
+};
 const automaticLoop: FanAutomatic = {
   mode: () => currentMode,
   setMode: async (next: FanMode): Promise<FanCommandResult> => {

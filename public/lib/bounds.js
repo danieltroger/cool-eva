@@ -111,6 +111,19 @@ const BY_KEY = {
   // signal renders whatever arrives, which is the one outcome this file exists to
   // prevent. Same reasoning as the `buttons` group, applied one signal at a time.
   "fast_dc_contactor": [0, 1],
+  // Why a waypoint was refused — WAYPOINT_REFUSAL in src/gps/waypoint.ts. Named here for
+  // the reason `fast_dc_contactor` above is: blank unit, and `waypoint` is not a
+  // BOOLEAN_GROUP, so no other rule in this file reaches it.
+  //
+  // ⚠️ THE RULE FOR THIS GROUP, since it now holds both kinds: an ENUM is bounded to the
+  // size of the enum, because the codes are ours and a code added without widening this
+  // would be drawn as a dead sensor — the same argument `fan_auto_mode` carries. A
+  // MONOTONIC COUNTER is left ungated, because any ceiling is arbitrary and the counter
+  // that outgrew it would be rejected as a sentinel on a working bike. So
+  // `waypoint_refusal` is here and `waypoint_seq` / `waypoint_refused_seq` deliberately
+  // are not. They are not COUNTER_KEYS either: that set is the `diag` group's 0…1000
+  // counts, which is a bound, and these two have no ceiling worth naming.
+  "waypoint_refusal": [1, 7],
   // The DC charge-current limit the rider picked on the bike's own screen (0x121).
   // Named here because BY_UNIT's "A" fallback is [-1000, 1000], which would happily draw
   // a misread opcode byte as 147 A. 127 is the real hard stop, and it is not a guess: the

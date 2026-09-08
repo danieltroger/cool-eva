@@ -1,4 +1,4 @@
-import { ageMs, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
+import { ageMs, freshValue, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT, type FanCommandResult, type FanController } from "./control.ts";
 import {
@@ -65,6 +65,15 @@ export const CHARGE_SESSION_MAX_AGE_MS = 5_000;
 
 export interface FanAutoState {
   mode: FanMode;
+  /**
+   * The duty the fan was last asked for, straight off ./control.ts.
+   *
+   * Here rather than left to the caller so that everything deciding what the fan should
+   * do NEXT — src/fan/gesture-runner.ts above all — can read the mode and the duty from
+   * one object, and act through this interface alone rather than reaching for the
+   * controller and gaining the ability to command it.
+   */
+  targetPercent: number;
   /** The curve's last answer, or null while the slider is what is driving the fan. */
   decision: FanCurveDecision | null;
   /** Milliseconds since the last in-bounds `batt_temp_hi`, or since this loop started. */
@@ -271,16 +280,6 @@ function sampleTemperature(context: AutoContext): void {
   context.lastGoodAt = monotonicNow() - age;
 }
 
-/** A signal's value, or null when it is absent, stale, or not a finite number. */
-function freshValue(key: string, maxAgeMs: number): number | null {
-  const age = ageMs(key);
-  if (age === null || age > maxAgeMs) {
-    return null;
-  }
-  const value = latestValue(key);
-  return value !== null && Number.isFinite(value) ? value : null;
-}
-
 async function switchMode(context: AutoContext, mode: FanMode): Promise<FanCommandResult> {
   if (mode === "fun") {
     return await enterFun(context);
@@ -424,6 +423,7 @@ function stopTicking(context: AutoContext): void {
 function snapshotAutoState(context: AutoContext): FanAutoState {
   return {
     mode: context.mode,
+    targetPercent: context.controller.state().targetPercent,
     decision: context.lastDecision,
     temperatureAgeMs: since(context.lastGoodAt),
     funGate: context.funGate,

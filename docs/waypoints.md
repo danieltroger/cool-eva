@@ -1,6 +1,6 @@
 # Waypoints
 
-"I am here, now", stamped into the ride log from the handlebar's indicator-cancel long press, the phone's own button, or a Siri Shortcut. Related: `src/http/waypoint.ts` (the endpoint), `docs/route-map.md` (the dashboard it is drawn on), `public/lib/bounds.js` (the client gate), issues #157 and #165.
+"I am here, now", stamped into the ride log from the handlebar's indicator-cancel long press, the phone's own button, or a Siri Shortcut. Related: `src/gps/waypoint.ts` (the gates and the counters), `src/http/waypoint.ts` (the HTTP shell), `docs/handlebar-gestures.md` (the long press that saves without HTTP), `docs/route-map.md` (the dashboard it is drawn on), `public/lib/bounds.js` (the client gate), issues #157 and #165.
 
 No coordinates appear in this file, for the reason `docs/route-map.md` gives under _No coordinates anywhere_. Where one is unavoidable — the corrupt longitude below — it is quoted because it is the evidence, and it is not a place this bike has ever been.
 
@@ -40,15 +40,22 @@ Of the six waypoints in the archive, one sits about 7 000 km from where the bike
 
 ## What each gate can see
 
-Three gates now exist, and they are not interchangeable.
+Four gates now exist, and they are not interchangeable.
 
 | gate | catches | cannot see |
 | --- | --- | --- |
-| `src/http/waypoint.ts`, ±90 / ±180 | a decode that leaves the planet | anything that is still a legal coordinate |
+| `src/gps/fix-plausibility.ts`, ±90 / ±180 | a decode that leaves the planet | anything that is still a legal coordinate |
 | `public/lib/bounds.js`, the same four signals | the same, on the dashboard, as a visible fault | the same |
+| `src/gps/fix-plausibility.ts`, the implied-speed test | a legal coordinate the bike cannot have got to | a bad FIRST fix, which has nothing to be compared against |
 | the route map's corroboration test | a position the surrounding track contradicts | excursions under 0.5°, and unwitnessed saves |
 
-The bike itself still cannot refuse the 2026-08-09 case — it has only one side of the evidence. #165 is the gate that would: a Δt-gated implied-speed test against the previous fix.
+**The bike can now refuse the 2026-08-09 case itself.** #165's gate landed with the server-side handlebar gestures: the fix is measured against the one before it, and anything implying more than 300 km/h — `bounds.js`'s own ceiling for `gps_speed_kmh`, read from it rather than copied — is refused before the save. Two things bound it, both of them lessons this repo had already paid for: the two fixes must be at least 1 s apart, because `docs/route-map.md` records an implied-speed test with a short denominator reading 7 m in 1 ms as 25 000 km/h; and one spike costs **two** refusals, itself and the good fix after it, which is the right side to fail on.
+
+⚠️ The range gate moved out of `src/http/waypoint.ts` with it. The endpoint is a shell now: `src/gps/waypoint.ts` owns every gate and both counters, because a handlebar hold saves without going through HTTP at all. `docs/handlebar-gestures.md` has that half.
+
+### How a refusal reaches the rider
+
+It used to be the reply to the request the phone had made. A hold on the bars asks nobody, so a refusal now travels as two signals — `waypoint_refused_seq`, a monotonic count, and `waypoint_refusal`, one of the seven `WAYPOINT_REFUSAL` codes — and `public/lib/announce.js` turns the code back into the sentence that used to come off the reply. A **counter**, because `record()` seals a row only when a value moves: two identical refusals in a row would otherwise be one banner, and the second hold at the same spot with the same stale fix would look like it had worked.
 
 ### The corroboration test
 

@@ -269,6 +269,27 @@ const CHECKS: SelfCheck[] = [
       "throw away fourteen steps in fifteen",
   },
   {
+    script: "scripts/check-hold-gestures.ts",
+    covers:
+      "the two handlebar HOLD gestures the Pi now recognises for itself — a 1200 ms hold of MODE ENTER stepping " +
+      "the fan round manual 100 % → off → automatic, and a 1000 ms hold of the indicator-cancel switch saving a " +
+      "waypoint. Above all the freshness rule, planted rather than argued: a press followed by twenty minutes of " +
+      "silence NEVER fires however long the bus has been quiet, because the press is abandoned the moment the " +
+      "sample goes stale; a 300 ms press fires nothing; and a 1.3 s hold fires exactly once, while the thumb is " +
+      "still down rather than on the release — which is what keeps a thumb clear of the hazard lights the cancel " +
+      "switch turns on at or before 2.011 s. Then the thresholds against the whole 268-capture archive: 1200 ms " +
+      "clears the longest MODE ENTER press ever recorded (290 ms, over 160 presses, the only decoded handlebar " +
+      "bit with no long press anywhere) by more than 4×, and 1000 ms clears the longest ordinary indicator-cancel " +
+      "press outside one afternoon's experiment (330 ms over 770 of 779) by 3×. Then the cycle end to end " +
+      "bridge: it walks all three states in the rider's own direction — quiet is ONE hold from the manual 100 % he " +
+      "rides in — SKIPS the quiet state above 3 km/h so a false fire while riding can only " +
+      "land on the thermally safe side, reverts its own *off* when the bike moves but never a manual 0 the slider " +
+      "set, and leaves the fan off when the bus goes silent — because that silence is the AC charge the state " +
+      "exists for. Finally the waypoint's gates, including the 2026-08-09 defect: a fix 8 000 km from the one " +
+      "before it is refused with a code the phone can turn back into the red banner the move to the Pi would " +
+      "otherwise have taken away",
+  },
+  {
     script: "scripts/check-fan-endpoint.ts",
     covers:
       "both ends of the /fan wire: that the X-Cool-Eva header stands in front of every POST — the only thing " +

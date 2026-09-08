@@ -36,6 +36,9 @@ import { SIGNALS } from "./can/registry.ts";
 import { startCoolantSensors } from "./sensors/max31865.ts";
 import { startFanControl } from "./fan/control.ts";
 import { startFanAutomatic } from "./fan/auto.ts";
+import { startFanCycleGesture } from "./fan/gesture-runner.ts";
+import { startHoldGestures } from "./gestures/runner.ts";
+import { startWaypointFixTracking, waypointHoldGesture } from "./gps/waypoint.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
@@ -158,6 +161,20 @@ try {
 // docs/fan-control.md.
 const fanController = await startFanControl();
 const fanAutomatic = startFanAutomatic(fanController);
+
+// --- Handlebar gestures, recognised here rather than on the phone ---
+// A long press of MODE ENTER steps the fan round its three states; a long press of the
+// indicator-cancel switch saves a waypoint. Both used to be the dashboard's job, and the
+// dashboard closes its socket whenever the page is hidden — so a phone in a pocket, which
+// is every gesture worth making, recognised nothing. docs/handlebar-gestures.md.
+//
+// The fan's entry is only registered when there IS a fan: the same `configured` flag the
+// /fan route is behind, so a Pi with no fan wired up watches one button instead of two.
+const waypointFixes = startWaypointFixTracking();
+const fanCycle = fanController.configured ? startFanCycleGesture(fanAutomatic) : null;
+const handlebarGestures = startHoldGestures(
+  fanCycle === null ? [waypointHoldGesture()] : [fanCycle.gesture, waypointHoldGesture()]
+);
 
 // --- CAN: broadcast decode + OBD-II polling ---
 let channel: RawChannel | undefined;
@@ -585,9 +602,13 @@ async function shutdown(): Promise<void> {
   // unrecoverable; a fan left spinning has the config.txt `gpio=` lines and a five-second
   // `Restart=on-failure` behind it.
   await closeEncryptedLog();
-  // ⚠️ The curve stops FIRST. A tick landing after the bridge has been idled would
-  // re-command a duty into a process that is about to exit, and the enables would then
-  // be left HIGH for the five seconds until systemd restarts it.
+  // ⚠️ Everything that can command the fan stops BEFORE the bridge is idled — the
+  // gestures, then the curve. A hold or a tick landing after the bridge has been idled
+  // would re-command a duty into a process that is about to exit, and the enables would
+  // then be left HIGH for the five seconds until systemd restarts it.
+  handlebarGestures.stop();
+  fanCycle?.stop();
+  waypointFixes.stop();
   fanAutomatic.stop();
   chargeAutomatic.stop();
   // Awaited, and before the process goes: this is the only output this service drives.

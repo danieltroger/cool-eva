@@ -627,16 +627,23 @@ The malformed frames in §D are the ones worth having regardless of provenance: 
 
 **`scripts/check-button-decode.ts`** — every frame is REAL, copied byte for byte with its timestamp out of the candump captures in `~/Documents/cool-eva-archive` (see `CAPTURES.md` there). None is hand-written, because a hand-written frame only proves the decoder agrees with whoever wrote the fixture. The `0x400` button payloads in particular are the only ones ever recorded on this bike: across **1 099 357** frames of `0x400`, byte 2 held a non-zero value in **362** of them and took exactly two values — until 2026-08-19, when a session of deliberate presses finally produced a third (`0x01`, `btn_set_back`, 132 frames).
 
-**`scripts/check-handlebar-gestures.ts`** — most cases are real durations measured off this bike's own bus that must NOT be recognised as a gesture:
+**`scripts/check-handlebar-gestures.ts`** — since 2026-09-08 this covers only the gesture that is still the phone's, the `btn_cruise_set` double click that changes tab. Its cases are real durations measured off this bike's own bus that must NOT be recognised:
 
-- **140 ms** — the median handlebar press across 14 candump captures, and since indicator-cancel is 63 of the ~70 presses in that corpus, effectively the median cancel tap.
-- **120–260 ms** — the MODE buttons and `btn_set_back`, confirmed 2026-08-19 by instructed presses, 8/8 each, as clean momentary 0→1→0 pulses. An independent measurement of what an ordinary deliberate handlebar press looks like, and it agrees with the corpus median.
-- **920 ms** — the longest ordinary press ever recorded on any handlebar button (`btn_cruise_enable`, 2026-08-04 19:45:47.924). The long-press threshold has to clear this, or a rider who leans on a button saves a waypoint by accident.
-- **1794 ms** — the only `btn_cruise_set` press in the corpus (2026-08-04 18:04:45.055), held while cruise took the speed. A press this long must never pair with the one after it into a double click.
+- **140 ms** — the median handlebar press across 14 candump captures.
+- **120–260 ms** — the MODE buttons and `btn_set_back`, confirmed 2026-08-19 by instructed presses, 8/8 each, as clean momentary 0→1→0 pulses.
+- **1794 ms** — the identifying `btn_cruise_set` press (2026-08-04 18:04:45.055), held while cruise took the speed. A press this long must never pair with the one after it into a double click. ⚠️ It is no longer "the only one in the corpus": the whole archive has 78 presses of that button with a median of 1.198 s.
 
-A "sample" there is one WebSocket message, carrying the SERVER's timestamp — not the phone's — so every `at` is the Pi's clock. That means a stalled link is representable, and is tested: a stall is simply a gap with no samples in it. The detector cannot see wall-clock time passing on the phone, because it is never given it.
+A "sample" there is one WebSocket message, carrying the SERVER's timestamp — not the phone's — so every `at` is the Pi's clock. That means a stalled link is representable, and is tested: a stall is simply a gap with no samples in it.
 
-The names are a trap: `btn_cruise_enable` sits next to `btn_cruise_set` and BOTH of its recorded presses armed cruise control 0.53 s later. Binding a UI gesture to that bit would put a tab switch on a control that changes how the bike is moving — which is why the check also pins which buttons the gestures are bound to.
+The names are a trap: `btn_cruise_enable` sits next to `btn_cruise_set` and both of the presses checked against the cruise-armed bit armed cruise control 0.53 s later. Binding a UI gesture to that bit would put a tab switch on a control that changes how the bike is moving — which is why the check also pins which button the gesture is bound to.
+
+**`scripts/check-hold-gestures.ts`** — the two HOLD gestures, which moved to the Pi on 2026-09-08 (`docs/handlebar-gestures.md`). Its samples are not WebSocket messages but readings off the signal store, each carrying a monotonic age, and the three sequences that matter are planted rather than argued:
+
+- **a press, then twenty minutes of silence, then the bus coming back with the button still down** — must fire nothing. An AC charge silences the bus for up to 23.7 minutes, so this is the shape of a real failure and not a hypothetical. Deleting the abandon-on-stale branch in `src/gestures/long-press.ts` turns it red.
+- **a press released at 300 ms** — must fire nothing.
+- **a 1.3 s hold** — must fire exactly once, and while the button is still down rather than on the release. Firing at the threshold is what lets a thumb come off the cancel switch before the bike's own hazard lights come on at or before 2.011 s.
+
+Its thresholds are checked against the whole 268-capture archive rather than the 14-capture corpus above: **290 ms** is the longest MODE ENTER press ever recorded, over 160 presses, and the 1200 ms fan hold clears it by 4.1×; **330 ms** is the longest `btn_indicator_cancel` press outside one afternoon's experiment, over 770 of 779, and the 1000 ms waypoint hold clears it by 3.0×. The full per-button table, the nine presses inside that one minute, and the method's failure mode are in `docs/handlebar-gestures.md`.
 
 #### 11.3.1 What the 29 captured replies settled
 

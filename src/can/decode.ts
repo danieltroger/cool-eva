@@ -377,23 +377,27 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         // a press parked produces nothing visible, so `SET|BACK` as a FUNCTION remains
         // unverified — only the bit's existence and its pod position are measured.
         { key: "btn_set_back", value: bit(buttons, 0) },
-        // bit 1, cruise ON/OFF (right pod, front). ✅ CONFIRMED by what it causes:
-        // pressed exactly twice in the corpus (2026-08-04 18:04:42.270 for 0.877 s at
-        // 88 km/h, and 19:45:47.924 for 0.920 s at 39 km/h) and BOTH times 0x102 b3
-        // bit 1 — the cruise-armed state, see contactorAndCruise() — came up 0.53 s
-        // later and stayed up for the next 51 s / 82 s. A bit that only ever moves
-        // while riding and whose every press arms cruise control is the cruise button.
+        // bit 1, cruise ON/OFF (right pod, front). ✅ CONFIRMED by what it causes: the
+        // two presses in the ORIGINAL corpus (2026-08-04 18:04:42.270 for 0.877 s at
+        // 88 km/h, and 19:45:47.924 for 0.920 s at 39 km/h) BOTH brought 0x102 b3 bit 1
+        // — the cruise-armed state, see contactorAndCruise() — up 0.53 s later.
+        //
+        // ⚠️ "Exactly twice" was the 14-capture corpus. The whole archive has 36 presses,
+        // 0.465-1.125 s, every one above 3 km/h; the arming claim rests on the two that
+        // were checked against b3. docs/handlebar-gestures.md has the per-button table.
         //
         // ⚠️ …which also kills the plan HEATED_GRIPS.md §9 recommends it for. That
         // section calls a short press inert because the owner's manual says activation
         // needs a 3-second hold. It does not: both presses were under one second and
         // both armed cruise. This is NOT a side-effect-free button.
         { key: "btn_cruise_enable", value: bit(buttons, 1) },
-        // bit 2, cruise SET SPEED. ✅ CONFIRMED by context: pressed exactly once in
-        // the corpus, 2026-08-04 18:04:45.055 for 1.794 s — 2.8 s after cruise was
-        // armed, at a steady 87.6 km/h, after which speed held 89-91 km/h for the
-        // remaining 45 s of the arming. That is what setting a cruise speed looks
-        // like, and there is no other press anywhere in 1.1 M frames to compete.
+        // bit 2, cruise SET SPEED. ✅ CONFIRMED by context: the identifying press is
+        // 2026-08-04 18:04:45.055, held 1.794 s — 2.8 s after cruise was armed, at a
+        // steady 87.6 km/h, after which speed held 89-91 km/h for the remaining 45 s.
+        //
+        // ⚠️ "Exactly once in 1.1 M frames" was the 14-capture corpus. The whole archive
+        // has 78 presses, median 1.198 s, 38 of them over 1.2 s — so a long press is this
+        // button's NORMAL length, which is why the tab gesture pairs rising edges.
         { key: "btn_cruise_set", value: bit(buttons, 2) },
         // bit 3, `BUTTON [HEATED.GRP] (RightBack)`. ❓ Never set, which is EXPECTED
         // rather than evidence: this bike has no heated grips, and the wiring diagram
@@ -479,9 +483,13 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
     // toggles. That artefact was produced and discarded while measuring this.
     // Timings and the full sequence: docs/can-decode-findings.md § "bits 0 and 1".
     { key: "btn_mode_right", value: bit(handlebar, 1) },
-    // bit 2 — MODE ENTER. ✅ The cleanest of the three: 40 presses, all 0.08-0.29 s,
-    // every one below 3 km/h, no outliers at all. Re-confirmed 2026-08-19 by instructed
-    // press: 8/8 inside its own fenced block, 170-260 ms, nothing else on the byte moving.
+    // bit 2 — MODE ENTER. ✅ The cleanest of the three, and the only decoded handlebar
+    // bit in the archive with no long press anywhere: 160 presses, 0.010-0.290 s, median
+    // 0.140 s. That is what qualified it to carry the fan's 1200 ms hold gesture.
+    //
+    // 🚨 "Every one below 3 km/h" was true of 40 presses and is FALSE of 160 — five were
+    // made at 47-118 km/h. Corrected 2026-09-08; docs/can-decode-findings.md § "bit 2"
+    // has the frames, and docs/handlebar-gestures.md what it does and does not change.
     { key: "btn_mode_enter", value: bit(handlebar, 2) },
     // bits 3 and 4 are the turn-indicator SWITCHES, and are still not decoded here —
     // but which side is which is no longer an open question, so it is written down.
