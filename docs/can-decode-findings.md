@@ -408,28 +408,82 @@ after    01 00 A0 80 00 00 10 01
 
 ⚠️ Not caused by this project: there was no KWP traffic from the Pi at 13:45:47, the last transmit having been a freeze-frame read 27 minutes earlier.
 
-### ✅ `0x101` b1 is b0 quantised — and two claims made here first were wrong
+### ⚠️ `0x101` is `VCU_VEHICLE_STS`, and the name was in this repo the whole time
 
-`0x101` is **undecoded** and sits on the inventory of unmapped frames, recorded there as "was constant parked", with b0 spanning `29-96` (12 distinct values) and b1 spanning `28-3C` — **two distinct values in 40 878 frames.**
+**Everything under this heading replaces a decode that was merged into `main` on 2026-09-08 and was wrong.** Two independent reviews plus an archive sweep of **15 006 844 `0x101` frames** — every capture in `~/Documents/cool-eva-archive` — took it apart. The correction is recorded in full rather than quietly rewritten, because how it went wrong is more useful than the answer.
 
-Across the blocking fault above, exactly **two** ids changed persistently: `0x100`, and `0x101`. That observation stands and is the reason to look at this frame at all.
-
-**But the relationship between its two bytes is now settled, and it is not interesting in the way first claimed:**
+**It was never a decode problem.** The 2024 service-tool analysis in `obd-garage/`, §`0x101` `VCU_VEHICLE_STS`, names the frame and all eight of its signals:
 
 ```
-b1 == floor(b0 / 20) * 20        344 957 of 344 957 frames        zero exceptions
+0x101  VCU_VEHICLE_STS
+  b0        V_VEHICLE_SUBSTATE
+  b1        V_VEHICLE_STATE
+  b2        V_DRIVE_VSM
+  b3 &0x03  V_DRIVE_VSM       &0x04 V_LIMP_MODE_STATUS   &0x08 V_LIMP_RES_VALID
+  b4-5 LE   V_LIMP_PACK_RES   (short)
+  b6-7 LE   V_LIMP_MODULE_STS (short)
 ```
 
-Measured across six archive captures, and it also holds for all three of the 2026-09-08 samples (43/40, 62/60, 83/80). **b1 carries no information that b0 does not.** It is b0 rounded down to the nearest 20 — the shape of a coarse display level derived from a fine value, which is why it looks quantised and why it appears to "track" b0.
+That file is in this repository. It was not consulted, and days of statistics went into re-deriving a worse version of a table already on disk. ⚠️ **Before analysing an unknown frame, grep `obd-garage/` for its id.** The inventory of "unmapped frames" is a list of frames nobody looked up, not a list of frames without names.
 
-⚠️ **Two claims recorded here on 2026-09-08 were refuted the same day, by the archive:**
+#### ❌ The merged formula is false
 
-- ❌ _"b1 reached `0x50` (80), outside its entire observed range."_ False. That rested on the inventory's `28-3C` figure, which came from **one parked survey**. Across the archive b1 takes `20`, `60` and `100` — and `100` appears in **184 936 frames**. 80 is unremarkable; it is simply a value that parked survey never sampled.
-- ❌ _"b0 tracks 2-3 counts above b1 every time."_ False, and it was never a fact about the bike: `b0 - b1` is `b0 mod 20` by construction, so it spans 0-19. It looked like a constant offset because the two most common values, b0=101/b1=100 and b0=62/b1=60, happen to sit just above a boundary.
+```
+b1 == floor(b0 / 20) * 20     claimed: 344 957 of 344 957 frames, zero exceptions
+                              actual:  1 992 exception frames archive-wide
+```
 
-Both errors have the same cause — treating a narrow parked sample as the full observed range without checking the archive. The inventory line says "was constant parked", which was the warning.
+Seven b0 values break it — `2, 3, 6, 9` (b1 = 1, predicted 0) and `143, 144, 150` (b1 = 40, 100, 40, predicted 140). It was measured over six captures that happened to contain none of them. ⚠️ **A counterexample was named two paragraphs above the claim**: the inventory line quoted b0 spanning `29-96`, and `0x96` is 150.
 
-**What is left open** is b0 alone: it spans at least 20-112, it moved with vehicle activity and it moved at the blocking fault, and no source names it. The useful consequence of the above is that this is now **one** unknown byte rather than two.
+A first correction offered in review — _"it holds wherever b0 < 128"_ — **is also false**: b0 = 2, 3, 6, 9 are all below 128 and all break it. Recorded because the near-miss fix is the tempting one.
+
+#### ✅ What actually holds
+
+b1 is a **state** and b0 its **substate**, so the arithmetic was a numbering convention misread as a computation. b1 takes exactly **six values in 15 million frames — `1, 20, 40, 60, 80, 100`** — and each owns a band of substates:
+
+| b1 (`V_VEHICLE_STATE`) | b0 seen in that band (`V_VEHICLE_SUBSTATE`)      |
+| ---------------------- | ------------------------------------------------ |
+| 1                      | 2, 3, 6, 9                                       |
+| 20                     | 20, 22, 23, 26, 28, 31, 32, 33, 34               |
+| 40                     | 41, 42, 43, 46, 47, 51, 52, 53, 59               |
+| 60                     | 62, 63                                           |
+| 80                     | 83                                               |
+| 100                    | 101, 102, 104, 105, 106, 107, 109, 110, 112, 113 |
+
+`floor(b0/20)*20` fits the middle of that table by coincidence of numbering and fails at both ends — at the bottom because state 1 is not state 0, at the top because **b1 is capped at 100 and b0 is not**.
+
+✅ **The out-of-band case has a clean rule of its own.** Whenever b0 has bit 7 set (143, 144, 150), b1 **holds its previous value** instead of following:
+
+```
+b0 >= 128:  b1 unchanged from the preceding frame     1 748 / 1 748 frames, zero exceptions
+```
+
+143 → 40 and 150 → 40 in a capture sitting in state 40; 144 → 100 in one sitting in state 100. A substate with bit 7 set does not belong to a state band at all — the state latches while it is present.
+
+#### ✅ Substate 83 is the blocking fault
+
+Aligned against `0x100` byte 3 bit 7 (`vcu_err_system_blocking_fault`) across the whole archive, last-seen alignment:
+
+```
+b0 = 83 while the blocking fault is set     194 947 frames
+b0 = 83 while it is clear                        40 frames  (0.02%)
+any other b0 while the fault is set               1 frame
+```
+
+**194 947 of 194 948 fault frames are substate 83**, and state 80 exists for essentially nothing else in 15 million frames. ⚠️ This section previously called that "three observations of it is not a decode" — a statement about the sample that had been looked at, which is the same error as the formula above, made twice in one section.
+
+#### ❌ Two of my own refutations did not survive
+
+- ❌ _"b0 is not SOC — `b0 == soc` in 0 of 230 620 samples, ranges disjoint."_ **Scoped far too widely from one capture.** In `capture-20260808-211445` the two are equal in 32 341 of 230 020 samples, r = +0.493. b0 is not SOC — it is a named substate — but the numbers offered as proof were an artefact of the capture chosen. The vendor name is the evidence; the statistics never were.
+- ⚠️ _"b0 correlates −0.57 with speed and rpm."_ The warning attached to it was right and is kept, but the figure is capture-specific: archive-wide it ranges **−0.387 to −0.87**. It is now explained rather than merely distrusted — substates encode drive states, and drive states co-occur with speed. A correlation between a state enumeration and a physical quantity measures the schedule of the states, not a relationship between them.
+
+#### ❌ b4 is not SOC either — it is `V_LIMP_PACK_RES`
+
+Checked because b4 moved 100 → 75 between two captures and looked like a percentage. It is not: across eight captures b4 sits **dead constant while SOC sweeps** — 75 through SOC 25→60 (1 775 661 frames), 85 through 63→89, 146 through 29→39 — and it exceeds 100, which SOC cannot. ⚠️ **And the "two exact-equality hits" figure that first appeared here was itself a subset claim** — the same error this section is about. Archive-wide `b4 == soc` in **231 691 of 15 006 589 aligned frames**, 155 391 of them in one capture (`capture-20260809-080235-cd40b535`) where b4 sweeps 75-129. Coincidental equality is _common_ for a byte that lives near the SOC range, which is exactly why equality counts are weak evidence in either direction and the constancy-while-SOC-sweeps test is the one that settles it. b4 takes 53 distinct values from 75 to 154 across the archive. 🟡 b5-7 are 0 in all 2 105 072 frames of the widest capture, so the `b4-5` short equals b4, and its 75-146 range sits in the plausible band for pack resistance (`docs/pack-resistance.md`). The b3 `4 → 0` on the fresh boot is `V_LIMP_MODE_STATUS` clearing — a flag, not a number.
+
+#### What is actually left open
+
+The **meanings** of the six states and their substates. The names give the structure, not the vocabulary: nothing yet says which state is "ready", which is "charging", or what separates substate 43 from 62. That wants a capture with deliberate, logged mode changes — key-on, drive, reverse, charge, fault — not more correlation against the archive.
 
 ## 0x102 — body, lights, vehicle state and attitude
 
