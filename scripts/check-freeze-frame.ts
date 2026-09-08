@@ -52,7 +52,9 @@ import {
 // stated would condemn a layout that the same 29 replies confirm. What the rule
 // actually caught is that the reply is one byte longer than the fields account for;
 // the fields themselves decode correctly, which is a different fault to the one it
-// predicted. The trailing byte is FREEZE_FRAME_TRAILING_BYTES, and still undecoded.
+// predicted. The trailing byte is FREEZE_FRAME_TRAILING_BYTES, and it counts KEY CYCLES
+// since the record was stored — settled by reading it again after a clear, and again
+// after a key cycle, docs/diagnostics-and-checks.md.
 
 const failures: string[] = [];
 
@@ -81,10 +83,25 @@ for (const field of INFOKEY_TABLE) {
     failures.push(`infokey ${field.id} (${field.name}): ${error instanceof Error ? error.message : String(error)}`);
   }
 }
+// ⚠️ TWO refusals, asserted SEPARATELY because they are different faults reached by
+// different code, and a "simplification" that merged the two mechanisms would refuse
+// `f(x)=x*0.1` for all 18 fields that share it — V_ODOMETER among them.
 const refusedScalings = INFOKEY_TABLE.filter(field => !scaleInfokeyValue(field, 1).applied);
+const malformedEquations = INFOKEY_TABLE.filter(
+  field => field.refusedScaling === null && !scaleInfokeyValue(field, 1).applied
+);
+const impossibleResults = INFOKEY_TABLE.filter(field => field.refusedScaling !== null);
 check(
-  refusedScalings.length === 1 && refusedScalings[0].name === "AvgDOD",
-  `exactly one field's equation should be refused (AvgDOD's), got ${refusedScalings.map(f => f.name).join(", ")}`
+  malformedEquations.length === 1 && malformedEquations[0].name === "AvgDOD",
+  `exactly one field's EQUATION should be unusable (AvgDOD's f(x)=x@&255), got ${malformedEquations.map(f => f.name).join(", ")}`
+);
+check(
+  impossibleResults.length === 1 && impossibleResults[0].name === "TotalExchangedAh",
+  `exactly one field's RESULT should be refused under a well-formed equation (TotalExchangedAh), got ${impossibleResults.map(f => f.name).join(", ")}`
+);
+check(
+  refusedScalings.length === 2,
+  `those two and no others should be unscaled, got ${refusedScalings.map(f => f.name).join(", ")}`
 );
 console.log(`${INFOKEY_TABLE.length} fields, ids 1…${INFOKEY_TABLE[INFOKEY_TABLE.length - 1].id}`);
 console.log(`refused scalings: ${refusedScalings.map(f => `${f.name} (${f.equation})`).join(", ")}`);
@@ -571,7 +588,7 @@ console.log(
 );
 console.log(
   "✓ 29 CAPTURED 0x17 replies decode, every infokey resolves, and the layout predicts" +
-    " all 29 lengths to the byte — with one trailing byte per reply still unexplained"
+    " all 29 lengths to the byte — with the trailing key-cycle counter reading FF on all 29, four weeks before the clear"
 );
 
 /** Reassembles and decodes one transfer, printing every step. Returns null on failure. */

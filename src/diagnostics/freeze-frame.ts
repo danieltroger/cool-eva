@@ -47,7 +47,14 @@ const VCU_SAFETY_ADDRESS = 0xa8;
 export const FREEZE_FRAME_HEADER_BYTES = 5;
 
 /**
- * One byte after the fields, on every reply the bike has ever sent, meaning unknown.
+ * One byte after the fields, on every reply the bike has ever sent: KEY CYCLES SINCE
+ * THE RECORD WAS STORED. It advances by exactly one per power/ignition cycle with the
+ * payload frozen — measured across five components over one VCU reset and one
+ * key-off/key-on. NOT a count of how often the fault happened, and ⚠️ not an OBD aging
+ * counter either: those count fault-FREE cycles and reset on recurrence, and P0A07 is
+ * permanently present on this bike while its byte still climbs. It read `FF` before the
+ * clear at the end of the 2026-08-08 capture; no ceiling has been watched being reached
+ * and no record has been seen ageing out. docs/diagnostics-and-checks.md.
  *
  * ⚠️ Length arithmetic CANNOT tell this apart from a 6-byte header — `5 + fields + 1`
  * and `6 + fields` are the same number, all 29 times. What settles it is the decode:
