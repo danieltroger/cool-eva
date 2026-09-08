@@ -316,6 +316,19 @@ const CHECKS: SelfCheck[] = [
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
   },
   {
+    script: "scripts/check-lifetime-stats.ts",
+    covers:
+      "the bike's lifetime battery statistics against the only two readings that exist — components 51 and 52 " +
+      "captured 2026-08-08 before the codes were cleared, and read again 2026-09-08 after them, 967.6 km apart. " +
+      "That both decode field for field; that TotalExchangedAh is REFUSED rather than scaled, because Energica's " +
+      "own ×0.1 has this pack moving 3.47 Ah/km where its own logged current says 0.47 and no candidate scale is " +
+      "settled; that the charge counters' residue grew by one while 71 of 72 new charges classified, so the gap " +
+      "is a slow small category and not a decode fault; that AvgDOD's two candidate readings of Energica's " +
+      "malformed equation are discriminated by the pair of dates (59→58 against 11→100); that the trailing " +
+      "key-cycle counter is accounted for outside the fields on all four replies; and that a sentinel is shown " +
+      "as a fault rather than clamped while a half reading is labelled rather than presented as whole",
+  },
+  {
     script: "scripts/check-power-bar.ts",
     covers:
       "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +

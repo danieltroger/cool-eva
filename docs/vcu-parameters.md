@@ -509,7 +509,7 @@ Bank 1 is the EEPROM calibration the parameter table describes. Bank 2 is live d
 
 ## ✅ Bank 2 — mapped for the first time, 2026-09-08
 
-Bank 2 (`0x2000 | index`, the RUNNING values as against bank 1's stored settings) had never been read. Swept on the bike with the service running, through `/vcu-probe` — so **no service stop is needed for parameter reads**, only for freeze frames.
+Bank 2 (`0x2000 | index`, the RUNNING values as against bank 1's stored settings) had never been read. Swept on the bike with the service running, through `/vcu-probe` — so **no service stop is needed for parameter reads**. A freeze-frame read does need one today, but ⚠️ **for socket ownership rather than because the bike refuses**: `scripts/read-freeze-frame.ts` opens its own socket while the service holds one, and these micros answer on a single id with no request tag, so two testers are resolved by whichever frame lands first. Whether the service itself, as the single tester, can run that read in-process is open — #156, and `docs/lifetime-battery-statistics.md`.
 
 **A9 answers `0…197` and refuses `198+`** with NRC `0x31` (requestOutOfRange). That is a hard edge, not a scatter: 150 consecutive reads answered, then every index from 198 up refused. A8 refuses bank 2 at the one index tried (258). Bank-1 index 258 (`MAX_DC_CHG_CURRENT`) is therefore **past the end of bank 2**, which is why an early attempt at it returned nothing.
 
