@@ -8,13 +8,13 @@ Everything below was measured against the 2026-09-07 decrypt (15 477 057 reading
 
 `gps_lat` and `gps_lon` are **separate log-on-change signals with independent deadbands**. They share a millisecond whenever the decoder completes a fix and both moved — but a heading that only moves one of them logs only that one. Over the archive:
 
-|                            | rows   |
-| -------------------------- | ------ |
-| `gps_lat`                  | 53 872 |
-| `gps_lon`                  | 55 191 |
-| sharing an exact timestamp | 45 130 |
+|                            | rows    |
+| -------------------------- | ------- |
+| `gps_lat`                  | 97 868  |
+| `gps_lon`                  | 100 277 |
+| sharing an exact timestamp | 80 774  |
 
-So an inner join on equal `ts` silently drops **~16 % of the track**. Each signal is carried forward onto the other's timestamps instead. SQLite has no `IGNORE NULLS`, so the carry-forward is expressed as "the timestamp of the last non-null", joined back to the row holding it.
+So an inner join on equal `ts` silently drops **17.5 % of the track**. Each signal is carried forward onto the other's timestamps instead. SQLite has no `IGNORE NULLS`, so the carry-forward is expressed as "the timestamp of the last non-null", joined back to the row holding it.
 
 The window reaches 10 minutes below `$__from` to seed that hold, for the reason `grafana/README.md` gives under _"Carry-forward joins need seeding from before `$__from`"_: a window opening mid-ride otherwise starts with a latitude and no longitude and draws nothing.
 
@@ -22,11 +22,11 @@ The window reaches 10 minutes below `$__from` to seed that hold, for the reason 
 
 The per-millisecond pivot emits a row at **each signal's own timestamp**, so a latitude row and a longitude row 1 ms apart become two points a few metres apart — a staircase.
 
-That staircase is not a cosmetic problem. It destroys any speed-based outlier test: 7 m in 1 ms reads as 25 000 km/h. A first attempt at despiking on implied speed rejected **2 561 of 113 798 steps** as impossible, essentially all of which were this artefact and not bad data. Collapsing to the last exact sample of each second removes it, and drops the archive to 65 482 points.
+That staircase is not a cosmetic problem. It destroys any speed-based outlier test: 7 m in 1 ms reads as 25 000 km/h. Of the 117 370 consecutive steps on the per-millisecond pivot, **4 718 imply over 200 km/h** — essentially all of them this artefact rather than bad data, which is why a first attempt at despiking on implied speed rejected them wholesale. Collapsing to the last exact sample of each second removes it, and drops the archive to 65 483 points.
 
 ## Despiking by shape, not by speed and not by coordinate range
 
-The decoder occasionally produces a longitude carrying an **extra leading digit**, landing it roughly 100° away from the fixes one second either side of it. Two of these survive the archive. (The values themselves are not reproduced here, for the same reason the dashboard carries no coordinates.)
+The decoder occasionally produces a longitude carrying an **extra leading digit**, landing it roughly 100° away from the fixes one second either side of it. Three of these exist in the archive. (The values themselves are not reproduced here, for the same reason the dashboard carries no coordinates.)
 
 **A coordinate range gate would catch them and is the wrong tool three times over.** Such a value is a perfectly valid longitude, so the test is really a geography test; a `BETWEEN` in a committed dashboard tells anyone reading the repo which part of the world this bike is ridden in; and — the strongest of the three — **not every corrupt fix leaves the plausible box.** The archive contains single fixes that jump 0.3 km, 1.4 km, 4.8 km and 420 km out and straight back, all of them well inside any latitude/longitude bounds you would think to write. A range gate cannot see those at all.
 
@@ -47,6 +47,20 @@ The 263 the floor saves are parked jitter, not data. The 17 it keeps are a stric
 Distances stay **squared and in degrees**: no `SQRT`, no `POW`, no trig, so nothing depends on the datasource's SQLite being built with `SQLITE_ENABLE_MATH_FUNCTIONS`.
 
 > ⚠️ An earlier version gated on the time step instead — skip the test when `dt > 120 s`, on the grounds that a long gap can legitimately move a long way. That let exactly **two** corrupt fixes through, both in stretches where reception was sparse enough that the neighbouring steps exceeded the gate. Two points out of 67 851 were enough to stretch the map's auto-fit to the whole globe. **A despiker on map data is not judged by the fraction it catches but by whether any survive.**
+
+### Both window edges need slack, not just the lower one
+
+The spike test needs a point on each side, so a point with no successor is never tested — and with a window bounded at `$__to`, that is **the last point of every window**. Since the dashboard's default range ends at `now`, the untested point is the newest fix in the archive.
+
+Measured before the fix: setting `$__to` to one of the archive's corrupt longitudes returned a window whose final point sat ~120° from the track, and one window returned a **single row**, the corrupt fix itself. `fit` then framed half the planet — precisely the failure this section says the despiker exists to prevent, reintroduced at the boundary.
+
+So `raw` reaches 10 minutes past `$__to` as well as below `$__from`, and `budgeted` trims back to the window afterwards. The genuinely last point in the database still has no successor; that is one point at the end of all data rather than one at the end of every view.
+
+## Charge sessions need slack at the window edges too
+
+Same shape of bug, different query. The evidence stream was bounded at the window, so a session straddling `$__from` was **clipped rather than excluded**, and clipping is the worse failure: the session kept rendering, with the window's own `from` as its start time and a third of its energy missing, and nothing on screen said so. Opening the window later still made it vanish outright, because the clipped span fell under the five-minute minimum — which also silently removed the ride split that session was supposed to cause.
+
+The evidence now reaches 12 hours either side and sessions are kept on **overlap** with the window. A session reports the same start time and the same energy from any window that contains any part of it.
 
 ## The track is points, not a line
 
@@ -93,11 +107,11 @@ So `view.zoom` is set to 18. Because `id` is `fit`, geomap's final `if (view.zoo
 
 ## A charge stop is not a measured position
 
-**This bike logs almost no GPS while charging.** The Connectivity Hub sleeps, so across 37 `charger_enabled` rising edges, **33 had zero GPS fixes inside the session**.
+**This bike logs almost no GPS while charging.** The Connectivity Hub sleeps, so of the 20 sessions the current detector finds across the archive, **11 contain no GPS fix at all** — and of the 51 `charger_enabled` rising edges, most are handshakes lasting seconds, which is why sessions are built from current rather than from that flag.
 
-A charge stop is therefore drawn at the **last fix from before the bike was plugged in**, and that fix's age ranges from seconds to over a week (the worst in the archive is 14 122 minutes — nearly ten days). Two sessions have no prior fix at all, because GPS logging started later that same evening.
+A charge stop is therefore drawn at the **last fix from before the bike was plugged in**, and that fix's age ranges from seconds to over a week (the worst in the archive is 14 122 minutes — nearly ten days). Two sessions have no prior fix at all, because GPS logging started later that same evening; they are listed in the table but cannot be drawn.
 
-`Fix age (min)` is carried as a field and drives the marker colour — green under 30 minutes, amber past that, red past six hours — so a stale position is visible as stale rather than drawn as a confident pin. This is the same argument `public/lib/bounds.js` makes for readings: a value that cannot be trusted is shown as a fault, never quietly rendered as something plausible.
+`Fix age (min)` is carried as a field and drives the marker colour — green under 30 minutes, amber past that, red past six hours — so a stale position is visible as stale rather than drawn as a confident pin. This is the same argument `public/lib/bounds.js` makes for readings: a value that cannot be trusted is shown as a fault, never quietly rendered as something plausible. (That file gates no coordinate — `gps_lat` and `gps_lon` have no entry in it — so the principle is borrowed, not the mechanism. Nothing upstream of this dashboard filters a position.)
 
 ## Charge sessions are built from evidence that current flowed
 
@@ -142,9 +156,18 @@ Distance is conserved (132.8 + 83.9 ≈ 217); what disappears is the half hour t
 
 Two things enforce it. Fixes logged **while plugged in are dropped outright** — a stationary hour at a charger is not riding, and on the sessions where the hub does stay awake it would otherwise open the next ride with a long motionless prefix. And a session **starting between two surviving fixes forces a break**, which is what catches short stops: a 21-minute charge leaves no 30-minute hole for the gap rule to find.
 
+## What the tiles count, and what the map can draw
+
+The "Charge stops" and "Energy charged" tiles count **every** session, including the ones with no known position. The map necessarily draws only those it can place. Those two numbers therefore differ — 20 against 18 pins over the default range — and the tiles are the honest answer to "how much did it charge", so they are the ones that count everything.
+
+An earlier version built the tiles by wrapping the _map_ query, which inherited its `lat IS NOT NULL` filter. The tiles then silently under-reported by exactly the sessions the panel description calls out as unplaceable — a tile labelled "Charge stops" reporting mappable charge stops, with nothing to say so.
+
 ## Known limitations
 
 - **Rides are runs of GPS fixes**, not of motion, so a stretch with no reception splits one ride in two. `km` comes from the odometer rather than from the fixes, so the distance stays right even where the track does not.
 - Sessions shorter than 5 minutes, and charging under 0.5 A, are not counted as stops — and a ride that straddles one of those is not split by it.
+- **`Type` is three-valued.** `fast_dc_target_a` does not exist before 2026-08-26, so a session older than that cannot be shown to be DC. It reads `AC` only where mains current positively says so and `?` otherwise; it is never inferred from the absence of the DC signal.
+- **The Charging dashboard is built on the AC charger's frames**, which a DC session does not send, so most of its panels come back empty for a DC stop. The `Started` cell therefore offers two links — Charging for AC, Charge manager for DC — rather than guessing.
+- Rides are split by _detected_ charge sessions, so the same 5-minute floor applies: a shorter stop will not split a ride.
 - **`gps_speed_kmh` is gated to `public/lib/bounds.js`'s declared 0…300 range**, which is the right gate: this bike's top speed is 270 km/h, so a "Top km/h" of 256 is a real reading and not an artefact. (An earlier draft of this document called that value implausible and proposed tightening the bound. It was wrong about the bike.)
 - The 49 772 readings stamped 2060 (a corrupt GPS frame stepped the Pi's clock; see the Clock section of `README.md`) are excluded by an explicit `ts < 2000000000000` guard in every query, **and** by the dashboard defaulting to a relative `now-90d → now` range: `now` is before 2060, so those rows sort after the window and fall out on their own. A hardcoded absolute range would work today and go stale; the relative one stays correct as new rides land.
