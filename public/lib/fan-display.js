@@ -76,19 +76,23 @@ export function dutyStopIndex(stops, duty) {
 export const FAN_REASON_TEXT = {
   0: "The slider is driving the fan.",
   1: "Waiting for the first pack temperature — the fan stays stopped until one arrives.",
+  // ⚠️ Rendered at TWO duties — the 30 % floor off a DC session and 100 % on one — so it
+  // must not name one. public/views/fan.js prints "Running at N %." directly above it.
   2:
-    "⚠️  No usable pack temperature. Running at the floor rather than off, because a dead sensor reads exactly " +
-    "like a cold pack.",
+    "⚠️  No usable pack temperature. The fan is running anyway — 'off' is the one answer a dead sensor must " +
+    "not produce, because it reads exactly like a cold pack.",
   3: "The pack is below the temperature the fan starts at.",
   4: "Moving fast enough that the airstream through the duct does the cooling.",
   5: "Following the pack temperature.",
-  6: "DC charging — the floor every DC session gets, whatever the pack temperature.",
-  7: "DC charging, following the pack temperature up the steeper curve.",
+  // 6 and 7 were the DC floor and the DC ramp, retired 2026-09-08 and never reused.
+  // docs/fan-control.md §6 "Retired reason codes" is where their words went.
+  8: "DC charging — 100 % for the whole session, whatever the pack temperature.",
 };
 
 /**
  * The one reason code the sheet paints as a FAULT rather than a note: no usable pack
- * temperature for a minute, so the fan is at the floor and a sensor is dead.
+ * temperature for a minute, so a sensor is dead — at the 30 % floor, or at 100 % if a DC
+ * session is what is setting the duty.
  *
  * ⚠️ A second copy of src/fan/curve.ts's FAN_REASON.TEMPERATURE_FAULT, because the
  * browser cannot import a .ts module and the code is the wire format. §8 of
@@ -100,13 +104,14 @@ export const TEMPERATURE_FAULT_REASON = 2;
 
 /**
  * One clause per FAN_TEMPERATURE_INPUT in src/fan/curve.ts. Empty where there is nothing
- * to add: a live reading needs no comment, and code 2 is already spelled out by reason 1
- * or 2, whichever applies.
+ * to add: a live reading needs no comment, and code 2 is already spelled out by whichever
+ * reason it arrives with — 1 or 2 off a DC session, and 8 on one, whose own sentence
+ * already says the duty owes nothing to the pack temperature.
  * @type {Record<number, string>}
  */
 export const FAN_TEMPERATURE_NOTE = {
   0: "",
-  1: " Steering by the last in-bounds batt_temp_hi — the signal has stopped arriving.",
+  1: " The last in-bounds batt_temp_hi is all there is — the signal has stopped arriving.",
   2: "",
 };
 

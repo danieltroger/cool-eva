@@ -16,7 +16,6 @@ import type { FanPwm } from "../src/fan/pwm.ts";
 import { AUTO_TICK_MS, CHARGE_SESSION_MAX_AGE_MS, SPEED_MAX_AGE_MS, startFanAutomatic } from "../src/fan/auto.ts";
 import {
   CHARGE_MANAGER_STATE_DC,
-  DC_CURVE_TOP_C,
   FAN_OFF_TEMPERATURE_C,
   FAN_ON_TEMPERATURE_C,
   FAN_REASON,
@@ -27,6 +26,7 @@ import {
   ROAD_SPEED_MAX_KMH,
   SPEED_GATE_OFF_KMH,
   SPEED_GATE_ON_KMH,
+  TEMPERATURE_FRESH_MS,
   TEMPERATURE_GRACE_MS,
   fanCurveDecision,
   type FanCurveInputs,
@@ -100,31 +100,65 @@ check(
   dutyAt({ packTemperatureC: 20 }) === 0 && reasonAt({ packTemperatureC: 20 }) === FAN_REASON.BELOW_THRESHOLD
 );
 
-// --- 2. The DC curve, and the floor ------------------------------------------
+// --- 2. The DC rule: 100 %, unconditional ------------------------------------
+//
+// Not a curve. A DC session commands 100 % from the tick that sees 0x610 b7 = 0x23 to the
+// tick after it goes stale, and consults nothing: not the pack, not the speed gate, not
+// the hysteresis, not whether batt_temp_hi is alive. docs/fan-control.md §4 has why —
+// cooling is radiator-limited rather than curve-limited, and a stationary bike at a
+// charger pays nothing for max airflow. What it does NOT swallow is the fault: §5 below.
+//
+// ⚠️ The sweep below is what proves the answer is constant; the two assertions before it
+// are the same property at the two temperatures a resurrected ramp would differ at, named
+// separately because .every() cannot say WHICH temperature failed. Their labels carry the
+// retired ramp's own answers — 65 at 44.5 °C, 30 at 5 °C — so a failure reads as a policy
+// that came back rather than as an arithmetic slip.
 
-console.log(`\n2. the DC curve, 35 → ${DC_CURVE_TOP_C} °C, and the floor a session always gets`);
+console.log("\n2. the DC rule — 100 % for the whole session, whatever the pack is doing");
 
 const dc = { chargeManagerState: CHARGE_MANAGER_STATE_DC };
 
-check("halfway (44.5 °C) is halfway (65 %)", dutyAt({ ...dc, packTemperatureC: 44.5 }) === 65);
-check(`at the top (${DC_CURVE_TOP_C} °C) it is 100 %`, dutyAt({ ...dc, packTemperatureC: DC_CURVE_TOP_C }) === 100);
-check("past the top it stays 100 %", dutyAt({ ...dc, packTemperatureC: 80 }) === 100);
+check("44.5 °C is 100 %, where the old 35 → 54 °C ramp said 65", dutyAt({ ...dc, packTemperatureC: 44.5 }) === 100);
+check("a cold pack at 5 °C is 100 %, where the old DC floor said 30", dutyAt({ ...dc, packTemperatureC: 5 }) === 100);
 check(
-  "⚠️  48 °C is 78 % on DC and 100 % riding — the two curves are NOT the same line",
-  dutyAt({ ...dc, packTemperatureC: 48 }) === 78 && dutyAt({ packTemperatureC: 48 }) === 100
+  "every plausible pack temperature is the same answer — this is a rule, not a curve",
+  [PACK_TEMPERATURE_MIN_C, 5, 35, 44.5, 48, 54, 80, PACK_TEMPERATURE_MAX_C].every(
+    celsius => dutyAt({ ...dc, packTemperatureC: celsius }) === 100
+  )
 );
 check(
-  `a cold pack on DC still gets the ${MIN_RUNNING_DUTY_PERCENT} % floor, not 0`,
-  dutyAt({ ...dc, packTemperatureC: 5 }) === MIN_RUNNING_DUTY_PERCENT &&
-    reasonAt({ ...dc, packTemperatureC: 5 }) === FAN_REASON.DC_FLOOR
+  "…and the reason names the session rather than leaving 100 % to be guessed at",
+  reasonAt({ ...dc, packTemperatureC: 5 }) === FAN_REASON.DC_SESSION &&
+    reasonAt({ ...dc, packTemperatureC: 48 }) === FAN_REASON.DC_SESSION
 );
 check(
-  "⚠️  and the floor ignores the speed gate, which a DC session cannot be moving through anyway",
-  dutyAt({ ...dc, packTemperatureC: 5, speedKmh: 200 }) === MIN_RUNNING_DUTY_PERCENT
+  "⚠️  48 °C is 100 % on DC and 100 % riding, and that is now the SAME number by two different rules",
+  dutyAt({ ...dc, packTemperatureC: 48 }) === 100 &&
+    dutyAt({ packTemperatureC: 48 }) === 100 &&
+    reasonAt({ ...dc, packTemperatureC: 48 }) !== reasonAt({ packTemperatureC: 48 })
 );
 check(
-  "the floor holds right up to the foot of the curve",
-  dutyAt({ ...dc, packTemperatureC: FAN_ON_TEMPERATURE_C }) === MIN_RUNNING_DUTY_PERCENT
+  "⚠️  the rule ignores the speed gate, which a DC session cannot be moving through anyway",
+  dutyAt({ ...dc, packTemperatureC: 5, speedKmh: 200 }) === 100 &&
+    dutyAt({ ...dc, packTemperatureC: 5, speedKmh: 819 }) === 100
+);
+check(
+  "…and the running-fan hysteresis, which has nothing to say about a session either",
+  dutyAt({ ...dc, packTemperatureC: 34, previouslyRunning: false }) === 100 &&
+    dutyAt({ ...dc, packTemperatureC: 34, previouslyRunning: true }) === 100
+);
+check(
+  "a DC session with no reading at all still runs, inside the grace, and admits it has none",
+  dutyAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 1000 }) === 100 &&
+    reasonAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 1000 }) === FAN_REASON.DC_SESSION &&
+    fanCurveDecision(inputs({ ...dc, packTemperatureC: null, temperatureAgeMs: 1000 })).temperatureInput ===
+      FAN_TEMPERATURE_INPUT.NONE
+);
+// ⚠️ Without this a DC branch returning `temperatureC: null` unconditionally stays green,
+// and /fan's auto.temperatureC goes blank for every session on the dashboard.
+check(
+  "a DC session with a reading reports it, even though the duty did not rest on it",
+  fanCurveDecision(inputs({ ...dc, packTemperatureC: 42 })).temperatureC === 42
 );
 
 // --- 3. The speed gate, and its hysteresis -----------------------------------
@@ -242,28 +276,61 @@ check(
   "the grace boundary itself is still held, not yet a fault",
   fanCurveDecision(inputs({ ...warm, temperatureAgeMs: 60_000 })).temperatureInput === FAN_TEMPERATURE_INPUT.HELD
 );
+// ⚠️ The live/held frontier, pinned the way the grace boundary above is. Without both
+// sides of it the comparison in temperatureInputOf() can move a millisecond in either
+// direction and the whole suite stays green — the dashboard would then say "live" over a
+// reading five seconds old, or flag a fresh one as held.
+check(
+  `the fresh window is the ${TEMPERATURE_FRESH_MS / 1000} s the doc says — 5 000 is live, 5 001 is held`,
+  fanCurveDecision(inputs({ ...warm, temperatureAgeMs: 5_000 })).temperatureInput === FAN_TEMPERATURE_INPUT.LIVE &&
+    fanCurveDecision(inputs({ ...warm, temperatureAgeMs: 5_001 })).temperatureInput === FAN_TEMPERATURE_INPUT.HELD
+);
 check(
   `tier 3 — past the grace it runs at the ${MIN_RUNNING_DUTY_PERCENT} % floor and NOT at 0`,
   lost.dutyPercent === MIN_RUNNING_DUTY_PERCENT && lost.reason === FAN_REASON.TEMPERATURE_FAULT
 );
-check("tier 3 admits it has no temperature rather than reporting a stale one", lost.temperatureC === null);
+check(
+  "tier 3 admits it has no temperature rather than reporting a stale one",
+  lost.temperatureC === null && lost.temperatureInput === FAN_TEMPERATURE_INPUT.NONE
+);
 check(
   "⚠️  a pack that WAS cold does not stay 'cold' once the sensor dies — the floor still wins",
   fanCurveDecision(inputs({ packTemperatureC: 5, temperatureAgeMs: 60_001 })).dutyPercent === MIN_RUNNING_DUTY_PERCENT
 );
+// ⚠️ THE RULING, and the reason it is one assertion rather than two: on a DC session the
+// DUTY is the DC rule's (100 %, never the floor) and the REASON is still the fault's. A
+// DC rule that swallowed the fault would hide a dead batt_temp_hi for exactly the sessions
+// where the pack matters most, and it would surface on the next ride, at 48 °C, with no
+// fan. Satisfying either half alone is the bug; both together are the requirement.
+// The reason asserted is FAN_REASON.TEMPERATURE_FAULT and §8 pins that to
+// TEMPERATURE_FAULT_REASON — public/views/fan.js's own copy, the number that actually
+// paints the banner red — so the two together are what say the banner still fires here.
+for (const [what, overrides] of [
+  ["a reading that went quiet", { packTemperatureC: 42 }],
+  ["a pack that was cold when the sensor died", { packTemperatureC: 5 }],
+  ["a sentinel nobody is refreshing", { packTemperatureC: 988 }],
+  ["nothing that ever arrived at all", { packTemperatureC: null }],
+] as const) {
+  const decision = fanCurveDecision(inputs({ ...dc, ...overrides, temperatureAgeMs: 60_001 }));
+  check(
+    `⚠️  a DC session with ${what} runs at 100 % AND still raises the fault`,
+    decision.dutyPercent === 100 &&
+      decision.reason === FAN_REASON.TEMPERATURE_FAULT &&
+      decision.temperatureInput === FAN_TEMPERATURE_INPUT.NONE &&
+      decision.temperatureC === null
+  );
+}
 check(
-  "…and the same on a DC session, where the fault outranks the floor's own reason",
-  fanCurveDecision(inputs({ ...dc, packTemperatureC: 5, temperatureAgeMs: 60_001 })).reason ===
-    FAN_REASON.TEMPERATURE_FAULT
+  "the grace is the same 60 s on a DC session — 60 000 is the rule, 60 001 is the fault",
+  reasonAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 60_000 }) === FAN_REASON.DC_SESSION &&
+    reasonAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 60_001 }) === FAN_REASON.TEMPERATURE_FAULT
 );
 check(
   "before the FIRST reading has ever arrived the fan waits, and says so",
   reasonAt({ packTemperatureC: null, temperatureAgeMs: 1000 }) === FAN_REASON.NO_READING_YET &&
-    dutyAt({ packTemperatureC: null, temperatureAgeMs: 1000 }) === 0
-);
-check(
-  "…except on DC, where the floor needs no temperature at all",
-  dutyAt({ ...dc, packTemperatureC: null, temperatureAgeMs: 1000 }) === MIN_RUNNING_DUTY_PERCENT
+    dutyAt({ packTemperatureC: null, temperatureAgeMs: 1000 }) === 0 &&
+    fanCurveDecision(inputs({ packTemperatureC: null, temperatureAgeMs: 1000 })).temperatureInput ===
+      FAN_TEMPERATURE_INPUT.NONE
 );
 check(
   "waiting for the first reading does not last forever — the grace turns it into the fault",
@@ -280,16 +347,17 @@ console.log("\n6. the three signals this rests on, and the wrong ones next to th
 // ⚠️ The literal first, for the reason 89 and 90 are literals in §3 — and this is the
 // consequential one. Every DC assertion in this file spreads `dc`, which is built FROM
 // this constant, so all of them stayed green for every value it could take. A wrong byte
-// leaves `charging` false for a whole session: no DC curve AND no 30 % floor, which is
-// the case docs/fan-control.md §"The automatic curve" says the fan is most for, on a fan
-// with no tacho and with a green build. src/vcu/write-runner.ts keeps its own
+// leaves `charging` false for a whole session, which now drops it onto the RIDING curve:
+// a cold pack at a fast charger gets 0 %, not the 30 % floor it used to fall back to.
+// That is the case docs/fan-control.md §"The automatic curve" says the fan is most for,
+// on a fan with no tacho and with a green build. src/vcu/write-runner.ts keeps its own
 // module-private copy of the same byte, so pinning both to the literal is what keeps them
 // agreeing across two files that cannot see each other — the argument
 // CHARGE_SESSION_MAX_AGE_MS is pinned twice under, in §10 below.
 check("a DC session is 0x610 b7 = 0x23, the byte the capture archive measured", CHARGE_MANAGER_STATE_DC === 0x23);
 check(
-  `⚠️  charge_type's DC value (2) does NOT select the DC curve — only 0x${CHARGE_MANAGER_STATE_DC.toString(16)} does`,
-  dutyAt({ chargeManagerState: 2, packTemperatureC: 5 }) === 0 && dutyAt({ ...dc, packTemperatureC: 5 }) === 30
+  `⚠️  charge_type's DC value (2) does NOT select the DC rule — only 0x${CHARGE_MANAGER_STATE_DC.toString(16)} does`,
+  dutyAt({ chargeManagerState: 2, packTemperatureC: 5 }) === 0 && dutyAt({ ...dc, packTemperatureC: 5 }) === 100
 );
 check(
   "an AC session (0x02) takes the riding curve, which is what the owner chose",
@@ -326,7 +394,7 @@ for (const sentinel of [-242, -50, 120, 988, Number.NaN]) {
   const decision = fanCurveDecision(inputs({ packTemperatureC: sentinel }));
   check(
     `${sentinel} °C never steers the curve (reason ${decision.reason}, ${decision.dutyPercent} %)`,
-    decision.reason !== FAN_REASON.PACK_TEMPERATURE && decision.reason !== FAN_REASON.DC_TEMPERATURE
+    decision.reason !== FAN_REASON.PACK_TEMPERATURE
   );
 }
 check(
@@ -568,12 +636,13 @@ record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
 record("batt_temp_hi", 10);
 await ticks(2);
 check(
-  "a DC session starts it again at the floor, at 10 °C, at 120 km/h — the floor answers to none of them",
-  controller.state().targetPercent === MIN_RUNNING_DUTY_PERCENT && controller.state().driverEnabled
+  "a DC session runs it flat out at 10 °C and at 120 km/h — the rule answers to none of them",
+  controller.state().targetPercent === 100 && controller.state().driverEnabled
 );
 check(
-  "and the published reason says DC rather than leaving 30 % to be guessed at",
-  latestValue("fan_auto_reason") === FAN_REASON.DC_FLOOR
+  "and the published reason says DC rather than leaving 100 % to be guessed at",
+  latestValue("fan_auto_reason") === FAN_REASON.DC_SESSION &&
+    latestValue("fan_temp_input") === FAN_TEMPERATURE_INPUT.LIVE
 );
 
 // The session ending is a staleness event too: 0x610 simply stops when the cable comes
@@ -700,6 +769,6 @@ if (failures > 0) {
   console.error(`FAILED — ${failures} assertion${failures === 1 ? "" : "s"}`);
   process.exitCode = 1;
 } else {
-  console.log("✓ both curves, the DC floor, both hysteresis pairs and all three staleness tiers hold, and a");
-  console.log("  batt_temp_hi that dies runs the fan at the floor rather than reading as a cold pack");
+  console.log("✓ the curve, the DC rule's unconditional 100 %, both hysteresis pairs and all three staleness");
+  console.log("  tiers hold — and a batt_temp_hi that dies still raises the fault on a DC session, at 100 %");
 }
