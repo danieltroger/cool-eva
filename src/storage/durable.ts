@@ -17,14 +17,9 @@ import type { FileHandle } from "fs/promises";
 // flush failure is one fd every 30 s until EMFILE takes the whole service down with it.
 
 /**
- * How long we WAIT for `sync(1)` — never how long it takes.
- *
- * ⚠️ Those are different things and conflating them was a bug here. `sync(2)` is
- * uninterruptible, so a signal cannot shorten it; measured, `execFile`'s own `timeout`
- * option does not bound anything, because the promise settles on the child's exit and a
- * child that will not die does not settle it — and if it later exits 0 the call RESOLVES,
- * reporting a wedged flush as a success. So the bound is a timer we race, and stopping the
- * wait is all it does. docs/power-cuts.md.
+ * How long we WAIT for `sync(1)` — never how long it takes, which nothing here can bound.
+ * Conflating the two was a bug, and `execFile`'s own `timeout` cannot do this job:
+ * docs/power-cuts.md §"Why the `sync` runs after the reply" has the measurements.
  */
 const SYNC_TIMEOUT_MS = 30_000;
 
@@ -32,10 +27,9 @@ const SYNC_TIMEOUT_MS = 30_000;
 export interface DurabilityCounters {
   flushes: number;
   directorySyncs: number;
-  failures: number;
 }
 
-const counters: DurabilityCounters = { flushes: 0, directorySyncs: 0, failures: 0 };
+const counters: DurabilityCounters = { flushes: 0, directorySyncs: 0 };
 
 /**
  * Appends `data` and does not resolve until those bytes are on the card.
@@ -45,16 +39,8 @@ const counters: DurabilityCounters = { flushes: 0, directorySyncs: 0, failures: 
  * itself gone — the "first .celog of a day" case.
  */
 export async function appendDurably(path: string, data: Buffer | string): Promise<void> {
-  const { handle, created } = await openForAppend(path);
+  const handle = await openForAppend(path);
   try {
-    // ⚠️ BEFORE the write, not after. The entry exists the moment "ax" succeeds, so if the
-    // write or the flush fails here, every retry takes the EEXIST branch and this path would
-    // never be flushed again — a cut would then cost the whole day's file, which is the
-    // exact case this call exists for. Flushing first exposes a zero-length file instead,
-    // which every reader already treats as no data.
-    if (created) {
-      await syncDirectory(dirname(path));
-    }
     // writeFile() rather than write(): write() reports a short write in `bytesWritten` and
     // leaves acting on it to the caller, so a partial record would be flushed to the card
     // as a truncated one — this module's own injury, made permanent. writeFile() loops,
@@ -81,20 +67,12 @@ export interface DeferredAppend {
  * keeping: the parameter sweep's resume file. The directory entry costs one flush, once;
  * 277 data flushes inside a bus burst are what src/vcu/snapshot-store.ts refuses.
  *
- * ⚠️ Here rather than hand-rolled at that call site, because the hand-rolled version leaked
- * the handle when the directory flush threw — the exact failure this file opens by warning
- * about, in the one place the recipe was copied instead of imported.
+ * ⚠️ Here rather than hand-rolled at that call site: the hand-rolled version leaked the
+ * handle when the directory flush threw, which is the failure this file opens by warning
+ * about, in the one place the recipe had been copied instead of imported.
  */
 export async function openDeferredAppend(path: string): Promise<DeferredAppend> {
-  const { handle, created } = await openForAppend(path);
-  try {
-    if (created) {
-      await syncDirectory(dirname(path));
-    }
-  } catch (error) {
-    await closeReportingOnly(handle, path);
-    throw error;
-  }
+  const handle = await openForAppend(path);
   return {
     write: data => handle.writeFile(data),
     close: async () => {
@@ -151,7 +129,6 @@ export async function syncDirectory(directory: string): Promise<void> {
     await handle.sync();
     counters.directorySyncs += 1;
   } catch (error) {
-    counters.failures += 1;
     throw new Error(`${directory}: the directory entry could not be flushed to the card`, { cause: error });
   } finally {
     await closeReportingOnly(handle, directory);
@@ -168,14 +145,13 @@ export async function syncDirectory(directory: string): Promise<void> {
  * the machine running the suite.
  */
 export async function syncFilesystems(command = "sync"): Promise<string | null> {
-  // spawn with stdio "ignore" rather than execFile: execFile always pipes stdout/stderr, and
-  // those pipes keep the event loop alive on their own — measured, unref()ing the child alone
-  // still held the process for the full 8 s of a wedged flush. `sync` says nothing anyway.
-  // ../http/update.ts spawns its restart the same way and for the same reason.
+  // spawn/"ignore" rather than execFile: execFile's stdout/stderr pipes hold the event loop
+  // open on their own, so unref()ing the child does not detach it (measured in
+  // docs/power-cuts.md). ../http/update.ts spawns its restart the same way.
   const child = spawn(command, [], { stdio: "ignore" });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const finished = new Promise<string | null>(resolve => {
-    child.once("error", error => resolve(`\`${command}\` could not be run: ${(error as Error).message}`));
+    child.once("error", error => resolve(`\`${command}\` could not be run: ${error.message}`));
     child.once("close", (code, signal) => {
       if (code === 0) {
         resolve(null);
@@ -216,21 +192,41 @@ export function durabilityCounters(): DurabilityCounters {
 }
 
 /**
- * An append handle, and whether this call created the file.
+ * An append handle whose directory entry is already on the card.
  *
- * "ax" is O_APPEND|O_CREAT|O_EXCL, so success means the directory entry is ours and needs
- * flushing too. Only EEXIST may fall through to a plain open — an ENOENT here means the
- * DIRECTORY is missing, which has to stay an error.
+ * "ax" is O_APPEND|O_CREAT|O_EXCL, so success means we created the entry and the directory
+ * needs flushing too. Only EEXIST may fall through to a plain open — an ENOENT here means
+ * the DIRECTORY is missing, which has to stay an error.
+ *
+ * ⚠️ The flush happens BEFORE the caller writes anything. The entry exists the moment "ax"
+ * succeeds, so if a later write fails, every retry takes the EEXIST branch and this path
+ * would never be flushed again — a cut would then cost the whole day's file, which is the
+ * case the flush exists for. Flushing first exposes a zero-length file instead, which every
+ * reader here already treats as no data. And the handle is closed if that flush throws:
+ * this file's whole premise is that an abandoned handle is one fd per write until EMFILE.
  */
-async function openForAppend(path: string): Promise<{ handle: FileHandle; created: boolean }> {
+async function openForAppend(path: string): Promise<FileHandle> {
+  let handle: FileHandle;
+  let created = true;
   try {
-    return { handle: await open(path, "ax"), created: true };
+    handle = await open(path, "ax");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
       throw error;
     }
-    return { handle: await open(path, "a"), created: false };
+    handle = await open(path, "a");
+    created = false;
   }
+  if (!created) {
+    return handle;
+  }
+  try {
+    await syncDirectory(dirname(path));
+  } catch (error) {
+    await closeReportingOnly(handle, path);
+    throw error;
+  }
+  return handle;
 }
 
 /**
@@ -244,7 +240,6 @@ async function flush(handle: FileHandle, path: string): Promise<void> {
     await handle.datasync();
     counters.flushes += 1;
   } catch (error) {
-    counters.failures += 1;
     throw new Error(`${path}: written but NOT flushed to the card — treat this write as unsafe`, { cause: error });
   }
 }

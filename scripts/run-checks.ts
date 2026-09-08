@@ -22,8 +22,8 @@ import { fileURLToPath } from "url";
 // Why there is no test framework here: docs/diagnostics-and-checks.md §11.1.
 
 /**
- * Per-check wall-clock limit. The whole suite runs in under ten seconds today, most of
- * which is check-fan-curve.ts sitting still: it replays a 1500 ms kick-start and two
+ * Per-check wall-clock limit. The whole suite runs in about 25 s today, much of which is
+ * check-fan-curve.ts sitting still: it replays a 1500 ms kick-start and two
  * signal-staleness windows in real time, on about a tenth of a second of CPU. So this is
  * not a performance budget — it is only here to turn a hang into a red build instead of
  * an Actions job that runs until the six-hour ceiling.
@@ -346,7 +346,9 @@ const CHECKS: SelfCheck[] = [
       "userspace, one of two gaps the check names in its own header; that a 1710-byte hole punched into a " +
       "real sealed .celog costs exactly the segments whose bytes it touches and nothing on either side of it, " +
       "measured through scripts/decrypt-log.ts itself as a subprocess because check-ride-log-status.ts only has " +
-      "a MIRRORED copy of its segment reader; that the resume file flushes its directory entry on creation and its rows once at close but never per row, and that clearPartialSweep flushes the removal; and that syncFilesystems reports a missing command as a sentence " +
+      "a MIRRORED copy of its segment reader; that the resume file flushes its directory entry on " +
+      "creation and its rows once at close but never per row, and that clearPartialSweep flushes " +
+      "the removal; and that syncFilesystems reports a missing command as a sentence " +
       "rather than throwing into the update endpoint. ⚠️ macOS fsync is not F_FULLFSYNC, so a green run here " +
       "proves the code path and the ordering — the durability claim is an ext4-on-Linux one",
   },

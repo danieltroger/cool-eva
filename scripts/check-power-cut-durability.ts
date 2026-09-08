@@ -42,7 +42,8 @@ import type { VcuParameterRow } from "../src/vcu/snapshot.ts";
 //   1. delete `datasync()` inside flush(), leaving `counters.flushes` beside it
 //   2. MOVE flush() to after rename() in replaceFileDurably — the counter still moves
 //   3. syncDirectory warning instead of throwing when the FSYNC (not the open) fails
-//   4. revert openDeferredAppend's try/catch, the leak B1 of the diff review was about
+//   4. revert openForAppend's close-on-throw — a handle abandoned when the DIRECTORY
+//      flush throws, which needs an fsync failure nothing here can provoke
 // 2 and 4 are ordering and cleanup on paths whose failure needs a real EIO to reach. The
 // fsync-before-rename ordering in particular is held by code structure and review, NOT by
 // anything below — do not read a green run as covering it.
@@ -54,6 +55,7 @@ const generateKeyPairAsync = promisify(generateKeyPair);
 const HOLE_BYTES = 1710;
 const SEGMENTS_TO_SEAL = 24;
 
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const workDir = await mkdtemp(join(tmpdir(), "cool-eva-power-cut-check-"));
 let failures = 0;
 
@@ -104,18 +106,10 @@ async function checkAppendDurably(): Promise<void> {
     afterAppend.directorySyncs - afterCreate.directorySyncs === 0
   );
   check("both calls flushed the file", afterAppend.flushes - before.flushes === 2);
-  check("nothing failed", afterAppend.failures - before.failures === 0);
 
   // A missing DIRECTORY must stay an error — only EEXIST may fall through to a plain open.
-  // ⚠️ The errno, not merely "it rejected": the property is that ENOENT does NOT fall
-  // through, and any-rejection would survive a refactor that fails before reaching open().
-  let code: string | undefined;
-  try {
-    await appendDurably(join(directory, "no-such-dir", "x.log"), "nope\n");
-  } catch (error) {
-    code = (error as NodeJS.ErrnoException).code;
-  }
-  check("an append into a missing directory rejects with ENOENT rather than creating it", code === "ENOENT");
+  const appendCode = await rejectionCode(() => appendDurably(join(directory, "no-such-dir", "x.log"), "nope\n"));
+  check("an append into a missing directory rejects with ENOENT rather than creating it", appendCode === "ENOENT");
 }
 
 /**
@@ -194,18 +188,7 @@ async function checkCrashShapedCorpus(): Promise<void> {
     "the records are newest first",
     audit.result[0]?.status === "ok-last" && audit.result[1]?.status === "ok-first"
   );
-  // ⚠️ WHERE the reader complained, not just what it returned. The two injuries mean
-  // different things about a motorcycle — a torn tail is a process that was killed, a
-  // holed middle is a DAMAGED FILE — and a reader that stopped telling them apart would
-  // return exactly the same records. That is what the log level is carrying.
-  check(
-    "the torn tail is reported as routine",
-    audit.logs.some(line => line.includes("ends mid-record"))
-  );
-  check(
-    "the holed line is reported as damage",
-    audit.warns.some(line => line.includes("is not valid JSON"))
-  );
+  checkInjuriesTellApart("service-writes.jsonl", audit, "ends mid-record");
 
   await writeFile(join(directory, "sweep.partial.jsonl"), withHoleAndTornTail(partialLines()), "utf-8");
   const partial = await captureConsole(() => loadPartialRows(directory));
@@ -214,14 +197,7 @@ async function checkCrashShapedCorpus(): Promise<void> {
     partial.result.size === 2 && partial.result.get(1)?.status === "read"
   );
   check("the holed row is not silently invented", !partial.result.has(2));
-  check(
-    "the torn tail is reported as routine",
-    partial.logs.some(line => line.includes("ends mid-row"))
-  );
-  check(
-    "the holed line is reported as damage",
-    partial.warns.some(line => line.includes("is not valid JSON"))
-  );
+  checkInjuriesTellApart("sweep.partial.jsonl", partial, "ends mid-row");
 
   const snapshot = JSON.stringify({ readAt: Date.now(), complete: true, micros: [], rows: [] });
   await writeFile(join(directory, "latest.json"), snapshot.slice(0, snapshot.length - 20), "utf-8");
@@ -288,7 +264,6 @@ async function checkCounters(): Promise<void> {
   const afterSnapshot = durabilityCounters();
   check("writing a snapshot flushes the archive and latest.json", afterSnapshot.flushes - afterSecond.flushes === 2);
   check("and the directory once per rename", afterSnapshot.directorySyncs - afterSecond.directorySyncs === 2);
-  check("no failures counted on a healthy path", afterSnapshot.failures - beforeAudit.failures === 0);
 }
 
 /** The smallest row that counts as a real value, so rule 5 lets latest.json be replaced. */
@@ -312,111 +287,19 @@ function oneReadRow(): VcuParameterRow {
 }
 
 /**
- * §7 — the paths the diff review found uncovered.
+ * The errno a rejection carried, or undefined if `body` resolved.
  *
- * The resume file's own writer (which had none at all), the tidy-up flush after a completed
- * sweep, and two failure behaviours that can actually be provoked: a replace whose rename
- * fails must leave no `.tmp`, and a create whose write fails must already have flushed the
- * directory entry. Every one of these shipped green under a mutation before this section.
+ * ⚠️ Every caller asserts the CODE rather than merely that something rejected: a rejection
+ * from a step earlier than the one under test would satisfy "it threw" while leaving the
+ * assertion after it vacuous.
  */
-async function checkUncoveredWriters(): Promise<void> {
-  console.log("\n§7 the resume file and the tidy-up flush");
-  const directory = join(workDir, "resume");
-  await mkdirp(directory);
-
-  const beforeOpen = durabilityCounters();
-  const log = await openPartialSweepLog(directory);
-  const afterOpen = durabilityCounters();
-  check(
-    "creating the resume file flushes its directory entry",
-    afterOpen.directorySyncs - beforeOpen.directorySyncs === 1
-  );
-  check("but not the rows yet", afterOpen.flushes - beforeOpen.flushes === 0);
-
-  await log.append(oneReadRow());
-  const afterAppend = durabilityCounters();
-  check("a row costs no flush at all — the 277-per-sweep argument", afterAppend.flushes - afterOpen.flushes === 0);
-
-  await log.close();
-  const afterClose = durabilityCounters();
-  check("closing flushes the rows exactly once", afterClose.flushes - afterAppend.flushes === 1);
-  check("the row is on disk", (await readFile(join(directory, "sweep.partial.jsonl"), "utf-8")).includes('"index":1'));
-
-  // Reopening an existing resume file must not re-flush the directory entry.
-  const reopened = await openPartialSweepLog(directory);
-  const afterReopen = durabilityCounters();
-  check(
-    "reopening an existing resume file does not re-flush the directory",
-    afterReopen.directorySyncs - afterClose.directorySyncs === 0
-  );
-  await reopened.close();
-
-  const beforeClear = durabilityCounters();
-  await clearPartialSweep(directory);
-  const afterClear = durabilityCounters();
-  check("clearing the resume file flushes the removal", afterClear.directorySyncs - beforeClear.directorySyncs === 1);
-  check("and the file is gone", !(await exists(join(directory, "sweep.partial.jsonl"))));
-
-  // ⚠️ Covers syncDirectory's OPEN failing, not its fsync failing. The second cannot be
-  // provoked on a healthy filesystem, and is one of the three gaps listed in the header.
-  let syncCode: string | undefined;
+async function rejectionCode(body: () => Promise<unknown>): Promise<string | undefined> {
   try {
-    await syncDirectory(join(directory, "not-a-directory"));
+    await body();
+    return undefined;
   } catch (error) {
-    syncCode = (error as NodeJS.ErrnoException).code;
+    return (error as NodeJS.ErrnoException).code;
   }
-  check("syncDirectory on a missing directory throws rather than warning", syncCode === "ENOENT");
-
-  // ⚠️ A failure AFTER the temporary file exists, which is the only kind whose cleanup can
-  // be observed: renaming onto a non-empty directory fails EISDIR, by which point the tmp
-  // has been written, flushed and closed. A missing parent would fail at open() instead and
-  // would prove nothing, because there would be no tmp to leave behind.
-  const blocked = join(directory, "blocked.json");
-  await mkdirp(join(blocked, "makes-it-non-empty"));
-  let replaceCode: string | undefined;
-  try {
-    await replaceFileDurably(blocked, "{}\n");
-  } catch (error) {
-    replaceCode = (error as NodeJS.ErrnoException).code;
-  }
-  // The errno, not merely "it rejected": a rejection from somewhere earlier would leave the
-  // cleanup assertion below vacuous, since there would be no temporary file to orphan.
-  check("a replace whose rename fails rejects with EISDIR", replaceCode === "EISDIR");
-  check("and removes its temporary file rather than orphaning it", !(await exists(`${blocked}.tmp`)));
-
-  // ⚠️ Fault injection, deliberately: a create that succeeds followed by a write that fails
-  // is the case where flushing the directory AFTER the write loses that entry for ever —
-  // the retry then takes the EEXIST branch and never flushes it again.
-  const halfMade = join(directory, "half-made.log");
-  const beforeHalf = durabilityCounters();
-  try {
-    await appendDurably(halfMade, undefined as unknown as string);
-  } catch {
-    // The rejection is the point; what matters is what happened before it.
-  }
-  const afterHalf = durabilityCounters();
-  check(
-    "a create whose write then fails still flushed the directory entry",
-    afterHalf.directorySyncs - beforeHalf.directorySyncs === 1
-  );
-  check("and the file it created is there to be appended to", await exists(halfMade));
-
-  // ⚠️ Covers a handle abandoned when the WRITE throws — not the directory-flush throw that
-  // B1 of the diff review was actually about, which needs an fsync failure nothing here can
-  // provoke (gap 4 in the header). It is still the right guard to have: one fd every 30 s
-  // reaches the default 1024 in about eight hours, a dying card is a PERSISTENT error, and
-  // the failure path is where a leak accrues. Counted rather than reasoned about.
-  const leakDirectory = join(directory, "leak");
-  await mkdirp(leakDirectory);
-  for (let index = 0; index < 5; index += 1) {
-    await failedAppend(join(leakDirectory, `warm-${index}.log`));
-  }
-  const openBefore = await openFileCount();
-  for (let index = 0; index < 40; index += 1) {
-    await failedAppend(join(leakDirectory, `cold-${index}.log`));
-  }
-  const openAfter = await openFileCount();
-  check(`40 failed creates leak no descriptors (${openBefore} → ${openAfter} open)`, openAfter - openBefore <= 1);
 }
 
 /** One append that is guaranteed to fail after the file has been created. */
@@ -439,6 +322,24 @@ async function openFileCount(): Promise<number> {
     console.warn("could not read /dev/fd, so the descriptor count is not being checked:", error);
     return 0;
   }
+}
+
+/**
+ * Both halves of "the reader still tells the two injuries apart", named by file.
+ *
+ * ⚠️ WHERE the reader complained, not just what it returned. A torn tail is a process that
+ * was killed; a holed middle is a DAMAGED FILE. A reader that stopped distinguishing them
+ * would return exactly the same records, so the log level is the only thing carrying it.
+ */
+function checkInjuriesTellApart<T>(file: string, capture: ConsoleCapture<T>, tornPhrase: string): void {
+  check(
+    `${file}: the torn tail is reported as routine`,
+    capture.logs.some(line => line.includes(tornPhrase))
+  );
+  check(
+    `${file}: the holed line is reported as damage`,
+    capture.warns.some(line => line.includes("is not valid JSON"))
+  );
 }
 
 interface ConsoleCapture<T> {
@@ -561,7 +462,7 @@ async function decryptLog(directory: string, privateKeyPath: string, outPath: st
     const result = await execFileAsync(
       process.execPath,
       ["--experimental-strip-types", "scripts/decrypt-log.ts", directory, "--out", outPath],
-      { env: { ...process.env, RIDE_LOG_PRIVATE_KEY: privateKeyPath }, cwd: repoRoot() }
+      { env: { ...process.env, RIDE_LOG_PRIVATE_KEY: privateKeyPath }, cwd: repoRoot }
     );
     stdout = result.stdout;
     stderr = result.stderr;
@@ -591,6 +492,100 @@ async function checkSyncFilesystems(): Promise<void> {
   const failure = await syncFilesystems("cool-eva-definitely-not-a-command");
   check("a missing command comes back as a sentence, not a throw", typeof failure === "string");
   check("the sentence names the command", (failure ?? "").includes("cool-eva-definitely-not-a-command"));
+}
+
+/**
+ * §7 — the writers §1-§4 do not reach.
+ *
+ * The resume file's own writer, which had no coverage at all, the tidy-up flush after a
+ * completed sweep, and two failure behaviours that can actually be provoked: a replace whose
+ * rename fails must leave no `.tmp`, and a create whose write fails must already have
+ * flushed the directory entry. Every one of these once passed under a mutation.
+ */
+async function checkUncoveredWriters(): Promise<void> {
+  console.log("\n§7 the resume file and the tidy-up flush");
+  const directory = join(workDir, "resume");
+  await mkdirp(directory);
+
+  const beforeOpen = durabilityCounters();
+  const log = await openPartialSweepLog(directory);
+  const afterOpen = durabilityCounters();
+  check(
+    "creating the resume file flushes its directory entry",
+    afterOpen.directorySyncs - beforeOpen.directorySyncs === 1
+  );
+  check("but not the rows yet", afterOpen.flushes - beforeOpen.flushes === 0);
+
+  await log.append(oneReadRow());
+  const afterAppend = durabilityCounters();
+  check("a row costs no flush at all — the 277-per-sweep argument", afterAppend.flushes - afterOpen.flushes === 0);
+
+  await log.close();
+  const afterClose = durabilityCounters();
+  check("closing flushes the rows exactly once", afterClose.flushes - afterAppend.flushes === 1);
+  check("the row is on disk", (await readFile(join(directory, "sweep.partial.jsonl"), "utf-8")).includes('"index":1'));
+
+  // Reopening an existing resume file must not re-flush the directory entry.
+  const reopened = await openPartialSweepLog(directory);
+  const afterReopen = durabilityCounters();
+  check(
+    "reopening an existing resume file does not re-flush the directory",
+    afterReopen.directorySyncs - afterClose.directorySyncs === 0
+  );
+  await reopened.close();
+
+  const beforeClear = durabilityCounters();
+  await clearPartialSweep(directory);
+  const afterClear = durabilityCounters();
+  check("clearing the resume file flushes the removal", afterClear.directorySyncs - beforeClear.directorySyncs === 1);
+  check("and the file is gone", !(await exists(join(directory, "sweep.partial.jsonl"))));
+
+  // ⚠️ Covers syncDirectory's OPEN failing, not its fsync failing. The second cannot be
+  // provoked on a healthy filesystem, and is gap 3 in the header.
+  const syncCode = await rejectionCode(() => syncDirectory(join(directory, "not-a-directory")));
+  check("syncDirectory on a missing directory throws rather than warning", syncCode === "ENOENT");
+
+  // ⚠️ A failure AFTER the temporary file exists, which is the only kind whose cleanup can
+  // be observed: renaming onto a non-empty directory fails EISDIR, by which point the tmp
+  // has been written, flushed and closed. A missing parent would fail at open() instead and
+  // would prove nothing, because there would be no tmp to leave behind.
+  const blocked = join(directory, "blocked.json");
+  await mkdirp(join(blocked, "makes-it-non-empty"));
+  const replaceCode = await rejectionCode(() => replaceFileDurably(blocked, "{}\n"));
+  check("a replace whose rename fails rejects with EISDIR", replaceCode === "EISDIR");
+  check("and removes its temporary file rather than orphaning it", !(await exists(`${blocked}.tmp`)));
+
+  // ⚠️ Fault injection, deliberately: a create that succeeds followed by a write that fails
+  // is the case where flushing the directory AFTER the write loses that entry for ever —
+  // the retry then takes the EEXIST branch and never flushes it again.
+  const halfMade = join(directory, "half-made.log");
+  const beforeHalf = durabilityCounters();
+  await failedAppend(halfMade);
+  const afterHalf = durabilityCounters();
+  check(
+    "a create whose write then fails still flushed the directory entry",
+    afterHalf.directorySyncs - beforeHalf.directorySyncs === 1
+  );
+  check("and the file it created is there to be appended to", await exists(halfMade));
+
+  // ⚠️ Covers a handle abandoned when the WRITE throws — not the one abandoned when the
+  // DIRECTORY FLUSH throws, which needs an fsync failure nothing here can provoke (gap 4 in
+  // the header). It is still the right guard to have: one fd every 30 s
+  // reaches the default 1024 in about eight hours, a dying card is a PERSISTENT error, and
+  // the failure path is where a leak accrues. Counted rather than reasoned about.
+  const leakDirectory = join(directory, "leak");
+  await mkdirp(leakDirectory);
+  for (let index = 0; index < 3; index += 1) {
+    await failedAppend(join(leakDirectory, `warm-${index}.log`));
+  }
+  const openBefore = await openFileCount();
+  // Eight, not forty: a real leak is one fd PER call, so eight separates it from noise just
+  // as well and costs a fifth of the directory fsyncs.
+  for (let index = 0; index < 8; index += 1) {
+    await failedAppend(join(leakDirectory, `cold-${index}.log`));
+  }
+  const openAfter = await openFileCount();
+  check(`8 failed creates leak no descriptors (${openBefore} → ${openAfter} open)`, openAfter - openBefore <= 1);
 }
 
 /**
@@ -642,8 +637,4 @@ async function exists(path: string): Promise<boolean> {
     }
     return false;
   }
-}
-
-function repoRoot(): string {
-  return dirname(dirname(fileURLToPath(import.meta.url)));
 }

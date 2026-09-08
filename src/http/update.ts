@@ -307,31 +307,29 @@ export function deployHint(streams: string, deploy: DeployContext): string | nul
 /**
  * Flush what the pull wrote, then restart. In that order, and the restart cannot be lost.
  *
- * ⚠️ Runs AFTER the reply is on the wire, not before it: `res.once("finish")` is the only
- * thing that arms the restart, and this can take up to SYNC_TIMEOUT_MS, so flushing first
- * would put 30 s of garage wifi between a successful pull and the restart it promised.
- *
- * ⚠️ scheduleServiceRestart() is in the `finally`. A flush that fails, or one that has to
- * be given up on, must never cost the restart — the reply has already told the rider it is
- * coming, and the new code is on disk either way. The `catch` is what keeps the discarded
- * promise from becoming an unhandled rejection, which Node 24 turns into an exit.
+ * ⚠️ AFTER the reply is on the wire, and the restart is unconditional. `res.once("finish")`
+ * is the only thing that arms this, so flushing first would put the whole flush's worth of
+ * garage wifi between a successful pull and the restart it promised; and a flush that fails
+ * or has to be given up on must not cost the restart, since the reply has already promised
+ * it and the new code is on disk either way. docs/power-cuts.md has the measurements.
  */
 async function flushThenRestart(): Promise<void> {
   try {
-    try {
-      const failure = await syncFilesystems();
-      if (failure) {
-        console.warn(`update: ${failure}`);
-      }
-    } finally {
-      scheduleServiceRestart();
+    const failure = await syncFilesystems();
+    if (failure) {
+      console.warn(`update: ${failure}`);
     }
   } catch (err) {
-    // ⚠️ Around EVERYTHING, including the restart itself. This runs on a `void`ed promise, and
+    console.warn("update: could not flush the checkout to disk:", err);
+  }
+  try {
+    scheduleServiceRestart();
+  } catch (err) {
+    // ⚠️ Its own catch, not a bare call. This runs on a `void`ed promise, and
     // ChildProcess.spawn defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to nextTick — every
     // other errno throws synchronously, so an ENOMEM on a Pi Zero would become an unhandled
     // rejection, which Node 24 turns into an exit.
-    console.warn("update: could not flush the checkout or restart the service:", err);
+    console.warn("update: could not start the service restart:", err);
   }
 }
 
