@@ -120,3 +120,47 @@ Injecting the pair with `probe-charge-stop.ts --pair --send` during a live AC ch
 An isolation test (`probe-charge-stop.ts --request-only --send`, which injects only `0x120: 96 ff 01 …` with no 0x121) **stopped a live AC charge on-bike** — the teardown broadcasts followed on cue. This is the mirror of the earlier 0x121-only test, which only armed the "interruption in progress" prompt and never completed. So of the pair the dash emits, **the commit rides on the 0x120 request-twin; the 0x121 companion does nothing on its own and adds nothing to the 0x120.**
 
 `buildChargeStopCommand()` now emits the **single 0x120 frame** (still an array of one, so `sendChargeStopCommand`'s transmit loop is unchanged). Why the dash sends both anyway is unknown — likely the 0x121 is the dash echoing its own display state, not a required command — but we do not need to reproduce it. `--pair` is kept in the probe for reference.
+
+## CAPTURED — the DC pair, and the deploy that hid it — 2026-09-07
+
+Everything above about the pair was proven on **AC** (`0x1A`, ceiling `0x0F`). The DC layout was asserted from it and never seen. It has now been captured, and the capture also explains a failure that looked like a protocol bug and was not.
+
+### The symptom
+
+On a DC fast charge the rider set the charge current from the phone three times. The number on the bike's dash changed; the delivered current did not move at all.
+
+### What was on the wire
+
+From `capture-20260907-182807-f349228d.log` (candump, Pi-local CEST = UTC+2), every frame on `0x120`/`0x121` for the session. The Pi's three commands:
+
+```
+19:08:25.529  121  18 FF 2F 01 4B 00 00 00   ← 47 A
+19:09:26.603  121  18 FF 4B 01 4B 00 00 00   ← 75 A
+19:14:48.916  121  18 FF 28 01 4B 00 00 00   ← 40 A
+```
+
+**The `0x121` half alone — no `0x120` commit twin.** Corroborated to the millisecond by the bike's own `service-writes.jsonl`, whose `rawHex` for those three records is one frame with no id prefix, while the `charge-stop` record from earlier the same day carries `"0x120 96 FF 01 …"`.
+
+Eight minutes later the rider turned the dial on the bike itself, twelve times, and every one was a **pair**:
+
+```
+19:16:44.138  120  98 FF 23 00 00 00 00 00   ← commit twin, 35 A
+19:16:44.147  121  18 FF 23 01 4B 00 00 00   ← command, 35 A, ceiling 0x4B = 75
+19:16:45.874  120  98 FF 28 00 00 00 00 00   ← 40 A …
+```
+
+`0x120` first, `0x121` **4.217–10.122 ms** later (mean 6.685), each pair sent once, `b2` amps 1:1, `b4` = `0x4B` = 75 in every DC command. That these are the rider and not the Pi is settled twice: each is preceded 0–2 s by physical `btn_mode_*` presses whose net count matches the amp delta ÷ 5 (clamped at the ceiling), and each produced a `dc_charge_limit_selected_a` row in the ride log to the millisecond — while the Pi's own three produced **none**, because `createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS` and the service therefore never hears itself.
+
+### The cause was the deploy, not the design
+
+`buildChargeCurrentCommand("dc", A, 75)` on `main` emits exactly those two frames, byte for byte. The bike was running `93e071a`, pulled **2026-09-03 20:29:56 +0200**; the commit twin landed in `676d95f` at **22:34:02 +0200 the same day**, two hours later. `git merge-base --is-ancestor 676d95f 93e071a` is false. So the bike spent five days sending the half this document had already proven does not commit.
+
+⚠️ **No check in this repo could have caught that**, and one was nearly written on the belief that it would: a stale deploy is not a code change, and every assertion passed the whole time. What catches it is knowing which commit is running — now in the startup banner, in `/vcu-write`'s status payload and stamped into every audit record (`src/version.ts`). `scripts/check-charge-command.ts` guards the other failure, the one where the _code_ regresses to a single frame.
+
+### Dialling up is station-bound, not refused
+
+`charge-setpoint.ts` used to say dialling up "is NOT obeyed". Measured the same session: 50 → 75 A raised the delivered current 49.5 → 72.5 A immediately. The VCU honours an increase; it cannot conjure current the station or the pack will not give. **So only a LOWERING is a clean test of whether a command took** — a raise that does not move the current is the charger's decision.
+
+### Confirming a DC command took: not `charge_limit_a`
+
+`charge_limit_a` is `0x10A` b7 ÷ 7 and it is an **AC** signal. Across the three DC sessions of 2026-09-07 it read **0.0 for their entire duration** (0, 1 and 1 rows, every value zero) while moving 23 times in the first hour of the AC session that evening. The DC read-back is **`fast_dc_target_a`** (`0x615` b2), the vehicle's own request to the station, which moves whether or not the station can follow. `pack_a` is what actually flowed and conflates the two.

@@ -7,15 +7,15 @@
 //
 // Setting the current is a PAIR, the exact mirror of the stop below: the 0x121 alone moves only
 // the dash's DISPLAYED (pending) value, and the 0x120 request-twin (opcode | 0x80) COMMITS it.
-// Proven on-bike 2026-09-03 — a 0x121-only inject left charge_limit_a (0x10A, the committed
-// setpoint) unmoved while the dash showed the new number; injecting the 0x120+0x121 pair the dash
-// itself sends committed it with no key and no dial. So buildChargeCurrentCommand emits BOTH, the
-// 0x120 first (~5 ms ahead, as the dash sends them). The field layout: b2 = amps 1:1 for AC (dash
-// sent 1a ff 01/02/03 01 0f … for 1/2/3 A), and the AC ceiling in b4 is 0x0f = 15 — the pilot/cable
-// rating, NOT ac_supply_limit_a (31), likely charger-specific, so echo the dash's last b4; a wrong
-// one makes the VCU reject and fall back to ~10 A. The DC ceiling stays the static 75
-// (fast_dc_limit_max_a). The 0x120 twin's tail differs from the 0x121: b3=0/b4=0, not b3=1/b4=ceiling.
-// See docs/can-0x121-charge-command.md.
+//
+// ⚠️ AC was proven on-bike 2026-09-03; DC was ASSERTED from it until the dash's own DC frames were
+// captured 2026-09-07 — twelve pairs, byte for byte what this builder already emitted.
+// scripts/charge-command-fixtures.ts holds them, scripts/check-charge-command.ts round-trips them.
+//
+// b2 = amps 1:1 on both. The AC ceiling (b4 = 0x0f) is the pilot/cable rating and is likely
+// charger-specific, so echo the dash's last b4; a wrong one makes the VCU fall back to ~10 A. The
+// DC ceiling is the static 75, seen as b4 = 0x4b in all twelve captured commands. The 0x120 twin's
+// tail differs from the 0x121: b3=0/b4=0. Every proof and its date: docs/can-0x121-charge-command.md.
 //
 // Stopping a charge is a DIFFERENT command, cracked 2026-08-25 by a whole-bus capture of the
 // rider's two-press Mode stop: the dash puts a PAIR on the bus — 0x120 `96 ff 01 …` AND 0x121

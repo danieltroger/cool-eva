@@ -27,6 +27,7 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
 /** @typedef {import("../../src/http/vcu-probe.ts").VcuProbeResponse} VcuProbeResponse */
 /** @typedef {import("../../src/vcu/write-runner.ts").WriteTargetSummary} WriteTargetSummary */
 /** @typedef {import("../../src/vcu/write-audit.ts").AuditRecord} AuditRecord */
+/** @typedef {import("../../src/vcu/write-runner.ts").VcuWriteStatus} VcuWriteStatus */
 
 /**
  * @typedef {{ value: number, rawHex: string | null, label: string | null,
@@ -212,8 +213,11 @@ function Availability() {
     }
     if (!status.enabled) {
       return div(
-        { style: `color:${MUTED}` },
-        "🔒  Writing is off on this Pi. It is off by default — set SERVICE_WRITE_ENABLED=1 in the service's environment to allow it. Reading is unaffected."
+        div(
+          { style: `color:${MUTED}` },
+          "🔒  Writing is off on this Pi. It is off by default — set SERVICE_WRITE_ENABLED=1 in the service's environment to allow it. Reading is unaffected."
+        ),
+        RunningVersion(status)
       );
     }
     if (!status.gate.safe) {
@@ -228,7 +232,8 @@ function Availability() {
           "🚫  Nothing can be written:",
           ...status.gate.blockers.map(blocker => div({ style: `color:${MUTED}` }, `· ${blocker}`))
         ),
-        TableTypeNote()
+        TableTypeNote(),
+        RunningVersion(status)
       );
     }
     return div(
@@ -238,9 +243,28 @@ function Availability() {
           ? "✅  Stationary and out of drive."
           : `🔌  Stationary and charging (${status.gate.chargingEvidence}) — which is deliberately allowed, because the DC charge parameters cannot be tested unplugged.`
       ),
-      TableTypeNote()
+      TableTypeNote(),
+      RunningVersion(status)
     );
   });
+}
+
+/**
+ * Which commit the Pi is running, on every branch of the status block.
+ *
+ * ⚠️ Not decoration. On 2026-09-07 the charge-current feature changed the dash's number and
+ * moved no current, and the cause was that the Pi had been running a five-day-old build since
+ * before the fix landed — indistinguishable, from the garage, from a feature that does not
+ * work. This is the line that tells those two apart before anyone starts debugging the wrong
+ * one. `+dirty` means tracked files differ from that commit, so the running code is not the
+ * committed code; `+unverified` means git could not say, which is flagged the same way rather than
+ * shown as clean. src/version.ts.
+ *
+ * @param {VcuWriteStatus} status
+ */
+function RunningVersion(status) {
+  const { label, dirty, trustworthy } = status.runningVersion;
+  return div({ class: "action-note", style: `color:${dirty || !trustworthy ? WATCH : MUTED}` }, `⚙️  Running ${label}`);
 }
 
 /**

@@ -39,6 +39,7 @@ export const SIGNALS: SignalDef[] = [
   // combination bounds.js renders ungated — so each is named in its BY_KEY, and
   // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
   { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true },
+
   { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true },
   // Fun mode's gate (src/fan/fun.ts, docs/fan-control.md §"Fun mode"). `fan_fun_available`
@@ -309,6 +310,14 @@ export const SIGNALS: SignalDef[] = [
   { key: "bms_leak_detect_inhibit", unit: "", group: "bms", source: "stream" }, // 0x605 b7 ✅
   { key: "charge_manager_status", unit: "", group: "charge", source: "stream" }, // 0x610 b0 ✅
   { key: "charge_manager_state", unit: "", group: "charge", source: "stream" }, // 0x610 b7 ✅
+  // Whether a charge-current command took, written by src/charge/ack-watch.ts. Recorded rather
+  // than merely shown because the failure this answers is UNATTENDED: on 2026-09-07 three commands
+  // moved no current and nothing anywhere said so afterwards. `charge_cmd_ack` is the verdict as
+  // CHARGE_ACK_CODE spells it. ⚠️ record() logs only on CHANGE, so two identical verdicts in a row
+  // write once — the per-command record is the audit journal, which already has a line each.
+  { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true },
   { key: "charge_manager_error_src", unit: "", group: "charge", source: "stream" }, // 0x610 b1 ✅
   { key: "charge_manager_error_code", unit: "", group: "charge", source: "stream" }, // 0x610 b2-3 ✅
   { key: "fast_dc_target_v", unit: "V", group: "charge", source: "stream" }, // 0x615 b0-1 ✅

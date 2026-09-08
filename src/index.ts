@@ -17,6 +17,8 @@ import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
 import { createVcuReadRunner } from "./vcu/read-runner.ts";
 import { createVcuWriteRunner } from "./vcu/write-runner.ts";
+import { readRunningVersion } from "./version.ts";
+import { startChargeAckWatch } from "./charge/ack-watch.ts";
 import { loadLatestSweep, loadLatestTableType } from "./vcu/snapshot-store.ts";
 import {
   KNOWN_TABLE_TYPES,
@@ -91,8 +93,20 @@ const SERVICE_MODE_ENABLED = process.env.SERVICE_MODE_ENABLED !== "0";
 // bike it never has. README, "Changing something on the bike".
 const SERVICE_WRITE_ENABLED = process.env.SERVICE_WRITE_ENABLED === "1";
 
+// --- Which commit this is, said out loud before anything else ---
+// A feature that silently does nothing and a feature deployed five days ago look identical
+// from the garage. On 2026-09-07 they were the same thing. See src/version.ts.
+const runningVersion = await readRunningVersion(UPDATE_DIR);
+console.log(
+  `cool-eva: running ${runningVersion.label}` +
+    (runningVersion.trustworthy ? "" : " — ⚠️ COULD NOT VERIFY THIS AGAINST THE CHECKOUT")
+);
+
 // --- Signal registry ---
 defineSignals(SIGNALS);
+// Collects the acknowledgement signals from the first frame, so a command sent seconds after boot
+// still has a lookback to judge against.
+startChargeAckWatch();
 configurePackTemperature(CUSTOM_BMS_CONFIG);
 console.log(
   CUSTOM_BMS_CONFIG

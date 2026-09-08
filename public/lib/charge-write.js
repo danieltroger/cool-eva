@@ -17,11 +17,17 @@ import { armed } from "./arming.js";
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 
 /**
- * How stale charge_manager_state may be before this treats the session as gone. Matches the Pi's
- * own CHARGE_SESSION_MAX_AGE_MS in src/vcu/write-runner.ts, so the controls and the server agree
- * on when there is a live charge to command into.
+ * How stale charge_manager_state may be before this treats the session as gone.
+ *
+ * ⚠️ 12 s, and it MUST stay above ws.ts's HEARTBEAT_MS (5000). It used to be 5000 to "match the
+ * Pi", which cannot work: the Pi's `ageMs()` is refreshed by every 0x610 frame (~10 Hz), while the
+ * browser learns an age only from a WebSocket message and `record()` patches only on CHANGE —
+ * charge_manager_state holds 0x23 all session (8399 frames, zero changes), so the browser's copy is
+ * refreshed only by the heartbeat. Same number, different clocks, and the tile unmounted on every
+ * late timer. charge-mode.js already learned this; its CONTACTOR_LIVE_MS is 12 s.
+ * check-charge-write-visibility.ts §2 asserts this stays above the heartbeat.
  */
-export const CHARGE_SESSION_MAX_AGE_MS = 5000;
+export const CHARGE_SESSION_MAX_AGE_MS = 12_000;
 
 /** charge_manager_state (0x610 b7) settled values: 0x02 AC, 0x23 DC. */
 const CHARGE_MANAGER_STATE_AC = 0x02;
@@ -44,6 +50,37 @@ export const writeStatus = van.state(/** @type {VcuWriteResponse | null} */ (nul
  * subscribe to serverTime; were it to, it would re-run ~20 Hz and recreate any <input> under it.
  */
 export const sessionLive = van.state(false);
+
+/**
+ * The charge source as a STATE — `"ac"`, `"dc"` or null — written by the same derive.
+ *
+ * ⚠️ This is what renders must read. Calling `liveChargeType()` inside a binding subscribes it to
+ * serverTime, which VanJS then re-runs on every WebSocket message (~10 Hz on a charging bike),
+ * and `update()` replaces the binding's DOM node whether or not the content changed. Six bindings
+ * in charge-current.js and three in charge-stop.js did exactly that; that is the churn half of the
+ * charge-tab layout shift, the unmount half being CHARGE_SESSION_MAX_AGE_MS above.
+ */
+export const chargeType = van.state(/** @type {"ac" | "dc" | null} */ (null));
+
+/**
+ * Whether writing is on, as a plain boolean STATE rather than a reach into `writeStatus`.
+ *
+ * ⚠️ `writeStatus` gets a NEW object on every fetch, and `armWrite()` refetches before every arm,
+ * so a binding reading `writeStatus.val?.status?.enabled` re-ran on identity even when the answer
+ * was unchanged — rebuilding the tile, and its <input>, mid-gesture. A boolean assigned the same
+ * value is a no-op in VanJS, so this makes an unchanged refresh cost nothing.
+ */
+const writesOn = van.state(false);
+
+/**
+ * The Pi's verdict on the last charge-current command, as a STATE.
+ *
+ * ⚠️ Same reason as `writesOn`: a binding reading `writeStatus.val?.status?.chargeAck` re-runs on
+ * the payload's identity, so the Outcome subtree was rebuilt on every arm and every refresh — the
+ * churn the rest of this fix removes. After this no view imports `writeStatus` at all.
+ * @type {import("../vendor/van-1.6.1.js").State<import("../../src/charge/ack-watch.ts").ChargeAckState | null>}
+ */
+export const chargeAck = van.state(null);
 
 /** Callbacks to run when a live session ends, so each control can clear its own form. */
 const sessionEndListeners = /** @type {(() => void)[]} */ ([]);
@@ -68,7 +105,9 @@ export function onChargeSessionEnd(listener) {
 // equality check); the fetch fires only on the session edge.
 let lastLive = false;
 van.derive(() => {
-  const live = liveChargeType() !== null;
+  const type = liveChargeType();
+  const live = type !== null;
+  chargeType.val = type;
   sessionLive.val = live;
   if (live === lastLive) {
     return;
@@ -79,7 +118,7 @@ van.derive(() => {
   } else {
     // A charge that ended tells us nothing about the next one's gate, and a stale "enabled" left
     // on screen would render a control against a session that is over.
-    writeStatus.val = null;
+    applyWriteStatus(null);
     for (const listener of sessionEndListeners) {
       listener();
     }
@@ -89,9 +128,12 @@ van.derive(() => {
 /**
  * The charge source right now, or null when there is no settled session to command into.
  *
- * ⚠️ Reads charge_manager_state, NOT charge_type (see the file header). Staleness-checked the same
- * way the Pi does, so a page open during a charge that has since ended will not command into a
- * gone session.
+ * ⚠️ NOT FOR RENDERS — use the `chargeType` state. This subscribes whatever calls it to
+ * serverTime (through isStale), which is the churn described on that state. It is the derive's
+ * own input, and it is exported only so scripts/check-charge-write-visibility.ts can drive the
+ * real staleness logic without a browser; §3 of that check asserts no view imports it.
+ *
+ * ⚠️ Reads charge_manager_state, NOT charge_type (see the file header).
  * @returns {"ac" | "dc" | null}
  */
 export function liveChargeType() {
@@ -128,9 +170,22 @@ export function ceilingIsFallback(type) {
   return type === "ac" && valueOf("ac_charge_ceiling_a") == null;
 }
 
-/** Whether writing is switched on for this Pi (SERVICE_WRITE_ENABLED). */
+/** Whether writing is switched on for this Pi (SERVICE_WRITE_ENABLED). Reads the boolean state. */
 export function writesEnabled() {
-  return writeStatus.val?.status?.enabled === true;
+  return writesOn.val;
+}
+
+/**
+ * Records a /vcu-write payload, or clears everything when passed null.
+ *
+ * ⚠️ The ONLY place these three are assigned, so they cannot drift — a caller that set the payload
+ * and not the derived states would leave the tile rendering off a stale boolean.
+ * @param {VcuWriteResponse | null} payload
+ */
+export function applyWriteStatus(payload) {
+  writeStatus.val = payload;
+  writesOn.val = payload?.status?.enabled === true;
+  chargeAck.val = payload?.status?.chargeAck ?? null;
 }
 
 /** GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike. */
@@ -141,7 +196,7 @@ export async function fetchChargeWriteStatus() {
     // Disarmed before the new status lands: writes switched off across the refresh must not
     // leave a primed button behind.
     armed.val = "";
-    writeStatus.val = payload;
+    applyWriteStatus(payload);
   } catch (error) {
     // Loud, but not fatal to the read-only screen: a failed status fetch simply leaves the
     // controls hidden (their render requires enabled === true), which is the safe direction.

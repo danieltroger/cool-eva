@@ -35,6 +35,8 @@ import {
   type WriteTarget,
 } from "./write-targets.ts";
 import { parameterTableFor } from "./table-catalog.ts";
+import { readRunningVersion, type RunningVersion } from "../version.ts";
+import { chargeAckState, noteChargeCommandSent, type ChargeAckState } from "../charge/ack-watch.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
 // to it, read the result back, and write down what happened. The read engine is
@@ -173,6 +175,23 @@ export interface VcuWriteRunner {
 export interface VcuWriteStatus {
   /** False when SERVICE_WRITE_ENABLED is not 1. The page then labels the buttons as off. */
   enabled: boolean;
+  /**
+   * How the last charge-current command turned out, or null when none has been sent this session.
+   *
+   * ⚠️ On the status payload rather than in the POST reply because the answer is not synchronous:
+   * 0x121 is an event frame with no reply, and whether the VCU took it shows up over the following
+   * seconds on the charge request. The page polls this while its window is open.
+   */
+  chargeAck: ChargeAckState | null;
+  /**
+   * Which commit the Pi is running.
+   *
+   * ⚠️ On the payload the page fetches before every arm, because "the feature does nothing" and
+   * "the feature is not deployed yet" are indistinguishable from the garage and were the same thing
+   * on 2026-09-07. Structured rather than a pre-rendered string so the page reads `trustworthy`
+   * instead of matching a suffix — `+unverified` would otherwise render as clean. src/version.ts.
+   */
+  runningVersion: RunningVersion;
   gate: ServiceGateVerdict;
   /**
    * ⚠️ Whether anything on this Pi has confirmed which parameter table the bike runs,
@@ -338,6 +357,8 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
   const sweep = await context.latestSweep();
   return {
     enabled: context.enabled,
+    runningVersion: await readRunningVersion(),
+    chargeAck: chargeAckState(),
     gate: context.gate(),
     tableGate: evaluateTableGate(sweep?.report ?? null),
     clock: readPiClock(),
@@ -1066,6 +1087,11 @@ async function performChargeCurrent(
     `vcu-write: about to command ${mode.toUpperCase()} charge current ${request.amps} A (ceiling ${ceiling} A) on 0x121`
   );
   const outcome = await sendChargeCommand(channel, mode, request.amps, ceiling);
+  if (outcome.status === "sent") {
+    // Starts the acknowledgement window. ⚠️ After the send, so a frame that never left the Pi is
+    // not watched for an answer it could not produce.
+    noteChargeCommandSent(mode, request.amps);
+  }
   await appendAuditRecord(context.directory, {
     at: Date.now(),
     clockTrustworthy: readPiClock().trustworthy,

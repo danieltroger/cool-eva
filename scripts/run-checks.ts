@@ -56,6 +56,37 @@ const CHECKS: SelfCheck[] = [
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
   },
   {
+    script: "scripts/check-charge-ack.ts",
+    covers:
+      "whether the Pi can tell that a charge-current command took, against the 2026-09-07 session where three " +
+      "commands provably moved nothing and two provably worked: that all seven adjudicate as their known outcomes, " +
+      "that the real trace still supplies at least two true negatives and one true positive and that no verdict " +
+      "comes from an empty window, that five constructed shapes cover what that day did not produce, that the naive " +
+      "first-crossing test really would have scored two of the failures as successes (which is why the envelope " +
+      "exists), that the settle grace changes no verdict, that a binding command still reads waiting halfway " +
+      "through its window, that the ride-log codes are distinct, and that nothing in the adjudicator reads pack_a",
+  },
+  {
+    script: "scripts/check-charge-command.ts",
+    covers:
+      "the charge-current transmitter against the dash's OWN frames, captured off the bus during a real DC fast " +
+      "charge on 2026-09-07: that buildChargeCurrentCommand reproduces all twelve dial changes byte for byte with " +
+      "the 0x120 commit twin first, that it never again produces the 0x121-only frame the bike really sent that " +
+      "day and that moved no current, that both decoders read the captured commands back, that the opcode gate " +
+      "emits nothing for the real non-command frames sharing the id, and that the transmit spacing sits inside the " +
+      "dash's own measured 4.2-10.1 ms",
+  },
+  {
+    script: "scripts/check-charge-write-visibility.ts",
+    covers:
+      "why the charge tab's write controls used to flicker: that the browser's staleness window for " +
+      "charge_manager_state stays above ws.ts's heartbeat, since a signal that never changes is refreshed only by " +
+      "that heartbeat and any window at or below it unmounts the whole set-current tile on a late timer; that " +
+      "neither charge view reaches serverTime through liveChargeType or isStale, which would replace its DOM node " +
+      "on every message; that visibility does not ride on the /vcu-write payload's identity; and that both arm " +
+      "paths still raise busy around the pre-arm refresh, which is the double-tap guard (#107)",
+  },
+  {
     script: "scripts/check-pack-resistance.ts",
     covers:
       "the pack-resistance estimator that replaced the BMS's own unusable 0x206 figure, driven by real 0x200 " +

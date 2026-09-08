@@ -104,6 +104,14 @@ const BY_KEY = {
   // writes through mask 127, so the screen cannot offer more however the bike is
   // optioned. Ours is 75.
   "dc_charge_limit_selected_a": [0, 127],
+  // Whether a charge-current command took (src/charge/ack-watch.ts). ⚠️ These MUST be named:
+  // `charge_cmd_ack` has unit "" in a group that is not a BOOLEAN_GROUP, which is the exact
+  // combination this file's header says falls through every rule and renders whatever arrives.
+  // The ack bound is the size of CHARGE_ACK_CODE, tight for the same reason as fan_auto_reason —
+  // the codes are ours, so there is no unseen value to leave room for.
+  "charge_cmd_a": [0, 127],
+  "charge_cmd_ack": [0, 6],
+  "charge_cmd_ack_ms": [0, 60000],
   // The charge manager's flags and raw state bytes (src/can/charge-manager.ts), added
   // 2026-08-19. Every one of them needs naming here for the same reason
   // `fast_dc_contactor` above does: a blank unit in the `charge` group — which cannot

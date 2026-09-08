@@ -3,14 +3,16 @@
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
+import { valueOf } from "../lib/store.js";
 import {
+  applyWriteStatus,
   ceilingIsFallback,
+  chargeAck,
+  chargeType,
   fetchChargeWriteStatus,
   liveCeiling,
-  liveChargeType,
   onChargeSessionEnd,
   sessionLive,
-  writeStatus,
   writesEnabled,
 } from "../lib/charge-write.js";
 
@@ -41,8 +43,8 @@ const busy = van.state(false);
 /** True only while the command's own POST is in flight, so "Sending…" cannot be shown for a status refresh. */
 const sending = van.state(false);
 const message = van.state("");
-/** The last command's outcome, shown against the amps it was for. */
-const lastResult = van.state(/** @type {{ amps: number, succeeded: boolean } | null} */ (null));
+/** Whether the last command was accepted by the Pi. The bike's own verdict is `chargeAck`. */
+const lastResult = van.state(/** @type {boolean | null} */ (null));
 
 // The form clears when the charge ends — a new session starts blank. Session tracking, the lazy
 // status fetch and the live AC/DC/ceiling reads all live in ../lib/charge-write.js, shared with
@@ -50,6 +52,21 @@ const lastResult = van.state(/** @type {{ amps: number, succeeded: boolean } | n
 onChargeSessionEnd(forgetCommand);
 
 export const ARMED_KEY = "charge-current";
+
+// The Pi records its verdict as `charge_cmd_ack`, which reaches the page over the WebSocket the
+// instant it settles. So the verdict arrives for free and this fetches ONCE, for the phrasing.
+// ⚠️ It used to poll /vcu-write every 2 s for 14 s. That payload re-reads the whole parameter
+// sweep and the entire append-only audit journal per request (#107), on the event loop serving the
+// 10 Hz WebSocket mid-charge — up to nine of them per command, to learn something already pushed.
+van.derive(() => {
+  const verdict = valueOf("charge_cmd_ack");
+  if (verdict !== null && verdict !== CHARGE_ACK_WAITING && sessionLive.val) {
+    void fetchChargeWriteStatus();
+  }
+});
+
+/** `CHARGE_ACK_CODE.waiting` — the one code that means the window is still open. */
+const CHARGE_ACK_WAITING = 0;
 
 /**
  * The control, or an empty node when it must not be offered.
@@ -62,7 +79,7 @@ export const ARMED_KEY = "charge-current";
  */
 export function ChargeCurrentControl() {
   return div(() => {
-    if (!sessionLive.val || writeStatus.val?.status?.enabled !== true) {
+    if (!sessionLive.val || !writesEnabled()) {
       return div();
     }
     return div(
@@ -86,7 +103,7 @@ export function ChargeCurrentControl() {
  */
 function Situation() {
   return div({ class: "action-note" }, () => {
-    const type = liveChargeType();
+    const type = chargeType.val;
     if (type === null) {
       // charge_manager_state briefly out of a settled AC/DC value (a pause or handshake step) —
       // the tile stays; the button waits for it. A real unplug clears sessionLive and hides this.
@@ -127,7 +144,7 @@ function InputRow() {
       type: "text",
       inputmode: "numeric",
       placeholder: () => {
-        const type = liveChargeType();
+        const type = chargeType.val;
         const ceiling = type === null ? null : liveCeiling(type);
         return ceiling === null ? "amps" : `1…${ceiling}`;
       },
@@ -178,18 +195,18 @@ function SetButton() {
         }
         const value = parsedAmps();
         if (value === null) {
-          const type = liveChargeType();
+          const type = chargeType.val;
           const ceiling = type === null ? null : liveCeiling(type);
           return ceiling === null ? "✏️  Waiting for a live charge" : `✏️  Type the current to set (1…${ceiling})`;
         }
-        const type = liveChargeType();
+        const type = chargeType.val;
         const label = type === null ? "" : ` ${type.toUpperCase()} ${value} A`;
         return armed.val === ARMED_KEY ? `⚠️  Tap again to command${label}` : `✏️  Set${label}`;
       }
     ),
     div({ class: "action-note", style: `color:${MUTED}` }, () =>
       commandable()
-        ? "Event frame with no reply — watch the dash's set value and the AC setpoint below to see it take. A full battery caps what actually flows."
+        ? "Event frame with no reply — the Pi watches the bike's own charge request and says below whether it took. A full battery caps what actually flows."
         : ""
     )
   );
@@ -199,22 +216,45 @@ function SetButton() {
  * The last command's outcome, and — once one has landed — where to look to confirm it.
  *
  * The hint is deliberately shown only afterwards: standing at the bike the moment the frame
- * has gone out is the moment "watch charge_limit_a" becomes useful, and before then it is
- * one more line competing with the input.
+ * has gone out is the moment the verdict becomes useful, and before then it is one more line
+ * competing with the input.
  */
 function Outcome() {
   return div({ class: "action-note" }, () => {
     const result = lastResult.val;
-    return div(
-      message.val ? div({ style: `color:${result?.succeeded ? GOOD : WARN}` }, message.val) : div(),
-      result?.succeeded
-        ? div(
-            { style: `color:${WATCH}` },
-            `🔍  Commanded ${result.amps} A — the AC setpoint (charge_limit_a) should follow if the current allows.`
-          )
-        : div()
-    );
+    return div(message.val ? div({ style: `color:${result ? GOOD : WARN}` }, message.val) : div(), Acknowledgement());
   });
+}
+
+/**
+ * Whether the bike actually took the last command — the Pi's own verdict, not a hint about where
+ * to look.
+ *
+ * ⚠️ This is the whole point of the feature after 2026-09-07, when three commands changed the
+ * dash's number, moved no current, and nothing anywhere said so. It reads the vehicle's own charge
+ * request, never the delivered amps: `pack_a` conflates "the VCU accepted my command" with "the
+ * station could deliver it", and those are exactly the two answers this tells apart. So a
+ * `station-limited` verdict is amber and explicitly NOT a fault — only a reduction proves anything,
+ * since dialling up is the charger's decision. src/charge/acknowledge.ts.
+ */
+function Acknowledgement() {
+  const ack = chargeAck.val;
+  if (!ack) {
+    return div();
+  }
+  const colour = ack.verdict.kind === "took" ? GOOD : ack.verdict.kind === "not-acknowledged" ? WARN : MUTED;
+  return div({ style: `color:${colour}` }, `${ackIcon(ack.verdict.kind)}  ${ack.message}`);
+}
+
+/** @param {import("../../src/charge/acknowledge.ts").ChargeAckVerdict["kind"]} kind */
+function ackIcon(kind) {
+  if (kind === "took") {
+    return "✅";
+  }
+  if (kind === "not-acknowledged") {
+    return "⚠️";
+  }
+  return "🔍";
 }
 
 /**
@@ -228,7 +268,7 @@ function commandable() {
   if (!writesEnabled()) {
     return false;
   }
-  const type = liveChargeType();
+  const type = chargeType.val;
   return type !== null && liveCeiling(type) !== null;
 }
 
@@ -239,7 +279,7 @@ function parsedAmps() {
     return null;
   }
   const value = Number(text);
-  const type = liveChargeType();
+  const type = chargeType.val;
   const ceiling = type === null ? null : liveCeiling(type);
   if (ceiling === null || value < 1 || value > ceiling) {
     return null;
@@ -297,7 +337,7 @@ async function performChargeCurrent() {
       headers: { "X-Cool-Eva": "service-write" },
     });
     payload = /** @type {VcuWriteResponse} */ (await response.json());
-    writeStatus.val = payload;
+    applyWriteStatus(payload);
     message.val = payload.result?.message ?? payload.message ?? "";
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the bike — the frame goes
@@ -319,5 +359,5 @@ async function performChargeCurrent() {
     lastResult.val = null;
     return;
   }
-  lastResult.val = { amps: value, succeeded: payload.result.succeeded };
+  lastResult.val = payload.result.succeeded;
 }

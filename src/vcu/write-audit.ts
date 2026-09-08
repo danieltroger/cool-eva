@@ -1,5 +1,6 @@
 import { mkdir, open, readFile } from "fs/promises";
 import { join } from "path";
+import { readRunningVersion } from "../version.ts";
 
 // Every attempt to change something on this motorcycle, appended to one file, for ever.
 // What was asked for, what the bike held before, what it held after, and how it went —
@@ -65,6 +66,15 @@ export interface AuditRecord {
   rawHex?: string;
   /** Why it failed, or what is unusual about it succeeding. */
   note?: string;
+  /**
+   * Which commit was running when this happened — `09c3b84`, `09c3b84+dirty`, or `unknown`.
+   *
+   * ⚠️ Stamped by appendAuditRecord rather than by the callers, so a future action cannot
+   * forget it. The 2026-09-07 charge-current records are the argument: they say exactly what
+   * was sent and there is no way to tell from them that the build was five days old, which is
+   * the one fact that explained the whole failure. src/version.ts.
+   */
+  runningVersion?: string;
 }
 
 /**
@@ -77,18 +87,22 @@ export interface AuditRecord {
  * calibration changed with nothing anywhere saying so.
  */
 export async function appendAuditRecord(directory: string, record: AuditRecord): Promise<void> {
+  // Read here rather than pushed in at startup: readRunningVersion() is already cached, so this is
+  // one map lookup, and it removes both a module global and an ordering rule ("must be set before
+  // anything can be written") that a script or a reordered startup could silently break.
+  const stamped: AuditRecord = { ...record, runningVersion: (await readRunningVersion()).label };
   try {
     await mkdir(directory, { recursive: true });
     const handle = await open(join(directory, AUDIT_FILE), "a");
     try {
-      await handle.write(`${JSON.stringify(record)}\n`);
+      await handle.write(`${JSON.stringify(stamped)}\n`);
     } finally {
       await handle.close();
     }
   } catch (err) {
     console.error("=".repeat(72));
     console.error(`vcu-write: COULD NOT RECORD ${record.action} (${record.status}) IN THE AUDIT JOURNAL:`, err);
-    console.error(`vcu-write: the record that was lost: ${JSON.stringify(record)}`);
+    console.error(`vcu-write: the record that was lost: ${JSON.stringify(stamped)}`);
     console.error("vcu-write: the action itself already happened. Copy the line above somewhere by hand.");
     console.error("=".repeat(72));
   }
