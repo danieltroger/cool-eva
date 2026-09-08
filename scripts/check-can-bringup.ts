@@ -370,11 +370,21 @@ if (healthy.kind !== "read") {
 // the same way. Whitespace is collapsed first so a Prettier rewrap cannot turn this red.
 const socketSource = await readFile(new URL("../src/can/socket.ts", import.meta.url), "utf8");
 const collapsed = socketSource.replace(/\s+/g, " ");
-for (const call of ["decideCanBringUp(stdout, active)", "canConfigureArgs(iface, active)"]) {
-  if (!collapsed.includes(call)) {
-    failures.push(
-      `src/can/socket.ts no longer forwards \`active\` verbatim: expected \`${call}\`. That polarity belongs in link-config.ts, which this check can drive`
-    );
+const WIRING: { needle: string; why: string }[] = [
+  {
+    needle: "decideCanBringUp(stdout, active)",
+    why: "the polarity belongs in link-config.ts, which this check can drive",
+  },
+  { needle: "canConfigureArgs(iface, active)", why: "the argv would stop matching the conditions the skip checks" },
+  { needle: "if (decision.skip) {", why: "without it the skip never fires and the whole feature is a no-op that logs" },
+  {
+    needle: "if (decision.unreadable) { console.warn(",
+    why: "an unreadable link must stay LOUD — demoted to console.log it reads as routine",
+  },
+];
+for (const { needle, why } of WIRING) {
+  if (!collapsed.includes(needle)) {
+    failures.push(`src/can/socket.ts no longer contains \`${needle}\` — ${why}`);
   }
 }
 const negations = socketSource

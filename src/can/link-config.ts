@@ -128,7 +128,10 @@ export function decideCanBringUp(ipOutput: string, active: boolean): BringUpDeci
  * ends up silently unable to transmit. Requiring info_kind, state and restart_ms first is
  * the positive evidence that this `ip` renders the CAN block, and therefore that the missing
  * array means empty rather than unsupported. Deliberately NOT the bitrate: the kernel omits
- * that until one is set, so demanding it would classify every cold boot as unreadable.
+ * that until one is set, so its absence has a SECOND explanation that state and restart_ms do
+ * not have. Dropping it removed a false witness rather than weakening the chain — and it had
+ * been classifying every cold boot as unreadable, which is the normal start on a bike whose
+ * Pi loses power at key-off.
  */
 export function parseCanLinkConfig(ipOutput: string): CanLinkReading {
   let parsed: unknown;
