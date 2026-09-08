@@ -964,6 +964,14 @@ There is no fallback to `unsigned`: a write is compared against the TYPED value,
 
 Two captions on the button, because it answers two different questions. With nothing read it is the way to get a value at all; with a sweep's value already on screen it is how you find out whether that value is still true, which is a thing you may want and no longer something you are made to do.
 
+### Where an ANSWER goes, which is not where the prose goes
+
+`action-block` holds a control and the prose that belongs to it, in the order a thumb meets them: the consequence above the button, what it does and why you might not want to below. An **answer** is a fifth thing and it goes _between_ — under the control, above the prose.
+
+The prose is static and says what the button is FOR; the answer is what it just did, and it is the newest thing on the card. Putting it under three lines that never change buries it, and the alternative — appending it to the shared `message` signal — is what produced issue #154: the read-service-stamp outcome rendered three sections up the sheet, at the same 11.52 px as the line describing the button, and pressing the button appeared to do nothing at all.
+
+⚠️ **The read-stamp control now carries no `caution` key**, so the only amber under it is its answer. That is load-bearing rather than incidental: `.action-note.caution` is amber but **not** bigger — `style.css:733` sets `color` and nothing else — so an answer set in `.caution` is only conspicuous while it is not competing with a permanently amber sentence in the same block. The caveat it used to carry ("⚠️ Untried…") was retired by the 2026-09-08 read, which is what freed the colour. If a `caution` is ever added back to that control, this trade has to be decided again, and `scripts/check-service-stamp.ts` asserts the absence so the decision cannot be made by accident.
+
 ### Reading the outcome — `send()` and `performWrite()`
 
 ⚠️ THE ANSWER IS TAKEN FROM THIS REQUEST'S OWN RESPONSE, never from `state.val`. `send()` leaves the state alone when the request does not come back, so reading the verdict out of the state would attribute the LAST write's result — including its "written", its read-back and the verification hint — to an attempt that may have reached the bike and may have done anything at all. That is why `send()` returns the payload, or null.
@@ -975,6 +983,20 @@ The three outcomes:
 - **a result** — the reading is replaced from the read-back the write itself did, so the value on screen is the one that is true afterwards rather than the one the sweep recorded before. Cleared when the attempt reached the bus and produced no reading (refused at the session or security step, or a failure partway): the write may have landed, so the page falls back to the sweep's older value, correctly labelled as old, and the Pi re-reads before any second attempt exactly as it did before this one.
 
 The body carries the status and the journal on every code this endpoint returns, including 400 and 409, so it is read before the status is judged. `X-Cool-Eva: service-write` is a DIFFERENT value from the read endpoints' `service-mode`, so a caller built for those cannot reach this one.
+
+#### `stampOutcome` — a second signal, not a third binding on `message`
+
+The last-service read fills its own state rather than sharing `message`, and `message` is **cleared** when it does.
+
+`message` has exactly two rendering homes, and they are **not** the pair it is easy to assume. One is `Outcome()`, the last child of `ParameterForm()`, three sections up the sheet. The other is `VcuWrite()`'s `!hasControls()` branch — the red `.action-note.failure` line that is the only thing on screen when the section cannot render its controls at all.
+
+A third binding, at the service-actions control, would render the same sentence twice on one screen — so the read's answer gets a signal of its own, filled in `performAction()` from the payload `send()` already returns for exactly this kind of reason.
+
+⚠️ **`message` is cleared only while the node that replaces it is still mounted.** `send()` replaces the state before `performAction()` runs, so an answer carrying `enabled: false` unmounts the whole controls branch — `StampOutcome` with it — on the same update. Clearing unconditionally therefore emptied the failure line, and a Pi that answered "writing is off" showed a heading, an ellipsis, and nothing else. `hasControls()` is the condition, because it is the same question the two nodes are branched on. An earlier version of this section said both homes were in `ParameterForm()`; that sentence is what made the bug look safe.
+
+The four endings all land in it: a 200 with a stamp, a **409** refusal (`payload.message` — a failed read is never a 200, so `write-session.ts`'s refusal sentence is literally what renders under the button), a 400, and a request that never came back, whose sentence `send()` composes itself.
+
+⚠️ **`31 FC` clears it.** Set Service Point overwrites the block the read reports and sits two taps away inside the same fold, so what was on screen becomes false the moment it runs. It is cleared rather than refilled with the routine's own `after` for two reasons: that stamp is `undefined` unless the routine reached `started` and `null` whenever the read-back failed, so "refill" is often "refill with nothing"; and its sentence is already being rendered by `Outcome()`, so copying it here would reintroduce the double render this design exists to avoid. **Nothing else clears it** — a parameter write addresses an index, Mode 04 addresses codes, `reset-vcu` restarts the micros, and the clock sync changes the clock a _future_ stamp would use, not the stored one.
 
 `writing` is separate from `busy`, which is also raised by the probe read and by the refresh the write button's first tap does. This page must not say "Writing…" while it is doing something else: a caption claiming a write is in progress when none is would be a lie about the one thing on this page that cannot be taken back. Each disabled state says which of the two things is missing rather than sharing one caption — "nothing has read it" and "you have not said what to write" are fixed by different taps in different places. The blocked caption deliberately says "sweep", not "read": the probe shows the answer and stores nothing, so a caption saying "read 277" sends people round a loop that never ends.
 
@@ -996,7 +1018,7 @@ The no-undo line is rendered through `NoUndoLine`, not hand-rolled: rendering th
 
 ### Resetting on open
 
-`refreshVcuWrite()` is called by `views/service-mode.js` whenever the sheet opens: it refreshes, disarms and re-folds everything. Re-folding is not in `forgetSelection()`, which also runs when the PARAMETER changes — the irreversible actions have nothing to do with which parameter is selected. The `dangerOpen` reset belongs to the sheet-opening reset alone, for the same reason `armed` is cleared there: the state a sheet opens in is the state a thumb finds when it is reaching for something else, and that state must not contain `31 FC`.
+`refreshVcuWrite()` is called by `views/service-mode.js` whenever the sheet opens: it refreshes, disarms, re-folds everything, and drops `stampOutcome` — an answer read through a previous sheet-opening must not be read as this one's, the same rule `headlightExpected` and `lightsProgress` follow. Re-folding is not in `forgetSelection()`, which also runs when the PARAMETER changes — the irreversible actions have nothing to do with which parameter is selected. The `dangerOpen` reset belongs to the sheet-opening reset alone, for the same reason `armed` is cleared there: the state a sheet opens in is the state a thumb finds when it is reaching for something else, and that state must not contain `31 FC`.
 
 `fetchStatus()` is kept apart from `refreshVcuWrite()` because arming the clock sync needs a fresh `clock.iso` and must not wipe a parameter reading somebody took thirty seconds ago.
 

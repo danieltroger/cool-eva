@@ -150,3 +150,12 @@ export function groupedReading(value) {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
   return fraction === undefined ? grouped : `${grouped}.${fraction}`;
 }
+
+/**
+ * `0x1113`. Four digits, because these words are quoted that way everywhere else — the
+ * parameter table, the service stamp's four WORDs, `SERVICE_RESET.md`.
+ * @param {number} value
+ */
+export function hexWord(value) {
+  return `0x${value.toString(16).toUpperCase().padStart(4, "0")}`;
+}

@@ -2450,8 +2450,9 @@ expect(
 
 // ── 16. The service stamp, mode 04, the bus lease and the request parser ───
 // A8's last-service block, decoded the way the service tool's own GetMotorbikeService() does.
-// ⚠️ Untried on this bike: these four identifiers sit outside params.ecf's 1…277 and
-// no sweep has ever reached them.
+// ⚠️ Read on this bike on 2026-09-08: all four answered zero (docs/service-stamp.md). Still
+// outside params.ecf's 1…277, so no sweep has ever reached them — that read was the service
+// action's own KWP read on A8, not a sweep.
 const stampNow = Date.UTC(2026, 7, 16, 12, 0, 0);
 expect(SERVICE_STAMP_IDENTIFIERS.dateLow.identifier === 0x13e8, "the service date's low word is 0x13E8");
 expect(SERVICE_STAMP_IDENTIFIERS.odometerHigh.identifier === 0x13eb, "the odometer's high word is 0x13EB");

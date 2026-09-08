@@ -2,7 +2,7 @@ import type { RawChannel } from "socketcan";
 import { ageMs, latestValue } from "../can/signals.ts";
 import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
-import { checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
+import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
@@ -875,6 +875,10 @@ async function performReadStamp(context: WriteContext, channel: RawChannel): Pro
     status: outcome.ok ? "read" : "failed",
     before: outcome.ok ? outcome.stamp.dateIso : null,
     after: outcome.ok ? outcome.stamp.odometer : null,
+    // ⚠️ The four WORDs, not just the decoded stamp. before/after keep what the bytes MEAN,
+    // and on 2026-09-08 — the first time anything read these identifiers — that left the
+    // primary evidence recorded nowhere at all. Built here, where the identifiers live.
+    rawHex: outcome.ok ? describeStampWords(outcome.stamp) : undefined,
     note: outcome.ok ? (outcome.stamp.implausible ?? "read cleanly") : outcome.reason,
   });
   if (!outcome.ok) {
@@ -890,6 +894,16 @@ async function performReadStamp(context: WriteContext, channel: RawChannel): Pro
       stamp: { before: outcome.stamp, after: null },
     },
   };
+}
+
+/** `13E8=0000 13E9=0000 13EA=0000 13EB=0000` — each identifier beside the word it answered. */
+function describeStampWords(stamp: ServiceStamp): string {
+  return Object.entries(SERVICE_STAMP_IDENTIFIERS)
+    .map(([field, entry]) => {
+      const word = stamp.raw[field as keyof ServiceStamp["raw"]];
+      return `${entry.identifier.toString(16).toUpperCase()}=${word.toString(16).toUpperCase().padStart(4, "0")}`;
+    })
+    .join(" ");
 }
 
 function describeStamp(stamp: ServiceStamp): string {

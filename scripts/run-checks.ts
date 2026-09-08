@@ -322,6 +322,35 @@ const CHECKS: SelfCheck[] = [
       "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",
   },
   {
+    script: "scripts/check-service-stamp.ts",
+    covers:
+      "the last-service read, whose bug was PLACEMENT and not text: that the read-stamp control is still passed an " +
+      "outcome node to render — deleting that argument is issue #154 exactly, the answer rendering three sections up " +
+      "an overflow-y sheet while the button appeared to do nothing — that `message.val` is rendered only by the two " +
+      "components that own it and never by the service-actions block, since a third binding puts the same sentence " +
+      "on screen twice, and that the answer is dropped when the sheet reopens and when 31 FC overwrites the block it " +
+      "reports. Plus the evidence itself against the REAL 2026-09-08 payload (four zero WORDs), including that the " +
+      "fields shown are exactly the identifiers that are read, so a fifth word cannot silently drop out, and that " +
+      "the implausible note is NOT repeated under the sentence that already carries it. Finally that no tracked " +
+      "file re-asserts that these four were unread — a claim that lived in five places, one of them a " +
+      "refusal a rider reads at the bike, and that a grep found four of. \u26a0 It asserts the WIRING, not the " +
+      "rendering: the suite has no browser, so that the outcome node reaches a phone is what the screenshots cover",
+  },
+  {
+    script: "scripts/check-write-audit.ts",
+    covers:
+      "the audit journal's reader — the only record of what has been done to this motorcycle, and untested until " +
+      "2026-09-08: that a line of NUL bytes (a power cut leaves the block allocated and the write lost; U+0000 is " +
+      "not JS whitespace, so trim() misses it and JSON.parse threw a stack trace on every GET and POST to " +
+      "/vcu-write) is skipped like a blank line and named once as a record that is gone, mid-file and as a torn " +
+      "last line, while NULs mixed with real content stay a damaged line and keep their warning — the fence that " +
+      "stops the fix widening into 'skip anything that will not parse'. Plus blank lines, ordinary corruption, a " +
+      "torn tail, newest-first order, the limit, an absent journal reading as no records rather than an unreadable " +
+      "one, and a round trip through appendAuditRecord carrying the stamp read's rawHex. \u26a0 Nothing here " +
+      "RECOVERS a lost record: 1 710 NUL bytes are not a record, the returned rows are identical on both readers, " +
+      "and the only assertion that changes colour is the captured console output",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",

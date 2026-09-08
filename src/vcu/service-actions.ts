@@ -13,11 +13,9 @@
 //    tool (`ControlMotorbikeOverview_AvailableActions.GetMotorbikeService()`,
 //    obd-garage/SERVICE_RESET.md §2) — four bank-1 WORDs on A8, ids 1000-1003, the
 //    date being a 32-bit count of seconds since 2000-01-01 UTC.
-//  • ❌ Not one of those four identifiers has ever been read off this bike. The sweep
-//    covers indices 1…277 and these are 1000…1003, which is outside it entirely. So
-//    "A8 answers these" is an expectation, not an observation, and the failure mode
-//    if it is wrong is a negative response — which SERVICE_RESET.md §2 says the tool
-//    itself treats as "this bike does not have the feature".
+//  • ✅ A8 answered all four on 2026-09-08, the first time anything asked: four 2-byte
+//    WORDs, all zero, so the block is there and no service point has ever been set on
+//    this bike. What that does and does not establish: docs/service-stamp.md.
 //  • ❌ Mode 04 has never been sent by anything in this repo.
 
 import { toHex } from "./param-codec.ts";

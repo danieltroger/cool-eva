@@ -628,7 +628,7 @@ async function runReadServiceStamp(
       // different thing from the bus having gone quiet.
       return {
         ok: false,
-        reason: `${field} (identifier 0x${entry.identifier.toString(16).toUpperCase()}) — ${outcome.reason}. These four identifiers have never been read off this bike; a refusal may simply mean it does not carry a service stamp.`,
+        reason: `${field} (identifier 0x${entry.identifier.toString(16).toUpperCase()}) — ${outcome.reason}. A8 answered all four of these on 2026-09-08, so a refusal now is a change from that rather than a bike without the feature.`,
       };
     }
     // Each half is a WORD, so a record of any other width means the assumption is

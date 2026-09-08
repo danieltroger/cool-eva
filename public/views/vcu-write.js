@@ -2,8 +2,9 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { BAD, GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
-import { ageInWords } from "../lib/format.js";
+import { ageInWords, hexWord } from "../lib/format.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
+import { describeStampEvidence } from "../lib/service-stamp.js";
 
 const { button, div, h2, h3, input, option, select, span } = van.tags;
 
@@ -28,6 +29,7 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
 /** @typedef {import("../../src/vcu/write-runner.ts").WriteTargetSummary} WriteTargetSummary */
 /** @typedef {import("../../src/vcu/write-audit.ts").AuditRecord} AuditRecord */
 /** @typedef {import("../../src/vcu/write-runner.ts").VcuWriteStatus} VcuWriteStatus */
+/** @typedef {import("../../src/vcu/service-actions.ts").ServiceStamp} ServiceStamp */
 
 /**
  * @typedef {{ value: number, rawHex: string | null, label: string | null,
@@ -88,6 +90,19 @@ const busy = van.state(false);
  */
 const writing = van.state(false);
 const message = van.state("");
+/**
+ * What the last-service read came back with, held apart from `message` so it can be shown at
+ * the button that asked for it.
+ *
+ * ⚠️ `message` is CLEARED when this is filled — but only while this node is mounted. Its two
+ * homes are Outcome(), three sections up, and VcuWrite's failure line, which renders exactly
+ * when this one does not. docs/dashboard-decisions.md §"Reading the outcome".
+ *
+ * ⚠️ Cleared, not refilled, when `31 FC` runs: that routine overwrites the block this read
+ * reports, and it is two taps away inside the same fold. Why nothing else touches it, and
+ * why the new stamp is not shown here: docs/dashboard-decisions.md §"Reading the outcome".
+ */
+const stampOutcome = van.state(/** @type {{ text: string, stamp: ServiceStamp | null } | null} */ (null));
 /**
  * Which circuit an all-lights run is on, e.g. `Disabling stop / brake… (4 of 5)`. Shown
  * under the two all-lights buttons while `writing` holds them disabled — one run is five
@@ -482,11 +497,6 @@ function describeBits(target, value) {
   }
   const bits = target.control.bits.map(bit => `${bit.label} ${(value & bit.mask) === 0 ? "OFF" : "ON"}`);
   return [hexWord(value), ...bits].join(" · ");
-}
-
-/** `0x1113`. Four digits, because these words are quoted that way everywhere else. @param {number} value */
-function hexWord(value) {
-  return `0x${value.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
 /**
@@ -1212,17 +1222,59 @@ function ServiceActions() {
     // Outside the fold, deliberately: it changes nothing, and it is the action you
     // want BEFORE the service point below — which stamps the bike's own clock and
     // odometer over whatever this one shows you.
-    ActionButton("read-service-stamp", () => "📖  Read the last-service stamp", {
-      confirm: "ask the A8 for the service stamp",
-      does:
-        "Reads four identifiers on the A8 that no sweep covers. Read-only. The date and " +
-        "odometer AT THE LAST SERVICE — not the current mileage, which is already live " +
-        "as odometer_can_km and needs no read.",
-      caution:
-        "⚠️ Untried: nothing has ever read these off this bike, so a refusal may simply mean it does not carry a service stamp.",
-    }),
+    ActionButton("read-service-stamp", () => "📖  Read the last-service stamp", READ_STAMP_NOTES),
     IrreversibleActions()
   );
+}
+
+/**
+ * The read-stamp control's prose, and the node that shows what came back.
+ *
+ * ⚠️ Exported so scripts/check-service-stamp.ts can assert this control's shape as DATA
+ * rather than by parsing the call that builds it — the same reason `IRREVERSIBLE` and
+ * `confirmationFor` are exported. `caution` is deliberately absent: see StampOutcome.
+ *
+ * @type {ConfirmableAction}
+ */
+export const READ_STAMP_NOTES = {
+  confirm: "ask the A8 for the service stamp",
+  does:
+    "Reads four identifiers on the A8 that no sweep covers. Read-only. The date and " +
+    "odometer AT THE LAST SERVICE — not the current mileage, which is already live " +
+    "as odometer_can_km and needs no read. Read for the first time on 2026-09-08: all " +
+    "four answered zero, so no service point has ever been set on this bike " +
+    "(docs/service-stamp.md).",
+  outcome: StampOutcome,
+};
+
+/**
+ * What the bike answered, under the button that asked.
+ *
+ * ⚠️ This node is the whole point of the control. The sentence used to go only to
+ * `message`, whose only home on a sheet with controls is Outcome(), three sections up an
+ * `overflow-y: auto` sheet — so pressing the button changed nothing a thumb could see, and
+ * the report was "it doesn't seem to change anything". See issue #154.
+ *
+ * `.caution`, never bare `.action-note`: at 11.52 px in `--label` it would render
+ * identically to the grey line above it, which is the argument style.css:748-759 makes
+ * about the loudest sentence in a section being set as its quietest type.
+ */
+function StampOutcome() {
+  return div(() => {
+    const answer = stampOutcome.val;
+    if (answer === null) {
+      return div();
+    }
+    return div(
+      div({ class: "action-note caution" }, answer.text),
+      // The four WORDs as they came off the bus. `.output` is the machine-output class —
+      // this is A8 talking, not prose we wrote — and its overflow-wrap keeps a long line
+      // from pushing a 390 px sheet sideways.
+      answer.stamp === null
+        ? div()
+        : div({ class: "action-note output", style: `color:${MUTED}` }, describeStampEvidence(answer.stamp).join("\n"))
+    );
+  });
 }
 
 /**
@@ -1439,7 +1491,12 @@ function ClockAction() {
  * clock action writes its own confirmation (it asks a question about the time rather
  * than about an intention) while still rendering the same three ranked sentences.
  *
- * @typedef {ActionNotes & { confirm: string }} ConfirmableAction
+ * `outcome` is the node that shows what the bike ANSWERED, and it rides in here rather than
+ * beside the prose for the reason `irreversible` is derived rather than passed: what a
+ * control is and what it renders cannot then disagree. It is a thunk, so nothing is built
+ * for a control that has no answer to show.
+ *
+ * @typedef {ActionNotes & { confirm: string, outcome?: () => Element }} ConfirmableAction
  */
 
 /**
@@ -1499,6 +1556,9 @@ function ActionButton(action, caption, notes) {
       // exactly the case it exists to catch.
       () => (armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption())
     ),
+    // ⚠️ ABOVE the prose. The prose is static and says what the button is FOR; this is what
+    // it just did. docs/dashboard-decisions.md §"Where an ANSWER goes".
+    notes.outcome ? notes.outcome() : div(),
     NoteBlock(notes)
   );
 }
@@ -1952,7 +2012,47 @@ async function performHeadlight(off) {
  * @param {string} confirmation
  */
 async function performAction(action, confirmation) {
-  await send(new URLSearchParams({ action, confirm: confirmation }));
+  const payload = await send(new URLSearchParams({ action, confirm: confirmation }));
+  if (action === "read-service-stamp") {
+    // Taken from `message` rather than recomputed: send() composes the transport-failure
+    // sentence itself, and a refusal arrives as `payload.message` — so whatever send()
+    // decided is exactly what this control has to show, for every ending.
+    const text = payload === null ? unreachableForARead() : message.val;
+    stampOutcome.val = { text, stamp: payload?.result?.stamp?.before ?? null };
+    // ⚠️ Cleared ONLY while this node is still on screen. `send()` has just replaced the
+    // state, and an answer that says writing is off unmounts the whole controls branch —
+    // StampOutcome with it — on the same update. Clearing unconditionally therefore
+    // emptied the failure line at VcuWrite's `!hasControls()` branch, which is the ONE
+    // thing that must render when there are no controls, and the section collapsed to a
+    // heading and an ellipsis. The condition is "is the node that renders this still
+    // there", which is what hasControls() answers.
+    if (hasControls()) {
+      message.val = "";
+    }
+    return;
+  }
+  if (action === "set-service-point") {
+    // ⚠️ `31 FC` overwrote the block the read reports, and it is two taps away in the same
+    // fold. What was on screen is now false. Cleared rather than refilled with the routine's
+    // own `after`: that stamp is absent whenever the routine could not read it back, and its
+    // sentence is already being rendered by Outcome(). docs/dashboard-decisions.md.
+    stampOutcome.val = null;
+  }
+}
+
+/**
+ * What a request that never came back means for a READ.
+ *
+ * ⚠️ Not send()'s sentence, which says "this does NOT mean nothing was written — the
+ * request may have reached the bike. Read the value back before trying again". That is
+ * true of every write on this page and false of this one: the read changes nothing, so
+ * there is nothing to read back and nothing to worry about having landed.
+ */
+function unreachableForARead() {
+  return (
+    "Could not reach the Pi, so the stamp was not read. Nothing was sent to the bike and nothing " +
+    "changed — try again when the Pi answers."
+  );
 }
 
 /**
@@ -2013,6 +2113,8 @@ export async function refreshVcuWrite() {
   dangerOpen.val = false;
   headlightExpected.val = null;
   lightsProgress.val = "";
+  // An answer read through a previous sheet-opening must not be read as this one's.
+  stampOutcome.val = null;
   forgetSelection();
   await fetchStatus();
 }

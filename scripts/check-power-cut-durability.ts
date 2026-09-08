@@ -53,6 +53,8 @@ const generateKeyPairAsync = promisify(generateKeyPair);
 
 /** The observed shape: a mid-file run of NULs where the kernel never wrote the data back. */
 const HOLE_BYTES = 1710;
+/** What both readers call a hole. They agree, so it is not a per-file parameter. */
+const HOLE_PHRASE = "NUL bytes";
 const SEGMENTS_TO_SEAL = 24;
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -336,9 +338,13 @@ function checkInjuriesTellApart<T>(file: string, capture: ConsoleCapture<T>, tor
     `${file}: the torn tail is reported as routine`,
     capture.logs.some(line => line.includes(tornPhrase))
   );
+  // ⚠️ The LEVEL is the property. This pinned the literal "is not valid JSON", which is what
+  // a hole produced when it reached JSON.parse — so a reader that learned to name the hole
+  // instead failed a check about log levels. Both readers now say the same word, so it is a
+  // constant rather than a per-file parameter; the torn-tail phrase genuinely differs.
   check(
     `${file}: the holed line is reported as damage`,
-    capture.warns.some(line => line.includes("is not valid JSON"))
+    capture.warns.some(line => line.includes(HOLE_PHRASE))
   );
 }
 

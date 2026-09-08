@@ -173,7 +173,10 @@ const ALL_KEYS = [
 check(`no two of the ${ALL_KEYS.length} controls share a key`, new Set(ALL_KEYS).size === ALL_KEYS.length);
 check(
   "the written-down read-service-stamp button is still there, so its key above is a control and not a leftover",
-  sourceOf("public/views/vcu-write.js").includes('ActionButton("read-service-stamp"')
+  // ⚠️ Whitespace-tolerant, not a literal substring. Prettier broke this call across lines
+  // the day it grew a fourth argument (the outcome node, #154), and an exact match then
+  // reported the control as DELETED — a red build about a button that was still there.
+  /ActionButton\(\s*"read-service-stamp"/.test(sourceOf("public/views/vcu-write.js"))
 );
 check(
   '⚠️  and no control\'s key is "" — that is what makes `armed.val = ""` a disarm rather than the name of something',

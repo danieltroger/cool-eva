@@ -132,6 +132,23 @@ export async function recentAuditRecords(directory: string, limit: number): Prom
     if (line.trim().length === 0) {
       continue;
     }
+    if (line.replace(/\0/g, "").trim().length === 0) {
+      // A HOLE, not a parse failure. A power cut mid-append leaves the block allocated and
+      // the write lost, so the line comes back as NUL bytes (docs/power-cuts.md). U+0000 is
+      // not JS whitespace, so the trim above does not catch it and this reached JSON.parse —
+      // which threw a stack trace on every GET and POST to /vcu-write, complaining about a
+      // line whose NULs its own message renders as spaces.
+      //
+      // ⚠️ Still a WARNING, and deliberately so: a torn tail is a process that was killed,
+      // a hole is a DAMAGED FILE, and the level is the only thing carrying that difference
+      // (check-power-cut-durability.ts §3). What changes is that it names the injury and
+      // carries no stack trace. Nothing is recovered — these bytes are not a record — and
+      // #164 stops NEW holes without repairing the file that already has one.
+      console.warn(
+        `vcu-write: ${AUDIT_FILE} line ${position + 1} is ${line.length} NUL bytes — a record lost to a power cut, not a parse error`
+      );
+      continue;
+    }
     try {
       records.push(JSON.parse(line) as AuditRecord);
     } catch (err) {
