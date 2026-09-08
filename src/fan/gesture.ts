@@ -31,6 +31,18 @@ export const FAN_HOLD_MS = 1200;
  */
 export const STATIONARY_MAX_KMH = 3;
 
+/**
+ * How old `speed_can_kmh` may be and still say whether the bike is stopped.
+ *
+ * ⚠️ Its own constant, and NOT the button window from ../gestures/long-press.ts even
+ * though both are 500 ms today. That one is argued from gaps between 0x102 frames; this
+ * one decides whether a fan may be switched off under a moving bike, and retuning the
+ * button's window for a slower bit must not quietly move this. Same 500 ms and the same
+ * fail-closed argument as ./fun.ts's FUN_GATE_MAX_AGE_MS, which asks this exact question
+ * of this exact signal; scripts/check-hold-gestures.ts pins the three together.
+ */
+export const STATIONARY_MAX_AGE_MS = 500;
+
 /** What the gesture does next. `full` is MAX_DUTY_PERCENT, `off` is a manual 0. */
 export type FanGestureAction = "automatic" | "full" | "off";
 

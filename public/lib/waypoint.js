@@ -2,15 +2,17 @@
 
 /** @typedef {import("../../src/http/waypoint.ts").WaypointReply} WaypointReply */
 
-// Saving a waypoint from the phone, for both callers that do it: the menu button and
-// the handlebar long press.
+// Saving a waypoint from the phone: the menu button in ../views/sheet.js, and nothing
+// else since the handlebar long press moved to the Pi (src/gps/waypoint.ts).
 //
-// One code path on purpose. The server decides whether a waypoint may be saved — it
-// owns the GPS fix, its age and the clock it would be stamped with — and this asks it
-// in the one way that gets a machine-readable answer back. Nothing here re-derives
-// that judgement from the dashboard's own copy of the signals, because a second
-// opinion about whether the save happened is exactly how a banner ends up claiming a
-// waypoint that is not in the log.
+// The server decides whether a waypoint may be saved — it owns the GPS fix, its age and
+// the clock it would be stamped with — and this asks it in the one way that gets a
+// machine-readable answer back. Nothing here re-derives that judgement from the
+// dashboard's own copy of the signals, because a second opinion about whether the save
+// happened is exactly how a banner ends up claiming a waypoint that is not in the log.
+//
+// ⚠️ A save the BIKE makes never comes through here at all. ./announce.js is what puts
+// that one on screen, off `waypoint_seq` and `waypoint_refused_seq`.
 
 /**
  * Asks the bike to stamp a waypoint here, now.

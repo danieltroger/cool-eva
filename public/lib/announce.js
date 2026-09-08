@@ -1,7 +1,7 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { connection, valueOf } from "./store.js";
+import { connection, peek, valueOf } from "./store.js";
 import { fanAnnouncementKey, fanAnnouncementText } from "./fan-display.js";
 import { showToast } from "./toast.js";
 
@@ -131,10 +131,12 @@ function announceWaypoints() {
     if (foldedSave.announce) {
       showToast(`Waypoint ${Math.round(Number(saved.value))} saved.`, "good");
     }
+    // peek(), not valueOf(): the counter above is what this reacts to, and the code is
+    // only read to word a banner already decided on. store.js §peek has the rule.
+    const why = peek("waypoint_refusal");
     const foldedRefusal = foldAnnouncement(refused, valueOf("waypoint_refused_seq"));
     refused = foldedRefusal.state;
     if (foldedRefusal.announce) {
-      const why = valueOf("waypoint_refusal");
       showToast(WAYPOINT_REFUSAL_TEXT[why ?? 0] ?? "Waypoint not saved.", "bad");
     }
   });

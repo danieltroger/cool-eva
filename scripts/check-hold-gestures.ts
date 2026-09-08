@@ -7,6 +7,7 @@ import type { FanPwm } from "../src/fan/pwm.ts";
 import {
   FAN_GESTURE_BUTTON,
   FAN_HOLD_MS,
+  STATIONARY_MAX_AGE_MS,
   STATIONARY_MAX_KMH,
   isStationary,
   nextFanGestureAction,
@@ -22,6 +23,14 @@ import {
   type HoldOutcome,
   type HoldState,
 } from "../src/gestures/long-press.ts";
+import {
+  MAX_PLAUSIBLE_KMH,
+  MIN_FIX_INTERVAL_MS,
+  distanceKm,
+  implausibleJumpKmh,
+  type Fix,
+} from "../src/gps/fix-plausibility.ts";
+import { FUN_GATE_MAX_AGE_MS } from "../src/fan/fun.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 import { fanAnnouncementKey, fanAnnouncementText } from "../public/lib/fan-display.js";
 import { WAYPOINT_REFUSAL_TEXT, foldAnnouncement } from "../public/lib/announce.js";
@@ -45,8 +54,6 @@ import { DOUBLE_CLICK_WINDOW_MS } from "../public/lib/gestures.js";
 // — hiding the three gates this file is actually here to check.
 process.env.GPS_TIME_SYNC = "0";
 const {
-  MAX_PLAUSIBLE_KMH,
-  MIN_FIX_INTERVAL_MS,
   WAYPOINT_GESTURE_BUTTON,
   WAYPOINT_HOLD_MS,
   WAYPOINT_REFUSAL,
@@ -281,37 +288,34 @@ check(
 );
 
 // --- 3. The fan cycle, end to end -----------------------------------------------
+//
+// ⚠️ The cycle walk runs on a SHORTENED COPY of the shipped gesture — the same object
+// with `holdMs` turned down — because `holdMs` is per gesture and the runner takes a
+// list, so no seam in src/ is needed to make this fast. §3a below then does one hold at
+// the shipped 1200 ms, so the real threshold is exercised end to end rather than assumed
+// from §1's arithmetic. Seven holds at the shipped length cost 10 s of `setTimeout` in a
+// suite that runs its checks one after another.
 
 console.log("\n3. the cycle against a real loop and a recording bridge");
 
 defineSignals(SIGNALS);
 
-interface PwmCall {
-  method: "duty" | "output" | "bridge";
-  value: number | boolean;
-}
-const calls: PwmCall[] = [];
+/** The bridge, stubbed. Nothing here is read back: every assertion goes through state(). */
 const recording: FanPwm = {
   channelPath: "/sys/class/pwm/pwmchipFAKE/pwm0",
-  setDutyPercent: async percent => {
-    calls.push({ method: "duty", value: percent });
-  },
-  setOutputEnabled: async on => {
-    calls.push({ method: "output", value: on });
-  },
-  setBridgeEnabled: async on => {
-    calls.push({ method: "bridge", value: on });
-  },
+  setDutyPercent: async () => {},
+  setOutputEnabled: async () => {},
+  setBridgeEnabled: async () => {},
 };
 
 const TICK_MS = 20;
-const bus = { enter: 0, cancel: 0, speedKmh: 0, throttlePercent: 0, go: 0 };
+/** Long enough to be a hold and to clear a beat, short enough not to cost a second. */
+const QUICK_HOLD_MS = 150;
+const bus = { enter: 0, cancel: 0, speedKmh: 0 };
 const busTimer = setInterval(() => {
   record("btn_mode_enter", bus.enter);
   record("btn_indicator_cancel", bus.cancel);
   record("speed_can_kmh", bus.speedKmh);
-  record("throttle_pct", bus.throttlePercent);
-  record("go", bus.go);
   record("batt_temp_hi", 20);
 }, TICK_MS);
 
@@ -319,58 +323,47 @@ async function settle(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** One hold of a button, at its SHIPPED length plus a beat, then a release. */
-async function holdButton(button: "enter" | "cancel", holdMs: number): Promise<void> {
+/** One press of a button, held past whatever that gesture's threshold is, then released. */
+async function pressAndHold(button: "enter" | "cancel", key: string, holdMs: number): Promise<void> {
   bus[button] = 1;
-  record(button === "enter" ? "btn_mode_enter" : "btn_indicator_cancel", 1);
+  record(key, 1);
   await settle(holdMs + HOLD_BEAT_MS * 2);
   bus[button] = 0;
-  record(button === "enter" ? "btn_mode_enter" : "btn_indicator_cancel", 0);
+  record(key, 0);
   await settle(TICK_MS * 4);
 }
+
+const holdEnter = (holdMs: number): Promise<void> => pressAndHold("enter", "btn_mode_enter", holdMs);
 
 const controller = await startFanControl({ enabled: true, openPwm: async () => recording });
 const automatic = startFanAutomatic(controller, { tickMs: TICK_MS, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
 const fanCycle = startFanCycleGesture(automatic, { revertBeatMs: 50 });
-const gestures = startHoldGestures([fanCycle.gesture, waypointHoldGesture()]);
+const quickGestures = startHoldGestures([{ ...fanCycle.gesture, holdMs: QUICK_HOLD_MS }]);
 await settle(TICK_MS * 4);
 
 check("a fresh loop is in automatic", automatic.mode() === "automatic");
 
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check(
   `⚠️  hold 1, bike stopped: automatic → off (mode ${automatic.mode()}, ${controller.state().targetPercent} %)`,
   automatic.mode() === "manual" && controller.state().targetPercent === 0 && !controller.state().driverEnabled
 );
 
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check(
   `hold 2: off → manual ${MAX_DUTY_PERCENT} %`,
   automatic.mode() === "manual" && controller.state().targetPercent === MAX_DUTY_PERCENT
 );
 
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check("hold 3: manual 100 % → automatic, closing the cycle", automatic.mode() === "automatic");
 check("…and the dashboard is told", latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic);
-
-// An ordinary press must do nothing at all, on the real wiring rather than in §1.
-const beforeTap = automatic.mode();
-bus.enter = 1;
-record("btn_mode_enter", 1);
-await settle(LONGEST_ENTER_PRESS_MS);
-bus.enter = 0;
-record("btn_mode_enter", 0);
-await settle(TICK_MS * 6);
-check(
-  `⚠️  a ${LONGEST_ENTER_PRESS_MS} ms press — the longest ever recorded — changes nothing`,
-  automatic.mode() === beforeTap
-);
 
 // Moving: the cycle degrades to the two-state toggle.
 bus.speedKmh = 5;
 record("speed_can_kmh", 5);
 await settle(TICK_MS * 4);
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check(
   `⚠️  a hold at ${bus.speedKmh} km/h skips *off* and goes to manual ${MAX_DUTY_PERCENT} %`,
   automatic.mode() === "manual" && controller.state().targetPercent === MAX_DUTY_PERCENT
@@ -380,9 +373,9 @@ check(
 bus.speedKmh = 0;
 record("speed_can_kmh", 0);
 await settle(TICK_MS * 4);
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check("back to automatic, ready to be switched off again", automatic.mode() === "automatic");
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check("the fan is off with the bike stopped", automatic.mode() === "manual" && controller.state().targetPercent === 0);
 bus.speedKmh = 5;
 record("speed_can_kmh", 5);
@@ -404,15 +397,14 @@ check(
 );
 
 // A bus that goes quiet with the fan off must leave it off: that silence is an AC charge,
-// which is the whole reason the state exists.
-//
-// The mode is put back to automatic through the endpoint's own call first, because the
-// slider left the fan at manual 0 above and one hold from there is `full`, not `off`.
+// which is the whole reason the state exists. The mode is put back through the endpoint's
+// own call first, because the slider left the fan at manual 0 and one hold from there is
+// `full`, not `off`.
 bus.speedKmh = 0;
 record("speed_can_kmh", 0);
 await automatic.setMode("automatic");
 await settle(TICK_MS * 4);
-await holdButton("enter", FAN_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 check(
   "the gesture has the fan off again, with the bike stopped",
   automatic.mode() === "manual" && controller.state().targetPercent === 0
@@ -423,8 +415,50 @@ check(
   "⚠️  a bus that goes SILENT with the fan off leaves it off — that silence is the dinner",
   automatic.mode() === "manual" && controller.state().targetPercent === 0
 );
+quickGestures.stop();
 
-gestures.stop();
+// --- 3a. The same wiring at the SHIPPED hold length -------------------------------
+//
+// ⚠️ Everything above turned `holdMs` down. This section does not, so the 1200 ms in
+// src/fan/gesture.ts is exercised on the real path exactly once — and the longest MODE
+// ENTER press ever recorded is replayed against it and must do nothing.
+
+console.log("\n3a. and the same button at the shipped 1200 ms");
+
+const shippedBus = setInterval(() => {
+  record("btn_mode_enter", bus.enter);
+  record("speed_can_kmh", bus.speedKmh);
+  record("batt_temp_hi", 20);
+}, TICK_MS);
+const shippedGestures = startHoldGestures([fanCycle.gesture]);
+await automatic.setMode("automatic");
+await settle(TICK_MS * 4);
+
+// ⚠️ One tap first, and it is not padding. src/can/signals.ts notifies only when a value
+// MOVES, so re-recording the 0 this button already holds raises no event and a runner
+// started mid-stream would never see the 0 that a watched 0→1 needs. On the bike the
+// first 0x102 frame after boot is that key's first record and does notify.
+await holdEnter(60);
+check("a tap far below the threshold changes nothing", automatic.mode() === "automatic");
+
+bus.enter = 1;
+record("btn_mode_enter", 1);
+await settle(LONGEST_ENTER_PRESS_MS);
+bus.enter = 0;
+record("btn_mode_enter", 0);
+await settle(TICK_MS * 6);
+check(
+  `⚠️  a ${LONGEST_ENTER_PRESS_MS} ms press — the longest ever recorded — changes nothing`,
+  automatic.mode() === "automatic"
+);
+
+await holdEnter(FAN_HOLD_MS);
+check(
+  `⚠️  a hold at the shipped ${FAN_HOLD_MS} ms steps the fan (mode ${automatic.mode()})`,
+  automatic.mode() === "manual" && controller.state().targetPercent === 0
+);
+clearInterval(shippedBus);
+shippedGestures.stop();
 fanCycle.stop();
 automatic.stop();
 await controller.stop();
@@ -462,40 +496,36 @@ const failingStopController: FanController = {
   stop: async () => {},
 };
 
+let stubbornPress = 0;
+let stubbornSpeed = 0;
 const stubbornBus = setInterval(() => {
   record("btn_mode_enter", stubbornPress);
   record("speed_can_kmh", stubbornSpeed);
   record("batt_temp_hi", 20);
 }, TICK_MS);
-let stubbornPress = 0;
-let stubbornSpeed = 0;
 const stubbornLoop = startFanAutomatic(failingStopController, {
   tickMs: TICK_MS,
   speedMaxAgeMs: 400,
   chargeSessionMaxAgeMs: 400,
 });
 const stubbornCycle = startFanCycleGesture(stubbornLoop, { revertBeatMs: 50 });
-const stubbornGestures = startHoldGestures([stubbornCycle.gesture]);
+const stubbornGestures = startHoldGestures([{ ...stubbornCycle.gesture, holdMs: QUICK_HOLD_MS }]);
 await settle(TICK_MS * 4);
 
-// ⚠️ One tap first, and it is not padding. src/can/signals.ts notifies only when a value
-// MOVES, so re-recording the 0 this button already holds from §3 raises no event and this
-// second runner would never see the 0 that a watched 0→1 needs. On the bike the first
-// 0x102 frame after boot is the first record of that key and does notify; here the store
-// is already warm. The tap is 100 ms, far too short to fire anything.
-stubbornPress = 1;
-record("btn_mode_enter", 1);
-await settle(100);
-stubbornPress = 0;
-record("btn_mode_enter", 0);
-await settle(TICK_MS * 4);
+/** A press on the stubborn bus. Its own, because that bus carries its own variables. */
+async function holdStubborn(holdMs: number): Promise<void> {
+  stubbornPress = 1;
+  record("btn_mode_enter", 1);
+  await settle(holdMs + HOLD_BEAT_MS * 2);
+  stubbornPress = 0;
+  record("btn_mode_enter", 0);
+  await settle(TICK_MS * 4);
+}
 
-stubbornPress = 1;
-record("btn_mode_enter", 1);
-await settle(FAN_HOLD_MS + HOLD_BEAT_MS * 2);
-stubbornPress = 0;
-record("btn_mode_enter", 0);
-await settle(TICK_MS * 4);
+// One tap first, for the reason §3a gives: a runner started mid-stream has not yet seen
+// the 0 that a watched 0→1 needs, and re-recording an unchanged 0 raises no event.
+await holdStubborn(60);
+await holdStubborn(QUICK_HOLD_MS);
 check(
   "the hold stopped the fan even though the bridge refused",
   stubbornLoop.mode() === "manual" && failingStopController.state().targetPercent === 0
@@ -545,6 +575,52 @@ check(
 check(
   "…and the counter is what moves, so two identical refusals are two banners",
   latestValue("waypoint_refused_seq") === 2
+);
+
+// ⚠️ THROUGH THE RUNNER, not by calling saveWaypointNow() again: everything above proves
+// the gates, and nothing yet proves the hold reaches them. This is the second gesture on
+// the shared recogniser, at its own shipped 1000 ms, on its own button.
+const waypointBus = setInterval(() => {
+  record("btn_indicator_cancel", bus.cancel);
+}, TICK_MS);
+const waypointGestures = startHoldGestures([waypointHoldGesture()]);
+record("gps_lat", 57.7, Date.now());
+record("gps_lon", 11.97, Date.now());
+await settle(TICK_MS * 4);
+const savedBefore = waypointsSaved();
+await pressAndHold("cancel", "btn_indicator_cancel", 200);
+check("a 200 ms tap of the cancel switch saves nothing", waypointsSaved() === savedBefore);
+await pressAndHold("cancel", "btn_indicator_cancel", WAYPOINT_HOLD_MS);
+check(
+  `⚠️  a ${WAYPOINT_HOLD_MS} ms hold of the cancel switch saves a waypoint through the runner`,
+  waypointsSaved() === savedBefore + 1
+);
+clearInterval(waypointBus);
+waypointGestures.stop();
+
+// The gate itself, as a table. It is pure (src/gps/fix-plausibility.ts), so both branches
+// are reachable without driving the signal store or waiting out an interval.
+const here: Fix = { latitudeDeg: 57.7, longitudeDeg: 11.97, at: 0 };
+check(
+  "one fix on its own is never implausible — there is nothing to compare it against",
+  implausibleJumpKmh(null, here) === null
+);
+check(
+  "⚠️  the 2026-08-09 jump — 13.04° to 130.30° of longitude in two seconds — is refused",
+  implausibleJumpKmh(here, { latitudeDeg: 57.7, longitudeDeg: 130.3, at: 2_000 }) !== null
+);
+check(
+  "⚠️  …but not when the two fixes are closer together than the GPS cadence, where a short " +
+    "denominator turns metres into thousands of km/h",
+  implausibleJumpKmh(here, { latitudeDeg: 57.7, longitudeDeg: 130.3, at: MIN_FIX_INTERVAL_MS - 1 }) === null
+);
+check(
+  "a lap of a town at a plausible speed is not refused",
+  implausibleJumpKmh(here, { latitudeDeg: 57.72, longitudeDeg: 11.99, at: 60_000 }) === null
+);
+check(
+  `the great-circle distance is right to a metre (${distanceKm(here, { latitudeDeg: 57.71, longitudeDeg: 11.97, at: 0 }).toFixed(3)} km for 0.01°)`,
+  Math.abs(distanceKm(here, { latitudeDeg: 57.71, longitudeDeg: 11.97, at: 0 }) - 1.112) < 0.001
 );
 
 const refusalBounds = boundsFor("waypoint_refusal", "", "waypoint");
@@ -677,7 +753,18 @@ for (const [role, key] of bound) {
   check(`…and it is not ${FORBIDDEN_BINDING}`, (key as string) !== FORBIDDEN_BINDING);
 }
 check("the two gestures are on different buttons", (FAN_GESTURE_BUTTON as string) !== WAYPOINT_GESTURE_BUTTON);
-check(`the plausibility gate agrees with bounds.js about a plausible speed`, MAX_PLAUSIBLE_KMH === 300);
+// ⚠️ Read OFF bounds.js rather than compared to a second literal 300. The comment in
+// src/gps/fix-plausibility.ts claims the two "cannot come to disagree"; only this makes
+// that true, and the previous form was green for every value of either.
+const speedBounds = boundsFor("gps_speed_kmh", "km/h", "gps");
+check(
+  `the plausibility gate is bounds.js's own ceiling for gps_speed_kmh (${speedBounds?.[1]})`,
+  speedBounds !== null && MAX_PLAUSIBLE_KMH === speedBounds[1]
+);
+check(
+  "and the stationary window agrees with fun mode's, which asks the same of the same signal",
+  STATIONARY_MAX_AGE_MS === FUN_GATE_MAX_AGE_MS && STATIONARY_MAX_AGE_MS === SAMPLE_MAX_AGE_MS
+);
 
 console.log("");
 if (failures > 0) {

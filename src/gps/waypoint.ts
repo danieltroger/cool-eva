@@ -1,6 +1,7 @@
-import { ageMs, latestValue, onChange, record, snapshot, type LiveValue } from "../can/signals.ts";
+import { ageMs, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
 import { monotonicNow } from "../monotonic.ts";
+import { implausibleJumpKmh, isPositionOnEarth, type Fix } from "./fix-plausibility.ts";
 import { systemClockTrust } from "./clock.ts";
 
 // Stamping "I am here, now" into the ride log, for both things that ask: GET /waypoint
@@ -19,42 +20,6 @@ import { systemClockTrust } from "./clock.ts";
 
 /** A fix older than this is not where you are any more. */
 export const FIX_MAX_AGE_MS = 30_000;
-
-/**
- * The planet. A decode failure can put a coordinate outside it; nothing else can.
- *
- * Exported because public/lib/bounds.js gates the same four signals for the dashboard and
- * cannot import this file — the dashboard has no build step. That agreement is asserted by
- * scripts/check-waypoint-endpoint.ts rather than left to trust.
- *
- * ⚠️ This refuses a NON-POSITION, and that is all — the 2026-08-09 waypoint sits 7 000 km
- * from where the bike stood and passes it, because 130.3 is a legal longitude. The gate
- * that refuses THAT one is the jump check below. docs/waypoints.md §"What each gate can
- * see" has both.
- */
-export const LATITUDE_RANGE: [number, number] = [-90, 90];
-export const LONGITUDE_RANGE: [number, number] = [-180, 180];
-
-/**
- * Faster than this between two fixes and the newer one is a decode artefact, not a ride.
- *
- * ⚠️ NOT a guess at how fast the bike goes: it is `public/lib/bounds.js`'s own gate on
- * `gps_speed_kmh`, so the two cannot come to disagree about what a plausible speed is.
- * This bike's top speed is 270 km/h (docs/route-map.md), so 300 cannot reject a real
- * ride and does reject the failure this exists for — a waypoint saved on 2026-08-09 with
- * longitude 130.30 while the next `gps_lon` row read 13.04, some 8 000 km away.
- */
-export const MAX_PLAUSIBLE_KMH = 300;
-
-/**
- * Two fixes closer together than this are not judged on the distance between them.
- *
- * ⚠️ THE LESSON docs/route-map.md ALREADY PAID FOR: an implied-speed test is destroyed
- * by a short denominator — 7 m in 1 ms reads as 25 000 km/h, and a first attempt at
- * despiking the archive that way rejected 4 718 steps that were all timing artefact
- * rather than bad data. One second is the GPS cadence, so a real pair straddles it.
- */
-export const MIN_FIX_INTERVAL_MS = 1_000;
 
 /** Held to save a waypoint: the turn-signal cancel switch, pushed in (0x102 b0 bit 5). */
 export const WAYPOINT_GESTURE_BUTTON = "btn_indicator_cancel";
@@ -118,10 +83,9 @@ export interface WaypointOutcome {
 let waypointCount = 0;
 let refusedCount = 0;
 
-/** The fix before the one a save would take, and when it arrived. See startWaypointFixTracking(). */
-let precedingFix: { latitudeDeg: number; longitudeDeg: number; at: number } | null = null;
-let latestFix: { latitudeDeg: number; longitudeDeg: number; at: number } | null = null;
-let unsubscribeFixes: (() => void) | null = null;
+/** The fix before the one a save would take, and the one it would take. */
+let precedingFix: Fix | null = null;
+let latestFix: Fix | null = null;
 
 /**
  * Starts remembering where the last fix was, which is what makes the plausibility gate
@@ -131,15 +95,7 @@ let unsubscribeFixes: (() => void) | null = null;
  * Called from src/index.ts and stopped with the rest, so nothing subscribes at import.
  */
 export function startWaypointFixTracking(): { stop: () => void } {
-  unsubscribeFixes = onChange(changed => onFixChanged(changed));
-  return { stop: () => stopWaypointFixTracking() };
-}
-
-function stopWaypointFixTracking(): void {
-  if (unsubscribeFixes !== null) {
-    unsubscribeFixes();
-    unsubscribeFixes = null;
-  }
+  return { stop: onChange(onFixChanged) };
 }
 
 /** Shifts the newest fix back one slot and takes the new one. */
@@ -166,20 +122,19 @@ function onFixChanged(changed: Record<string, LiveValue>): void {
  * be fresh, and be stamped with a time the Pi has earned the right to claim.
  */
 export function saveWaypointNow(): WaypointOutcome {
-  const signals = snapshot();
-  const latitude = signals.gps_lat;
-  const longitude = signals.gps_lon;
+  const latitude = latestValue("gps_lat");
+  const longitude = latestValue("gps_lon");
   const now = Date.now();
 
-  if (!latitude || !longitude) {
+  if (latitude === null || longitude === null) {
     return refuse(WAYPOINT_REFUSAL.NO_FIX, "No GPS fix yet — waypoint not saved.", "no GPS fix has been received");
   }
 
-  if (!isPositionOnEarth(latitude.value, longitude.value)) {
+  if (!isPositionOnEarth(latitude, longitude)) {
     // Cheapest and most fundamental of the refusals, so it goes first: a fix that is not a
     // position on Earth cannot be made into one by being fresh, and the sentence is more
     // use than "GPS fix is 3 seconds old" would have been.
-    const where = `${latitude.value.toFixed(3)}, ${longitude.value.toFixed(3)}`;
+    const where = `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
     return refuse(
       WAYPOINT_REFUSAL.FIX_NOT_ON_EARTH,
       `GPS fix is not a real position (${where}) — waypoint not saved.`,
@@ -213,7 +168,10 @@ export function saveWaypointNow(): WaypointOutcome {
     );
   }
 
-  const jump = implausibleJump(latitude.value, longitude.value);
+  // ⚠️ The TRACKED fix, not the live values above. The two differ by at most the 3 m
+  // deadband on gps_lat/gps_lon, which is nothing against a gate about 8 000 km — and
+  // this one carries the instant the fix arrived, which the live value does not.
+  const jump = latestFix === null ? null : implausibleJumpKmh(precedingFix, latestFix);
   if (jump !== null) {
     return refuse(
       WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE,
@@ -250,80 +208,31 @@ export function saveWaypointNow(): WaypointOutcome {
   // coordinates it labels, and the count is what the dashboard watches to notice that a
   // waypoint was saved by something other than its own button.
   record("waypoint_seq", waypointCount, now);
-  record("waypoint_lat", latitude.value, now);
-  record("waypoint_lon", longitude.value, now);
-  console.log(`waypoint: #${waypointCount} at ${latitude.value.toFixed(5)}, ${longitude.value.toFixed(5)}`);
+  record("waypoint_lat", latitude, now);
+  record("waypoint_lon", longitude, now);
+  console.log(`waypoint: #${waypointCount} at ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
   return { saved: true, message: `Waypoint ${waypointCount} saved.`, sequence: waypointCount };
 }
 
 /**
  * The waypoint's entry in src/index.ts's gesture list.
  *
- * ⚠️ It reports `ok: true` for a refusal, and that is not a lie: the gesture did what it
- * is for — it asked, and the answer was recorded and is on its way to the phone as a red
- * banner. Reporting a refused save as a failed GESTURE would put a second, wronger
- * sentence in the journal beside the accurate one src/gps/waypoint.ts already wrote.
+ * ⚠️ A refusal is not a failed gesture: the hold did what it is for — it asked, and the
+ * answer is recorded and on its way to the phone as a red banner. The sentence it returns
+ * is saveWaypointNow()'s own, so the journal says which gate refused.
  */
 export function waypointHoldGesture(): HoldGesture {
   return {
     button: WAYPOINT_GESTURE_BUTTON,
     holdMs: WAYPOINT_HOLD_MS,
     description: "save a waypoint here",
-    perform: async () => {
-      const outcome = saveWaypointNow();
-      return { ok: true, message: outcome.message };
-    },
+    perform: async () => saveWaypointNow().message,
   };
 }
 
 /** How many waypoints this boot — for /status. */
 export function waypointsSaved(): number {
   return waypointCount;
-}
-
-/**
- * The speed this fix implies since the preceding one, when that is impossible — else null.
- *
- * ⚠️ Answers null, not a refusal, when there is nothing to compare against: one fix on
- * its own is not evidence of anything, and refusing the first waypoint of every boot
- * would break the case the feature is for. The residual gap is therefore a bad FIRST
- * fix, which nothing here can see; an absolute-region rule is the follow-up issue's.
- */
-function implausibleJump(latitudeDeg: number, longitudeDeg: number): number | null {
-  if (precedingFix === null) {
-    return null;
-  }
-  // Between the two FIXES, not up to now: `now` includes however long the rider then took
-  // to press the button, and a bigger denominator makes an impossible jump look survivable.
-  const elapsedMs = (latestFix === null ? monotonicNow() : latestFix.at) - precedingFix.at;
-  if (elapsedMs < MIN_FIX_INTERVAL_MS) {
-    return null;
-  }
-  const km = distanceKm(precedingFix.latitudeDeg, precedingFix.longitudeDeg, latitudeDeg, longitudeDeg);
-  const impliedKmh = km / (elapsedMs / 3_600_000);
-  return impliedKmh > MAX_PLAUSIBLE_KMH ? impliedKmh : null;
-}
-
-/** Great-circle kilometres between two fixes. Pure arithmetic; the mean Earth radius. */
-function distanceKm(fromLatDeg: number, fromLonDeg: number, toLatDeg: number, toLonDeg: number): number {
-  const radians = Math.PI / 180;
-  const meanEarthRadiusKm = 6371;
-  const halfLatDelta = ((toLatDeg - fromLatDeg) * radians) / 2;
-  const halfLonDelta = ((toLonDeg - fromLonDeg) * radians) / 2;
-  const chord =
-    Math.sin(halfLatDelta) ** 2 +
-    Math.cos(fromLatDeg * radians) * Math.cos(toLatDeg * radians) * Math.sin(halfLonDelta) ** 2;
-  return 2 * meanEarthRadiusKm * Math.asin(Math.min(1, Math.sqrt(chord)));
-}
-
-/** Whether a pair of coordinates is a place at all. */
-export function isPositionOnEarth(latitudeDeg: number, longitudeDeg: number): boolean {
-  return (
-    latitudeDeg >= LATITUDE_RANGE[0] &&
-    latitudeDeg <= LATITUDE_RANGE[1] &&
-    longitudeDeg >= LONGITUDE_RANGE[0] &&
-    longitudeDeg <= LONGITUDE_RANGE[1]
-  );
 }
 
 /**

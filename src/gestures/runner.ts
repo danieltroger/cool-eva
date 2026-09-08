@@ -12,32 +12,22 @@ import { HOLD_OUTCOME, isPressOpen, newHoldState, observeHold, type HoldState } 
 // waypoint, because the second button lights the hazards if it is held to ~2 s and the
 // first does not.
 
-/** What a gesture's action did, so the runner can put one honest line in the journal. */
-export interface GestureOutcome {
-  ok: boolean;
-  message: string;
-}
-
 export interface HoldGesture {
   /** The signal whose 0/1 the hold is measured on. */
   button: string;
   /** How long this button must be held. Argued per button in docs/handlebar-gestures.md. */
   holdMs: number;
-  /** What the gesture is for, in the journal line. */
+  /** What the gesture is for, in the journal line the runner writes when it fires. */
   description: string;
-  /** Runs on the hold. Never throws for the runner — a refusal comes back as ok: false. */
-  perform: () => Promise<GestureOutcome>;
-}
-
-export interface HoldGestureOptions {
   /**
-   * How often an OPEN press is re-examined.
+   * Runs on the hold and answers with the line to put in the journal.
    *
-   * The seam ../fan/auto.ts's tickMs is, and for its stated reason: the alternative to
-   * overriding it is a check that sits still for three real holds. Defaults to the
-   * shipped value, so the service's own call passes nothing.
+   * ⚠️ A SENTENCE and not an `{ok, message}`: the two gestures do not agree on what
+   * failure means. A fan command the bridge refuses did not happen, while a waypoint the
+   * GPS gate refuses DID happen — it asked, and the refusal is recorded and on its way to
+   * the phone. A shared boolean would have made one of them lie; each writes its own line.
    */
-  beatMs?: number;
+  perform: () => Promise<string>;
 }
 
 /**
@@ -65,7 +55,6 @@ interface GestureRun {
 
 interface RunnerContext {
   runs: GestureRun[];
-  beatMs: number;
   unsubscribe: (() => void) | null;
 }
 
@@ -76,10 +65,9 @@ interface RunnerContext {
  * is stopped before the controller: a gesture landing after the bridge has been idled
  * would re-command a fan that is about to lose its process.
  */
-export function startHoldGestures(gestures: HoldGesture[], options: HoldGestureOptions = {}): { stop: () => void } {
+export function startHoldGestures(gestures: HoldGesture[]): { stop: () => void } {
   const context: RunnerContext = {
     runs: gestures.map(gesture => ({ gesture, state: newHoldState(), timer: null, inFlight: false })),
-    beatMs: options.beatMs ?? HOLD_BEAT_MS,
     unsubscribe: null,
   };
   context.unsubscribe = onChange(changed => onSignalsChanged(context, changed));
@@ -135,7 +123,7 @@ function armBeat(context: RunnerContext, run: GestureRun): void {
   if (run.timer !== null) {
     return;
   }
-  run.timer = setInterval(() => foldInSample(context, run), context.beatMs);
+  run.timer = setInterval(() => foldInSample(context, run), HOLD_BEAT_MS);
 }
 
 function clearBeat(run: GestureRun): void {
@@ -170,7 +158,7 @@ function fireGesture(run: GestureRun): void {
   // a helper that runs before the async function's first await — would never become a
   // rejected promise, so it would escape into a setInterval callback with nothing above
   // it, end the process, and leave the flag latched so nothing fired again either.
-  let running: Promise<GestureOutcome>;
+  let running: Promise<string>;
   try {
     running = run.gesture.perform();
   } catch (error) {
@@ -179,9 +167,8 @@ function fireGesture(run: GestureRun): void {
     return;
   }
   void running
-    .then(outcome => {
-      const verdict = outcome.ok ? "" : "REFUSED — ";
-      console.log(`gesture: ${run.gesture.button} held ${run.gesture.holdMs} ms — ${verdict}${outcome.message}`);
+    .then(line => {
+      console.log(`gesture: ${run.gesture.button} held ${run.gesture.holdMs} ms — ${line}`);
     })
     .catch(error => {
       console.warn(`gesture: ${run.gesture.button} — ${run.gesture.description} threw:`, error);

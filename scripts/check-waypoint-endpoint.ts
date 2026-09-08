@@ -7,7 +7,7 @@ import { defineSignals, latestValue, record, snapshot } from "../src/can/signals
 import { systemClockTrust, syncSystemClockFromGps } from "../src/gps/clock.ts";
 import type { WaypointReply } from "../src/http/waypoint.ts";
 import { handleWaypointEndpoint } from "../src/http/waypoint.ts";
-import { LATITUDE_RANGE, LONGITUDE_RANGE } from "../src/gps/waypoint.ts";
+import { LATITUDE_RANGE, LONGITUDE_RANGE } from "../src/gps/fix-plausibility.ts";
 
 // The /waypoint wire, with no Pi and no phone.
 //

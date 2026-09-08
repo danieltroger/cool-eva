@@ -1,4 +1,4 @@
-import { ageMs, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
+import { ageMs, freshValue, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { MAX_DUTY_PERCENT, MIN_RUNNING_DUTY_PERCENT, type FanCommandResult, type FanController } from "./control.ts";
 import {
@@ -278,16 +278,6 @@ function sampleTemperature(context: AutoContext): void {
   }
   context.lastGoodTemperatureC = value;
   context.lastGoodAt = monotonicNow() - age;
-}
-
-/** A signal's value, or null when it is absent, stale, or not a finite number. */
-function freshValue(key: string, maxAgeMs: number): number | null {
-  const age = ageMs(key);
-  if (age === null || age > maxAgeMs) {
-    return null;
-  }
-  const value = latestValue(key);
-  return value !== null && Number.isFinite(value) ? value : null;
 }
 
 async function switchMode(context: AutoContext, mode: FanMode): Promise<FanCommandResult> {

@@ -37,7 +37,7 @@ import { startCoolantSensors } from "./sensors/max31865.ts";
 import { startFanControl } from "./fan/control.ts";
 import { startFanAutomatic } from "./fan/auto.ts";
 import { startFanCycleGesture } from "./fan/gesture-runner.ts";
-import { startHoldGestures, type HoldGesture } from "./gestures/runner.ts";
+import { startHoldGestures } from "./gestures/runner.ts";
 import { startWaypointFixTracking, waypointHoldGesture } from "./gps/waypoint.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
@@ -173,7 +173,7 @@ const fanAutomatic = startFanAutomatic(fanController);
 const waypointFixes = startWaypointFixTracking();
 const fanCycle = fanController.configured ? startFanCycleGesture(fanAutomatic) : null;
 const handlebarGestures = startHoldGestures(
-  [fanCycle?.gesture, waypointHoldGesture()].filter((gesture): gesture is HoldGesture => gesture !== undefined)
+  fanCycle === null ? [waypointHoldGesture()] : [fanCycle.gesture, waypointHoldGesture()]
 );
 
 // --- CAN: broadcast decode + OBD-II polling ---

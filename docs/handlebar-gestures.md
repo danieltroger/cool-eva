@@ -114,6 +114,18 @@ The cost is bounded: it is the bike's own trip counter. `odometer_can_km` is log
 
 **The measurement that settles it** — parked, key on, about 30 seconds: hold ENTER and release at roughly 1 s, then 2 s, then 4 s, noting for each whether the dash enters reset mode; whether reset mode leaves on its own and after how long; and whether the _press_ that starts a second hold is enough to confirm the reset or whether it takes a full short click. If the answer is "more than ~2 s", an upper bound becomes one constant and one branch. If it is "under 1.2 s", the choice is between accepting it and moving the fan cycle to another bit, and that is the owner's.
 
+## A waypoint the bike refuses
+
+The hold asks nobody, so a refusal that only existed in the reply to a request is a refusal the rider never learns about — they hold the button, see nothing, and ride away from a place they meant to keep. Two signals carry it instead: `waypoint_refused_seq`, a monotonic count, and `waypoint_refusal`, the reason code (`WAYPOINT_REFUSAL` in `src/gps/waypoint.ts`; the sentences are in `public/lib/announce.js`).
+
+⚠️ A **counter** and not a flag, for the reason `docs/can-decode-findings.md` gives about re-selecting a value you already had: `record()` seals a row only when the value moves, so two identical refusals in a row would write one row, raise one change and put up one banner — and the second hold at the same spot with the same stale fix would look like it had worked.
+
+The reasons are the endpoint's three original gates — no fix, a fix older than 30 s, a clock that is not satellite-backed — plus one added 2026-09-08: **a fix too far from the one before it to have been ridden to.** That is a real defect rather than a hypothetical: a waypoint saved on 2026-08-09 carried longitude 130.30 while the next `gps_lon` row read 13.04, about 8 000 km away. Nothing about 130.30 is out of range on its own, so only the distance from the previous fix can catch it.
+
+`src/gps/fix-plausibility.ts` is that gate and is pure. Two guards, both argued from things this repo has already paid for: the implied speed must exceed **300 km/h**, which is `public/lib/bounds.js`'s own ceiling on `gps_speed_kmh` rather than a second opinion about how fast the bike goes; and the two fixes must be at least **1 s** apart, because `docs/route-map.md` records that an implied-speed test with a short denominator reads 7 m in 1 ms as 25 000 km/h and rejected 4 718 steps that were all timing artefact.
+
+Known and accepted: one spike costs **two** refusals — itself, and the good fix after it, which is measured against the spike. Both are loud, and the one after next is judged against a good pair again. A bad **first** fix of a boot cannot be caught at all; an absolute-region rule is a follow-up issue's.
+
 ## What the rider hears about
 
 Nothing is transmitted to the bike, so the feedback is whatever the gesture itself produces:

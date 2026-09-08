@@ -1,9 +1,15 @@
-import { ageMs, latestValue } from "../can/signals.ts";
-import { SAMPLE_MAX_AGE_MS } from "../gestures/long-press.ts";
-import type { GestureOutcome, HoldGesture } from "../gestures/runner.ts";
+import { freshValue } from "../can/signals.ts";
+import type { HoldGesture } from "../gestures/runner.ts";
 import { AUTO_TICK_MS, type FanAutomatic } from "./auto.ts";
-import { MAX_DUTY_PERCENT } from "./control.ts";
-import { FAN_GESTURE_BUTTON, FAN_HOLD_MS, STATIONARY_MAX_KMH, isStationary, nextFanGestureAction } from "./gesture.ts";
+import { MAX_DUTY_PERCENT, type FanCommandResult } from "./control.ts";
+import {
+  FAN_GESTURE_BUTTON,
+  FAN_HOLD_MS,
+  STATIONARY_MAX_AGE_MS,
+  STATIONARY_MAX_KMH,
+  isStationary,
+  nextFanGestureAction,
+} from "./gesture.ts";
 
 // The half of the fan gesture that touches the world: it reads the fan's state and the
 // bike's speed, hands them to the pure cycle in ./gesture.ts, and commands the answer.
@@ -67,12 +73,12 @@ export function startFanCycleGesture(
 }
 
 /** One hold: read where the fan is, decide the next step, command it. */
-async function stepTheFan(context: FanCycleContext): Promise<GestureOutcome> {
+async function stepTheFan(context: FanCycleContext): Promise<string> {
   const state = context.automatic.state();
   const action = nextFanGestureAction({
     mode: state.mode,
     targetPercent: state.targetPercent,
-    speedKmh: freshSpeedKmh(),
+    speedKmh: freshValue("speed_can_kmh", STATIONARY_MAX_AGE_MS),
   });
   // Disarmed before the command rather than after: whatever this hold does, the *off*
   // this file last commanded is over, and a revert landing between the two would be
@@ -80,14 +86,12 @@ async function stepTheFan(context: FanCycleContext): Promise<GestureOutcome> {
   disarmRevert(context);
 
   if (action === "automatic") {
-    const outcome = await context.automatic.setMode("automatic");
-    return { ok: outcome.ok, message: `fan to automatic — ${outcome.message}` };
+    return line(await context.automatic.setMode("automatic"), "fan to automatic");
   }
   if (action === "full") {
     // MAX_DUTY_PERCENT rather than a literal 100: ./control.ts caps there today and the
     // cap moves the day the 12 V rail is measured.
-    const outcome = await context.automatic.commandManualDuty(MAX_DUTY_PERCENT);
-    return { ok: outcome.ok, message: `fan to manual ${MAX_DUTY_PERCENT} % — ${outcome.message}` };
+    return line(await context.automatic.commandManualDuty(MAX_DUTY_PERCENT), `fan to manual ${MAX_DUTY_PERCENT} %`);
   }
   const outcome = await context.automatic.commandManualDuty(0);
   // ⚠️ Armed whatever the command SAID. ./control.ts's goIdle() sets the target to 0 and
@@ -96,7 +100,12 @@ async function stepTheFan(context: FanCycleContext): Promise<GestureOutcome> {
   // road. Arming is free when it is wrong: checkForMovement() disarms itself the moment
   // the fan is not in the state this commanded.
   armRevert(context);
-  return { ok: outcome.ok, message: `fan off while the bike is stopped — ${outcome.message}` };
+  return line(outcome, "fan off while the bike is stopped");
+}
+
+/** One journal line, saying up front when the bridge refused what the hold asked for. */
+function line(outcome: FanCommandResult, what: string): string {
+  return `${outcome.ok ? "" : "REFUSED — "}${what} — ${outcome.message}`;
 }
 
 /**
@@ -148,7 +157,7 @@ async function checkForMovement(context: FanCycleContext): Promise<void> {
       disarmRevert(context);
       return;
     }
-    const speedKmh = freshSpeedKmh();
+    const speedKmh = freshValue("speed_can_kmh", STATIONARY_MAX_AGE_MS);
     if (speedKmh === null || isStationary(speedKmh)) {
       return;
     }
@@ -169,14 +178,4 @@ async function checkForMovement(context: FanCycleContext): Promise<void> {
     // would end the service. Same shape as ./auto.ts's runTick().
     console.warn("fan: the gesture's movement watchdog failed —", error);
   }
-}
-
-/** Fresh `speed_can_kmh`, or null when absent, stale or not finite. */
-function freshSpeedKmh(): number | null {
-  const age = ageMs("speed_can_kmh");
-  if (age === null || age > SAMPLE_MAX_AGE_MS) {
-    return null;
-  }
-  const value = latestValue("speed_can_kmh");
-  return value !== null && Number.isFinite(value) ? value : null;
 }
