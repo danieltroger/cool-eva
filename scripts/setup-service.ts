@@ -1,6 +1,6 @@
-import { execSync } from "child_process";
-import { credentialHint, pullEnvironment } from "../src/http/update.ts";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { execFileSync, execSync } from "child_process";
+import { PULL_ARGS, asOwnerCommand, credentialHint } from "../src/http/update.ts";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -228,22 +228,21 @@ function readEnvFile(): Record<string, string> {
  * Prove the Update button will be able to pull, at the one moment someone is sitting in
  * front of the Pi to fix it — rather than months later, in a garage, from a phone.
  *
- * The scheme alone cannot answer this: https and ssh are both supported (INSTALL.md §3),
- * so the only real test is to try, as the service user. This script has already refused
- * to run as anything but root and the unit it just wrote is User=root, so this process IS
- * that user; pullEnvironment() is the button's own, so what passes here is what the
- * button will do.
+ * Run exactly as the button will: as the checkout's OWNER, via the same asOwnerCommand()
+ * the endpoint uses. That is what makes this a proof rather than an approximation — root
+ * can reach remotes the owner cannot (and leaves root-owned files in .git when it pulls,
+ * which is the bug this whole path exists to prevent).
  *
- * ⚠️ -c safe.directory because the checkout is pi-owned and this runs as root: without it
- * git refuses for dubious ownership and this would never read the remote on the only
- * machine it exists for.
+ * The remote's scheme is deliberately not the test. https and ssh are both correct
+ * (INSTALL.md §3); the only question is whether origin is readable as that user.
  */
 function warnIfRemoteUnreadable(): void {
+  const ownerUid = statSync(projectDir).uid;
+  const currentUid = process.getuid?.() ?? ownerUid;
   let remoteUrl: string;
   try {
-    remoteUrl = execSync(`git -C ${projectDir} -c safe.directory=${projectDir} remote get-url origin`, {
-      stdio: ["ignore", "pipe", "pipe"],
-    })
+    const { command, args } = asOwnerCommand(["-C", projectDir, "remote", "get-url", "origin"], ownerUid, currentUid);
+    remoteUrl = execFileSync(command, args, { stdio: ["ignore", "pipe", "pipe"] })
       .toString()
       .trim();
   } catch (error) {
@@ -253,12 +252,15 @@ function warnIfRemoteUnreadable(): void {
     return;
   }
   try {
-    execSync(`git -C ${projectDir} -c safe.directory=${projectDir} ls-remote --exit-code origin HEAD`, {
-      timeout: LS_REMOTE_TIMEOUT_MS,
-      stdio: ["ignore", "ignore", "pipe"],
-      env: pullEnvironment(process.env),
-    });
-    console.log(`deploy: origin is readable as the service user — the Update button will work (${remoteUrl})`);
+    const { command, args } = asOwnerCommand(
+      ["-C", projectDir, "ls-remote", "--exit-code", "origin", "HEAD"],
+      ownerUid,
+      currentUid
+    );
+    execFileSync(command, args, { timeout: LS_REMOTE_TIMEOUT_MS, stdio: ["ignore", "ignore", "pipe"] });
+    console.log(
+      `deploy: ${remoteUrl} is readable as the checkout's owner (uid ${ownerUid}) — the Update button will work`
+    );
     return;
   } catch (error) {
     reportUnreadableRemote(remoteUrl, error as Error & { stderr?: Buffer | string });
@@ -282,7 +284,9 @@ function reportUnreadableRemote(remoteUrl: string, error: Error & { stderr?: Buf
     return;
   }
   console.warn("");
-  console.warn(`\u26a0 The dashboard's Update button will NOT be able to pull from ${remoteUrl}.`);
+  console.warn(
+    `\u26a0 The dashboard's Update button (git ${PULL_ARGS.join(" ")}) will NOT be able to pull from ${remoteUrl}.`
+  );
   console.warn(`  ${stderr.split("\n")[0]}`);
   console.warn("");
   for (const line of hint.split(". ")) {

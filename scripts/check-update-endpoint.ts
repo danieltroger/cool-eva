@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { UpdateReply } from "../src/http/update.ts";
 import {
-  DEPLOY_SSH_COMMAND,
+  PULL_ARGS,
+  asOwnerCommand,
   credentialHint,
   describePullFailure,
   handleUpdateEndpoint,
-  pullEnvironment,
 } from "../src/http/update.ts";
 
 // The Update button's endpoint, against a real git and no Pi.
@@ -22,6 +22,10 @@ import {
 // `sudo systemctl restart cool-eva` on whatever machine ran `npm test`. The fake below
 // RECORDS the listener and never emits it — and §1 asserts one was armed, so "we avoided
 // the restart" is a checked property rather than a hope.
+//
+// §6 is the one that would have saved a ride: the pull must run as the checkout's OWNER,
+// because a root pull leaves root-owned files in .git and the next pull as pi fails
+// silently, leaving the service restarting on stale code.
 //
 // The other half is what the rider is told when it fails. A pull that timed out and a
 // pull that exited non-zero arrive at describePullFailure looking almost identical —
@@ -215,10 +219,7 @@ try {
   const refused = "git@github.com: Permission denied (publickey,password).\n";
   const refusedHint = credentialHint(refused) ?? "";
   check("'Permission denied (publickey,password)' is matched, not just the bare (publickey)", refusedHint !== "");
-  check(
-    "and is about the key, naming both ways out",
-    /deploy key/.test(refusedHint) && /GIT_SSH_COMMAND/.test(refusedHint)
-  );
+  check("and is about the key, naming both ways out", /deploy key/.test(refusedHint) && /https/.test(refusedHint));
   check("and does not tell you to run ssh-keyscan, which would not help", !/ssh-keyscan/.test(refusedHint));
 
   check(
@@ -237,26 +238,51 @@ try {
     /ssh-keyscan/.test(describePullFailure(carried, 300))
   );
 
-  // --- 6. the environment the pull runs in ------------------------------------
+  // --- 6. WHO the pull runs as ------------------------------------------------
 
-  console.log("\n6. the environment shared by the button and the installer");
+  console.log("\n6. the user the pull runs as");
 
-  const supplied = pullEnvironment({ PATH: "/usr/bin" });
+  // ⚠️ THE REGRESSION THIS SECTION EXISTS FOR. A root pull over a pi-owned checkout
+  // leaves root-owned files in .git, and the NEXT pull as pi dies on "unable to append
+  // to '.git/logs/refs/remotes/origin/<branch>': Permission denied" — silently, with the
+  // service restarting on the old commit. Found on the bike 2026-09-08.
+  const switched = asOwnerCommand(["-C", "/home/pi/cool-eva", ...PULL_ARGS], 1000, 0);
+  check("a root service pulls THROUGH sudo, never as itself", switched.command === "sudo");
+  check("as the checkout's owner by uid, not a hardcoded name", switched.args.slice(0, 3).join(" ") === "-n -u #1000");
+  check("with -H, so ssh finds that user's key and known_hosts the normal way", switched.args.includes("-H"));
+  check("and sudo never waits for a password no phone can type", switched.args.includes("-n"));
+  check("git is what sudo runs", switched.args[switched.args.indexOf("-H") + 1] === "git");
+
+  const same = asOwnerCommand(["-C", "/srv/cool-eva", ...PULL_ARGS], 1000, 1000);
+  check("when we ALREADY are the owner there is nothing to switch to", same.command === "git");
+  check("and no sudo is invoked", !same.args.includes("sudo"));
+
   check(
-    "a private fork gets pi's key named explicitly, since $HOME cannot redirect ssh",
-    supplied.GIT_SSH_COMMAND === DEPLOY_SSH_COMMAND
+    "the pull is --ff-only, so a diverged checkout cannot merge itself on the bike",
+    PULL_ARGS.includes("--ff-only")
   );
-  check("the key is offered ALONE, so a root agent cannot shadow it", /IdentitiesOnly=yes/.test(DEPLOY_SSH_COMMAND));
   check(
-    "and an encrypted key fails fast instead of hanging on an askpass nobody can answer",
-    /BatchMode=yes/.test(DEPLOY_SSH_COMMAND)
+    "safe.directory is gone — matching the owner is what made it unnecessary",
+    !switched.args.join(" ").includes("safe.directory")
   );
-  check("terminal prompts are off, so a credential-wanting remote says so", supplied.GIT_TERMINAL_PROMPT === "0");
-  check("PATH survives — without it git cannot even exec git-remote-https", supplied.PATH === "/usr/bin");
-  check(
-    "an operator's own GIT_SSH_COMMAND wins, so another key path or user needs no code change",
-    pullEnvironment({ GIT_SSH_COMMAND: "ssh -i /custom/key" }).GIT_SSH_COMMAND === "ssh -i /custom/key"
-  );
+
+  // --- 7. --ff-only against a real divergence ---------------------------------
+
+  console.log("\n7. a checkout that has diverged");
+
+  await run("git", ["-C", checkout, "remote", "set-url", "origin", upstream]);
+  await run("git", ["-C", checkout, ...GIT_IDENTITY, "fetch", "origin"]);
+  await run("git", ["-C", checkout, ...GIT_IDENTITY, "reset", "--hard", "HEAD~1"]);
+  await writeFile(join(checkout, "LOCAL.md"), "a commit the Pi made that upstream does not have\n");
+  await run("git", ["-C", checkout, ...GIT_IDENTITY, "add", "-A"]);
+  await run("git", ["-C", checkout, ...GIT_IDENTITY, "commit", "-m", "local divergence"]);
+
+  const diverged = fakeResponse();
+  await handleUpdateEndpoint(postRequest(), diverged.res, checkout);
+  const divergedReply = parseReply(diverged);
+  check("a diverged checkout is refused rather than merged", diverged.statusCode === 500);
+  check("and says so in git's words", /Not possible to fast-forward|diverg/i.test(divergedReply.message));
+  check("and does not restart the service on code it did not pull", diverged.finishListeners === 0);
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }

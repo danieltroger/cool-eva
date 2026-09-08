@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { execFile, spawn } from "child_process";
+import { stat } from "fs/promises";
 import { promisify } from "util";
 import { monotonicNow, since } from "../monotonic.ts";
 
@@ -14,17 +15,21 @@ const execFileAsync = promisify(execFile);
 // reply has flushed (the request's response "finish" event) — otherwise the button hangs
 // on a killed connection. See scheduleServiceRestart for why it must be detached.
 //
-// Run with -c safe.directory so a root service (systemd) is not refused by git's
-// dubious-ownership check over a pi-owned checkout. ⚠️ Files git rewrites then become
-// root-owned; a later by-hand pull as `pi` may want its own safe.directory or a chown.
-// Deploying only through this button keeps ownership consistent.
+// ⚠️ THE PULL RUNS AS THE CHECKOUT'S OWNER, NOT AS ROOT, and that is the whole of why
+// this file is shaped the way it is. A root `git pull` over a pi-owned checkout leaves
+// root-owned files behind in .git — refs, reflogs, objects — and the NEXT pull as pi then
+// dies on "unable to append to '.git/logs/refs/remotes/origin/<branch>': Permission
+// denied". That failure is quiet in the worst way: the fast-forward does not happen, the
+// service restarts on the old commit, and the journal looks healthy. It happened on the
+// bike on 2026-09-08 and had to be repaired with chown -R.
 //
-// This service runs as root, so pi's ssh setup is not automatically in reach: OpenSSH
-// expands ~ from the effective uid's passwd entry, not from $HOME, which is why the
-// HOME=/home/pi this used to carry did nothing. A public fork pulls over https and needs
-// no credentials at all; a private one keeps its ssh remote and DEPLOY_SSH_COMMAND names
-// pi's key and known_hosts explicitly, which is what HOME= was pretending to do.
-// INSTALL.md §3 has both paths; credentialHint says it to whoever hits it.
+// Matching the user to the owner also retires two workarounds. `-c safe.directory` was
+// only ever needed because the uid did not match the owner, and ssh credentials stop
+// needing a GIT_SSH_COMMAND: sudo -H puts us in pi's HOME with pi's uid, so OpenSSH
+// resolves ~/.ssh from the passwd entry the normal way. One mechanism, not three.
+//
+// --ff-only so a diverged checkout fails loudly instead of quietly building a merge
+// commit on the bike, which nobody is there to review.
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -49,38 +54,34 @@ const PULL_TIMEOUT_MS = 60_000;
 const TIMEOUT_SKEW_MS = 250;
 
 /**
- * How the pull reaches an SSH remote — for a PRIVATE fork; a public one pulls over https
- * and never invokes ssh at all, so this is inert there.
+ * The argv that runs a git command as `ownerUid`, from a process running as `currentUid`.
  *
- * Naming the key and the known_hosts file is the only thing that redirects a root git to
- * pi's credentials, since $HOME cannot (see the header). IdentitiesOnly so a root agent
- * or a stray /root/.ssh key cannot be offered ahead of this one, and BatchMode so an
- * encrypted key fails immediately instead of sitting on an askpass prompt nobody can
- * answer until PULL_TIMEOUT_MS.
+ * Pure and exported so scripts/setup-service.ts verifies the remote exactly the way the
+ * button will pull it, and so the check can assert the user-switch without a `pi` on the
+ * machine running the test.
  *
- * Overridable: set GIT_SSH_COMMAND in /etc/default/cool-eva for another user, key path
- * or key type, and pullEnvironment leaves it alone.
+ * The uid is taken from the checkout rather than hardcoding `pi`, because the invariant
+ * that matters is "the puller IS the owner" — a hardcoded name reintroduces the same bug
+ * mirrored the moment a checkout belongs to anyone else. `#1000` is sudo's own syntax for
+ * a numeric uid. `-n` so a sudo that would need a password fails at once instead of
+ * hanging until the timeout on a prompt no phone can answer.
+ *
+ * When we already ARE the owner there is nothing to switch to, so sudo is skipped
+ * entirely — which is also what lets the check drive the real path in CI.
  */
-export const DEPLOY_SSH_COMMAND =
-  "ssh -i /home/pi/.ssh/id_ed25519 -o IdentitiesOnly=yes " +
-  "-o UserKnownHostsFile=/home/pi/.ssh/known_hosts -o BatchMode=yes";
-
-/**
- * The environment the deploy pull runs in, and the same one setup-service.ts verifies the
- * remote with — so what the installer proves is what the button will do.
- *
- * ⚠️ Spreading the caller's environment is load-bearing: without it git loses PATH and
- * cannot exec git-remote-https at all. GIT_TERMINAL_PROMPT=0 turns a remote that wants
- * credentials into git's own "terminal prompts disabled" rather than its attempt to open
- * /dev/tty, which a systemd service does not have.
- */
-export function pullEnvironment(environment: Record<string, string | undefined>): Record<string, string | undefined> {
-  return {
-    ...environment,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_SSH_COMMAND: environment.GIT_SSH_COMMAND ?? DEPLOY_SSH_COMMAND,
-  };
+export function asOwnerCommand(
+  gitArgs: string[],
+  ownerUid: number,
+  currentUid: number
+): { command: string; args: string[] } {
+  if (ownerUid === currentUid) {
+    return { command: "git", args: gitArgs };
+  }
+  return { command: "sudo", args: ["-n", "-u", `#${ownerUid}`, "-H", "git", ...gitArgs] };
 }
+
+/** The pull itself, so the endpoint and the installer cannot describe it differently. */
+export const PULL_ARGS = ["pull", "--ff-only"];
 
 export async function handleUpdateEndpoint(
   req: IncomingMessage,
@@ -94,14 +95,13 @@ export async function handleUpdateEndpoint(
   }
   const startedAt = monotonicNow();
   try {
-    const { stdout, stderr } = await execFileAsync(
-      "git",
-      ["-C", directory, "-c", `safe.directory=${directory}`, "pull"],
-      {
-        timeout: PULL_TIMEOUT_MS,
-        env: pullEnvironment(process.env),
-      }
+    const owner = await stat(directory);
+    const { command, args } = asOwnerCommand(
+      ["-C", directory, ...PULL_ARGS],
+      owner.uid,
+      process.getuid?.() ?? owner.uid
     );
+    const { stdout, stderr } = await execFileAsync(command, args, { timeout: PULL_TIMEOUT_MS });
     const output = `${stdout}${stderr}`.trim();
     console.log(`update: git pull in ${directory}:\n${output}`);
     const summary = output || "Already up to date.";
@@ -158,6 +158,9 @@ function wasKilledByTimeout(failure: { killed?: boolean; signal?: string | null 
  * that named one cause for both would be wrong half the time. Shared with
  * scripts/setup-service.ts so the installer and the button give the same advice.
  *
+ * The pull runs as the checkout's owner, so these are about THAT user's ~/.ssh; there is
+ * no root-cannot-read-pi's-key case left to explain.
+ *
  * ⚠️ Matched on OpenSSH's words rather than git's: OpenSSH ships no NLS at all, so these
  * are byte-identical under every locale, while git has a full message catalog and its
  * `fatal:` lines move with LC_ALL. The method list in `Permission denied (publickey,
@@ -166,17 +169,14 @@ function wasKilledByTimeout(failure: { killed?: boolean; signal?: string | null 
 export function credentialHint(streams: string): string | null {
   if (/Host key verification failed/.test(streams)) {
     return (
-      "github.com is not in the known_hosts the pull reads (by default pi's, since this " +
-      "runs as root): sudo -u pi ssh-keyscan github.com >> /home/pi/.ssh/known_hosts. " +
-      "See INSTALL.md §3."
+      "github.com is not in the checkout owner's known_hosts: " +
+      "sudo -u pi ssh-keyscan github.com >> /home/pi/.ssh/known_hosts. See INSTALL.md §3."
     );
   }
   if (/Permission denied \(publickey/.test(streams)) {
     return (
-      "The deploy key was refused (by default /home/pi/.ssh/id_ed25519): add it as a " +
-      "deploy key on the fork, or set GIT_SSH_COMMAND in /etc/default/cool-eva to point " +
-      "at another key. A public fork can use an https remote and skip keys entirely. " +
-      "See INSTALL.md §3."
+      "GitHub refused the owner's ssh key. Add ~/.ssh/id_*.pub as a deploy key on the " +
+      "fork, or use an https remote — a public fork needs no key at all. See INSTALL.md §3."
     );
   }
   return null;

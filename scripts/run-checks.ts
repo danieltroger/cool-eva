@@ -292,9 +292,11 @@ const CHECKS: SelfCheck[] = [
       "is not (that is an OOM on a Pi Zero, and a confident wrong answer is worse than none), and OpenSSH's two " +
       "credential failures earn DIFFERENT advice — `Host key verification failed` is a known_hosts entry, " +
       "`Permission denied (publickey,…` is the key itself, matched short of the closing paren because the method " +
-      "list varies — plus the environment both the button and the installer pull with: pi's key named explicitly " +
-      "(since $HOME cannot redirect ssh for a root service), offered alone, failing fast rather than hanging on " +
-      "an askpass, with PATH intact and an operator's own GIT_SSH_COMMAND left alone. " +
+      "list varies — plus THE USER THE PULL RUNS AS, which is the one that cost a ride: a root pull over a " +
+      "pi-owned checkout leaves root-owned files in .git and the next pull as pi dies on 'unable to append to " +
+      ".git/logs/refs/…' silently, restarting the service on stale code, so the pull goes through sudo as the " +
+      "checkout's owner by uid (with -H, non-interactive, and no sudo at all when we already are the owner) and " +
+      "is --ff-only, proven against a genuinely diverged checkout. " +
       "\u26a0 The restart is asserted to be ARMED and never fired: a real ServerResponse here would emit 'finish' " +
       "and `sudo systemctl restart cool-eva` would run on whatever machine ran npm test",
   },
