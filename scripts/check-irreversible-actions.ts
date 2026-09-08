@@ -181,6 +181,11 @@ const UNCONFIRMED: Record<string, URLSearchParams> = {
     on: "1",
     expected: "4371",
   }),
+  // Complete: one valid w=NAME:VALUE:EXPECTED triple (the batch is repeated `w=`). Like
+  // parameter and bit it carries no confirm — it is many reversible parameter writes, not one
+  // of the irreversible ones — so it parses OK here, never enters the gated set below, and
+  // belongs out in the open rather than behind the fold.
+  parameters: new URLSearchParams({ action: "parameters", w: "MAX_DC_CHG_CURRENT:80:75" }),
   "read-service-stamp": new URLSearchParams({ action: "read-service-stamp" }),
   "set-service-point": new URLSearchParams({ action: "set-service-point" }),
   "sync-clock": new URLSearchParams({ action: "sync-clock" }),
@@ -191,6 +196,8 @@ const UNCONFIRMED: Record<string, URLSearchParams> = {
   // Complete on its own — stop takes no fields. Missing only the confirm, so it too is
   // refused FOR the confirmation.
   "charge-stop": new URLSearchParams({ action: "charge-stop" }),
+  // Complete on its own — reset takes no fields either. Refused only for the confirmation.
+  "reset-vcu": new URLSearchParams({ action: "reset-vcu" }),
 };
 
 const unknown = accepted.filter(action => UNCONFIRMED[action] === undefined);
@@ -243,7 +250,10 @@ const behindTheFold: string[] = IRREVERSIBLE.map(entry => entry.action);
 // charge-stop joins for the same reason: it is confirm-gated (curl can reach the endpoint, so a
 // deliberate word is required), but ending a charge undoes itself — the rider simply re-plugs or
 // restarts the charge on the bike's own screen. Behind a "cannot be undone" fold that row would lie.
-const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop"]);
+// reset-vcu joins too: it is confirm-gated (curl can reach it, and it drops the bike off the bus), but
+// a key-cycle restart erases nothing and reverts nothing — the bike reboots and comes back exactly as
+// it was. Behind a "cannot be undone" fold that row would lie, so it lives out in the open like the two above.
+const REVERSIBLE_CONFIRMED = new Set(["charge-current", "charge-stop", "reset-vcu"]);
 
 const gatedNotHidden = gated.filter(action => !behindTheFold.includes(action) && !REVERSIBLE_CONFIRMED.has(action));
 check(
@@ -305,6 +315,16 @@ check(
     ? "charge-stop is accepted with confirm=charge-stop"
     : `charge-stop is REFUSED with its own confirmation — ${stopAnswer.reason}`,
   stopAnswer.ok
+);
+
+const resetConfirmed = new URLSearchParams(UNCONFIRMED["reset-vcu"]);
+resetConfirmed.set("confirm", "reset-vcu");
+const resetAnswer = parseWriteRequest(resetConfirmed, NOW);
+check(
+  resetAnswer.ok
+    ? "reset-vcu is accepted with confirm=reset-vcu"
+    : `reset-vcu is REFUSED with its own confirmation — ${resetAnswer.reason}`,
+  resetAnswer.ok
 );
 
 // --- 4. The confirmations the page really sends ------------------------------

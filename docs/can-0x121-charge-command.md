@@ -32,9 +32,28 @@ AC (`0x1A`) was originally the never-decoded half; `b4` for it was a guess (32).
 
 So AC `b2` **is** amps 1:1 (1↔1, 2↔2, 3↔3), and the AC ceiling is `b4 = 0x0f = 15`. This 15 is **not** `ac_supply_limit_a` (0x620 b1, which read 31 in the same session) — it is the pilot/cable rating the dash tracks, and is therefore **likely charger-specific**. A command should echo the dash's last observed AC `b4` rather than hardcode 15.
 
+### AC ceiling fallback of 15 when the dash has broadcast none — 2026-09-03
+
+The set-current control originally refused an AC command until `ac_charge_ceiling_a` had been seen — but that b4 is an EVENT the dash only emits when the rider nudges the charge-current dial on the bike's own screen. From the phone, remote from the bike, there is nobody to nudge it, so the control could never be offered. The fallback: when AC has no live ceiling this session, both the Pi (`AC_CEILING_FALLBACK_A` in `src/vcu/write-runner.ts`) and the dash (`AC_CEILING_FALLBACK_A` in `public/lib/charge-write.js`) default `b4` to **15** — the only AC ceiling ever captured on this bike. The live signal is still preferred whenever present; 15 is only the fallback, and DC never falls back (an absent DC ceiling means CAN is not being received). The risk is the same charger-specificity above: if the real pilot/cable rating is not 15, the VCU rejects the frame's b4 and settles on ~10 A — **benign** (nothing damaged, overridable on the bike), just ineffective. The control says it is using a default and points at `charge_limit_a` to confirm the command took.
+
 ## Injection is honoured — with the right b4
 
-A Pi-injected `0x121` **is** obeyed by the VCU (the dash's charge-current SET display changes on transmit — proven 2026-08-24 on an AC session). The earlier mystery, where injecting `--amps 1` and `--amps 3` both drove the dash to a fixed **10 A**, is explained by the wrong ceiling: those frames carried `b4 = 32`, which the VCU rejected, falling back to a ~10 A default. With the correct `b4 = 15`, `b2` should be read as sent. (Pending confirmation: an injected AC command with a non-full battery to watch the delivered current follow, not just the dash SET display.)
+A Pi-injected `0x121` **is** obeyed by the VCU (the dash's charge-current SET display changes on transmit — proven 2026-08-24 on an AC session). The earlier mystery, where injecting `--amps 1` and `--amps 3` both drove the dash to a fixed **10 A**, is explained by the wrong ceiling: those frames carried `b4 = 32`, which the VCU rejected, falling back to a ~10 A default. With the correct `b4 = 15`, `b2` should be read as sent.
+
+> ⚠️ **Superseded — the `0x121` alone changes only the DISPLAY, not the committed setpoint.** See the next section: it moves the dash's pending SET display but `charge_limit_a` (0x10A `CHG.PWR.REF`, the committed value) never follows. Reading the display change as "obeyed" was the mistake; the commit needs the `0x120` twin.
+
+### CRACKED — set-current also needs the `0x120` commit twin — 2026-09-03
+
+The shipped set-current control sends only the `0x121` half. On an on-bike AC session (SoC 71–74 %, ceiling live at **15** = the fallback, so b4 was never the issue) an injected `0x121: 1a ff 05 01 0f …` moved the dash's **displayed** SET value to 5 A but `charge_limit_a` (0x10A b7 ÷ 7, the VCU's committed setpoint) stayed put — 14.3 A, then 7 A after a physical nudge. The value only committed when the rider turned the dial with the key present, which was mistaken for a key/menu authorisation gate.
+
+A passive sniff of `0x120`/`0x121` (`scripts/sniff-charge-commit.ts`, a second read-only `RawChannel` that does not touch the interface) during the rider's own dial change caught the dash emitting a **pair**, `0x120` first, ~5 ms before the `0x121`:
+
+```
+0x120  9a ff 05 00 00 00 00 00   ← request-twin (0x1A | 0x80 = 0x9A), b3=0 b4=0 — the COMMIT
+0x121  1a ff 05 01 0f 00 00 00   ← the command we were already sending (b3=1, b4=ceiling)
+```
+
+Replaying that pair (`scripts/inject-charge-pair.ts 5 15`) with **no key touched and no dial moved** committed `charge_limit_a` to **5 A**. So set-current is the exact mirror of the stop command: the commit rides on the `0x120` request-twin, and the `0x121` alone only sets the dash's pending display. The `0x9A` twin's tail differs from the `0x121` (b3=0, b4=0 vs b3=1, b4=ceiling); replicate the bytes as captured. Whether `0x120` alone commits (as it does for stop) was not isolated — the faithful pair is proven, so `buildChargeCurrentCommand` should emit both, `0x120` first. The key was never the gate; the feature was sending half the sequence.
 
 ## Not a current-limit frame
 

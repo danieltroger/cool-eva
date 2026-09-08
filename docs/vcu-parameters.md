@@ -27,12 +27,13 @@ Sections:
 
 ## 1. What is proven and what is not
 
-As of 2026-08-16, and unchanged since:
+As of 2026-08-16, updated 2026-08-28 when the write path was first driven on-bike:
 
 - ✅ **The seed→key algorithm.** Four real A8 seed/key pairs off this bike's bus (`DIAG_ADDRESSES.md` §9.3) all satisfy it, and `scripts/check-vcu-params.ts` §13 asserts all four. This is the one part of the write path with live ground truth.
 - ✅ **The `2E` write framing and its auth rule**, from a passive capture of Energica's own diagnostic software writing to this bike's A8 on 2026-08-08, and additionally exercised against this bike by `obd-garage/vcu_param.py` on 2026-08-09 — `VCU_PARAM_CHANGES.md` records five parameters written and persisting across a power cycle ("Write procedure — fully proven").
 - 🟡 **The `31 FC` request bytes** are derived from Energica's own frame builder; the POSITIVE RESPONSE bytes `71 FC` are INFERRED, not logged (`SERVICE_RESET.md` §3). So `decodeRoutineReply` accepts the echo it expects and reports anything else as `unrecognised` rather than assuming success.
-- ❌ **Nothing in `write-codec.ts` or `write-session.ts` has ever been transmitted by this repo. Not one frame.** None of the five allowlisted parameters has been written by this repo at any value. The direction of effect of `FCHG_CURRENT_GAIN` is not merely untested but genuinely unknown — see [§5](#5-the-write-allowlist-parameter-by-parameter).
+- ✅ **The write path is now proven on-bike (2026-08-27/28), sequencing included.** `write-session.ts` and `write-codec.ts` have driven many `2E` writes to A8 — the light-threshold parameters (`BEAM_MAX_CURR_TH` and four siblings, generated allowlist targets), each through the full `10 81`→`22`→`27`→`2E`→`22` cycle with read-back, logged in the write audit journal. The single-session batch ([§8](#8-the-write-runner-five-locks)) additionally exercised MULTI-WRITE SEQUENCING — five writes on one `27` unlock — which is exactly the part §7 called out as having no live evidence.
+- 🟡 **But none of the five RESEARCHED parameters in [§5](#5-the-write-allowlist-parameter-by-parameter) (charge current, charge gain, torque, regen, VSM config) has been written at any value** — the lights above are a separate generated target set. The direction of effect of `FCHG_CURRENT_GAIN` remains genuinely unknown, not merely untested.
 
 The pure/transport split throughout `src/vcu/` exists for this reason: with the bike a week away (2026-08-16), the only claims that can be tested at all are the ones that live in a function taking numbers and returning numbers. `scripts/check-vcu-params.ts` exercises those branches.
 
@@ -414,9 +415,9 @@ Seeds decode big-endian, per the four captured pairs, with `>>> 0` because a see
 
 `src/vcu/write-session.ts` is the transport half of writing: the socket, the clock and the sequencing. Every byte it sends is built by `param-codec.ts` (the read legs) or `write-codec.ts` (the write legs).
 
-### ⚠️ Nothing here has ever run against the bike (2026-08-16)
+### ✅ The sequencing is now proven on-bike (2026-08-28)
 
-The SERVICES and their framing are proven — from the passive capture of Energica's own software writing to this bike's A8 and from five parameters written to this bike with `vcu_param.py` on 2026-08-09 — but not one frame in that file has been transmitted by this repo. **The SEQUENCING is the part with no live evidence at all, and it is the part most likely to be wrong.**
+Originally (2026-08-16) not one frame in this file had been transmitted by this repo, and the SEQUENCING — the ordering this file imposes, distinct from the per-frame framing, which the passive capture and `vcu_param.py` (2026-08-09) already proved — was the part with no live evidence and the most likely to be wrong. It has that evidence now: `write-session.ts` has driven many `2E` writes to A8's light-threshold parameters, and the single-session batch ([§8](#8-the-write-runner-five-locks)) drove the multi-write sequencing directly — five writes riding one `27`, each read back, all in the audit journal. Still unwritten: the five researched parameters in [§5](#5-the-write-allowlist-parameter-by-parameter); the lights are a separate generated target set.
 
 ### The sequence, and why each step is where it is
 
@@ -440,6 +441,7 @@ The read BEFORE is a compare-and-swap and matters just as much. A dashboard left
 1. **The unlock decays in about two seconds.** Measured across six writes by the factory software (`DIAG_ADDRESSES.md` §9.3): 2 ms and 167 ms after the unlock succeeded were accepted; 2.32 s and 4.44 s were refused with NRC `0x33`. So the write follows the unlock immediately, with nothing in between — no read, no logging, no `await` that could be scheduled behind something else.
 2. **A bad key costs one of about three attempts, and the lockout clears only on a VCU power cycle.** That is why `write-codec.ts`'s key function is asserted against four real captured seed/key pairs rather than trusted.
 3. **Running `27` against an ALREADY-UNLOCKED micro returns NRC `0x35` invalidKey and burns an attempt.** `VCU_PARAM_CHANGES.md` records one being burned this way. Two writes in quick succession would do it — the second one's `27 01` would land while the first one's unlock was still live — so `SECURITY_COOLDOWN_MS` refuses to start a second authenticated operation until the unlock has certainly expired. It costs four seconds and it protects the one resource here that cannot be replenished without walking to the bike and turning it off.
+4. **But ONE unlock can cover several writes, as long as each follows within the decay window.** Every exchange on the channel re-arms that ~2-second timer — each reply pushes the "last authenticated at" mark forward while the micro is still unlocked — so writes spaced closer than the decay ride a single unlock. That is exactly what the factory capture in rule 1 is: six writes on one `27`. It is the whole basis of the batch in [§8](#8-the-write-runner-five-locks): one unlock, several `2E` writes, no second `27`. It does NOT contradict rule 3 — that governs starting a SEPARATE authenticated operation, which the batch never does — and one unlock risks one of the ~3 attempts where five separate operations would risk five.
 
 ## 8. The write runner: five locks
 
@@ -457,7 +459,24 @@ And behind all five, per action: a read of the current value, a compare-and-swap
 
 ### ⚠️ What is not there, and must not be added
 
-No "write these five parameters". No "restore from a snapshot". No "revert". Each is a reasonable thing to want and each turns one confirmed change into a batch nobody reads. If a batch is ever genuinely needed, the right shape is a list the owner confirms one row at a time — not a loop over that function.
+No "restore from a snapshot". No "revert". No open-ended loop over an arbitrary list. Each is a reasonable thing to want and each turns one confirmed change into a batch nobody reads — the value that went in came from a file or a diff, not from a person looking at that row.
+
+There IS one batch, added for the all-lights buttons and described next. What makes it the exception and not the top of a slope is that it is a SHORT FIXED list that is genuinely one gesture: every row is still separately compare-and-swapped against a fresh read, read back and audited, and the ONLY thing it shares is the authenticated session. What stays refused is the batch that skips the per-row read — the snapshot restore, the revert, the loop that writes numbers nobody read one at a time. For one of those the right shape is still a list the owner confirms a row at a time.
+
+### The one batch: `kind: parameters`, for the all-lights gesture
+
+`performParameterWrites` writes several allowlisted parameters under ONE `10 81` session and ONE `27` unlock. It exists because the all-lights buttons ([headlight-beam-threshold.md](headlight-beam-threshold.md)) disable or restore five current-threshold parameters at once, and five SEPARATE authenticated writes cannot run back to back: `SECURITY_COOLDOWN_MS` (§7 rule 3) makes each wait out the ~4 s cooldown, so a looped run took ~25 s — and the first attempt at it, a client loop of single writes, had every write after the first refused with NRC `0x35` because they landed inside a still-live unlock.
+
+Sharing the session is safe, and safer than not, for the reasons in §7 rule 4: all five light parameters are on micro A8, one unlock covers them all as long as each `2E` follows the last within the decay window, and one unlock risks one of the ~3 attempts where five operations risk five. Nothing else is shared — each parameter is planned in the pure layer, compare-and-swapped against its own fresh read, read back, and given its own audit line, exactly as a lone `parameter` write is. A batch and five single writes are indistinguishable in the journal, which is the point.
+
+What the batch refuses, and where it stops:
+
+- **Refused before any frame, as a whole:** an empty batch, more than `MAX_PARAMETERS_PER_BATCH` (8), any name off the allowlist or out of range, or a mix of micros. A batch on the wrong footing is worse than a plain refusal, and half a gesture is not the gesture.
+- **Stops the run and reports** on a transport failure at a write, or a stale-unlock refusal (NRC `0x33`): the session is gone, and re-`27` mid-batch is the one thing this must never do.
+- **Records and carries on** when a single parameter is refused for its value or reads back changed — the session is still open and authenticated, and the remaining rows are still the owner's one gesture. Each row's outcome comes back separately (`result.writes`, matched by name on the client), so a partial run names exactly which circuits went through and which did not.
+- **Never unlocks at all** if every parameter is already at its target or a precondition is stale: the reads all happen before the unlock, and a read spends no attempt.
+
+The transport that holds the session open across the writes is `writeParameters` / `runParameterWrites` in `write-session.ts`; the engine that plans, audits and summarises is `performParameterWrites` in `write-runner.ts`; the wire form is repeated `w=NAME:VALUE:EXPECTED` on `action=parameters` (`http/vcu-write.ts`), colon-packed so a name is never paired with another's value.
 
 ### Showing the last sweep's value for an allowlisted parameter
 
@@ -998,7 +1017,7 @@ What IS worth knowing is that one of them CHANGED, because that means something 
 
 ### Provenance of the format (established 2026-08-15)
 
-`energica_tool.py` is a reverse-engineered Energica VCU tool by another owner, built from the decompiled NRJK7 app. Its `_params_save_backup` is six lines:
+`energica_tool.py` is an Independent Reimplementation VCU tool by another owner. Its `_params_save_backup` is six lines:
 
 ```python
 with open(path, "w", newline="") as fh:

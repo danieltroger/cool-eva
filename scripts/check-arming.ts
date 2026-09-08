@@ -14,7 +14,7 @@ import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.
 // between a double-tap and a write to a calibration EEPROM. The three surfaces behind it —
 // views/vcu-write.js (a parameter write, `31 FC`, Mode 04 and the bike's own clock),
 // views/charge-current.js and views/charge-stop.js — each spell the gate out again at their own
-// `onclick`, so half of what is asserted here is that all five firing sites still spell it the
+// `onclick`, so half of what is asserted here is that all seven firing sites still spell it the
 // same way (§7). A gate one site forgot is exactly as absent as one that was deleted.
 //
 // The dwell is time-based, so `arm()` and `armDwellElapsed()` take an optional reading and this
@@ -27,7 +27,7 @@ import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.
 //
 // Same shape as scripts/check-irreversible-actions.ts, and for the same reason: public/ is ES
 // modules with no build step, so a browser file imports straight into Node. What needs a DOM is
-// the five `onclick` bodies, which is why §7 and §8 read them rather than running them.
+// the seven `onclick` bodies, which is why §7 and §8 read them rather than running them.
 
 let failures = 0;
 
@@ -50,7 +50,7 @@ const EXPORTED_KEYS = new Map([
 ]);
 
 // ⚠️ DISCOVERED, never listed. §7 reads the firing sites out of these files, and a list here
-// would be the one place a new arming surface could fail to appear: a sixth control in a NEW
+// would be the one place a new arming surface could fail to appear: an eighth control in a NEW
 // view would simply not be looked at, and every count below would stay green without it.
 const ARMING_CONSUMERS = await armingConsumers();
 const SOURCES = new Map<string, string>();
@@ -191,7 +191,7 @@ check(
 // --- 6. what disarms, run for real -------------------------------------------
 //
 // The refreshes are the disarm-on-change path that can be executed without a DOM, and they are
-// the load-bearing pair: all five controls refresh BEFORE they arm, so a status that lands under
+// the load-bearing pair: all seven controls refresh BEFORE they arm, so a status that lands under
 // an already-armed button has to take the arming with it. Armed AFTER the call and before its
 // answer, which is the ordering that matters — a button armed against 75 must not fire against
 // the 80 the refresh brought with it.
@@ -226,22 +226,24 @@ try {
 // ⚠️ THE GATE IS NOT IN ONE PLACE. arming.js holds the dwell; the RULE — test my key, then the
 // dwell, then clear, then act — is spelled out at each `onclick`, and those bodies need a DOM to
 // run. So they are read instead, the way check-irreversible-actions.ts reads the `switch` in
-// src/http/vcu-write.ts rather than trusting a sentence about it. A sixth firing site, or one
+// src/http/vcu-write.ts rather than trusting a sentence about it. An eighth firing site, or one
 // that drops a line of the rule, is what this section exists to make loud.
 
-console.log("\n7. the five firing sites, and the rule each of them repeats");
+console.log("\n7. the seven firing sites, and the rule each of them repeats");
 
 const SITES = ARMING_CONSUMERS.flatMap(path => firingSites(path, sourceOf(path)));
 console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
 
-// Named rather than counted, so a sixth site has to be ADDED here rather than absorbed by a
+// Named rather than counted, so an eighth site has to be ADDED here rather than absorbed by a
 // number — and so the red line says which one arrived. ActionButton is one call site serving
-// five keyed controls, which is why this is a list of firing sites and §5's is a list of keys.
+// four keyed controls, which is why this is a list of firing sites and §5's is a list of keys.
 const EXPECTED_SITES = [
   "charge-current.js → performChargeCurrent",
   "charge-stop.js → performChargeStop",
   "vcu-write.js → performAction",
   "vcu-write.js → performAction",
+  "vcu-write.js → performAllLights",
+  "vcu-write.js → performHeadlight",
   "vcu-write.js → performWrite",
 ];
 check(
@@ -436,7 +438,7 @@ if (failures > 0) {
 } else {
   console.log("✓ two taps 400 ms apart, the second ignored rather than disarmed inside the dwell, one key for the");
   console.log("  whole dashboard with no two controls sharing it, every refresh disarming what it lands under, and");
-  console.log("  all five firing sites still spelling the same rule — on the injected clock and on the real one");
+  console.log("  all seven firing sites still spelling the same rule — on the injected clock and on the real one");
 }
 
 /**

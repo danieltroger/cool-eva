@@ -33,6 +33,14 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
  *   source: "bus" | "sweep", readAt: number | null, complete: boolean }} OnBike
  */
 
+/**
+ * A single parameter read off the bike: the typed value, or why the read failed. Named so
+ * the `ok: true`/`ok: false` literals survive as a discriminated union across both readers
+ * — an inline union in one `@returns` and a bare inference in the other widen `ok` to
+ * `boolean`, and then `if (!read.ok)` no longer narrows to the value branch.
+ * @typedef {{ ok: true, value: number } | { ok: false, reason: string }} ReadResult
+ */
+
 const state = van.state(/** @type {VcuWriteResponse | null} */ (null));
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
@@ -79,6 +87,67 @@ const busy = van.state(false);
  */
 const writing = van.state(false);
 const message = van.state("");
+/**
+ * Which circuit an all-lights run is on, e.g. `Disabling stop / brake… (4 of 5)`. Shown
+ * under the two all-lights buttons while `writing` holds them disabled — one run is five
+ * sequential writes, and a single "Writing…" would hide which one a partial run stopped at.
+ */
+const lightsProgress = van.state("");
+
+/**
+ * The headlight-off control's fixed parameter and its two fixed values.
+ *
+ * ⚠️ NOT a new action. This is the ordinary allowlisted parameter write — a fresh read,
+ * the compare-and-swap, the read-back — on ONE parameter and two fixed values, wrapped
+ * in two buttons so nobody has to know the name or the number. The mechanism and its
+ * on-bike proof are in docs/headlight-beam-threshold.md: the beam's over-current
+ * threshold, written below the beam's real draw, makes the VCU fault the beam OPEN
+ * CIRCUIT at its next initialisation and bring it up dark. Persistent, and reversible by
+ * writing the threshold back to factory.
+ *
+ * ⚠️ The off value is FIXED, not measured. The proven route reads the live beam sense
+ * (control 18) and writes half of it — but that read is on the banned 0x2F diagnostic
+ * path, so this ships a constant below any real beam draw instead. 1810 mA sits well
+ * under this bike's ~3600 mA beam and above zero; a beam drawing less than 1810 mA would
+ * not fault, which is the one case where the button does nothing.
+ */
+const BEAM_MAX_PARAM = "BEAM_MAX_CURR_TH";
+const BEAM_MAX_OFF_MA = 1810;
+/** params.ecf's factory value for BEAM_MAX_CURR_TH — what “restore” puts back. */
+const BEAM_MAX_FACTORY_MA = 7500;
+
+/**
+ * Every VCU-current-sensed light: the MAX threshold that writes it OFF (below the circuit's
+ * real draw, so the VCU faults it dark at the next key-cycle), and the params.ecf CATALOGUE
+ * MAX. The beam row IS the headlight above — the all-lights buttons are a superset of it.
+ *
+ * ⚠️ `catalogue` is the restore FALLBACK, not the value normally written. Restore prefers
+ * this bike's OWN healthy MAX, read off the bus and saved the moment the light was disabled
+ * (savedLightValues) — the two differ, and not harmlessly: this bike's indicators run 2000 mA
+ * where the catalogue says 500, and 500 is also the indicator's off value, so a catalogue
+ * "restore" of the blinkers writes them straight back off. The catalogue is only reached for
+ * when nothing was saved, and the run says so. On-bike values: docs/headlight-beam-threshold.md.
+ *
+ * @typedef {{ label: string, param: string, off: number, catalogue: number }} LightCircuit
+ * @type {LightCircuit[]}
+ */
+const LIGHT_CIRCUITS = [
+  { label: "headlight", param: BEAM_MAX_PARAM, off: BEAM_MAX_OFF_MA, catalogue: BEAM_MAX_FACTORY_MA },
+  { label: "front position", param: "POSLIGHTS_MAX_CURR_TH", off: 10, catalogue: 300 },
+  { label: "rear position", param: "RPOSLIGHTS_MAX_CURR_TH", off: 5, catalogue: 500 },
+  { label: "stop / brake", param: "STOPLIGHTS_MAX_CURR_TH", off: 25, catalogue: 300 },
+  { label: "indicators", param: "INDICATOR_MAX_CURR_TH", off: 500, catalogue: 500 },
+];
+
+/** localStorage key for this bike's saved healthy light MAX values, a name→mA map. See savedLightValues. */
+const SAVED_LIGHTS_KEY = "cool-eva.lightHealthyMax";
+
+/**
+ * The BEAM_MAX_CURR_TH value the first tap read off the bike, held for the second tap to
+ * send as `expected=`. Cleared on every sheet open and after every attempt, so a value
+ * read for one gesture can never be sent as the precondition of a later one.
+ */
+const headlightExpected = van.state(/** @type {number | null} */ (null));
 
 export function VcuWrite() {
   return div(
@@ -106,7 +175,10 @@ export function VcuWrite() {
     // that did not exist. `.failure`, not `.action-note`, and Availability() stands its
     // ellipsis down beside it — docs/dashboard-decisions.md §"The section heading".
     () => (!hasControls() && message.val ? div({ class: "action-note failure" }, message.val) : div()),
-    () => (hasControls() ? div(ParameterForm(), ServiceActions(), Journal()) : div())
+    () =>
+      hasControls()
+        ? div(ParameterForm(), HeadlightSection(), AllLightsSection(), ResetVcuSection(), ServiceActions(), Journal())
+        : div()
   );
 }
 
@@ -626,6 +698,467 @@ function Outcome() {
 }
 
 /**
+ * Two buttons that turn the headlight off and back on, over the bus.
+ *
+ * ⚠️ Nothing here is a new lever on the bike. Both buttons POST the SAME
+ * `action=parameter` write the form above sends, on `BEAM_MAX_CURR_TH` and a fixed
+ * value — so the allowlist, the compare-and-swap, the read-back, the table gate and the
+ * audit journal all apply exactly as they do to any other parameter write. What this
+ * adds is the fixed parameter, the two fixed values, and the caveat a person needs.
+ *
+ * ⚠️ Hidden entirely when the bike's table has no BEAM_MAX_CURR_TH — a parameter write
+ * by index against a bike that does not carry it is exactly what the table gate exists
+ * to refuse, so the page does not offer the button.
+ */
+function HeadlightSection() {
+  return div(() => {
+    if (!beamTarget()) {
+      return div();
+    }
+    return div(
+      h3({ class: "sheet-title" }, "Headlight"),
+      div(
+        { class: "action-note", style: `color:${MUTED}` },
+        `Writes ${BEAM_MAX_PARAM} below what the beam actually draws, so the VCU brings the beam up OFF at the next ` +
+          "power-on and stores a beam-fault (the “low circuit amps” warning on the dash). It is an ordinary parameter " +
+          "write — read off the bike first, then read back — and reversible."
+      ),
+      div(
+        { class: "action-block" },
+        // ⚠️ Above the button, on the way to the thumb: this is the one thing about it a
+        // person will not expect. It is NOT a live switch — the light stays on until the
+        // bike is keyed off and on again.
+        div(
+          { class: "action-note caution" },
+          "⚠️ Not immediate. The beam stays on for the rest of THIS power-on; it comes up dark only at the next " +
+            "key-cycle, with a beam-fault showing on the dash until you restore it."
+        ),
+        HeadlightButton(true)
+      ),
+      div(
+        { class: "action-block" },
+        div(
+          { class: "action-note" },
+          `Puts ${BEAM_MAX_PARAM} back to the factory ${BEAM_MAX_FACTORY_MA} mA. The beam returns at the next ` +
+            "key-cycle and the beam-fault clears itself."
+        ),
+        HeadlightButton(false)
+      )
+    );
+  });
+}
+
+/**
+ * Reset the VCU — restarts both micros with ECUReset (11 02), a key-cycle restart.
+ *
+ * Placed right under the light controls because that is the reason it exists: a parameter
+ * change like the headlight and all-lights ones above comes up OFF/ON only at the next
+ * key-cycle, and this is the key-cycle without walking to the bike.
+ *
+ * ⚠️ Reversible — the bike reboots and comes back — so it is the plain tier, NOT behind
+ * the irreversible fold. It is still gated: the server refuses it mid-charge and, through
+ * the shared safety gate, while the bike could move. Both nodes always restart together;
+ * resetting one alone latches a fault on its partner.
+ */
+function ResetVcuSection() {
+  return div(
+    h3({ class: "sheet-title" }, "Reset VCU"),
+    ActionButton("reset-vcu", () => "🔄  Reset the VCU (restart both processors)", {
+      confirm: "RESTART both VCU processors now",
+      does:
+        "Sends ECUReset 11 02 to both VCU micros (Control 0xA9 and Safety 0xA8), back-to-back — a key-cycle " +
+        "restart. Nothing is erased and no setting reverts. It is how a parameter change (like the headlight above) " +
+        "takes effect without walking to the bike to key it off and on.",
+      caution:
+        "⚠️ The bike drops off the bus for a second or two while both micros reboot; the dash reconnects on its own. " +
+        "Refused if charging or moving. If a fault stays latched afterwards, key off for 30 s and on.",
+    })
+  );
+}
+
+/**
+ * One of the two headlight buttons. `off` picks which: the amber “writes” tier for
+ * disabling (it changes the bike), the plain tier for restoring.
+ *
+ * The first tap READS BEAM_MAX_CURR_TH off the bike and arms; the second, after the
+ * shared dwell, writes the fixed value with that reading as `expected=`. Same two-tap
+ * shape, same dwell and same key-repeat guard as the parameter write above.
+ *
+ * @param {boolean} off
+ */
+function HeadlightButton(off) {
+  const key = off ? "headlight-off" : "headlight-restore";
+  return button(
+    {
+      class: off ? "action writes" : "action",
+      // One held Enter must not arm and then fire. See refuseKeyRepeat.
+      onkeydown: refuseKeyRepeat,
+      // Same gate as the parameter write — it IS a parameter write by index, so the
+      // table gate applies. The server enforces all of it regardless.
+      disabled: () => busy.val || !canWrite() || !beamTarget(),
+      onclick: () => {
+        if (armed.val !== key) {
+          void armHeadlight(key);
+          return;
+        }
+        if (!armDwellElapsed()) {
+          return;
+        }
+        armed.val = "";
+        void performHeadlight(off);
+      },
+    },
+    () => {
+      if (writing.val) {
+        return "⏳  Writing…";
+      }
+      if (busy.val) {
+        return "⏳  Reading the beam threshold…";
+      }
+      const table = state.val?.status.tableGate;
+      if (table && !table.writesAllowed) {
+        // The short form; the full sentence and remedy are in TableTypeNote() above.
+        return table.noReadWillHelp
+          ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
+          : "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
+      }
+      if (off) {
+        return armed.val === key ? "⚠️  Tap again to disable the headlight" : "🌑  Disable the headlight";
+      }
+      return armed.val === key ? "⚠️  Tap again to restore the headlight" : "💡  Restore the headlight";
+    }
+  );
+}
+
+/**
+ * Two buttons that turn EVERY light off and back on — the headlight section's move applied
+ * to all five circuits in LIGHT_CIRCUITS at once.
+ *
+ * ⚠️ Not a new lever on the bike: it sends `action=parameters`, a batch of the same gated
+ * parameter writes the form and the headlight buttons make. The server opens ONE session and
+ * unlocks ONCE, then compare-and-swaps, writes and reads back each circuit and gives it its own
+ * audit line — so the allowlist, the table gate and all the per-parameter safety apply to each
+ * exactly as to a lone write; only the authenticated session is shared. That sharing is the point:
+ * five separate unlocks cannot fit inside the server's SecurityAccess cooldown, so a per-circuit
+ * loop had to wait one out between each (~25 s) — one session writes them back-to-back.
+ *
+ * Hidden when the bike's table has no BEAM_MAX_CURR_TH, for the reason HeadlightSection is:
+ * a write by index against a table that lacks these params is what the gate exists to refuse.
+ */
+function AllLightsSection() {
+  return div(() => {
+    if (!beamTarget()) {
+      return div();
+    }
+    return div(
+      h3({ class: "sheet-title" }, "All lights"),
+      div(
+        { class: "action-note", style: `color:${MUTED}` },
+        `Runs the headlight move on all ${LIGHT_CIRCUITS.length} circuits — headlight, front and rear position, ` +
+          "stop/brake and indicators. Each comes up off at the next key-cycle with its own open-circuit fault on the " +
+          "dash. Reversible: disabling first saves each circuit's healthy value, and restore writes those back."
+      ),
+      div(
+        { class: "action-block" },
+        // Both cautions ABOVE the button, on the way to the thumb — the same placement the
+        // headlight's "not immediate" line uses. The road-legal one leads: it is the whole
+        // reason not to press this, and it is reversible, so it is caution (amber) and NOT
+        // the red no-undo tier, which means something this is not.
+        div(
+          { class: "action-note caution" },
+          "⚠️ Leaves the bike NOT road-legal — no brake light, no indicators, no headlight. For a parked or " +
+            "stand-bound bike only; restore every light before riding."
+        ),
+        div(
+          { class: "action-note caution" },
+          "⚠️ Not immediate. Every light stays on for the rest of THIS power-on and comes up dark only at the next " +
+            "key-cycle, each with a lighting fault on the dash until restored."
+        ),
+        AllLightsButton(true)
+      ),
+      div(
+        { class: "action-block" },
+        div(
+          { class: "action-note" },
+          "Writes each circuit's MAX threshold back to the value saved when it was disabled — or the factory " +
+            "catalogue if nothing was saved (a different phone, cleared storage), which may not match this bike. " +
+            "All lights return at the next key-cycle and the faults clear themselves."
+        ),
+        AllLightsButton(false)
+      ),
+      // The per-circuit progress of a run in flight, and where a partial run stopped. Muted:
+      // the outcome summary lands in `message` (Outcome, above) when the run finishes.
+      div({ class: "action-note", style: `color:${MUTED}` }, () => lightsProgress.val)
+    );
+  });
+}
+
+/**
+ * One of the two all-lights buttons. `off` picks the amber “writes” tier and the disable
+ * run; restore is the plain tier. First tap arms; the second, after the shared dwell, runs
+ * performAllLights. Unlike the headlight button there is no first-tap read — performAllLights
+ * reads every circuit's value inline, then writes the survivors in one batched session.
+ *
+ * @param {boolean} off
+ */
+function AllLightsButton(off) {
+  const key = off ? "all-lights-off" : "all-lights-restore";
+  return button(
+    {
+      class: off ? "action writes" : "action",
+      // One held Enter must not arm and then fire. See refuseKeyRepeat.
+      onkeydown: refuseKeyRepeat,
+      // `writing` as well as `busy`: the batch's send() drops `busy` on its way out while the
+      // run is still finishing, and a second tap must not start a second run into the first.
+      disabled: () => busy.val || writing.val || !canWrite() || !beamTarget(),
+      onclick: () => {
+        if (armed.val !== key) {
+          arm(key);
+          return;
+        }
+        if (!armDwellElapsed()) {
+          return;
+        }
+        armed.val = "";
+        void performAllLights(off);
+      },
+    },
+    () => {
+      if (writing.val) {
+        return "⏳  Writing…";
+      }
+      if (busy.val) {
+        return "⏳  Checking what the bike holds…";
+      }
+      const table = state.val?.status.tableGate;
+      if (table && !table.writesAllowed) {
+        // The short form; the full sentence and remedy are in TableTypeNote() above.
+        return table.noReadWillHelp
+          ? "🚨  Blocked — this bike's parameter table is not one this software can write against"
+          : "⚠️  Blocked until a sweep has recorded the A8's TABLE_TYPE (277) — see above";
+      }
+      if (off) {
+        return armed.val === key ? "⚠️  Tap again to turn OFF every light" : "🌑  Turn off ALL lights";
+      }
+      return armed.val === key ? "⚠️  Tap again to restore every light" : "💡  Restore ALL lights";
+    }
+  );
+}
+
+/**
+ * Disable or restore every circuit in LIGHT_CIRCUITS in ONE authenticated session. First reads
+ * each circuit off the bike — to seed the compare-and-swap's `expected=`, to skip a circuit
+ * already at target, and (when disabling) to save its healthy value — then sends the survivors
+ * as a single `action=parameters` batch. The server opens one session, unlocks once, and
+ * compare-and-swaps + writes + reads back each parameter with its own audit line; the shared
+ * unlock is the whole reason this is one POST rather than five spaced past a SecurityAccess
+ * cooldown. Each circuit's outcome comes back in `result.writes`, mapped by name; the run is
+ * summed into `message` (rendered by Outcome, up the sheet).
+ *
+ * @param {boolean} off
+ */
+async function performAllLights(off) {
+  writing.val = true;
+  // Held for the WHOLE run — the per-circuit reads AND the batch. readTargetValue does not touch
+  // `busy`; the single send() drops it on its way out, but result-handling after it is
+  // synchronous, so `writing` is what keeps every button on the sheet disabled to the finally.
+  busy.val = true;
+  message.val = "";
+  // Restore reads this bike's own healthy values, saved when the lights were disabled; the
+  // catalogue is only the fallback. Snapshot once so the whole run sees a consistent map.
+  const saved = off ? {} : savedLightValues();
+  /** @type {string[]} */
+  const done = [];
+  /** @type {string[]} */
+  const skipped = [];
+  /** @type {string[]} */
+  const failed = [];
+  /** Circuits restored from the params.ecf catalogue because nothing was saved for them. */
+  const fellBack = [];
+  let unreachable = false;
+  // The survivors of the read-and-decide phase — what actually gets written, one `w=` each.
+  /** @type {{ name: string, value: number, expected: number, label: string, usingCatalogue: boolean }[]} */
+  const toWrite = [];
+  try {
+    // ── Read each circuit and decide what, if anything, to write ────────────
+    for (let position = 0; position < LIGHT_CIRCUITS.length; position++) {
+      const circuit = LIGHT_CIRCUITS[position];
+      const target = state.val?.status.targets.find(candidate => candidate.name === circuit.param) ?? null;
+      if (!target) {
+        skipped.push(`${circuit.label} (not in this bike's table)`);
+        continue;
+      }
+      lightsProgress.val = `Reading ${circuit.label}… (${position + 1} of ${LIGHT_CIRCUITS.length})`;
+      const read = await readTargetValue(target);
+      if (!read.ok) {
+        failed.push(`${circuit.label}: could not read it (${read.reason})`);
+        continue;
+      }
+      // On restore, trust a saved value only if it is above the off threshold — a healthy MAX
+      // always is (off sits below the draw, below the healthy MAX). Anything else is stale or
+      // corrupt, so fall back to the catalogue as if nothing were saved for this circuit.
+      const savedValue = saved[circuit.param];
+      const usingCatalogue = !off && !(typeof savedValue === "number" && savedValue > circuit.off);
+      const value = off ? circuit.off : usingCatalogue ? circuit.catalogue : savedValue;
+      // The catalogue can't always restore. This bike's indicators run 2000 mA but the catalogue
+      // MAX (500) equals their off value, so writing it would leave them off — say so rather than
+      // claim a restore that didn't happen. The rider sets the real value with the parameter form.
+      if (!off && value <= circuit.off) {
+        failed.push(
+          `${circuit.label}: nothing saved and the catalogue default (${circuit.catalogue} mA) is not above its off threshold — restore it by hand with the parameter form above.`
+        );
+        continue;
+      }
+      if (read.value === value) {
+        skipped.push(`${circuit.label} (already ${off ? "off" : "restored"})`);
+        continue;
+      }
+      // Capture the live healthy MAX before pulling it down, so a later restore has this bike's
+      // own value. Guard on `> off` so an already-disabled circuit is never saved as "healthy".
+      if (off && read.value > circuit.off) {
+        saveLightValue(circuit.param, read.value);
+      }
+      toWrite.push({ name: circuit.param, value, expected: read.value, label: circuit.label, usingCatalogue });
+    }
+
+    // ── One batch POST for the survivors — one session, one unlock ──────────
+    if (toWrite.length > 0) {
+      lightsProgress.val = `${off ? "Disabling" : "Restoring"} ${toWrite.length} light${toWrite.length === 1 ? "" : "s"} in one session…`;
+      // Repeated `w=NAME:VALUE:EXPECTED`, one per survivor. URLSearchParams.append keeps them all,
+      // and the server pairs each name with its own value and compare-and-swap `expected`.
+      const query = new URLSearchParams({ action: "parameters" });
+      for (const write of toWrite) {
+        query.append("w", `${write.name}:${write.value}:${write.expected}`);
+      }
+      const payload = await send(query);
+      if (!payload) {
+        // The request did not come back. Every write in the batch is unconfirmed — the frames may
+        // have gone out — so none is claimed done. send() set the "read it back" message already.
+        for (const write of toWrite) {
+          failed.push(`${write.label}: the request did not come back`);
+        }
+        unreachable = true;
+      } else if (!payload.result) {
+        // 400/409: the whole batch was refused before the bus (a bad value, a busy bus, a gate
+        // that has closed). Nothing was written; `payload.message` carries the server's reason.
+        for (const write of toWrite) {
+          failed.push(`${write.label}: ${payload.message ?? "refused"}`);
+        }
+      } else {
+        // One row per parameter the server was given, in order — so every survivor has exactly
+        // one row here, matched back by name (never by position, which a reorder could shift).
+        const rows = payload.result.writes ?? [];
+        for (const write of toWrite) {
+          const row = rows.find(candidate => candidate.name === write.name) ?? null;
+          if (row && row.succeeded) {
+            done.push(write.label);
+            if (write.usingCatalogue) {
+              fellBack.push(write.label);
+            }
+          } else {
+            failed.push(`${write.label}: ${row?.message ?? "no result came back for it"}`);
+          }
+        }
+      }
+    }
+  } finally {
+    writing.val = false;
+    busy.val = false;
+    lightsProgress.val = "";
+    armed.val = "";
+  }
+  message.val = summariseAllLights(off, done, skipped, failed, fellBack, unreachable);
+}
+
+/**
+ * One line for the outcome of a whole run. A partial run has to name which circuits are in
+ * which state, because the bike is now in a mixed state and the rider needs to know it.
+ *
+ * @param {boolean} off @param {string[]} done @param {string[]} skipped
+ * @param {string[]} failed @param {string[]} fellBack @param {boolean} unreachable
+ */
+function summariseAllLights(off, done, skipped, failed, fellBack, unreachable) {
+  const verb = off ? "Disabled" : "Restored";
+  const parts = [];
+  if (done.length > 0) {
+    parts.push(`${verb} ${done.length}: ${done.join(", ")}.`);
+  }
+  if (skipped.length > 0) {
+    parts.push(`Skipped ${skipped.length}: ${skipped.join(", ")}.`);
+  }
+  if (failed.length > 0) {
+    parts.push(`⚠️ ${failed.length} did not go through — ${failed.join("; ")}.`);
+  }
+  if (fellBack.length > 0) {
+    parts.push(
+      `No saved value for ${fellBack.join(", ")} — restored from the factory catalogue, which may not match this ` +
+        "bike. Check them and adjust with the parameter form if a light is dim or still faulted."
+    );
+  }
+  if (unreachable) {
+    parts.push("Stopped early: the Pi stopped answering. Read the values back before trying again.");
+  }
+  if (parts.length === 0) {
+    return `Nothing to do — every light was already ${off ? "off" : "restored"}.`;
+  }
+  if (off && failed.length === 0 && !unreachable) {
+    parts.push(
+      "They come up dark at the next key-cycle — use Reset VCU below to key-cycle without walking to the bike."
+    );
+  }
+  return parts.join(" ");
+}
+
+/**
+ * This bike's saved healthy light MAX values (param name → mA), read from localStorage — what a
+ * restore prefers over the factory catalogue. Per-device and losable (a different phone, cleared
+ * storage): a miss just falls back to the catalogue. Never throws — corrupt or absent storage
+ * yields an empty map so a restore can still run, and only finite numbers survive the parse.
+ *
+ * @returns {Record<string, number>}
+ */
+function savedLightValues() {
+  try {
+    const raw = localStorage.getItem(SAVED_LIGHTS_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    /** @type {Record<string, number>} */
+    const values = {};
+    for (const [name, value] of Object.entries(parsed)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        values[name] = value;
+      }
+    }
+    return values;
+  } catch (error) {
+    console.warn("could not read saved light values from localStorage", error);
+    return {};
+  }
+}
+
+/**
+ * Save one circuit's healthy MAX (mA) under its parameter name, merged into whatever is already
+ * stored, so a later restore can reuse this bike's own value. Best-effort — a storage failure is
+ * logged and swallowed, because losing the save only costs us the catalogue fallback on restore.
+ *
+ * @param {string} param @param {number} value
+ */
+function saveLightValue(param, value) {
+  try {
+    const values = savedLightValues();
+    values[param] = value;
+    localStorage.setItem(SAVED_LIGHTS_KEY, JSON.stringify(values));
+  } catch (error) {
+    console.warn(`could not save healthy light value for ${param} to localStorage`, error);
+  }
+}
+
+/**
  * The four service actions — one read, three that cannot be undone. Only the read one
  * is on screen; the other three are behind a fold, in the red tier.
  *
@@ -873,7 +1406,7 @@ function ClockAction() {
  */
 
 /**
- * @param {"read-service-stamp" | "set-service-point" | "clear-dtcs"} action
+ * @param {"read-service-stamp" | "set-service-point" | "clear-dtcs" | "reset-vcu"} action
  * @param {() => string} caption
  * @param {ConfirmableAction} notes
  */
@@ -1279,6 +1812,104 @@ async function performWrite() {
   wanted.val = "";
 }
 
+/** The allowlist entry for BEAM_MAX_CURR_TH on this bike's table, or null when it has none. */
+function beamTarget() {
+  return state.val?.status.targets.find(target => target.name === BEAM_MAX_PARAM) ?? null;
+}
+
+/**
+ * Reads one parameter off the bike through the read path's probe — the same endpoint,
+ * header and typing readCurrent() uses. Returns the TYPED value (never the unsigned
+ * reading), which is the number a write is compared against.
+ *
+ * @param {WriteTargetSummary} target
+ * @returns {Promise<ReadResult>}
+ */
+async function readTargetValue(target) {
+  try {
+    const query = new URLSearchParams({ target: target.micro, bank: "1", index: String(target.index) });
+    const response = await fetch(`/vcu-probe?${query}`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "X-Cool-Eva": "service-mode" },
+    });
+    const payload = /** @type {VcuProbeResponse} */ (await response.json());
+    const answer = payload.reading;
+    if (!answer || answer.status !== "read" || answer.value === null) {
+      return { ok: false, reason: answer?.note ?? payload.message ?? "no answer" };
+    }
+    return { ok: true, value: answer.value };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * BEAM_MAX_CURR_TH off the bike, or why not — the headlight buttons' read. See readTargetValue.
+ * @returns {Promise<ReadResult>}
+ */
+async function readBeamMax() {
+  const target = beamTarget();
+  if (!target) {
+    return { ok: false, reason: `${BEAM_MAX_PARAM} is not in this bike's parameter table` };
+  }
+  return readTargetValue(target);
+}
+
+/**
+ * The first tap: read BEAM_MAX_CURR_TH off the bike, then arm — so the second tap's
+ * compare-and-swap is against a value read seconds ago, not the sweep's older one. Only
+ * arms if the read succeeded and writing is still allowed.
+ *
+ * @param {string} key
+ */
+async function armHeadlight(key) {
+  busy.val = true;
+  message.val = "";
+  try {
+    const read = await readBeamMax();
+    if (!read.ok) {
+      message.val = `Could not read ${BEAM_MAX_PARAM}: ${read.reason}`;
+      return;
+    }
+    headlightExpected.val = read.value;
+  } finally {
+    busy.val = false;
+  }
+  if (canWrite() && beamTarget()) {
+    arm(key);
+  }
+}
+
+/**
+ * The second tap: write the fixed value with the first tap's reading as `expected=`,
+ * through the very same POST the parameter form uses. The server re-reads, compares,
+ * writes and reads back; `send()` sets the shared message and refreshes the journal.
+ *
+ * @param {boolean} off
+ */
+async function performHeadlight(off) {
+  const target = beamTarget();
+  const expected = headlightExpected.val;
+  if (!target || expected === null) {
+    return;
+  }
+  const query = new URLSearchParams({
+    action: "parameter",
+    name: BEAM_MAX_PARAM,
+    value: String(off ? BEAM_MAX_OFF_MA : BEAM_MAX_FACTORY_MA),
+    expected: String(expected),
+  });
+  writing.val = true;
+  try {
+    await send(query);
+  } finally {
+    writing.val = false;
+  }
+  armed.val = "";
+  headlightExpected.val = null;
+}
+
 /**
  * @param {string} action
  * @param {string} confirmation
@@ -1338,10 +1969,13 @@ function Field(label, control) {
 /** Called by ./service-mode.js whenever the sheet opens. Refreshes, disarms and re-folds everything. */
 export async function refreshVcuWrite() {
   armed.val = "";
-  // Not in forgetSelection(): that also runs when the PARAMETER changes, and the
-  // irreversible actions have nothing to do with which parameter is selected. This is
-  // the sheet-opening reset, and re-folding belongs to it alone.
+  // Not in forgetSelection(): that also runs when the PARAMETER changes, and neither the
+  // irreversible actions nor the headlight buttons have anything to do with which
+  // parameter is selected. This is the sheet-opening reset, and re-folding — and dropping
+  // any beam reading a half-finished headlight gesture left behind — belongs to it alone.
   dangerOpen.val = false;
+  headlightExpected.val = null;
+  lightsProgress.val = "";
   forgetSelection();
   await fetchStatus();
 }

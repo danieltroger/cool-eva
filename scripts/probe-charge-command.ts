@@ -65,9 +65,10 @@ if (options.listen) {
 // anything until the frame round-trips through the VCU's own decode shape.
 selfCheckCodec();
 
-const frame = buildChargeCurrentCommand(options.mode, options.amps, options.ceiling);
+const frames = buildChargeCurrentCommand(options.mode, options.amps, options.ceiling);
 console.log(
-  `\ncrafted 0x121 command: ${hex(frame)}  (mode=${options.mode} selected=${options.amps} A ceiling=${options.ceiling} A)`
+  `\ncrafted charge-current pair: ${frames.map(f => `0x${f.id.toString(16)} ${hex(f.data)}`).join("  ")}` +
+    `  (mode=${options.mode} selected=${options.amps} A ceiling=${options.ceiling} A)`
 );
 
 if (options.dryRun) {
@@ -95,13 +96,16 @@ channel.start();
 
 await watchWindow("BEFORE", options.watchSeconds);
 
-console.log(`\n→ transmitting the command ${options.repeat}×…`);
+console.log(`\n→ transmitting the pair (0x120 commit twin, then 0x121) ${options.repeat}×…`);
 for (let sent = 0; sent < options.repeat; sent++) {
-  try {
-    channel.send({ id: 0x121, ext: false, rtr: false, data: Buffer.from(frame) });
-  } catch (error) {
-    console.error("send failed — is the cool-eva service still holding can0? Stop it and retry.", error);
-    process.exit(1);
+  for (const frame of frames) {
+    try {
+      channel.send({ id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
+    } catch (error) {
+      console.error("send failed — is the cool-eva service still holding can0? Stop it and retry.", error);
+      process.exit(1);
+    }
+    await sleep(5);
   }
   await sleep(500);
 }
@@ -156,7 +160,11 @@ function snapshot(): string {
 }
 
 function selfCheckCodec(): void {
-  const roundTrip = decodeChargeCurrentCommand(buildChargeCurrentCommand(options.mode, options.amps, options.ceiling));
+  // The decoder reads the 0x121 command frame — the half that carries the ceiling — so pick it
+  // out of the pair the builder now returns.
+  const built = buildChargeCurrentCommand(options.mode, options.amps, options.ceiling);
+  const command = built.find(frame => frame.id === CHARGE_COMMAND_CAN_ID);
+  const roundTrip = command ? decodeChargeCurrentCommand(command.data) : null;
   if (
     roundTrip === null ||
     roundTrip.mode !== options.mode ||

@@ -86,7 +86,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "Ride telemetry from CAN `0x104`/`0x105`/`0x108` (speed, odometer, motor), `0x200`-`0x206` (BMS),\n`0x10A` (energy and range), `0x410` (GPS via the Connectivity Hub) and the OBD poller.\n\n**What the 2026-08-02 capture contains.** A short lap and then a garage session. Several decoders\nonly came online after the lap, so the tiles reading them cannot describe it: `odometer_can_km`,\n`speed_can_kmh`, `motor_rpm_can` and `motor_temp_c` all have a handful of samples, none of them\nduring the ride. `trip_km` is the one distance signal with samples through it: +0.2 km across the whole\ncapture, of which 0.1 km falls inside the lap itself — it only resolves to 0.1 km and logged\n3 rows during the lap, so read it as coarse. That is why the Trip meter tile exists next to\nDistance.\n\n**What is empty, and why.** Elevation, Elevation range and Highest point draw nothing because\n`gps_fix` is 0 for the whole capture. The bike was in a garage: `gps_altitude_m` sat at a\nplaceholder 0 m and `gps_lat`/`gps_lon` were never written at all. Those three panels are gated on\nthe fix rather than plotting the placeholder, so an empty chart there means \"no fix\" - which the\n'GPS fix over time' lane at the bottom of the Position row states outright. That is the signal being absent,\nnot a broken query.\n\n**Reading the panels.** Values are logged on change with a per-signal deadband, so a flat stretch\nmeans \"unchanged\", not \"missing\". Every series uses stepAfter with spanNulls on for that reason.",
+        "content": "Ride telemetry from CAN `0x104`/`0x105`/`0x108` (speed, odometer, motor), `0x200`-`0x206` (BMS),\n`0x10A` (energy and range), `0x410` (GPS via the Connectivity Hub) and the OBD poller.\n\n**What the 2026-08-02 capture contains.** A short lap and then a garage session. Several decoders\nonly came online after the lap, so the tiles reading them cannot describe it: `odometer_can_km`,\n`speed_can_kmh`, `motor_rpm_can` and `motor_temp_c` all have a handful of samples, none of them\nduring the ride. `trip_km` is the one distance signal with samples through it: +0.2 km across the whole\ncapture, of which 0.1 km falls inside the lap itself — it only resolves to 0.1 km and logged\n3 rows during the lap, so read it as coarse. That is why the Trip meter tile exists next to\nDistance.\n\n**What is empty, and why.** Elevation, Elevation range and Highest point draw nothing because\n`gps_fix` is 0 for the whole capture. The bike was in a garage: `gps_altitude_m` sat at a\nplaceholder 0 m and `gps_lat`/`gps_lon` were never written at all. Those three panels are gated on\nthe fix rather than plotting the placeholder, so an empty chart there means \"no fix\" - which the\n'GPS fix over time' lane at the bottom of the Position row states outright. That is the signal being absent,\nnot a broken query.\n\n**Reading the panels.** Values are logged on change with a per-signal deadband, so a flat stretch\nmeans \"unchanged\", not \"missing\". Every series uses stepAfter for that reason. Most also span their nulls; **Inverter torque — commanded vs delivered** deliberately does not, because it carries signals from two different transports and a held line across a dead BLE link reads there as the two disagreeing.",
         "mode": "markdown"
       },
       "title": "About this dashboard",
@@ -1009,7 +1009,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 32
       },
@@ -1039,6 +1039,176 @@
         }
       ],
       "title": "Throttle",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The inverter's own torque pair off CAN 0x02C at 50 Hz — drive_torque_cmd_nm, what the VCU asked for, against drive_torque_feedback_nm, what the inverter reports having delivered — with the Connectivity Hub's motor_torque_nm dashed behind them as a second, independent path to the same quantity. All three carry the same 0.5 Nm deadband deliberately, so comparing them is honest rather than an artefact of one being logged more finely than another.\n\nRead the GAP, not the lines. The two inverter traces sit on top of each other almost always: over the 300 450 rows in rides.db where both changed inside the same frame and therefore share a timestamp, the median command − delivery is +0.2 Nm and the 1st-99th percentile band is −4.8 to +4.6 Nm, with only 24 rows past 20 Nm. So a separation wide enough to see is the event worth looking at, and a sustained one with the command above the delivery is the inverter not meeting the demand — torque limiting, a thermal derate, or an intervention. Zoom in to read it: over a whole ride the three traces are one band and only the extremes separate visibly.\n\n⚠️ A BREAK IN A LINE IS A DEAD TRANSPORT, NOT A DEAD MOTOR. The hub and the CAN pair fail independently and the hub fails far more. On 2026-09-07, counting hub silences longer than the 20 s threshold below that have at least one inverter row inside them, the hub was blind for 12.29 h of the day — once for 5.33 h straight (12:17-17:37 UTC) while the inverter pair logged 314 647 rows ranging −63.1 to +223.1 Nm. Drawn as a held line instead of a broken one the hub sits flat at 28.0 Nm, its last sample before the gap, right through all of that.\n\nTWO settings control that and they are not independent. insertNulls = 20000 inserts a null once a series goes 20 s without a sample; spanNulls decides whether that null survives the frame join, so it MUST stay false here. spanNulls:true deletes the inserted nulls outright and restores the flat line — verified by mutation on this panel — and any numeric spanNulls above insertNulls bridges the gap just the same. 20 s comes from the hub's gap histogram over the whole log, which is two populations with a sparse band between: 113 358 gaps under 5 s, then only 79 across the whole 5-35 s span, then a distinct 556 sitting at 35-45 s. That second population is a recurring hub stall rather than a parked bike — bridging it hides 332 000 inverter rows behind a held line, against 510 at any threshold from 10 s to 30 s. See docs/can-decode-findings.md §0x02C.\n\n⚠️ The two inverter series only exist from 2026-08-19, when 0x02C decoding landed. An earlier ride draws the hub trace alone; that is a gap in the log, not a dead inverter.\n\nAll three queries exclude rows stamped past 2033 — the 2060 clock corruption described in grafana/README.md, which motor_torque_nm has 851 of and the inverter pair none. Kept uniform across the three so the shapes match.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": 20000,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Nm"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Commanded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Delivered"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hub reported"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 40,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Commanded\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'drive_torque_cmd_nm' AND r.ts BETWEEN $__from AND $__to\n  AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Delivered\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'drive_torque_feedback_nm' AND r.ts BETWEEN $__from AND $__to\n  AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Hub reported\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_torque_nm' AND r.ts BETWEEN $__from AND $__to\n  AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Inverter torque — commanded vs delivered",
       "type": "timeseries"
     },
     {

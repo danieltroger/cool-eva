@@ -537,20 +537,26 @@ expect(
 // "value the name's own S/U column contradicts" this path exists to avoid.
 expect(damaged.rows[0].value !== -366, "…and must not keep 16407's signed reading beside 4102's unsigned name");
 
-// ── 1e. THE CATALOGUE: all 28 of Energica's tables, and that they agree ─────
+// ── 1e. THE CATALOGUE: every table it carries, and that they agree ──────────
 // ⚠️ This is the check that replaces the one the old single-table module had. That one
 // threw at module load if the embedded params.ecf stopped saying what a hardcoded
 // one-id correction expected. Its generalisation is a fingerprint per table, taken by
 // scripts/extract-vcu-tables.ts from Energica's own bundle before any delta arithmetic,
 // and recomputed here from the reconstruction. A table set that quietly disagrees with
-// itself is worse than one hardcoded table, because it is confidently wrong 28 ways.
+// itself is worse than one hardcoded table, because it is confidently wrong once per table.
 //
 // Every table is BUILT here, which is deliberately not what the service does: it builds
-// only the one it needs, so a Pi that sees one bike pays for one table. Building all 28
-// belongs in the check, where it is a proof rather than a startup cost.
+// only the one it needs, so a Pi that sees one bike pays for one table. Building all of
+// them belongs in the check, where it is a proof rather than a startup cost.
+//
+// ⚠️ The count is hardcoded so that a contributed table landing here is a DELIBERATE bump,
+// not a silent drift — 28 came from the 2024 service-tool build, and 4115 was imported from
+// the service-tool analysis (scripts/import-em-table.ts) because it is the table THIS bike reports and
+// that build did not carry it. Adding your own bike's table raises this number the same way.
 expect(
-  KNOWN_TABLE_TYPES.length === 28,
-  `the 2024 service-tool build selects 28 tables, the catalogue has ${KNOWN_TABLE_TYPES.length}`
+  KNOWN_TABLE_TYPES.length === 29,
+  `the catalogue should carry 29 tables — the 2024 service-tool build's 28 plus 4115 imported from ` +
+    `the service-tool analysis — but has ${KNOWN_TABLE_TYPES.length}`
 );
 expect(
   new Set(KNOWN_TABLE_TYPES).size === KNOWN_TABLE_TYPES.length,
@@ -621,14 +627,15 @@ expect(
   "276/277 must be TABLE_TYPE_uC on the A9 and TABLE_TYPE_uS on the A8 in ALL 28, or asking which table this is needs the answer first"
 );
 
-// The RegenFade split, counted. 20 tables carry the fade curve at 70…94 and 8 carry the
+// The RegenFade split, counted. 21 tables carry the fade curve at 70…94 and 8 carry the
 // battery cell block; nothing carries a mixture. The count is asserted rather than
 // described so that a contributed table landing on the wrong side of it is a red build.
+// 4115 (imported from the service-tool analysis) is a fade table, which is why this is 21 not 20.
 const fadeTables = builtTables.filter(table => table?.byIndex.get(70)?.name === "RegenFade_0");
 const cellTables = builtTables.filter(table => table?.byIndex.get(70)?.name === "CELL_COUNT");
 expect(
-  fadeTables.length === 20 && cellTables.length === 8,
-  `20 tables should have RegenFade at ids 70–94 and 8 the cell block, found ${fadeTables.length}/${cellTables.length}`
+  fadeTables.length === 21 && cellTables.length === 8,
+  `21 tables should have RegenFade at ids 70–94 and 8 the cell block, found ${fadeTables.length}/${cellTables.length}`
 );
 expect(
   fadeTables.length + cellTables.length === KNOWN_TABLE_TYPES.length,
@@ -2625,7 +2632,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "✓ the name table, all 28 of Energica's parameter tables against their own fingerprints, table selection " +
+  "✓ the name table, all 29 carried parameter tables against their own fingerprints, table selection " +
     "and the RegenFade/cell-block distinction, request encoding, framing, the live reads, " +
     "interpretation, diff, the energica_tool.py backup CSV, " +
     "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +

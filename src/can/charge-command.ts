@@ -5,14 +5,17 @@
 // the decode gate in charge-setpoint.ts, so a frame this builds is one decodeChargeSetpointFrame
 // would accept — which is the round-trip the check below rests on.
 //
-// NOTHING in the running service transmits this yet. Injection is PROVEN honoured (a Pi-sent
-// 0x121 changes the dash's setting), and the field layout is confirmed against the dash's OWN
-// frames captured 2026-08-25: b2 = amps 1:1 for AC too (dash sent 1a ff 01/02/03 01 0f … for
-// 1/2/3 A). The one correction from that capture: the AC ceiling in b4 is 0x0f = 15, NOT the
-// 32 first guessed and NOT ac_supply_limit_a (31) — it is the pilot/cable rating, so it is
-// likely charger-specific. A caller should echo the dash's last observed AC b4 rather than
-// hardcode one; a wrong b4 makes the VCU reject the value and fall back to a ~10 A default.
-// The DC ceiling stays the static 75 (fast_dc_limit_max_a). See docs/can-0x121-charge-command.md.
+// Setting the current is a PAIR, the exact mirror of the stop below: the 0x121 alone moves only
+// the dash's DISPLAYED (pending) value, and the 0x120 request-twin (opcode | 0x80) COMMITS it.
+// Proven on-bike 2026-09-03 — a 0x121-only inject left charge_limit_a (0x10A, the committed
+// setpoint) unmoved while the dash showed the new number; injecting the 0x120+0x121 pair the dash
+// itself sends committed it with no key and no dial. So buildChargeCurrentCommand emits BOTH, the
+// 0x120 first (~5 ms ahead, as the dash sends them). The field layout: b2 = amps 1:1 for AC (dash
+// sent 1a ff 01/02/03 01 0f … for 1/2/3 A), and the AC ceiling in b4 is 0x0f = 15 — the pilot/cable
+// rating, NOT ac_supply_limit_a (31), likely charger-specific, so echo the dash's last b4; a wrong
+// one makes the VCU reject and fall back to ~10 A. The DC ceiling stays the static 75
+// (fast_dc_limit_max_a). The 0x120 twin's tail differs from the 0x121: b3=0/b4=0, not b3=1/b4=ceiling.
+// See docs/can-0x121-charge-command.md.
 //
 // Stopping a charge is a DIFFERENT command, cracked 2026-08-25 by a whole-bus capture of the
 // rider's two-press Mode stop: the dash puts a PAIR on the bus — 0x120 `96 ff 01 …` AND 0x121
@@ -39,12 +42,18 @@ const SEPARATOR_BYTE = 0xff;
 const LIMIT_IN_FORCE = 1;
 
 /**
+ * The high bit that turns a 0x121 command opcode into its 0x120 request-twin — the frame that
+ * COMMITS the action on this channel. Both the current-limit pair and the stop pair use it:
+ * `0x1A → 0x9A`, `0x16 → 0x96`. docs/can-0x121-charge-command.md.
+ */
+const REQUEST_TWIN_BIT = 0x80;
+
+/**
  * The stop-charging opcode (b0) as it rides on the 0x120 request-twin: the base `0x16` ORed with
- * the request-twin high bit (`0x96`). b2 = 1, b1 = 0xFF, b3 = 0 (NOT a limit-in-force frame), tail
- * zero. The 0x121 twin (`0x16`) is what the dash pairs with it, but 0x120 alone commits the stop.
+ * REQUEST_TWIN_BIT (`0x96`). b2 = 1, b1 = 0xFF, b3 = 0 (NOT a limit-in-force frame), tail zero.
+ * The 0x121 twin (`0x16`) is what the dash pairs with it, but 0x120 alone commits the stop.
  */
 const STOP_OPCODE = 0x16;
-const STOP_REQUEST_TWIN_BIT = 0x80;
 const STOP_ARG_BYTE = 1;
 
 export type ChargeMode = "ac" | "dc";
@@ -56,15 +65,19 @@ export interface ChargeFrame {
 }
 
 /**
- * Packs a charge-current-limit command into the 8-byte 0x121 frame. Pure.
+ * Packs a charge-current-limit command into the two frames the dash sends. Pure.
  *
- * `selectedAmps` is what to ask for; `ceilingAmps` is the b4 the dash pairs with it (the
+ * Returns the 0x120 request-twin (the COMMIT) FIRST, then the 0x121 command — the order and the
+ * pair the dash itself emits ~5 ms apart. The 0x121 alone only moves the dash's pending display;
+ * without the 0x120 twin the setpoint never commits (proven on-bike 2026-09-03, see the header).
+ *
+ * `selectedAmps` is what to ask for; `ceilingAmps` is the b4 the 0x121 pairs with it (the
  * configured maximum — 75 for DC). Both are whole amps. Throws rather than emit a frame the
  * VCU's own decode would reject: 1 ≤ selected ≤ ceiling ≤ 255, which is the exact relation
  * charge-setpoint.ts gates on. A zero request is not "off" — that is the stop command, a
  * different opcode this builder does not make.
  */
-export function buildChargeCurrentCommand(mode: ChargeMode, selectedAmps: number, ceilingAmps: number): Uint8Array {
+export function buildChargeCurrentCommand(mode: ChargeMode, selectedAmps: number, ceilingAmps: number): ChargeFrame[] {
   if (!Number.isInteger(selectedAmps) || !Number.isInteger(ceilingAmps)) {
     throw new Error(`charge-command: amps must be whole numbers, got selected=${selectedAmps} ceiling=${ceilingAmps}`);
   }
@@ -76,14 +89,25 @@ export function buildChargeCurrentCommand(mode: ChargeMode, selectedAmps: number
     // so sending it could only either do nothing or, worse, be read as some other opcode's layout.
     throw new Error(`charge-command: ${selectedAmps} A must be between 1 and the ceiling ${ceilingAmps} A`);
   }
-  const frame = new Uint8Array(8);
-  frame[0] = mode === "dc" ? DC_CURRENT_LIMIT_OPCODE : AC_CURRENT_LIMIT_OPCODE;
-  frame[1] = SEPARATOR_BYTE;
-  frame[2] = selectedAmps;
-  frame[3] = LIMIT_IN_FORCE;
-  frame[4] = ceilingAmps;
-  // b5-7 stay zero: a tail in use marks a different opcode's layout (charge-setpoint.ts).
-  return frame;
+  const opcode = mode === "dc" ? DC_CURRENT_LIMIT_OPCODE : AC_CURRENT_LIMIT_OPCODE;
+  // The 0x120 commit twin: opcode | 0x80, amps in b2, and b3/b4/tail all zero — its layout differs
+  // from the 0x121 command, so it is built by hand rather than by flipping a bit on the command.
+  const commit = new Uint8Array(8);
+  commit[0] = opcode | REQUEST_TWIN_BIT;
+  commit[1] = SEPARATOR_BYTE;
+  commit[2] = selectedAmps;
+  // The 0x121 command: b3 = limit-in-force, b4 = ceiling, b5-7 zero (a tail in use marks a
+  // different opcode's layout — charge-setpoint.ts).
+  const command = new Uint8Array(8);
+  command[0] = opcode;
+  command[1] = SEPARATOR_BYTE;
+  command[2] = selectedAmps;
+  command[3] = LIMIT_IN_FORCE;
+  command[4] = ceilingAmps;
+  return [
+    { id: CHARGE_REQUEST_CAN_ID, data: commit },
+    { id: CHARGE_COMMAND_CAN_ID, data: command },
+  ];
 }
 
 /**
@@ -97,7 +121,7 @@ export function buildChargeCurrentCommand(mode: ChargeMode, selectedAmps: number
  */
 export function buildChargeStopCommand(): ChargeFrame[] {
   const request = new Uint8Array(8);
-  request[0] = STOP_OPCODE | STOP_REQUEST_TWIN_BIT;
+  request[0] = STOP_OPCODE | REQUEST_TWIN_BIT;
   request[1] = SEPARATOR_BYTE;
   request[2] = STOP_ARG_BYTE;
   return [{ id: CHARGE_REQUEST_CAN_ID, data: request }];

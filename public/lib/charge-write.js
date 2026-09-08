@@ -27,6 +27,14 @@ export const CHARGE_SESSION_MAX_AGE_MS = 5000;
 const CHARGE_MANAGER_STATE_AC = 0x02;
 const CHARGE_MANAGER_STATE_DC = 0x23;
 
+/**
+ * AC ceiling used when the dash has not broadcast ac_charge_ceiling_a this session — the remote
+ * case, where nobody is at the bike to nudge the charge-current dial. Must match the Pi's
+ * AC_CEILING_FALLBACK_A in src/vcu/write-runner.ts, which puts this byte in the frame; here it only
+ * lets the page offer and range-check the control. See docs/can-0x121-charge-command.md.
+ */
+const AC_CEILING_FALLBACK_A = 15;
+
 /** The last /vcu-write status fetched — the gate, and whether writing is on at all. Shared. */
 export const writeStatus = van.state(/** @type {VcuWriteResponse | null} */ (null));
 
@@ -96,13 +104,28 @@ export function liveChargeType() {
 
 /**
  * The ceiling a charge-current command's b4 will carry, from the same live signal the Pi echoes:
- * the dash's own last AC ceiling, or the always-broadcast DC maximum.
+ * the dash's own last AC ceiling, or the always-broadcast DC maximum. When AC has no live ceiling
+ * (the dial has not been nudged this session) it falls back to AC_CEILING_FALLBACK_A so a remote
+ * command still has a range — matching the Pi. DC never falls back (an absent DC ceiling means CAN
+ * is not being received, not a value to guess).
  * @param {"ac" | "dc"} type
  * @returns {number | null}
  */
 export function liveCeiling(type) {
   const ceiling = valueOf(type === "ac" ? "ac_charge_ceiling_a" : "fast_dc_limit_max_a");
-  return ceiling == null ? null : ceiling;
+  if (ceiling == null) {
+    return type === "ac" ? AC_CEILING_FALLBACK_A : null;
+  }
+  return ceiling;
+}
+
+/**
+ * Whether the AC ceiling in force is the fallback rather than a value the dash broadcast — so the
+ * control can say it is using a default. Only ever true for AC; DC has no fallback.
+ * @param {"ac" | "dc"} type
+ */
+export function ceilingIsFallback(type) {
+  return type === "ac" && valueOf("ac_charge_ceiling_a") == null;
 }
 
 /** Whether writing is switched on for this Pi (SERVICE_WRITE_ENABLED). */

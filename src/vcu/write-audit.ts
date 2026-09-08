@@ -31,6 +31,8 @@ export type AuditAction =
   | "charge-current"
   /** A stop-charging command — the 0x120 Mode-stop request-twin. Fire-and-forget, recorded like charge-current. */
   | "charge-stop"
+  /** ECUReset (11 02) on both VCU micros — a key-cycle restart. Recorded because it drops the bike off the bus. */
+  | "reset-vcu"
   /** Reading the last-service block. Read-only, but recorded because it is the before-picture of the routine. */
   | "read-service-stamp";
 

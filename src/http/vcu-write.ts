@@ -19,7 +19,7 @@ import type { ServiceWriteRequest, ServiceWriteResult, VcuWriteRunner, VcuWriteS
 // reads cannot reach a write by accident, including a script of the owner's own
 // written before this endpoint existed.
 //
-// ⚠️ Three actions additionally require the caller to say what it thinks it is doing,
+// ⚠️ Several actions additionally require the caller to say what it thinks it is doing,
 // because `curl` can reach this endpoint and the UI's two taps cannot follow it there:
 //
 //   set-service-point  confirm=set-service-point
@@ -27,6 +27,7 @@ import type { ServiceWriteRequest, ServiceWriteResult, VcuWriteRunner, VcuWriteS
 //   sync-clock         confirm=<the UTC minute the caller displayed, ISO>
 //   charge-current     amps=<whole amps>  confirm=charge-current-<amps>
 //   charge-stop        confirm=charge-stop
+//   reset-vcu          confirm=reset-vcu
 //
 // The clock one is not ceremony — it is the server-side half of "Is it <date and
 // time>?", so a page left open since this morning cannot sync this morning's time.
@@ -147,6 +148,49 @@ export function parseWriteRequest(
       }
       return { ok: true, request: { kind: "bit", name, bit, on: on === "1", expectedCurrent: expected } };
     }
+    case "parameters": {
+      // A batch is repeated `w=NAME:VALUE:EXPECTED`, one per parameter — colon-packed rather
+      // than three parallel arrays so a name can never end up paired with another's value if
+      // the query is reordered. Each carries its own compare-and-swap `expected`, exactly as a
+      // single `parameter` write does; no confirm token, because it is many parameter writes
+      // (the guarded, reversible action), not one of the irreversible ones. The runner caps the
+      // count, plans every name against the allowlist, and refuses the whole batch on any bad one.
+      const entries = params.getAll("w");
+      if (entries.length === 0) {
+        return {
+          ok: false,
+          reason:
+            "a batch write needs at least one w=NAME:VALUE:EXPECTED — the value and the value you read off the bike",
+        };
+      }
+      const writes: { name: string; value: number; expectedCurrent: number }[] = [];
+      for (const entry of entries) {
+        const parts = entry.split(":");
+        if (parts.length !== 3) {
+          return {
+            ok: false,
+            reason: `each w= must be NAME:VALUE:EXPECTED (three colon-separated fields), not "${entry}"`,
+          };
+        }
+        const name = parts[0].trim();
+        if (name.length === 0) {
+          return { ok: false, reason: `a w= entry has no parameter name: "${entry}"` };
+        }
+        const value = parseNumber(parts[1]);
+        if (value === null) {
+          return { ok: false, reason: `${name}: value must be a whole number, not ${parts[1] || "(nothing)"}` };
+        }
+        const expected = parseNumber(parts[2]);
+        if (expected === null) {
+          return {
+            ok: false,
+            reason: `${name}: expected= must carry the value you read off the bike — every write in the batch is still a compare-and-swap`,
+          };
+        }
+        writes.push({ name, value, expectedCurrent: expected });
+      }
+      return { ok: true, request: { kind: "parameters", writes } };
+    }
     case "read-service-stamp":
       return { ok: true, request: { kind: "read-service-stamp" } };
     case "set-service-point":
@@ -213,10 +257,21 @@ export function parseWriteRequest(
         };
       }
       return { ok: true, request: { kind: "charge-stop" } };
+    case "reset-vcu":
+      // Resetting actuates the bike (both micros restart, dropping it off the bus briefly), so it
+      // carries the same one-word confirm the two-tap UI sends but curl must state deliberately.
+      if (params.get("confirm") !== "reset-vcu") {
+        return {
+          ok: false,
+          reason:
+            "Resetting the VCU restarts both micros and drops the bike off the bus briefly. Pass confirm=reset-vcu.",
+        };
+      }
+      return { ok: true, request: { kind: "reset-vcu" } };
     default:
       return {
         ok: false,
-        reason: `action must be one of parameter, bit, read-service-stamp, set-service-point, sync-clock, clear-dtcs, charge-current, charge-stop — not ${action ?? "(nothing)"}`,
+        reason: `action must be one of parameter, parameters, bit, read-service-stamp, set-service-point, sync-clock, clear-dtcs, charge-current, charge-stop, reset-vcu — not ${action ?? "(nothing)"}`,
       };
   }
 }

@@ -25,7 +25,7 @@ import { parameterAtIndex } from "./param-table.ts";
 import {
   buildChargeCurrentCommand,
   buildChargeStopCommand,
-  CHARGE_COMMAND_CAN_ID,
+  type ChargeFrame,
   type ChargeMode,
 } from "../can/charge-command.ts";
 import {
@@ -57,9 +57,10 @@ import type { ParameterWritePlan } from "./write-targets.ts";
 //     22 CID       READ IT BACK
 //     ── compare against what was written; a mismatch is reported, loudly
 //
-// ⚠️ NOTHING HERE HAS EVER RUN AGAINST THE BIKE. The services and their framing are proven;
-// the SEQUENCING above is the part with no live evidence at all, and the part most likely
-// to be wrong.
+// ✅ Proven on-bike 2026-08-27/28: this sequence has driven the A8 light-threshold parameters,
+// and the single-session batch (runParameterWrites) drove the multi-write case — several 2E
+// writes riding ONE 27 unlock, each read back and audited. The researched five (charge/torque/
+// regen/VSM) stay unwritten; the lights are generated targets. See docs/vcu-parameters.md §7.
 //
 // ⚠️ The two reads are the point: `2E`'s positive reply carries NO VALUE, so "the micro
 // accepted it" is not the same claim as "the cell now holds that number", and the read
@@ -104,6 +105,19 @@ export type ServiceWriteOutcome =
 /** How far an operation got. On the audit record, because "refused" means different things at each step. */
 export type WriteStage = "session" | "read-before" | "security-seed" | "security-key" | "write" | "read-back";
 
+/**
+ * How a single-session batch (`writeParameters`) came out.
+ *
+ * `ran` carries one per-parameter `ServiceWriteOutcome` for every plan, in the order
+ * given — the SAME outcome a single write produces, so the runner audits and renders
+ * each identically. `failed` is only the batch-level stop: the cooldown was still
+ * running or the micro never answered `10 81`, so no parameter was read and no
+ * SecurityAccess attempt was spent.
+ */
+export type BatchWriteOutcome =
+  | { status: "ran"; results: ServiceWriteOutcome[] }
+  | { status: "failed"; stage: "session"; reason: string };
+
 /** How the Set Service Point routine came out. */
 export type ServicePointOutcome =
   /** `71 FC` came back, and the stamp was re-read afterwards. `after` is null when the re-read failed. */
@@ -117,6 +131,19 @@ export type ClearDtcsOutcome =
   | { status: "refused"; negativeResponseCode: number; description: string }
   | { status: "failed"; reason: string };
 
+/**
+ * How an ECUReset of both VCU micros came out.
+ *
+ * "reset" is the success, and it is a weak claim on purpose: the reply to `11 02`
+ * almost never arrives — the micro reboots before answering — so a timed-out request
+ * is counted as issued, exactly as scripts/reboot-vcu.ts does. `note` records, per
+ * micro, whether it was a positive 0x51 or silence.
+ */
+export type ResetVcuOutcome =
+  | { status: "reset"; note: string }
+  | { status: "refused"; micro: string; negativeResponseCode: number; description: string }
+  | { status: "failed"; stage: "session" | "reset"; micro: string; reason: string };
+
 /** A reply window. Inherited from ./kwp-client.ts rather than measured for this path. */
 const RESPONSE_TIMEOUT_MS = 300;
 
@@ -125,6 +152,32 @@ const PACE_MS = 10;
 
 /** Gap between charge-stop frames if more than one is ever sent; today the stop is a single frame. */
 const STOP_FRAME_GAP_MS = 20;
+
+/**
+ * Gap between the two charge-current frames (0x120 commit twin, then 0x121 command). The dash spaces
+ * its own pair ~5 ms apart; matched here, since that spacing is what was proven to commit on-bike.
+ */
+const CURRENT_FRAME_GAP_MS = 5;
+
+// ── ECUReset (resetVcu) ─────────────────────────────────────────────────────
+const SERVICE_ECU_RESET = 0x11;
+const RESET_KEY_OFF_ON = 0x02; // keyOffOnReset — the only mode the service tool uses on the bike (a restart, not a factory reset)
+const POSITIVE_RESET_RESPONSE = 0x51; // 0x11 + 0x40
+const NEGATIVE_RESPONSE_SERVICE = 0x7f;
+/**
+ * Control (A9) first, then Safety (A8), matching scripts/reboot-vcu.ts and the service
+ * tool's ResetVCU. Sessions are opened on both before either is reset — see runResetVcu.
+ */
+const RESET_MICRO_ORDER: ("A8" | "A9")[] = ["A9", "A8"];
+/** Extended-addressing target byte per micro. Mirrors param-codec's TARGET_ADDRESS, which is module-private. */
+const RESET_TARGET_ADDRESS: Record<"A8" | "A9", number> = { A8: 0xa8, A9: 0xa9 };
+const RESET_NRC_NAMES: Record<number, string> = {
+  0x11: "serviceNotSupported",
+  0x12: "subFunctionNotSupported",
+  0x22: "conditionsNotCorrect",
+  0x31: "requestOutOfRange",
+  0x33: "securityAccessDenied",
+};
 
 /**
  * How long after an authenticated operation another one may start.
@@ -216,6 +269,38 @@ export function writeParameter(
   return { session: sessionHandle(context), finished: runParameterWrite(context, plan, tableType) };
 }
 
+/**
+ * Writes SEVERAL parameters in ONE authenticated session — one `10 81`, one `27` unlock,
+ * then a `2E` and a read-back for each — instead of a full session-and-unlock cycle per
+ * parameter as `writeParameter` (singular) does.
+ *
+ * ⚠️ Why this exists. Five single writes fired back to back cannot work: the second
+ * `27 01` lands inside the first unlock's ~2.5 s idle window, returns invalidKey, and
+ * spends one of about three attempts (SECURITY_COOLDOWN_MS is the refusal that stops it).
+ * So the all-lights button either waits out five 4 s cooldowns — ~25 s — or shares one
+ * unlock, which is this. Sharing is also SAFER: one `27` puts one attempt at risk, not five.
+ *
+ * ⚠️ What is KEPT, per parameter, is everything that makes a single write safe: each plan
+ * is still a compare-and-swap against a fresh read (ALL read before the unlock, so a stale
+ * precondition never spends an attempt), each write is still read back, and the runner
+ * still writes one audit line each. The session and the unlock are the only shared things.
+ *
+ * ⚠️ It NEVER re-unlocks mid-batch. The unlock survives only because every exchange
+ * re-arms the micro's idle timer (see `exchangeRaw`'s `settle`); if a write is refused for
+ * a stale unlock (`0x33`) the batch STOPS rather than sending a second `27` — that
+ * re-unlock is the exact attempt-burning the cooldown exists to prevent. A value the micro
+ * merely refuses (any other NRC), or a read-back mismatch, is recorded and the batch
+ * continues, because the session is still open and still authenticated.
+ */
+export function writeParameters(
+  channel: RawChannel,
+  plans: ParameterWritePlan[],
+  tableType: TableTypeReport | null
+): { session: RunningWriteSession; finished: Promise<BatchWriteOutcome> } {
+  const context = newContext(channel);
+  return { session: sessionHandle(context), finished: runParameterWrites(context, plans, tableType) };
+}
+
 async function runParameterWrite(
   context: SessionContext,
   plan: ParameterWritePlan,
@@ -276,6 +361,190 @@ async function runParameterWrite(
   // Nothing between the unlock and this line. No logging, no extra await, no read —
   // the window is about two seconds and the factory software's own successful writes
   // followed within 2 ms and 167 ms.
+  return await writeAndReadBack(context, micro, plan, tableType);
+}
+
+/**
+ * Reads all plans (compare-and-swap), unlocks ONCE, then writes each in the still-open
+ * session. See `writeParameters` for why this shares a single unlock and what it refuses
+ * to do (re-unlock) mid-run.
+ */
+async function runParameterWrites(
+  context: SessionContext,
+  plans: ParameterWritePlan[],
+  tableType: TableTypeReport | null
+): Promise<BatchWriteOutcome> {
+  // Backstops for the two things the runner guarantees but this export cannot assume,
+  // because a batch on the wrong footing is worse than a refusal: an empty run is a
+  // caller bug, and a mixed-micro batch would unlock one micro and send `2E` frames to
+  // the other on a session it never opened.
+  if (plans.length === 0) {
+    return { status: "failed", stage: "session", reason: "a batch write was asked to write nothing" };
+  }
+  const micro = plans[0].micro;
+  if (plans.some(plan => plan.micro !== micro)) {
+    return {
+      status: "failed",
+      stage: "session",
+      reason: `a single-session batch must be one micro; got ${[...new Set(plans.map(plan => plan.micro))].join(", ")}`,
+    };
+  }
+
+  const cooldown = cooldownFor(micro);
+  if (cooldown > 0) {
+    return {
+      status: "failed",
+      stage: "session",
+      reason:
+        `${micro} was authenticated ${Math.round((SECURITY_COOLDOWN_MS - cooldown) / 100) / 10} s ago — ` +
+        `wait ${Math.ceil(cooldown / 1000)} s. Asking a micro that is still unlocked for a seed returns invalidKey ` +
+        "and spends one of about three attempts before it locks out until the bike is power-cycled.",
+    };
+  }
+  if (!(await openSession(context, micro))) {
+    return { status: "failed", stage: "session", reason: `${micro} did not answer 10 81` };
+  }
+
+  // ── Compare-and-swap, first half, for EVERY plan, BEFORE the unlock ────────
+  // Reads spend no SecurityAccess attempt, so classifying all of them first is free —
+  // and it means a stale precondition or a dead sensor is reported without ever
+  // unlocking, and a batch that turns out to have nothing to write never spends one.
+  const results: (ServiceWriteOutcome | null)[] = plans.map(() => null);
+  const toWrite: { position: number; plan: ParameterWritePlan }[] = [];
+  for (const [position, plan] of plans.entries()) {
+    const before = await readParameterValue(context, micro, plan.index);
+    if (before.kind !== "value") {
+      results[position] = { status: "failed", plan, stage: "read-before", reason: before.reason };
+      continue;
+    }
+    if (before.value !== plan.previousValue) {
+      results[position] = { status: "stale-precondition", plan, actual: before.value };
+      continue;
+    }
+    if (before.value === plan.value) {
+      results[position] = {
+        status: "failed",
+        plan,
+        stage: "read-before",
+        reason: `${plan.name} already reads ${plan.value} — nothing to write`,
+      };
+      continue;
+    }
+    toWrite.push({ position, plan });
+  }
+
+  if (toWrite.length === 0) {
+    // Nothing survived the compare-and-swap, so NEVER unlock: this is the no-op path
+    // (every parameter already at target, or every one stale), and spending an attempt
+    // to write nothing is the waste the cooldown exists to stop.
+    return finaliseBatch(results);
+  }
+
+  // ── SecurityAccess, ONCE, then the writes with nothing in between ──────────
+  const unlocked = await unlock(context, micro);
+  if (unlocked.kind === "refused") {
+    for (const { position, plan } of toWrite) {
+      results[position] = {
+        status: "refused",
+        plan,
+        stage: unlocked.stage,
+        negativeResponseCode: unlocked.negativeResponseCode,
+        description: unlocked.description,
+      };
+    }
+    return finaliseBatch(results);
+  }
+  if (unlocked.kind === "failed") {
+    for (const { position, plan } of toWrite) {
+      results[position] = { status: "failed", plan, stage: unlocked.stage, reason: unlocked.reason };
+    }
+    return finaliseBatch(results);
+  }
+
+  // Every write from here shares the one unlock. It stays alive because each exchange
+  // re-arms the micro's idle timer (exchangeRaw's settle pushes lastAuthenticatedAt
+  // forward while unlockedMicro is set) — so consecutive writes only have to be closer
+  // together than ~2.5 s, which they are: a write is a `2E` and a `22`, milliseconds
+  // apart. The FIRST write immediately follows the unlock, keeping the "nothing in
+  // between" invariant runParameterWrite documents. On a stop, the rest are recorded as
+  // not-attempted rather than left blank — see batchStopReason.
+  let stopReason: string | null = null;
+  for (const { position, plan } of toWrite) {
+    if (stopReason !== null) {
+      results[position] = { status: "failed", plan, stage: "write", reason: `not attempted — ${stopReason}` };
+      continue;
+    }
+    const outcome = await writeAndReadBack(context, micro, plan, tableType);
+    results[position] = outcome;
+    stopReason = batchStopReason(outcome);
+  }
+
+  return finaliseBatch(results);
+}
+
+/**
+ * Asserts every position was filled and packages the batch. A null here is unreachable —
+ * the read-before phase fills every skipped position and the write loop fills every
+ * to-write one — and loud if it ever is not, because a blank is a parameter the caller
+ * asked about and got no answer for, which on this path could mean a silent unwritten cell.
+ */
+function finaliseBatch(results: (ServiceWriteOutcome | null)[]): BatchWriteOutcome {
+  const filled = results.map((outcome, position) => {
+    if (outcome === null) {
+      throw new Error(`vcu-write: batch result ${position} was never filled in`);
+    }
+    return outcome;
+  });
+  return { status: "ran", results: filled };
+}
+
+/**
+ * Whether a batch must STOP after this outcome, and why — or null to carry on.
+ *
+ * The batch continues only while the session is provably alive and still authenticated. A
+ * transport failure at the write or read-back (no reply, or the frame never reached the
+ * bus) means the bus or micro has gone quiet, and a write we could not confirm must not be
+ * followed by another; a stale-unlock refusal (`0x33`) means the authentication is gone and
+ * the only way on is a second `27`, which is forbidden. Everything else — a value the micro
+ * refused with some other NRC, a read-back mismatch — leaves the session open and unlocked,
+ * so the next parameter is still safe to write and IS written.
+ */
+function batchStopReason(outcome: ServiceWriteOutcome): string | null {
+  switch (outcome.status) {
+    case "written":
+    case "read-back-mismatch":
+    case "stale-precondition":
+      return null;
+    case "refused":
+      return outcome.negativeResponseCode === 0x33
+        ? `the ${outcome.plan.micro} unlock went stale at ${outcome.plan.name} (0x33) — not sending a second 27`
+        : null;
+    case "failed":
+      // A read-back failure is the dangerous one: the write may have landed and we could
+      // not confirm it, so stop rather than pile another unconfirmed write behind it. A
+      // write-step transport failure means the bus went quiet. Both stop the run.
+      return outcome.stage === "write" || outcome.stage === "read-back"
+        ? `the bus stopped answering at ${outcome.plan.name} (${outcome.stage})`
+        : null;
+  }
+}
+
+/**
+ * The write and its read-back, in an already-open, already-unlocked session — the part of
+ * a parameter write AFTER the compare-and-swap and the unlock. Shared by the single write
+ * and the batch so both encode, decode and confirm identically; there is no second copy of
+ * "accepted is not written" to drift.
+ *
+ * ⚠️ Assumes the unlock is live and immediately precedes the first call. The caller owns
+ * that: `runParameterWrite` unlocks right before it, `runParameterWrites` unlocks right
+ * before its first to-write plan and keeps the unlock alive by pacing the rest.
+ */
+async function writeAndReadBack(
+  context: SessionContext,
+  micro: "A8" | "A9",
+  plan: ParameterWritePlan,
+  tableType: TableTypeReport | null
+): Promise<ServiceWriteOutcome> {
   const written = await exchange(context, micro, { kind: "write-parameter", plan, tableType });
   if (written.kind !== "reply") {
     return { status: "failed", plan, stage: "write", reason: describeExchangeFailure(written) };
@@ -290,9 +559,10 @@ async function runParameterWrite(
       plan,
       stage: "write",
       negativeResponseCode: reply.negativeResponseCode,
-      // NRC 0x33 here is the one worth explaining: it means the unlock went stale,
-      // which is a timing problem on our side rather than the micro objecting to the
-      // value. The factory software's own recovery is to re-run SA and retry.
+      // NRC 0x33 here is the one worth explaining: it means the unlock went stale, which
+      // is a timing problem on our side rather than the micro objecting to the value. The
+      // factory software's own recovery is to re-run SA and retry — which the batch will
+      // not do mid-run, so it stops instead (see batchStopReason).
       description:
         reply.negativeResponseCode === 0x33
           ? `${reply.description} — the unlock went stale before the write landed; try again`
@@ -539,6 +809,107 @@ async function runClearDtcs(context: SessionContext): Promise<ClearDtcsOutcome> 
 }
 
 /**
+ * Restarts both VCU micros with UDS ECUReset (`11 02` = keyOffOnReset) — a key-cycle
+ * restart, nothing erased. Ported from scripts/reboot-vcu.ts, itself a port of
+ * the service-tool analysis's ResetVCU, and proven on-bike 2026-08-27.
+ *
+ * ⚠️ BOTH micros are reset, back-to-back, with a session opened on BOTH before the
+ * first reset. The two processors watch each other: restart one alone and its partner
+ * sees it drop off the bus and latches a U1000 — which is how a single-node reset once
+ * put a bike into error. There is deliberately no single-node path.
+ *
+ * ⚠️ Deliberately crosses this repo's standing ban on transmitting 0x11 — every shipped
+ * codec (param-codec, write-codec) refuses ECUReset by construction — the same way
+ * clearStoredDtcs hand-builds a Mode-04 frame the write codec will not. `exchangeRaw`
+ * is the bypass: it takes bytes and sends them without a service check.
+ *
+ * Needs only a diagnostic session (`10 81`), no SecurityAccess unlock. The charge/motion
+ * interlock lives in the runner, not here.
+ */
+export function resetVcu(channel: RawChannel): {
+  session: RunningWriteSession;
+  finished: Promise<ResetVcuOutcome>;
+} {
+  const context = newContext(channel);
+  return { session: sessionHandle(context), finished: runResetVcu(context) };
+}
+
+async function runResetVcu(context: SessionContext): Promise<ResetVcuOutcome> {
+  // Open a session on EVERY micro BEFORE the first reset, like the service tool's ResetVCU:
+  // opening the second node's session after the first is already down is one more
+  // round trip during which the partner sees it gone and stores a fault.
+  for (const micro of RESET_MICRO_ORDER) {
+    if (!(await openSession(context, micro))) {
+      return { status: "failed", stage: "session", micro, reason: `${micro} did not answer 10 81 — is the key ON?` };
+    }
+  }
+
+  const notes: string[] = [];
+  for (const micro of RESET_MICRO_ORDER) {
+    const outcome = await sendEcuReset(context, micro);
+    if (outcome.kind === "refused") {
+      return {
+        status: "refused",
+        micro,
+        negativeResponseCode: outcome.negativeResponseCode,
+        description: outcome.description,
+      };
+    }
+    if (outcome.kind === "failed") {
+      // A partner may already be restarting; the caller's guidance is to key off 30 s.
+      return { status: "failed", stage: "reset", micro, reason: outcome.reason };
+    }
+    notes.push(`${micro}: ${outcome.note}`);
+  }
+  return { status: "reset", note: notes.join("; ") };
+}
+
+/** One `11 02` to a named micro. A timeout is success — the micro reboots before it can answer. */
+async function sendEcuReset(
+  context: SessionContext,
+  micro: "A8" | "A9"
+): Promise<
+  | { kind: "issued"; note: string }
+  | { kind: "refused"; negativeResponseCode: number; description: string }
+  | { kind: "failed"; reason: string }
+> {
+  const canIds = canIdsFor(micro);
+  const frame = new Uint8Array(8);
+  frame[0] = RESET_TARGET_ADDRESS[micro]; // extended-addressing target byte
+  frame[1] = 2; // single-frame PCI: two payload bytes
+  frame[2] = SERVICE_ECU_RESET;
+  frame[3] = RESET_KEY_OFF_ON;
+  const result = await exchangeRaw(context, {
+    requestCanId: canIds.request,
+    responseCanId: canIds.response,
+    frame,
+    isObd: false,
+  });
+  if (result.kind === "timeout") {
+    return { kind: "issued", note: "issued (no reply — the micro is rebooting)" };
+  }
+  if (result.kind === "not-sent") {
+    return { kind: "failed", reason: `the frame never reached the bus — ${result.reason}` };
+  }
+  if (result.frame.kind !== "payload") {
+    return { kind: "failed", reason: `the reply was a ${result.frame.kind} frame` };
+  }
+  const payload = result.frame.payload;
+  if (payload.length >= 3 && payload[0] === NEGATIVE_RESPONSE_SERVICE) {
+    const negativeResponseCode = payload[2];
+    return { kind: "refused", negativeResponseCode, description: describeResetNrc(negativeResponseCode) };
+  }
+  if (payload[0] === POSITIVE_RESET_RESPONSE) {
+    return { kind: "issued", note: "accepted (positive 51)" };
+  }
+  return { kind: "failed", reason: `unexpected reply ${toHex(payload)}` };
+}
+
+function describeResetNrc(code: number): string {
+  return `NRC 0x${code.toString(16).padStart(2, "0")} (${RESET_NRC_NAMES[code] ?? "unknown"})`;
+}
+
+/**
  * Broadcasts the Pi's UTC onto CAN 0x120, setting the bike's own clock.
  *
  * ⚠️ FIRE AND FORGET, and that is not a shortcut — it is what the mechanism is.
@@ -585,30 +956,38 @@ export function syncBikeClock(
  * NOT a guess: a wrong b4 makes the VCU reject the value and fall back to a ~10 A default.
  * The caller validates amps against it; the pure builder re-checks 1 ≤ amps ≤ ceiling.
  */
-export function sendChargeCommand(
+export async function sendChargeCommand(
   channel: RawChannel,
   mode: ChargeMode,
   selectedAmps: number,
   ceilingAmps: number
-): { status: "sent"; hex: string } | { status: "failed"; reason: string } {
-  let frame: Uint8Array;
+): Promise<{ status: "sent"; hex: string } | { status: "failed"; reason: string }> {
+  let frames: ChargeFrame[];
   try {
-    frame = buildChargeCurrentCommand(mode, selectedAmps, ceilingAmps);
+    frames = buildChargeCurrentCommand(mode, selectedAmps, ceilingAmps);
   } catch (err) {
     // The builder refused a request that should have been range-checked upstream — surfaced,
     // not swallowed, because a silently-dropped command looks identical to one the bike ignored.
     return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
   }
-  try {
-    channel.send({ id: CHARGE_COMMAND_CAN_ID, ext: false, rtr: false, data: Buffer.from(frame) });
-  } catch (err) {
-    console.error("vcu-write: could not transmit the charge-current command", err);
-    return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
+  // The pair the dash sends: the 0x120 commit twin first, then the 0x121 command, spaced as the
+  // dash spaces them. The 0x121 alone only moves the pending display — the 0x120 is the commit
+  // (charge-command.ts). Same fire-and-forget multi-frame shape as sendChargeStopCommand.
+  const sentHex: string[] = [];
+  for (const frame of frames) {
+    try {
+      channel.send({ id: frame.id, ext: false, rtr: false, data: Buffer.from(frame.data) });
+    } catch (err) {
+      console.error(`vcu-write: could not transmit the charge-current frame on 0x${frame.id.toString(16)}`, err);
+      return { status: "failed", reason: err instanceof Error ? err.message : String(err) };
+    }
+    sentHex.push(`0x${frame.id.toString(16)} ${toHex(frame.data)}`);
+    await delay(CURRENT_FRAME_GAP_MS);
   }
   console.warn(
-    `vcu-write: sent ${mode.toUpperCase()} charge current ${selectedAmps} A (ceiling ${ceilingAmps} A) on 0x121 — ${toHex(frame)}`
+    `vcu-write: sent ${mode.toUpperCase()} charge current ${selectedAmps} A (ceiling ${ceilingAmps} A) — ${sentHex.join(" / ")}`
   );
-  return { status: "sent", hex: toHex(frame) };
+  return { status: "sent", hex: sentHex.join(" / ") };
 }
 
 /**

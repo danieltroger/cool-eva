@@ -4,6 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import {
+  ceilingIsFallback,
   fetchChargeWriteStatus,
   liveCeiling,
   liveChargeType,
@@ -93,11 +94,18 @@ function Situation() {
     }
     const ceiling = liveCeiling(type);
     if (ceiling === null) {
+      // Only DC reaches here now — AC falls back to a default ceiling (see liveCeiling).
       return div(
         { style: `color:${WARN}` },
-        type === "ac"
-          ? "⚠️ AC ceiling not seen yet — nudge the charge-current dial once on the bike's own screen so the dash broadcasts it, then it will appear here."
-          : "⚠️ DC ceiling (fast_dc_limit_max_a) has not arrived — this means CAN is not being received."
+        "⚠️ DC ceiling (fast_dc_limit_max_a) has not arrived — this means CAN is not being received."
+      );
+    }
+    if (ceilingIsFallback(type)) {
+      return div(
+        { style: `color:${WATCH}` },
+        `Live AC charge · using the default ceiling ${ceiling} A (the dial has not been nudged this session, so the dash has broadcast no ceiling). Whole amps, 1…${ceiling}. `,
+        "If this charger's rating differs from " +
+          `${ceiling} A the bike may ignore the command and settle near 10 A — check charge_limit_a on the dash after sending.`
       );
     }
     return div(

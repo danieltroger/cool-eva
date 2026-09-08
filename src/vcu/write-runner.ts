@@ -12,12 +12,15 @@ import type { ChargeMode } from "../can/charge-command.ts";
 import {
   clearStoredDtcs,
   readServiceStamp,
+  resetVcu,
   sendChargeCommand,
   sendChargeStopCommand,
   setServicePoint,
   syncBikeClock,
   writeParameter,
+  writeParameters,
   type ClearDtcsOutcome,
+  type ResetVcuOutcome,
   type RunningWriteSession,
   type ServicePointOutcome,
   type ServiceWriteOutcome,
@@ -28,6 +31,7 @@ import {
   writeTargetNamed,
   writeTargetProblemIn,
   writeTargets,
+  type ParameterWritePlan,
   type WriteTarget,
 } from "./write-targets.ts";
 import { parameterTableFor } from "./table-catalog.ts";
@@ -51,15 +55,31 @@ import { parameterTableFor } from "./table-catalog.ts";
 // And behind all five, per action: a read of the current value, a compare-and-swap against
 // what the caller thought it was, and a read-back afterwards.
 //
-// ⚠️ What is NOT here, and must not be added: no "write these five parameters", no "restore
-// from a snapshot", no "revert". Each turns one confirmed change into a batch nobody reads.
-// If a batch is ever genuinely needed, the right shape is a list the owner confirms one row
-// at a time — not a loop over this function.
+// ⚠️ What is NOT here, and must not be added: no "restore from a snapshot", no "revert", no
+// bulk loader that writes a table of values nobody read one at a time. Each turns a
+// confirmed change into a batch nobody reads.
+//
+// There IS one batch — `kind: "parameters"`, for the all-lights buttons — and it is the
+// shape this rule always allowed: a short fixed list that is genuinely ONE gesture, where
+// every parameter is still compare-and-swapped against a fresh read, read back, and given
+// its own audit line. The ONLY thing shared is the authenticated session, because five
+// separate unlocks cannot fit inside SECURITY_COOLDOWN_MS and one unlock risks fewer
+// attempts than five. What stays refused is the OPEN-ENDED batch — a snapshot restore, a
+// revert, a loop over an arbitrary list; for one of those the right shape is still a list
+// the owner confirms one row at a time.
 
 /** What the write runner can be asked to do. Closed, and every member is one action. */
 export type ServiceWriteRequest =
   /** Set an allowlisted parameter to a value, having read `expectedCurrent` off the bike first. */
   | { kind: "parameter"; name: string; value: number; expectedCurrent: number }
+  /**
+   * Set SEVERAL allowlisted parameters in ONE authenticated session — a read + compare-and-swap
+   * on each, then a single `27` unlock shared across all the `2E` writes. Only for a batch that
+   * is genuinely one gesture (the all-lights buttons); see the ⚠️ at the top of this file for why
+   * an open-ended batch is refused. Each entry is still individually planned, CAS-checked, read
+   * back and audited — the session is the only shared thing.
+   */
+  | { kind: "parameters"; writes: { name: string; value: number; expectedCurrent: number }[] }
   /** Turn one named bit of an allowlisted config word on or off. */
   | { kind: "bit"; name: string; bit: string; on: boolean; expectedCurrent: number }
   /** Read the last-service block off A8. Read-only; here because it is the routine's before-picture. */
@@ -82,7 +102,14 @@ export type ServiceWriteRequest =
    * ends AC and DC — so it carries no fields; the only precondition is a live session, checked
    * off charge_manager_state like charge-current.
    */
-  | { kind: "charge-stop" };
+  | { kind: "charge-stop" }
+  /**
+   * Restart both VCU micros with ECUReset (`11 02`) — a key-cycle restart, nothing erased.
+   * Carries no fields: both nodes always reset together. Refused if a charge session is live
+   * (checked off charge_manager_state like charge-stop) and, through the shared gate, if the
+   * bike is moving. Reversible, so not on the irreversible tier.
+   */
+  | { kind: "reset-vcu" };
 
 /** How an action came out, in the shape the page renders. */
 export interface ServiceWriteResult {
@@ -108,6 +135,25 @@ export interface ServiceWriteResult {
    * exactly as this one was.
    */
   onBike?: { name: string; value: number; rawHex: string | null } | null;
+  /**
+   * Present only for a batch (`kind: "parameters"`): one entry per parameter asked for,
+   * in the order asked, so the page can say which circuit went through and which did not.
+   * The top-level `status`/`message`/`succeeded` summarise the whole run.
+   */
+  writes?: PerWriteResult[];
+}
+
+/** One parameter's outcome inside a batch, in the shape the page renders per row. */
+export interface PerWriteResult {
+  name: string;
+  /** The parameter's own status word — `written`, `read-back-mismatch`, `stale-precondition`, `refused`, `failed`. */
+  status: string;
+  /** One sentence, already phrased for the page — the same text a single write would show. */
+  message: string;
+  /** True only when this parameter really is now the value asked for. */
+  succeeded: boolean;
+  /** What it reads on the bike now, off the bus, when the outcome read it; null otherwise. */
+  onBike: { name: string; value: number; rawHex: string | null } | null;
 }
 
 export type ServiceWriteAnswer = { ok: true; result: ServiceWriteResult } | { ok: false; reason: string };
@@ -236,6 +282,17 @@ const GATE_WATCH_INTERVAL_MS = 200;
 const RECENT_AUDIT_LINES = 12;
 
 /**
+ * The most parameters one batch (`kind: "parameters"`) may write in a single session.
+ *
+ * NOT a bus limit — the unlock survives as many writes as stay under ~2.5 s apart, which
+ * is all of them. It is a policy ceiling: one authenticated session is meant to be one
+ * gesture (the five light circuits), and a request to write dozens is either a bug or the
+ * batch being misused as a bulk loader — the "batch nobody reads" this file's header
+ * refuses. Eight is the five lights plus headroom.
+ */
+const MAX_PARAMETERS_PER_BATCH = 8;
+
+/**
  * How fresh charge_manager_state must be before a charge-current command is honoured.
  *
  * ⚠️ charge_manager_state (0x610 b7), NOT charge_type (0x605 b2). charge_type names "AC current
@@ -249,6 +306,16 @@ const CHARGE_SESSION_MAX_AGE_MS = 5000;
 /** charge_manager_state (0x610 b7) settled values — the cleanest AC/DC discriminator. docs/charge-manager.md. */
 const CHARGE_MANAGER_STATE_AC = 0x02;
 const CHARGE_MANAGER_STATE_DC = 0x23;
+
+/**
+ * The AC ceiling (0x121 b4) to use when the dash has NOT broadcast ac_charge_ceiling_a this
+ * session — the remote case, where nobody is at the bike to nudge the charge-current dial.
+ * 15 (0x0f) is the only AC ceiling ever captured on this bike (docs/can-0x121-charge-command.md),
+ * and it is likely charger-specific: if the real pilot/cable rating is not 15, the VCU rejects the
+ * frame's b4 and settles on a ~10 A default — benign (nothing damaged, overridable on the bike),
+ * just ineffective. The live signal is still preferred whenever present; this is only the fallback.
+ */
+const AC_CEILING_FALLBACK_A = 15;
 
 interface WriteContext extends VcuWriteRunnerOptions {
   running: RunningWriteSession | null;
@@ -363,7 +430,7 @@ export function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | 
  * being irreversible: docs/vcu-parameters.md §4.
  */
 function tableGateAppliesTo(request: ServiceWriteRequest): boolean {
-  return request.kind === "parameter" || request.kind === "bit";
+  return request.kind === "parameter" || request.kind === "bit" || request.kind === "parameters";
 }
 
 /**
@@ -441,20 +508,31 @@ async function checkPreconditions(
     // ./write-session.ts re-reads, compares and reads back by plan.index, so a
     // misrouted write reads the wrong cell, writes it, verifies it and records success.
     // This asks about the parameter actually being written.
-    const named = "name" in request ? writeTargetNamed(request.name) : null;
-    if (named && table.tableType !== null) {
+    // One name for a single write or bit toggle, every name for a batch — each checked,
+    // because a batch shares nothing that would let one bad index ride in on another's back.
+    const names =
+      request.kind === "parameters" ? request.writes.map(write => write.name) : "name" in request ? [request.name] : [];
+    if (names.length > 0 && table.tableType !== null) {
       const bikeTable = parameterTableFor(table.tableType);
       if (!bikeTable) {
         return { ok: false, reason: `the bike names table ${table.tableType}, which this software cannot rebuild` };
       }
-      const problem = writeTargetProblemIn(named, bikeTable);
-      if (problem) {
-        return {
-          ok: false,
-          reason:
-            `refusing to write ${named.name} on a bike running table ${table.tableType} — ${problem}. ` +
-            "The parameter is writable; it is this bike's table that puts something else at that index.",
-        };
+      for (const name of names) {
+        const named = writeTargetNamed(name);
+        // An unknown name is not judged here — it is refused later, in the pure planning
+        // layer, with the full writable list. This gate only asks about names it knows.
+        if (!named) {
+          continue;
+        }
+        const problem = writeTargetProblemIn(named, bikeTable);
+        if (problem) {
+          return {
+            ok: false,
+            reason:
+              `refusing to write ${named.name} on a bike running table ${table.tableType} — ${problem}. ` +
+              "The parameter is writable; it is this bike's table that puts something else at that index.",
+          };
+        }
       }
     }
   }
@@ -498,6 +576,8 @@ async function performOnBus(
     case "parameter":
     case "bit":
       return await performParameterWrite(context, request, channel, tableType);
+    case "parameters":
+      return await performParameterWrites(context, request, channel, tableType);
     case "read-service-stamp":
       return await performReadStamp(context, channel);
     case "set-service-point":
@@ -510,6 +590,8 @@ async function performOnBus(
       return await performChargeCurrent(context, request, channel);
     case "charge-stop":
       return await performChargeStop(context, channel);
+    case "reset-vcu":
+      return await performResetVcu(context, channel);
   }
 }
 
@@ -566,6 +648,136 @@ async function performParameterWrite(
       message: describeWriteOutcome(outcome),
       succeeded: outcome.status === "written",
       onBike: readingAfter(outcome),
+    },
+  };
+}
+
+/**
+ * Writes several allowlisted parameters in ONE authenticated session — the engine behind the
+ * all-lights buttons. Every parameter is still planned, compare-and-swapped, written and read
+ * back exactly as a single write is; the ONLY shared thing is the `10 81` session and the one
+ * `27` unlock, because five separate unlocks cannot fit inside SECURITY_COOLDOWN_MS and one
+ * unlock risks one attempt rather than five. See the ⚠️ at the top of this file for what stays
+ * refused (the open-ended batch).
+ *
+ * The whole batch is refused, before any frame, if it is empty, over the cap, names something
+ * off the allowlist, or mixes micros — a batch on the wrong footing is worse than a plain
+ * refusal, and half a gesture is not the gesture. Once it runs, each parameter gets its own
+ * audit line and its own row in `writes`; the top-level status summarises — `written` only if
+ * every one went through, `partial` if some did, `failed` if none did.
+ */
+async function performParameterWrites(
+  context: WriteContext,
+  request: Extract<ServiceWriteRequest, { kind: "parameters" }>,
+  channel: RawChannel,
+  tableType: TableTypeReport | null
+): Promise<ServiceWriteAnswer> {
+  if (request.writes.length === 0) {
+    return { ok: false, reason: "a batch write named no parameters" };
+  }
+  if (request.writes.length > MAX_PARAMETERS_PER_BATCH) {
+    return {
+      ok: false,
+      reason: `a batch may write at most ${MAX_PARAMETERS_PER_BATCH} parameters in one session; ${request.writes.length} were asked for`,
+    };
+  }
+
+  // Plan every write in the pure layer first: a name off the allowlist or a value out of range
+  // refuses the WHOLE batch before a session is opened. A batch is one gesture, and running
+  // four of five writes because the fifth was malformed is not what the button promised.
+  const plans: ParameterWritePlan[] = [];
+  for (const write of request.writes) {
+    const planned = planWrite(write.name, write.value, write.expectedCurrent);
+    if (!planned.ok) {
+      return { ok: false, reason: `${write.name}: ${planned.reason}` };
+    }
+    plans.push(planned.plan);
+  }
+
+  // One micro per session. ./write-session.ts backstops this, but refusing here keeps the
+  // reason specific instead of surfacing as an opaque session-step failure.
+  const micro = plans[0].micro;
+  if (plans.some(plan => plan.micro !== micro)) {
+    const micros = [...new Set(plans.map(plan => plan.micro))];
+    return { ok: false, reason: `a single-session batch must be one micro; these span ${micros.join(", ")}` };
+  }
+
+  console.warn(
+    `vcu-write: about to write ${plans.length} parameters in one session on ${micro} — ` +
+      plans.map(plan => `${plan.name}=${plan.value}`).join(", ")
+  );
+
+  const session = writeParameters(channel, plans, tableType);
+  context.running = session.session;
+  const outcome = await session.finished;
+
+  if (outcome.status === "failed") {
+    // The batch never got past `10 81` (a live cooldown, or the micro did not answer), so no
+    // parameter was read and no SecurityAccess attempt was spent. One audit line for the whole
+    // batch — there is no per-parameter before/after to record — and every row reported failed.
+    await appendAuditRecord(context.directory, {
+      at: Date.now(),
+      clockTrustworthy: readPiClock().trustworthy,
+      action: "parameter-write",
+      status: "failed",
+      micro,
+      note: `batch of ${plans.length} (${plans.map(plan => plan.name).join(", ")}) failed at the ${outcome.stage} step: ${outcome.reason}`,
+    });
+    return {
+      ok: true,
+      result: {
+        action: "parameter-write",
+        status: "failed",
+        message: `Nothing was written — the batch failed at the ${outcome.stage} step: ${outcome.reason}`,
+        succeeded: false,
+        writes: plans.map(plan => ({
+          name: plan.name,
+          status: "failed",
+          message: `Not attempted — ${outcome.reason}`,
+          succeeded: false,
+          onBike: null,
+        })),
+      },
+    };
+  }
+
+  // One audit line per parameter, the SAME shape a lone write records (see performParameterWrite),
+  // so a batched write and a single write are indistinguishable in the journal — which is the
+  // point: each row is a real, separately compare-and-swapped and read-back change to the bike.
+  for (const perWrite of outcome.results) {
+    await appendAuditRecord(context.directory, {
+      at: Date.now(),
+      clockTrustworthy: readPiClock().trustworthy,
+      action: "parameter-write",
+      status: perWrite.status,
+      name: perWrite.plan.name,
+      identifier: perWrite.plan.identifier,
+      micro: perWrite.plan.micro,
+      before: perWrite.status === "stale-precondition" ? perWrite.actual : perWrite.plan.previousValue,
+      after: perWrite.status === "written" || perWrite.status === "read-back-mismatch" ? perWrite.readBack : null,
+      requested: perWrite.plan.value,
+      rawHex: "rawHex" in perWrite ? perWrite.rawHex : undefined,
+      note: describeWriteOutcome(perWrite),
+    });
+  }
+
+  const writes: PerWriteResult[] = outcome.results.map(perWrite => ({
+    name: perWrite.plan.name,
+    status: perWrite.status,
+    message: describeWriteOutcome(perWrite),
+    succeeded: perWrite.status === "written",
+    onBike: readingAfter(perWrite),
+  }));
+  const writtenCount = writes.filter(write => write.succeeded).length;
+  const allWritten = writtenCount === writes.length;
+  return {
+    ok: true,
+    result: {
+      action: "parameter-write",
+      status: allWritten ? "written" : writtenCount > 0 ? "partial" : "failed",
+      message: `Wrote ${writtenCount} of ${writes.length} parameters in one authenticated session.`,
+      succeeded: allWritten,
+      writes,
     },
   };
 }
@@ -826,14 +1038,21 @@ async function performChargeCurrent(
     };
   }
 
-  const ceiling = latestValue(ceilingKey);
+  // AC falls back to a known ceiling when the dash has not broadcast one this session, so a remote
+  // command works without someone at the bike to nudge the dial. DC still refuses: its ceiling is a
+  // continuous broadcast, so an absent one means CAN is not being received — not a case to guess.
+  let ceiling = latestValue(ceilingKey);
+  if (ceiling === null && mode === "ac") {
+    console.warn(
+      `vcu-write: AC charge ceiling (${ceilingKey}) not seen this session — defaulting b4 to ${AC_CEILING_FALLBACK_A} A. If this charger's rating differs, the VCU will settle on ~10 A.`
+    );
+    ceiling = AC_CEILING_FALLBACK_A;
+  }
   if (ceiling === null) {
     return {
       ok: false,
       reason:
-        mode === "ac"
-          ? "the AC charge ceiling has not been seen this session — nudge the charge-current dial once on the bike's own screen so the dash broadcasts it, then retry. Sending an AC command with the wrong ceiling byte makes the VCU ignore it and default to ~10 A."
-          : "the DC charge ceiling (fast_dc_limit_max_a) has not arrived — it broadcasts whenever the bike is awake, so this means CAN is not being received. Not commanding blind.",
+        "the DC charge ceiling (fast_dc_limit_max_a) has not arrived — it broadcasts whenever the bike is awake, so this means CAN is not being received. Not commanding blind.",
     };
   }
   if (!Number.isInteger(request.amps) || request.amps < 1 || request.amps > ceiling) {
@@ -846,7 +1065,7 @@ async function performChargeCurrent(
   console.warn(
     `vcu-write: about to command ${mode.toUpperCase()} charge current ${request.amps} A (ceiling ${ceiling} A) on 0x121`
   );
-  const outcome = sendChargeCommand(channel, mode, request.amps, ceiling);
+  const outcome = await sendChargeCommand(channel, mode, request.amps, ceiling);
   await appendAuditRecord(context.directory, {
     at: Date.now(),
     clockTrustworthy: readPiClock().trustworthy,
@@ -871,7 +1090,7 @@ async function performChargeCurrent(
       action: "charge-current",
       status: "sent",
       message:
-        `Commanded ${mode.toUpperCase()} charge current ${request.amps} A on 0x121 (${outcome.hex}). ` +
+        `Commanded ${mode.toUpperCase()} charge current ${request.amps} A (${outcome.hex}). ` +
         "⚠️ This is an event frame with no reply — watch the dash's set value and charge_limit_a to see it take. " +
         "A full battery caps the current that actually flows regardless. The setting is transient (unplugging resets it) " +
         "and you can override it on the bike's own screen.",
@@ -943,6 +1162,72 @@ async function performChargeStop(context: WriteContext, channel: RawChannel): Pr
       succeeded: true,
     },
   };
+}
+
+/**
+ * Restarts both VCU micros with ECUReset (`11 02`) — a key-cycle restart, nothing erased.
+ *
+ * Reversible, so it is NOT on the irreversible tier — but it drops the bike off the bus for a
+ * second or two, and `11 02` is also the charge manager's bootloader-entry service, so it is
+ * refused mid-charge: a live charge is managed by these very controllers. The charge check keys
+ * on charge_manager_state (present and fresh = a live session), matching performChargeStop — the
+ * reliable session signal, NOT the 0x625 dc_charging flag that false-refused the scratch script
+ * on 2026-08-27. The stationary check is inherited from the shared gate; this action is not
+ * gate-exempt, unlike the two charge actions. Both nodes always reset together — see resetVcu.
+ */
+async function performResetVcu(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
+  const chargeState = latestValue("charge_manager_state");
+  const chargeStateAge = ageMs("charge_manager_state");
+  if (chargeState !== null && chargeStateAge !== null && chargeStateAge <= CHARGE_SESSION_MAX_AGE_MS) {
+    return {
+      ok: false,
+      reason:
+        "a charge session is live (charge_manager_state is fresh) — do not reset the VCU mid-charge. " +
+        "Stop the charge or unplug first.",
+    };
+  }
+
+  console.warn("vcu-write: about to reset both VCU micros (ECUReset 11 02) — the bike drops off the bus briefly");
+  const session = resetVcu(channel);
+  context.running = session.session;
+  const outcome = await session.finished;
+  await appendAuditRecord(context.directory, {
+    at: Date.now(),
+    clockTrustworthy: readPiClock().trustworthy,
+    action: "reset-vcu",
+    status: outcome.status,
+    // No synchronous read-back: the micros reboot before replying, and there is nothing to read
+    // afterwards but a fresh session, which the page confirms on its own poll.
+    after: null,
+    micro: outcome.status === "refused" || outcome.status === "failed" ? outcome.micro : undefined,
+    note: describeResetOutcome(outcome),
+  });
+  if (outcome.status !== "reset") {
+    return { ok: false, reason: describeResetOutcome(outcome) };
+  }
+  return {
+    ok: true,
+    result: {
+      action: "reset-vcu",
+      status: "reset",
+      message:
+        `Restarted both VCU micros (ECUReset 11 02, a key-cycle restart — nothing erased). ${outcome.note}. ` +
+        "⚠️ The bike drops off the bus for a second or two while they reboot; the dash reconnects on its own. " +
+        "If a fault stays latched, key off for 30 s and on — a real power cycle clears what a reset leaves behind.",
+      succeeded: true,
+    },
+  };
+}
+
+function describeResetOutcome(outcome: ResetVcuOutcome): string {
+  switch (outcome.status) {
+    case "reset":
+      return `both VCU micros restarted (${outcome.note})`;
+    case "refused":
+      return `${outcome.micro} refused the reset: ${outcome.description}`;
+    case "failed":
+      return `${outcome.micro} failed at the ${outcome.stage} step: ${outcome.reason} — key off for 30 s and on to be sure of a clean state`;
+  }
 }
 
 /**

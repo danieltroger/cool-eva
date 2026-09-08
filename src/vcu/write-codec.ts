@@ -25,7 +25,9 @@ import type { ParameterWritePlan } from "./write-targets.ts";
 //    the factory tool's actuator-test channel, which drives the pump, fan, horn and
 //    lights directly — 0x3B, 0x3D and 0x34/0x36/0x37 are absent and must stay absent.
 //
-// ❌ Nothing in this file has ever been transmitted by this repo. Not one frame.
+// ✅ Proven on-bike 2026-08-27/28: this file's `2E` write legs have driven the A8 light-threshold
+// parameters (through write-session.ts), read back and logged. The five RESEARCHED parameters in
+// docs/vcu-parameters.md §5 (charge/torque/regen/VSM) stay unwritten — the lights are generated targets.
 
 /** Everything this codebase is permitted to ask a VCU micro to DO. Closed on purpose — see the header. */
 export type VcuWriteRequest =

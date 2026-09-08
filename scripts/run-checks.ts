@@ -262,6 +262,21 @@ const CHECKS: SelfCheck[] = [
       "the multi-frame half of the VCU's custom-KWP channel: the five read services and the guard that keeps every write unexpressible, ISO-TP segmentation against the 0x35 request frame captured 2026-08-08 and flow control in both directions, the one multi-frame reply with real bytes behind it (A8 bank-2 0x2001, reconstructed from two independent live records), the gapped / short / oversized / foreign / flooding replies the transport must abandon rather than complete, and the whole 0x35/0x36/0x37 bulk sequence with its block cap, cancellation and bus lease",
   },
   {
+    script: "scripts/check-power-bar.ts",
+    covers:
+      "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +
+      "backwards: that regen reads green and a pull never does — inverted from 2026-08-03 until 2026-09-08, under " +
+      "a doc comment that said the right thing throughout — that drive is WHITE at every load, the ramp by " +
+      "magnitude having been retired, and that the dashed derate rule keeps a 3:1 contrast floor over that fill, " +
+      "computed rather than restated, since it is drawn on top of it. That both BMS ceilings convert to kW through the MEASURED pack " +
+      "voltage with a 0 A derate surviving as a real limit and a 0 V reading rejected as a missing one, that both " +
+      "go quiet while a charge is up — the BMS zeroes them there, and believing them would hatch the whole bar " +
+      "away under a fill showing 24 kW of charge — and that each ceiling hatches its own side's far end against " +
+      "its OWN scale, hatches nothing at or past full scale, hatches the whole half at zero, and still draws for " +
+      "a derate of 1 kW, since a minimum width that swallowed small ones made a blank end mean two things. " +
+      "Walked end to end as well as at each end, because covering both ends left a crossed pair between them green",
+  },
+  {
     script: "scripts/check-tab-routing.ts",
     covers:
       "the dashboard's tab URLs — that each tab still lives at the address every bookmark holds, that a fragment naming no tab (empty, unknown, malformed, or a path) lands on the riding screen instead of throwing before the first render, and that the tab ring the high-beam gesture advances through closes",

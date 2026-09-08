@@ -509,6 +509,91 @@ export const PARAMETER_TABLE_DELTAS: ParameterTableDelta[] = [
 `,
   },
   {
+    tableType: 4115,
+    exportStamp: "service-tool-analysis",
+    fingerprint: "f591017d",
+    delta: `
+1 TH_HIGH_B_H_TEMP
+2 TH_LOW_B_L_TEMP
+3 TH_LOW_CHGBTEMP
+4 TH_HIGH_B_PACK_V
+5 TH_LOW_B_PACK_V
+9 CELL_UNDER_VOLTAGE
+10 CELL_UNDERVOLTAGE_WARNING
+11 CELL_OVER_VOLTAGE
+12 BATTERY_UNBALANCE_WINDOW
+13 BATTERY_TRICKLE_CHG_T
+14 SOC_VALIDATION_TH
+17 CELL_COUNT_C
+19 VSM_DUMMY_WORD5
+70 RegenFade_0
+71 RegenFade_1
+72 RegenFade_2 U
+73 RegenFade_3 U
+74 RegenFade_4 U
+75 RegenFade_5 U
+76 RegenFade_6
+77 RegenFade_7
+78 RegenFade_8
+79 RegenFade_9
+80 RegenFade_10
+81 RegenFade_11
+82 RegenFade_12
+83 RegenFade_13
+84 RegenFade_14
+85 RegenFade_15
+86 RegenFade_16
+87 RegenFade_17 U
+88 RegenFade_18 U
+89 RegenFade_19
+90 RegenFade_20
+91 RegenFade_21 U
+92 RegenFade_22 U
+93 RegenFade_23 U
+94 RegenFade_24 U
+95 ThrottleNeutralPosition_1 U
+96 ThrottleNeutralPosition_2 U
+97 ThrottleNeutralPosition_3 U
+98 ThrottleNeutralPosition_4 U
+99 ThrottleNeutralPosition_5 U
+100 ThrottleNeutralPosition_6
+101 ThrottleNeutralPosition_7
+102 ThrottleNeutralPosition_8
+103 ThrottleNeutralPosition_9
+104 ThrottleNeutralPosition_10
+105 ThrottleNeutralPosition_11
+106 ThrottleNeutralPosition_12
+107 ThrottleNeutralPosition_13
+108 ThrottleNeutralPosition_14
+109 ThrottleNeutralPosition_15
+110 ThrottleNeutralPosition_16
+111 ThrottleNeutralPosition_17
+112 ThrottleNeutralPosition_18
+113 ThrottleNeutralPosition_19
+114 ThrottleNeutralPosition_20
+115 ThrottleNeutralPosition_21
+116 ThrottleNeutralPosition_22
+117 ThrottleNeutralPosition_23
+118 ThrottleNeutralPosition_24
+119 ThrottleNeutralPosition_25
+154 DBW_DUMMY_WORD11
+155 DBW_DUMMY_WORD12
+156 DBW_DUMMY_WORD13
+157 DBW_DUMMY_WORD14
+158 DBW_DUMMY_WORD15
+159 DBW_DUMMY_WORD16
+160 DBW_DUMMY_WORD17
+243 FPOSLIGHTS_MIN_CURR_TH
+244 FPOSLIGHTS_MAX_CURR_TH
+260 DC_CHG_COMPLETE_TH
+262 TARGET_VOLTAGE
+263 DC_OVERSHOOT
+264 EVSE_DUMMY_WORD3
+266 CELL_COUNT_S
+267 CELL_TYPE
+`,
+  },
+  {
     tableType: 4117,
     exportStamp: "202202241008",
     fingerprint: "5fc76505",

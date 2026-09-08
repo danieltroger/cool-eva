@@ -3,9 +3,16 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { inflateRaw } from "zlib";
 import { promisify } from "util";
-import { PARAMETER_FILE_TEXT, parseParameterFile, type VcuParameter } from "../src/vcu/param-file.ts";
-import { buildParameterTable, fingerprintTable, type ParameterTableDelta } from "../src/vcu/table-catalog.ts";
+import { PARAMETER_FILE_TEXT, parseParameterFile } from "../src/vcu/param-file.ts";
+import { buildParameterTable } from "../src/vcu/table-catalog.ts";
 import { PARAMETER_TABLE_DELTAS } from "../src/vcu/table-catalog.data.ts";
+import {
+  mergeIntoCatalogue,
+  renderModule,
+  toDelta,
+  type BundleRecord,
+  type ExtractedTable,
+} from "./table-delta-build.ts";
 
 // Pulls Energica's VCU parameter tables out of the manufacturer's service-tool
 // executable and writes them into src/vcu/table-catalog.data.ts, which is the file the
@@ -50,22 +57,6 @@ const ZIP_LOCAL_HEADER = 0x04034b50;
 
 /** The only compression method these bundles use. */
 const ZIP_DEFLATE = 8;
-
-/** One record as Energica's `.emcpd` JSON writes it. `min`/`max` are datatype ranges and are ignored. */
-interface BundleRecord {
-  id: number;
-  name: string;
-  datatype: string;
-  signedness: string;
-  ecu: string;
-}
-
-interface ExtractedTable {
-  tableType: number;
-  /** `ParametersBundle.ExportToFile` stamps `yyyyMMddHHmm`; it names both files in the ZIP. */
-  exportStamp: string;
-  records: BundleRecord[];
-}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_PATH = join(HERE, "..", "src", "vcu", "table-catalog.data.ts");
@@ -112,7 +103,7 @@ if (tables.length === 0) {
 
 const base = parseParameterFile(PARAMETER_FILE_TEXT());
 const extracted = tables.map(table => toDelta(table, base));
-const deltas = mergeIntoCatalogue(extracted, replaceEverything);
+const deltas = mergeIntoCatalogue(PARAMETER_TABLE_DELTAS, extracted, replaceEverything);
 
 // ⚠️ Round-tripped BEFORE anything is written: every delta is rebuilt through the same
 // code the service uses and checked against its own fingerprint. The catalogue's own
@@ -133,66 +124,6 @@ if (process.argv.includes("--stdout")) {
     `extract-vcu-tables: wrote ${deltas.length} table(s) to ${OUTPUT_PATH} (${(source.length / 1024).toFixed(1)} KB). ` +
       "Run `npx prettier --write src/vcu/table-catalog.data.ts && npm test` before committing."
   );
-}
-
-/**
- * The catalogue this run should write: everything already committed, plus everything the
- * exe just yielded.
- *
- * ⚠️ Refuses on a content conflict rather than picking a side — see the header. The
- * per-table log line is here rather than at the call site because "new", "already had it"
- * and "kept, this build does not have it" are the three things somebody running this needs
- * to see, and only this function knows which is which.
- */
-function mergeIntoCatalogue(extracted: ParameterTableDelta[], replaceEverything: boolean): ParameterTableDelta[] {
-  const merged = new Map<number, ParameterTableDelta>();
-  if (!replaceEverything) {
-    for (const existing of PARAMETER_TABLE_DELTAS) {
-      merged.set(existing.tableType, existing);
-    }
-  }
-  let added = 0;
-  for (const delta of extracted) {
-    const existing = merged.get(delta.tableType);
-    if (existing && existing.fingerprint !== delta.fingerprint) {
-      throw new Error(
-        `extract-vcu-tables: table ${delta.tableType} is already in src/vcu/table-catalog.data.ts with a ` +
-          `DIFFERENT content (fingerprint ${existing.fingerprint}, export ${existing.exportStamp}) from the one ` +
-          `in this exe (${delta.fingerprint}, export ${delta.exportStamp}). Every table shared between the builds ` +
-          "seen so far is byte-identical, so this is a real finding: either Energica reissued a table under the " +
-          "same TABLE_TYPE, or src/vcu/param-file.ts's params.ecf text has changed underneath the catalogue. " +
-          "Please open an issue with both export stamps. `--replace` writes only this exe's tables, discarding " +
-          "every table it does not have — which on a 2021-era build means discarding twenty of them."
-      );
-    }
-    if (!existing) {
-      added += 1;
-    }
-    merged.set(delta.tableType, delta);
-  }
-  const catalogue = [...merged.values()].sort((left, right) => left.tableType - right.tableType);
-  const fromThisExe = new Set(extracted.map(delta => delta.tableType));
-  for (const delta of catalogue) {
-    const rows = deltaRowCount(delta);
-    const provenance = !fromThisExe.has(delta.tableType)
-      ? "kept — not in this build"
-      : PARAMETER_TABLE_DELTAS.some(existing => existing.tableType === delta.tableType) && !replaceEverything
-        ? "already carried, unchanged"
-        : "NEW";
-    console.log(
-      `  ${String(delta.tableType).padStart(5)}  export=${delta.exportStamp}  fingerprint=${delta.fingerprint}  ` +
-        `${String(rows).padStart(3)} row(s) differ from params.ecf   ${provenance}`
-    );
-  }
-  console.log(
-    `extract-vcu-tables: ${extracted.length} table(s) in this exe, ${added} of them new; ` +
-      `catalogue goes from ${replaceEverything ? 0 : PARAMETER_TABLE_DELTAS.length} to ${catalogue.length}`
-  );
-  return catalogue;
-}
-
-function deltaRowCount(delta: ParameterTableDelta): number {
-  return delta.delta.split("\n").filter(line => line.trim().length > 0).length;
 }
 
 /**
@@ -410,126 +341,6 @@ async function decodeEntry(entry: ZipEntry): Promise<string> {
     throw new Error(`extract-vcu-tables: ${entry.name} uses compression method ${entry.method}, not stored or deflate`);
   }
   return (await inflateRawAsync(entry.bytes)).toString("utf-8");
-}
-
-/** One table as a delta against `params.ecf`'s 277 rows, in the shape src/vcu/table-catalog.data.ts stores. */
-function toDelta(table: ExtractedTable, base: VcuParameter[]): ParameterTableDelta {
-  const baseByIndex = new Map(base.map(parameter => [parameter.index, parameter]));
-  const lines: string[] = [];
-  for (const record of table.records) {
-    assertInvariantsHold(table, record, baseByIndex.get(record.id));
-    const baseRow = baseByIndex.get(record.id);
-    const signed = record.signedness === "S";
-    if (!baseRow) {
-      lines.push(`+ ${record.id} ${record.name} ${record.datatype} ${record.signedness} ${record.ecu}`);
-      continue;
-    }
-    if (baseRow.name === record.name && baseRow.signed === signed) {
-      continue;
-    }
-    // The name is repeated even when only the signedness moved, so every line in the
-    // delta says what the row IS rather than what changed about it. A line that only
-    // carried "id 91 is signed now" would be unreadable next to a rename.
-    lines.push(
-      baseRow.signed === signed ? `${record.id} ${record.name}` : `${record.id} ${record.name} ${record.signedness}`
-    );
-  }
-  for (const parameter of base) {
-    if (!table.records.some(record => record.id === parameter.index)) {
-      lines.push(`- ${parameter.index}`);
-    }
-  }
-  return {
-    tableType: table.tableType,
-    exportStamp: table.exportStamp,
-    // ⚠️ Taken from the BUNDLE, before any delta arithmetic. A fingerprint computed
-    // from the reconstruction would agree with the reconstruction by construction and
-    // would prove nothing at all.
-    fingerprint: fingerprintTable(
-      table.records.map(record => ({
-        index: record.id,
-        name: record.name,
-        type: record.datatype,
-        signed: record.signedness === "S",
-        micro: record.ecu,
-      }))
-    ),
-    delta: lines.length === 0 ? "" : `\n${lines.join("\n")}\n`,
-  };
-}
-
-/**
- * ⚠️ `id → ecu` and `id → datatype` are invariant across every bundle Energica has
- * shipped, and the delta format has no way to express a table where they are not.
- *
- * That invariance is not a convenience — it is why a wrong table is DANGEROUS: a write
- * under the wrong names still goes to the right micro with the right number of bytes,
- * so nothing on the wire notices. If a future build breaks it, the right response is to
- * widen the format deliberately, not to have this script quietly drop the difference.
- */
-function assertInvariantsHold(table: ExtractedTable, record: BundleRecord, baseRow: VcuParameter | undefined): void {
-  if (!baseRow) {
-    return;
-  }
-  if (record.datatype !== baseRow.type) {
-    throw new Error(
-      `extract-vcu-tables: table ${table.tableType} stores id ${record.id} as ${record.datatype} where params.ecf ` +
-        `says ${baseRow.type}. id → datatype has been invariant across all 28 shipped tables; a build that breaks ` +
-        "that needs src/vcu/table-catalog.ts's delta format widened before it can be carried"
-    );
-  }
-  if (record.ecu !== baseRow.micro) {
-    throw new Error(
-      `extract-vcu-tables: table ${table.tableType} routes id ${record.id} to ${record.ecu} where params.ecf says ` +
-        `${baseRow.micro}. id → ecu has been invariant across all 28 shipped tables; see the note above this check`
-    );
-  }
-}
-
-function renderModule(deltas: ParameterTableDelta[]): string {
-  const entries = deltas
-    .map(delta =>
-      [
-        "  {",
-        `    tableType: ${delta.tableType},`,
-        `    exportStamp: "${delta.exportStamp}",`,
-        `    fingerprint: "${delta.fingerprint}",`,
-        `    delta: \`${delta.delta}\`,`,
-        "  },",
-      ].join("\n")
-    )
-    .join("\n");
-  return `${moduleHeader()}\nexport const PARAMETER_TABLE_DELTAS: ParameterTableDelta[] = [\n${entries}\n];\n`;
-}
-
-/** The generated file's own header. A function so it can sit down here with the other helpers. */
-function moduleHeader(): string {
-  return `import type { ParameterTableDelta } from "./table-catalog.ts";
-
-// GENERATED FILE — do not edit by hand. Regenerate with:
-//
-//     node --experimental-strip-types scripts/extract-vcu-tables.ts /path/to/service-tool.exe
-//     npx prettier --write src/vcu/table-catalog.data.ts
-//
-// Energica's VCU parameter tables, one entry per \`TABLE_TYPE\` the manufacturer's
-// service tool can select, each stored as a DELTA against \`params.ecf\` (which is table
-// 16406 — see ./param-file.ts). ./table-catalog.ts rebuilds the full table from a delta
-// and checks the result against the fingerprint recorded here, which was taken from
-// Energica's own bundle rather than from the delta.
-//
-// Delta format, one row per line — the same columns as params.ecf, minus the ones that
-// cannot differ:
-//
-//     <index> <NAME>              the id is renamed; signedness unchanged
-//     <index> <NAME> <S|U>        renamed and/or the S/U column differs
-//     + <index> <NAME> <TYPE> <S|U> <MICRO>   an id params.ecf does not have
-//     - <index>                   an id params.ecf has and this table does not
-//
-// An empty delta means the table is byte-identical to params.ecf.
-//
-// ⚠️ Adding your own bike's table is a supported thing to do and does not mean editing
-// this file by hand — see README.md, "Adding your bike's VCU parameter table".
-`;
 }
 
 /** .NET writes string lengths and resource type codes as 7-bit-per-byte LEB128. */

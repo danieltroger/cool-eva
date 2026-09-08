@@ -1,10 +1,11 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
+import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
+import { powerLimitsKw } from "../lib/power-limits.js";
 import { PairTile, SectionLabel, SignalTile, Tile } from "../lib/tiles.js";
 import { meter, sparkline, splitBar } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
@@ -20,8 +21,29 @@ const { div, span } = van.tags;
 // comes from GPS rather than the bike, per the request — the wheel-derived figure
 // is kept underneath it, because the gap between them is your speedometer error.
 
-/** Widest power the bar scales to. The Ribelle peaks around 126 kW. */
-const POWER_LIMIT_KW = 130;
+/**
+ * What each half of the power bar shows at its end. Fixed — it is the derate that
+ * moves, not the scale — and asymmetric, because the two directions are not the same
+ * size on this machine and pretending they are wastes most of one half.
+ *
+ * ⚠️ Sized against the CEILING each half has to be able to clear, not against the power
+ * recorded in it. That distinction is the whole of why `regen` is not 45: the regen
+ * ceiling is `allowed_regen_a × pack_v` and cannot pass 120 A × 341.2 V = 40.9 kW, so a
+ * 45 kW half could never be un-hatched — 0.00% of moving time in the archive, a
+ * permanent 15% floor of dashes on a healthy pack. Which is the exact fault the hatching
+ * exists to remove, at a fifth of the size.
+ *
+ * 130 = 400 A at 325 V; 36 = 120 A at 300 V — each direction's configured current limit
+ * at a representative pack voltage. Measured over 1054 minutes of moving time, that
+ * clears the drive half for 20.1% of the time the BMS is allowing its full 400 A and the
+ * regen half for 23.0% of the time it is allowing its full 120 A, so neither half is
+ * systematically noisier than the other. 130 also contains the archive's deepest sample
+ * (−117.3 kW) and the Ribelle's ~126 kW peak. 36 does not contain regen's largest ever
+ * (40.9 kW) and is not meant to: 4 of 57 443 positive samples exceed 38 kW, and clamping
+ * that tail costs far less than a half that can never come clean.
+ * docs/dashboard-decisions.md §"The power bar" has the measurements.
+ */
+const POWER_SCALE_KW = { drive: 130, regen: 36 };
 
 export function RideView() {
   return div(
@@ -117,6 +139,13 @@ function SpeedHero() {
  * Power flow and what it is costing in heat. The I²R figure is here, and not only
  * on the hypermiling screen, because it is the same watts the coolant loop has to
  * carry away — it belongs next to the temperatures it explains.
+ *
+ * The hatching is the BMS's own ceilings (lib/power-limits.js), shown as the part of
+ * the scale you can no longer reach. It is what turns the bar from "how hard am I
+ * pulling" into "how much is left before the pack says no", and it MOVES — the
+ * discharge ceiling averages 91 kW over moving time in the archive against the bike's
+ * 126 kW peak, so a rider reading a full-looking bar without it is usually reading a
+ * derate as headroom.
  */
 function PowerRow() {
   return div(
@@ -127,7 +156,16 @@ function PowerRow() {
       () => power(valueOf("pack_kw")),
       span({ class: "unit" }, "kW")
     ),
-    () => splitBar({ value: valueOf("pack_kw"), limit: POWER_LIMIT_KW, color: colors.power(valueOf("pack_kw")) }),
+    () => {
+      const kilowatts = valueOf("pack_kw");
+      const limits = powerLimitsKw(valueOf, isStale);
+      return splitBar({
+        value: kilowatts,
+        fullScale: POWER_SCALE_KW,
+        color: colors.power(kilowatts),
+        limits,
+      });
+    },
     div({ class: "sub" }, () => {
       const watts = resistiveLossWatts();
       const percent = resistiveLossPercent();
