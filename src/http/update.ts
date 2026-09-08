@@ -25,8 +25,10 @@ const execFileAsync = promisify(execFile);
 //
 // Matching the user to the owner also retires two workarounds. `-c safe.directory` was
 // only ever needed because the uid did not match the owner, and ssh credentials stop
-// needing a GIT_SSH_COMMAND: sudo -H puts us in pi's HOME with pi's uid, so OpenSSH
-// resolves ~/.ssh from the passwd entry the normal way. One mechanism, not three.
+// needing a GIT_SSH_COMMAND: OpenSSH resolves ~/.ssh from the EFFECTIVE UID's passwd
+// entry, so switching user is by itself enough to put pi's key and known_hosts in reach.
+// Measured, because the distinction matters below: `sudo -u '#N' ssh -G` reads the target
+// user's known_hosts with or without -H. One mechanism, not three.
 //
 // --ff-only so a diverged checkout fails loudly instead of quietly building a merge
 // commit on the bike, which nobody is there to review.
@@ -64,7 +66,13 @@ const TIMEOUT_SKEW_MS = 250;
  * that matters is "the puller IS the owner" — a hardcoded name reintroduces the same bug
  * mirrored the moment a checkout belongs to anyone else. `#1000` is sudo's own syntax for
  * a numeric uid. `-n` so a sudo that would need a password fails at once instead of
- * hanging until the timeout on a prompt no phone can answer.
+ * hanging until the timeout on a prompt no phone can answer — verified: it exits
+ * immediately with "sudo: a password is required".
+ *
+ * ⚠️ `-H` is NOT what fixes ssh, which is easy to assume and wrong: ssh follows the
+ * effective uid, and without -H sudo leaves HOME pointing at the INVOKING user's home
+ * (root's). -H is here for what genuinely does read $HOME — git's own ~/.gitconfig and
+ * any credential helper — so the pull sees the owner's git config rather than root's.
  *
  * When we already ARE the owner there is nothing to switch to, so sudo is skipped
  * entirely — which is also what lets the check drive the real path in CI.

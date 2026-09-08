@@ -249,7 +249,9 @@ try {
   const switched = asOwnerCommand(["-C", "/home/pi/cool-eva", ...PULL_ARGS], 1000, 0);
   check("a root service pulls THROUGH sudo, never as itself", switched.command === "sudo");
   check("as the checkout's owner by uid, not a hardcoded name", switched.args.slice(0, 3).join(" ") === "-n -u #1000");
-  check("with -H, so ssh finds that user's key and known_hosts the normal way", switched.args.includes("-H"));
+  // ⚠️ -H is for git's own ~/.gitconfig, NOT for ssh: ssh follows the effective uid, and
+  // without -H sudo leaves HOME pointing at root's home. Measured both ways.
+  check("with -H, so git reads the owner's config rather than root's", switched.args.includes("-H"));
   check("and sudo never waits for a password no phone can type", switched.args.includes("-n"));
   check("git is what sudo runs", switched.args[switched.args.indexOf("-H") + 1] === "git");
 
