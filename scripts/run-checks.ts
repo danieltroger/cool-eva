@@ -66,6 +66,16 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-charge-write-visibility.ts",
+    covers:
+      "why the charge tab's write controls used to flicker: that the browser's staleness window for " +
+      "charge_manager_state stays above ws.ts's heartbeat, since a signal that never changes is refreshed only by " +
+      "that heartbeat and any window at or below it unmounts the whole set-current tile on a late timer; that " +
+      "neither charge view reaches serverTime through liveChargeType or isStale, which would replace its DOM node " +
+      "on every message; that visibility does not ride on the /vcu-write payload's identity; and that both arm " +
+      "paths still raise busy around the pre-arm refresh, which is the double-tap guard (#107)",
+  },
+  {
     script: "scripts/check-pack-resistance.ts",
     covers:
       "the pack-resistance estimator that replaced the BMS's own unusable 0x206 figure, driven by real 0x200 " +

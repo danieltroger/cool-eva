@@ -4,13 +4,13 @@ import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import {
+  applyWriteStatus,
   ceilingIsFallback,
+  chargeType,
   fetchChargeWriteStatus,
   liveCeiling,
-  liveChargeType,
   onChargeSessionEnd,
   sessionLive,
-  writeStatus,
   writesEnabled,
 } from "../lib/charge-write.js";
 
@@ -62,7 +62,7 @@ export const ARMED_KEY = "charge-current";
  */
 export function ChargeCurrentControl() {
   return div(() => {
-    if (!sessionLive.val || writeStatus.val?.status?.enabled !== true) {
+    if (!sessionLive.val || !writesEnabled()) {
       return div();
     }
     return div(
@@ -86,7 +86,7 @@ export function ChargeCurrentControl() {
  */
 function Situation() {
   return div({ class: "action-note" }, () => {
-    const type = liveChargeType();
+    const type = chargeType.val;
     if (type === null) {
       // charge_manager_state briefly out of a settled AC/DC value (a pause or handshake step) —
       // the tile stays; the button waits for it. A real unplug clears sessionLive and hides this.
@@ -127,7 +127,7 @@ function InputRow() {
       type: "text",
       inputmode: "numeric",
       placeholder: () => {
-        const type = liveChargeType();
+        const type = chargeType.val;
         const ceiling = type === null ? null : liveCeiling(type);
         return ceiling === null ? "amps" : `1…${ceiling}`;
       },
@@ -178,11 +178,11 @@ function SetButton() {
         }
         const value = parsedAmps();
         if (value === null) {
-          const type = liveChargeType();
+          const type = chargeType.val;
           const ceiling = type === null ? null : liveCeiling(type);
           return ceiling === null ? "✏️  Waiting for a live charge" : `✏️  Type the current to set (1…${ceiling})`;
         }
-        const type = liveChargeType();
+        const type = chargeType.val;
         const label = type === null ? "" : ` ${type.toUpperCase()} ${value} A`;
         return armed.val === ARMED_KEY ? `⚠️  Tap again to command${label}` : `✏️  Set${label}`;
       }
@@ -228,7 +228,7 @@ function commandable() {
   if (!writesEnabled()) {
     return false;
   }
-  const type = liveChargeType();
+  const type = chargeType.val;
   return type !== null && liveCeiling(type) !== null;
 }
 
@@ -239,7 +239,7 @@ function parsedAmps() {
     return null;
   }
   const value = Number(text);
-  const type = liveChargeType();
+  const type = chargeType.val;
   const ceiling = type === null ? null : liveCeiling(type);
   if (ceiling === null || value < 1 || value > ceiling) {
     return null;
@@ -297,7 +297,7 @@ async function performChargeCurrent() {
       headers: { "X-Cool-Eva": "service-write" },
     });
     payload = /** @type {VcuWriteResponse} */ (await response.json());
-    writeStatus.val = payload;
+    applyWriteStatus(payload);
     message.val = payload.result?.message ?? payload.message ?? "";
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the bike — the frame goes

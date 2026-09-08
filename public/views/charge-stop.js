@@ -4,11 +4,11 @@ import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN, WATCH } from "../lib/colors.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import {
+  applyWriteStatus,
+  chargeType,
   fetchChargeWriteStatus,
-  liveChargeType,
   onChargeSessionEnd,
   sessionLive,
-  writeStatus,
   writesEnabled,
 } from "../lib/charge-write.js";
 
@@ -89,7 +89,7 @@ function StopButton() {
         if (busy.val) {
           return "⏳  Checking the charge is still live…";
         }
-        const type = liveChargeType();
+        const type = chargeType.val;
         const label = type === null ? "the charge" : `the ${type.toUpperCase()} charge`;
         return armed.val === ARMED_KEY ? `⚠️  Tap again to stop ${label}` : `🛑  Stop ${label}`;
       }
@@ -128,7 +128,7 @@ function Outcome() {
  * ⚠️ NOT gate.safe — the stationary service gate does not apply to a charging operation.
  */
 function commandable() {
-  return writesEnabled() && liveChargeType() !== null;
+  return writesEnabled() && chargeType.val !== null;
 }
 
 /** Clears the outcome. Called when a charge ends. */
@@ -169,7 +169,7 @@ async function performChargeStop() {
       headers: { "X-Cool-Eva": "service-write" },
     });
     payload = /** @type {VcuWriteResponse} */ (await response.json());
-    writeStatus.val = payload;
+    applyWriteStatus(payload);
     message.val = payload.result?.message ?? payload.message ?? "";
   } catch (error) {
     // ⚠️ A request that did not come back may still have reached the bike — the frames go out
