@@ -6,7 +6,8 @@ import { REQUIRED_CONSISTENT_READINGS } from "../src/gps/clock-gate.ts";
 import { defineSignals, latestValue, record, snapshot } from "../src/can/signals.ts";
 import { systemClockTrust, syncSystemClockFromGps } from "../src/gps/clock.ts";
 import type { WaypointReply } from "../src/http/waypoint.ts";
-import { LATITUDE_RANGE, LONGITUDE_RANGE, handleWaypointEndpoint } from "../src/http/waypoint.ts";
+import { handleWaypointEndpoint } from "../src/http/waypoint.ts";
+import { LATITUDE_RANGE, LONGITUDE_RANGE } from "../src/gps/waypoint.ts";
 
 // The /waypoint wire, with no Pi and no phone.
 //

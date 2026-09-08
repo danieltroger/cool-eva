@@ -16,6 +16,7 @@ import { monotonicNow } from "./lib/clock.js";
 import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
 import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
+import { installAnnouncements } from "./lib/announce.js";
 import { startTheming } from "./lib/theme.js";
 import { viewRules } from "./lib/view-rules.js";
 
@@ -262,6 +263,10 @@ van.add(document.body, App());
 // what keeps the URL and the screen in step. A gesture that set the tab itself would
 // be the second answer to a question that must only have one.
 installHandlebarGestures({ onNextTab: advanceTab });
+// The other half of the same story, and the reason the list above is shorter than it was:
+// the fan cycle and the waypoint hold are recognised on the Pi now, so this page finds out
+// about them the way it finds out about anything else on the bus, and says so.
+installAnnouncements();
 // Before connect(), so the first paint is already in the right theme when the phone's
 // own setting is the one that decides it. The bike's flag can only arrive later.
 startTheming();

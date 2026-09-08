@@ -851,6 +851,15 @@ export const SIGNALS: SignalDef[] = [
   { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true },
   { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor", onDemand: true },
   { key: "waypoint_lon", unit: "°", group: "waypoint", source: "sensor", onDemand: true },
+  // A waypoint that was ASKED for and refused, added with the server-side handlebar hold
+  // (src/gestures/runner.ts). Until then a refusal only ever existed in the reply to the
+  // phone that had asked; a hold on the bars asks nobody, so without these a rider gets
+  // no banner and reads the silence as a save. `waypoint_refused_seq` is a counter and
+  // not a flag for the reason docs/can-decode-findings.md gives about re-selecting a
+  // value: two identical refusals in a row would write one row and raise one change.
+  // The code is WAYPOINT_REFUSAL in src/gps/waypoint.ts; the words are the dashboard's.
+  { key: "waypoint_refused_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true },
+  { key: "waypoint_refusal", unit: "", group: "waypoint", source: "sensor", onDemand: true },
 
   ...perLmuSignals(),
 ];

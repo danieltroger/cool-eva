@@ -79,35 +79,34 @@ What the dashboard has instead of a touchscreen while riding:
 
 - flash the high beam three times → next tab (`app.js`)
 - double-click `btn_cruise_set` → next tab
-- long-press `btn_indicator_cancel` → save a waypoint, and say so
 
-The recognisers in `lib/gestures.js` are pure, in the sense `src/can/decode.ts` is pure: every clock they reason about is passed in, so they read no clock, touch no DOM and hold no timers. That is what lets `scripts/check-handlebar-gestures.ts` replay press sequences through the very objects the phone runs — including the real durations measured off this bike's own bus, which is the only evidence there is for the thresholds below. The impure half (subscribing to signals, calling the actions) is `lib/handlebar-gestures.js`.
+⚠️ **The HOLD gestures left this page on 2026-09-08 and are now the Pi's** — a 1200 ms hold of MODE ENTER steps the cooling fan, a 1000 ms hold of `btn_indicator_cancel` saves a waypoint, both recognised in `src/gestures/`. They had to move: `lib/connection.js` closes the socket whenever the page is hidden, so a phone in a pocket recognised nothing, which is every gesture worth making. `docs/handlebar-gestures.md` has the recogniser, the thresholds and the corpus behind them, and it is where the `LONG_PRESS_MS` argument that used to be in this section now lives — corrected, because part of it had gone stale (see below).
+
+**What could not follow them is the two that change TAB**, and the reason is structural rather than a preference: the Pi has no idea which tab is showing and no channel to say so — `DashboardMessage` carries signals and nothing else. So `DoubleClickDetector` stays here.
+
+The recogniser in `lib/gestures.js` is pure, in the sense `src/can/decode.ts` is pure: every clock it reasons about is passed in, so it reads no clock, touches no DOM and holds no timers. That is what lets `scripts/check-handlebar-gestures.ts` replay press sequences through the very object the phone runs. The impure half (subscribing to signals, calling the actions) is `lib/handlebar-gestures.js`.
 
 ### ⚠️ The clock these take is the SERVER's, not the phone's
 
 `nowMs` is `serverTime` from `lib/store.js` — the `ts` the Pi stamped on the message — and **not** `monotonicNow()`. That is the opposite of the rule the rest of this codebase follows for durations, so it needs its argument written down.
 
-What these measure is how long a button was down ON THE BIKE. The phone's monotonic clock cannot answer that: it measures the gap between two WebSocket messages ARRIVING, and those are the same number only while delivery latency is constant. On a garage hotspot it is not. A 140 ms tap whose release patch is held up 1.5 s by the link looks, on the arrival clock, exactly like a 1.5 s hold — and would save a waypoint nobody asked for. Two deliberate presses a second apart, delivered back-to-back after a stall, look exactly like a double click.
+What this measures is the gap between two presses ON THE BIKE. The phone's monotonic clock cannot answer that: it measures the gap between two WebSocket messages ARRIVING, and those are the same number only while delivery latency is constant. On a garage hotspot it is not — two deliberate presses a second apart, delivered back-to-back after a stall, look exactly like a double click on the arrival clock.
 
-The Pi stamps `ts` when it builds the patch, before the message goes anywhere, so server-side differences are immune to whatever the link does afterwards. A stall simply stops the clock advancing, and the queued release arrives carrying the time it really happened.
+The Pi stamps `ts` when it builds the patch, before the message goes anywhere, so server-side differences are immune to whatever the link does afterwards. A stall simply stops the clock advancing, and the queued press arrives carrying the time it really happened.
 
-The one thing the server clock can do that a monotonic clock cannot is JUMP: `src/gps/clock.ts` steps it from satellite time, by at least `DRIFT_THRESHOLD_SECONDS` (60 s) when it does. `IMPLAUSIBLE_HOLD_MS` is what keeps a step from being read as a very long press.
-
-There is deliberately no timer in `LongPressDetector`. An earlier version fired on a local `setTimeout` at the threshold, which measured the gap between two messages arriving and so counted a stalled link as a hold.
+⚠️ This whole argument is why the hold gestures are better off on the Pi, where `monotonicNow()` is available and cannot be stepped — see `docs/handlebar-gestures.md`. It is also why the ceiling this section used to describe, `IMPLAUSIBLE_HOLD_MS`, is gone with them: it existed to stop `src/gps/clock.ts` stepping the server clock mid-hold and landing as a six-hour press, and a monotonic clock cannot do that.
 
 ### The safety argument, which decides the shape of the file
 
-Both buttons these watch have primary vehicle functions: `btn_cruise_set` sets the cruise speed, `btn_indicator_cancel` cancels the turn signal. Neither function is affected by anything here, and not because the code is careful — because the phone is not in the circuit. The buttons are wired to the bike's own dashboard and VCU; CAN `0x102` / `0x400` carry a _report_ of the switch state that the bike broadcasts after it has already acted. This dashboard is a passive listener on that broadcast (`src/can/socket.ts` comes up listen-only; nothing on this path ever transmits), so there is no press for it to swallow, debounce or delay. A gesture is recognised strictly downstream of the bike having done its own job.
+The button this watches has a primary vehicle function: `btn_cruise_set` sets the cruise speed. It is not affected by anything here, and not because the code is careful — because the phone is not in the circuit. The buttons are wired to the bike's own dashboard and VCU; CAN `0x102` / `0x400` carry a _report_ of the switch state that the bike broadcasts after it has already acted. This dashboard is a passive listener on that broadcast (`src/can/socket.ts` comes up listen-only; nothing on this path ever transmits), so there is no press for it to swallow, debounce or delay. A gesture is recognised strictly downstream of the bike having done its own job.
 
-That is also why nothing here waits to see whether a press "turns into" a gesture. A double click does not suppress the first click, and a long press does not suppress the release — the bike never asked us, and both actions have already happened by the time the frame carrying them is decoded, let alone by the time a gesture completes 1.2 s later.
+That is also why nothing here waits to see whether a press "turns into" a gesture. A double click does not suppress the first click — the bike never asked us, and the press has already happened by the time the frame carrying it is decoded.
 
 ### Which bit, and why it is not the obvious one
 
 `btn_cruise_enable` is the wrong button and its name is the reason to check. It is the cruise ON/OFF switch, and `src/can/decode.ts` records that BOTH of its presses in the corpus armed cruise control 0.53 s later — it is not side-effect-free, and the owner's manual claim that activation needs a 3-second hold is contradicted by the bus (both presses were under a second). `btn_cruise_set` is the SET SPEED button next to it (`0x400` b2 bit 2), and setting a cruise speed does nothing at all unless cruise is already armed.
 
 That leaves one honest caveat, which belongs to the button rather than to the gesture: double-tapping SET while cruise IS armed re-sets the cruise speed to the current speed. So does tapping it once, so nothing here made that worse — but a rider changing tabs while decelerating under cruise would be lowering the setpoint, and that is worth knowing rather than discovering.
-
-`WAYPOINT_BUTTON` is `btn_indicator_cancel`, the turn-signal cancel switch pushed in (`0x102` b0 bit 5).
 
 ### `DOUBLE_CLICK_WINDOW_MS` = 700 ms
 
@@ -122,25 +121,13 @@ Rising edge to rising edge, not release to press, because a cruise-set press is 
 
 The detector clears `#lastRiseAt` rather than replacing it when a pair completes, so three quick taps are one switch and a fresh start — not two switches, which would make a fumbled double tap overshoot. It also requires a real observed 0→1: loading the page mid-press is not a press we watched, and `app.js`'s high-beam gesture draws the line in the same place.
 
-### `LONG_PRESS_MS` = 1200 ms
+### The two thresholds that left, and one correction they took with them
 
-How long `btn_indicator_cancel` must be held before it saves a waypoint. The corpus is the argument. Across 14 candump captures the median handlebar press is 140 ms and the shortest 30 ms, and indicator-cancel is 63 of the ~70 presses in it, so that median is essentially the median cancel tap. The longest ordinary press ever recorded on any handlebar button is 920 ms (`btn_cruise_enable`, which was not being held for effect — a short press already arms cruise).
+`LONG_PRESS_MS` (1200 ms) and `IMPLAUSIBLE_HOLD_MS` (30 s) were here until 2026-09-08. The first is now two constants on the Pi — 1200 ms for the fan cycle on MODE ENTER, **1000 ms** for the waypoint on the cancel switch, because that switch turns the hazard lights on if it is held to about two seconds. The second is gone entirely: it guarded against `src/gps/clock.ts` stepping the server clock mid-press, and the Pi measures on a monotonic clock that cannot be stepped. Both arguments, in full: `docs/handlebar-gestures.md`.
 
-Corroborated since, and independently: the MODE buttons and `btn_set_back` were confirmed on 2026-08-19 by instructed presses, 8/8 each, as clean momentary 0→1→0 pulses of 120–260 ms. A deliberate press of a handlebar button made on purpose, by a rider being asked to press it, is a quarter of a second at the outside — which is the same story the corpus median tells, told by a different measurement.
+⚠️ **One number in the argument they took with them was wrong by the time they left.** This section said "the longest ordinary press ever recorded on any handlebar button is 920 ms (`btn_cruise_enable`)". That came from 14 captures and two presses of that button; across the 268-capture archive it has 36 presses and reaches **1.125 s**. It was not wrong when it was written, and it is why the table in the new document records the sample size beside every number.
 
-1200 ms is therefore ~8.5× a normal cancel tap and clears the longest ordinary press of any button by 280 ms, while staying short enough to hold through a corner without thinking about it. Riders do not hold the cancel switch in: it stops the lamp the instant it closes and there is no reason to keep pressing.
-
-The cost of being wrong is deliberately asymmetric, which is why this is not set even higher. A false positive saves a waypoint nobody wanted — a row in the log and a banner. A false negative is a stop you meant to remember and did not. Neither touches the indicator, which cancelled on the closing edge 1.2 s earlier.
-
-`LongPressDetector` fires as soon as the evidence arrives that the button WAS down for long enough — usually while it still is, because `lib/store.js` is fed a patch on every signal change and those run at ~5 Hz even on a parked bike (measured over the 90 s capture in `obd-garage/captures`). So the banner normally appears about a tenth of a second after the threshold, with the thumb still on the button, and holding longer is self-correcting. When the bus goes quiet the evidence can instead arrive with the RELEASE, whose timestamp says how long the press really was. Firing then is late feedback for a gesture that was genuinely made, which is far better than dropping it — and it is the same rule, not a special case: fire when the server's own timeline shows the threshold was passed.
-
-### `IMPLAUSIBLE_HOLD_MS` = 30 s
-
-An apparent hold longer than this is not a hold, and is abandoned without firing. The server clock these run on is the one `src/gps/clock.ts` steps from satellite time. A forward step during a press would otherwise land as "held for six hours" and save a waypoint the rider never asked for, in the seconds after a cold boot — which is exactly when they are least likely to be watching for it.
-
-30 s separates the two cases cleanly and needs no maintenance. Above: the smallest step the gate will ever make is `DRIFT_THRESHOLD_SECONDS`, 60 s, and a real one is hours. Below: the slowest the phone can learn that a button is still down is the 5 s WebSocket heartbeat, on a bus where nothing else is changing at all.
-
-How the two derives are paced — signal-bound for the double click, `serverTime`-bound for the long press — is argued at each `van.derive` in `lib/handlebar-gestures.js`, because the pacing is what the detector's correctness rests on. The high-beam flash in `app.js` is the third of these and the only one that works with a full-face helmet and winter gloves without moving a hand.
+How the surviving derive is paced — signal-bound rather than tick-bound — is argued at the `van.derive` in `lib/handlebar-gestures.js`, because the pacing is what the detector's correctness rests on. The high-beam flash in `app.js` is the other one that works with a full-face helmet and winter gloves without moving a hand.
 
 ---
 
@@ -193,7 +180,7 @@ The tile therefore does not classify signals; it READS THE CLOCK. Anything curre
 
 `HOLD_MS` is 1000 ms, where the corpus is thinnest: 1 678 of the 1 739 `btn_` presses ever recorded are under it, against a front-brake application whose median is 2.24 s. Nothing is MISLABELLED by landing on the wrong side — a button really held for a second was really held for a second, and the tile then says so, which is the point. The threshold only decides which of two true sentences is the more useful one.
 
-The case that settles it landed the same day, in `lib/handlebar-gestures.js`: holding `btn_indicator_cancel` for `LONG_PRESS_MS` = 1200 ms now saves a waypoint. So a key whose name, prefix and 762 recorded presses all say "momentary" is deliberately held past a second as a designed input — and the tile says "held 1 s" while it happens, which is the useful thing to see while you are waiting for the toast. Any list of held-state keys written yesterday would have been wrong about it today.
+The case that settles it landed the same day: holding `btn_indicator_cancel` saves a waypoint — since 2026-09-08 at 1000 ms and recognised on the Pi (`docs/handlebar-gestures.md`), which changes nothing about this tile. So a key whose name, prefix and 762 recorded presses all say "momentary" is deliberately held past a second as a designed input — and the tile says "held 1 s" while it happens, which is the useful thing to see while you are waiting for the toast. Any list of held-state keys written yesterday would have been wrong about it today.
 
 `secondsSincePress()` measures from the RELEASE, not the press. For the 140 ms taps this was written for the two are the same number; for a 47 s brake hold they are not, and stamping the rising edge would have the tile read "1 press · 49 s ago" two seconds after the lever came back. "Ago" has to mean "since this last stopped being true", or it disagrees with the hold line rendered directly above it.
 
@@ -680,6 +667,17 @@ The constraints are the ones `style.css` opens with — read at speed, through a
 `TOAST_BAD_MS` = 9000, longer for two reasons: it is a longer sentence, and it is the one that asks for a decision — a waypoint that was not saved is only recoverable if the rider learns about it while still at the place they wanted to remember.
 
 The timer is restarted, not extended: the newest message is the true one, and it gets its own full reading time rather than inheriting the remainder of the last one's.
+
+### What raises one, now that the gestures are the Pi's — `lib/announce.js`
+
+The banner used to be raised by the code that had just recognised a gesture and called an endpoint. That code is on the Pi now, so this page finds out the way it finds out about anything else: off the live signals. `lib/announce.js` watches two things and raises a banner when either moves.
+
+- **The fan**, keyed on `fan_auto_mode` plus whether `fan_target_pct` is above zero **while manual** — four states: automatic, fun, manual-running, manual-stopped. ⚠️ The key is deliberately coarser than the sentence it prints. A thumb dragging the slider from 40 % to 60 % must raise nothing, where a key carrying the duty would raise one banner per command at up to seven a second; and the zero-crossing is scoped to manual because in automatic the curve takes the duty through zero on temperature several times an hour on a warm pack.
+- **Waypoints**, off `waypoint_seq` and `waypoint_refused_seq` — counters, not values, because `record()` seals a row only when the value MOVES, so two identical refusals in a row would otherwise be one banner and the second hold at the same spot with the same stale fix would look like it had worked. The refusal codes are `WAYPOINT_REFUSAL` in `src/gps/waypoint.ts` and their sentences are in `lib/announce.js`, the same arrangement `FUN_GATE_TEXT` uses.
+
+The first reading after load is adopted **silently**, and so is the first after the link returns to `live`. `lib/connection.js` closes the socket while the page is hidden, so a phone taken out of a pocket reconnects to a full snapshot — and announcing that would be announcing ten-minute-old news as if it had just happened. Same rule as "a hold we never saw begin is not a gesture".
+
+⚠️ **It does not try to tell a gesture from a tap on this phone's own controls, and that is a decision.** The WebSocket patch normally arrives BEFORE the HTTP reply that would register "this was me", so suppressing self-originated changes would have to be a time window rather than a match — and a window that misfires swallows the banner for a real gesture, which is the one failure the banner exists to prevent. A redundant banner over a control you are already looking at is the cheaper wrong. The cost is one extra banner when the rider taps Auto or saves a waypoint from the sheet; `views/sheet.js`'s "no banner from here" still holds for that button's own inline note.
 
 ---
 

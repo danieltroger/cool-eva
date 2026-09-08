@@ -595,7 +595,13 @@ Speed decays 87.9 → 83.6 km/h until 18:04:45.4, then climbs back and sits at 8
 
 #### bit 2 — MODE ENTER
 
-✅ The cleanest of the three: 40 presses, all 0.08-0.29 s, every one below 3 km/h, no outliers at all. Re-confirmed 2026-08-19 by instructed press: 8/8 inside its own fenced block, 170-260 ms, nothing else on the byte moving.
+✅ The cleanest of the three, and re-measured over the whole archive on 2026-09-08 while picking a button for the fan gesture: **160 presses** across 268 captures, deduped by absolute press instant, **0.010–0.290 s**, median 0.140 s. Re-confirmed 2026-08-19 by instructed press: 8/8 inside its own fenced block, 170-260 ms, nothing else on the byte moving.
+
+**It is the only decoded handlebar bit in the archive with no long press anywhere** — every other button that is held for anything reaches 1.2 s to 191 s. That is what qualified it to carry a 1200 ms hold gesture (`docs/handlebar-gestures.md`), which has the full per-button table.
+
+🚨 **CORRECTION, 2026-09-08. "Every one below 3 km/h" was true of 40 presses and is false of 160.** Five of them were made while riding: at **47.0, 52.2, 88.0, 93.6 and 118.1 km/h**, durations 0.14–0.21 s. Verified frame by frame in `capture-20260809-080235-cd40b535.log`, where b0 goes `0x80` → `0x84` at 14:32:15.747384 and holds for 21 consecutive frames while `0x104` decodes 89 km/h.
+
+That does not touch the decode, and it does not touch the 1200 ms threshold, which still clears the longest press by 4.1×. What it kills is the _argument_ that ENTER is inert while riding, which the fan gesture was originally justified with: the button is pressed at speed, so a gesture on it has to be harmless at speed by construction rather than by the rider never touching it. The manual's ">3 km/h exits the menu" is about the dash MENU, and says nothing about what else a press may do. What the rider is doing with it at 118 km/h is not known.
 
 #### bits 3 and 4 — the turn-indicator SWITCHES, left undecoded
 
@@ -1065,11 +1071,11 @@ Re-measured 2026-09-08 over **14 069 994 frames across 97 candump captures** —
 
 **bit 0, `BUTTON [SET|BACK] (LeftBack)`.** ✅ SEEN AT LAST, 2026-08-19: eight presses at 18:31:51-53, 120-160 ms each, one payload (`02 01 01 00 00 00 00 00`) in 132 frames. Until that afternoon it had never been set in one frame of the 1.1 M, and was decoded on the vendor table's word alone. The bit is now real and is where the table said. **What is STILL the table's word is what it DOES:** the owner pressed "the button below the high beam flash" on the left pod, and a press parked produces nothing visible, so `SET|BACK` as a FUNCTION remains unverified — only the bit's existence and its pod position are measured.
 
-**bit 1, cruise ON/OFF (right pod, front).** ✅ CONFIRMED by what it causes: pressed exactly twice in the corpus (2026-08-04 18:04:42.270 for 0.877 s at 88 km/h, and 19:45:47.924 for 0.920 s at 39 km/h) and **BOTH times 0x102 b3 bit 1** — the cruise-armed state — came up 0.53 s later and stayed up for the next 51 s / 82 s. A bit that only ever moves while riding and whose every press arms cruise control is the cruise button.
+**bit 1, cruise ON/OFF (right pod, front).** ✅ CONFIRMED by what it causes. ⚠️ "Exactly twice" below is the 14-capture corpus; re-measured over the whole archive on 2026-09-08 this button has **36 presses, 0.465–1.125 s, every one above 3 km/h** (`docs/handlebar-gestures.md`), and the arming claim rests on the two that were checked against b3. Pressed exactly twice in the corpus (2026-08-04 18:04:42.270 for 0.877 s at 88 km/h, and 19:45:47.924 for 0.920 s at 39 km/h) and **BOTH times 0x102 b3 bit 1** — the cruise-armed state — came up 0.53 s later and stayed up for the next 51 s / 82 s. A bit that only ever moves while riding and whose every press arms cruise control is the cruise button.
 
 ⚠️ **…which also kills the plan `HEATED_GRIPS.md` §9 recommends it for.** That section calls a short press inert because the owner's manual says activation needs a 3-second hold. **It does not:** both presses were under one second and both armed cruise. This is NOT a side-effect-free button.
 
-**bit 2, cruise SET SPEED.** ✅ CONFIRMED by context: pressed exactly once in the corpus, 2026-08-04 18:04:45.055 for 1.794 s — 2.8 s after cruise was armed, at a steady 87.6 km/h, after which speed held 89-91 km/h for the remaining 45 s of the arming. That is what setting a cruise speed looks like, and there is no other press anywhere in 1.1 M frames to compete.
+**bit 2, cruise SET SPEED.** ✅ CONFIRMED by context. ⚠️ "Exactly once" is again the 14-capture corpus: the whole archive has **78 presses, median 1.198 s, 38 of them over 1.2 s**, so a long press is this button's normal length — which is why the tab gesture pairs RISING edges and not releases. The identifying press is 2026-08-04 18:04:45.055 for 1.794 s — 2.8 s after cruise was armed, at a steady 87.6 km/h, after which speed held 89-91 km/h for the remaining 45 s of the arming. That is what setting a cruise speed looks like, and there is no other press anywhere in 1.1 M frames to compete.
 
 **b2 bit 4, `DBS LIGHT SENS CALIB STS`.** ❓ Never set in 14 069 994 frames. Expected — it is a service-tool calibration state — but now a measured never rather than an unexamined one. Not decoded.
 

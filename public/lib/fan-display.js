@@ -167,3 +167,60 @@ export function describeAutoReason(reason, temperatureInput) {
   const sentence = FAN_REASON_TEXT[reason] ?? `Reason code ${reason}, which this page has no words for.`;
   return sentence + (temperatureInput === null ? "" : (FAN_TEMPERATURE_NOTE[temperatureInput] ?? ""));
 }
+
+/**
+ * Which of the fan's four announceable states this is, or null while it is unknown.
+ *
+ * ⚠️ The KEY is deliberately coarser than the text below it. A banner is raised when the
+ * key CHANGES, so a thumb dragging the slider from 40 % to 60 % raises none — where a key
+ * that carried the duty would raise one per command, at up to seven a second. The three
+ * states a handlebar hold can produce each land on a different key, which is what the
+ * gesture needs. docs/dashboard-decisions.md §"The toast banner".
+ *
+ * @param {number | null} modeCode `fan_auto_mode`
+ * @param {number | null} targetPercent `fan_target_pct`
+ * @returns {string | null}
+ */
+export function fanAnnouncementKey(modeCode, targetPercent) {
+  if (modeCode === null) {
+    return null;
+  }
+  if (modeCode === FAN_MODE_CODE.AUTOMATIC) {
+    return "automatic";
+  }
+  if (modeCode === FAN_MODE_CODE.FUN) {
+    return "fun";
+  }
+  if (targetPercent === null) {
+    return null;
+  }
+  // ⚠️ Manual only. In automatic the curve takes the duty through zero on temperature —
+  // several times an hour on a warm pack — and keying on that would put a banner over the
+  // header every time the fan started or stopped by itself.
+  return targetPercent > 0 ? "manual-running" : "manual-stopped";
+}
+
+/**
+ * What the banner says for that key. The duty is read at the moment it is raised, so the
+ * gesture's step reads "manual 100 %" with the number coming off the wire rather than
+ * from a copy of src/fan/control.ts's cap.
+ *
+ * @param {string | null} key from fanAnnouncementKey()
+ * @param {number | null} targetPercent `fan_target_pct`
+ * @returns {string}
+ */
+export function fanAnnouncementText(key, targetPercent) {
+  if (key === "automatic") {
+    return "Fan: automatic";
+  }
+  if (key === "fun") {
+    return "Fan: fun mode";
+  }
+  if (key === "manual-stopped") {
+    return "Fan: off";
+  }
+  if (key === "manual-running") {
+    return targetPercent === null ? "Fan: manual" : `Fan: manual ${formatDuty(targetPercent)} %`;
+  }
+  return "";
+}

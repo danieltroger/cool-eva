@@ -1,22 +1,24 @@
 // @ts-check
 
-// Turning handlebar button bits into deliberate gestures.
+// Turning handlebar button bits into deliberate gestures, for the one gesture that is
+// still the phone's to recognise: a double click that changes tab.
 //
-// Pure, in the sense src/can/decode.ts is pure: every clock these recognisers reason
-// about is passed in, so they read no clock, touch no DOM and hold no timers. That is
-// what lets scripts/check-handlebar-gestures.ts replay press sequences through the very
-// objects the phone runs. The impure half is ./handlebar-gestures.js.
+// Pure, in the sense src/can/decode.ts is pure: every clock this reasons about is passed
+// in, so it reads no clock, touches no DOM and holds no timers. That is what lets
+// scripts/check-handlebar-gestures.ts replay press sequences through the very object the
+// phone runs. The impure half is ./handlebar-gestures.js.
 //
-// ⚠️ `nowMs` is the SERVER's clock — `serverTime` from ./store.js, the `ts` the Pi
-// stamped on the message — and NOT `monotonicNow()`. That is the opposite of the rule
-// the rest of this codebase follows for durations, and it is deliberate: these measure
-// how long a button was down ON THE BIKE, and the phone's monotonic clock can only
-// measure when two messages ARRIVED. On a stalling link the two differ, and a 140 ms
-// tap would read as a 1.5 s hold. IMPLAUSIBLE_HOLD_MS covers the one thing a server
-// clock can do that a monotonic one cannot, which is jump.
+// ⚠️ `nowMs` is the SERVER's clock — the `ts` the Pi stamped on the reading — and NOT the
+// phone's. That is the opposite of the rule the rest of this codebase follows for
+// durations, and it is deliberate: this measures the gap between two presses ON THE BIKE,
+// and the phone's clock can only measure when two messages ARRIVED. On a stalling link
+// the two differ, and two presses a second apart would collapse into one double click.
 //
-// That argument in full, and why no gesture here can degrade the button it listens to:
-// docs/dashboard-decisions.md §"Handlebar gestures".
+// ⚠️ THE LONG PRESS USED TO LIVE HERE AND IS GONE — it is src/gestures/long-press.ts now.
+// It had to move: ./connection.js closes the socket whenever the page is hidden, so a
+// phone in a pocket recognised nothing, which is every gesture worth making. The tab
+// gesture cannot follow it, because changing tab is something only this page can do.
+// docs/handlebar-gestures.md has the whole argument and the thresholds.
 
 /**
  * Double-clicked to change tab: the cruise SET SPEED button (`0x400` b2 bit 2).
@@ -33,9 +35,6 @@
  */
 export const NEXT_TAB_BUTTON = "btn_cruise_set";
 
-/** Held to save a waypoint: the turn-signal cancel switch, pushed in (`0x102` b0 bit 5). */
-export const WAYPOINT_BUTTON = "btn_indicator_cancel";
-
 /**
  * How long two presses of the same button may be apart and still count as one
  * double click, measured between their RISING edges.
@@ -45,41 +44,12 @@ export const WAYPOINT_BUTTON = "btn_indicator_cancel";
  * sits between the two with ~200 ms of headroom either side.
  *
  * Rising edge to rising edge, not release to press, because a cruise-set press is not
- * short — the only one in the corpus was held 1.794 s — so measured that way a held
- * press can never pair with the press after it.
+ * short: over the whole archive this button has 78 presses with a MEDIAN of 1.198 s, and
+ * 38 of them run past 1.2 s. Measured that way a held press can never pair with the one
+ * after it.
  * See docs/dashboard-decisions.md §"Handlebar gestures".
  */
 export const DOUBLE_CLICK_WINDOW_MS = 700;
-
-/**
- * How long `btn_indicator_cancel` must be held before it saves a waypoint.
- *
- * The corpus is the argument: a median handlebar press of 140 ms across 14 candump
- * captures, a longest ordinary press of 920 ms on any button, and 8/8 instructed MODE
- * presses at 120–260 ms. 1200 ms is ~8.5× a normal cancel tap and clears that 920 ms by
- * 280 ms, while staying short enough to hold through a corner without thinking about it.
- *
- * Not set higher because the cost of being wrong is asymmetric: a false positive is a
- * row in the log and a banner, a false negative is a stop you meant to remember and did
- * not. Neither touches the indicator, which cancelled 1.2 s earlier.
- * See docs/dashboard-decisions.md §"Handlebar gestures".
- */
-export const LONG_PRESS_MS = 1200;
-
-/**
- * An apparent hold longer than this is not a hold, and is abandoned without firing.
- *
- * The server clock these run on is the one ../../src/gps/clock.ts steps from satellite
- * time. A forward step during a press would otherwise land as "held for six hours" and
- * save a waypoint the rider never asked for, in the seconds after a cold boot — which
- * is exactly when they are least likely to be watching for it.
- *
- * 30 s separates the two cases cleanly and needs no maintenance. Above: the smallest
- * step the gate will ever make is DRIFT_THRESHOLD_SECONDS, 60 s, and a real one is
- * hours. Below: the slowest the phone can learn that a button is still down is the
- * 5 s WebSocket heartbeat, on a bus where nothing else is changing at all.
- */
-export const IMPLAUSIBLE_HOLD_MS = 30_000;
 
 /**
  * Recognises two quick presses of one button.
@@ -128,80 +98,6 @@ export class DoubleClickDetector {
       return true;
     }
     this.#lastRiseAt = nowMs;
-    return false;
-  }
-}
-
-/**
- * Recognises one button held past a threshold.
- *
- * Fires as soon as the evidence arrives that the button WAS down for long enough —
- * usually while it still is, since patches run at ~5 Hz even on a parked bike, but on a
- * quiet bus the evidence can arrive with the RELEASE instead. That is the same rule and
- * not a special case: fire when the server's own timeline shows the threshold passed.
- *
- * ⚠️ There is deliberately no timer here. An earlier version fired on a local
- * setTimeout at the threshold, which measured the gap between two messages ARRIVING and
- * so counted a stalled link as a hold. See the note at the top of this file.
- */
-export class LongPressDetector {
-  #holdMs;
-  /** @type {number | null} */
-  #previousValue = null;
-  /** @type {number | null} */
-  #pressedAt = null;
-  #fired = false;
-
-  /** @param {number} [holdMs] */
-  constructor(holdMs = LONG_PRESS_MS) {
-    this.#holdMs = holdMs;
-  }
-
-  /**
-   * Folds in one reading of the button. Called on every message, not only on the
-   * edges — an unchanged `1` with a newer timestamp is what proves the button is
-   * still down.
-   *
-   * @param {number | null} value the button bit, or null if the signal has never arrived
-   * @param {number} nowMs the SERVER's clock as of the newest message
-   * @returns {boolean} true exactly once per press, when the hold is shown to have
-   *   passed the threshold
-   */
-  observe(value, nowMs) {
-    if (value === null) {
-      return false;
-    }
-    const previous = this.#previousValue;
-    this.#previousValue = value;
-
-    if (this.#pressedAt !== null && !this.#fired) {
-      const heldFor = nowMs - this.#pressedAt;
-      if (heldFor < 0 || heldFor > IMPLAUSIBLE_HOLD_MS) {
-        // The clock moved, not the thumb. Abandon this press rather than guess at it;
-        // a fresh 0→1 starts a new one.
-        this.#pressedAt = null;
-      } else if (heldFor >= this.#holdMs) {
-        this.#fired = true;
-        if (value !== 1) {
-          // Learned from the release. Clear the press here, because the reset below
-          // is skipped by the early return.
-          this.#pressedAt = null;
-        }
-        return true;
-      }
-    }
-
-    if (value !== 1) {
-      this.#pressedAt = null;
-      this.#fired = false;
-      return false;
-    }
-    if (previous === 0) {
-      this.#pressedAt = nowMs;
-      this.#fired = false;
-    }
-    // Anything else is a hold still in progress, or one that has already fired and is
-    // latched so a long hold saves one waypoint however long it lasts.
     return false;
   }
 }

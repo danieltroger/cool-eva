@@ -65,6 +65,15 @@ export const CHARGE_SESSION_MAX_AGE_MS = 5_000;
 
 export interface FanAutoState {
   mode: FanMode;
+  /**
+   * The duty the fan was last asked for, straight off ./control.ts.
+   *
+   * Here rather than left to the caller so that everything deciding what the fan should
+   * do NEXT — src/fan/gesture-runner.ts above all — can read the mode and the duty from
+   * one object, and act through this interface alone rather than reaching for the
+   * controller and gaining the ability to command it.
+   */
+  targetPercent: number;
   /** The curve's last answer, or null while the slider is what is driving the fan. */
   decision: FanCurveDecision | null;
   /** Milliseconds since the last in-bounds `batt_temp_hi`, or since this loop started. */
@@ -424,6 +433,7 @@ function stopTicking(context: AutoContext): void {
 function snapshotAutoState(context: AutoContext): FanAutoState {
   return {
     mode: context.mode,
+    targetPercent: context.controller.state().targetPercent,
     decision: context.lastDecision,
     temperatureAgeMs: since(context.lastGoodAt),
     funGate: context.funGate,

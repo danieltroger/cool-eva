@@ -3,7 +3,7 @@ import { join } from "path";
 import type { ServerResponse } from "http";
 import { ageMs, snapshot, type SignalDef } from "../can/signals.ts";
 import { SIGNALS } from "../can/registry.ts";
-import { waypointsSaved } from "./waypoint.ts";
+import { waypointsSaved } from "../gps/waypoint.ts";
 
 // GET /status — what can be asked about the bike that is not telemetry.
 //

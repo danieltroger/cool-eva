@@ -1,15 +1,18 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { serverTime, signalState } from "./store.js";
-import { DoubleClickDetector, LongPressDetector, NEXT_TAB_BUTTON, WAYPOINT_BUTTON } from "./gestures.js";
-import { saveWaypoint } from "./waypoint.js";
-import { showToast } from "./toast.js";
+import { signalState } from "./store.js";
+import { DoubleClickDetector, NEXT_TAB_BUTTON } from "./gestures.js";
 
 // Handlebar buttons as app controls: the impure half of ./gestures.js.
 //
-//   • double-click `btn_cruise_set`      → next tab
-//   • long-press `btn_indicator_cancel`  → save a waypoint, and say so
+//   • double-click `btn_cruise_set` → next tab
+//
+// ⚠️ ONE GESTURE, where there were two. The waypoint long press moved to the Pi
+// (src/gps/waypoint.ts) because this page closes its socket while it is hidden and a
+// phone in a pocket therefore recognised nothing. A tab switch cannot follow it: the Pi
+// has no idea which tab is showing and no channel to say so — `DashboardMessage` carries
+// signals and nothing else. ./announce.js is how this page hears about the ones that left.
 //
 // ⚠️ `btn_cruise_set` is the SET SPEED button, NOT `btn_cruise_enable` next to it —
 // that one is cruise ON/OFF, and both of its presses in the corpus armed cruise control
@@ -17,9 +20,9 @@ import { showToast } from "./toast.js";
 // with cruise armed, tapping SET re-sets the setpoint to the current speed, so changing
 // tabs while decelerating under cruise would lower it.
 //
-// Neither gesture can degrade the button it listens to, structurally — the phone is a
+// The gesture cannot degrade the button it listens to, structurally — the phone is a
 // passive listener on a broadcast the bike sends after it has already acted. That
-// argument, and the measurements behind the thresholds: docs/dashboard-decisions.md
+// argument, and the measurements behind the threshold: docs/dashboard-decisions.md
 // §"Handlebar gestures".
 
 /**
@@ -29,12 +32,11 @@ import { showToast } from "./toast.js";
  */
 
 const doubleClick = new DoubleClickDetector();
-const longPress = new LongPressDetector();
 
 let installed = false;
 
 /**
- * Starts watching the two buttons.
+ * Starts watching the button.
  *
  * ⚠️ Call this at module top level, the way app.js calls connect() — never from inside
  * a view or a binding. The derives below decide their own lifetime from where they are
@@ -68,30 +70,4 @@ export function installHandlebarGestures(actions) {
       actions.onNextTab();
     }
   });
-
-  // ⚠️ This one subscribes to `serverTime` as well, which paces it at the WebSocket's
-  // full rate — normally the thing ./store.js warns against, and here the entire point.
-  //
-  // A held button sends nothing. Patches carry only what CHANGED, so between the two
-  // edges of a 1.2 s hold the button's own signal is untouched and a derive watching
-  // only that signal would next wake on the 5 s heartbeat. `serverTime` moves on every
-  // message — ~5 Hz even parked, measured over the 90 s capture in obd-garage/captures
-  // — so this is what lets the detector see that time has passed on the BIKE while the
-  // button stayed down.
-  //
-  // The cost is a handful of comparisons per message, which is nothing next to the
-  // per-signal bindings the same messages already drive.
-  van.derive(() => {
-    const serverNow = serverTime.val;
-    const reading = signalState(WAYPOINT_BUTTON).val;
-    if (reading && longPress.observe(reading.value, serverNow)) {
-      void saveWaypointAndReport();
-    }
-  });
-}
-
-/** Saves, then puts the server's own verdict on screen — worked or did not. */
-async function saveWaypointAndReport() {
-  const outcome = await saveWaypoint();
-  showToast(outcome.message, outcome.saved ? "good" : "bad");
 }
