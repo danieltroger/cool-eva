@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
+import { replaceFileDurably } from "../storage/durable.ts";
 import { join } from "path";
 import { decodeFreezeFrameResponse } from "../diagnostics/freeze-frame.ts";
 import { summariseLifetimeStatistics, type LifetimeStatistics } from "../diagnostics/lifetime-stats.ts";
@@ -119,7 +120,11 @@ export async function writeLifetimeRead(
     console.warn(`lifetime: ⚠️  ${reason}`);
     return { stored: false, reason };
   }
-  await writeFile(path, `${JSON.stringify(read, null, 2)}\n`, "utf-8");
+  // Renamed into place, never written in place: a truncated lifetime.json reads as
+  // null, the page says "never read", and a reading that cost a service stop and a
+  // trip to the garage is gone. Same rule and same call as ./snapshot-store.ts's
+  // latest.json — docs/power-cuts.md.
+  await replaceFileDurably(path, `${JSON.stringify(read, null, 2)}\n`);
   const reason = `stored ${answered}/${read.replies.length} replies from ${read.source} in ${path}`;
   console.log(`lifetime: ${reason}`);
   return { stored: true, reason };
@@ -135,7 +140,7 @@ export async function writeLifetimeRead(
  */
 async function archive(directory: string, read: StoredLifetimeRead): Promise<void> {
   const stamp = new Date(read.readAt).toISOString().replace(/:/g, "-");
-  await writeFile(join(directory, `lifetime-${stamp}.json`), `${JSON.stringify(read, null, 2)}\n`, "utf-8");
+  await replaceFileDurably(join(directory, `lifetime-${stamp}.json`), `${JSON.stringify(read, null, 2)}\n`);
 }
 
 /** The file as it sits on disk, undecoded. For a caller that wants the bytes rather than the reading. */

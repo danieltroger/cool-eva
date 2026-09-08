@@ -20,11 +20,12 @@ import {
   openPartialSweepLog,
   writeSnapshot,
 } from "../src/vcu/snapshot-store.ts";
+import { writeLifetimeRead } from "../src/vcu/lifetime-store.ts";
 import { appendAuditRecord, recentAuditRecords } from "../src/vcu/write-audit.ts";
 import { loadLatestSnapshot } from "../src/http/vcu-params.ts";
 import type { VcuParameterRow } from "../src/vcu/snapshot.ts";
 
-// The four writes this Pi makes, against the power cut it takes every single ride.
+// The five writes this Pi makes, against the power cut it takes every single ride.
 //
 //   node --experimental-strip-types scripts/check-power-cut-durability.ts
 //
@@ -264,6 +265,33 @@ async function checkCounters(): Promise<void> {
   const afterSnapshot = durabilityCounters();
   check("writing a snapshot flushes the archive and latest.json", afterSnapshot.flushes - afterSecond.flushes === 2);
   check("and the directory once per rename", afterSnapshot.directorySyncs - afterSecond.directorySyncs === 2);
+
+  // The fifth writer. ⚠️ A lifetime reading is the least reproducible file this Pi
+  // holds: it costs a service stop and someone standing at the bike, and a truncated
+  // one reads as null, so the page says "never read" and it is simply gone.
+  const stored = await writeLifetimeRead(directory, {
+    readAt: Date.now(),
+    source: "service",
+    replies: [
+      { component: 52, payloadHex: "57 01 00 34 05 00 0A 0A C0 03 FA 03 C9 00 11 01 26 64 3A 05", failure: null },
+    ],
+  });
+  const afterLifetime = durabilityCounters();
+  check("a lifetime reading is stored at all", stored.stored);
+  check("…and flushes the archive and lifetime.json", afterLifetime.flushes - afterSnapshot.flushes === 2);
+  check("and the directory once per rename", afterLifetime.directorySyncs - afterSnapshot.directorySyncs === 2);
+
+  // ⚠️ The refused write archives too — snapshot-store.ts rule 1. Refusing to overwrite
+  // a good file is right; leaving the refused run's bytes only in a journal line is how
+  // #160 lost a set of payloads.
+  const refused = await writeLifetimeRead(directory, {
+    readAt: Date.now(),
+    source: "service",
+    replies: [{ component: 52, payloadHex: null, failure: "no-session" }],
+  });
+  const afterRefused = durabilityCounters();
+  check("a zero-answer reading is refused", !refused.stored);
+  check("…and its archive is still flushed", afterRefused.flushes - afterLifetime.flushes === 1);
 }
 
 /** The smallest row that counts as a real value, so rule 5 lets latest.json be replaced. */

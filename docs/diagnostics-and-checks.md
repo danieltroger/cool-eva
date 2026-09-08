@@ -298,7 +298,16 @@ A multi-frame reply does not arrive unless the tester answers the First Frame wi
 
 `GET` how the current or last sweep is going and whether the bike may be serviced; `POST` start one (refused, not queued, if one is already running); `DELETE` ask a running one to stop, keeping what it has.
 
-**⚠️ This is the one endpoint in this repo that causes traffic on the bike's bus**, and since the sweep moved in-process (`src/vcu/sweep.ts`) it is also the only path from an HTTP request to a CAN frame that exists at all. What stands between the two is `src/vcu/service-gate.ts`: a POST is refused unless the bike is PROVED stationary and out of drive, and a sweep already running is put out the moment that stops being true. The gate is on the wire so the page can say why the button is unavailable rather than leaving it to fail.
+**⚠️ This endpoint causes traffic on the bike's bus**, and it is one of four that can:
+
+| endpoint              | what it puts on the bus                                                      |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `POST /vcu-read`      | a parameter sweep — up to 277 single-frame reads                             |
+| `POST /vcu-probe`     | one identifier, any bank, any target                                         |
+| `POST /vcu-write`     | the only one that CHANGES anything — its own switch, `SERVICE_WRITE_ENABLED` |
+| `POST /lifetime-read` | components 51 and 52's freeze frames, and it parks the OBD poller to do it   |
+
+⚠️ **This list is the one place that count lives.** It used to be stated as "the only path from an HTTP request to a CAN frame" in this file, in `src/http/vcu-read.ts` and in `src/index.ts`, and it had been false in all three since `/vcu-probe` landed. A count repeated in four files rots; a pointer to one table does not. What stands between the two is `src/vcu/service-gate.ts`: a POST is refused unless the bike is PROVED stationary and out of drive, and a sweep already running is put out the moment that stops being true. The gate is on the wire so the page can say why the button is unavailable rather than leaving it to fail.
 
 **⚠️ Still read-only.** A sweep can only ask `10 81`, `3E` and `22`: those three are the whole of `param-codec.ts`'s request union, and its encoder throws on anything else on the way out. There is no parameter on this endpoint that selects a service, an identifier or a value — POST takes no body at all — so there is nothing here for a widened union to leak through either.
 

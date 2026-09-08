@@ -12,6 +12,7 @@ import { handleFaultInfokeysEndpoint } from "./http/fault-infokeys.ts";
 import { handleStoredDtcsEndpoint } from "./http/stored-dtcs.ts";
 import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
+import { handleLifetimeReadEndpoint } from "./http/lifetime-read.ts";
 import { handleLifetimeStatsEndpoint } from "./http/lifetime-stats.ts";
 import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
 import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
@@ -39,6 +40,7 @@ import { startFanAutomatic } from "./fan/auto.ts";
 import { bringUpCan, openChannel } from "./can/socket.ts";
 import { startCanLinkMonitor } from "./can/link-status.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
+import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
 import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
@@ -301,13 +303,18 @@ if (CAN_ENABLED) {
     channel.addListener("onMessage", msg => {
       const data = msg.data;
       if (isObdResponse(msg.id)) {
+        // ⚠️ The KERNEL's arrival stamp, taken before any of our code ran. It is the
+        // only way to see how late this dispatch was, which is the question
+        // docs/lifetime-battery-statistics.md exists to answer — a timestamp taken
+        // inside the handler starts after libuv already delayed it.
+        const arrival = frameArrival(msg);
         // Service mode's KWP replies land in this same 0x7E0–0x7EF range (the VCU
         // micros answer on 0x7E0 under EXTENDED addressing, so byte 0 is the
         // tester's own address 0xF1). Offered to the sweep first, and it consumes
         // only frames addressed to 0xF1 — which no OBD-II reply is, since byte 0
         // there is an ISO-TP length nibble — so this takes nothing away from the
         // poller. It is also a no-op unless a sweep is actually running.
-        if (vcuReadRunner.handleCanFrame(msg.id, data)) {
+        if (vcuReadRunner.handleCanFrame(msg.id, data, arrival)) {
           return;
         }
         // Same for a write in flight, and it needs the OBD range too: the KWP legs
@@ -481,8 +488,21 @@ const server = createServer(async (req, res) => {
     await handleLifetimeStatsEndpoint(res, VCU_PARAM_DIR);
     return;
   }
-  // Service mode. The ONE endpoint here that causes traffic on the bike's bus, and
-  // the only path in this repo from an HTTP request to a CAN frame. Read-only —
+  // …and the read that fills it, which DOES put frames on the bus. Its own path rather
+  // than a POST on the reader above, so that handler can keep taking no `req` at all —
+  // the same split as /vcu-params and /vcu-read.
+  if (url.pathname === "/lifetime-read") {
+    await handleLifetimeReadEndpoint(req, res, {
+      runner: vcuReadRunner,
+      directory: VCU_PARAM_DIR,
+      enabled: SERVICE_MODE_ENABLED,
+    });
+    return;
+  }
+  // Service mode. One of the endpoints that can put a frame on the bike's bus — the
+  // list is in docs/diagnostics-and-checks.md §7, kept in one place because a COUNT
+  // stated in four files rots the moment a fifth endpoint lands, and this one had.
+  // Read-only —
   // src/vcu/param-codec.ts's request union cannot express a write — and gated on the
   // bike being stationary and out of drive, checked before the read starts and again
   // before every frame it sends. See src/vcu/service-gate.ts.

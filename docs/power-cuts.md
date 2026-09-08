@@ -30,7 +30,7 @@ That is not a hypothesis. It is what the ride log looks like.
 
 Each mid-file hole marks one power cut.
 
-The four writes, and what each was doing before this change — none of them flushed (`snapshot-store.ts` owns two of them):
+The writes this Pi makes, and what each was doing before this change — none of them flushed (`snapshot-store.ts` owns two of them, and `lifetime-store.ts` was added after and is listed here for the same reason):
 
 | Write                                   | Where                          | Shape                                    |
 | --------------------------------------- | ------------------------------ | ---------------------------------------- |
@@ -39,6 +39,9 @@ The four writes, and what each was doing before this change — none of them flu
 | sweep resume file, per row              | `src/vcu/snapshot-store.ts`    | handle held open, no fsync **by design** |
 | `latest.json` + `<iso>.json`, per sweep | `src/vcu/snapshot-store.ts`    | in-place `writeFile()`                   |
 | `git pull`, per Update press            | `src/http/update.ts`           | no flush before the restart              |
+| `lifetime.json` + `lifetime-<iso>.json` | `src/vcu/lifetime-store.ts`    | in-place `writeFile()` — see below       |
+
+⚠️ The lifetime store landed one commit after this change and inherited the old shape, so for a few days it was the one write on this list still done in place. It is the **least reproducible file the Pi holds**: a reading costs a service stop and someone standing at the bike, and a truncated one reads as null — so the page says "never read" and it is simply gone rather than stale. Both of its writes are `replaceFileDurably` now, and `scripts/check-power-cut-durability.ts` §4 drives them.
 
 > ⚠️ #158 cites the audit journal's append at `write-audit.ts:110-116`. Those lines are the **reader's** catch block; the append was at `:82-87` **as of `dd8acac`**, which is the commit #158 was counting lines in. The claim was right, the citation was not — and since a callout about a wrong citation had better not become one, note that line numbers in this file are stated against the commit named beside them.
 
@@ -96,7 +99,7 @@ A hardening change that lets someone believe the problem is gone has done harm. 
 2. **The one write in flight**, if the cut lands between the `write()` and the `datasync()`. The window shrinks from ~30 s of writeback delay to the duration of one flush; it does not become zero.
 3. **A whole sweep's resume rows**, by the deliberate decision above.
 4. **A cut during the `git pull` itself** — half-fetched objects, a stale `index.lock`. Unchanged. `deployHint` in `src/http/update.ts` already names that one and tells the rider to delete the lock.
-5. **Every file we do not fsync.** `data=ordered` is not the cause and never was — it is the mode that forces data out _before_ the metadata referencing it is committed, and the mode where metadata may precede data is `data=writeback`. What defeats it here is `delalloc`: blocks that have not been allocated yet are not in the transaction that publishes `i_size`, so there is nothing for ordered mode to order. An explicit flush is what puts them there, and only these four writes get one.
+5. **Every file we do not fsync.** `data=ordered` is not the cause and never was — it is the mode that forces data out _before_ the metadata referencing it is committed, and the mode where metadata may precede data is `data=writeback`. What defeats it here is `delalloc`: blocks that have not been allocated yet are not in the transaction that publishes `i_size`, so there is nothing for ordered mode to order. An explicit flush is what puts them there, and only the writes in the table above get one.
 6. **An SD card that lies.** `fsync` is only as honest as the device. A card that acknowledges a flush it has not completed, or that loses an erase block mid-program, defeats all of this. That is the hardware half, and it is still open.
 
 ### Duplicates, on a flush failure

@@ -1,4 +1,5 @@
 import type { RawChannel } from "socketcan";
+import type { ArrivalLatency, FrameArrival } from "../can/frame-arrival.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import {
   KWP_REQUEST_CAN_ID,
@@ -117,7 +118,14 @@ export type VcuMultiFrameOutcome =
    * may still be a refusal: the micro answering `7F 17 31` is a successful
    * exchange carrying a negative answer.
    */
-  | { status: "reply"; reply: VcuMultiFrameReply; payload: Uint8Array; sawFlowControlFromMicro: boolean }
+  | {
+      status: "reply";
+      reply: VcuMultiFrameReply;
+      payload: Uint8Array;
+      sawFlowControlFromMicro: boolean;
+      /** Kernel arrival of the First Frame → our flow control. Null when the reply needed none. */
+      flowControlLatency: ArrivalLatency | null;
+    }
   /** A session was open and the exchange got silence. `stage` says where it stopped. */
   | { status: "no-response"; stage: TransferStage }
   /**
@@ -156,7 +164,8 @@ export interface VcuKwpClient {
    * Feed every received CAN frame here. Returns true when the frame was consumed,
    * so a caller sharing the socket knows not to look at it as well.
    */
-  handleFrame: (id: number, data: Buffer) => boolean;
+  /** `arrival` is the kernel's stamp — src/can/frame-arrival.ts. Optional: without it nothing is measured. */
+  handleFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
   /** Opens (or re-opens) a diagnostic session. Resolves false if the target will not. */
   openSession: (target: VcuTarget) => Promise<boolean>;
   /** `3E` TesterPresent — a pre-flight "is this target there?" that needs a session first. */
@@ -313,7 +322,7 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
     stopped: false,
   };
   return {
-    handleFrame: (id, data) => handleFrame(context, id, data),
+    handleFrame: (id, data, arrival) => handleFrame(context, id, data, arrival),
     openSession: target => openSession(context, target),
     ping: target => ping(context, target),
     readParameter: (micro, index) => readParameter(context, micro, index),
@@ -325,7 +334,7 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
   };
 }
 
-function handleFrame(context: ClientContext, id: number, data: Buffer): boolean {
+function handleFrame(context: ClientContext, id: number, data: Buffer, arrival?: FrameArrival | null): boolean {
   // Matched against the id the request IN FLIGHT expects, not against a constant.
   // With nothing in flight there is nothing of ours on the bus, so nothing here is
   // ours to consume — which also keeps this a strict no-op for the shared socket in
@@ -337,7 +346,7 @@ function handleFrame(context: ClientContext, id: number, data: Buffer): boolean 
     // Handed straight through, undecoded. The transfer answers a First Frame with
     // flow control from inside this call, so nothing may be inserted before it —
     // see the timing note in ./multiframe-transfer.ts' header.
-    return context.pending.transfer.handleFrame(data);
+    return context.pending.transfer.handleFrame(data, arrival);
   }
   const frame = parseResponseFrame(data);
   if (frame.kind === "ignored") {
@@ -419,6 +428,7 @@ async function multiFrameExchange(
         reply: decodeMultiFrameReply(result.payload, expectedService),
         payload: result.payload,
         sawFlowControlFromMicro: result.sawFlowControlFromMicro,
+        flowControlLatency: result.flowControlLatency,
       };
     case "timeout":
       // NOT retried, deliberately, where a single-frame read is. A stale session

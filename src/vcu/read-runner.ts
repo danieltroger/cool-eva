@@ -1,9 +1,12 @@
 import type { RawChannel } from "socketcan";
+import type { FrameArrival } from "../can/frame-arrival.ts";
 import { ageMs, latestValue } from "../can/signals.ts";
 import { acquireBus, type BusLease } from "./bus-lease.ts";
 import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
-import { startProbe, type RunningProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
+import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
+import { startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
+import { holdObdPoller } from "../can/obd.ts";
 import { parameterTable, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
 
@@ -78,17 +81,31 @@ export interface VcuReadRunner {
    */
   probe: (request: VcuProbeRequest) => Promise<VcuProbeOutcomeOrRefusal>;
   /**
+   * Reads the bike's lifetime battery statistics — components 51 and 52 — in this
+   * process, behind the same gate and the same single-flight as a sweep or a probe.
+   *
+   * ⚠️ It also PARKS THE 2 Hz OBD POLLER for the duration, which nothing else here
+   * does: this is the only read whose reply is multi-frame, and the poller is the
+   * documented cause of that channel's failures (src/can/obd.ts). The result carries
+   * how late our flow control was, which is the number this whole path exists to
+   * produce. Resolves with a refusal rather than throwing.
+   */
+  readLifetimeStatistics: () => Promise<LifetimeReadOutcomeOrRefusal>;
+  /**
    * Feed CAN frames here; true when consumed. No-op unless a sweep is running, so
    * the service's frame router pays one null check per OBD-range frame and nothing
    * at all the rest of the time.
    */
-  handleCanFrame: (id: number, data: Buffer) => boolean;
+  handleCanFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
   /**
    * Stops any running sweep, for shutdown. Resolves once it has written itself
    * down — await it, or `process.exit()` takes the archive with it.
    */
   stop: () => Promise<void>;
 }
+
+/** A lifetime read's result, or the reason there is not one. */
+export type LifetimeReadOutcomeOrRefusal = { ok: true; result: LifetimeReadResult } | { ok: false; reason: string };
 
 /** A probe's answer, or the reason there is not one. Never throws into an HTTP handler. */
 export type VcuProbeOutcomeOrRefusal = { ok: true; reading: VcuProbeReading } | { ok: false; reason: string };
@@ -138,8 +155,15 @@ const ROW_STATUSES: VcuParameterRow["status"][] = [
 
 interface RunnerContext extends VcuReadRunnerOptions {
   sweep: RunningParameterSweep | null;
-  /** At most one of `sweep` and `probe` is ever set. Both put frames on the same bus. */
-  probe: RunningProbe | null;
+  /**
+   * The one-shot module running, if any — a probe or a lifetime-statistics read.
+   *
+   * ⚠️ ONE field rather than one per kind, and it carries its own NAME. The refusal a
+   * caller reads is built from that name, so a second kind cannot inherit the first
+   * one's message: before this, a lifetime read blocked by a probe would have been told
+   * "a probe is already running" and vice versa, which is a lie a person acts on.
+   */
+  oneShot: { name: string; module: OneShotBusModule } | null;
   /**
    * The bus lease held by whichever of the two is running, or null.
    *
@@ -165,7 +189,7 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
   const context: RunnerContext = {
     ...options,
     sweep: null,
-    probe: null,
+    oneShot: null,
     lease: null,
     startedAt: null,
     finishedAt: null,
@@ -180,8 +204,10 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
     state: () => readState(context),
     gate: () => readGate(),
     probe: request => runProbe(context, request),
+    readLifetimeStatistics: () => runLifetimeRead(context),
     // Whichever is running gets the frame; neither running means it was not ours.
-    handleCanFrame: (id, data) => (context.sweep ?? context.probe)?.handleFrame(id, data) ?? false,
+    handleCanFrame: (id, data, arrival) =>
+      (context.sweep ?? context.oneShot?.module)?.handleFrame(id, data, arrival) ?? false,
     stop: () => stop(context),
   };
 }
@@ -276,8 +302,8 @@ function checkPreconditions(
   if (context.sweep) {
     return { ok: false, reason: "a parameter read is already running" };
   }
-  if (context.probe) {
-    return { ok: false, reason: "a probe is already running" };
+  if (context.oneShot) {
+    return { ok: false, reason: `${context.oneShot.name} is already running` };
   }
   const channel = context.channel();
   if (!channel) {
@@ -317,28 +343,93 @@ function checkPreconditions(
  * transmits for long.
  */
 async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promise<VcuProbeOutcomeOrRefusal> {
-  const ready = checkPreconditions(context, "a probe");
+  const outcome = await runOneShotBusModule(context, "a probe", channel => startProbe({ ...request, channel }));
+  if (!outcome.ok) {
+    return outcome;
+  }
+  console.log(`vcu-probe: ${request.target} 0x${outcome.result.identifier.toString(16)} → ${outcome.result.status}`);
+  return { ok: true, reading: outcome.result };
+}
+
+/**
+ * The lifetime read, with the poller parked around it.
+ *
+ * ⚠️ THE HOLD IS TAKEN BEFORE THE LEASE and released after it, and both releases are in
+ * `finally`s. The bus must be quiet before the session opens, not after the First Frame
+ * has already raced a mode-01 reply. If the poller will not park, the read is refused
+ * rather than attempted on a busy bus — the failure it would produce is a stalled
+ * transfer, which is indistinguishable from a bike that did not answer.
+ */
+async function runLifetimeRead(context: RunnerContext): Promise<LifetimeReadOutcomeOrRefusal> {
+  const what = "a lifetime-statistics read";
+  const hold = await holdObdPoller(what);
+  if (!hold) {
+    return { ok: false, reason: "the OBD poller would not go quiet — a multi-frame read needs the bus to itself" };
+  }
+  try {
+    const outcome = await runOneShotBusModule(context, what, channel => startLifetimeRead({ channel }));
+    if (outcome.ok) {
+      console.log(
+        `vcu-read: lifetime statistics — ${describeFlowControl(outcome.result)}, ` +
+          `worst event-loop delay ${outcome.result.loopDelayMs?.toFixed(1) ?? "?"} ms`
+      );
+    }
+    return outcome;
+  } finally {
+    hold.release();
+  }
+}
+
+/** The measurement, in one line, however it came out. */
+function describeFlowControl(result: LifetimeReadResult): string {
+  if (result.flowControl === null) {
+    return "no flow control was needed";
+  }
+  return result.flowControl.known
+    ? `flow control ${result.flowControl.ms.toFixed(1)} ms after the kernel saw the First Frame`
+    : `flow-control latency unmeasured — ${result.flowControl.reason}`;
+}
+
+/** A probe or a lifetime read: one bounded exchange, driven the same way. */
+export interface OneShotBusModule<T = unknown> {
+  handleFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
+  abort: (reason: string) => void;
+  finished: Promise<T>;
+}
+
+/**
+ * Preconditions → start → watchdog → await → release, for the modules that are one
+ * bounded exchange rather than a 277-read sweep.
+ *
+ * ⚠️ Factored rather than copied, and the copy is why: `runProbe` and the lifetime read
+ * are structurally identical, and this file is already past the ~400-line guideline —
+ * so the second one had to make the file SMALLER or it should not have been added here.
+ * The gate watchdog, the `finally` that always releases both the slot and the lease,
+ * and the refusal-rather-than-throw contract are the parts that must not diverge.
+ */
+async function runOneShotBusModule<T>(
+  context: RunnerContext,
+  what: string,
+  start: (channel: RawChannel) => OneShotBusModule<T>
+): Promise<{ ok: true; result: T } | { ok: false; reason: string }> {
+  const ready = checkPreconditions(context, what);
   if (!ready.ok) {
     return { ok: false, reason: ready.reason };
   }
-  const probe = startProbe({ ...request, channel: ready.channel });
-  context.probe = probe;
-  const watchdog = startWatchdog(reason => probe.abort(reason));
-  console.log(
-    `vcu-probe: reading bank ${request.bank} index ${request.index} off ${request.target} — the bike checked out as safe to service`
-  );
+  const module = start(ready.channel);
+  context.oneShot = { name: what, module };
+  const watchdog = startWatchdog(reason => module.abort(reason));
+  console.log(`vcu-read: ${what} started — the bike checked out as safe to service`);
   try {
-    const reading = await probe.finished;
-    console.log(`vcu-probe: ${request.target} 0x${reading.identifier.toString(16)} → ${reading.status}`);
-    return { ok: true, reading };
+    return { ok: true, result: await module.finished };
   } catch (err) {
-    // Never swallowed, and never allowed to reject into the HTTP handler: a probe
-    // that threw looks the same as a silent bike on screen unless it is said out loud.
-    console.error("vcu-probe: the probe failed:", err);
+    // Never swallowed, and never allowed to reject into the HTTP handler: a read that
+    // threw looks the same as a silent bike on screen unless it is said out loud.
+    console.error(`vcu-read: ${what} failed:`, err);
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
     clearInterval(watchdog);
-    context.probe = null;
+    context.oneShot = null;
     ready.lease.release();
   }
 }
@@ -367,10 +458,13 @@ function cancel(context: RunnerContext): boolean {
 async function stop(context: RunnerContext): Promise<void> {
   const sweep = context.sweep;
   stopGateWatchdog(context);
-  // A probe is at most two reply windows long and holds no file handle and no
-  // partial state, so it is aborted and not waited for — unlike a sweep, which has
-  // an archive to write.
-  context.probe?.abort("the service is shutting down");
+  // A one-shot module is aborted and not waited for. A probe is at most two reply
+  // windows and holds nothing; a lifetime read holds a durable store write, but that
+  // write happens AFTER the lease is released and outside the module's own promise, so
+  // awaiting the module here would not protect it either — ./lifetime-read.ts and the
+  // caller in ../http/lifetime-read.ts own that ordering. A sweep is the exception,
+  // below, because its archive write IS inside its promise.
+  context.oneShot?.module.abort("the service is shutting down");
   if (!sweep) {
     return;
   }

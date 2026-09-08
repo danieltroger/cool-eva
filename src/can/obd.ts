@@ -161,6 +161,135 @@ function requestPid(pid: number, timeoutMs = 200): Promise<Buffer | null> {
   });
 }
 
+// ── Parking the poller, so a multi-frame read on the KWP channel gets a quiet bus ──
+//
+// ⚠️ THE POLLER IS NOT UNDER src/vcu/bus-lease.ts and cannot be: the lease is per
+// operation and this loop runs forever. It is also the documented cause of the KWP
+// channel's 25-70 % completion rate — docs/can-decode-findings.md:1196 measures it
+// sharing the bus, and :1206 has the tell: a completed transfer had ZERO mode-01
+// replies interleaved and a failed one 50+. So parking it is not merely a hazard
+// mitigation; it is what gives an in-service read the quiet bus (of OUR traffic — the
+// bike's own broadcasts are still there) that a stopped-service script gets for free.
+//
+// ⚠️ AN ACKNOWLEDGEMENT, NOT A FLAG. `holdObdPoller` resolves only once the loop has
+// PARKED, because a boolean set from an HTTP handler cannot unwind a trouble-code
+// transfer already four retries deep. And parked-at-a-park-point implies nothing of
+// ours is in flight: every `requestPid` and every `requestTroubleCodeList` is awaited,
+// and obd-dtc.ts's `settle` nulls its in-flight request and clears its timer before
+// resolving. Traced in the review on issue #156.
+//
+// ⚠️ FAIL-SAFE: if the loop never parks, the hold times out and the caller is refused.
+// There is no arrangement in which it falsely grants a bus that is still busy.
+//
+// ⚠️ AND THE HOLD ITSELF IS CAPPED, BY THE LOOP. A leaked hold would take speed, rpm,
+// the temperatures, the 12 V rail, the trip counters and the whole stored-DTC list off
+// the dashboard AND out of the log, with a healthy-looking journal, on a bike parked
+// where there is no reception. That is worse than anything the hold exists to prevent,
+// so the loop resumes on its own past MAX_HOLD_MS whatever the holder does.
+
+/** A parked poller. Releasing twice is safe, which is what a `finally` on a retried path does. */
+export interface ObdPollerHold {
+  release: () => void;
+}
+
+/**
+ * How long a caller may keep the poller parked before it resumes anyway.
+ *
+ * Sized from the work it is protecting, not picked: two components, two attempts each,
+ * bounded by the transport's own first-reply and transfer timeouts, plus the session
+ * opens — comfortably inside ten seconds. Past that, something is wrong with the read
+ * and telemetry matters more.
+ */
+const MAX_HOLD_MS = 15_000;
+
+/**
+ * How long to WAIT for the loop to park before giving up.
+ *
+ * The worst case is one trouble-code mode in flight when the hold is asked for:
+ * 5 attempts × (300 ms first reply + 400 ms transfer) + 4 × 120 ms between them =
+ * 3.98 s (src/can/obd-dtc.ts). It is not the 14.2 s of a whole `pollOnce`, because the
+ * loop parks between PIDs and between the three modes as well as at the top — every one
+ * of those calls is awaited, so the implication above holds at all three. The common
+ * case is one `requestPid` timeout, 200 ms, since 119 rounds in 120 are PIDs only.
+ */
+const HOLD_WAIT_MS = 6000;
+
+/** How often a parked loop re-checks. Short enough that the cap expires promptly, cheap enough to ignore. */
+const HOLD_POLL_MS = 100;
+
+let hold: { name: string; parked: boolean; announce: (() => void) | null; expiresAt: number } | null = null;
+
+/**
+ * Parks the 2 Hz poller and resolves once it has actually stopped, or null on timeout.
+ *
+ * `reason` is shown to a person, so it is a phrase: "a lifetime-statistics read".
+ */
+export async function holdObdPoller(reason: string, waitMs = HOLD_WAIT_MS): Promise<ObdPollerHold | null> {
+  if (hold) {
+    console.warn(`obd: refusing to park for ${reason} — ${hold.name} already has it`);
+    return null;
+  }
+  const mine = { name: reason, parked: false, announce: null as (() => void) | null, expiresAt: 0 };
+  hold = mine;
+  const parked = await new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => {
+      mine.announce = null;
+      resolve(false);
+    }, waitMs);
+    timer.unref?.();
+    mine.announce = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+  });
+  if (!parked) {
+    hold = null;
+    console.warn(`obd: the poller did not park within ${waitMs} ms — refusing ${reason}`);
+    return null;
+  }
+  mine.expiresAt = monotonicNow() + MAX_HOLD_MS;
+  console.log(`obd: parked for ${reason}`);
+  return {
+    release: () => {
+      // Only clears the hold if it is still OURS — the same identity check
+      // src/vcu/bus-lease.ts makes, for the same reason: a late release must not free
+      // somebody else's.
+      if (hold === mine) {
+        hold = null;
+        console.log(`obd: resumed after ${reason}`);
+      }
+    },
+  };
+}
+
+/** Whether the poller is currently parked. Read at each park point. */
+export function obdPollerHeldBy(): string | null {
+  return hold?.name ?? null;
+}
+
+/**
+ * Called at each park point. True when the caller should stop and not transmit.
+ *
+ * ⚠️ This is where the cap is enforced, by the loop rather than by the holder — see the
+ * header. A hold past its expiry is dropped loudly and the poller carries on.
+ */
+function parkedForHold(): boolean {
+  if (!hold) {
+    return false;
+  }
+  if (hold.parked && hold.expiresAt > 0 && monotonicNow() > hold.expiresAt) {
+    console.warn(`obd: ${hold.name} held the poller past ${MAX_HOLD_MS} ms — resuming anyway`);
+    hold = null;
+    return false;
+  }
+  if (!hold.parked) {
+    hold.parked = true;
+    hold.announce?.();
+    hold.announce = null;
+  }
+  return true;
+}
+
 let pollRound = 0;
 let storedDtcReads = 0;
 
@@ -169,6 +298,12 @@ async function pollOnce(): Promise<void> {
   for (const def of PIDS) {
     if (def.everyNthRound && pollRound % def.everyNthRound !== 0) {
       continue;
+    }
+    // Park point. Every requestPid above is awaited and single-frame, so stopping here
+    // leaves nothing of ours in flight — and it is what keeps the common-case wait at
+    // one PID timeout rather than a whole round.
+    if (parkedForHold()) {
+      return;
     }
     const resp = await requestPid(def.pid);
     if (!resp) continue;
@@ -198,13 +333,25 @@ async function readTroubleCodeLists(): Promise<void> {
   if (!channel || pollRound % STORED_DTC_ROUND_DIVISOR !== 1) {
     return;
   }
+  if (parkedForHold()) {
+    return;
+  }
   recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_STORED_DTCS), "stored");
 
   storedDtcReads += 1;
   if (storedDtcReads % SILENT_MODE_READ_EVERY !== 1) {
     return;
   }
+  // Between the modes as well: each requestTroubleCodeList is awaited and obd-dtc.ts
+  // settles before resolving, so this is the point that keeps the worst case at one
+  // mode (3.98 s) rather than three (11.9 s).
+  if (parkedForHold()) {
+    return;
+  }
   recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_PENDING_DTCS), "pending");
+  if (parkedForHold()) {
+    return;
+  }
   recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_PERMANENT_DTCS), "permanent");
 }
 
@@ -218,6 +365,11 @@ export function startObdPoller(intervalMs = 1000): () => void {
       // so `intervalMs - elapsed` becomes the size of the step and polling stalls
       // for that long — a minute-sized step means a minute with no OBD data.
       const roundStartedAt = monotonicNow();
+      // Park point, and the one that matters for a hold asked for mid-`sleep`.
+      if (parkedForHold()) {
+        await sleep(HOLD_POLL_MS);
+        continue;
+      }
       try {
         await pollOnce();
       } catch (err) {
