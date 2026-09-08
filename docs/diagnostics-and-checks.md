@@ -879,6 +879,8 @@ Pointed at `origin/main`'s template it reports **nine** failures. Six of them ar
 
 The other three are the unanswered `/fan`, `/charge-auto` and `/can-restart`.
 
+⚠️ **It types the five NAMED fixtures, not every reply the preview writes.** `/waypoint`, `/update`, `/can-restart`, `/vcu-probe`, `/stored-dtcs` and `/vcu-params` are built inline inside the stubbed `fetch`, mostly from the request, so a table keyed on constant names cannot reach them — and that is not hypothetical: `/vcu-probe` was missing `VcuProbeReading.section` in both templates until the altitude pass found it by type-checking the six by hand, and `/stored-dtcs`' own comment records an earlier inline reply that "threw ten TypeErrors per load". The endpoint half asserts those paths are ANSWERED; nothing yet asserts what they answer with. Keying the fixture table by path — the same walk `preview-endpoints.ts` already does over the `path === "…"` branches — is how that closes, and it is not done here.
+
 ⚠️ **It reports at most one error per nested path, so a red run is not a complete inventory.** `READ_STATE.run.expected` — the fifth invented field, and a real one — does not appear above: its sibling `byStatus` error suppresses it, and it surfaces only once `byStatus` is fixed. Same rule the two assignments exist to soften, one level down. Fixing what a run names and running it again is the loop; a single green run is the assurance, not a single red one.
 
 Both templates carry their own copy of `WRITE_STATUS`, so the first four were fixed twice — the tax [#170](https://github.com/danieltroger/cool-eva/issues/170) exists to remove.

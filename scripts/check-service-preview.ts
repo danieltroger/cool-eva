@@ -57,10 +57,12 @@ for (const flags of [[], ["--annotated"]]) {
   const html = await readFile(out, "utf8");
   await unlink(out).catch(() => {});
 
-  for (const placeholder of ["__CSS__", "__MODULES__"]) {
-    if (html.includes(placeholder)) {
-      failures.push(`${label}: ${placeholder} survived into the output — a substitution did not happen`);
-    }
+  // ⚠️ A pattern, not a list. This named two of what are now four placeholders — it never covered
+  // __TABLES__ and would not have covered __SERVER_FACTS__ — and `String.replace` substitutes only
+  // the FIRST occurrence, so a template that grew a second copy of one (the two are copy-edited)
+  // ships a bare identifier that parses fine here and throws a ReferenceError at load.
+  for (const [placeholder] of html.matchAll(/__[A-Z][A-Z_]*__/g)) {
+    failures.push(`${label}: ${placeholder} survived into the output — a substitution did not happen`);
   }
 
   const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);

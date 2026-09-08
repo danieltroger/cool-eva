@@ -624,11 +624,11 @@
        * stayed on "Stop the parameter read" forever, which would have looked like a bug in
        * the sheet and is not one.
        */
-      function json(body) {
+      function json(body, status = 200) {
         const text = JSON.stringify(body);
         return Promise.resolve({
-          ok: true,
-          status: 200,
+          ok: status >= 200 && status < 300,
+          status,
           json: () => Promise.resolve(JSON.parse(text)),
           text: () => Promise.resolve(text),
         });
@@ -791,12 +791,7 @@
         // is the truthful stand-in for THIS page, whose panels are the service sheet's and never
         // render a fan section; the whole-dashboard preview serves a real FanReply instead.
         if (path === "/fan") {
-          return Promise.resolve({
-            ok: false,
-            status: 404,
-            json: () => Promise.resolve({ error: "preview: this Pi has no fan configured" }),
-            text: () => Promise.resolve("not found"),
-          });
+          return json({ error: "preview: this Pi has no fan configured" }, 404);
         }
         if (path === "/status") {
           return json(STATUS);
@@ -858,7 +853,9 @@
             return json({
               reading: {
                 status: "read",
-                target: url.searchParams.get("target"),
+                // ⚠️ Narrowed to a real VcuTarget rather than echoed: searchParams.get() is
+                // `string | null`, and the Pi's reply cannot name a micro it cannot address.
+                target: url.searchParams.get("target") === "A8" ? "A8" : "A9",
                 bank: Number(url.searchParams.get("bank")),
                 index,
                 identifier: (Number(url.searchParams.get("bank")) << 12) | index,
@@ -867,6 +864,8 @@
                 signed: 500,
                 value: null,
                 name: null,
+                // Null for the same reason `name` is: the name table describes bank 1 alone.
+                section: null,
                 note: "No name-table row describes this identifier, so only the bytes are known.",
               },
               message: null,
@@ -886,6 +885,7 @@
               signed: target.onBike.value,
               value: target.onBike.value,
               name: target.name,
+              section: "EVSE",
               note: null,
             },
             message: null,

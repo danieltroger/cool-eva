@@ -1,11 +1,12 @@
 import ts from "typescript";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { serverFacts } from "./preview-server-facts.ts";
+import { SIGNALS } from "../src/can/registry.ts";
 import { pathsAnsweredBy, pathsFetchedByTheDashboard, pathsServedFromTables } from "./preview-endpoints.ts";
 
 // Whether the design preview's fixtures still describe the bike the Pi describes.
@@ -28,7 +29,15 @@ const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
-/** Which fixture constant stands in for which of the Pi's payloads, and where that type lives. */
+/**
+ * Which fixture constant stands in for which of the Pi's payloads, and where that type lives.
+ *
+ * ⚠️ Five of the eleven replies the preview writes. The other six are built inline inside the
+ * stubbed `fetch`, mostly out of the request, so a table keyed on a constant's name cannot reach
+ * them — and `/vcu-probe` was missing a required field for exactly that reason. Keying this by
+ * PATH instead, off the same walk preview-endpoints.ts already does, is what closes it.
+ * docs/diagnostics-and-checks.md §11.7 says so where a reader of the ✓ will see it.
+ */
 const FIXTURES = [
   { constant: "WRITE_STATUS", type: "VcuWriteStatus", from: "src/vcu/write-runner.ts" },
   { constant: "STATUS", type: "StatusPayload", from: "src/http/status.ts" },
@@ -42,12 +51,18 @@ const FIXTURES = [
  * the DC scene's `chargeAck`, which is the field this check exists to protect. Checked as partials:
  * an overlay may leave a field alone, but it may not invent or mistype one.
  */
-const OVERLAYS = [
+const OVERLAYS: { key: string; as: string; from: string | null; name: string | null }[] = [
   { key: "gate", as: "Partial<ServiceGateVerdict>", from: "src/vcu/service-gate.ts", name: "ServiceGateVerdict" },
   { key: "fan", as: "Partial<FanReply>", from: "src/http/fan.ts", name: "FanReply" },
   { key: "fanAuto", as: "Partial<FanAutoReply>", from: "src/http/fan.ts", name: "FanAutoReply" },
   { key: "chargeAck", as: "ChargeAckState", from: "src/charge/ack-watch.ts", name: "ChargeAckState" },
+  { key: "funGate", as: "FunGate", from: "src/fan/fun.ts", name: "FunGate" },
+  { key: "chargeAutoReason", as: "ChargeAutoReason", from: "src/charge/auto-curve.ts", name: "ChargeAutoReason" },
+  { key: "commandedAmps", as: "number | null", from: null, name: null },
 ];
+
+/** Scene keys that are not a payload, so carry nothing for a type to check. */
+const NOT_A_PAYLOAD = new Set(["signals"]);
 
 /** `[value, unit, group]`, and optionally the moment it was recorded. */
 const READING = "[value: number, unit: string, group: string, ts?: number]";
@@ -58,7 +73,7 @@ const TEMPLATES = ["scripts/app-preview-template.html", "scripts/service-preview
 const failures: string[] = [];
 
 console.log("\n──── scripts/check-preview-fixtures.ts ─────────────────────────────────────────");
-console.log("     that the preview's fixtures still match the payloads the Pi serves");
+console.log("     that the preview's NAMED fixtures still match the payloads the Pi serves");
 
 const fetched = await pathsFetchedByTheDashboard(failures);
 const tablePaths = await pathsServedFromTables(failures);
@@ -81,9 +96,10 @@ for (const templatePath of templates) {
   // in it; the annotated sheet mounts a chosen set of panels, which is a different contract. Read
   // off the source rather than the filename — the distinction check-service-preview.ts already
   // draws — so a renamed or copied template is judged by what it does.
-  const mountsTheApp = /imp\("app\.js"\)/.test(harness);
+  const mountsTheApp = /__imp\("app\.js"\)|imp\("app\.js"\)/.test(harness);
 
   await checkFixtureTypes(source, label, mountsTheApp);
+  checkReadings(source, label);
   if (mountsTheApp) {
     const answered = pathsAnsweredBy(source, tablePaths);
     for (const [path, asker] of fetched) {
@@ -108,7 +124,73 @@ if (failures.length > 0) {
   }
   process.exit(1);
 }
-console.log("\n✓ every fixture matches its payload type, and every endpoint the dashboard fetches has an answer");
+console.log("\n✓ every named fixture matches its payload type, and every endpoint the dashboard fetches has an answer");
+
+/**
+ * Every reading a scene broadcasts, against the unit and group the Pi files it under.
+ *
+ * ⚠️ Not covered by the types above: a reading is a tuple of `[number, string, string]`, so
+ * `["km", "battery"]` type-checks perfectly against a key the registry files under `energy` — and
+ * `group` is what public/lib/store.js sorts the All tab by, so a wrong one puts a signal in a
+ * section the bike never puts it in. `range_km` was in the wrong group here, and this diff had
+ * copied it into two more scenes before this assertion existed.
+ */
+function checkReadings(source: ts.SourceFile, label: string): void {
+  const known = new Map(SIGNALS.map(signal => [signal.key, signal]));
+  for (const [key, unit, group] of readingTriples(source)) {
+    const definition = known.get(key);
+    if (!definition) {
+      failures.push(`${label}: the scenes broadcast ${key}, which src/can/registry.ts does not define`);
+    } else if (definition.unit !== unit || definition.group !== group) {
+      failures.push(
+        `${label}: ${key} is broadcast as [${unit}, ${group}] and the Pi files it under ` +
+          `[${definition.unit}, ${definition.group}]`
+      );
+    }
+  }
+}
+
+/**
+ * `key: [value, unit, group]` entries, from the SIGNAL TABLES only.
+ *
+ * ⚠️ Not from the whole harness: a write target's `warnings` is also an array of strings, and a
+ * walk that took every array-valued property reported the bike broadcasting a signal called
+ * `warnings`.
+ */
+function readingTriples(source: ts.SourceFile): [string, string, string][] {
+  const found: [string, string, string][] = [];
+  const declarations = topLevelDeclarations(source);
+  const base = declarations.get("PARKED_SIGNALS");
+  if (base) {
+    collectTriples(base, found);
+  }
+  for (const scene of namedEntries(declarations.get("SCENES") ?? undefined)) {
+    for (const entry of namedEntries(scene.value)) {
+      if (entry.name === "signals") {
+        collectTriples(entry.value, found);
+      }
+    }
+  }
+  return found;
+}
+
+function collectTriples(node: ts.Node, into: [string, string, string][]): void {
+  if (ts.isPropertyAssignment(node) && ts.isArrayLiteralExpression(node.initializer)) {
+    const [, unit, group] = node.initializer.elements;
+    if (unit && group && ts.isStringLiteral(unit) && ts.isStringLiteral(group)) {
+      into.push([propertyName(node.name), unit.text, group.text]);
+    }
+  }
+  ts.forEachChild(node, child => collectTriples(child, into));
+}
+
+/** The text of a property's name, whether it is quoted or bare. */
+function propertyName(name: ts.PropertyName): string {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  return name.getText();
+}
 
 /**
  * The harness `<script>` — the one the fixtures live in.
@@ -132,33 +214,28 @@ function harnessSource(html: string): string | null {
  */
 async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsTheApp: boolean): Promise<void> {
   const declarations = topLevelDeclarations(source);
-  const wanted = new Set<string>();
-  for (const fixture of FIXTURES) {
-    if (declarations.has(fixture.constant)) {
-      wanted.add(fixture.constant);
-    } else if (mountsTheApp) {
-      // The annotated sheet declares only the fixtures its panels need, and is held to those.
-      failures.push(`${label}: no ${fixture.constant} fixture, so nothing stands in for the Pi's ${fixture.type}`);
+  const present = FIXTURES.filter(fixture => declarations.has(fixture.constant));
+  if (mountsTheApp) {
+    for (const fixture of FIXTURES) {
+      if (!declarations.has(fixture.constant)) {
+        // The annotated sheet declares only the fixtures its panels need, and is held to those.
+        failures.push(`${label}: no ${fixture.constant} fixture, so nothing stands in for the Pi's ${fixture.type}`);
+      }
     }
   }
-  if (wanted.size === 0) {
+  if (present.length === 0) {
     return;
   }
 
   const imports = new Map<string, Set<string>>();
-  for (const fixture of FIXTURES) {
-    if (wanted.has(fixture.constant)) {
-      addImport(imports, fixture.from, fixture.type);
-    }
+  for (const fixture of present) {
+    addImport(imports, fixture.from, fixture.type);
   }
   // SERVER is a placeholder the builder substitutes, so the fixtures are checked against the REAL
   // object it will inject — which is also what makes `SERVER.fanReason.DC_SESSION` a typo the
   // fixture cannot get away with.
   const lines = [`const SERVER = ${JSON.stringify(serverFacts())} as const;`];
-  for (const fixture of FIXTURES) {
-    if (!wanted.has(fixture.constant)) {
-      continue;
-    }
+  for (const fixture of present) {
     const literal = inlined(declarations.get(fixture.constant)!, source, declarations);
     // ⚠️ TWICE, and the second is not redundant. TypeScript's excess-property check only fires on a
     // FRESH literal and reports the first mismatch it finds — so against main's template the
@@ -166,14 +243,13 @@ async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsThe
     // this check was written for. The second assignment goes through a widened copy, which is not
     // fresh, so it sees what is ABSENT; mapping every value to `unknown` keeps it to presence
     // alone, since a widened copy has lost the literal types the first assignment checks.
-    lines.push(`const ${fixture.constant}: ${fixture.type} = ${literal};`, `void ${fixture.constant};`);
+    lines.push(`const ${fixture.constant}: ${fixture.type} = ${literal};`);
     lines.push(`const __wide_${fixture.constant} = ${literal};`);
     lines.push(
-      `const __has_${fixture.constant}: { [K in keyof ${fixture.type}]: unknown } = __wide_${fixture.constant};`,
-      `void __has_${fixture.constant};`
+      `const __has_${fixture.constant}: { [K in keyof ${fixture.type}]: unknown } = __wide_${fixture.constant};`
     );
   }
-  lines.push(...sceneAssertions(source, declarations, imports));
+  lines.push(...sceneAssertions(source, declarations, imports, label));
 
   const header = [...imports].map(
     ([from, names]) => `import type { ${[...names].join(", ")} } from ${JSON.stringify(join(ROOT, from))};`
@@ -218,12 +294,13 @@ async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsThe
 function sceneAssertions(
   source: ts.SourceFile,
   declarations: Map<string, ts.Expression>,
-  imports: Map<string, Set<string>>
+  imports: Map<string, Set<string>>,
+  label: string
 ): string[] {
   const lines: string[] = [];
   const base = declarations.get("PARKED_SIGNALS");
   if (base) {
-    lines.push(`const __base: Record<string, ${READING}> = ${inlined(base, source, declarations)};`, "void __base;");
+    lines.push(`const __base: Record<string, ${READING}> = ${inlined(base, source, declarations)};`);
   }
   const scenes = declarations.get("SCENES");
   if (!scenes) {
@@ -234,13 +311,24 @@ function sceneAssertions(
       const overlay = OVERLAYS.find(candidate => candidate.key === entry.name);
       const as = entry.name === "signals" ? `Record<string, ${READING}>` : overlay?.as;
       if (as === undefined) {
+        // ⚠️ Red, not skipped. This defaulted to `continue`, so a scene key nobody had listed —
+        // `funGate`, `chargeAutoReason` and `commandedAmps` were all three of them — went
+        // unchecked while the run said the fixtures type-check. An undefined `funGate` is
+        // broadcast as a signal and an undefined `chargeAutoReason` empties the tile's sentence:
+        // quietly wrong panels, which is the whole failure this file exists for.
+        if (!NOT_A_PAYLOAD.has(entry.name)) {
+          failures.push(
+            `${label}: the ${scene.name} scene sets ${entry.name}, which no row in OVERLAYS gives a type — ` +
+              "add one, or list it in NOT_A_PAYLOAD to say it carries nothing to check"
+          );
+        }
         continue;
       }
-      if (overlay) {
+      if (overlay?.from && overlay.name) {
         addImport(imports, overlay.from, overlay.name);
       }
       const name = `__${entry.name}_${scene.name}`;
-      lines.push(`const ${name}: ${as} = ${inlined(entry.value, source, declarations)};`, `void ${name};`);
+      lines.push(`const ${name}: ${as} = ${inlined(entry.value, source, declarations)};`);
     }
   }
   return lines;
@@ -334,8 +422,8 @@ function topLevelDeclarations(source: ts.SourceFile): Map<string, ts.Expression>
 }
 
 /** The `name: { … }` entries of an object literal. */
-function namedEntries(node: ts.Expression): { name: string; value: ts.Expression }[] {
-  if (!ts.isObjectLiteralExpression(node)) {
+function namedEntries(node: ts.Expression | undefined): { name: string; value: ts.Expression }[] {
+  if (!node || !ts.isObjectLiteralExpression(node)) {
     return [];
   }
   return node.properties.flatMap(property =>

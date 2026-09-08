@@ -238,5 +238,15 @@ console.log(
 // to anyone who has not read the template. Printed here because this is where somebody looking for
 // them is standing.
 if (!annotated) {
-  console.log(`  ?scene=parked (the default) · ?scene=dc · ?scene=riding — file://${out}?scene=dc`);
+  // Read out of the page rather than restated: a fourth scene would otherwise leave this line
+  // quietly listing three, and the whole point of printing it is that the scenes are invisible
+  // to anyone who has not opened the template.
+  const scenes = /const SCENES = \{([\s\S]*?)\n      \};/.exec(html);
+  const names = [...(scenes?.[1].matchAll(/^        (\w+): \{/gm) ?? [])].map(match => match[1]);
+  if (names.length === 0) {
+    throw new Error("build-service-preview: the template declares no scenes, or SCENES changed shape");
+  }
+  console.log(
+    `  ${names.map(name => `?scene=${name}`).join(" · ")} (${names[0]} is the default) — file://${out}?scene=${names[1] ?? names[0]}`
+  );
 }

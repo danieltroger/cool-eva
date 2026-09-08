@@ -362,7 +362,7 @@ __MODULES__
         "cell_min_mv": [3612, "mV", "cells"],
         "cell_max_mv": [3641, "mV", "cells"],
         "cell_spread_mv": [29, "mV", "cells"],
-        "range_km": [96, "km", "battery"],
+        "range_km": [96, "km", "energy"],
         "coolant_in": [31.4, "°C", "coolant"],
         "coolant_out": [34.9, "°C", "coolant"],
         "odometer_can_km": [14849.4, "km", "drive"],
@@ -400,9 +400,8 @@ __MODULES__
        * it is gating is not a gate.
        */
       const SCENES = {
-        parked: { label: "parked in the garage", signals: {} },
+        parked: { signals: {} },
         dc: {
-          label: "a DC session at 42 A, with the rider having taken the current back",
           // ⚠️ NOTHING from the onboard charger is here — no `charger_enabled`, no `charger_max_dc_*`,
           // no mains or dc_v/dc_a. lib/charge-mode.js records that every one of them logged exactly
           // zero readings across a measured 40-minute DC session, so a fixture broadcasting them as
@@ -418,7 +417,7 @@ __MODULES__
             "pack_v": [358.4, "V", "battery"],
             "pack_a": [42.1, "A", "battery"],
             "pack_kw": [15.1, "kW", "battery"],
-            "range_km": [103, "km", "battery"],
+            "range_km": [103, "km", "energy"],
             "batt_temp_lo": [43, "°C", "battery"],
             "batt_temp_hi": [47, "°C", "battery"],
             "coolant_in": [34.8, "°C", "coolant"],
@@ -455,7 +454,6 @@ __MODULES__
           fanAuto: { reason: SERVER.fanReason.DC_SESSION, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 47, temperatureAgeMs: 310 },
         },
         riding: {
-          label: "riding at 72 km/h with the pack derating both ways",
           // Both halves of the power bar hatch here, which is the case lib/svg.js's derateSpans()
           // and lib/power-limits.js exist for and which no parked fixture can reach: 210 A at
           // 340 V is 71 kW against the drive half's 130, and 55 A is 19 kW against regen's 36.
@@ -465,7 +463,7 @@ __MODULES__
             "pack_v": [340.2, "V", "battery"],
             "pack_a": [-142, "A", "battery"],
             "pack_kw": [-48.3, "kW", "battery"],
-            "range_km": [71, "km", "battery"],
+            "range_km": [71, "km", "energy"],
             "allowed_discharge_a": [210, "A", "battery"],
             "allowed_regen_a": [55, "A", "battery"],
             "batt_temp_lo": [38, "°C", "battery"],
@@ -529,7 +527,29 @@ __MODULES__
         message: null,
       };
 
-      /** The automatic charge-current controller, in the shape src/http/charge-auto.ts answers with. */
+      /**
+       * The controller's reply, derived from its state exactly as src/http/charge-auto.ts's
+       * respond() derives it — the reason's sentence and the floor are not independent facts.
+       * One function, because the three places that used to do this by hand were the initial
+       * fixture, the scene overlay and the POST handler, and only the first was type-checked.
+       */
+      function chargeAutoReply(state, message = null) {
+        return {
+          state,
+          reasonText: SERVER.chargeAutoReasonText[state.reason] ?? "",
+          floorAmps: SERVER.chargeAutoFloorAmps,
+          message,
+        };
+      }
+
+      /**
+       * The automatic charge-current controller, in the shape src/http/charge-auto.ts answers with.
+       *
+       * ⚠️ Written out rather than built by chargeAutoReply() above, and the reason is the check:
+       * scripts/check-preview-fixtures.ts type-checks fixture LITERALS, so a fixture assembled by a
+       * call is a fixture it cannot see. This is the copy that is checked; the function is for the
+       * two derivations that happen on a tap, which are the ones that used to be unchecked.
+       */
       const CHARGE_AUTO = {
         state: { mode: "off", reason: SERVER.chargeAutoReason.NOT_DC, commandedAmps: null },
         reasonText: SERVER.chargeAutoReasonText[SERVER.chargeAutoReason.NOT_DC],
@@ -540,9 +560,9 @@ __MODULES__
       // The scene's own answers, laid over the fixtures above. Kept here rather than written into
       // each fixture so the literals stay complete — scripts/check-preview-fixtures.ts reads THEM,
       // and a fixture assembled per scene would be a fixture it could no longer check.
-      Object.assign(WRITE_STATUS.gate, SCENE.gate ?? {});
-      Object.assign(FAN, SCENE.fan ?? {});
-      Object.assign(FAN.auto, SCENE.fanAuto ?? {});
+      Object.assign(WRITE_STATUS.gate, SCENE.gate);
+      Object.assign(FAN, SCENE.fan);
+      Object.assign(FAN.auto, SCENE.fanAuto);
       if (SCENE.funGate !== undefined) {
         FAN.fun.gate = SCENE.funGate;
       }
@@ -550,8 +570,14 @@ __MODULES__
         WRITE_STATUS.chargeAck = SCENE.chargeAck;
       }
       if (SCENE.chargeAutoReason !== undefined) {
-        CHARGE_AUTO.state = { mode: "automatic", reason: SCENE.chargeAutoReason, commandedAmps: SCENE.commandedAmps ?? null };
-        CHARGE_AUTO.reasonText = SERVER.chargeAutoReasonText[SCENE.chargeAutoReason];
+        Object.assign(
+          CHARGE_AUTO,
+          chargeAutoReply({
+            mode: "automatic",
+            reason: SCENE.chargeAutoReason,
+            commandedAmps: SCENE.commandedAmps ?? null,
+          })
+        );
       }
 
       // The fan broadcasts as well as answering, and the sheet reads the BROADCAST for what it is
@@ -574,9 +600,16 @@ __MODULES__
         };
       }
 
-      // What the curve was deciding when this scene was loaded, kept so switching back to
-      // automatic can restore it rather than leaving the slider's answer behind.
-      const SCENE_FAN = { ...FAN };
+      // What the curve was doing when this scene was loaded, kept so switching back to automatic
+      // restores it rather than leaving the slider's answer behind. ⚠️ Only the fields the restore
+      // reads: `{ ...FAN }` would carry an `auto` that is the SAME OBJECT the slider mutates, so
+      // the obvious `Object.assign(FAN.auto, SCENE_FAN.auto)` would be a silent no-op.
+      const SCENE_FAN = {
+        dutyPercent: FAN.dutyPercent,
+        targetPercent: FAN.targetPercent,
+        driverEnabled: FAN.driverEnabled,
+        phase: FAN.phase,
+      };
       const SCENE_FAN_AUTO = { ...FAN.auto };
 
       Object.assign(LIVE, fanReadings());
@@ -808,11 +841,8 @@ __MODULES__
         // Leaving MANUAL there would show an automatic fan reporting that the slider is driving it,
         // which is a pair of lines the Pi cannot produce together.
         if (wanted === "automatic") {
+          Object.assign(FAN, SCENE_FAN);
           Object.assign(FAN.auto, SCENE_FAN_AUTO);
-          FAN.dutyPercent = SCENE_FAN.dutyPercent;
-          FAN.targetPercent = SCENE_FAN.targetPercent;
-          FAN.driverEnabled = SCENE_FAN.driverEnabled;
-          FAN.phase = SCENE_FAN.phase;
         }
         FAN.message = null;
         return 200;
@@ -882,12 +912,14 @@ __MODULES__
             const mode = url.searchParams.get("mode");
             // `mode=automatic` is what clears a stand-down on the Pi too (src/charge/auto.ts), which
             // is the whole of why #176's third button state is one tap and not two.
-            CHARGE_AUTO.state = {
-              mode: mode === "automatic" ? "automatic" : "off",
-              reason: mode === "automatic" ? SERVER.chargeAutoReason.SETTLED : SERVER.chargeAutoReason.DISABLED,
-              commandedAmps: mode === "automatic" ? CHARGE_AUTO.state.commandedAmps : null,
-            };
-            CHARGE_AUTO.reasonText = SERVER.chargeAutoReasonText[CHARGE_AUTO.state.reason];
+            Object.assign(
+              CHARGE_AUTO,
+              chargeAutoReply({
+                mode: mode === "automatic" ? "automatic" : "off",
+                reason: mode === "automatic" ? SERVER.chargeAutoReason.SETTLED : SERVER.chargeAutoReason.DISABLED,
+                commandedAmps: mode === "automatic" ? CHARGE_AUTO.state.commandedAmps : null,
+              })
+            );
             pushPatch({ charge_auto_reason: [CHARGE_AUTO.state.reason, "", "charge"] });
           }
           return json(CHARGE_AUTO);
@@ -937,7 +969,9 @@ __MODULES__
             return json({
               reading: {
                 status: "read",
-                target: url.searchParams.get("target"),
+                // ⚠️ Narrowed to a real VcuTarget rather than echoed: searchParams.get() is
+                // `string | null`, and the Pi's reply cannot name a micro it cannot address.
+                target: url.searchParams.get("target") === "A8" ? "A8" : "A9",
                 bank: Number(url.searchParams.get("bank")),
                 index,
                 identifier: (Number(url.searchParams.get("bank")) << 12) | index,
@@ -946,6 +980,8 @@ __MODULES__
                 signed: 500,
                 value: null,
                 name: null,
+                // Null for the same reason `name` is: the name table describes bank 1 alone.
+                section: null,
                 note: "No name-table row describes this identifier, so only the bytes are known.",
               },
               message: null,
@@ -965,6 +1001,7 @@ __MODULES__
               signed: target.onBike.value,
               value: target.onBike.value,
               name: target.name,
+              section: "EVSE",
               note: null,
             },
             message: null,
@@ -1126,8 +1163,14 @@ __MODULES__
       async function seed(imp) {
         const store = imp("lib/store.js");
         const trip = imp("lib/trip.js");
-        store.connect();
-        await new Promise(resolve => setTimeout(resolve, 0));
+
+        // ⚠️ It does NOT call store.connect(). app.js does that when it is imported below, and
+        // connect() is not idempotent — a second call built a second link over a second socket,
+        // so the store applied every heartbeat TWICE, for ever, and the first socket's interval
+        // kept a connection the page could no longer see alive with it. Harmless before the
+        // heartbeat existed, since a stub that sent one snapshot and stopped simply went quiet.
+        // The bike holds one link; so does this. The walk below needs no socket: it writes the
+        // two signals it reads.
 
         // 37.4 km in 41 minutes, which is what the last ride was. updateTrip() credits at
         // most two seconds per call — the guard that stops a backgrounded tab claiming its
