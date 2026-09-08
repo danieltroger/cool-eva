@@ -1,5 +1,6 @@
 import { mkdir, open, readFile } from "fs/promises";
 import { join } from "path";
+import { readRunningVersion } from "../version.ts";
 
 // Every attempt to change something on this motorcycle, appended to one file, for ever.
 // What was asked for, what the bike held before, what it held after, and how it went —
@@ -20,20 +21,6 @@ import { join } from "path";
 // Why the hand-maintained record was not enough: docs/vcu-parameters.md §16.
 
 const AUDIT_FILE = "service-writes.jsonl";
-
-/**
- * The commit label every record is stamped with, set once at startup by src/index.ts.
- *
- * Module-level rather than a parameter on purpose: the stamp must not be forgettable at a
- * call site, and there are nine of them. Stays "unknown" if nothing set it, which is the
- * honest answer for a process that never read its own version.
- */
-let runningVersion = "unknown";
-
-/** Tells the journal which commit is running. Called once, before anything can be written. */
-export function rememberRunningVersion(label: string): void {
-  runningVersion = label;
-}
 
 /** What kind of change was attempted. A closed union so the file cannot grow shapes nothing reads. */
 export type AuditAction =
@@ -100,7 +87,10 @@ export interface AuditRecord {
  * calibration changed with nothing anywhere saying so.
  */
 export async function appendAuditRecord(directory: string, record: AuditRecord): Promise<void> {
-  const stamped: AuditRecord = { ...record, runningVersion };
+  // Read here rather than pushed in at startup: readRunningVersion() is already cached, so this is
+  // one map lookup, and it removes both a module global and an ordering rule ("must be set before
+  // anything can be written") that a script or a reordered startup could silently break.
+  const stamped: AuditRecord = { ...record, runningVersion: (await readRunningVersion()).label };
   try {
     await mkdir(directory, { recursive: true });
     const handle = await open(join(directory, AUDIT_FILE), "a");

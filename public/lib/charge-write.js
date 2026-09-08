@@ -72,6 +72,16 @@ export const chargeType = van.state(/** @type {"ac" | "dc" | null} */ (null));
  */
 const writesOn = van.state(false);
 
+/**
+ * The Pi's verdict on the last charge-current command, as a STATE.
+ *
+ * ⚠️ Same reason as `writesOn`: a binding reading `writeStatus.val?.status?.chargeAck` re-runs on
+ * the payload's identity, so the Outcome subtree was rebuilt on every arm and every refresh — the
+ * churn the rest of this fix removes. After this no view imports `writeStatus` at all.
+ * @type {import("../vendor/van-1.6.1.js").State<import("../../src/charge/ack-watch.ts").ChargeAckState | null>}
+ */
+export const chargeAck = van.state(null);
+
 /** Callbacks to run when a live session ends, so each control can clear its own form. */
 const sessionEndListeners = /** @type {(() => void)[]} */ ([]);
 
@@ -108,8 +118,7 @@ van.derive(() => {
   } else {
     // A charge that ended tells us nothing about the next one's gate, and a stale "enabled" left
     // on screen would render a control against a session that is over.
-    writeStatus.val = null;
-    writesOn.val = false;
+    applyWriteStatus(null);
     for (const listener of sessionEndListeners) {
       listener();
     }
@@ -167,15 +176,16 @@ export function writesEnabled() {
 }
 
 /**
- * Records a /vcu-write payload the controls got back from their own POST.
+ * Records a /vcu-write payload, or clears everything when passed null.
  *
- * Here rather than in each control so `writeStatus` and `writesOn` cannot drift — a view that set
- * only the first would leave the tile rendering off a stale boolean.
- * @param {VcuWriteResponse} payload
+ * ⚠️ The ONLY place these three are assigned, so they cannot drift — a caller that set the payload
+ * and not the derived states would leave the tile rendering off a stale boolean.
+ * @param {VcuWriteResponse | null} payload
  */
 export function applyWriteStatus(payload) {
   writeStatus.val = payload;
-  writesOn.val = payload.status?.enabled === true;
+  writesOn.val = payload?.status?.enabled === true;
+  chargeAck.val = payload?.status?.chargeAck ?? null;
 }
 
 /** GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike. */
@@ -186,10 +196,7 @@ export async function fetchChargeWriteStatus() {
     // Disarmed before the new status lands: writes switched off across the refresh must not
     // leave a primed button behind.
     armed.val = "";
-    writeStatus.val = payload;
-    // The boolean last, and separately: assigning an unchanged boolean is a VanJS no-op, so a
-    // refresh that answers the same thing costs no re-render. See `writesOn`.
-    writesOn.val = payload.status?.enabled === true;
+    applyWriteStatus(payload);
   } catch (error) {
     // Loud, but not fatal to the read-only screen: a failed status fetch simply leaves the
     // controls hidden (their render requires enabled === true), which is the safe direction.

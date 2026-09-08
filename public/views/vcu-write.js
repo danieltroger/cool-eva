@@ -257,15 +257,14 @@ function Availability() {
  * before the fix landed — indistinguishable, from the garage, from a feature that does not
  * work. This is the line that tells those two apart before anyone starts debugging the wrong
  * one. `+dirty` means tracked files differ from that commit, so the running code is not the
- * committed code. src/version.ts.
+ * committed code; `+unverified` means git could not say, which is flagged the same way rather than
+ * shown as clean. src/version.ts.
  *
  * @param {VcuWriteStatus} status
  */
 function RunningVersion(status) {
-  return div(
-    { class: "action-note", style: `color:${status.runningVersion.endsWith("+dirty") ? WATCH : MUTED}` },
-    `⚙️  Running ${status.runningVersion}`
-  );
+  const { label, dirty, trustworthy } = status.runningVersion;
+  return div({ class: "action-note", style: `color:${dirty || !trustworthy ? WATCH : MUTED}` }, `⚙️  Running ${label}`);
 }
 
 /**

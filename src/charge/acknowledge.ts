@@ -108,30 +108,22 @@ export function judgeChargeCommand(input: ChargeAckInput): ChargeAckVerdict {
 
   if (lastBefore.amps > commandedAmps + AMP_TOLERANCE) {
     // A binding reduction: the request is above what we asked for, so the bike must visibly move.
+    // ⚠️ `took` needs a post-settle sample. With none, the signal is logged on change, so the
+    // request is still what it was — too high. That is the ONE direction silence is evidence in,
+    // and reading it the other way is what once returned `took` for a command that did nothing.
     const settled = after.filter(sample => sample.atMs >= sentAtMs + settleMs);
-    if (settled.length > 0) {
-      const heldAmps = Math.max(...settled.map(sample => sample.amps));
-      if (heldAmps <= commandedAmps + AMP_TOLERANCE) {
-        const firstAtOrUnder = after.find(sample => sample.amps <= commandedAmps + AMP_TOLERANCE);
-        return {
-          kind: "took",
-          fromAmps: lastBefore.amps,
-          toAmps: heldAmps,
-          latencyMs: firstAtOrUnder ? firstAtOrUnder.atMs - sentAtMs : 0,
-        };
-      }
-      if (nowMs < windowEnds) {
-        return { kind: "waiting", elapsedMs: nowMs - sentAtMs };
-      }
-      return supersededEarly ? { kind: "superseded" } : { kind: "not-acknowledged", heldAmps };
+    const heldAmps = settled.length > 0 ? Math.max(...settled.map(sample => sample.amps)) : lastBefore.amps;
+    if (settled.length > 0 && heldAmps <= commandedAmps + AMP_TOLERANCE) {
+      // The first sample at or under the ask, which may predate the settle grace — that is the
+      // latency worth reporting. `settled[0]` is the guaranteed fallback: it exists here, and with
+      // `heldAmps` (its max) under the ask, every settled sample is under it too.
+      const firstAtOrUnder = after.find(sample => sample.amps <= commandedAmps + AMP_TOLERANCE) ?? settled[0];
+      return { kind: "took", fromAmps: lastBefore.amps, toAmps: heldAmps, latencyMs: firstAtOrUnder.atMs - sentAtMs };
     }
     if (nowMs < windowEnds) {
       return { kind: "waiting", elapsedMs: nowMs - sentAtMs };
     }
-    // ⚠️ No post-settle sample, and the signal is logged on change — so the request is still
-    // whatever it was, which for a binding reduction is still too high. This is the ONE direction
-    // silence is evidence in; the opposite reading is what produced a false `took`.
-    return supersededEarly ? { kind: "superseded" } : { kind: "not-acknowledged", heldAmps: lastBefore.amps };
+    return supersededEarly ? { kind: "superseded" } : { kind: "not-acknowledged", heldAmps };
   }
 
   if (commandedAmps > lastBefore.amps + AMP_TOLERANCE) {
@@ -142,17 +134,9 @@ export function judgeChargeCommand(input: ChargeAckInput): ChargeAckVerdict {
     // value on its way to the ceiling, so a first-crossing test would score the sweep as a take.
     // It must reach the commanded value AND not overshoot it — that is what settling at a new cap
     // looks like, and what a sweep past it does not.
-    const settledAtCap =
-      after.some(sample => sample.amps >= commandedAmps - AMP_TOLERANCE) &&
-      after.every(sample => sample.amps <= commandedAmps + AMP_TOLERANCE);
-    if (settledAtCap) {
-      const reached = after.find(sample => sample.amps >= commandedAmps - AMP_TOLERANCE);
-      return {
-        kind: "took",
-        fromAmps: lastBefore.amps,
-        toAmps: reached ? reached.amps : commandedAmps,
-        latencyMs: reached ? reached.atMs - sentAtMs : 0,
-      };
+    const reached = after.find(sample => sample.amps >= commandedAmps - AMP_TOLERANCE);
+    if (reached && after.every(sample => sample.amps <= commandedAmps + AMP_TOLERANCE)) {
+      return { kind: "took", fromAmps: lastBefore.amps, toAmps: reached.amps, latencyMs: reached.atMs - sentAtMs };
     }
     if (nowMs < windowEnds) {
       return { kind: "waiting", elapsedMs: nowMs - sentAtMs };

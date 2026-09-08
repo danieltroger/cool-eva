@@ -35,7 +35,7 @@ import {
   type WriteTarget,
 } from "./write-targets.ts";
 import { parameterTableFor } from "./table-catalog.ts";
-import { readRunningVersion } from "../version.ts";
+import { readRunningVersion, type RunningVersion } from "../version.ts";
 import { chargeAckState, noteChargeCommandSent, type ChargeAckState } from "../charge/ack-watch.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
@@ -184,13 +184,14 @@ export interface VcuWriteStatus {
    */
   chargeAck: ChargeAckState | null;
   /**
-   * Which commit the Pi is running — `09c3b84`, `09c3b84+dirty`, or `unknown`.
+   * Which commit the Pi is running.
    *
-   * ⚠️ On the payload the page fetches before every arm, because "the feature does nothing"
-   * and "the feature is not deployed yet" are indistinguishable from the garage and were the
-   * same thing on 2026-09-07. src/version.ts has the story.
+   * ⚠️ On the payload the page fetches before every arm, because "the feature does nothing" and
+   * "the feature is not deployed yet" are indistinguishable from the garage and were the same thing
+   * on 2026-09-07. Structured rather than a pre-rendered string so the page reads `trustworthy`
+   * instead of matching a suffix — `+unverified` would otherwise render as clean. src/version.ts.
    */
-  runningVersion: string;
+  runningVersion: RunningVersion;
   gate: ServiceGateVerdict;
   /**
    * ⚠️ Whether anything on this Pi has confirmed which parameter table the bike runs,
@@ -356,7 +357,7 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
   const sweep = await context.latestSweep();
   return {
     enabled: context.enabled,
-    runningVersion: (await readRunningVersion()).label,
+    runningVersion: await readRunningVersion(),
     chargeAck: chargeAckState(),
     gate: context.gate(),
     tableGate: evaluateTableGate(sweep?.report ?? null),

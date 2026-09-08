@@ -60,7 +60,8 @@ const CHECKS: SelfCheck[] = [
     covers:
       "whether the Pi can tell that a charge-current command took, against the 2026-09-07 session where three " +
       "commands provably moved nothing and two provably worked: that all seven adjudicate as their known outcomes, " +
-      "that the fixture still holds at least two true positives and two true negatives, that the naive " +
+      "that the real trace still supplies at least two true negatives and one true positive and that no verdict " +
+      "comes from an empty window, that five constructed shapes cover what that day did not produce, that the naive " +
       "first-crossing test really would have scored two of the failures as successes (which is why the envelope " +
       "exists), that the settle grace changes no verdict, that a binding command still reads waiting halfway " +
       "through its window, that the ride-log codes are distinct, and that nothing in the adjudicator reads pack_a",

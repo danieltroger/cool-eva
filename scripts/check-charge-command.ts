@@ -5,7 +5,6 @@ import {
   CAPTURED_PAIR_GAP_MS_RANGE,
   CAPTURED_PI_SINGLE_FRAMES,
   fixtureBytes,
-  fixtureHex,
 } from "./charge-command-fixtures.ts";
 import {
   CHARGE_COMMAND_CAN_ID,
@@ -16,6 +15,7 @@ import {
 } from "../src/can/charge-command.ts";
 import { decodeChargeSetpointFrame } from "../src/can/charge-setpoint.ts";
 import { CURRENT_FRAME_GAP_MS } from "../src/vcu/write-session.ts";
+import { toHex } from "../src/vcu/param-codec.ts";
 
 // Holds the charge-current transmitter against the frames the DASH itself put on the bus
 // during a real DC fast charge (2026-09-07), on a laptop, with no bike.
@@ -53,8 +53,8 @@ for (const pair of CAPTURED_DC_PAIRS) {
     );
     continue;
   }
-  const commit = fixtureHex(frames[0].data);
-  const command = fixtureHex(frames[1].data);
+  const commit = toHex(frames[0].data);
+  const command = toHex(frames[1].data);
   if (commit !== pair.commitHex) {
     failures.push(`§1 ${pair.amps} A at ${pair.atLocal}: 0x120 built "${commit}", dash sent "${pair.commitHex}"`);
   }
@@ -69,7 +69,7 @@ for (const pair of CAPTURED_DC_PAIRS) {
 // none of them may be a thing this builder can produce for the same request.
 for (const single of CAPTURED_PI_SINGLE_FRAMES) {
   const frames = buildChargeCurrentCommand("dc", single.amps, CAPTURED_DC_CEILING_A);
-  const onlyFrame = frames.length === 1 && fixtureHex(frames[0].data) === single.commandHex;
+  const onlyFrame = frames.length === 1 && toHex(frames[0].data) === single.commandHex;
   if (onlyFrame) {
     failures.push(
       `§2 ${single.amps} A: the builder reproduced the pre-twin single frame "${single.commandHex}" that failed ` +
@@ -128,8 +128,8 @@ const stopFrames = buildChargeStopCommand();
 const capturedStopCommit = CAPTURED_NON_COMMAND_FRAMES.find(frame => frame.id === CHARGE_REQUEST_CAN_ID);
 if (stopFrames.length !== 1 || stopFrames[0].id !== CHARGE_REQUEST_CAN_ID) {
   failures.push(`§5 buildChargeStopCommand emitted ${stopFrames.length} frame(s); the commit is the single 0x120`);
-} else if (capturedStopCommit && fixtureHex(stopFrames[0].data) !== capturedStopCommit.hex) {
-  failures.push(`§5 stop built "${fixtureHex(stopFrames[0].data)}", dash sent "${capturedStopCommit.hex}"`);
+} else if (capturedStopCommit && toHex(stopFrames[0].data) !== capturedStopCommit.hex) {
+  failures.push(`§5 stop built "${toHex(stopFrames[0].data)}", dash sent "${capturedStopCommit.hex}"`);
 }
 
 // ── §6 the transmit spacing is inside what the dash actually does ──────────

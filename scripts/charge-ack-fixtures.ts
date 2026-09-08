@@ -1,3 +1,5 @@
+import type { AckSample, ChargeAckVerdict } from "../src/charge/acknowledge.ts";
+
 // Generated from the 2026-09-07 ride log. Data only — nothing here talks to a bus.
 //
 // The vehicle's own DC request (`fast_dc_target_a`, 0x615 b2) around every charge-current
@@ -10,11 +12,12 @@
 // 1-3 minutes and the request swept the whole range, which is what makes a first-crossing
 // test score the failures as successes. docs/can-0x121-charge-command.md.
 
-/** Milliseconds since the first command of the session, so the fixture carries no wall clock. */
-export interface AckFixtureSample {
-  atMs: number;
-  amps: number;
-}
+/**
+ * One reading, timestamped in milliseconds since the first command of the session so the fixture
+ * carries no wall clock. `AckSample` from the module under test rather than a local twin — it is
+ * passed straight into judgeChargeCommand({ samples }).
+ */
+export type AckFixtureSample = AckSample;
 
 /** One command, with the verdict the 2026-09-07 outcome says it must get. */
 export interface AckFixtureCommand {
@@ -22,7 +25,7 @@ export interface AckFixtureCommand {
   source: "Pi" | "dash";
   atMs: number;
   amps: number;
-  expected: string;
+  expected: ChargeAckVerdict["kind"];
   why: string;
 }
 
@@ -473,7 +476,7 @@ export const ACK_SYNTHETIC_CASES: {
   commandedAmps: number;
   samples: AckFixtureSample[];
   supersededAtMs: number | null;
-  expected: string;
+  expected: ChargeAckVerdict["kind"];
   why: string;
 }[] = [
   {

@@ -7,7 +7,7 @@ import { HEARTBEAT_MS } from "../src/ws.ts";
 // charge-write.js fetches /vcu-write on the session edge, and a relative URL is not a URL
 // outside a browser. Stubbed BEFORE the module is imported (hence the dynamic import below) so
 // the check exercises the staleness logic without printing a network failure that is not one.
-globalThis.fetch = (async () => ({ json: async () => ({ status: { enabled: false } }) })) as unknown as typeof fetch;
+globalThis.fetch = (async () => new Response(JSON.stringify({ status: { enabled: false } }))) as typeof fetch;
 const { CHARGE_SESSION_MAX_AGE_MS, liveChargeType } = await import("../public/lib/charge-write.js");
 
 // Holds the charge tab's write controls against the one thing that made them flicker: a
@@ -99,13 +99,6 @@ if (nullReadings > 0) {
 //
 // §1 fails only for windows below the worst age it happens to reach. This is the invariant
 // behind it, and it is the one that catches someone "restoring" the 5000 to match the Pi.
-if (CHARGE_SESSION_MAX_AGE_MS <= HEARTBEAT_MS) {
-  failures.push(
-    `§2 CHARGE_SESSION_MAX_AGE_MS (${CHARGE_SESSION_MAX_AGE_MS} ms) is not above ws.ts HEARTBEAT_MS ` +
-      `(${HEARTBEAT_MS} ms). A signal that never changes is refreshed only by the heartbeat, so any window ` +
-      `at or below it is a race by construction`
-  );
-}
 if (CHARGE_SESSION_MAX_AGE_MS < HEARTBEAT_MS * 2) {
   failures.push(
     `§2 CHARGE_SESSION_MAX_AGE_MS (${CHARGE_SESSION_MAX_AGE_MS} ms) leaves no room for a single missed ` +
@@ -120,8 +113,15 @@ if (CHARGE_SESSION_MAX_AGE_MS < HEARTBEAT_MS * 2) {
 // must read the `chargeType` STATE. Asserted by import, because the next person to add a
 // `liveChargeType()` call to a caption would reintroduce it silently.
 const viewsDirectory = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "views");
-for (const view of ["charge-current.js", "charge-stop.js"]) {
-  const source = await readFile(join(viewsDirectory, view), "utf-8");
+/** Each view read once; §3, §4 and §5 all index this rather than re-reading it five times. */
+const viewSources = new Map(
+  await Promise.all(
+    ["charge-current.js", "charge-stop.js"].map(
+      async view => [view, await readFile(join(viewsDirectory, view), "utf-8")] as const
+    )
+  )
+);
+for (const [view, source] of viewSources) {
   if (source.includes("liveChargeType")) {
     failures.push(
       `§3 public/views/${view} references liveChargeType — renders must read the chargeType state, ` +
@@ -138,12 +138,17 @@ for (const view of ["charge-current.js", "charge-stop.js"]) {
 // `armWrite()` refetches /vcu-write before every arm. A visibility binding reading
 // `writeStatus.val?.status?.enabled` re-ran on the new object even when the answer was unchanged,
 // rebuilding the tile and its <input> mid-gesture. It must read the boolean instead.
-const chargeCurrentSource = await readFile(join(viewsDirectory, "charge-current.js"), "utf-8");
-if (chargeCurrentSource.includes("writeStatus.val?.status?.enabled")) {
-  failures.push(
-    "§4 charge-current.js gates visibility on writeStatus identity — use writesEnabled(), whose boolean " +
-      "state makes an unchanged refresh a no-op"
-  );
+// ⚠️ Widened from one literal to the whole import. `writeStatus` is the payload OBJECT, so any
+// binding reading it re-runs on its identity; both `enabled` and `chargeAck` now have their own
+// states, which makes a view importing `writeStatus` at all the structural mistake. An absent
+// import is a far stronger assertion than a string match a reformat or a local alias slips past.
+for (const [view, source] of viewSources) {
+  if (/\bwriteStatus\b/.test(source)) {
+    failures.push(
+      `§4 public/views/${view} still reads writeStatus — its identity changes on every refresh, so the binding ` +
+        `rebuilds. Use the writesEnabled() / chargeAck states, which are no-ops when unchanged`
+    );
+  }
 }
 
 // ── §5 the pre-arm refresh still raises busy ───────────────────────────────
@@ -151,8 +156,7 @@ if (chargeCurrentSource.includes("writeStatus.val?.status?.enabled")) {
 // ⚠️ Issue #107's warning, kept alive here: the refresh before arming exists to raise `busy`, and
 // that is the double-tap guard on a control that changes the bike. A fix for the flicker that
 // removed it would look like an improvement and would not be one.
-for (const view of ["charge-current.js", "charge-stop.js"]) {
-  const source = await readFile(join(viewsDirectory, view), "utf-8");
+for (const [view, source] of viewSources) {
   const armBody = source.slice(source.indexOf("async function arm"));
   const refreshIndex = armBody.indexOf("fetchChargeWriteStatus");
   if (refreshIndex < 0 || !armBody.slice(0, refreshIndex).includes("busy.val = true")) {

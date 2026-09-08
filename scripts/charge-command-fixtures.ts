@@ -1,3 +1,6 @@
+import { parseHexBytes } from "./captured-vcu-records.ts";
+import { toHex } from "../src/vcu/param-codec.ts";
+
 // The dash's own charge-current frames, captured off the bus on 2026-09-07. Data only —
 // nothing here talks to a bus.
 //
@@ -32,10 +35,19 @@ export const CAPTURED_DC_CEILING_A = 75;
  * The measured spread of the dash's own 0x120 → 0x121 spacing, milliseconds.
  *
  * ⚠️ Codified so `CURRENT_FRAME_GAP_MS` in src/vcu/write-session.ts can be checked against a
- * measurement rather than against the "~5 ms" a comment once estimated. Mean 6.685 over the
- * twelve pairs; the bound is the observed min and max, not a tolerance anyone chose.
+ * measurement rather than against the "~5 ms" a comment once estimated. Mean 6.685 over the twelve
+ * pairs; the bound is the observed min and max, not a tolerance anyone chose. DERIVED from the rows
+ * below rather than typed beside them — hand-maintained, the two could silently disagree and the
+ * check would be asserting against a copy instead of the capture.
  */
-export const CAPTURED_PAIR_GAP_MS_RANGE = { min: 4.217, max: 10.122 };
+export const CAPTURED_PAIR_GAP_MS_RANGE = {
+  get min() {
+    return Math.min(...CAPTURED_DC_PAIRS.map(pair => pair.gapMs));
+  },
+  get max() {
+    return Math.max(...CAPTURED_DC_PAIRS.map(pair => pair.gapMs));
+  },
+};
 
 /**
  * Twelve rider dial changes, 2026-09-07 19:16:44-19:34:46 CEST, inside the second-to-last DC
@@ -166,12 +178,13 @@ export const CAPTURED_NON_COMMAND_FRAMES = [
   { atLocal: "19:37:46.153", id: 0x121, hex: "1B FF AA 1F 00 00 00 00", what: "opcode 0x1B query, b2 = 170" },
 ];
 
-/** Splits a fixture's `"18 FF 2F …"` into the bytes a decoder takes. */
+/**
+ * A fixture's `"18 FF 2F …"` as the bytes a decoder takes.
+ *
+ * `parseHexBytes` rather than a local split: it THROWS on a malformed byte, where the obvious
+ * `parseInt` turns a typo into `NaN` and then 0, and the check would compare against a frame nobody
+ * ever wrote. Rendering goes through `toHex`, the same speller the VCU codecs use.
+ */
 export function fixtureBytes(hex: string): Buffer {
-  return Buffer.from(hex.split(/\s+/).map(byte => Number.parseInt(byte, 16)));
-}
-
-/** Renders 8 bytes back to the fixture's own spelling, so a mismatch prints legibly. */
-export function fixtureHex(data: Uint8Array): string {
-  return [...data].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+  return Buffer.from(parseHexBytes(hex));
 }

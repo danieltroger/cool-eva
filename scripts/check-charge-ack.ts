@@ -1,3 +1,5 @@
+import { readFile } from "fs/promises";
+import { boundsFor } from "../public/lib/bounds.js";
 import {
   ACK_FIXTURE_COMMANDS,
   ACK_FIXTURE_COMMAND_TIMES_MS,
@@ -24,14 +26,16 @@ import {
 // 47 A and 40 A commands as `took` at 8.664 s and 8.909 s, because the BMS clamp released ~8.7 s
 // after each and the request swept down through both values on its way to 20 A. Two true negatives
 // reported as successes, which is the direction that lets a broken transmit path look healthy. §1
-// asserts the real outcomes; §2 asserts that the naive test really would have failed, so nobody
-// simplifies the envelope back out.
+// asserts the real outcomes, §2 the constructed shapes, and §3 that the naive test really would
+// have failed — so nobody simplifies the envelope back out.
 
 const failures: string[] = [];
 
 // ── §1 the real verdicts ───────────────────────────────────────────────────
-for (const command of ACK_FIXTURE_COMMANDS) {
-  const verdict = judge(command.atMs, command.amps);
+//
+// Adjudicated ONCE here; §2b reads these rather than re-running the same seven commands twice more.
+const judged = ACK_FIXTURE_COMMANDS.map(command => ({ command, verdict: judge(command.atMs, command.amps) }));
+for (const { command, verdict } of judged) {
   if (verdict.kind !== command.expected) {
     failures.push(
       `§1 ${command.source} command ${command.amps} A at +${(command.atMs / 1000).toFixed(1)} s: got ` +
@@ -64,7 +68,7 @@ for (const synthetic of ACK_SYNTHETIC_CASES) {
 // Counted rather than assumed, so trimming the fixture fails the build. Two true negatives from
 // real frames is the direction that matters; `took` is proved by §2's constructed shapes and by
 // the one unambiguous take the day contains.
-const outcomes = ACK_FIXTURE_COMMANDS.map(command => judge(command.atMs, command.amps).kind);
+const outcomes = judged.map(entry => entry.verdict.kind);
 const tookCount = outcomes.filter(kind => kind === "took").length;
 const missedCount = outcomes.filter(kind => kind === "not-acknowledged").length;
 if (missedCount < 2 || tookCount < 1) {
@@ -74,8 +78,7 @@ if (missedCount < 2 || tookCount < 1) {
   );
 }
 // ⚠️ No verdict may come from an empty window. That is exactly how the false `took` arose.
-for (const command of ACK_FIXTURE_COMMANDS) {
-  const verdict = judge(command.atMs, command.amps);
+for (const { command, verdict } of judged) {
   const after = ACK_FIXTURE_SAMPLES.filter(
     sample => sample.atMs > command.atMs && sample.atMs <= command.atMs + ACK_TIMEOUT_MS
   );
@@ -150,11 +153,25 @@ if (new Set(codes).size !== codes.length) {
 //
 // The rail: `pack_a` conflates "the VCU accepted my command" with "the station could deliver it".
 // Asserted by source, because a future edit adding it would look reasonable.
-const source = await (
-  await import("fs/promises")
-).readFile(new URL("../src/charge/acknowledge.ts", import.meta.url), "utf-8");
+const source = await readFile(new URL("../src/charge/acknowledge.ts", import.meta.url), "utf-8");
 if (/\bpack_a\b/.test(source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, ""))) {
   failures.push("§7 acknowledge.ts references pack_a outside a comment — the verdict must key on the request only");
+}
+
+// ── §8 every verdict code survives the dashboard's plausibility gate ───────
+//
+// bounds.js says its ack bound IS the size of CHARGE_ACK_CODE, and nothing asserted it. A code
+// outside the bound is rejected as a dead sensor and the page silently holds the PREVIOUS verdict —
+// the documented fan_auto_mode regression, three lines above the entry.
+const ackBounds = boundsFor("charge_cmd_ack", "", "charge");
+for (const [kind, code] of Object.entries(CHARGE_ACK_CODE)) {
+  if (!ackBounds || code < ackBounds[0] || code > ackBounds[1]) {
+    failures.push(
+      `§8 CHARGE_ACK_CODE.${kind} = ${code} is outside public/lib/bounds.js's ` +
+        `${ackBounds ? `[${ackBounds[0]}, ${ackBounds[1]}]` : "missing"} rule — the page would reject it as a ` +
+        `dead sensor and keep showing the previous verdict`
+    );
+  }
 }
 
 if (failures.length > 0) {
@@ -172,7 +189,8 @@ console.log(
     `saw-tooth trough that an earlier adjudicator scored as took; ` +
     `${naiveWrong.length} of the failures would have fooled a first-crossing test, so the envelope is doing real ` +
     `work; the settle grace changes no verdict at 0 or ${2 * ACK_SETTLE_MS} ms; a binding command still reads ` +
-    `waiting halfway through its window; the log codes are distinct; and nothing in the adjudicator reads pack_a`
+    `waiting halfway through its window; every verdict code is distinct and inside the bounds.js rule that claims ` +
+    `to be its size; and nothing in the adjudicator reads pack_a`
 );
 
 /** Runs the adjudicator over the fixture trace as the runner would, at the end of the window. */
