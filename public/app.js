@@ -16,6 +16,7 @@ import { monotonicNow } from "./lib/clock.js";
 import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
 import { installHandlebarGestures } from "./lib/handlebar-gestures.js";
+import { startTheming } from "./lib/theme.js";
 import { viewRules } from "./lib/view-rules.js";
 
 const { button, div, span } = van.tags;
@@ -261,5 +262,8 @@ van.add(document.body, App());
 // what keeps the URL and the screen in step. A gesture that set the tab itself would
 // be the second answer to a question that must only have one.
 installHandlebarGestures({ onNextTab: advanceTab });
+// Before connect(), so the first paint is already in the right theme when the phone's
+// own setting is the one that decides it. The bike's flag can only arrive later.
+startTheming();
 connect();
 void refreshStatus();

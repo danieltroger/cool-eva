@@ -18,10 +18,15 @@ import { CALM, MUTED } from "./colors.js";
 
 const svgTags = van.tags("http://www.w3.org/2000/svg");
 
-// Unfilled part of any bar or ring. Must not be the tile background (#1e293b) —
-// that was the first version, and it made every bar invisible until it was more
-// than half full, which is exactly when you no longer need to look at it.
-const TRACK = "#0b1220";
+// Unfilled part of any bar or ring. Must not be the tile background — that was the
+// first version, and it made every bar invisible until it was more than half full,
+// which is exactly when you no longer need to look at it.
+//
+// ⚠️ Every colour here goes into `style`, never into a bare `fill=`/`stroke=`
+// presentation attribute, because these are var() tokens now. Chrome does resolve
+// var() in a presentation attribute; WebKit is untested and this page is only ever
+// read on a phone, so the form that is plain CSS everywhere is the one to use.
+const TRACK = "var(--track)";
 
 /**
  * How far from either end a limit marker may be drawn, in viewBox units. Small enough
@@ -47,7 +52,14 @@ export function sparkline({ values, color, minSpan = 1, height = 26, baseline = 
     // Something must occupy the space or tiles jump around as data arrives.
     return svgTags.svg(
       { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "spark" },
-      svgTags.line({ x1: 0, y1: height / 2, x2: width, y2: height / 2, stroke: MUTED, "stroke-dasharray": "2 3" })
+      svgTags.line({
+        x1: 0,
+        y1: height / 2,
+        x2: width,
+        y2: height / 2,
+        style: `stroke:${MUTED}`,
+        "stroke-dasharray": "2 3",
+      })
     );
   }
 
@@ -69,14 +81,21 @@ export function sparkline({ values, color, minSpan = 1, height = 26, baseline = 
   if (baseline != null) {
     const y = scaleY(baseline).toFixed(1);
     children.push(
-      svgTags.line({ x1: 0, y1: y, x2: width, y2: y, stroke: MUTED, "stroke-width": 0.5, "stroke-dasharray": "2 2" })
+      svgTags.line({
+        x1: 0,
+        y1: y,
+        x2: width,
+        y2: y,
+        style: `stroke:${MUTED}`,
+        "stroke-width": 0.5,
+        "stroke-dasharray": "2 2",
+      })
     );
   }
   children.push(
     svgTags.polyline({
       points,
-      fill: "none",
-      stroke: color,
+      style: `fill:none;stroke:${color}`,
       "stroke-width": 1.6,
       "stroke-linejoin": "round",
       "stroke-linecap": "round",
@@ -102,12 +121,12 @@ export function meter({ fraction, color, height = 10, marker = null }) {
   const width = 100;
   const filled = fraction == null ? 0 : Math.max(0, Math.min(1, fraction));
   const children = [
-    svgTags.rect({ x: 0, y: 0, width, height, rx: height / 2, fill: TRACK }),
-    svgTags.rect({ x: 0, y: 0, width: (filled * width).toFixed(2), height, rx: height / 2, fill: color }),
+    svgTags.rect({ x: 0, y: 0, width, height, rx: height / 2, style: `fill:${TRACK}` }),
+    svgTags.rect({ x: 0, y: 0, width: (filled * width).toFixed(2), height, rx: height / 2, style: `fill:${color}` }),
   ];
   if (marker != null) {
     const x = (Math.max(0, Math.min(1, marker)) * width).toFixed(2);
-    children.push(svgTags.rect({ x, y: -1, width: 1, height: height + 2, fill: "#e2e8f0" }));
+    children.push(svgTags.rect({ x, y: -1, width: 1, height: height + 2, style: "fill:var(--tick)" }));
   }
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
 }
@@ -139,15 +158,15 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
   // going, so it draws to the right. See the sign note in derive.js.
   const isDrive = (value ?? 0) < 0;
   const children = [
-    svgTags.rect({ x: 0, y: 0, width, height, rx: 2, fill: TRACK }),
+    svgTags.rect({ x: 0, y: 0, width, height, rx: 2, style: `fill:${TRACK}` }),
     svgTags.rect({
       x: isDrive ? centre : centre - magnitude,
       y: 0,
       width: magnitude.toFixed(2),
       height,
-      fill: color,
+      style: `fill:${color}`,
     }),
-    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }),
+    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, style: "fill:var(--centre-line)" }),
   ];
   // After the fill, so a limit the bar has run past is still legible on top of it.
   for (const x of limitMarkerPositions({ limits, fullScale, centre })) {
@@ -217,7 +236,7 @@ function limitMarker(x, height) {
     y1: 0,
     x2: x.toFixed(2),
     y2: height,
-    stroke: CALM,
+    style: `stroke:${CALM}`,
     "stroke-width": 1.2,
     "stroke-dasharray": "2 2",
     // preserveAspectRatio="none" stretches the viewBox to the tile, and for a vertical
@@ -242,13 +261,12 @@ export function ring({ fraction, color }) {
   const filled = fraction == null ? 0 : Math.max(0, Math.min(1, fraction));
   return svgTags.svg(
     { viewBox: `0 0 ${size} ${size}`, class: "ring" },
-    svgTags.circle({ cx: size / 2, cy: size / 2, r: radius, fill: "none", stroke: TRACK, "stroke-width": 8 }),
+    svgTags.circle({ cx: size / 2, cy: size / 2, r: radius, style: `fill:none;stroke:${TRACK}`, "stroke-width": 8 }),
     svgTags.circle({
       cx: size / 2,
       cy: size / 2,
       r: radius,
-      fill: "none",
-      stroke: color,
+      style: `fill:none;stroke:${color}`,
       "stroke-width": 8,
       "stroke-linecap": "round",
       "stroke-dasharray": `${(filled * circumference).toFixed(2)} ${circumference.toFixed(2)}`,
@@ -280,7 +298,7 @@ export function barStrip({ bars, low, high, height = 60 }) {
       y: (height - barHeight).toFixed(2),
       width: Math.max(barWidth - 0.25, 0.3).toFixed(2),
       height: barHeight.toFixed(2),
-      fill: bar.color,
+      style: `fill:${bar.color}`,
     });
   });
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "strip" }, ...rects);
@@ -323,8 +341,7 @@ export function heatmap({ rows, columns }) {
             y: y + gap / 2,
             width: cellWidth - gap,
             height: rowHeight - gap,
-            fill: "none",
-            stroke: TRACK,
+            style: `fill:none;stroke:${TRACK}`,
             "stroke-width": 0.4,
           })
         );
@@ -337,7 +354,7 @@ export function heatmap({ rows, columns }) {
           width: cellWidth - gap,
           height: rowHeight - gap,
           rx: 0.8,
-          fill: cell.color,
+          style: `fill:${cell.color}`,
         })
       );
     });

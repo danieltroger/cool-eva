@@ -628,6 +628,13 @@ export const SIGNALS: SignalDef[] = [
   // other 0x102 state bits above rather than in `buttons`; `controls` is already a
   // BOOLEAN_GROUP so it gets the same 0/1 gate.
   { key: "cruise_active", unit: "", group: "controls", source: "stream" },
+  // 0x400 b5 bit7 — the dashboard's own day/night flag, and what the phone dashboard's
+  // light theme follows. `controls` for the same reason as the row above: it is a
+  // vehicle state rather than a thing a thumb presses, and the group is already a
+  // BOOLEAN_GROUP. ⚠️ NO DEADBAND, and it must never gain one — signals.ts logs on
+  // |change| > deadband, so any deadband ≥ 1 makes `|1 − 0| > 1` false and this stops
+  // logging after its first sample, silently, forever. check-button-decode.ts asserts it.
+  { key: "dash_day_mode", unit: "", group: "controls", source: "stream" },
 
   // --- Frames named by Energica's own signal database, added 2026-08-16 --------------
   // Every row-rate figure below is MEASURED, by replaying the 2026-08-02 garage lap (409 s,

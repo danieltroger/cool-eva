@@ -904,7 +904,9 @@ Reading `cell_min_mv` (0x203) against `cell_cutoff_mv` gives "how close am I to 
 
 `src/can/decode.ts`. Byte 2 is a button bitfield; every other byte is either constant or a slow mode flag.
 
-Measured over **1 099 357 frames across 14 candump captures** (2026-08-02 and 2026-08-04; see `CAPTURES.md`): b0 is `0x02` and b1 is `0x01` in every single frame, b3/b4/b6/b7 are `0x00` in every single frame, b5 only ever holds `0x00` or `0x80`, and b2 only ever holds `0x00`, `0x02` or `0x04`. So the whole frame carries four static bytes, one slow flag and this one button byte. ✅
+Re-measured 2026-09-08 over **14 069 994 frames across 97 candump captures** — the whole archive, 12.8× the 1 099 357 / 14-capture corpus this paragraph used to cite: b0 is `0x02` and b1 is `0x01` in every single frame, b3/b4/b6/b7 are `0x00` in every single frame, b5 only ever holds `0x00` or `0x80`, and b2 holds `0x00`, `0x01`, `0x02` or `0x04` (the `0x01` is the 2026-08-19 `btn_set_back` press; this used to say three values). So the whole frame carries four static bytes, one flag and this one button byte. ✅
+
+**b5 bit 7 is the dashboard's day/night flag**, decoded since 2026-09-08 as `dash_day_mode` and no longer "a slow mode flag" — it is what the phone dashboard's light theme follows. Set in 77.3 % of satellite-validated daytime frames and in **0 of 2 258 235** validated evening ones, independent of both beams, flipping within ~90 s of the bike leaving a dark garage on a bright afternoon. **`docs/can-0x400-day-night.md`** has the census, the beam cross-tab, the garage traces, the flap rate and the three open questions — including why more than half the archive's timestamps cannot be trusted at all, which is a finding about the whole corpus rather than about this bit.
 
 ⚠️ **The bit NAMES are Energica's, not ours:** they come from a free-frame IO table inside the service-tool executable (`obd-garage/HEATED_GRIPS.md` §3.0), and that table describes every model the tool serves rather than this one. **A name off a table is not a measurement** — the `charging` key on 0x102 b2 bit 0 came off a third-party table the same way and is really the high beam. So each bit carries what the captures show about it, separately, and the ones the captures cannot speak to say so.
 
@@ -915,6 +917,8 @@ Measured over **1 099 357 frames across 14 candump captures** (2026-08-02 and 20
 ⚠️ **…which also kills the plan `HEATED_GRIPS.md` §9 recommends it for.** That section calls a short press inert because the owner's manual says activation needs a 3-second hold. **It does not:** both presses were under one second and both armed cruise. This is NOT a side-effect-free button.
 
 **bit 2, cruise SET SPEED.** ✅ CONFIRMED by context: pressed exactly once in the corpus, 2026-08-04 18:04:45.055 for 1.794 s — 2.8 s after cruise was armed, at a steady 87.6 km/h, after which speed held 89-91 km/h for the remaining 45 s of the arming. That is what setting a cruise speed looks like, and there is no other press anywhere in 1.1 M frames to compete.
+
+**b2 bit 4, `DBS LIGHT SENS CALIB STS`.** ❓ Never set in 14 069 994 frames. Expected — it is a service-tool calibration state — but now a measured never rather than an unexamined one. Not decoded.
 
 **bit 3, `BUTTON [HEATED.GRP] (RightBack)`.** ❓ Never set, which is **EXPECTED rather than evidence**: this bike has no heated grips, and the wiring diagram says the dashboard derives this bit by sensing +12 V on `Monitor_Heated Knobs` (J8 pin 5), a wire that currently goes nowhere. Decoded anyway because it is the readout for `HEATED_GRIPS.md` §7.0 — jumper J109a pin 1 to pin 3 and this is the signal that says whether the idea works.
 

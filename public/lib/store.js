@@ -154,6 +154,30 @@ export function isStale(key, maxAgeMs) {
 }
 
 /**
+ * How long ago a signal was last refreshed, on the server's clock, sampled rather
+ * than subscribed. `Infinity` if it has never arrived.
+ *
+ * ⚠️ Deliberately NOT isStale(): that folds `linkIsLive` into freshness, which is right
+ * for a tile presenting a number and wrong for theme.js, whose question is "is the BIKE
+ * still saying this" and which must not repaint the whole screen over a socket blip.
+ * Both halves of that distinction matter — see the note on isStaleWith() below.
+ *
+ * Infinity rather than leaning on `NaN < x` being false: a comparison that works by
+ * accident is one refactor away from working differently.
+ *
+ * A caller wanting this to change over time has to be paced by something else —
+ * chartTick, as tiles.js does for its fault notice — because sampling subscribes to
+ * nothing. That is the point: serverTime moves on every message, including 20 Hz
+ * patches, and subscribing to it here would pace the caller at the WebSocket's rate.
+ * @param {string} key
+ * @returns {number}
+ */
+export function ageOf(key) {
+  const reading = signalState(key).rawVal;
+  return reading ? peekServerTime() - reading.ts : Infinity;
+}
+
+/**
  * The same, sampled rather than subscribed. See peek() and peekServerTime(): the
  * tick-paced work in app.js must not subscribe to serverTime, which apply() writes
  * on every message including 20 Hz pack_a patches.

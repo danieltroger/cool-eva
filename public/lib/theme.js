@@ -1,0 +1,126 @@
+// @ts-check
+
+import van from "../vendor/van-1.6.1.js";
+import { ageOf, chartTick, valueOf } from "./store.js";
+
+// Dark or light, resolved from three inputs and stamped on <html> as `data-theme`.
+//
+// The dark screen washes out in direct sun, which is the whole reason this exists.
+// The values of both palettes, and the contrast measurements behind them, are in
+// style.css; docs/dashboard-decisions.md has why the light ramp is shaped as it is.
+//
+// ⚠️ This is the ONLY resolver. style.css deliberately has no `prefers-color-scheme`
+// media query, because a media query would be a second answer to the same question and
+// the two would disagree the moment the bike says one thing and the phone says another.
+
+/** @typedef {"auto" | "light" | "dark"} ThemePreference */
+/** @typedef {"light" | "dark"} Theme */
+
+const STORAGE_KEY = "coolEva.theme";
+
+/**
+ * How long the bike's own day/night flag counts for after it last arrived.
+ *
+ * 0x400 is the highest-rate frame on this bus at ~100 Hz, so while the bike is awake
+ * this window is unreachable and CANNOT delay a flip — which is the requirement: the
+ * phone switches in step with the dash, with no smoothing. It only decides when the
+ * bike has gone quiet and the phone's own setting should take back over, which is why
+ * it is generous. Same shape as CHARGER_LIVE_MS / CONTACTOR_LIVE_MS in charge-mode.js.
+ */
+const DASH_LIVE_MS = 10_000;
+
+/**
+ * The rider's choice. "auto" — the default — follows the bike, then the phone.
+ * The only writer is setThemePreference().
+ */
+export const themePreference = van.state(/** @type {ThemePreference} */ (loadPreference()));
+
+/** The phone's own setting, kept live so a change to it while the page is open lands. */
+const prefersLight = van.state(matchMediaLight()?.matches === true);
+
+/**
+ * The theme actually being shown.
+ *
+ * The fall-through is the whole design: an explicit choice is never overruled by the
+ * bus; otherwise the bike while it is talking; otherwise the phone.
+ */
+export const activeTheme = van.derive(() => {
+  const preference = themePreference.val;
+  if (preference !== "auto") {
+    return preference;
+  }
+  // valueOf() and not peek(): a flip has to repaint on the frame it arrives. This is
+  // the one subscription in here that must be a subscription.
+  const dayMode = valueOf("dash_day_mode");
+  // …and this is what ages that reading OUT when the bike stops broadcasting. Paced
+  // rather than subscribed for the reason ageOf() gives — reading serverTime directly
+  // would re-run this derive at the WebSocket's rate. tiles.js:141 does the same thing
+  // for its fault notice. It never delays a flip; see DASH_LIVE_MS.
+  chartTick.val;
+  if (dayMode !== null && ageOf("dash_day_mode") < DASH_LIVE_MS) {
+    return dayMode === 1 ? "light" : "dark";
+  }
+  return prefersLight.val ? "light" : "dark";
+});
+
+/**
+ * Set and persist the rider's choice.
+ * @param {ThemePreference} preference
+ */
+export function setThemePreference(preference) {
+  themePreference.val = preference;
+  try {
+    localStorage.setItem(STORAGE_KEY, preference);
+  } catch (error) {
+    // Private-mode Safari throws on any localStorage write; the choice just won't
+    // persist past this session, which is a far smaller problem than a dead page.
+    console.warn("theme: could not persist preference", error);
+  }
+}
+
+/**
+ * Starts applying the theme to the document. Idempotent in effect — VanJS derives are
+ * the only thing driving it — and called once, from app.js.
+ */
+export function startTheming() {
+  const media = matchMediaLight();
+  if (media) {
+    media.addEventListener("change", event => {
+      prefersLight.val = event.matches;
+    });
+  }
+  van.derive(() => {
+    const theme = activeTheme.val;
+    document.documentElement.dataset.theme = theme;
+    // The browser chrome around the page, which is not styled by our CSS. Both pages
+    // carry the tag; whichever one is loaded, this keeps its bar matching the screen.
+    for (const tag of document.querySelectorAll('meta[name="theme-color"]')) {
+      tag.setAttribute("content", theme === "light" ? "#ffffff" : "#0f172a");
+    }
+  });
+}
+
+/**
+ * `matchMedia` guarded, because it is absent in some embedded webviews and a throw
+ * here would take the whole dashboard down over a colour.
+ * @returns {MediaQueryList | null}
+ */
+function matchMediaLight() {
+  try {
+    return window.matchMedia("(prefers-color-scheme: light)");
+  } catch (error) {
+    console.warn("theme: matchMedia unavailable, falling back to dark", error);
+    return null;
+  }
+}
+
+/** @returns {ThemePreference} */
+function loadPreference() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : "auto";
+  } catch (error) {
+    console.warn("theme: could not read stored preference", error);
+    return "auto";
+  }
+}
