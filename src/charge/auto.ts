@@ -107,7 +107,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     // 2026-09-07: our three sends produced no decoded row while all twelve of the dash's did), so a
     // `dc_charge_limit_selected_a` event is necessarily the RIDER and never our own echo.
     if (changed["dc_charge_limit_selected_a"] !== undefined) {
-      context.riderOverride = true;
+      standDown(context);
     }
     // ⚠️ Reset on ENTERING a DC session as well as leaving one. Resetting only on exit leaves the
     // ring full of temperatures from the ride in — a hot pack cooling on the way to the charger
@@ -132,14 +132,15 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
       publishMode(context);
       // ⚠️ Re-decide NOW rather than waiting up to a tick, so the page shows what the controller
       // will do instead of last minute's reason — otherwise "Take the current back" stays on screen
-      // for a minute after it has been taken back. src/fan/auto.ts re-evaluates on the same edge.
-      // Pure: it reads the bus and returns a decision; nothing is transmitted on a mode change.
+      // for a minute after it has been taken back. src/fan/auto.ts re-evaluates on the same edge and
+      // COMMANDS there; this deliberately does not, because a mode change should put nothing on the
+      // bus. `decide()` only reads signals and returns a verdict.
       context.reason = decide(context).reason;
       record("charge_auto_reason", context.reason);
       console.warn(`charge-auto: mode set to ${mode}`);
     },
     noteManualCommand: () => {
-      context.riderOverride = true;
+      standDown(context);
       console.warn("charge-auto: a charge current was set by hand — standing down for this charge");
     },
     stop: () => {
@@ -255,6 +256,19 @@ function forgetSession(context: AutoContext): void {
  */
 function publishMode(context: AutoContext): void {
   record("charge_auto_mode", CHARGE_AUTO_MODE_CODE[stateOf(context).mode]);
+}
+
+/**
+ * Stands the controller down and says so IMMEDIATELY.
+ *
+ * ⚠️ The reason has to move with the flag. Setting only the flag left `reason` stale until the next
+ * tick, so for up to a minute after the rider set a current the charge tab still offered "switch
+ * off" — the two-tap trap, in the exact window it is supposed to be gone from.
+ */
+function standDown(context: AutoContext): void {
+  context.riderOverride = true;
+  context.reason = CHARGE_AUTO_REASON.RIDER;
+  record("charge_auto_reason", context.reason);
 }
 
 function stateOf(context: AutoContext): ChargeAutoState {

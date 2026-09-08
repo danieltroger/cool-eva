@@ -86,11 +86,14 @@ function ToggleButton() {
         class: "action",
         disabled: () => busy.val,
         // Read at click time, not captured: the state moves under the button between renders.
-        onclick: () => void toggle(toggleAction(mode.val, reasonCode.val).mode),
+        onclick: () => void toggle(toggleAction(mode.val, reasonCode.val, floorAmps.val).mode),
       },
-      () => (busy.val ? "⏳  …" : toggleAction(mode.val, reasonCode.val).label)
+      () => (busy.val ? "⏳  …" : toggleAction(mode.val, reasonCode.val, floorAmps.val).label)
     ),
-    div({ class: "action-note", style: `color:${MUTED}` }, () => toggleAction(mode.val, reasonCode.val).note)
+    div(
+      { class: "action-note", style: `color:${MUTED}` },
+      () => toggleAction(mode.val, reasonCode.val, floorAmps.val).note
+    )
   );
 }
 
@@ -106,13 +109,16 @@ export const REASON_RIDER = 4;
  * two taps through a label that says the wrong thing. `mode=automatic` already clears the stand-down
  * in src/charge/auto.ts, so this is one tap; only the wording was missing.
  *
- * Pure, and exported, so scripts/check-charge-auto.ts can assert all three without a browser.
+ * Pure — the floor arrives as an argument rather than being read off the module state, so the label
+ * binding gains no dependency it does not need and the check asserts the sentence a rider actually
+ * sees. Exported so scripts/check-charge-auto.ts can drive all three states without a browser.
  * @param {"automatic" | "off"} currentMode
  * @param {number | null} reason
+ * @param {number} floor_a
  * @returns {{ label: string, mode: "automatic" | "off", note: string }}
  */
-export function toggleAction(currentMode, reason) {
-  const floor = `It only ever lowers the current, never below ${floorAmps.val} A`;
+export function toggleAction(currentMode, reason, floor_a) {
+  const floor = `It only ever lowers the current, never below ${floor_a} A`;
   if (reason === REASON_RIDER) {
     return {
       label: "↩️  Take the current back",

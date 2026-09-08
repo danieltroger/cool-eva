@@ -367,14 +367,26 @@ for (const code of Object.keys(CHARGE_AUTO_REASON_TEXT)) {
 // "Switch off for this charge" — the opposite of what the rider wants — and taking it back means
 // tapping off and then on, two taps through a label that says the wrong thing. All three states are
 // asserted, because the middle one is the whole point and the other two are what it must not break.
+/** Any floor; the sentence is what is under test, not the number in it. */
+const FLOOR_FOR_TEXT = 35;
+
 const RETAKE_CASES = [
-  { name: "stood down by the rider", mode: "automatic" as const, reason: REASON_RIDER, posts: "automatic" },
+  { name: "stood down by the rider", mode: "automatic" as const, reason: CHARGE_AUTO_REASON.RIDER, posts: "automatic" },
   { name: "running normally", mode: "automatic" as const, reason: CHARGE_AUTO_REASON.CLOSING, posts: "off" },
   { name: "switched off", mode: "off" as const, reason: CHARGE_AUTO_REASON.DISABLED, posts: "automatic" },
 ];
+// ⚠️ FIRST: the page cannot import the enum (no build step), so it keeps a hand-copied `4`. Feeding
+// that same constant in as the input would assert it against itself — set it to 12 and every other
+// assertion here stays green while the feature is silently dead on the bike.
+if (REASON_RIDER !== CHARGE_AUTO_REASON.RIDER) {
+  failures.push(
+    `§9 public/views/charge-auto.js's REASON_RIDER is ${REASON_RIDER}, but CHARGE_AUTO_REASON.RIDER is ` +
+      `${CHARGE_AUTO_REASON.RIDER} — the page would never offer to take the controller back`
+  );
+}
 const labels = new Set<string>();
 for (const retake of RETAKE_CASES) {
-  const action = toggleAction(retake.mode, retake.reason);
+  const action = toggleAction(retake.mode, retake.reason, FLOOR_FOR_TEXT);
   labels.add(action.label);
   if (action.mode !== retake.posts) {
     failures.push(`§9 ${retake.name}: the button POSTs mode=${action.mode}, expected ${retake.posts}`);
@@ -391,7 +403,7 @@ if (labels.size !== RETAKE_CASES.length) {
 }
 // ⚠️ And that the stood-down case is not merely the off-state's wording reused: it must say the
 // controller stopped BECAUSE the rider set a current, or the button is honest and the note is not.
-const stoodDown = toggleAction("automatic", REASON_RIDER);
+const stoodDown = toggleAction("automatic", CHARGE_AUTO_REASON.RIDER, FLOOR_FOR_TEXT);
 if (!/you set the current/i.test(stoodDown.note)) {
   failures.push(`§9 the stood-down note does not say why the Pi stopped: "${stoodDown.note}"`);
 }
