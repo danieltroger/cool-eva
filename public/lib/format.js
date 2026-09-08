@@ -91,6 +91,23 @@ export function ageInWords(epochMs) {
 }
 
 /**
+ * A time of day, in whatever timezone the phone is in.
+ *
+ * The bike stamps UTC — it has no RTC and steps its own clock from the satellites — and
+ * a rider asking when they saved something wants their own clock, so the conversion is
+ * the browser's rather than ours. Hours and minutes only: a waypoint's second is not a
+ * thing anyone reads off a tile.
+ *
+ * `hourCycle` is pinned rather than left to the locale, which would render an en-US phone
+ * "06:13 PM" — three glyphs wider in a tile measured at 84 px, and the only 12-hour clock
+ * anywhere in this dashboard or its Grafana dashboards.
+ * @param {number} epochMs
+ */
+export function clockTime(epochMs) {
+  return new Date(epochMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
+/**
  * Degrees to a compass point. A heading of 237° means nothing at speed; "SW" does.
  * @param {number | null} degrees
  */

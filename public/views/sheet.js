@@ -1,14 +1,14 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, knownKeys, valueOf } from "../lib/store.js";
-import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
-import { bytes, compass, duration } from "../lib/format.js";
+import { knownKeys, valueOf } from "../lib/store.js";
+import { bytes } from "../lib/format.js";
 import * as units from "../lib/units.js";
 import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { FanControl, refreshFanStatus } from "./fan.js";
+import { TripStats } from "./trip-stats.js";
 
 const { button, div, h2 } = van.tags;
 
@@ -77,7 +77,7 @@ export function Sheet() {
       h2({ class: "sheet-heading" }, "Units"),
       UnitsToggle(),
       h2({ class: "sheet-heading" }, "This session"),
-      TripStats(),
+      TripStats(status),
       // No subtitle here, deliberately. Three sections carrying a one-line "what can
       // this do to the bike" was one sentence too many for a single bit of
       // information: the controls in this one are in the grey tier, which says the
@@ -129,43 +129,6 @@ export function Sheet() {
   );
 }
 
-function TripStats() {
-  return div(
-    { class: "stats" },
-    Stat("Distance", () => {
-      chartTick.val;
-      const travelledKm = distanceKm();
-      return travelledKm == null ? "–" : `${units.distance(travelledKm).toFixed(1)} ${units.distanceUnit()}`;
-    }),
-    Stat("Moving", () => {
-      chartTick.val;
-      return duration(movingTimeSeconds());
-    }),
-    Stat("Average", () => {
-      chartTick.val;
-      const average = averageMovingSpeedKmh();
-      return average == null ? "–" : `${units.speed(average).toFixed(0)} ${units.speedUnit()}`;
-    }),
-    Stat("Top", () => {
-      chartTick.val;
-      return `${units.speed(topSpeed()).toFixed(0)} ${units.speedUnit()}`;
-    }),
-    Stat("Altitude", () => {
-      const metres = valueOf("gps_altitude_m");
-      return metres == null ? "–" : `${Math.round(units.altitude(metres))} ${units.altitudeUnit()}`;
-    }),
-    Stat("Heading", () => compass(valueOf("gps_course_deg"))),
-    Stat("Waypoints", () => {
-      const saved = valueOf("waypoint_seq");
-      return saved == null ? "0" : String(Math.round(saved));
-    }),
-    Stat("Satellites", () => {
-      const satellites = valueOf("gps_satellites");
-      return satellites == null ? "–" : String(Math.round(satellites));
-    })
-  );
-}
-
 /**
  * Saves a waypoint from the phone. The same endpoint a Siri Shortcut hits and the same
  * one a long press of the indicator-cancel switch reaches, through the same client in
@@ -184,7 +147,15 @@ function WaypointButton() {
           saving.val = true;
           waypointMessage.val = "saving…";
           try {
-            waypointMessage.val = (await saveWaypoint()).message;
+            const reply = await saveWaypoint();
+            waypointMessage.val = reply.message;
+            if (reply.saved) {
+              // The Waypoints tile above this button asks /status whether any waypoint
+              // belongs to THIS boot, and nothing else refreshes that after a save — so
+              // without this the note here says "Waypoint 1 saved." while the tile two
+              // rows up still reads "none since restart" until the sheet is reopened.
+              void refreshStatus();
+            }
           } finally {
             // saveWaypoint() reports its own failures and never throws, so this is
             // only here to guarantee the button re-enables.
@@ -373,14 +344,6 @@ function UnitsToggle() {
       )
     )
   );
-}
-
-/**
- * @param {string} label
- * @param {() => string} value
- */
-function Stat(label, value) {
-  return div({ class: "stat" }, div({ class: "stat-label" }, label), div({ class: "stat-value" }, value));
 }
 
 /** Refreshes /status while the sheet is open, and once at startup for the log size. */

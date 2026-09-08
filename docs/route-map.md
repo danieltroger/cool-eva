@@ -143,6 +143,19 @@ Not in the dashboard JSON, not in the SQL, not in this file. Three places wanted
 - the despiker — solved by the shape test above rather than a `BETWEEN` on latitude/longitude;
 - the "Distance" tile — reads the bike's own `odometer_can_km` delta, which is exact, needs no `SQRT`, and says nothing about where.
 
+**The waypoint gate does put a `BETWEEN` on latitude and longitude, and it is not an exception to this.** `±90` and `±180` are the planet, not a region: they say a coordinate is a coordinate, and they would read identically in a repository belonging to a bike on another continent. The part of that gate which actually catches a wrong position is a _comparison against the fixes either side of it_ — a difference, never a place. See [Waypoints](#waypoints-are-gated-against-the-track-not-against-a-box) below and `docs/waypoints.md`.
+
+## Waypoints are gated against the track, not against a box
+
+A waypoint (`waypoint_seq`, `waypoint_lat`, `waypoint_lon`) is a copy of the live GPS fix, taken when the rider asks — from the handlebar, the phone's button or Siri. The map draws the corroborated ones as stars and the table below it lists every one in the window with a verdict, including the ones the map refuses.
+
+The gate, and the two constants behind it, are derived in `docs/waypoints.md`. The one thing worth repeating here, because it is the same mistake this file's despiker section warns about from the other direction: **the fix logged immediately before a waypoint is the fix the waypoint copied**, so comparing the two proves nothing. `gps_lat`/`gps_lon` carry a 3 m deadband and a waypoint copies liveState, so the two are equal by construction — on 2026-08-09 the previous `gps_lon` row is byte-identical to the waypoint 148 ms later, and _that row was the corrupt one_. The witness has to be at least five seconds away before it is evidence at all.
+
+Two things the waypoint query does differently from the track query above, both for reasons that do not apply to the track:
+
+- it is driven by `waypoint_seq` and resolves each coordinate as "the last value logged at or before this timestamp", rather than pivoting the three signals on their shared `ts`. They do share one — `record()` stamps all three with a single `now` — but `waypoint_lat`/`waypoint_lon` carry no deadband, so a second save from the same live fix logs _only_ the sequence, and a pivot would hand the map a `NULL` position and the table an accusation. The carried value is exact rather than approximate: suppression happens only when the two values are equal.
+- its despiking is a fixed 0.5°, not the track's scale-free ratio. The witness set only has to be free of excursions big enough to matter at the threshold it is compared against; the track's job is to catch _all_ of them, which is why it cannot use a fixed distance.
+
 ## A charge stop ends a ride
 
 The Rides table splits on charging, not only on GPS gaps. Before that rule the evening of 2026-09-07 read as **one 281-minute, 217 km ride** — with a 21-minute DC stop sitting inside it and its duration counted as riding time. It is really two rides:

@@ -586,6 +586,17 @@ body {
   margin-top: 0.15rem;
 }
 
+/* A second line under a stat's value, for the one tile whose answer is two facts: the
+   Waypoints tile shows where the last one was AND when. Grey and small so the position
+   above stays what the eye lands on. Measured at 390 px: the pair wraps after its comma
+   into a 86 px tile, against 72 px for the row it sits in. */
+.stat-sub {
+  font-size: 0.62rem;
+  color: var(--sub);
+  margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- the sheet's three risk tiers ---------- */
 
 /* Every control in this sheet used to be the same grey rectangle, which meant

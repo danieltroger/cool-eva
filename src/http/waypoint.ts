@@ -25,6 +25,22 @@ import { systemClockTrust } from "../gps/clock.ts";
 const FIX_MAX_AGE_MS = 30_000;
 
 /**
+ * The planet. A decode failure can put a coordinate outside it; nothing else can.
+ *
+ * Exported because public/lib/bounds.js gates the same four signals for the dashboard
+ * and cannot import this file — the dashboard has no build step. That agreement is
+ * asserted by scripts/check-waypoint-endpoint.ts rather than left to trust, the way
+ * cellVoltageKey() and CELL_VOLTAGE_PATTERN are.
+ *
+ * ⚠️ This refuses a NON-POSITION, and that is all. The 2026-08-09 waypoint sits 7 000 km
+ * from where the bike stood and passes every test here, because 130.3 is a legal
+ * longitude — #165 is the gate that would refuse it. docs/waypoints.md §"What each
+ * gate can see".
+ */
+export const LATITUDE_RANGE: [number, number] = [-90, 90];
+export const LONGITUDE_RANGE: [number, number] = [-180, 180];
+
+/**
  * What the endpoint says, for a caller that has to act on it rather than read it.
  *
  * A named type rather than an inline literal, for the reason CLAUDE.md gives about
@@ -56,6 +72,16 @@ export function handleWaypointEndpoint(res: ServerResponse, accept: string | und
   if (!latitude || !longitude) {
     respond(res, accept, { saved: false, message: "No GPS fix yet — waypoint not saved." });
     console.warn("waypoint: refused, no GPS fix has been received");
+    return;
+  }
+
+  if (!plausibleFix(latitude.value, longitude.value)) {
+    // Cheapest and most fundamental of the refusals, so it goes first: a fix that is not
+    // a position on Earth cannot be made into one by being fresh, and the sentence is
+    // more use than "GPS fix is 3 seconds old" would have been.
+    const where = `${latitude.value.toFixed(3)}, ${longitude.value.toFixed(3)}`;
+    respond(res, accept, { saved: false, message: `GPS fix is not a real position (${where}) — waypoint not saved.` });
+    console.warn(`waypoint: refused, fix is not a position on Earth (${where})`);
     return;
   }
 
@@ -122,6 +148,16 @@ export function handleWaypointEndpoint(res: ServerResponse, accept: string | und
 /** How many waypoints this boot — for /status. */
 export function waypointsSaved(): number {
   return waypointCount;
+}
+
+/** Whether a pair of coordinates is a place at all. */
+function plausibleFix(latitude: number, longitude: number): boolean {
+  return (
+    latitude >= LATITUDE_RANGE[0] &&
+    latitude <= LATITUDE_RANGE[1] &&
+    longitude >= LONGITUDE_RANGE[0] &&
+    longitude <= LONGITUDE_RANGE[1]
+  );
 }
 
 /**

@@ -74,6 +74,20 @@ const BY_KEY = {
   "residual_energy_wh": [0, 30_000],
   "gps_altitude_m": [-500, 9000],
   "gps_speed_kmh": [0, 300],
+  // Coordinates, named one at a time rather than given a BY_UNIT rule: seven signals
+  // carry "°" across four different natural ranges — these four, `gps_course_deg`'s
+  // 0…360 and the IMU's ±180 roll and pitch — so a unit rule would have to be their
+  // union and would gate nothing.
+  //
+  // ⚠️ This catches a decode failure that leaves the planet. It CANNOT catch the one
+  // that made this file grow these four lines: a longitude of 130.3 logged where 13.0
+  // belonged is a perfectly legal coordinate, and no range test can see it. That case
+  // is gated where the evidence is — the route map compares a waypoint against the
+  // fixes either side of it. docs/waypoints.md.
+  "gps_lat": [-90, 90],
+  "gps_lon": [-180, 180],
+  "waypoint_lat": [-90, 90],
+  "waypoint_lon": [-180, 180],
   "speed_kmh": [0, 300],
   "motor_rpm": [-12_000, 12_000],
   "aux_12v": [0, 20],
