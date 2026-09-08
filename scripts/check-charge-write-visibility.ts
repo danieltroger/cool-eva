@@ -17,18 +17,14 @@ const { CHARGE_SESSION_MAX_AGE_MS, liveChargeType } = await import("../public/li
 //
 // Run by `npm test` via scripts/run-checks.ts. Takes no arguments.
 //
-// ⚠️ THE BUG, because the numbers alone do not show it. `charge_manager_state` holds 0x23 for a
-// whole DC session — 8399 frames, zero changes, measured off the bus on 2026-09-07 — and
-// src/can/signals.ts only pushes a WebSocket patch when a value CHANGES. So the browser's copy
-// of its timestamp is refreshed ONLY by the 5 s snapshot heartbeat, while `serverTime` advances
-// ~10 times a second off every other signal. With the window also at 5000 ms the age crossed it
-// whenever the heartbeat ran a millisecond late, `liveChargeType()` returned null, `sessionLive`
-// went false, and the entire set-current tile unmounted and remounted. The Pi never saw a stale
-// session at all: its `ageMs()` reads a per-frame monotonic mark, so its age is ~100 ms. Same
-// number, different clocks. docs/dashboard-decisions.md and issue #142 §2.
+// ⚠️ THE BUG. `charge_manager_state` holds 0x23 all session (8399 frames, zero changes, measured),
+// and signals.ts patches only on CHANGE — so the browser's copy of its age is refreshed only by
+// the 5 s heartbeat while serverTime advances ~10×/s. With the window also 5000 ms the age crossed
+// it on any late timer and the whole tile unmounted. The Pi's own age is ~100 ms off a per-frame
+// monotonic mark: same number, different clocks. Full argument, and why charge-mode.js already
+// uses 12 s: public/lib/charge-write.js and issue #142 §2.
 //
-// This drives the REAL store.js staleness logic the way check-connection.ts drives the real
-// connection policy — no browser, no mocking of the thing under test.
+// Drives the REAL store.js staleness logic, as check-connection.ts drives the real link policy.
 
 const failures: string[] = [];
 

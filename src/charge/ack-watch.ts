@@ -2,7 +2,7 @@ import { latestValue, onChange, record } from "../can/signals.ts";
 import { monotonicNow } from "../monotonic.ts";
 import {
   ACK_TIMEOUT_MS,
-  BINDING_LOOKBACK_MS,
+  SAMPLE_HISTORY_MS,
   CHARGE_ACK_CODE,
   describeChargeAck,
   judgeChargeCommand,
@@ -18,17 +18,12 @@ import type { ChargeMode } from "../can/charge-command.ts";
 // src/fan/curve.ts and src/fan/auto.ts, for the same reason: the judgement is replayable and this
 // is not.
 //
-// ⚠️ It watches EVERY charge-current command, not only the automatic controller's. A second
-// mechanism for the manual control is how the two drift apart, and the manual control is what a
-// live test uses.
+// ⚠️ It watches EVERY charge-current command, not only the automatic controller's — a second
+// mechanism for the manual control is how the two drift apart.
 //
-// ⚠️ The acknowledgement signal differs by charge type, and getting this wrong is silent:
-//   DC → `fast_dc_target_a` (0x615 b2), the vehicle's own request to the station.
-//   AC → `charge_limit_a` (0x10A b7 ÷ 7), the committed AC setpoint.
-// `charge_limit_a` reads a flat 0.0 for the whole of a DC session — measured across all three of
-// 2026-09-07 — so keying DC on it would report "not acknowledged" for ever. And neither is
-// `pack_a`, which is what flowed and conflates the VCU accepting the command with the station
-// being able to deliver it. docs/can-0x121-charge-command.md.
+// ⚠️ The acknowledgement signal differs by charge type and getting it wrong is silent: DC reads
+// `fast_dc_target_a`, AC reads `charge_limit_a`, and NEITHER is `pack_a`. Why each, and why
+// charge_limit_a is unusable on DC: docs/can-0x121-charge-command.md § "Confirming a DC command".
 
 /** charge_manager_state (0x610 b7) settled values, as write-runner.ts reads them. */
 const CHARGE_MANAGER_STATE_AC = 0x02;
@@ -62,6 +57,17 @@ export function noteChargeCommandSent(mode: ChargeMode, amps: number): void {
     settle(pending, sentAtMs);
   }
   pending = { mode, amps, sentAtMs };
+  // ⚠️ The verdict must land with NOBODY WATCHING. It used to be computed only when the page
+  // fetched /vcu-write, so an unattended charge — the case this whole feature exists for — recorded
+  // nothing at all. One short-lived timer per command, cleared the moment it settles.
+  clearSettleTimer();
+  settleTimer = setTimeout(() => {
+    settleTimer = null;
+    if (pending) {
+      settle(pending, null);
+    }
+  }, ACK_TIMEOUT_MS + SETTLE_TIMER_MARGIN_MS);
+  settleTimer.unref?.();
   record("charge_cmd_a", amps);
   latest = { commandedAmps: amps, mode, verdict: { kind: "waiting", elapsedMs: 0 }, message: "" };
 }
@@ -71,7 +77,13 @@ export function chargeAckState(): ChargeAckState | null {
   if (pending) {
     // Judged on every read rather than on a timer: the page asks when it renders, and a timer here
     // would be a second clock to keep in step with the one the verdict is measured against.
-    const verdict = judgePending(pending, monotonicNow());
+    const verdict = judgeChargeCommand({
+      commandedAmps: pending.amps,
+      sentAtMs: pending.sentAtMs,
+      nowMs: monotonicNow(),
+      samples: samplesFor(pending),
+      supersededAtMs: null,
+    });
     if (verdict.kind !== "waiting") {
       settle(pending, null);
     } else {
@@ -93,6 +105,7 @@ export function chargeAckState(): ChargeAckState | null {
  * be read as belonging to this one.
  */
 function forgetChargeAck(): void {
+  clearSettleTimer();
   pending = null;
   latest = null;
   samples.length = 0;
@@ -132,6 +145,17 @@ interface PendingCommand {
 
 let pending: PendingCommand | null = null;
 let latest: ChargeAckState | null = null;
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** A beat past the window, so the timer never fires on a verdict that is still legitimately open. */
+const SETTLE_TIMER_MARGIN_MS = 500;
+
+function clearSettleTimer(): void {
+  if (settleTimer) {
+    clearTimeout(settleTimer);
+    settleTimer = null;
+  }
+}
 
 /**
  * Samples per signal, oldest first, trimmed to what a verdict can still need.
@@ -144,40 +168,39 @@ const samples: { key: string; sample: AckSample }[] = [];
 function remember(key: string, amps: number): void {
   const atMs = monotonicNow();
   samples.push({ key, sample: { atMs, amps } });
-  const oldest = atMs - (BINDING_LOOKBACK_MS + ACK_TIMEOUT_MS);
+  const oldest = atMs - (SAMPLE_HISTORY_MS + ACK_TIMEOUT_MS);
   while (samples.length > 0 && samples[0].sample.atMs < oldest) {
     samples.shift();
   }
 }
 
-function judgePending(command: PendingCommand, nowMs: number): ChargeAckVerdict {
+/**
+ * The samples a verdict is judged from.
+ *
+ * ⚠️ ONE path, used by both the live read and the final settle. They used to differ — only the live
+ * one seeded from `latestValue` — so a steady capped charge, which is exactly the case the seed
+ * exists for, read `not-acknowledged` while the command was open and `no-evidence` the instant it
+ * settled. Same command, two answers, decided by which function happened to run.
+ */
+function samplesFor(command: PendingCommand): AckSample[] {
   const key = ACK_SIGNAL[command.mode];
   const forSignal = samples.filter(entry => entry.key === key).map(entry => entry.sample);
-  // ⚠️ Seed the ring with the signal's current value when nothing has changed inside the lookback.
-  // Without it a rock-steady request — exactly what a healthy capped charge looks like — has no
-  // samples at all and every command reads `no-evidence`.
+  // Seeded when nothing has CHANGED inside the history window: the signal is logged on change, so
+  // silence means it is still sitting at its current value, not that it is unknown.
   const current = latestValue(key);
   if (forSignal.length === 0 && current !== null) {
     forSignal.push({ atMs: command.sentAtMs, amps: current });
   }
-  return judgeChargeCommand({
-    commandedAmps: command.amps,
-    sentAtMs: command.sentAtMs,
-    nowMs,
-    samples: forSignal,
-    supersededAtMs: null,
-  });
+  return forSignal;
 }
 
 /** Records a command's final verdict and stops watching it. `supersededAtMs` when a newer one came. */
 function settle(command: PendingCommand, supersededAtMs: number | null): void {
-  const key = ACK_SIGNAL[command.mode];
-  const forSignal = samples.filter(entry => entry.key === key).map(entry => entry.sample);
   const verdict = judgeChargeCommand({
     commandedAmps: command.amps,
     sentAtMs: command.sentAtMs,
     nowMs: supersededAtMs ?? monotonicNow(),
-    samples: forSignal,
+    samples: samplesFor(command),
     supersededAtMs,
   });
   latest = {
@@ -191,5 +214,6 @@ function settle(command: PendingCommand, supersededAtMs: number | null): void {
     record("charge_cmd_ack_ms", verdict.latencyMs);
   }
   console.warn(`charge-ack: ${command.mode.toUpperCase()} ${command.amps} A — ${latest.message}`);
+  clearSettleTimer();
   pending = null;
 }

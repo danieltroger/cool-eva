@@ -199,7 +199,7 @@ function SetButton() {
     ),
     div({ class: "action-note", style: `color:${MUTED}` }, () =>
       commandable()
-        ? "Event frame with no reply — watch the dash's set value and the AC setpoint below to see it take. A full battery caps what actually flows."
+        ? "Event frame with no reply — the Pi watches the bike's own charge request and says below whether it took. A full battery caps what actually flows."
         : ""
     )
   );
@@ -209,8 +209,8 @@ function SetButton() {
  * The last command's outcome, and — once one has landed — where to look to confirm it.
  *
  * The hint is deliberately shown only afterwards: standing at the bike the moment the frame
- * has gone out is the moment "watch charge_limit_a" becomes useful, and before then it is
- * one more line competing with the input.
+ * has gone out is the moment the verdict becomes useful, and before then it is one more line
+ * competing with the input.
  */
 function Outcome() {
   return div({ class: "action-note" }, () => {

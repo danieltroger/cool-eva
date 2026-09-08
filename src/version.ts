@@ -40,11 +40,16 @@ export async function readRunningVersion(): Promise<RunningVersion> {
   }
   const repository = join(dirname(fileURLToPath(import.meta.url)), "..");
   const commit = await gitOutput(repository, ["rev-parse", "--short", "HEAD"]);
-  // A failed `status` must not be read as a clean tree: that would claim the running code is the
-  // committed code on exactly the evidence we do not have. Unknown collapses into the label.
-  const changes = commit === null ? null : await gitOutput(repository, ["status", "--porcelain"]);
+  // ⚠️ `--untracked-files=no`: the question is whether the RUNNING code differs from the committed
+  // code, and an untracked ride-log or scratch file is not that. Without it the Pi, which
+  // accumulates both, would report `+dirty` permanently and the flag would stop meaning anything.
+  const changes =
+    commit === null ? null : await gitOutput(repository, ["status", "--porcelain", "--untracked-files=no"]);
   const dirty = changes !== null && changes.length > 0;
-  const label = commit === null ? "unknown" : dirty ? `${commit}+dirty` : commit;
+  // ⚠️ A failed `status` is NOT a clean tree. Saying `09c3b84` when we could not check would claim
+  // the running code is the committed code on exactly the evidence we do not have.
+  const label =
+    commit === null ? "unknown" : changes === null ? `${commit}+unverified` : dirty ? `${commit}+dirty` : commit;
   cached = { commit, dirty, label };
   return cached;
 }

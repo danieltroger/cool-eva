@@ -440,8 +440,8 @@ export const ACK_FIXTURE_COMMANDS: AckFixtureCommand[] = [
     source: "dash",
     atMs: 1224805,
     amps: 50,
-    expected: "took",
-    why: "re-capped after the release, with the clamp already down at 20 A",
+    expected: "station-limited",
+    why: "the clamp already had the request at 20 A and no sample arrived in the window — asking for 50 while the pack will not give it is the charger's answer. ⚠️ This read `took` until the diff review: with no post-command evidence the adjudicator was echoing the pre-command value back as a success",
   },
 ];
 
@@ -457,4 +457,77 @@ export const ACK_FIXTURE_COMMANDS: AckFixtureCommand[] = [
 export const ACK_FIXTURE_COMMAND_TIMES_MS: number[] = [
   0, 61074, 383387, 498619, 500355, 508298, 510374, 1190838, 1193123, 1195828, 1224805, 1372576, 1407098, 1575465,
   1580770,
+];
+
+/**
+ * CONSTRUCTED cases, and the file says so — unlike everything above, these were never on a bus.
+ *
+ * ⚠️ They exist because the 2026-09-07 data cannot supply them. It is almost entirely saw-tooth, so
+ * it contains exactly one unambiguous take and no silent-signal case at all; a check built only on
+ * it would leave the `took` path barely exercised and the worst failure mode untested. Real frames
+ * supply the negatives, which is the direction that matters; these supply the shapes the day did
+ * not happen to produce. scripts/freeze-frame-fixtures.ts makes the same split for the same reason.
+ */
+export const ACK_SYNTHETIC_CASES: {
+  name: string;
+  commandedAmps: number;
+  samples: AckFixtureSample[];
+  supersededAtMs: number | null;
+  expected: string;
+  why: string;
+}[] = [
+  {
+    name: "dead command in a saw-tooth trough",
+    commandedAmps: 47,
+    samples: [
+      { atMs: -40000, amps: 71 },
+      { atMs: -1000, amps: 20 },
+    ],
+    supersededAtMs: null,
+    expected: "station-limited",
+    why: "⚠️ THE REGRESSION CASE. The command does nothing and the request never moves. An earlier adjudicator called this `took` — it treated the 60 s envelope as the binding test, so a trough counted as binding and the quiet window as success",
+  },
+  {
+    name: "clean reduction that holds",
+    commandedAmps: 50,
+    samples: [
+      { atMs: -1000, amps: 73 },
+      { atMs: 400, amps: 50 },
+      { atMs: 5000, amps: 50 },
+    ],
+    supersededAtMs: null,
+    expected: "took",
+    why: "the shape a working DC command makes: above the ask, then at or under it and staying there",
+  },
+  {
+    name: "reduction the bike ignores",
+    commandedAmps: 47,
+    samples: [
+      { atMs: -1000, amps: 73 },
+      { atMs: 4000, amps: 71 },
+    ],
+    supersededAtMs: null,
+    expected: "not-acknowledged",
+    why: "what 2026-09-07 looked like: the request stays above the ask for the whole window",
+  },
+  {
+    name: "reduction with the signal silent",
+    commandedAmps: 47,
+    samples: [{ atMs: -1000, amps: 73 }],
+    supersededAtMs: null,
+    expected: "not-acknowledged",
+    why: "logged on change, so silence means the request is still 73 A — the one direction silence is evidence in",
+  },
+  {
+    name: "sweep through the commanded value is not a take",
+    commandedAmps: 50,
+    samples: [
+      { atMs: -1000, amps: 20 },
+      { atMs: 2000, amps: 50 },
+      { atMs: 4000, amps: 73 },
+    ],
+    supersededAtMs: null,
+    expected: "station-limited",
+    why: "the saw-tooth recovering passes through 50 on its way to 73; reaching the value is not settling at it",
+  },
 ];

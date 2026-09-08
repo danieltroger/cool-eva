@@ -1,4 +1,9 @@
-import { ACK_FIXTURE_COMMANDS, ACK_FIXTURE_COMMAND_TIMES_MS, ACK_FIXTURE_SAMPLES } from "./charge-ack-fixtures.ts";
+import {
+  ACK_FIXTURE_COMMANDS,
+  ACK_FIXTURE_COMMAND_TIMES_MS,
+  ACK_FIXTURE_SAMPLES,
+  ACK_SYNTHETIC_CASES,
+} from "./charge-ack-fixtures.ts";
 import {
   ACK_SETTLE_MS,
   ACK_TIMEOUT_MS,
@@ -35,19 +40,51 @@ for (const command of ACK_FIXTURE_COMMANDS) {
   }
 }
 
-// ── §2 both true negatives and both true positives really are present ──────
+// ── §2 the constructed shapes the real day did not produce ─────────────────
 //
-// A check whose fixture happens to contain only one kind of outcome proves much less than it looks
-// like it does, and an earlier draft of this design had exactly that problem. Counted rather than
-// assumed, so trimming the fixture fails the build.
+// ⚠️ Including the regression case for the worst bug this adjudicator has had: a command that did
+// nothing, sent while a saw-tooth trough held the request below it, scored `took`. Both of the
+// fixture's original "true positives" came from that path — they were the pre-command value echoed
+// back, and a dead transmit path produced a byte-identical sample stream.
+for (const synthetic of ACK_SYNTHETIC_CASES) {
+  const verdict = judgeChargeCommand({
+    commandedAmps: synthetic.commandedAmps,
+    sentAtMs: 0,
+    nowMs: ACK_TIMEOUT_MS,
+    samples: synthetic.samples,
+    supersededAtMs: synthetic.supersededAtMs,
+  });
+  if (verdict.kind !== synthetic.expected) {
+    failures.push(`§2 "${synthetic.name}": got ${verdict.kind}, expected ${synthetic.expected} — ${synthetic.why}`);
+  }
+}
+
+// ── §2b the real trace still supplies the negatives, and nothing is a free pass ──
+//
+// Counted rather than assumed, so trimming the fixture fails the build. Two true negatives from
+// real frames is the direction that matters; `took` is proved by §2's constructed shapes and by
+// the one unambiguous take the day contains.
 const outcomes = ACK_FIXTURE_COMMANDS.map(command => judge(command.atMs, command.amps).kind);
 const tookCount = outcomes.filter(kind => kind === "took").length;
 const missedCount = outcomes.filter(kind => kind === "not-acknowledged").length;
-if (tookCount < 2 || missedCount < 2) {
+if (missedCount < 2 || tookCount < 1) {
   failures.push(
-    `§2 the fixture must exercise at least two true positives and two true negatives; got ` +
-      `${tookCount} took and ${missedCount} not-acknowledged`
+    `§2b the real trace must still supply at least two true negatives and one true positive; got ` +
+      `${missedCount} not-acknowledged and ${tookCount} took`
   );
+}
+// ⚠️ No verdict may come from an empty window. That is exactly how the false `took` arose.
+for (const command of ACK_FIXTURE_COMMANDS) {
+  const verdict = judge(command.atMs, command.amps);
+  const after = ACK_FIXTURE_SAMPLES.filter(
+    sample => sample.atMs > command.atMs && sample.atMs <= command.atMs + ACK_TIMEOUT_MS
+  );
+  if (verdict.kind === "took" && after.length === 0) {
+    failures.push(
+      `§2b ${command.amps} A at +${(command.atMs / 1000).toFixed(1)} s reads took with NO post-command sample — ` +
+        `that is the pre-command value being echoed back as a success`
+    );
+  }
 }
 
 // ── §3 the naive first-crossing test would have been wrong ─────────────────
@@ -131,6 +168,8 @@ const tally = [...new Set(outcomes)].map(kind => `${outcomes.filter(o => o === k
 console.log(
   `✓ all ${ACK_FIXTURE_COMMANDS.length} charge-current commands of 2026-09-07 adjudicate as their known outcomes ` +
     `(${tally}); ` +
+    `plus ${ACK_SYNTHETIC_CASES.length} constructed shapes the day did not produce, including the dead command in a ` +
+    `saw-tooth trough that an earlier adjudicator scored as took; ` +
     `${naiveWrong.length} of the failures would have fooled a first-crossing test, so the envelope is doing real ` +
     `work; the settle grace changes no verdict at 0 or ${2 * ACK_SETTLE_MS} ms; a binding command still reads ` +
     `waiting halfway through its window; the log codes are distinct; and nothing in the adjudicator reads pack_a`

@@ -24,21 +24,14 @@ import { CURRENT_FRAME_GAP_MS } from "../src/vcu/write-session.ts";
 //
 // Run by `npm test` via scripts/run-checks.ts. Takes no arguments.
 //
-// ⚠️ WHY THIS EXISTS, and what it does and does not guard. On 2026-09-07 three Pi-sent DC
-// charge-current commands changed the dash's displayed number and moved no current at all.
-// The cause was a stale deploy: the bike was running `93e071a`, five days old, from before
-// the 0x120 commit twin landed, so it was sending the 0x121 half alone — the half already
-// proven not to commit. §1 of issue #142 has the evidence.
-//
-// So this check cannot see the failure that actually happened — a deploy is not a code
-// change, and every assertion here would have passed all day on 2026-09-07. What reports the
-// running commit is a separate thing (the startup banner and /vcu-write's status payload).
-// What this DOES guard is the shape going wrong again in code: §1 below fails the moment the
+// ⚠️ WHAT IT DOES AND DOES NOT GUARD. The 2026-09-07 failure was a STALE DEPLOY, so every
+// assertion here would have passed all day; reporting the running commit is what catches that
+// (src/version.ts). This guards the shape going wrong again in CODE: §1 fails the moment the
 // builder emits one frame instead of two.
 //
-// Provenance is the point. scripts/charge-command-fixtures.ts is a real candump, byte for
-// byte, so "the frame we send is the frame the dash sends" is a claim about the motorcycle
-// and not about our own arithmetic.
+// The fixture is a real candump, byte for byte, so "the frame we send is the frame the dash
+// sends" is a claim about the motorcycle rather than about our own arithmetic.
+// docs/can-0x121-charge-command.md § "the deploy, not the design".
 
 const failures: string[] = [];
 

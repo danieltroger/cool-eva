@@ -75,14 +75,15 @@ export const ACK_TIMEOUT_MS = 10_000;
 export const ACK_SETTLE_MS = 1_000;
 
 /**
- * How far back to look for what the request was doing BEFORE the command.
+ * How far back a sample may be and still count as "what the request was when we commanded".
  *
- * ⚠️ Not the single previous sample. During a saw-tooth the instantaneous value is wherever the
- * sweep happens to be — at 17:16:55 on 2026-09-07 it read 45 A one moment before a 50 A command,
- * which would score a genuine, effective cap as "nothing to observe". Sixty seconds spans two
- * saw-tooth periods, so the envelope reflects what the charge is really doing.
+ * ⚠️ Used to FIND that value, never to widen what counts as binding. An earlier version took the
+ * 60 s ENVELOPE as the binding test, so a command sent in a saw-tooth trough — request sitting at
+ * 20 A, envelope 71 A — counted as binding, and then any quiet window read as success. A command
+ * that did nothing scored `took`. Whether a reduction can bind is a question about the request at
+ * the moment of sending, and nothing else.
  */
-export const BINDING_LOOKBACK_MS = 60_000;
+export const SAMPLE_HISTORY_MS = 60_000;
 
 /** The request is a whole-amp byte, so treat anything within 1 A as equal. */
 const AMP_TOLERANCE = 1;
@@ -96,49 +97,71 @@ const AMP_TOLERANCE = 1;
  */
 export function judgeChargeCommand(input: ChargeAckInput): ChargeAckVerdict {
   const { commandedAmps, sentAtMs, nowMs, samples, supersededAtMs, settleMs = ACK_SETTLE_MS } = input;
-  const before = samples.filter(sample => sample.atMs <= sentAtMs && sample.atMs >= sentAtMs - BINDING_LOOKBACK_MS);
+  const before = samples.filter(sample => sample.atMs <= sentAtMs && sample.atMs >= sentAtMs - SAMPLE_HISTORY_MS);
   const lastBefore = before.at(-1) ?? null;
   if (lastBefore === null) {
     return { kind: "no-evidence" };
   }
-  const envelopeBefore = Math.max(...before.map(sample => sample.amps));
+  const supersededEarly = supersededAtMs !== null && supersededAtMs <= sentAtMs + ACK_TIMEOUT_MS;
   const windowEnds = Math.min(sentAtMs + ACK_TIMEOUT_MS, supersededAtMs ?? Number.POSITIVE_INFINITY);
   const after = samples.filter(sample => sample.atMs > sentAtMs && sample.atMs <= windowEnds);
 
-  if (envelopeBefore > commandedAmps + AMP_TOLERANCE) {
-    // A binding reduction: the only case where the bike must visibly do something.
+  if (lastBefore.amps > commandedAmps + AMP_TOLERANCE) {
+    // A binding reduction: the request is above what we asked for, so the bike must visibly move.
     const settled = after.filter(sample => sample.atMs >= sentAtMs + settleMs);
-    // ⚠️ No samples is NOT no evidence. The signal is logged on change, so silence means the value
-    // is still whatever it last was — which for a binding command is still too high.
-    const heldAmps = settled.length > 0 ? Math.max(...settled.map(sample => sample.amps)) : lastBefore.amps;
-    if (heldAmps <= commandedAmps + AMP_TOLERANCE) {
-      const firstAtOrUnder = after.find(sample => sample.amps <= commandedAmps + AMP_TOLERANCE);
-      return {
-        kind: "took",
-        fromAmps: envelopeBefore,
-        toAmps: heldAmps,
-        latencyMs: firstAtOrUnder ? firstAtOrUnder.atMs - sentAtMs : 0,
-      };
+    if (settled.length > 0) {
+      const heldAmps = Math.max(...settled.map(sample => sample.amps));
+      if (heldAmps <= commandedAmps + AMP_TOLERANCE) {
+        const firstAtOrUnder = after.find(sample => sample.amps <= commandedAmps + AMP_TOLERANCE);
+        return {
+          kind: "took",
+          fromAmps: lastBefore.amps,
+          toAmps: heldAmps,
+          latencyMs: firstAtOrUnder ? firstAtOrUnder.atMs - sentAtMs : 0,
+        };
+      }
+      if (nowMs < windowEnds) {
+        return { kind: "waiting", elapsedMs: nowMs - sentAtMs };
+      }
+      return supersededEarly ? { kind: "superseded" } : { kind: "not-acknowledged", heldAmps };
     }
     if (nowMs < windowEnds) {
       return { kind: "waiting", elapsedMs: nowMs - sentAtMs };
     }
-    if (supersededAtMs !== null && supersededAtMs <= sentAtMs + ACK_TIMEOUT_MS) {
-      return { kind: "superseded" };
-    }
-    return { kind: "not-acknowledged", heldAmps };
+    // ⚠️ No post-settle sample, and the signal is logged on change — so the request is still
+    // whatever it was, which for a binding reduction is still too high. This is the ONE direction
+    // silence is evidence in; the opposite reading is what produced a false `took`.
+    return supersededEarly ? { kind: "superseded" } : { kind: "not-acknowledged", heldAmps: lastBefore.amps };
   }
 
   if (commandedAmps > lastBefore.amps + AMP_TOLERANCE) {
     // An increase. The VCU honours these, but only as far as the station and the pack allow, so
     // failing to reach the number is the charger's answer and not ours. Never a failure.
-    const reached = after.find(sample => sample.amps >= commandedAmps - AMP_TOLERANCE);
-    if (reached) {
-      return { kind: "took", fromAmps: lastBefore.amps, toAmps: reached.amps, latencyMs: reached.atMs - sentAtMs };
+    //
+    // ⚠️ Reaching the value is not enough: during a saw-tooth the request sweeps UP through every
+    // value on its way to the ceiling, so a first-crossing test would score the sweep as a take.
+    // It must reach the commanded value AND not overshoot it — that is what settling at a new cap
+    // looks like, and what a sweep past it does not.
+    const settledAtCap =
+      after.some(sample => sample.amps >= commandedAmps - AMP_TOLERANCE) &&
+      after.every(sample => sample.amps <= commandedAmps + AMP_TOLERANCE);
+    if (settledAtCap) {
+      const reached = after.find(sample => sample.amps >= commandedAmps - AMP_TOLERANCE);
+      return {
+        kind: "took",
+        fromAmps: lastBefore.amps,
+        toAmps: reached ? reached.amps : commandedAmps,
+        latencyMs: reached ? reached.atMs - sentAtMs : 0,
+      };
     }
     if (nowMs < windowEnds) {
       return { kind: "waiting", elapsedMs: nowMs - sentAtMs };
     }
+    if (supersededEarly) {
+      return { kind: "superseded" };
+    }
+    // ⚠️ Only samples from inside the window, never the pre-command reading: reporting "the charger
+    // is giving 20 A" off a minute-old value states a measurement that was never taken.
     const best = after.length > 0 ? Math.max(...after.map(sample => sample.amps)) : lastBefore.amps;
     return { kind: "station-limited", askedAmps: commandedAmps, gotAmps: best };
   }

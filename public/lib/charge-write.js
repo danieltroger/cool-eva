@@ -19,20 +19,13 @@ import { armed } from "./arming.js";
 /**
  * How stale charge_manager_state may be before this treats the session as gone.
  *
- * ⚠️ 12 s, and it MUST stay above ws.ts's HEARTBEAT_MS (5000). It used to be 5000 — the same
- * number the Pi uses — on the reasoning that the two should agree. They cannot: the Pi's
- * `ageMs()` reads `lastSeenMonotonic`, refreshed on EVERY 0x610 frame (~10 Hz), so its age is
- * ~100 ms and never trips. The browser only learns a signal's age from a WebSocket message, and
- * `record()` sends a patch only when a value CHANGES — charge_manager_state holds 0x23 for a
- * whole DC session (8399 frames, zero changes, measured 2026-09-07), so the browser's copy is
- * refreshed ONLY by the 5 s snapshot heartbeat while serverTime advances ~10 times a second.
- * With both numbers at 5000 the age crossed the window whenever the heartbeat was a millisecond
- * late, `liveChargeType()` returned null, and the whole set-current tile unmounted and remounted.
- * That was the "layout shift" on the charge tab. Same number, different clocks.
- *
- * charge-mode.js already learned this — its CONTACTOR_LIVE_MS is 12 s for the same reason. Any
- * window at or below HEARTBEAT_MS is a race by construction; check-charge-write-visibility.ts §2
- * asserts this one stays above it.
+ * ⚠️ 12 s, and it MUST stay above ws.ts's HEARTBEAT_MS (5000). It used to be 5000 to "match the
+ * Pi", which cannot work: the Pi's `ageMs()` is refreshed by every 0x610 frame (~10 Hz), while the
+ * browser learns an age only from a WebSocket message and `record()` patches only on CHANGE —
+ * charge_manager_state holds 0x23 all session (8399 frames, zero changes), so the browser's copy is
+ * refreshed only by the heartbeat. Same number, different clocks, and the tile unmounted on every
+ * late timer. charge-mode.js already learned this; its CONTACTOR_LIVE_MS is 12 s.
+ * check-charge-write-visibility.ts §2 asserts this stays above the heartbeat.
  */
 export const CHARGE_SESSION_MAX_AGE_MS = 12_000;
 

@@ -8,20 +8,14 @@
 // Setting the current is a PAIR, the exact mirror of the stop below: the 0x121 alone moves only
 // the dash's DISPLAYED (pending) value, and the 0x120 request-twin (opcode | 0x80) COMMITS it.
 //
-// ⚠️ Two separate proofs, and they used to be conflated here. AC was proven on-bike 2026-09-03
-// (opcode 0x1A, ceiling 0x0F): a 0x121-only inject left charge_limit_a unmoved while the dash
-// showed the new number, and replaying the pair committed it with no key and no dial. DC was only
-// ASSERTED from that until 2026-09-07, when the dash's own DC frames were captured — twelve pairs,
-// `98 ff <amps> 00 …` then `18 ff <amps> 01 4b …`, 4.2-10.1 ms apart, which is byte for byte what
-// this builder already emitted. scripts/charge-command-fixtures.ts holds them and
-// scripts/check-charge-command.ts round-trips against them.
+// ⚠️ AC was proven on-bike 2026-09-03; DC was ASSERTED from it until the dash's own DC frames were
+// captured 2026-09-07 — twelve pairs, byte for byte what this builder already emitted.
+// scripts/charge-command-fixtures.ts holds them, scripts/check-charge-command.ts round-trips them.
 //
-// Field layout: b2 = amps 1:1 on both (AC dash sent 1a ff 01/02/03 01 0f … for 1/2/3 A; DC 0x23…0x4b
-// for 35…75 A). The AC ceiling in b4 is 0x0f = 15 — the pilot/cable rating, NOT ac_supply_limit_a
-// (31), likely charger-specific, so echo the dash's last b4; a wrong one makes the VCU reject and
-// fall back to ~10 A. The DC ceiling is the static 75 (fast_dc_limit_max_a), confirmed as b4 = 0x4b
-// in all twelve captured DC commands. The 0x120 twin's tail differs from the 0x121: b3=0/b4=0, not
-// b3=1/b4=ceiling. See docs/can-0x121-charge-command.md.
+// b2 = amps 1:1 on both. The AC ceiling (b4 = 0x0f) is the pilot/cable rating and is likely
+// charger-specific, so echo the dash's last b4; a wrong one makes the VCU fall back to ~10 A. The
+// DC ceiling is the static 75, seen as b4 = 0x4b in all twelve captured commands. The 0x120 twin's
+// tail differs from the 0x121: b3=0/b4=0. Every proof and its date: docs/can-0x121-charge-command.md.
 //
 // Stopping a charge is a DIFFERENT command, cracked 2026-08-25 by a whole-bus capture of the
 // rider's two-press Mode stop: the dash puts a PAIR on the bus — 0x120 `96 ff 01 …` AND 0x121
