@@ -1009,7 +1009,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 32
       },
@@ -1039,6 +1039,176 @@
         }
       ],
       "title": "Throttle",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cool-eva-sqlite"
+      },
+      "description": "The inverter's own torque pair off CAN 0x02C at 50 Hz — drive_torque_cmd_nm, what the VCU asked for, against drive_torque_feedback_nm, what the inverter reports having delivered — with the Connectivity Hub's motor_torque_nm dashed behind them as a second, independent path to the same quantity. All three carry the same 0.5 Nm deadband deliberately, so comparing them is honest rather than an artefact of one being logged more finely than another.\n\nRead the GAP, not the lines. The two inverter traces sit on top of each other almost always: over the 300 450 rows in rides.db where both changed inside the same frame and therefore share a timestamp, the median command − delivery is +0.2 Nm and the 1st-99th percentile band is −4.8 to +4.6 Nm, with only 24 rows past 20 Nm. So a separation wide enough to see is the event worth looking at, and a sustained one with the command above the delivery is the inverter not meeting the demand — torque limiting, a thermal derate, or an intervention. Zoom in to read it: over a whole ride the three traces are one band and only the extremes separate visibly.\n\n⚠️ A BREAK IN A LINE IS A DEAD TRANSPORT, NOT A DEAD MOTOR. The hub and the CAN pair fail independently, and the hub fails far more: on 2026-09-07 it was silent for 8.19 h while the inverter pair kept logging, in one stretch of 5.3 h covering 158 275 CAN rows. That is what insertNulls = 60000 is for — NOT spanNulls, which does nothing here. Each target returns its own frame, so there are no nulls between points to span; the gap is simply a long segment between two real samples, and a line chart draws it as a straight line whatever spanNulls says. Measured before the setting was found: the hub drew a flat line at 25 Nm across the whole 5.3 h dropout, beside two inverter traces swinging −62 to +215 Nm, which reads as the two paths disagreeing rather than as one being unplugged. 60 s is chosen off the gap distribution, which is bimodal — hub p99 is 1.31 s, then nothing until the shortest real dropout at 1.8 min. See docs/can-decode-findings.md §0x02C and grafana/README.md.\n\n⚠️ The two inverter series only exist from 2026-08-19, when 0x02C decoding landed. An earlier ride draws the hub trace alone; that is a gap in the log, not a dead inverter.\n\nAll three queries exclude rows stamped past 2033 — the 2060 clock corruption described in grafana/README.md, which motor_torque_nm has 851 of and the inverter pair none. Kept uniform across the three so the shapes match.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": 60000,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 60000,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix:Nm"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Commanded"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Delivered"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Hub reported"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 40,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Commanded\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'drive_torque_cmd_nm' AND r.ts BETWEEN $__from AND $__to\n  AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "A",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Delivered\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'drive_torque_feedback_nm' AND r.ts BETWEEN $__from AND $__to\n  AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "B",
+          "timeColumns": ["time"]
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cool-eva-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT r.ts/1000.0 AS time, r.value AS \"Hub reported\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'motor_torque_nm' AND r.ts BETWEEN $__from AND $__to\n  AND r.ts < 2000000000000\nORDER BY r.ts",
+          "refId": "C",
+          "timeColumns": ["time"]
+        }
+      ],
+      "title": "Inverter torque — commanded vs delivered",
       "type": "timeseries"
     },
     {

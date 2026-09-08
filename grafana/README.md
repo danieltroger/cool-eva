@@ -56,6 +56,10 @@ So: return `time`, `metric` and a text `value`, set `queryType: "table"`, and ad
 
 **Grafana keys a separate y-scale off each distinct `axisLabel`.** Setting the label on one of three right-axis series produces three stacked right axes. All series sharing an axis must share the label string exactly.
 
+**To break a line across a transport dropout, the setting is `insertNulls`. `spanNulls` is a no-op on these panels.** Each target here returns its own frame with its own time column, so a series has no nulls in it — a gap in the data is just a long segment between two real samples, and a line chart connects it whatever `spanNulls` is set to. `spanNulls: 60000` was tried first on `ride-summary.json`'s **Inverter torque** panel and changed nothing on screen. `insertNulls: <ms>` ("Disconnect values" in the UI) is what puts a null in the gap and breaks the line.
+
+⚠️ **This makes several `spanNulls: true` settings in these dashboards decorative, and at least one panel description wrong about what it does** — "Motor power and torque" credits `spanNulls` for drawing "exactly what was recorded" while in fact holding `motor_torque_nm` flat across BLE dropouts of hours. It matters wherever two independently-transported signals share one axis: a held line next to a live one reads as the two sources disagreeing, which is exactly the "looks like a finding" failure this file warns about elsewhere. Pick the threshold off the signal's own gap distribution — for the torque signals the populations are three orders of magnitude apart (p99 1.31 s against a shortest real dropout of 1.8 min), so 60 s is safe; where they are not that separated, as with the module temperatures below, no threshold works and the answer is a dedicated liveness signal instead.
+
 **Never change a provisioned dashboard's `uid` in place.** The file provisioner then fails on every sync with `could not resolve dashboards:uid:… Dashboard not found`, permanently. Change the title instead.
 
 ## Querying log-on-change data

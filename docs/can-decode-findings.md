@@ -64,6 +64,35 @@ The other six bytes read all-zero across the whole capture. The `.xdbc` splits t
 
 **b4-7 is `D_RUN_TMR`**, a u32 that reads 0 in all 20 429 frames. Not decoded: there is nothing to decode, and recording that it is dead is more useful than a key that only ever writes 0.
 
+### The command-delivery gap, measured on stored rows
+
+Recorded 2026-09-08, when `ride-summary.json` gained the **Inverter torque — commanded vs delivered** panel and needed a number for what "normal" looks like. Both signals are decoded from the **same frame**, so whenever both move past the 0.5 Nm deadband on one frame they are written under one timestamp — which makes an exact-`ts` join legitimate here and a carry-forward join unnecessary. **300 450 such paired rows** in `rides.db`:
+
+| statistic                 | value              |
+| ------------------------- | ------------------ |
+| median command − delivery | **+0.2 Nm**        |
+| mean                      | +0.159 Nm          |
+| 1st-99th percentile       | **−4.8 … +4.6 Nm** |
+| beyond ±20 Nm             | 24 rows (0.008 %)  |
+| full range                | −50.4 … +41.4 Nm   |
+
+This agrees with the **+0.10 Nm** ordinary gap quoted in the ABS section below, which was measured over a different and much smaller window, and it is the quantitative form of the r = +0.9916 above. The practical consequence for anyone reading the panel: the two traces overlap almost everywhere, so **a visible separation is the event**, not the baseline.
+
+### ⚠️ The hub and the CAN pair fail independently, and the hub fails far more
+
+The Connectivity Hub's `motor_torque_nm` is a second path to this same quantity over BLE, which is why it carries the same 0.5 Nm deadband. It is **not** an equally reliable one. Measured over 2026-09-07, a single ride day:
+
+- The hub was silent for **8.19 h** in stretches where the inverter pair kept logging — one of them **5.3 h** (12:17-17:37 UTC) spanning **158 275** CAN rows.
+- Gap distribution is sharply bimodal. Hub: p50 0.06 s, p95 0.41 s, **p99 1.31 s**, then nothing until the shortest real dropout at **1.8 min**. CAN pair: p50 0.02 s, p99 0.72 s.
+
+Two things follow, and the second is the one that bites.
+
+**Drawing the line straight through a dropout manufactures a false finding.** Observed on screen before the fix: the hub drew a flat line at 25 Nm across the whole 5.3 h window, beside two inverter traces swinging −62 to +215 Nm. That renders as the two measurement paths disagreeing violently, which is a real and alarming fault, when the truth is that a BLE link was down and CAN was fine. Per `grafana/README.md`'s own standard — a panel failure that looks like an answer is the worst shape available — that is the failure to design out.
+
+**The setting that does it is `insertNulls`, and `spanNulls` is a red herring.** ⚠️ The first attempt set `spanNulls: 60000` and changed nothing, because each target returns its own frame and there are no nulls between points to span: the dropout is one long segment between two real samples, which a line chart connects whatever `spanNulls` says. `insertNulls: 60000` breaks the segment by putting a null in the gap. The threshold is chosen off the bimodal distribution above — 60 s sits three orders of magnitude clear of the p99 and well under the shortest real dropout — so every normal gap still bridges and every observed dropout breaks. Verified both ways in Grafana 11.3: at a 2-minute zoom the traces stay continuous and a 35 s hub gap is still bridged; over the 6¾ h window the hub trace stops at 12:17 and resumes at 17:37. The argument in `grafana/README.md` against a bounded threshold does not carry over — it is about module temperatures, where a healthy sensor goes 48 minutes between samples so no cutoff separates silent from steady.
+
+⚠️ **The neighbouring "Motor power and torque" panel holds `motor_torque_nm` across these dropouts**, and its description credits `spanNulls: true` for drawing "exactly what was recorded". Both halves of that panel are hub signals, so they go silent together and it does not invite a cross-path comparison — the misreading above needs two paths on one axis. Left alone deliberately rather than fixed in passing; if it ever gains a CAN series it needs `insertNulls` too.
+
 ---
 
 ## 0x0A0 — `ABS_INFO`
