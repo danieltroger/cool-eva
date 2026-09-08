@@ -1,7 +1,6 @@
-import { execFile } from "child_process";
+import { spawn } from "child_process";
 import { open, rename, rm } from "fs/promises";
 import { dirname } from "path";
-import { promisify } from "util";
 import type { FileHandle } from "fs/promises";
 
 // Getting bytes onto the SD card, on a Pi that loses power with the bike every time.
@@ -16,8 +15,6 @@ import type { FileHandle } from "fs/promises";
 // ⚠️ Every path closes its handle in a `finally`. Both callers of appendDurably catch and
 // carry on by design, and a dying card is a PERSISTENT EIO — so a handle leaked on the
 // flush failure is one fd every 30 s until EMFILE takes the whole service down with it.
-
-const execFileAsync = promisify(execFile);
 
 /**
  * How long we WAIT for `sync(1)` — never how long it takes.
@@ -171,7 +168,11 @@ export async function syncDirectory(directory: string): Promise<void> {
  * the machine running the suite.
  */
 export async function syncFilesystems(command = "sync"): Promise<string | null> {
-  const child = execFile(command, []);
+  // spawn with stdio "ignore" rather than execFile: execFile always pipes stdout/stderr, and
+  // those pipes keep the event loop alive on their own — measured, unref()ing the child alone
+  // still held the process for the full 8 s of a wedged flush. `sync` says nothing anyway.
+  // ../http/update.ts spawns its restart the same way and for the same reason.
+  const child = spawn(command, [], { stdio: "ignore" });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const finished = new Promise<string | null>(resolve => {
     child.once("error", error => resolve(`\`${command}\` could not be run: ${(error as Error).message}`));
@@ -203,6 +204,9 @@ export async function syncFilesystems(command = "sync"): Promise<string | null> 
     // Unref rather than kill: the whole point above is that a signal does not stop a sync.
     // Killing it would only stop US waiting, which the race has already done.
     child.unref();
+    // Both listeners go too — a resolved race leaves them attached to a child that may run
+    // for minutes, and the closure they hold is the whole promise chain above.
+    child.removeAllListeners();
   }
 }
 

@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rm } from "fs/promises";
+import { mkdir, readFile, rm } from "fs/promises";
 import { join } from "path";
 import { openDeferredAppend, replaceFileDurably, syncDirectory } from "../storage/durable.ts";
 import {
@@ -11,7 +11,6 @@ import {
   type VcuParameterSnapshot,
 } from "./snapshot.ts";
 import { selectParameterTable } from "./param-table.ts";
-import type { FileHandle } from "fs/promises";
 
 // Where a parameter sweep's results live on disk, and the rules about them that are worth
 // more than the code implementing them. Each is argued in docs/vcu-parameters.md §14; all

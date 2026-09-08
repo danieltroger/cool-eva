@@ -37,10 +37,15 @@ import type { VcuParameterRow } from "../src/vcu/snapshot.ts";
 // bytes through the same inode — the very path by which a cut hands it a hole — while a
 // rename leaves that reader on the complete old file and moves the inode.
 //
-// ⚠️ Two mutations this cannot catch, listed so nobody assumes otherwise: deleting the
-// `datasync()` inside flush() while leaving `counters.flushes` beside it, and syncDirectory
-// warning instead of throwing when the FSYNC (not the open) fails. Neither is observable
-// from userspace on a healthy filesystem.
+// ⚠️ Four mutations this cannot catch, listed so nobody assumes otherwise. It catches the
+// DELETION of a flush, never its misplacement, and it cannot provoke an fsync that fails:
+//   1. delete `datasync()` inside flush(), leaving `counters.flushes` beside it
+//   2. MOVE flush() to after rename() in replaceFileDurably — the counter still moves
+//   3. syncDirectory warning instead of throwing when the FSYNC (not the open) fails
+//   4. revert openDeferredAppend's try/catch, the leak B1 of the diff review was about
+// 2 and 4 are ordering and cleanup on paths whose failure needs a real EIO to reach. The
+// fsync-before-rename ordering in particular is held by code structure and review, NOT by
+// anything below — do not read a green run as covering it.
 
 const execFileAsync = promisify(execFile);
 const generateKeyPairAsync = promisify(generateKeyPair);
@@ -368,13 +373,15 @@ async function checkUncoveredWriters(): Promise<void> {
   // would prove nothing, because there would be no tmp to leave behind.
   const blocked = join(directory, "blocked.json");
   await mkdirp(join(blocked, "makes-it-non-empty"));
-  let replaceRejected = false;
+  let replaceCode: string | undefined;
   try {
     await replaceFileDurably(blocked, "{}\n");
-  } catch {
-    replaceRejected = true;
+  } catch (error) {
+    replaceCode = (error as NodeJS.ErrnoException).code;
   }
-  check("a replace whose rename fails rejects", replaceRejected);
+  // The errno, not merely "it rejected": a rejection from somewhere earlier would leave the
+  // cleanup assertion below vacuous, since there would be no temporary file to orphan.
+  check("a replace whose rename fails rejects with EISDIR", replaceCode === "EISDIR");
   check("and removes its temporary file rather than orphaning it", !(await exists(`${blocked}.tmp`)));
 
   // ⚠️ Fault injection, deliberately: a create that succeeds followed by a write that fails
@@ -394,10 +401,11 @@ async function checkUncoveredWriters(): Promise<void> {
   );
   check("and the file it created is there to be appended to", await exists(halfMade));
 
-  // ⚠️ The blocking bug this section was written for: a handle opened and then abandoned
-  // because a later step threw. One fd every 30 s reaches the default 1024 in about eight
-  // hours, and a dying card is a PERSISTENT error — so the failure path, not the happy one,
-  // is where a leak actually accrues. Counted rather than reasoned about.
+  // ⚠️ Covers a handle abandoned when the WRITE throws — not the directory-flush throw that
+  // B1 of the diff review was actually about, which needs an fsync failure nothing here can
+  // provoke (gap 4 in the header). It is still the right guard to have: one fd every 30 s
+  // reaches the default 1024 in about eight hours, a dying card is a PERSISTENT error, and
+  // the failure path is where a leak accrues. Counted rather than reasoned about.
   const leakDirectory = join(directory, "leak");
   await mkdirp(leakDirectory);
   for (let index = 0; index < 5; index += 1) {

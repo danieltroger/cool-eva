@@ -53,7 +53,7 @@ The four writes, and what each was doing before this change — none of them flu
 | `appendDurably(path, data)` | the bytes are on the card before it resolves; the **directory** is flushed too on the call that created the file |
 | `replaceFileDurably(path, data)` | tmp → flush → `rename()` → flush directory. A reader sees the whole old file or the whole new one |
 | `syncDirectory(dir)` | an entry created or removed in `dir` survives a cut |
-| `syncFilesystems()` | `sync(1)` as a child process, before the service restart |
+| `syncFilesystems()` | `sync(1)` as a child process (spawned, stdio ignored), before the service restart |
 
 `fdatasync` rather than `fsync` on the file: it flushes the data plus the metadata needed to _retrieve_ it, which for a size-extending write is `i_size` and the block map — exactly the metadata whose absence is the hole. It is the minimal correct primitive, **not** a faster one; on ext4 an append dirties `i_size` and forces the journal commit either way.
 
@@ -86,7 +86,7 @@ So `flushThenRestart()` runs after the reply is on the wire, and **`scheduleServ
 
 `execFile`'s own `timeout` option only _sends_ SIGTERM, and settles the promise on the child's exit. `sync(2)` is uninterruptible, so on the slow or dying card this whole file is about, the signal sits pending while the kernel finishes writeback. Measured against a child that ignores SIGTERM, `execFile` timeouts of 300/500/1000/2000 ms all settled only when the child exited **8 s** later — and settled by **resolving**, because the exit status was 0. A wedged flush would therefore have been reported as a success, with nothing in the journal at all, and the restart delayed for as long as the flush took.
 
-So the bound is a timer raced against the child, and stopping the wait is all it does. When it fires, the flush is still running; the restart goes ahead anyway. The log line says _"stopped waiting"_ and explicitly **not** _"the data did not land"_ — writeback already issued carries on — but it does not claim all of it landed either. The number itself is a bound rather than a measurement on purpose: only the Pi's own SD card could inform one, and both directions are harmless.
+So the bound is a timer raced against the child, and stopping the wait is all it does. The child is `spawn`ed with `stdio: "ignore"` rather than run through `execFile`, for a second measured reason: `execFile` always pipes stdout and stderr, and those pipes hold the event loop open on their own — `unref()`ing the child alone still kept the process alive for the full 8 s of a wedged flush, which would have handed back exactly the delay the timer exists to avoid. When it fires, the flush is still running; the restart goes ahead anyway. The log line says _"stopped waiting"_ and explicitly **not** _"the data did not land"_ — writeback already issued carries on — but it does not claim all of it landed either. The number itself is a bound rather than a measurement on purpose: only the Pi's own SD card could inform one, and both directions are harmless.
 
 ## 4. What a crash can still lose
 
