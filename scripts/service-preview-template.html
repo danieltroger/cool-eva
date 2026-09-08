@@ -532,6 +532,20 @@
         busHeldBy: null,
       };
 
+      /**
+       * What a lifetime-statistics read answers with (#177), in the shape src/http/lifetime-read.ts
+       * serves. `measurement` is the Pi timing ITSELF during the read — how late its flow control
+       * was, and the worst event-loop delay over the exchange — so a preview with no bus cannot
+       * have measured one. The numbers here are this fixture's own; the SENTENCE is the shape
+       * describeMeasurement() builds, so the panel is laid out as a real answer lays it out.
+       */
+      const LIFETIME_READ = {
+        measurement: "flow control 2.4 ms after the kernel saw the First Frame · worst event-loop delay 1.8 ms",
+        answered: 2,
+        message: null,
+        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+      };
+
       const STATUS = {
         uptimeSeconds: 4173,
         waypoints: 4,
@@ -816,6 +830,14 @@
               "fatal: unable to access 'https://github.com/danieltroger/cool-eva.git/': " +
               "Failed to connect to github.com port 443 after 60000 ms: Couldn't connect to server",
           });
+        }
+        if (path === "/lifetime-read") {
+          if (method !== "POST") {
+            // GET /lifetime-stats serves the stored reading; this path only ever reads the bike.
+            return json({ ...LIFETIME_READ, measurement: null, answered: null, message: "use POST" }, 405);
+          }
+          toast("Preview — nothing was sent. A Pi would have opened a diagnostic session on 51 and 52.");
+          return json(LIFETIME_READ);
         }
         if (path === "/vcu-read") {
           if (method === "POST") {

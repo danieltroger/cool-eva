@@ -44,6 +44,7 @@ const FIXTURES = [
   { constant: "READ_STATE", type: "VcuReadResponse", from: "src/http/vcu-read.ts" },
   { constant: "FAN", type: "FanReply", from: "src/http/fan.ts" },
   { constant: "CHARGE_AUTO", type: "ChargeAutoResponse", from: "src/http/charge-auto.ts" },
+  { constant: "LIFETIME_READ", type: "LifetimeReadResponse", from: "src/http/lifetime-read.ts" },
 ];
 
 /**
