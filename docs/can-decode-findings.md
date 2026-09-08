@@ -637,7 +637,19 @@ Measured 2026-09-08 with the bike connected, reverse selected deliberately twice
 
 **❌ "Exactly four transitions in 195 868 frames."** The frame count is not reproducible from any capture or combination of captures on the Pi — the 2026-09-08 files hold millions of `0x104` frames, one overnight capture alone carrying 2 879 174. More importantly the denominator is doing rhetorical work it has not earned: the overwhelming majority of those frames are a **stationary** bike, where neither hypothesis predicts anything. Restricted to frames where the bike was actually moving, the observation is two pulses among a few hundred moving frames, which is a far weaker statement than "4 in 195 868".
 
-**❌ The bit also fires when nobody selects reverse.** The overnight capture of 2026-09-08 (`capture-20260908-000823`, **2 879 174** `0x104` frames) has byte 7 = `0x00` in 2 879 169 of them and **`0x80` in 5** — bit 63 set, five times, on a bike nobody was selecting reverse on. That is fatal to reading the pulse as "reverse selected" and is comfortable for §12's rollback reading below. It also shows bits 60-62 sitting at **0** for that entire capture.
+**❌ The bit fires 38 410 times in the archive, and every one of them is a creeping bike.** Swept across **15 006 363** `0x104` frames in every local archive capture, decoding each hit with this repo's own bit offsets:
+
+```
+bit 63 set                        38 410 frames
+of those, speed > 0               38 410      — all of them
+speed range on those frames       0.5 … 4.5 km/h
+```
+
+**Not one fires at a standstill, and not one fires above 4.5 km/h.** That is decisive against "reverse selected": reverse is selected once, while stopped, and then held — it is not a thing that happens 38 410 times at 0.5-4.5 km/h. It is precisely §12's reading, reproduced here independently and at 60× the sample (§12: median 0.4 km/h, p95 0.7, never above 4.1).
+
+⚠️ **It is also not a capture-start artefact**, which is the obvious alternative for a bit that fires in short bursts. The first hit in each capture sits deep inside it — frame #8 359, #11 443, #20 847, #50 798, **#571 235** — not at frame 1. Two captures do start early (#73, #564), and they are the exception rather than the pattern.
+
+(An earlier version of this section rested the same point on 5 frames in one Pi-side overnight capture. That capture is not in the local archive and the claim could not be re-checked from here; the archive-wide result above replaces it and does not depend on it.)
 
 **❌ "Bits 60-62 held constant at `4` across all 195 868 frames", refuting the tachometer objection.** Constant at 4 _within the single capture that holds the pulses_. Across the day's other captures byte 7 reads `0x00` throughout — so bits 60-62 are 0 before the power cycle and 4 after, and any frame set large enough to reach 195 868 necessarily contains frames where the claim is false. The tachometer objection is answered for that one capture, not archive-wide.
 
