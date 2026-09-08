@@ -115,7 +115,9 @@ A command below 30 % stops the fan — enables LOW — rather than commanding a 
 
 Measure the rail at the IBT-2's 12 V terminal under load, then set the cap to `12 / measured × 100`. Until that measurement exists, guessing a number would be worse than the honest 100 — it would look like a decision.
 
-### The automatic curve, and the DC rule beside it
+⚠️ **The DC rule below made this exposure continuous rather than peak.** Automatic used to reach 100 % on a DC session only at 54 °C and above; it now holds 100 % for the whole session, and the evidence behind that change is a 42-minute stop. If the rail does sit at 13.8 V, the fan is 15 % over nominal for the length of a fast charge rather than for the top of a ramp. Nothing here changes in code — `MAX_DUTY_PERCENT` still clamps every request, so lowering the cap is still the whole fix — but the measurement is worth more now than it was.
+
+### The automatic curve
 
 One straight line, from the 30 % floor at 35 °C to 100 % at 48 °C, with `batt_temp_hi` as its input — and, on a DC session, no line at all. `src/fan/curve.ts` is the arithmetic and it is pure, so `scripts/check-fan-curve.ts` replays every point of it with no bike.
 
@@ -160,7 +162,7 @@ Three signals, each one keystroke away from a near-miss that would be wrong only
 
 | Used | Not used, and why not |
 | --- | --- |
-| **`batt_temp_hi`** — the TRUE pack temperature whichever frame supplies it (`registry.ts:37`, `pack-temperature.ts`) | ⚠️ **not `batt_temp_hi_vcu`**, which carries the BMS config's offset. Under the 15-bounded clamp it reads 0 below 35 °C and (true − 35) from 35 to 54 — i.e. exactly the band this curve lives in, reported as something else |
+| **`batt_temp_hi`** — the TRUE pack temperature whichever frame supplies it (`registry.ts:37`, `pack-temperature.ts`) | ⚠️ **not `batt_temp_hi_vcu`**, which carries the BMS config's offset. Under the 15-bounded clamp it reads 0 below 35 °C and (true − 35) from 35 to 54 — i.e. the whole band this curve lives in (35 → 48) and then some, reported as something else |
 | **`speed_can_kmh`** — broadcast, `source: "stream"`, 0.5 km/h deadband | ⚠️ **not `speed_kmh`**, which is `source: "poll"` on the OBD group: it can be stale, and on a Pi with `OBD_ENABLED=0` it never arrives at all, which would open the gate permanently |
 | **`charge_manager_state`** (`0x610` b7) — `0x23` DC, `0x02` AC | ⚠️ **not `charge_type`** (`0x605` b2), which flaps 1↔0 _within one plug-in_ as the charger pauses delivery — fourteen times in one measured AC session, reading 0 for up to eight minutes at a stretch (`docs/charge-manager.md`). That exact behaviour already made the charge-current tile vanish mid-session. Keying the DC rule on it would drop the fan out of DC mode every time the charger paused |
 
@@ -495,10 +497,10 @@ A code is the wire format, so a retired one is never reused — a ride log writt
 
 | Code | What it meant | Emitted until |
 | --- | --- | --- |
-| `6` `DC_FLOOR` | DC session, pack at or under the 35 °C foot — the 30 % floor every session got, whatever the temperature and the speed said | 2026-09-08 |
+| `6` `DC_FLOOR` | DC session **and** pack at or under the 35 °C foot (or no usable reading yet): the 30 % floor, which answered to neither the speed gate nor a missing `batt_temp_hi`. Above the foot the session showed `7` instead | 2026-09-08 |
 | `7` `DC_TEMPERATURE` | DC session, climbing the 35 → 54 °C ramp from that floor to 100 % | 2026-09-08 |
 
-Both were replaced by `8` `DC_SESSION`, a flat 100 % — §4 "The automatic curve, and the DC rule beside it" has the argument.
+Both were replaced by `8` `DC_SESSION`, a flat 100 % — §4 "The automatic curve" has the argument.
 
 ⚠️ **`2` `TEMPERATURE_FAULT` kept its name and its meaning and changed its duty.** The condition behind it is unchanged — no usable `batt_temp_hi` for 60 s — so a query for reason 2 returns the same _situations_ before and after. What widened is the duty beside them: every row written before 2026-09-08 is the 30 % floor, and after it a row is the 30 % floor off a DC session and **100 %** on one. `fan_duty_pct` is the column that separates them, and it is `onDemand` log-on-change, so the nearest one may be some way back.
 
@@ -541,7 +543,7 @@ Bring-up failures do not kill the service — the fan is not what the rest of th
 - **Manual mode has no shutoff.** In automatic the curve takes the fan back down on its own; a duty set from the slider runs until you set another, until the mode goes back to automatic, or until the service restarts — and a restart is a return to automatic, since the mode is not persisted. A `SIGTERM` (`systemctl restart`, the dashboard's Update button) stops the loop and then idles the bridge, in that order, so a tick cannot re-command a process that is leaving. A `SIGKILL` skips both — but the unit is `Restart=on-failure` with `RestartSec=5` (`scripts/setup-service.ts`), so the process is back about **five seconds** later and `openFanPwm()` drops both enables as its first statement. The `config.txt` `gpio=` lines are the backstop for the case where it does not come back at all.
 - **The automatic curve was never validated against a real pack.** Every number in §4 — 35, 48, the two hysteresis gaps — is a considered choice, not a measurement of how much air this radiator needs at a given pack temperature. (A DC session no longer has a number: it is 100 % throughout.) What exists is the arithmetic, checked; what does not exist is a ride or a DC session logged against it. The first hot DC charge with `FAN_ENABLED=1` is the datum to go and get.
 - **A pack whose `batt_temp_hi` never arrives runs the fan at 30 % for ever** in automatic, one minute after boot, with the fault visible only inside the menu sheet and nowhere on the main dashboard. §4 "When the temperature goes away" argues why the floor is the right answer and not a bug, and says plainly what the fault does and does not reach.
-- **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4.
+- **The rail voltage is unmeasured**, so the duty cap is 100 % — see §4. ⚠️ Since 2026-09-08 a DC session holds 100 % end to end rather than only at the top of a ramp, so if the rail is a charging-system 13.8 V the fan runs 15 % over nominal for the length of a fast charge.
 - **The udev race** described in §5 is unhandled.
 - **Fun mode's second gate condition is the same frame's neighbour, not an independent sensor.** `go` and `speed_can_kmh` come off different CAN ids (`0x102` and `0x104`), which is real independence at the frame level, but both originate in the VCU. Nothing here cross-checks the VCU against anything, and an all-zero `0x102` payload would read as "everything off" and pass the `go` half. The freshness window is what stands against that — a stuck frame stops being refreshed — and it is the weakest joint in the gate.
 

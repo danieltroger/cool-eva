@@ -104,8 +104,9 @@ export const TEMPERATURE_FAULT_REASON = 2;
 
 /**
  * One clause per FAN_TEMPERATURE_INPUT in src/fan/curve.ts. Empty where there is nothing
- * to add: a live reading needs no comment, and code 2 is already spelled out by reason 1
- * or 2, whichever applies.
+ * to add: a live reading needs no comment, and code 2 is already spelled out by whichever
+ * reason it arrives with — 1 or 2 off a DC session, and 8 on one, whose own sentence
+ * already says the duty owes nothing to the pack temperature.
  * @type {Record<number, string>}
  */
 export const FAN_TEMPERATURE_NOTE = {

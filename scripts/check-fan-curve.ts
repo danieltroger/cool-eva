@@ -26,6 +26,7 @@ import {
   ROAD_SPEED_MAX_KMH,
   SPEED_GATE_OFF_KMH,
   SPEED_GATE_ON_KMH,
+  TEMPERATURE_FRESH_MS,
   TEMPERATURE_GRACE_MS,
   fanCurveDecision,
   type FanCurveInputs,
@@ -274,6 +275,15 @@ check(
   "the grace boundary itself is still held, not yet a fault",
   fanCurveDecision(inputs({ ...warm, temperatureAgeMs: 60_000 })).temperatureInput === FAN_TEMPERATURE_INPUT.HELD
 );
+// ⚠️ The live/held frontier, pinned the way the grace boundary above is. Without both
+// sides of it the comparison in temperatureInputOf() can move a millisecond in either
+// direction and the whole suite stays green — the dashboard would then say "live" over a
+// reading five seconds old, or flag a fresh one as held.
+check(
+  `the fresh window is the ${TEMPERATURE_FRESH_MS / 1000} s the doc says — 5 000 is live, 5 001 is held`,
+  fanCurveDecision(inputs({ ...warm, temperatureAgeMs: 5_000 })).temperatureInput === FAN_TEMPERATURE_INPUT.LIVE &&
+    fanCurveDecision(inputs({ ...warm, temperatureAgeMs: 5_001 })).temperatureInput === FAN_TEMPERATURE_INPUT.HELD
+);
 check(
   `tier 3 — past the grace it runs at the ${MIN_RUNNING_DUTY_PERCENT} % floor and NOT at 0`,
   lost.dutyPercent === MIN_RUNNING_DUTY_PERCENT && lost.reason === FAN_REASON.TEMPERATURE_FAULT
@@ -345,9 +355,10 @@ console.log("\n6. the three signals this rests on, and the wrong ones next to th
 // ⚠️ The literal first, for the reason 89 and 90 are literals in §3 — and this is the
 // consequential one. Every DC assertion in this file spreads `dc`, which is built FROM
 // this constant, so all of them stayed green for every value it could take. A wrong byte
-// leaves `charging` false for a whole session: no DC curve AND no 30 % floor, which is
-// the case docs/fan-control.md §"The automatic curve" says the fan is most for, on a fan
-// with no tacho and with a green build. src/vcu/write-runner.ts keeps its own
+// leaves `charging` false for a whole session, which now drops it onto the RIDING curve:
+// a cold pack at a fast charger gets 0 %, not the 30 % floor it used to fall back to.
+// That is the case docs/fan-control.md §"The automatic curve" says the fan is most for,
+// on a fan with no tacho and with a green build. src/vcu/write-runner.ts keeps its own
 // module-private copy of the same byte, so pinning both to the literal is what keeps them
 // agreeing across two files that cannot see each other — the argument
 // CHARGE_SESSION_MAX_AGE_MS is pinned twice under, in §10 below.

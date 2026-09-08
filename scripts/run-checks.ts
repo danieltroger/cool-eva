@@ -161,8 +161,8 @@ const CHECKS: SelfCheck[] = [
       "because a dead batt_temp_hi reads exactly like a cold pack and this fan has no tacho to contradict it. And " +
       "that the DC rule does NOT swallow that fault: four ways of losing the temperature mid-session each give " +
       "100 % AND reason 2, the code the dashboard paints red, since a rule that named itself there would hide a " +
-      "broken sensor until the next ride. Plus the near-misses each signal has: " +
-      "that charge_type's DC value 2 does not select the DC rule, that an absent or impossible speed opens the " +
+      "broken sensor until the next ride. Plus the near-misses each signal has: that charge_type's DC value 2 " +
+      "does not select the DC rule, that an absent or impossible speed opens the " +
       "gate rather than holding the fan off over a hot pack, that the Pi's own bounds on batt_temp_hi are the " +
       "dashboard's, that every reason code has both a bound and a sentence, and that no slider stop lands in the " +
       "dead band under the floor. Every threshold is pinned to a LITERAL — an assertion phrased in the constant it " +
