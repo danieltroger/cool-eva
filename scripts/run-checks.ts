@@ -266,13 +266,15 @@ const CHECKS: SelfCheck[] = [
     covers:
       "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +
       "backwards: that regen reads green and a pull never does — inverted from 2026-08-03 until 2026-09-08, under " +
-      "a doc comment that said the right thing throughout — that the drive ramp only ever gets warmer with load " +
-      "and reaches all four of its colours, that both BMS ceilings convert to kW through the MEASURED pack " +
+      "a doc comment that said the right thing throughout — that drive is WHITE at every load, the ramp by " +
+      "magnitude having been retired, and that the dashed derate rule keeps a 3:1 contrast floor over that fill, " +
+      "computed rather than restated, since it is drawn on top of it. That both BMS ceilings convert to kW through the MEASURED pack " +
       "voltage with a 0 A derate surviving as a real limit and a 0 V reading rejected as a missing one, that both " +
-      "go quiet while a charge is up — the BMS zeroes them there, and drawing them puts two 0 kW ceilings under a " +
-      "bar showing 24 kW of charge — and that the dashed lines land on the sides the fill uses, sit on the centre " +
-      "at zero, and pin INSIDE the bar's end rather than vanishing when a ceiling is wider than the bar. Walked " +
-      "end to end as well as at each end, because covering both ends left a crossed pair between them green",
+      "go quiet while a charge is up — the BMS zeroes them there, and believing them would hatch the whole bar " +
+      "away under a fill showing 24 kW of charge — and that each ceiling hatches its own side's far end against " +
+      "its OWN scale, hatches nothing at or past full scale, hatches the whole half at zero, and still draws for " +
+      "a derate of 1 kW, since a minimum width that swallowed small ones made a blank end mean two things. " +
+      "Walked end to end as well as at each end, because covering both ends left a crossed pair between them green",
   },
   {
     script: "scripts/check-tab-routing.ts",
