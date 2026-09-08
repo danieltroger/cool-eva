@@ -43,7 +43,9 @@ This bike's own log says otherwise. Summing monotone runs of `remaining_ah` over
 | 1.0 Ah          | 456.0      | 463.1   | 0.463 |
 | 5.0 Ah          | 434.7      | 445.4   | 0.441 |
 
-**~0.47 Ah/km of gross pack throughput**, barely moving with the filter and the same in both directions. ×0.1 claims **7.4× more charge than the pack actually moved**. That is not a judgement about a plausible consumption figure; it is more amp-hours than this bike's own logged pack current delivered over the same kilometres.
+**~0.47 Ah/km of gross pack throughput**, barely moving with the filter and the same in both directions.
+
+⚠️ Only the top row is implementation-independent. A reviewer repeating this with their own reversal filter got 0.473 at 0.2 Ah — the headline — but 0.423 and 0.405 where the table says 0.463 and 0.441, because "ignore reversals below X" admits more than one reasonable definition. The 7.4× does not depend on which. ×0.1 claims **7.4× more charge than the pack actually moved**. That is not a judgement about a plausible consumption figure; it is more amp-hours than this bike's own logged pack current delivered over the same kilometres.
 
 ⚠️ **This measurement cannot be re-derived by any check.** `rides.db` is not in the repo and never will be. `scripts/check-lifetime-stats.ts` carries the 0.472 as a constant pointing here; this document is the primary evidence.
 
@@ -137,18 +139,22 @@ The third of the trio #56 names, and it carries nothing. Its shortlist is empty 
 
 ## `57 00` — no stored record
 
-Component 54 answered two bytes, `57 00`: the micro saying it has nothing on file for that component. Not a refusal and not a third outcome. ⚠️ `src/diagnostics/freeze-frame.ts` files it under `unrecognised` because it is shorter than the 5-byte header — the bytes are kept, but the meaning is not named. Naming it is a change to that decoder's outcome union and belongs with the freeze-frame channel rather than with this feature.
+Component 54 answered two bytes, `57 00`: the micro saying it has nothing on file for that component. Its frames are timestamped 13:16, two minutes before the capture file that holds components 53 and 60 opened — 54 is not in that batch (`for c in 51 52 53 60`), so the reading that fits is that it came from the capture still running before `read-freeze-frame.ts` bounced the interface, i.e. from the file #160 is about losing. An inference: the reporting session named a file for 53 and 60 and not for this one. Not a refusal and not a third outcome. ⚠️ `src/diagnostics/freeze-frame.ts` files it under `unrecognised` because it is shorter than the 5-byte header — the bytes are kept, but the meaning is not named. Naming it is a change to that decoder's outcome union and belongs with the freeze-frame channel rather than with this feature.
 
 ## How a reading is taken
 
 ```
 sudo systemctl stop cool-eva
-sudo ip link set can0 down && sudo ip link set can0 up type can bitrate 500000 && sudo ip link set can0 up
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 500000 listen-only off
+sudo ip link set can0 up
 node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save
 sudo systemctl start cool-eva
 ```
 
 `--save` writes `vcu-params/lifetime.json`, which `GET /lifetime-stats` serves and the All tab shows with the age of the reading.
+
+⚠️ **`listen-only off` is the flag that decides whether anything transmits.** Without it the interface swallows every request silently and the result is indistinguishable from a switched-off bike. The canonical three commands are in `docs/diagnostics-and-checks.md`.
 
 ⚠️ **The stop is for socket ownership, not because the bike refuses.** Two testers on one bus are resolved by whichever frame lands first — these micros answer on one id with no request tag — and the script opens its own socket while the service holds one. Whether the _service itself_, as the single tester, can run this read in-process is #156's second half.
 

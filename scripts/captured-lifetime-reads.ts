@@ -101,19 +101,12 @@ export const CAPTURED_EXCHANGE_60: CapturedExchange = {
 /**
  * Component 54's two-byte reply, `57 00`: **no stored record for that component**.
  *
- * Not a refusal and not a third outcome — the micro answering that it has nothing on
- * file. A real one, where scripts/freeze-frame-fixtures.ts only had a constructed one.
+ * Not a refusal and not a third outcome. ⚠️ The decoder files it under `unrecognised`
+ * because it is shorter than the 5-byte header — bytes kept, meaning unnamed.
  *
- * ⚠️ src/diagnostics/freeze-frame.ts files it under `unrecognised` (it is shorter than
- * the 5-byte header), which keeps the bytes but does not name what they mean. Left
- * alone deliberately: naming it is a change to the decoder's outcome union and belongs
- * with the freeze-frame channel, not with this feature. docs/lifetime-battery-statistics.md.
- *
- * ⚠️ Timestamped 13:16, two minutes BEFORE the capture file named above opened. The
- * reading that fits: 54 is not in that batch (`for c in 51 52 53 60`), so this came
- * from the capture that was still running before read-freeze-frame.ts bounced the
- * interface — i.e. from the file #160 is about losing. Stated as an inference,
- * because the reporting session named a file for 53 and 60 and not for this one.
+ * ⚠️ Timestamped two minutes before the capture file named above opened; which file it
+ * came from is an inference, not a record. Both, argued:
+ * docs/lifetime-battery-statistics.md.
  */
 export const CAPTURED_EXCHANGE_54: CapturedExchange = {
   component: 54,
@@ -122,6 +115,63 @@ export const CAPTURED_EXCHANGE_54: CapturedExchange = {
     { line: "(2026-09-08 13:16:53.000204)  can0  7E0  [8]  F1 02 57 00 00 00 00 00", role: "two-byte reply" },
   ],
 };
+
+// What these bytes mean, kept beside them the way scripts/freeze-frame-fixtures.ts keeps
+// FREEZE_FRAME_P0514_EXPECTED beside its frames. Raw values, before scaling: what the
+// decoder must read out of the payload, which is the layer a shifted field breaks.
+
+/** Component 51 on 2026-08-08 — a nearly empty pack, 19 % SOC. */
+export const EXPECTED_20260808_C51 = {
+  VEHICLE_SUBSTATE: 63,
+  B_SOC: 19,
+  V_TCSOC: 19,
+  B_SOH: 100,
+  B_AVG_CELL: 3510,
+  B_MIN_CELL_ID: 76,
+  B_MAX_CELL_ID: 47,
+  B_PACK_V: 2790,
+  // Negative int16. Reading this unsigned gives 6553.3 A.
+  B_PACK_I: -3,
+  B_MAX_CELL: 3528,
+  B_MIN_CELL: 3485,
+  V_ODOMETER: 174729,
+} as const;
+
+/** Component 51 on 2026-09-08 — full, 99 % SOC, and 967.6 km further on. */
+export const EXPECTED_20260908_C51 = {
+  VEHICLE_SUBSTATE: 124,
+  B_SOC: 99,
+  V_TCSOC: 99,
+  B_SOH: 100,
+  B_AVG_CELL: 4226,
+  B_MIN_CELL_ID: 4,
+  B_MAX_CELL_ID: 57,
+  B_PACK_V: 3355,
+  B_PACK_I: -2,
+  B_MAX_CELL: 4239,
+  B_MIN_CELL: 4219,
+  V_ODOMETER: 184405,
+} as const;
+
+/** Component 52 on 2026-08-08. The counters this whole feature turns on. */
+export const EXPECTED_20260808_C52 = {
+  TotalExchangedAh: 624512,
+  CompletedCharges: 946,
+  CompletedACCharges: 901,
+  CompletedDCCharges: 14,
+  AvgBattTemp: 330,
+  AvgDOD: 2875,
+} as const;
+
+/** Component 52 on 2026-09-08. */
+export const EXPECTED_20260908_C52 = {
+  TotalExchangedAh: 658112,
+  CompletedCharges: 1018,
+  CompletedACCharges: 969,
+  CompletedDCCharges: 17,
+  AvgBattTemp: 294,
+  AvgDOD: 25658,
+} as const;
 
 /** The payload for one of the two lost-frame components. Throws on a component this file does not hold. */
 export function lifetimeReadPayload(component: number): Uint8Array {

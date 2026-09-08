@@ -329,6 +329,15 @@ const CHECKS: SelfCheck[] = [
       "as a fault rather than clamped while a half reading is labelled rather than presented as whole",
   },
   {
+    script: "scripts/check-lifetime-store.ts",
+    covers:
+      "how the last lifetime reading is kept: that it round-trips through the stored PAYLOAD BYTES rather than " +
+      "through today's rendering of them, and that the two writes which would destroy it are refused with a reason " +
+      "— a run where nothing answered, and a run carrying fewer replies than the file already holds, both of which " +
+      "are ordinary outcomes when the bike was asleep or can0 came up listen-only. Plus that a damaged file, or one " +
+      "whose replies are not replies, reads as no reading rather than throwing inside an HTTP handler",
+  },
+  {
     script: "scripts/check-power-bar.ts",
     covers:
       "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +

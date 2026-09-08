@@ -34,7 +34,6 @@ export async function loadLifetimeStats(force = false) {
   if (fetched && !force) {
     return;
   }
-  fetched = true;
   try {
     const response = await fetch("/lifetime-stats");
     if (!response.ok) {
@@ -43,6 +42,10 @@ export async function loadLifetimeStats(force = false) {
     }
     lifetimeStats.val = /** @type {LifetimeStatsResponse} */ (await response.json());
     lifetimeError.val = "";
+    // ⚠️ Only now. Set before the await, a phone that wandered out of wifi once would
+    // show "could not reach the Pi" until the page was reloaded — and switching tabs
+    // re-enters AllView() but would short-circuit on the guard above.
+    fetched = true;
   } catch (err) {
     // Ordinary when the phone has wandered out of wifi range, and worth saying rather
     // than leaving an empty block that looks like a bike with no statistics.

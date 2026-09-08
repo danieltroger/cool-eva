@@ -9,6 +9,10 @@ import {
   LIFETIME_READ_PAYLOADS,
   capturedExchangePayload,
   frameIntervalMs,
+  EXPECTED_20260808_C51,
+  EXPECTED_20260808_C52,
+  EXPECTED_20260908_C51,
+  EXPECTED_20260908_C52,
   lifetimeReadPayload,
 } from "./captured-lifetime-reads.ts";
 import { infokeysFor } from "../src/diagnostics/fault-infokeys.ts";
@@ -20,6 +24,8 @@ import {
 import { lookupInfokey, scaleInfokeyValue } from "../src/diagnostics/infokey-table.ts";
 import { summariseLifetimeStatistics, type LifetimeRow } from "../src/diagnostics/lifetime-stats.ts";
 import { loadLifetimeStatistics, writeLifetimeRead } from "../src/vcu/lifetime-store.ts";
+import { HOW_TO_READ } from "../src/http/lifetime-stats.ts";
+import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
 
 // Checks the lifetime battery statistics against the only two readings that exist —
 // 2026-08-08 (scripts/captured-freeze-frames.ts, before the clear) and 2026-09-08
@@ -72,57 +78,46 @@ for (const [label, response] of [
   check(response.kind === "frame", `${label} should decode to a frame, got ${response.kind}`);
 }
 
-check(
-  rawOf(before51, "V_ODOMETER") === 174729,
-  `2026-08-08 odometer raw should be 174729, got ${rawOf(before51, "V_ODOMETER")}`
-);
-check(
-  rawOf(after51, "V_ODOMETER") === 184405,
-  `2026-09-08 odometer raw should be 184405, got ${rawOf(after51, "V_ODOMETER")}`
-);
-check(
-  valueOf(before51, "V_ODOMETER") === BEFORE.odometerKm,
-  `2026-08-08 odometer should scale to ${BEFORE.odometerKm} km`
-);
-check(
-  valueOf(after51, "V_ODOMETER") === AFTER.odometerKm,
-  `2026-09-08 odometer should scale to ${AFTER.odometerKm} km`
-);
-check(
-  rawOf(before51, "B_SOH") === 100 && rawOf(after51, "B_SOH") === 100,
-  "state of health should read 100 % on both reads"
-);
-
+// ⚠️ EVERY field of both components, not a representative handful. Bit-flipping the
+// fixtures showed 16 of component 51's 26 bytes leaving this check green while its
+// banner claimed "field for field" — cell voltages, ids, SOC, pack volts and amps all
+// sat unasserted. The expected values live beside the bytes they describe, the way
+// scripts/freeze-frame-fixtures.ts keeps FREEZE_FRAME_P0514_EXPECTED beside its frames.
 for (const [label, response, expected] of [
-  [
-    "2026-08-08",
-    before52,
-    {
-      TotalExchangedAh: 624512,
-      CompletedCharges: 946,
-      CompletedACCharges: 901,
-      CompletedDCCharges: 14,
-      AvgBattTemp: 330,
-      AvgDOD: 2875,
-    },
-  ],
-  [
-    "2026-09-08",
-    after52,
-    {
-      TotalExchangedAh: 658112,
-      CompletedCharges: 1018,
-      CompletedACCharges: 969,
-      CompletedDCCharges: 17,
-      AvgBattTemp: 294,
-      AvgDOD: 25658,
-    },
-  ],
+  ["2026-08-08 c51", before51, EXPECTED_20260808_C51],
+  ["2026-09-08 c51", after51, EXPECTED_20260908_C51],
+  ["2026-08-08 c52", before52, EXPECTED_20260808_C52],
+  ["2026-09-08 c52", after52, EXPECTED_20260908_C52],
 ] as const) {
   for (const [name, raw] of Object.entries(expected)) {
     check(rawOf(response, name) === raw, `${label} ${name} raw should be ${raw}, got ${rawOf(response, name)}`);
   }
 }
+
+check(
+  valueOf(before51, "V_ODOMETER") === BEFORE.odometerKm && valueOf(after51, "V_ODOMETER") === AFTER.odometerKm,
+  `the odometer should scale to ${BEFORE.odometerKm} and ${AFTER.odometerKm} km`
+);
+
+// The header bytes the fields sit behind. A status or a record count decoded out of the
+// wrong byte would shift the symptom, and with it the shortlist the fields are read by.
+for (const [label, response] of [
+  ["2026-08-08 c51", before51],
+  ["2026-08-08 c52", before52],
+  ["2026-09-08 c51", after51],
+  ["2026-09-08 c52", after52],
+] as const) {
+  const frame = response.kind === "frame" ? response.frame : null;
+  check(frame?.status === 0x05, `${label} status should be 0x05, got ${frame?.status}`);
+  check(frame?.symptom === 0, `${label} symptom should be 0, got ${frame?.symptom}`);
+  check(frame?.recordCount === 1, `${label} recordCount should be 1, got ${frame?.recordCount}`);
+  check(frame?.truncated === false, `${label} should not be truncated`);
+  // #102: the flag reads false for a reply at activity 3 that plainly has a frame. Both
+  // of these are activity 2 so it does not bite here — asserted so a future read that
+  // comes back at activity 3 is noticed rather than quietly gated out.
+  check(frame?.flags.hasFreezeFrame === true, `${label} should report a freeze frame`);
+}
+
 console.log(
   `  odometer ${BEFORE.odometerKm} → ${AFTER.odometerKm} km, ${(AFTER.odometerKm - BEFORE.odometerKm).toFixed(1)} km apart`
 );
@@ -286,9 +281,11 @@ check(
 );
 
 // A sentinel-filled reply is shown as a fault, not clamped into something plausible.
+// ⚠️ B_SOC is 0xFF here as well as the cells. It is gated but appears only in the
+// detail line, so a fixture with a plausible 99 % leaves its band unexercised.
 const sentinel = decodeFreezeFrameResponse(
   Uint8Array.from([
-    0x57, 0x01, 0x00, 0x33, 0x05, 0x7c, 0x63, 0x63, 0x64, 0xff, 0xff, 0xff, 0xff, 0x0d, 0x1b, 0xff, 0xfe, 0xff, 0xff,
+    0x57, 0x01, 0x00, 0x33, 0x05, 0x7c, 0xff, 0x63, 0x64, 0xff, 0xff, 0xff, 0xff, 0x0d, 0x1b, 0xff, 0xfe, 0xff, 0xff,
     0xff, 0xff, 0x00, 0x02, 0xd0, 0x55, 0x05,
   ]),
   51
@@ -303,6 +300,44 @@ check(
   spread?.detail.some(entry => entry.includes("⚠ 65535")) ?? false,
   `the rejected cell voltages must stay visible as the sentinels they are, got ${spread?.detail.join(" · ")}`
 );
+// ⚠️ 65535 − 65535 = 0, the most reassuring number this tile can show, made of two dead
+// cells. A rejected spread carries no number at all.
+check(spread?.raw === null, `a rejected spread must not carry its computed value, got ${spread?.raw}`);
+// Each of the three cell bands is consulted in a different place — two in the reject
+// decision, the average only in the detail line — so each is asserted where it is used.
+check(
+  (spread?.detail[0] ?? "").includes("⚠ 65535"),
+  `the average cell must be marked as a sentinel too, got ${spread?.detail[0]}`
+);
+check(
+  (spread?.detail[3] ?? "").includes("⚠ 255"),
+  `an impossible state of charge must be marked, not printed as a percentage, got ${spread?.detail[3]}`
+);
+
+// ⚠️ And ONE dead cell, not three. With every constituent a sentinel, each band masks
+// the other two — widening any single one leaves the row rejected by its neighbours, so
+// none of the three is actually covered. This is the real 2026-09-08 payload with only
+// B_MIN_CELL replaced by 0xFFFF.
+const oneDeadCell = decodeFreezeFrameResponse(
+  Uint8Array.from(
+    "57 01 00 33 05 7C 63 63 64 10 82 04 39 0D 1B FF FE 10 8F FF FF 00 02 D0 55 05"
+      .split(" ")
+      .map(byte => Number.parseInt(byte, 16))
+  ),
+  51
+);
+const oneDeadSpread = summariseLifetimeStatistics(0, [{ component: 51, response: oneDeadCell }]).rows.find(
+  row => row.key === "cell_spread_mv"
+);
+check(oneDeadSpread?.status === "rejected", "one cell at 0xFFFF must reject the spread on its own");
+check(
+  (oneDeadSpread?.detail[1] ?? "").includes("⚠ 65535"),
+  `the weakest cell must be the one marked, got ${oneDeadSpread?.detail[1]}`
+);
+check(
+  (oneDeadSpread?.detail[2] ?? "").includes("4239"),
+  `the strongest cell is still a real reading and must be shown as one, got ${oneDeadSpread?.detail[2]}`
+);
 
 // A half reading is kept and labelled, never presented as whole.
 const half = summariseLifetimeStatistics(0, [
@@ -310,10 +345,14 @@ const half = summariseLifetimeStatistics(0, [
   { component: 52, response: { kind: "unrecognised", reason: "no reply", rawHex: "" } satisfies FreezeFrameResponse },
 ]);
 check(!half.complete, "a reading missing component 52 must not be complete");
-check(
-  half.rows.some(row => row.key === "charges" && row.status === "missing"),
-  "the missing counters must say so"
-);
+// ⚠️ Every row the missing component owns says so. Dropping them instead would look
+// like a bike with fewer statistics rather than a read that half failed.
+for (const key of ["charges", "exchanged_ah", "average_battery_temp_c", "average_depth_of_discharge"]) {
+  check(
+    half.rows.some(row => row.key === key && row.status === "missing"),
+    `${key} must be present and marked missing when component 52 does not answer`
+  );
+}
 check(
   half.rows.some(row => row.key === "odometer_km" && row.status === "ok"),
   "what did answer must still be shown"
@@ -355,43 +394,21 @@ console.log(
   `  First Frame → our flow control ${firstFrameToFlowControl.toFixed(3)} ms · then the micro waited ${flowControlToConsecutive.toFixed(3)} ms`
 );
 
-// ── §8 The store, round-tripped ────────────────────────────────────────────
-console.log("\n── §8 the store ───────────────────────────────────────────────────");
+// ── §7b The instruction the dashboard shows must be a command that runs ────
+console.log("\n── §7b the on-screen instruction ──────────────────────────────────");
 
-const storeDirectory = await mkdtemp(join(tmpdir(), "cool-eva-lifetime-"));
-check((await loadLifetimeStatistics(storeDirectory)) === null, "an empty directory should read as no reading at all");
-
-await writeLifetimeRead(storeDirectory, {
-  readAt: Date.UTC(2026, 8, 8, 13, 18, 0),
-  source: "read-freeze-frame.ts",
-  replies: LIFETIME_READ_PAYLOADS.map(entry => ({
-    component: entry.component,
-    payloadHex: entry.payloadHex,
-    failure: null,
-  })),
-});
-const restored = await loadLifetimeStatistics(storeDirectory);
+// ⚠️ PARSED, not eyeballed. The first version of this string named `--components 51,52`,
+// a flag that has never existed, and it is what a Pi that has never taken a reading
+// shows as its only instruction.
+const instruction = HOW_TO_READ.replace(/,.*$/, "").split(/\s+/);
+const scriptIndex = instruction.findIndex(word => word.endsWith("read-freeze-frame.ts"));
+check(scriptIndex !== -1, `HOW_TO_READ should name the script, got ${JSON.stringify(HOW_TO_READ)}`);
+const parsed = parseFreezeFrameArguments(instruction.slice(scriptIndex + 1));
 check(
-  restored !== null && restored.source === "read-freeze-frame.ts",
-  "the stored reading should say where it came from"
+  parsed !== null && parsed.kind === "lifetime" && parsed.save,
+  `HOW_TO_READ must parse as a saving lifetime read, got ${JSON.stringify(parsed)}`
 );
-check(restored?.statistics.complete === true, "a stored reading of both components should be complete");
-check(
-  restored?.statistics.rows.find(row => row.key === "odometer_km")?.value === AFTER.odometerKm,
-  "the odometer should survive the round trip"
-);
-check(
-  restored?.statistics.rows.find(row => row.key === "exchanged_ah")?.status === "unscaled",
-  "the refusal must survive the round trip — the store keeps BYTES so today's decode is not frozen into the file"
-);
-
-// A damaged file reads as no reading rather than as a half one. ⚠️ The warning it
-// logs on the way past is the point of the test, not noise in it: CLAUDE.md forbids
-// swallowing this, and "no reading" and "the file is damaged" are different problems.
-await writeFile(join(storeDirectory, "lifetime.json"), "{ not json", "utf-8");
-check((await loadLifetimeStatistics(storeDirectory)) === null, "a damaged store file should read as no reading");
-await rm(storeDirectory, { recursive: true, force: true });
-console.log("  written, re-decoded from the stored bytes, and a damaged file refused");
+console.log(`  "${HOW_TO_READ}" parses as ${JSON.stringify(parsed)}`);
 
 if (failures.length > 0) {
   console.error("\nFAILED:");

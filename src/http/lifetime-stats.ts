@@ -22,9 +22,16 @@ export interface LifetimeStatsResponse {
   howToRead: string;
 }
 
-/** How a reading is taken today. One place, so the page and the doc cannot drift apart. */
+/**
+ * How a reading is taken today, verbatim, shown on a Pi that has never taken one.
+ *
+ * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts runs it through
+ * the script's own argument parser, because the first version of this said
+ * `--components 51,52` — a flag that never existed — and it was the first instruction
+ * every Pi would ever show.
+ */
 export const HOW_TO_READ =
-  "node --experimental-strip-types scripts/read-freeze-frame.ts --components 51,52 --save, with the service stopped";
+  "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save, with the service stopped";
 
 export async function handleLifetimeStatsEndpoint(res: ServerResponse, directory: string): Promise<void> {
   const payload: LifetimeStatsResponse = {

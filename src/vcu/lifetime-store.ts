@@ -61,14 +61,41 @@ export async function loadLifetimeStatistics(
   return { statistics: summariseLifetimeStatistics(stored.readAt, responses), source: stored.source };
 }
 
-/** Writes a reading, replacing whatever was there. */
-export async function writeLifetimeRead(directory: string, read: StoredLifetimeRead): Promise<void> {
-  await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, LATEST_FILE), `${JSON.stringify(read, null, 2)}\n`, "utf-8");
+/**
+ * Writes a reading — unless it would replace a better one. Says which, and returns it.
+ *
+ * ⚠️ A WORSE RUN MUST NEVER CLOBBER A GOOD FILE, and this is not the theoretical
+ * version of that rule: taking a reading needs the service stopped and `can0` up
+ * ACTIVE, so the likeliest run of all is the one where the bike was asleep or the bus
+ * came up listen-only and NOTHING answered. Writing that would destroy payloads that
+ * cost a service stop and a trip to the garage to get, and cannot be reconstructed
+ * from anything. src/vcu/snapshot-store.ts rule 5, same argument.
+ */
+export async function writeLifetimeRead(
+  directory: string,
+  read: StoredLifetimeRead
+): Promise<{ stored: boolean; reason: string }> {
   const answered = read.replies.filter(reply => reply.payloadHex !== null).length;
-  console.log(
-    `lifetime: stored ${answered}/${read.replies.length} replies from ${read.source} in ${join(directory, LATEST_FILE)}`
-  );
+  const path = join(directory, LATEST_FILE);
+  const previous = await loadStoredRead(directory);
+  const previousAnswered = previous?.replies.filter(reply => reply.payloadHex !== null).length ?? 0;
+  if (answered === 0) {
+    const reason = `nothing answered, so ${path} is left as it was — ${previousAnswered} stored replies stand`;
+    console.warn(`lifetime: ⚠️  ${reason}`);
+    return { stored: false, reason };
+  }
+  if (answered < previousAnswered) {
+    // Said out loud rather than done quietly, for the reason snapshot-store.ts gives:
+    // "your page still says yesterday" is baffling when it is silent.
+    const reason = `${answered} replies would replace ${previousAnswered} — KEPT the previous ${LATEST_FILE}`;
+    console.warn(`lifetime: ⚠️  ${reason}`);
+    return { stored: false, reason };
+  }
+  await mkdir(directory, { recursive: true });
+  await writeFile(path, `${JSON.stringify(read, null, 2)}\n`, "utf-8");
+  const reason = `stored ${answered}/${read.replies.length} replies from ${read.source} in ${path}`;
+  console.log(`lifetime: ${reason}`);
+  return { stored: true, reason };
 }
 
 /** The file as it sits on disk, undecoded. For a caller that wants the bytes rather than the reading. */
@@ -85,7 +112,11 @@ export async function loadStoredRead(directory: string): Promise<StoredLifetimeR
   }
   try {
     const parsed = JSON.parse(text) as StoredLifetimeRead;
-    if (typeof parsed.readAt !== "number" || !Array.isArray(parsed.replies)) {
+    // ⚠️ EVERY ELEMENT, not just the array. This file is served by an HTTP handler that
+    // is not itself wrapped in a try, and the process has no `unhandledRejection` hook,
+    // so a `replies: [null]` reaching the decoder below would take the service down —
+    // over a file whose only purpose is a block on a debug tab.
+    if (typeof parsed.readAt !== "number" || !Array.isArray(parsed.replies) || !parsed.replies.every(isStoredReply)) {
       console.warn(`lifetime: ${path} parsed but is not a stored reading`);
       return null;
     }
@@ -94,6 +125,19 @@ export async function loadStoredRead(directory: string): Promise<StoredLifetimeR
     console.warn(`lifetime: ${path} is not valid JSON:`, err);
     return null;
   }
+}
+
+/** Whether one element of `replies` is the shape this module wrote. */
+function isStoredReply(reply: unknown): reply is StoredLifetimeReply {
+  if (typeof reply !== "object" || reply === null) {
+    return false;
+  }
+  const candidate = reply as Partial<StoredLifetimeReply>;
+  return (
+    typeof candidate.component === "number" &&
+    (typeof candidate.payloadHex === "string" || candidate.payloadHex === null) &&
+    (typeof candidate.failure === "string" || candidate.failure === null)
+  );
 }
 
 /**

@@ -46,15 +46,10 @@ import {
 // they check the manufacturer's own data against this repo's independently
 // sourced DTC table, and a disagreement there would be real.
 //
-// `trailingHex` was written down as the number to watch, on the rule that a
-// non-empty value on a real reply would mean the layout was wrong. The bike is back,
-// §8 replays 29 real replies, and it is non-empty on ALL of them — so the rule as
-// stated would condemn a layout that the same 29 replies confirm. What the rule
-// actually caught is that the reply is one byte longer than the fields account for;
-// the fields themselves decode correctly, which is a different fault to the one it
-// predicted. The trailing byte is FREEZE_FRAME_TRAILING_BYTES, and it counts KEY CYCLES
-// since the record was stored — settled by reading it again after a clear, and again
-// after a key cycle, docs/diagnostics-and-checks.md.
+// `trailingHex` was written down as the number to watch, on a rule that would have
+// condemned a layout the same 29 replies confirm — it is non-empty on all of them. What
+// it caught was FREEZE_FRAME_TRAILING_BYTES: one byte past the fields, counting key
+// cycles since the record was stored. Both stories: docs/diagnostics-and-checks.md.
 
 const failures: string[] = [];
 
