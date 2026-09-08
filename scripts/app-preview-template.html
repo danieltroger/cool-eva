@@ -604,11 +604,11 @@ __MODULES__
        * stayed on "Stop the parameter read" forever, which would have looked like a bug in
        * the sheet and is not one.
        */
-      function json(body) {
+      function json(body, status = 200) {
         const text = JSON.stringify(body);
         return Promise.resolve({
-          ok: true,
-          status: 200,
+          ok: status >= 200 && status < 300,
+          status,
           json: () => Promise.resolve(JSON.parse(text)),
           text: () => Promise.resolve(text),
         });
@@ -777,7 +777,7 @@ __MODULES__
         const mode = query.get("mode");
         if (duty !== null && mode !== null) {
           FAN.message = "pass duty=<percent> OR mode=auto|manual|fun, not both — a duty already means manual";
-          return;
+          return 400;
         }
         if (duty !== null) {
           const percent = Number(duty);
@@ -788,19 +788,20 @@ __MODULES__
           FAN.phase = percent > 0 ? "running" : "idle";
           FAN.auto.reason = SERVER.fanReason.MANUAL;
           FAN.message = null;
-          return;
+          return 200;
         }
         const wanted = { auto: "automatic", automatic: "automatic", manual: "manual", fun: "fun", play: "fun" }[
           (mode ?? "").trim().toLowerCase()
         ];
         if (wanted === undefined) {
           FAN.message = `mode must be auto, manual or fun, not ${mode}`;
-          return;
+          return 400;
         }
         if (wanted === "fun") {
           // The gate the Pi applies, and the preview cannot pass it: fun mode needs a live throttle.
+          // 503 rather than 400, as src/http/fan.ts does: the request was fine, the bike is not.
           FAN.message = "The bike has to be parked and its throttle readable before the fan will follow it.";
-          return;
+          return 503;
         }
         FAN.mode = wanted;
         // Handing the fan back to the curve restores the decision this scene's curve would make.
@@ -814,6 +815,7 @@ __MODULES__
           FAN.phase = SCENE_FAN.phase;
         }
         FAN.message = null;
+        return 200;
       }
 
       window.fetch = function previewFetch(input, init) {
@@ -865,11 +867,15 @@ __MODULES__
         // exists to demonstrate it. A preview that undoes the gesture being reviewed is worse than
         // no preview of it.
         if (path === "/fan") {
-          if (method === "POST") {
-            commandFan(url.searchParams);
-            pushPatch(fanReadings());
+          if (method !== "POST") {
+            return json(FAN);
           }
-          return json(FAN);
+          // ⚠️ The STATUS the Pi would answer with, not a blanket 200: refreshFanStatus() and the
+          // command queue both branch on `response.ok`, so a stub that says 200 to a request the
+          // service refuses is a preview of a door that is not there.
+          const status = commandFan(url.searchParams);
+          pushPatch(fanReadings());
+          return json(FAN, status);
         }
         if (path === "/charge-auto") {
           if (method === "POST") {

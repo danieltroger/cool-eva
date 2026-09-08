@@ -301,9 +301,16 @@ function diagnostics(error: unknown, file: string): string[] {
     .split("\n")
     .filter(line => line.includes(file))
     .map(line => line.slice(line.indexOf(file) + file.length).replace(/^\(\d+,\d+\):\s*/, ""))
-    // The presence-only assertion's type prints as the whole payload with every value `unknown`,
-    // which is thirty words of nothing in front of the two names that matter.
-    .map(line => line.replace(/type '\{[^']*: unknown;[^']*\}'/g, "the payload the Pi sends"));
+    // ⚠️ Rewritten, not passed through. tsc prints the whole fixture and then the whole payload
+    // type before naming what is absent, which puts the two words that matter at the end of a
+    // 599-character line — in a check whose output is read in a terminal.
+    .map(line => {
+      // Greedy on purpose: the payload type printed in between contains colons of its own.
+      const missing = /is missing the following propert(?:y|ies) from .*: (.*)$/.exec(line);
+      return missing
+        ? `${line.slice(0, line.indexOf(":") + 1)} missing from the payload the Pi sends: ${missing[1]}`
+        : line;
+    });
   if (ours.length === 0) {
     return [`tsc could not check the fixtures — the repo itself does not compile:\n${output.trim()}`];
   }
@@ -324,48 +331,6 @@ function topLevelDeclarations(source: ts.SourceFile): Map<string, ts.Expression>
     }
   }
   return found;
-}
-
-/** The wanted names plus everything they reach, so the generated module has no free identifiers. */
-function closure(wanted: Set<string>, declarations: Map<string, ts.Expression>): Set<string> {
-  const needed = new Set(wanted);
-  const pending = [...wanted];
-  while (pending.length > 0) {
-    const initializer = declarations.get(pending.shift()!);
-    if (!initializer) {
-      continue;
-    }
-    for (const referenced of referencedNames(initializer)) {
-      if (declarations.has(referenced) && !needed.has(referenced)) {
-        needed.add(referenced);
-        pending.push(referenced);
-      }
-    }
-  }
-  return needed;
-}
-
-/** Identifiers an expression READS — not the property names it writes, which reference nothing. */
-function referencedNames(node: ts.Node, into: Set<string> = new Set()): Set<string> {
-  if (ts.isIdentifier(node)) {
-    into.add(node.text);
-    return into;
-  }
-  if (ts.isPropertyAccessExpression(node)) {
-    return referencedNames(node.expression, into);
-  }
-  if (ts.isPropertyAssignment(node)) {
-    return referencedNames(node.initializer, into);
-  }
-  ts.forEachChild(node, child => {
-    referencedNames(child, into);
-  });
-  return into;
-}
-
-/** Declaration order, so a name is emitted after everything it reads. SERVER is substituted. */
-function orderedNames(declarations: Map<string, ts.Expression>, needed: Set<string>): string[] {
-  return [...declarations.keys()].filter(name => needed.has(name) && name !== "SERVER");
 }
 
 /** The `name: { … }` entries of an object literal. */

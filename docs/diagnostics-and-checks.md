@@ -866,17 +866,22 @@ Two assertions, in two modules — `check-preview-fixtures.ts` asks whether the 
 - **Every fixture matches its payload type**, member by member and down through nested objects and unions. A field the Pi always sends and the fixture lacks is red; so is a field the fixture invents. Unions must match exactly ONE arm — merged members would accept a value the type cannot produce.
 - **Every path `public/` fetches has an answer** in the whole-dashboard template. Applied only to a template that calls `imp("app.js")`: the annotated sheet mounts a chosen set of panels rather than the app, which is a different contract.
 
-Pointed at `origin/main`'s template it reports ten failures. Five are fields:
+Pointed at `origin/main`'s template it reports **nine** failures. Six of them are the fixture:
 
 |  |  |
 | --- | --- |
 | `WRITE_STATUS.runningVersion` | missing — the one that threw |
-| `WRITE_STATUS.chargeAck` | missing. Invisible: `charge-write.js:188` reads it as `?? null`, so an absent field and a correct `null` render identically, and it would have silently swallowed #153's verdict line in the first DC screenshot anyone took |
+| `WRITE_STATUS.chargeAck` | missing. Invisible on screen: `charge-write.js:188` reads it as `?? null`, so an absent field and a correct `null` render identically, and it would have silently swallowed #153's verdict line in the first DC screenshot anyone took |
 | `WRITE_STATUS.gate.readings` | invented. `readings` is on the gate's INPUT type, never on the verdict |
 | `WRITE_STATUS.clock.reasons` | invented. `PiClockVerdict` is a union and `reasons` belongs to the untrustworthy arm alone |
-| `READ_STATE.run.expected` | invented. `VcuReadState`'s `finished` arm does not carry it; only `running` does |
+| `READ_STATE.…tally.byStatus` | four of the seven statuses `tallyOf()` seeds at zero are absent |
+| `FAN` and `CHARGE_AUTO` | no fixture at all |
 
-The other five are the missing `/fan`, `/charge-auto` and `/can-restart` stubs and the two fixtures behind them. Both templates carry their own copy of `WRITE_STATUS`, so the first four were fixed twice — the tax [#170](https://github.com/danieltroger/cool-eva/issues/170) exists to remove.
+The other three are the unanswered `/fan`, `/charge-auto` and `/can-restart`.
+
+⚠️ **It reports at most one error per nested path, so a red run is not a complete inventory.** `READ_STATE.run.expected` — the fifth invented field, and a real one — does not appear above: its sibling `byStatus` error suppresses it, and it surfaces only once `byStatus` is fixed. Same rule the two assignments exist to soften, one level down. Fixing what a run names and running it again is the loop; a single green run is the assurance, not a single red one.
+
+Both templates carry their own copy of `WRITE_STATUS`, so the first four were fixed twice — the tax [#170](https://github.com/danieltroger/cool-eva/issues/170) exists to remove.
 
 It does not compare the shapes itself: it lifts each fixture literal out of the template, writes it into a throwaway `.ts` annotated with the type its endpoint serves, and runs `tsc` over that. **A hand-rolled comparison was written first and rejected**, and the reason is worth keeping: at 524 lines it still passed a boolean swapped for a string, an array element with a renamed field, and a union arm satisfied on the wrong discriminant. Two of those three produce the same throwing binding this section is about. Reaching a fixture through a name (`targets: TARGETS`) widens its literal types before anything says what they should be, so the generator **inlines** every reference into one contextually-typed literal — that is the difference between checking `micro: "A9"` against `VcuMicro` and checking it against `string`. Each fixture is then written out **twice**: TypeScript's excess-property check fires only on a fresh literal and reports the first mismatch it finds, so against main's template the invented `gate.readings` masked the missing `runningVersion` completely — the check would have gone red without ever naming the field it exists for. The second assignment goes through a widened copy, which is not fresh and so reports what is ABSENT, with every value mapped to `unknown` so it stays a presence test and nothing else.
 
