@@ -711,6 +711,10 @@ speed range on those frames       0.5 … 4.5 km/h
 
 ⚠️ **The denominator also double-counted.** `ride-1.log` and `ride-2026-08-02.log` in the local archive are **byte-identical** — same md5, same 39 301 120 bytes — and both were being scanned. The figures above exclude the duplicate, which is why they are slightly smaller than the ones first published here: 14 965 486 frames rather than 15 006 363, and 37 288 hits rather than 38 410.
 
+✅ **If you re-run this sweep and get 751 rising edges rather than 742, you counted the duplicate.** `ride-1.log` contributes exactly **9** rising edges and so does `ride-2026-08-02.log`, which is what byte-identical files do; 751 − 9 = 742. Recorded because 751 is what a naive glob over the archive gives, and the next person to check this number should be able to land on either figure and know which one they have.
+
+🔎 **File boundaries are not a factor, which was worth checking rather than assuming.** A per-file sweep that resets its previous-sample state at each file would double-count any burst spanning a split. None does: **three** captures end with bit 63 still set, and **zero** captures begin with it set, so no burst crosses a boundary anywhere in the archive. Per-file and whole-stream counting agree exactly.
+
 ⚠️ **It is also not a capture-start artefact**, which is the obvious alternative for a bit that fires in short bursts. The first hit in each capture sits deep inside it — frame #8 359, #11 443, #20 847, #50 798, **#571 235** — not at frame 1. Two captures do start early (#73, #564), and they are the exception rather than the pattern.
 
 (An earlier version of this section rested the same point on 5 frames in one Pi-side overnight capture. That capture is not in the local archive and the claim could not be re-checked from here; the archive-wide result above replaces it and does not depend on it.)
