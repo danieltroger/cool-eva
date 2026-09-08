@@ -611,6 +611,40 @@ So the tile counts down against the TRUE temperature (`batt_temp_hi`, sourced fr
 
 ---
 
+## Light and dark — `lib/theme.js`, `style.css`
+
+The dark screen washes out in direct sun. `lib/theme.js` resolves one of two palettes and stamps it on `<html>` as `data-theme`; `style.css` carries both under the same token names.
+
+**The bike chooses it.** `0x400` b5 bit 7 is the dashboard's own day/night flag (`docs/can-0x400-day-night.md`), and the phone follows it directly, with **no hysteresis** — the owner's explicit call: _"it doesn't really strobe that much on the bike, I think it's cooler if they switch in tandem."_ That is worth knowing rather than discovering: the bit changed **55 times on one 5 h 32 min ride**, so the phone flips more often than the bike's own dash appears to — §4.4 there has the run-length distribution. No smoothing layer was needed to build this and none should be added without asking him — `signals.ts` is log-on-change, so a patch only goes out when the bit actually flips and the repaint lands on that frame.
+
+**The fall-through is the design:** an explicit choice from the menu sheet is never overruled by the bus; otherwise the bike while it is talking; otherwise the phone's own `prefers-color-scheme`. The middle branch is gated on the reading's own age (`ageOf`, 10 s) rather than on `isStale()`, because `isStale` folds in link liveness and would repaint the whole screen over a twelve-second socket blip. `0x400` is 100 Hz, so that window is unreachable while the bus is live and cannot delay a flip; it only decides when a sleeping bike hands the question back to the phone.
+
+There are four states, and the age test only covers three of them:
+
+| state | what happens |
+| --- | --- |
+| never connected, or the bike has never sent `0x400` | `valueOf` is `null` → the phone decides |
+| bike awake | the flag is milliseconds old → the bike decides, and a flip lands on the frame |
+| bike asleep, socket up | heartbeats advance `serverTime` while the flag's `ts` does not, so it ages out → the phone decides |
+| **socket down** | **`serverTime` freezes with the messages, so the age stops growing and the theme HOLDS its last value** |
+
+That last row is deliberate rather than an oversight, and it is the same property that stops a twelve-second blip repainting the screen: while nothing is arriving there is no new evidence about the light outside, and holding is better than snapping on the strength of a dropout. It is also why this is not additionally gated on `connection` — that would reintroduce exactly the snap the age test was chosen to avoid. A link that stays down leaves the theme on the bike's last word until the rider touches the toggle, which is what the toggle is for.
+
+⚠️ **`style.css` deliberately has no `prefers-color-scheme` media query.** A media query would be a second answer to the same question, and the two would disagree the moment the bike says one thing and the phone says another. The cost is that the first paint is dark until `theme.js` runs.
+
+**Why light rather than a higher-contrast dark.** The mechanism is that reflected ambient light adds a roughly constant luminance to ink and ground alike, which compresses a dark theme's ratio far more than a light one's. ⚠️ Stated as the reasoning, **not** as a measurement — nobody has measured this screen in sunlight, and the kickoff named high-contrast dark as a first-class alternative. If it turns out to be wrong, the toggle is right there.
+
+**The light ramp costs separation to buy contrast, and the trade is measured.** Today's accents are 1.2–2.8:1 on white, so a light theme needs its own ink ladder rather than a background swap. On a `#f1f5f9` tile the Tailwind 800 step is the FIRST that clears 6:1 — the 700 step tops out at 5.91 — and darkening yellow and orange that far walks them towards the same brown:
+
+|             | min contrast             | worst adjacent separation (Δa\*b\*) |
+| ----------- | ------------------------ | ----------------------------------- |
+| dark, today | 5.29 (`--bad` on a tile) | **38.7**                            |
+| light       | **6.25**                 | **16.0**                            |
+
+The light palette _beats_ the dark one on contrast and loses more than half the hue separation. For a theme whose whole purpose is direct sun — where glare degrades hue discrimination anyway and luminance is the binding constraint — that is the right side of the trade, but it is a real cost and `scripts/check-theme-contrast.ts` pins both ends of it so the next person can argue with it instead of rediscovering it.
+
+**No transition on the flip, and that is measured rather than taste** — a cross-fade on the ground alone leaves the ink already switched over it, i.e. blank for the whole fade. `style.css` carries the argument at the point where someone would add one back.
+
 ## The toast banner — `lib/toast.js`
 
 Everything else on this dashboard answers a question you went looking for. This answers one you cannot go looking for: a handlebar gesture gives no feedback of its own, so without it a long press on the bars is indistinguishable from a long press that did nothing, and the rider's only recourse is to stop and check.

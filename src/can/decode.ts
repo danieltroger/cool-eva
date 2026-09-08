@@ -352,9 +352,12 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     }
 
     // 0x400 — the dashboard broadcasting its own digital inputs. Byte 2 is a button
-    // bitfield; every other byte is either constant or a slow mode flag. ✅ Measured over
-    // 1 099 357 frames across 14 captures: four static bytes, one slow flag, one button
-    // byte, and b2 only ever holds 0x00, 0x02 or 0x04.
+    // bitfield, b5 bit 7 is the day/night flag, and the other six bytes are constant.
+    // ✅ Re-measured over 14 069 994 frames across 97 captures (was 1 099 357 across
+    // 14): b0 is 0x02 and b1 0x01 in every frame, b3/b4/b6/b7 are 0x00 in every frame,
+    // b2 holds only 0x00/0x01/0x02/0x04, and b5 only 0x00/0x80 — so bit 7 is the only
+    // thing in that byte that has ever moved. b2 bit 4 (`DBS LIGHT SENS CALIB STS`)
+    // has never been set once.
     //
     // ⚠️ The bit NAMES are Energica's, not ours — a free-frame IO table describing every
     // model the tool serves rather than this one (obd-garage/HEATED_GRIPS.md §3.0). A name
@@ -364,7 +367,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     case 0x400: {
       if (data.length < 3) return [];
       const buttons = data[2];
-      return [
+      const values: DecodedValue[] = [
         // bit 0, `BUTTON [SET|BACK] (LeftBack)`. ✅ SEEN AT LAST, 2026-08-19: eight
         // presses at 18:31:51-53, 120-160 ms each, one payload (02 01 01 00 00 00 00 00)
         // in 132 frames. Until that afternoon it had never been set in one frame of the
@@ -400,6 +403,19 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         // pin 3 and this is the signal that says whether the idea works.
         { key: "btn_heated_grip", value: bit(buttons, 3) },
       ];
+      // b5 keeps its own guard so a short frame cannot silence the four buttons on
+      // account of it — the arrangement 0x109's throttle and 0x0A0's b6 already use.
+      if (data.length >= 6) {
+        // b5 bit 7, `DBS DAY/NIGHT MODE` in the vendor IO table. 🟡 The NAME is the
+        // table's; what is MEASURED is that the bit tracks ambient light at the bike:
+        // set in 77.3 % of daytime frames and in 0 of 2 258 235 satellite-validated
+        // evening ones, independent of both beams, and flipping within ~90 s of the
+        // bike leaving a dark garage on a bright afternoon. Whether it is the dash's
+        // display mode or the raw sensor is still open — it changes far more often
+        // than the owner reports his dash changing. docs/can-0x400-day-night.md.
+        values.push({ key: "dash_day_mode", value: bit(data[5], 7) });
+      }
+      return values;
     }
 
     default:

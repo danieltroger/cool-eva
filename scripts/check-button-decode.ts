@@ -229,14 +229,26 @@ const CASES: FrameCase[] = [
     what: "0x400 idle — the payload 989 707 of 1 099 357 frames carried",
     id: 0x400,
     hex: "02 01 00 00 00 00 00 00",
-    expect: { ...NONE_PRESSED_400 },
+    expect: { ...NONE_PRESSED_400, dash_day_mode: 0 },
   },
   {
-    what: "0x400 idle with the day/night bit set (b5 0x80) — 2026-08-04 18:04:12.439",
+    what: "0x400 with the day/night bit set (b5 0x80) — 2026-08-04 18:04:12.439, riding at 88 km/h",
     id: 0x400,
-    // b5 is not decoded; this is here to prove that b5 moving cannot move a button.
+    // The frame this file has captioned "the day/night bit" since before anything
+    // decoded it. b5 moving must not move a button, AND it must move dash_day_mode.
     hex: "02 01 00 00 00 80 00 00",
-    expect: { ...NONE_PRESSED_400 },
+    expect: { ...NONE_PRESSED_400, dash_day_mode: 1 },
+  },
+  {
+    what: "0x400 with a b5 that has never occurred — bits 0-6 are dead in 14 069 994 frames",
+    id: 0x400,
+    // Not a captured frame and the only one in this file that is not: it is the
+    // NEGATIVE of a measurement. b5 has held exactly 0x00 or 0x80 in every frame on
+    // record, so a byte with the low bits alive is a layout change rather than a
+    // day/night state — and the decoder must read bit 7 alone rather than the byte.
+    // Guarding this here is why decode.ts needs no runtime check for it.
+    hex: "02 01 00 00 00 40 00 00",
+    expect: { ...NONE_PRESSED_400, dash_day_mode: 0 },
   },
   {
     what: "0x400 cruise ON/OFF held at 88 km/h — 2026-08-04 18:04:42.270",
@@ -394,7 +406,7 @@ if (decodeFrame(0x400, parseFrame("02 01")).length !== 0) {
 // Every key the decoder emits must be described in the registry, or it is logged into
 // group "misc" where the plausibility gate and the buttons section cannot see it.
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
-for (const key of [...BUTTONS_GROUP_KEYS, "fast_dc_contactor", "cruise_active"]) {
+for (const key of [...BUTTONS_GROUP_KEYS, "fast_dc_contactor", "cruise_active", "dash_day_mode"]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
@@ -425,7 +437,7 @@ for (const key of BUTTONS_GROUP_KEYS) {
 // real measurements and needs its own BY_KEY entry. Raised in review, where it turned
 // out to be the one flag added here that had fallen through both routes and was
 // rendering unbounded.
-for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp", "horn"]) {
+for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp", "horn", "dash_day_mode"]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is decoded but not defined in src/can/registry.ts`);

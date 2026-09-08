@@ -47,15 +47,96 @@
   --warn-edge: rgba(251, 146, 60, 0.45);
   --bad-edge: rgba(248, 113, 113, 0.55);
 
+  /* The rest of the ramp public/lib/colors.js draws with, which used to be a second
+     hand-kept copy of --good/--warn/--bad. Tokens now, so the light palette restates the
+     ramp in one place and colors.WARN can no longer drift from --warn — which the note
+     above says it must not. colors.CALM and colors.MUTED are var(--fg) and var(--sub)
+     rather than tokens of their own: they have always been those exact values, and a
+     second name for one hex is the drift this block exists to prevent. */
+  --watch: #facc15;
+  --cold: #38bdf8;
+  --cool: #67e8f9; /* the 5-20 °C step between --cold and --good */
+
+  /* Marks in public/lib/svg.js. Sized by VISIBILITY, not readability — an unfilled
+     bar has to be findable, not legible — so these are the one group not held to the
+     6:1 floor, and the light values match their dark counterparts' ratios instead.
+     (The limit marker on a bar is colors.CALM, not a token: svg.js already imports it
+     for the other marker of the same kind.) */
+  --track: #0b1220; /* 1.3:1 on --tile; must NOT be --tile, or a bar is invisible until half full */
+  /* The power bar's derate hatch. Deliberately LOW contrast — it is a texture over a
+     filled bar, not a mark to be read: 1.7…3.9:1 over the four grounds it can land on.
+     The light value is picked to match that range rather than to clear any floor. */
+  --derated: #64748b;
+
+  /* Ink on the toast, which is painted --good or --bad rather than --tile. 10.3:1 on
+     --good and 6.5:1 on --bad; the light theme flips it to white for the same reason,
+     because there the two grounds are dark. */
+  --toast-ink: #0f172a;
+  /* The tab bar sits over scrolling content, so it is near-opaque rather than a token. */
+  --tabs-bg: rgba(15, 23, 42, 0.94);
+
   /* The tab bar is fixed; every scrolling surface has to clear it plus the home
      indicator, or the last tile sits permanently under your thumb. */
   --tabs-height: 4.2rem;
+}
+
+/* ---------- the light palette ----------
+ *
+ * Same token names, different ground. This exists because the dark screen washes out
+ * in direct sun; docs/dashboard-decisions.md has the ramp measurements and the trade.
+ *
+ * Two rules to keep if you touch it. Every value here was measured against --tile
+ * (#f1f5f9), and the accents sit at the Tailwind 800/900 step because that is the
+ * FIRST step that clears 6:1 on this ground — the 700 step tops out at 5.91 and fails.
+ * Darkening yellow and orange that far walks them towards each other, so --watch and
+ * --warn are further apart here than the obvious amber/orange pair would be, and
+ * scripts/check-theme-contrast.ts pins both the ratio and the separation. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --tile: #f1f5f9;
+  --tile-edge: #e2e8f0;
+  --fg: #0f172a; /* 16.3:1 / 17.9:1 — values */
+  --label: #334155; /* 9.5:1 / 10.3:1 */
+  --sub: #475569; /* 6.9:1 / 7.6:1 */
+  --dim: #cbd5e1; /* borders only — never text */
+  --bad: #7f1d1d; /* 9.2:1 */
+  --good: #166534; /* 6.5:1 */
+  --warn: #9a3412; /* 6.7:1 */
+  --warn-edge: rgba(154, 52, 18, 0.45);
+  --bad-edge: rgba(127, 29, 29, 0.55);
+  --watch: #854d0e; /* 6.3:1 */
+  --cold: #075985; /* 6.9:1 */
+  --cool: #155e75; /* 6.6:1 */
+  --track: #cbd5e1; /* 1.4:1 on --tile, matching the dark theme's 1.3 */
+  --derated: #94a3b8; /* worst ground 1.73:1, against the dark theme's own 1.72 */
+  --toast-ink: #ffffff; /* 7.1:1 on --good, 10.0:1 on --bad */
+  --tabs-bg: rgba(255, 255, 255, 0.94);
+}
+
+/* ⚠️ `prefers-color-scheme` is deliberately NOT a media query here. public/lib/theme.js
+   resolves the theme from three inputs — the rider's choice, the bike's day/night bit
+   and the phone's setting — and stamps the answer on <html> as data-theme. A media
+   query would be a SECOND resolver for the same question, and the two would disagree
+   the moment the bike says one thing and the phone says another. One source of truth,
+   and it is the one that can see all three inputs. The cost — a dark first paint — and
+   the four states it resolves are in docs/dashboard-decisions.md §"Light and dark". */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--fg);
+  /* ⚠️ NO transition on the theme flip, and this is measured rather than taste. A
+     150 ms cross-fade on `background-color` alone leaves the ink already switched over
+     a ground that has not: for the whole fade the page is #0f172a on #0f172a, i.e.
+     blank. Fixing THAT means transitioning `color` as well, which would also ramp a
+     tile going GOOD → WARN — and colour here is the channel that carries state without
+     being read. A snap is the only option that is legible at every instant. */
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -108,7 +189,7 @@ body {
   background: var(--good);
 }
 .dot.connecting {
-  background: #facc15;
+  background: var(--watch);
 }
 .dot.up {
   background: var(--good);
@@ -308,7 +389,7 @@ body {
   left: 0;
   right: 0;
   display: flex;
-  background: rgba(15, 23, 42, 0.94);
+  background: var(--tabs-bg);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--tile-edge);
   padding-bottom: env(safe-area-inset-bottom);
@@ -359,6 +440,9 @@ body {
 .sheet {
   position: fixed;
   inset: 0;
+  /* Dark in BOTH themes on purpose, which is why it is a literal and not a palette
+     token: it dims the page behind the sheet, and a light scrim over a light page dims
+     nothing. A token here would read as a knob the light palette forgot to turn. */
   background: rgba(2, 6, 23, 0.6);
   display: flex;
   align-items: flex-end;
@@ -1179,7 +1263,7 @@ body {
      be in the way of whatever you meant to touch while it is up. */
   pointer-events: none;
   padding: calc(env(safe-area-inset-top) + 0.9rem) 1rem 0.9rem;
-  color: #0f172a;
+  color: var(--toast-ink);
   text-align: center;
   opacity: 0;
   transform: translateY(-100%);

@@ -5,6 +5,7 @@ import { chartTick, knownKeys, valueOf } from "../lib/store.js";
 import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
 import { bytes, compass, duration } from "../lib/format.js";
 import * as units from "../lib/units.js";
+import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { FanControl, refreshFanStatus } from "./fan.js";
@@ -67,10 +68,12 @@ export function Sheet() {
       // run of text to it. Levels start at 2 because the sheet is a section of a page
       // rather than a document of its own, and nothing renders differently — see
       // docs/dashboard-decisions.md §"The menu sheet".
-      // The one preference this dashboard has, at the top of the sheet where it is the
-      // first thing found rather than buried below the stats — nothing about it is worth
-      // reaching for at speed, but when the sheet is open it is the control most likely
-      // wanted, and every number below flips as you tap it. Persisted in lib/units.js.
+      // The two preferences this dashboard has, at the top of the sheet where they are
+      // found first rather than buried below the stats — neither is worth reaching for at
+      // speed, but when the sheet is open they are the controls most likely wanted, and
+      // the page flips under your thumb as you tap. Persisted in lib/theme.js, lib/units.js.
+      h2({ class: "sheet-heading" }, "Screen"),
+      ThemeToggle(),
       h2({ class: "sheet-heading" }, "Units"),
       UnitsToggle(),
       h2({ class: "sheet-heading" }, "This session"),
@@ -307,6 +310,27 @@ function UpdateButton() {
 /** True while the bike is reporting at least one stored trouble code. */
 export function hasTroubleCodes() {
   return knownKeys.val.some(key => /^dtc_\d+_\d+$/.test(key) && (valueOf(key) ?? 0) > 0);
+}
+
+/**
+ * Dark/light as a three-button segmented control, the same `.toggle-row` as the units
+ * row below it. AUTO follows the bike's own day/night flag while it is broadcasting and
+ * the phone's setting otherwise; the two explicit choices are never overruled by either,
+ * which is what makes this the escape hatch if the bike's flag ever reads wrong.
+ */
+function ThemeToggle() {
+  return div(
+    { class: "toggle-row" },
+    .../** @type {const} */ (["auto", "light", "dark"]).map(preference =>
+      button(
+        {
+          class: () => (theme.themePreference.val === preference ? "on" : ""),
+          onclick: () => theme.setThemePreference(preference),
+        },
+        preference === "auto" ? "Auto · bike" : preference === "light" ? "Light" : "Dark"
+      )
+    )
+  );
 }
 
 /**

@@ -7,15 +7,20 @@
 // A dashboard that is mostly grey-green at a glance means "fine" without being
 // read at all, which is the only thing that works at speed.
 
-export const CALM = "#e2e8f0";
-export const GOOD = "#4ade80";
-export const WATCH = "#facc15";
-export const WARN = "#fb923c";
-export const BAD = "#f87171";
-export const COLD = "#38bdf8";
-/* 6.1:1 against the tiles — matches --sub in style.css. Anything dimmer is
-   unreadable in daylight; see the palette note there before changing it. */
-export const MUTED = "#9aa9bf";
+/* Tokens rather than hex, so the light theme restates the ramp in one place and the
+   flip repaints from the CSS engine with no JS re-run — which matters because half of
+   these are read once, when an element is CREATED (svg.js), and a binding that never
+   re-runs would otherwise keep its old ink for as long as the element lives.
+   The values, and the contrast ratio behind each, are in style.css's palette blocks. */
+export const CALM = "var(--fg)";
+export const GOOD = "var(--good)";
+export const WATCH = "var(--watch)";
+export const WARN = "var(--warn)";
+export const BAD = "var(--bad)";
+export const COLD = "var(--cold)";
+/* 6.1:1 against the tiles dark, 6.9:1 light — matches --sub in both. Anything dimmer
+   is unreadable in daylight; see the palette note in style.css before changing it. */
+export const MUTED = "var(--sub)";
 
 /**
  * @param {number | null} celsius
@@ -29,7 +34,7 @@ export function temperature(celsius) {
     return COLD;
   }
   if (celsius < 20) {
-    return "#67e8f9";
+    return "var(--cool)";
   }
   if (celsius < 35) {
     return GOOD;

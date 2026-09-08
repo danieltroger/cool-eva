@@ -95,7 +95,15 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-button-decode.ts",
     covers:
-      "the handlebar-button bits on 0x102 b0 and 0x400 b2 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
+      "the handlebar-button bits on 0x102 b0 and 0x400 b2, the day/night flag on 0x400 b5 and the fast-charge contactor monitor on 0x102 b3, against frames captured 2026-08-04, plus the RX filter, short frames, and the registry and bounds entries a button needs to reach the dashboard",
+  },
+  {
+    script: "scripts/check-theme-contrast.ts",
+    covers:
+      "both of style.css's palettes, parsed out of the file itself rather than restated: every ink colors.js and " +
+      "svg.js draw with exists in both, values clear 11:1 and text and status inks 6:1 against both the page and " +
+      "the tile they land on, and no two steps of the good→watch→warn→bad ramp are closer than 15 in the a*b* " +
+      "plane — the light theme buys its contrast by compressing that ramp, so the trade is pinned at both ends",
   },
   {
     script: "scripts/check-all-view-tiles.ts",

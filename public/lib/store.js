@@ -154,6 +154,21 @@ export function isStale(key, maxAgeMs) {
 }
 
 /**
+ * How long ago a signal was last refreshed, on the server's clock, sampled rather than
+ * subscribed. `Infinity` if it has never arrived.
+ *
+ * ⚠️ Deliberately NOT isStale(), which folds `linkIsLive` into freshness: this answers
+ * "is the BIKE still saying this", not "is the page current". docs/dashboard-decisions.md
+ * §"Light and dark" has the four states that distinction produces.
+ * @param {string} key
+ * @returns {number}
+ */
+export function ageOf(key) {
+  const reading = signalState(key).rawVal;
+  return reading ? peekServerTime() - reading.ts : Infinity;
+}
+
+/**
  * The same, sampled rather than subscribed. See peek() and peekServerTime(): the
  * tick-paced work in app.js must not subscribe to serverTime, which apply() writes
  * on every message including 20 Hz pack_a patches.
