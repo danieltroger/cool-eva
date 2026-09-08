@@ -380,10 +380,10 @@ function ParameterSelect() {
     const targets = state.val?.status.targets ?? [];
     return select(
       {
-        "class": "probe-input",
+        class: "probe-input",
         // See the note on the bits picker below for why this is a name rather than an id.
-        "name": "vcu-write-parameter",
-        "autocomplete": "off",
+        name: "vcu-write-parameter",
+        autocomplete: "off",
         onchange: (/** @type {Event} */ event) => {
           selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
           // A different parameter means a different value, a different range and a
@@ -572,8 +572,8 @@ function WantedControl() {
           // contract to break. `autocomplete="off"` because a name is also what Chrome keys
           // autofill history on, and a remembered value offered on a control that writes to the
           // motorcycle is a suggestion nobody asked for.
-          "name": "vcu-write-bit",
-          "autocomplete": "off",
+          name: "vcu-write-bit",
+          autocomplete: "off",
           onchange: (/** @type {Event} */ event) => {
             wanted.val = /** @type {HTMLSelectElement} */ (event.target).value;
             armed.val = "";
@@ -587,13 +587,13 @@ function WantedControl() {
       );
     }
     return input({
-      "class": "probe-input",
-      "type": "text",
-      "inputmode": "numeric",
+      class: "probe-input",
+      type: "text",
+      inputmode: "numeric",
       // See the note on the picker above for why this is a name rather than an id.
-      "name": "vcu-write-value",
-      "autocomplete": "off",
-      "placeholder": target?.control.kind === "number" ? `${target.control.min}…${target.control.max}` : "",
+      name: "vcu-write-value",
+      autocomplete: "off",
+      placeholder: target?.control.kind === "number" ? `${target.control.min}…${target.control.max}` : "",
       value: wanted,
       oninput: (/** @type {Event} */ event) => {
         wanted.val = /** @type {HTMLInputElement} */ (event.target).value;

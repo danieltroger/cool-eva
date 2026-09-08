@@ -563,7 +563,9 @@
           tally: {
             total: 277,
             read: 233,
-            byStatus: { read: 233, refused: 30, "no-response": 14 },
+            // ⚠️ All seven, because tallyOf() seeds every status at 0 (src/vcu/read-runner.ts) —
+            // the Pi never sends a partial one, and views/service-mode.js reads the record.
+            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
             micros: [
               { micro: "A9", read: 201, failed: 22 },
               { micro: "A8", read: 32, failed: 22 },
@@ -784,6 +786,18 @@
         const method = ((init && init.method) || "GET").toUpperCase();
         const path = url.pathname;
 
+        // A Pi with FAN_ENABLED unset does not route /fan at all, and views/fan.js documents that
+        // 404 as "not an error — almost no Eva has this fan", hiding the section either way. That
+        // is the truthful stand-in for THIS page, whose panels are the service sheet's and never
+        // render a fan section; the whole-dashboard preview serves a real FanReply instead.
+        if (path === "/fan") {
+          return Promise.resolve({
+            ok: false,
+            status: 404,
+            json: () => Promise.resolve({ error: "preview: this Pi has no fan configured" }),
+            text: () => Promise.resolve("not found"),
+          });
+        }
         if (path === "/status") {
           return json(STATUS);
         }

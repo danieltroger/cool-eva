@@ -331,7 +331,9 @@ __MODULES__
           tally: {
             total: 277,
             read: 233,
-            byStatus: { read: 233, refused: 30, "no-response": 14 },
+            // ⚠️ All seven, because tallyOf() seeds every status at 0 (src/vcu/read-runner.ts) —
+            // the Pi never sends a partial one, and views/service-mode.js reads the record.
+            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
             micros: [
               { micro: "A9", read: 201, failed: 22 },
               { micro: "A8", read: 32, failed: 22 },
@@ -401,6 +403,11 @@ __MODULES__
         parked: { label: "parked in the garage", signals: {} },
         dc: {
           label: "a DC session at 42 A, with the rider having taken the current back",
+          // ⚠️ NOTHING from the onboard charger is here — no `charger_enabled`, no `charger_max_dc_*`,
+          // no mains or dc_v/dc_a. lib/charge-mode.js records that every one of them logged exactly
+          // zero readings across a measured 40-minute DC session, so a fixture broadcasting them as
+          // permanently fresh describes a bike this software does not serve.
+          //
           // ⚠️ `charge_manager_state` alone is NOT a DC session. It drives the AC/DC label and the
           // write controls' visibility (lib/charge-write.js), while lib/charge-mode.js — which the
           // delivery tile and the power bar's "claim nothing while charging" rule both read —
@@ -420,13 +427,10 @@ __MODULES__
             "fast_dc_contactor": [1, "", "charge"],
             "dc_charging": [1, "", "charge"],
             "bms_state_charge": [1, "", "bms"],
-            "charger_enabled": [1, "", "charge"],
             "fast_dc_limit_max_a": [75, "A", "charge"],
             "fast_dc_limit_a": [42, "A", "charge"],
             "fast_dc_target_a": [42, "A", "charge"],
             "fast_dc_target_v": [372, "V", "charge"],
-            "charger_max_dc_a": [125, "A", "charge"],
-            "charger_max_dc_v": [500, "V", "charge"],
             "charge_cmd_a": [42, "A", "charge"],
             "charge_cmd_ack": [1, "", "charge"],
             "charge_cmd_ack_ms": [1840, "ms", "charge"],
@@ -546,26 +550,36 @@ __MODULES__
         WRITE_STATUS.chargeAck = SCENE.chargeAck;
       }
       if (SCENE.chargeAutoReason !== undefined) {
-        CHARGE_AUTO.state = { mode: "automatic", reason: SCENE.chargeAutoReason, commandedAmps: SCENE.commandedAmps };
+        CHARGE_AUTO.state = { mode: "automatic", reason: SCENE.chargeAutoReason, commandedAmps: SCENE.commandedAmps ?? null };
         CHARGE_AUTO.reasonText = SERVER.chargeAutoReasonText[SCENE.chargeAutoReason];
       }
 
       // The fan broadcasts as well as answering, and the sheet reads the BROADCAST for what it is
       // doing right now ("the reply is only as fresh as the fetch" — views/fan.js). Derived from
-      // the reply above rather than written a second time in the scene, so the two cannot disagree:
+      // the reply rather than written a second time in the scene, so the two cannot disagree:
       // without these the section rendered "the fan driver has not reported yet" over a live one.
-      Object.assign(LIVE, {
-        fan_duty_pct: [FAN.dutyPercent, "%", "fan"],
-        fan_target_pct: [FAN.targetPercent, "%", "fan"],
-        fan_driver_enabled: [FAN.driverEnabled ? 1 : 0, "", "fan"],
-        // FAN_MODE_CODE in public/lib/fan-display.js, which is itself the browser's copy of
-        // src/fan/auto.ts's — scripts/check-fan-fun.ts is what keeps those two in step.
-        fan_auto_mode: [{ manual: 0, automatic: 1, fun: 2 }[FAN.mode], "", "fan"],
-        fan_auto_reason: [FAN.auto.reason, "", "fan"],
-        fan_temp_input: [FAN.auto.temperatureInput, "", "fan"],
-        fan_fun_available: [FAN.fun.available ? 1 : 0, "", "fan"],
-        fan_fun_gate: [FAN.fun.gate, "", "fan"],
-      });
+      //
+      // ⚠️ ALL of them, every time. Patching only the three the slider moves left the toggle on
+      // Auto and the reason line saying the curve was commanding a duty the rider had just typed.
+      function fanReadings() {
+        return {
+          fan_duty_pct: [FAN.dutyPercent, "%", "fan"],
+          fan_target_pct: [FAN.targetPercent, "%", "fan"],
+          fan_driver_enabled: [FAN.driverEnabled ? 1 : 0, "", "fan"],
+          fan_auto_mode: [SERVER.fanModeCode[FAN.mode], "", "fan"],
+          fan_auto_reason: [FAN.auto.reason, "", "fan"],
+          fan_temp_input: [FAN.auto.temperatureInput, "", "fan"],
+          fan_fun_available: [FAN.fun.available ? 1 : 0, "", "fan"],
+          fan_fun_gate: [FAN.fun.gate, "", "fan"],
+        };
+      }
+
+      // What the curve was deciding when this scene was loaded, kept so switching back to
+      // automatic can restore it rather than leaving the slider's answer behind.
+      const SCENE_FAN = { ...FAN };
+      const SCENE_FAN_AUTO = { ...FAN.auto };
+
+      Object.assign(LIVE, fanReadings());
 
       /** One WebSocket message, in the shape src/ws.ts broadcasts. */
       function message(type, readings) {
@@ -615,6 +629,10 @@ __MODULES__
           run.phase = "finished";
           run.complete = true;
           run.finishedAt = Date.now();
+          // ⚠️ `expected` belongs to the RUNNING arm alone, so a sweep that finishes must lose it
+          // rather than carry it over — the Pi builds a fresh state per phase (readState()), and a
+          // check that reads the literal cannot see a field re-added out here.
+          delete run.expected;
           run.tally.read = 233;
           run.tally.byStatus.read = 233;
           run.tally.micros = [
@@ -746,6 +764,58 @@ __MODULES__
         return null;
       }
 
+      /**
+       * What a fan command does to the driver's state.
+       *
+       * ⚠️ The query spelling is NOT the mode. views/fan.js sends `mode=auto`, and `FanMode` holds
+       * "automatic" — src/http/fan.ts's parseFanRequest() maps it, and accepts "play" for fun for
+       * the same reason. Storing the raw word put a value in the reply that the type cannot hold,
+       * and it stayed there for every later GET.
+       */
+      function commandFan(query) {
+        const duty = query.get("duty");
+        const mode = query.get("mode");
+        if (duty !== null && mode !== null) {
+          FAN.message = "pass duty=<percent> OR mode=auto|manual|fun, not both — a duty already means manual";
+          return;
+        }
+        if (duty !== null) {
+          const percent = Number(duty);
+          FAN.mode = "manual";
+          FAN.dutyPercent = percent;
+          FAN.targetPercent = percent;
+          FAN.driverEnabled = percent > 0;
+          FAN.phase = percent > 0 ? "running" : "idle";
+          FAN.auto.reason = SERVER.fanReason.MANUAL;
+          FAN.message = null;
+          return;
+        }
+        const wanted = { auto: "automatic", automatic: "automatic", manual: "manual", fun: "fun", play: "fun" }[
+          (mode ?? "").trim().toLowerCase()
+        ];
+        if (wanted === undefined) {
+          FAN.message = `mode must be auto, manual or fun, not ${mode}`;
+          return;
+        }
+        if (wanted === "fun") {
+          // The gate the Pi applies, and the preview cannot pass it: fun mode needs a live throttle.
+          FAN.message = "The bike has to be parked and its throttle readable before the fan will follow it.";
+          return;
+        }
+        FAN.mode = wanted;
+        // Handing the fan back to the curve restores the decision this scene's curve would make.
+        // Leaving MANUAL there would show an automatic fan reporting that the slider is driving it,
+        // which is a pair of lines the Pi cannot produce together.
+        if (wanted === "automatic") {
+          Object.assign(FAN.auto, SCENE_FAN_AUTO);
+          FAN.dutyPercent = SCENE_FAN.dutyPercent;
+          FAN.targetPercent = SCENE_FAN.targetPercent;
+          FAN.driverEnabled = SCENE_FAN.driverEnabled;
+          FAN.phase = SCENE_FAN.phase;
+        }
+        FAN.message = null;
+      }
+
       window.fetch = function previewFetch(input, init) {
         const request = typeof input === "string" ? input : input && input.url ? input.url : String(input);
         const url = new URL(request, "http://eva.local/");
@@ -796,25 +866,8 @@ __MODULES__
         // no preview of it.
         if (path === "/fan") {
           if (method === "POST") {
-            const duty = url.searchParams.get("duty");
-            const mode = url.searchParams.get("mode");
-            if (duty !== null) {
-              FAN.mode = "manual";
-              FAN.dutyPercent = Number(duty);
-              FAN.targetPercent = Number(duty);
-              FAN.driverEnabled = Number(duty) > 0;
-              FAN.phase = Number(duty) > 0 ? "running" : "idle";
-              FAN.auto.reason = SERVER.fanReason.MANUAL;
-              FAN.message = null;
-            } else if (mode !== null) {
-              FAN.mode = mode;
-              FAN.message = mode === "fun" ? "Fun mode is refused here: the preview has no throttle to steer the fan with." : null;
-            }
-            pushPatch({
-              fan_duty_pct: [FAN.dutyPercent, "%", "fan"],
-              fan_target_pct: [FAN.targetPercent, "%", "fan"],
-              fan_driver_enabled: [FAN.driverEnabled ? 1 : 0, "", "fan"],
-            });
+            commandFan(url.searchParams);
+            pushPatch(fanReadings());
           }
           return json(FAN);
         }
@@ -834,6 +887,11 @@ __MODULES__
           return json(CHARGE_AUTO);
         }
         if (path === "/can-restart") {
+          // POST-only on the Pi, so that a prefetch or a crawler cannot re-initialise the bus by
+          // following a link (src/http/can-restart.ts). The stub keeps the same door.
+          if (method !== "POST") {
+            return json({ ok: false, message: "POST to restart the CAN bus" });
+          }
           toast("Preview — nothing was sent. A Pi would have re-run the two ip link commands.");
           return json({ ok: true, message: "can0 restarted at 500 kbit/s." });
         }
@@ -848,7 +906,7 @@ __MODULES__
               tally: {
                 total: 277,
                 read: 0,
-                byStatus: { read: 0 },
+                byStatus: { "read": 0, "refused": 0, "no-response": 0, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
                 micros: [
                   { micro: "A9", read: 0, failed: 0 },
                   { micro: "A8", read: 0, failed: 0 },
@@ -981,8 +1039,10 @@ __MODULES__
        */
       function pushPatch(readings) {
         Object.assign(LIVE, readings);
-        if (liveSocket && liveSocket.onmessage) {
-          liveSocket.onmessage({ data: JSON.stringify(message("patch", readings)) });
+        // Through deliver(), so a patch cannot reach a socket the page has already closed — the
+        // guard the heartbeat below carries, which this used to go around.
+        if (liveSocket) {
+          liveSocket.deliver(message("patch", readings));
         }
       }
 

@@ -3,12 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
 import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
-import { fanLimits } from "../src/http/fan.ts";
-import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
-import { CHARGE_AUTO_REASON, MIN_COMMAND_A } from "../src/charge/auto-curve.ts";
-import { FAN_REASON, FAN_TEMPERATURE_INPUT } from "../src/fan/curve.ts";
-import { FUN_GATE } from "../src/fan/fun.ts";
-import { HEARTBEAT_MS } from "../src/ws.ts";
+import { serverFacts } from "./preview-server-facts.ts";
 import type { LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
 import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
@@ -221,28 +216,16 @@ const tables = JSON.stringify({
   "/lifetime-stats": buildLifetimePreview(),
 });
 
-// Numbers and prose the Pi owns, handed to the fixtures rather than re-typed beside them. Same
-// argument as the tables above, one layer in: the fan's nine policy constants are src/fan/curve.ts's
-// (through the endpoint's own fanLimits(), so tsc holds the shape), and CHARGE_AUTO_REASON_TEXT's
-// header calls itself "the ONLY copy of this prose" after it was once mirrored by hand into
-// public/views/charge-auto.js. A preview quoting a stale threshold is a preview arguing with the
-// bike about what the bike does.
-const serverFacts = JSON.stringify({
-  heartbeatMs: HEARTBEAT_MS,
-  fanLimits: fanLimits(),
-  fanReason: FAN_REASON,
-  fanTemperatureInput: FAN_TEMPERATURE_INPUT,
-  funGate: FUN_GATE,
-  chargeAutoReason: CHARGE_AUTO_REASON,
-  chargeAutoReasonText: CHARGE_AUTO_REASON_TEXT,
-  chargeAutoFloorAmps: MIN_COMMAND_A,
-});
+// Numbers and prose the Pi owns, handed to the fixtures rather than re-typed beside them. Its own
+// module because scripts/check-preview-fixtures.ts type-checks the fixtures against the identical
+// object; ./preview-server-facts.ts says why each entry is there.
+const serverConstants = JSON.stringify(serverFacts());
 
 const html = template
   .replace("__CSS__", () => css)
   .replace(/__MODULES__,?/, () => modules)
   .replace("__TABLES__", () => tables)
-  .replace("__SERVER_FACTS__", () => serverFacts);
+  .replace("__SERVER_FACTS__", () => serverConstants);
 
 const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");

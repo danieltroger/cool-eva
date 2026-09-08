@@ -148,16 +148,16 @@ function InputRow() {
   return div(
     { class: "probe-field" },
     input({
-      "class": "probe-input",
-      "type": "text",
-      "inputmode": "numeric",
+      class: "probe-input",
+      type: "text",
+      inputmode: "numeric",
       // A name rather than an id, for the reason public/views/vcu-write.js gives: the design
       // sheet mounts this module more than once per document. `autocomplete="off"` matters more
       // here than anywhere — an autofilled amperage on the control that commands current into
       // the pack is a number nobody typed.
-      "name": "charge-current-amps",
-      "autocomplete": "off",
-      "placeholder": () => {
+      name: "charge-current-amps",
+      autocomplete: "off",
+      placeholder: () => {
         const type = chargeType.val;
         const ceiling = type === null ? null : liveCeiling(type);
         return ceiling === null ? "amps" : `1…${ceiling}`;

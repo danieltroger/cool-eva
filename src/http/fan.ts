@@ -115,30 +115,6 @@ export interface FanEndpointOptions {
   automatic: FanAutomatic;
 }
 
-/**
- * The policy, gathered in one place.
- *
- * Its own function rather than an object literal inside respond() so the design preview can serve
- * the SAME nine numbers instead of a hand-typed copy — scripts/build-service-preview.ts calls this
- * at build time. A preview showing a curve threshold this Pi does not use is the kind of quiet
- * wrong answer the whole fixture check exists to stop.
- */
-export function fanLimits(): FanLimits {
-  return {
-    minRunningPercent: MIN_RUNNING_DUTY_PERCENT,
-    maxPercent: MAX_DUTY_PERCENT,
-    kickStartMs: KICK_START_MS,
-    curve: {
-      onTemperatureC: FAN_ON_TEMPERATURE_C,
-      offTemperatureC: FAN_OFF_TEMPERATURE_C,
-      ridingTopC: RIDING_CURVE_TOP_C,
-      speedGateOnKmh: SPEED_GATE_ON_KMH,
-      speedGateOffKmh: SPEED_GATE_OFF_KMH,
-      temperatureGraceMs: TEMPERATURE_GRACE_MS,
-    },
-  };
-}
-
 export async function handleFanEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
@@ -179,6 +155,30 @@ export async function handleFanEndpoint(
   // mode refused by its gate SHARES it deliberately — "the request was fine, the bike is
   // in Go, ask again when it is parked" is the same shape of answer and the same advice.
   respond(res, outcome.ok ? 200 : 503, options, outcome.message);
+}
+
+/**
+ * The policy, gathered in one place.
+ *
+ * Its own function rather than an object literal inside respond() so the design preview can serve
+ * the SAME nine numbers instead of a hand-typed copy — scripts/build-service-preview.ts calls this
+ * at build time. A preview showing a curve threshold this Pi does not use is the kind of quiet
+ * wrong answer the whole fixture check exists to stop.
+ */
+export function fanLimits(): FanLimits {
+  return {
+    minRunningPercent: MIN_RUNNING_DUTY_PERCENT,
+    maxPercent: MAX_DUTY_PERCENT,
+    kickStartMs: KICK_START_MS,
+    curve: {
+      onTemperatureC: FAN_ON_TEMPERATURE_C,
+      offTemperatureC: FAN_OFF_TEMPERATURE_C,
+      ridingTopC: RIDING_CURVE_TOP_C,
+      speedGateOnKmh: SPEED_GATE_ON_KMH,
+      speedGateOffKmh: SPEED_GATE_OFF_KMH,
+      temperatureGraceMs: TEMPERATURE_GRACE_MS,
+    },
+  };
 }
 
 export type FanRequest =

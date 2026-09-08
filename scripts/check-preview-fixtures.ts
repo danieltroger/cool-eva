@@ -1,64 +1,67 @@
 import ts from "typescript";
-import { readdir, readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { serverFacts } from "./preview-server-facts.ts";
+import { pathsAnsweredBy, pathsFetchedByTheDashboard, pathsServedFromTables } from "./preview-endpoints.ts";
 
-// Whether the design preview still stands in for the bike the Pi describes.
+// Whether the design preview's fixtures still describe the bike the Pi describes.
 //
-// ⚠️ Written because of a specific failure. `VcuWriteStatus` gained `runningVersion` in #153 and
-// the fixture never did; `public/views/vcu-write.js` destructures it, so the binding threw, the
-// sheet froze on its "waiting for an answer" ellipsis, and the safety-gate line and
-// `⚙️ Running <commit>` were absent from every screenshot taken for twelve days. The annotated
-// sheet threw the same error once per panel while its own guard reported `data-preview-failed=0`.
-// Nothing could see it: the fixture is data, `check-service-preview.ts` parses the generated page
-// without running it, and a browser is deliberately not in this suite (§11.6).
+// ⚠️ It does NOT compare the shapes itself. It lifts each fixture literal out of the template,
+// writes it into a throwaway `.ts` annotated with the type its endpoint serves, and hands that to
+// `tsc`. A hand-rolled comparison was written first and rejected in review: at 524 lines it still
+// missed a boolean swapped for a string, an array element with a renamed field, and a union arm
+// satisfied on the wrong discriminant — two of which produce a throwing binding and a panel that
+// looks like it is still loading. TypeScript gets all three right for nothing.
 //
-// So this compares the fixtures against the interfaces the Pi serves, and the endpoints the
-// preview answers against the ones `public/` fetches. It reads; it never runs the page. Parsing
-// is TypeScript's own — already a devDependency, already what `npm run typecheck` runs — rather
-// than the bracket-counting the two existing slicers use, because #170 records that both of those
-// share one blind spot: neither skips string literals or comments.
-//
-// ⚠️ What it does NOT see is printed on every run, not only on failure. A fixture field nobody was
-// looking at is the whole failure above, so the holes are named out loud rather than left implied.
+// What this exists to stop, and what it found on its first run:
+// docs/diagnostics-and-checks.md §11.7. Endpoint coverage is ./preview-endpoints.ts.
 //
 // Run it against any template, which is how it is shown going red:
 //   git show origin/main:scripts/app-preview-template.html > /tmp/main-template.html
 //   node --experimental-strip-types scripts/check-preview-fixtures.ts /tmp/main-template.html
 
+const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
-/**
- * Which fixture constant stands in for which of the Pi's payloads.
- *
- * A template that mounts the whole app must declare all of them; one that mounts chosen panels is
- * held only to the ones it declares.
- */
+/** Which fixture constant stands in for which of the Pi's payloads, and where that type lives. */
 const FIXTURES = [
-  { constant: "WRITE_STATUS", type: "VcuWriteStatus" },
-  { constant: "STATUS", type: "StatusPayload" },
-  { constant: "READ_STATE", type: "VcuReadResponse" },
-  { constant: "FAN", type: "FanReply" },
-  { constant: "CHARGE_AUTO", type: "ChargeAutoResponse" },
+  { constant: "WRITE_STATUS", type: "VcuWriteStatus", from: "src/vcu/write-runner.ts" },
+  { constant: "STATUS", type: "StatusPayload", from: "src/http/status.ts" },
+  { constant: "READ_STATE", type: "VcuReadResponse", from: "src/http/vcu-read.ts" },
+  { constant: "FAN", type: "FanReply", from: "src/http/fan.ts" },
+  { constant: "CHARGE_AUTO", type: "ChargeAutoResponse", from: "src/http/charge-auto.ts" },
 ];
+
+/**
+ * The per-scene overlays, applied with Object.assign and so part of no fixture literal — including
+ * the DC scene's `chargeAck`, which is the field this check exists to protect. Checked as partials:
+ * an overlay may leave a field alone, but it may not invent or mistype one.
+ */
+const OVERLAYS = [
+  { key: "gate", as: "Partial<ServiceGateVerdict>", from: "src/vcu/service-gate.ts", name: "ServiceGateVerdict" },
+  { key: "fan", as: "Partial<FanReply>", from: "src/http/fan.ts", name: "FanReply" },
+  { key: "fanAuto", as: "Partial<FanAutoReply>", from: "src/http/fan.ts", name: "FanAutoReply" },
+  { key: "chargeAck", as: "ChargeAckState", from: "src/charge/ack-watch.ts", name: "ChargeAckState" },
+];
+
+/** `[value, unit, group]`, and optionally the moment it was recorded. */
+const READING = "[value: number, unit: string, group: string, ts?: number]";
 
 /** Checked when no path is given on the command line. */
 const TEMPLATES = ["scripts/app-preview-template.html", "scripts/service-preview-template.html"];
 
-/** One type's members, or the arms of a union — kept apart, for the reason on unionArms(). */
-type Shape = { kind: "members"; members: ts.PropertySignature[] } | { kind: "union"; arms: ts.TypeNode[] };
-
 const failures: string[] = [];
-/** Where the walk stopped, and why. Printed whether or not anything failed. */
-const skipped: string[] = [];
 
 console.log("\n──── scripts/check-preview-fixtures.ts ─────────────────────────────────────────");
 console.log("     that the preview's fixtures still match the payloads the Pi serves");
 
-const types = await indexDeclaredTypes();
-const tablePaths = await pathsServedFromTables();
-const fetched = await pathsFetchedByTheDashboard();
+const fetched = await pathsFetchedByTheDashboard(failures);
+const tablePaths = await pathsServedFromTables(failures);
 const argumentPaths = process.argv.slice(2).filter(argument => !argument.startsWith("--"));
 const templates = argumentPaths.length > 0 ? argumentPaths : TEMPLATES.map(path => join(ROOT, path));
 
@@ -76,30 +79,13 @@ for (const templatePath of templates) {
   const failuresBefore = failures.length;
   // ⚠️ The app template mounts the whole dashboard, so every endpoint public/ fetches is reachable
   // in it; the annotated sheet mounts a chosen set of panels, which is a different contract. Read
-  // off the source rather than the filename — the same distinction check-service-preview.ts draws
-  // by looking for this call — so a renamed or copied template is judged by what it does.
-  const mountsTheApp = /__imp\("app\.js"\)|imp\("app\.js"\)/.test(harness);
+  // off the source rather than the filename — the distinction check-service-preview.ts already
+  // draws — so a renamed or copied template is judged by what it does.
+  const mountsTheApp = /imp\("app\.js"\)/.test(harness);
 
-  for (const fixture of FIXTURES) {
-    const literal = findObjectLiteral(source, fixture.constant);
-    if (!literal) {
-      if (mountsTheApp) {
-        failures.push(`${label}: no ${fixture.constant} fixture, so nothing stands in for the Pi's ${fixture.type}`);
-      }
-      continue;
-    }
-    const shape = namedShape(fixture.type);
-    if (!shape) {
-      failures.push(
-        `${label}: ${fixture.constant} claims to be a ${fixture.type}, and src/ declares no such object type`
-      );
-      continue;
-    }
-    checkShape(literal, shape, `${label}: ${fixture.constant}`, new Set([fixture.type]));
-  }
-
+  await checkFixtureTypes(source, label, mountsTheApp);
   if (mountsTheApp) {
-    const answered = pathsAnsweredBy(source);
+    const answered = pathsAnsweredBy(source, tablePaths);
     for (const [path, asker] of fetched) {
       if (!answered.has(path)) {
         failures.push(
@@ -110,15 +96,9 @@ for (const templatePath of templates) {
     }
   }
   if (failures.length === failuresBefore) {
-    const endpoints = mountsTheApp
-      ? `${fetched.size} endpoints answered, `
-      : "panels rather than the app, so endpoints are not its contract; ";
-    console.log(`  ${label}: ${endpoints}fixtures match`);
+    const endpoints = mountsTheApp ? `${fetched.size} endpoints answered, ` : "panels rather than the app; ";
+    console.log(`  ${label}: ${endpoints}fixtures type-check against the Pi's own payloads`);
   }
-}
-
-if (skipped.length > 0) {
-  console.log(`  not descended into: ${skipped.join("; ")}`);
 }
 
 if (failures.length > 0) {
@@ -141,384 +121,265 @@ function harnessSource(html: string): string | null {
   return blocks.length === 1 ? blocks[0] : null;
 }
 
-/** The object literal `const <name> = { … }` is initialised with, anywhere in the file. */
-function findObjectLiteral(node: ts.Node, name: string): ts.ObjectLiteralExpression | null {
-  if (
-    ts.isVariableDeclaration(node) &&
-    ts.isIdentifier(node.name) &&
-    node.name.text === name &&
-    node.initializer &&
-    ts.isObjectLiteralExpression(node.initializer)
-  ) {
-    return node.initializer;
-  }
-  let found: ts.ObjectLiteralExpression | null = null;
-  ts.forEachChild(node, child => {
-    found = found ?? findObjectLiteral(child, name);
-  });
-  return found;
-}
-
 /**
- * Every interface and object-shaped type alias in `src/`, by name.
+ * Writes the fixtures into a throwaway module, annotated with the types the Pi serves, and lets
+ * `tsc` say whether they fit.
  *
- * A name declared twice is kept as both: a lookup that finds two cannot say which payload the
- * fixture is being held to, and taking the first is how a check comes to assert the wrong contract
- * quietly.
+ * ⚠️ `--ignoreConfig` plus an explicit `src/types.d.ts`: without the shim every module that reaches
+ * write-runner.ts fails on `socketcan`, a Linux-only optional dependency absent on macOS and on CI.
+ * That is an error about the REPO rather than about the fixture, and reporting it here would be
+ * noise on every machine this check is meant to run on.
  */
-async function indexDeclaredTypes(): Promise<Map<string, ts.Node[]>> {
-  const index = new Map<string, ts.Node[]>();
-  for (const entry of await readdir(join(ROOT, "src"), { recursive: true })) {
-    if (!entry.endsWith(".ts")) {
-      continue;
-    }
-    const source = ts.createSourceFile(
-      entry,
-      await readFile(join(ROOT, "src", entry), "utf8"),
-      ts.ScriptTarget.ESNext,
-      true
-    );
-    for (const statement of source.statements) {
-      if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
-        index.set(statement.name.text, [...(index.get(statement.name.text) ?? []), statement]);
-      }
+async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsTheApp: boolean): Promise<void> {
+  const declarations = topLevelDeclarations(source);
+  const wanted = new Set<string>();
+  for (const fixture of FIXTURES) {
+    if (declarations.has(fixture.constant)) {
+      wanted.add(fixture.constant);
+    } else if (mountsTheApp) {
+      // The annotated sheet declares only the fixtures its panels need, and is held to those.
+      failures.push(`${label}: no ${fixture.constant} fixture, so nothing stands in for the Pi's ${fixture.type}`);
     }
   }
-  return index;
-}
-
-/** The shape a type name resolves to, or null when src/ has no single object-shaped declaration of it. */
-function namedShape(name: string): Shape | null {
-  const declarations = types.get(name);
-  if (!declarations || declarations.length !== 1) {
-    return null;
-  }
-  const declaration = declarations[0];
-  if (ts.isInterfaceDeclaration(declaration)) {
-    return { kind: "members", members: declaration.members.filter(ts.isPropertySignature) };
-  }
-  if (ts.isTypeAliasDeclaration(declaration)) {
-    return shapeOfTypeNode(declaration.type);
-  }
-  return null;
-}
-
-function shapeOfTypeNode(node: ts.TypeNode): Shape | null {
-  if (ts.isTypeLiteralNode(node)) {
-    return { kind: "members", members: node.members.filter(ts.isPropertySignature) };
-  }
-  if (ts.isUnionTypeNode(node)) {
-    return { kind: "union", arms: [...node.types] };
-  }
-  if (ts.isTypeReferenceNode(node) && !node.typeArguments) {
-    return namedShape(node.typeName.getText());
-  }
-  return null;
-}
-
-/** Checks one object literal against a shape, then walks into whatever it can. */
-function checkShape(literal: ts.ObjectLiteralExpression, shape: Shape, at: string, seen: Set<string>): void {
-  if (shape.kind === "union") {
-    checkAgainstUnion(literal, shape.arms, at, seen);
+  if (wanted.size === 0) {
     return;
   }
-  const comparison = compare(literal, shape.members, at);
-  failures.push(...comparison.messages);
-  descendInto(comparison.matched, at, seen);
+
+  const imports = new Map<string, Set<string>>();
+  for (const fixture of FIXTURES) {
+    if (wanted.has(fixture.constant)) {
+      addImport(imports, fixture.from, fixture.type);
+    }
+  }
+  // SERVER is a placeholder the builder substitutes, so the fixtures are checked against the REAL
+  // object it will inject — which is also what makes `SERVER.fanReason.DC_SESSION` a typo the
+  // fixture cannot get away with.
+  const lines = [`const SERVER = ${JSON.stringify(serverFacts())} as const;`];
+  for (const fixture of FIXTURES) {
+    if (!wanted.has(fixture.constant)) {
+      continue;
+    }
+    const literal = inlined(declarations.get(fixture.constant)!, source, declarations);
+    // ⚠️ TWICE, and the second is not redundant. TypeScript's excess-property check only fires on a
+    // FRESH literal and reports the first mismatch it finds — so against main's template the
+    // invented `gate.readings` masked the missing `runningVersion` entirely, hiding the very field
+    // this check was written for. The second assignment goes through a widened copy, which is not
+    // fresh, so it sees what is ABSENT; mapping every value to `unknown` keeps it to presence
+    // alone, since a widened copy has lost the literal types the first assignment checks.
+    lines.push(`const ${fixture.constant}: ${fixture.type} = ${literal};`, `void ${fixture.constant};`);
+    lines.push(`const __wide_${fixture.constant} = ${literal};`);
+    lines.push(
+      `const __has_${fixture.constant}: { [K in keyof ${fixture.type}]: unknown } = __wide_${fixture.constant};`,
+      `void __has_${fixture.constant};`
+    );
+  }
+  lines.push(...sceneAssertions(source, declarations, imports));
+
+  const header = [...imports].map(
+    ([from, names]) => `import type { ${[...names].join(", ")} } from ${JSON.stringify(join(ROOT, from))};`
+  );
+  const directory = await mkdtemp(join(tmpdir(), "cool-eva-fixture-"));
+  const file = join(directory, "fixtures.ts");
+  await writeFile(file, `${header.join("\n")}\n\n${lines.join("\n")}\n`, "utf8");
+  try {
+    await run("npx", [
+      "tsc",
+      "--ignoreConfig",
+      "--noEmit",
+      "--strict",
+      "--target",
+      "esnext",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--allowImportingTsExtensions",
+      "--skipLibCheck",
+      "--lib",
+      "esnext,dom",
+      join(ROOT, "src/types.d.ts"),
+      file,
+    ]);
+  } catch (error) {
+    for (const line of diagnostics(error, file)) {
+      failures.push(`${label}: ${line}`);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 /**
- * A fixture against a union: it has to satisfy exactly ONE arm.
+ * The signal tables and the per-scene overlays, which no fixture literal contains.
  *
- * ⚠️ Not the merged members of all of them. Both templates' `clock` fixture is a `trustworthy:
- * true` PiClockVerdict carrying the OTHER arm's `reasons` array — a value the type does not permit
- * and a merged check would wave through. When nothing fits, the nearest arm is what gets reported;
- * printing every arm's diff buries the one line that matters.
+ * A signal is a tuple rather than a named payload, and a malformed one renders NaN rather than
+ * failing — the quietest way this fixture can lie.
  */
-function checkAgainstUnion(
-  literal: ts.ObjectLiteralExpression,
-  arms: ts.TypeNode[],
-  at: string,
-  seen: Set<string>
+function sceneAssertions(
+  source: ts.SourceFile,
+  declarations: Map<string, ts.Expression>,
+  imports: Map<string, Set<string>>
+): string[] {
+  const lines: string[] = [];
+  const base = declarations.get("PARKED_SIGNALS");
+  if (base) {
+    lines.push(`const __base: Record<string, ${READING}> = ${inlined(base, source, declarations)};`, "void __base;");
+  }
+  const scenes = declarations.get("SCENES");
+  if (!scenes) {
+    return lines;
+  }
+  for (const scene of namedEntries(scenes)) {
+    for (const entry of namedEntries(scene.value)) {
+      const overlay = OVERLAYS.find(candidate => candidate.key === entry.name);
+      const as = entry.name === "signals" ? `Record<string, ${READING}>` : overlay?.as;
+      if (as === undefined) {
+        continue;
+      }
+      if (overlay) {
+        addImport(imports, overlay.from, overlay.name);
+      }
+      const name = `__${entry.name}_${scene.name}`;
+      lines.push(`const ${name}: ${as} = ${inlined(entry.value, source, declarations)};`, `void ${name};`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * One literal with every reference to another top-level constant spliced in.
+ *
+ * ⚠️ Inlined rather than emitted as separate `const`s, and that is the whole of whether this works.
+ * A bare `const TARGETS = [{ micro: "A9", … }]` widens `micro` to `string` before anything says it
+ * should be `VcuMicro`, so every fixture reached through a name failed as a false positive. Under
+ * one contextually-typed literal TypeScript keeps the literal types and checks the array elements,
+ * the discriminated unions and the scalars for real.
+ */
+function inlined(node: ts.Expression, source: ts.SourceFile, declarations: Map<string, ts.Expression>): string {
+  const text = node.getText(source);
+  const start = node.getStart(source);
+  const splices: { from: number; to: number; with: string }[] = [];
+  collectReferences(node, declarations, splices, source);
+  let out = text;
+  for (const splice of splices.sort((left, right) => right.from - left.from)) {
+    out = `${out.slice(0, splice.from - start)}(${splice.with})${out.slice(splice.to - start)}`;
+  }
+  return out;
+}
+
+function collectReferences(
+  node: ts.Node,
+  declarations: Map<string, ts.Expression>,
+  into: { from: number; to: number; with: string }[],
+  source: ts.SourceFile
 ): void {
-  let nearest: Comparison | null = null;
-  for (const arm of arms) {
-    const shape = shapeOfTypeNode(arm);
-    if (!shape || shape.kind !== "members") {
-      continue;
-    }
-    const comparison = compare(literal, shape.members, at);
-    if (comparison.messages.length === 0) {
-      descendInto(comparison.matched, at, seen);
-      return;
-    }
-    if (nearest === null || comparison.messages.length < nearest.messages.length) {
-      nearest = comparison;
-    }
-  }
-  if (nearest === null) {
-    skipped.push(`${at} (a union with no object-shaped arm)`);
+  if (ts.isPropertyAssignment(node) && !ts.isComputedPropertyName(node.name)) {
+    collectReferences(node.initializer, declarations, into, source);
     return;
   }
-  failures.push(...nearest.messages.map(message => `${message} — measured against the nearest shape the type allows`));
-}
-
-interface Matched {
-  member: ts.PropertySignature;
-  value: ts.Expression;
-}
-
-interface Comparison {
-  messages: string[];
-  matched: Matched[];
-}
-
-/** What a literal is missing, what it invents, and which members it did supply. */
-function compare(literal: ts.ObjectLiteralExpression, members: ts.PropertySignature[], at: string): Comparison {
-  const messages: string[] = [];
-  const matched: Matched[] = [];
-  const present = new Map<string, ts.Expression>();
-  for (const property of literal.properties) {
-    if (ts.isPropertyAssignment(property)) {
-      present.set(propertyName(property.name), property.initializer);
-    } else if (ts.isShorthandPropertyAssignment(property)) {
-      present.set(property.name.text, property.name);
-    } else {
-      // A spread hides the keys it contributes, and a check that shrugged at one would call a
-      // fixture complete whatever the spread held.
-      messages.push(`${at} uses a spread this check cannot read — write the fixture's keys out`);
-    }
+  if (ts.isPropertyAccessExpression(node)) {
+    collectReferences(node.expression, declarations, into, source);
+    return;
   }
+  if (ts.isIdentifier(node) && declarations.has(node.text) && node.text !== "SERVER") {
+    const referenced = declarations.get(node.text)!;
+    into.push({ from: node.getStart(source), to: node.getEnd(), with: inlined(referenced, source, declarations) });
+    return;
+  }
+  ts.forEachChild(node, child => collectReferences(child, declarations, into, source));
+}
 
-  for (const member of members) {
-    const name = propertyName(member.name);
-    const value = present.get(name);
-    if (value === undefined) {
-      if (member.questionToken === undefined) {
-        messages.push(`${at}.${name} is missing — the Pi always sends it, so a view that reads it gets undefined`);
+/**
+ * tsc's own words, with the throwaway file's path taken off the front.
+ *
+ * ⚠️ An error in a file that is NOT the generated one means the repo does not compile, which this
+ * check must not report as a fixture problem — `npm run typecheck` owns that and says it better.
+ */
+function diagnostics(error: unknown, file: string): string[] {
+  const output = error && typeof error === "object" && "stdout" in error ? String(error.stdout) : String(error);
+  const ours = output
+    .split("\n")
+    .filter(line => line.includes(file))
+    .map(line => line.slice(line.indexOf(file) + file.length).replace(/^\(\d+,\d+\):\s*/, ""))
+    // The presence-only assertion's type prints as the whole payload with every value `unknown`,
+    // which is thirty words of nothing in front of the two names that matter.
+    .map(line => line.replace(/type '\{[^']*: unknown;[^']*\}'/g, "the payload the Pi sends"));
+  if (ours.length === 0) {
+    return [`tsc could not check the fixtures — the repo itself does not compile:\n${output.trim()}`];
+  }
+  return ours;
+}
+
+/** Every `const <name> = …` at the top level of the harness, by name, in source order. */
+function topLevelDeclarations(source: ts.SourceFile): Map<string, ts.Expression> {
+  const found = new Map<string, ts.Expression>();
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) {
+      continue;
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+        found.set(declaration.name.text, declaration.initializer);
       }
-      continue;
     }
-    matched.push({ member, value });
-  }
-
-  const declared = new Set(members.map(member => propertyName(member.name)));
-  for (const name of present.keys()) {
-    if (!declared.has(name)) {
-      messages.push(
-        `${at}.${name} is not a field the Pi sends — the fixture describes a bike this software does not serve`
-      );
-    }
-  }
-  return { messages, matched };
-}
-
-function descendInto(matched: Matched[], at: string, seen: Set<string>): void {
-  for (const { member, value } of matched) {
-    descend(member, value, `${at}.${propertyName(member.name)}`, seen);
-  }
-}
-
-/**
- * Walks into one member when both the type and the fixture have a shape worth comparing.
- *
- * ⚠️ A member this cannot walk into is announced only when the TYPE names something structured —
- * an array of records, a `Record<>`, another interface. `enabled: boolean` was never descendable
- * and listing it as a hole would bury the two or three that are real under thirty that are not.
- */
-function descend(member: ts.PropertySignature, value: ts.Expression, at: string, seen: Set<string>): void {
-  const type = member.type;
-  if (!type) {
-    return;
-  }
-  if (value.kind === ts.SyntaxKind.NullKeyword) {
-    if (!admitsNull(type)) {
-      failures.push(`${at} is null, and the Pi's type has no null in it`);
-    }
-    return;
-  }
-  const name = ts.isTypeReferenceNode(type) ? type.typeName.getText() : null;
-  if (name !== null && seen.has(name)) {
-    skipped.push(`${at} (${name} again — a type that contains itself)`);
-    return;
-  }
-  const shape = ts.isTypeReferenceNode(type) && type.typeArguments ? null : shapeOfTypeNode(type);
-  if (shape && ts.isObjectLiteralExpression(value)) {
-    checkShape(value, shape, at, name === null ? seen : new Set([...seen, name]));
-    return;
-  }
-  if (couldHoldAnObject(type, 0)) {
-    skipped.push(`${at} (${describeHole(type, value)})`);
-  }
-}
-
-/**
- * Whether a member could have carried an object worth walking into.
- *
- * ⚠️ The gate on what gets announced as a hole. Without it every string-literal union — every
- * `phase`, every `mode` — was listed as unwalked, and twenty lines of things that were never
- * walkable is how the two or three real holes stop being read.
- */
-function couldHoldAnObject(type: ts.TypeNode, depth: number): boolean {
-  if (depth > 4) {
-    return false;
-  }
-  if (ts.isTypeLiteralNode(type)) {
-    return true;
-  }
-  if (ts.isArrayTypeNode(type)) {
-    return couldHoldAnObject(type.elementType, depth + 1);
-  }
-  if (ts.isUnionTypeNode(type)) {
-    return type.types.some(arm => couldHoldAnObject(arm, depth + 1));
-  }
-  if (!ts.isTypeReferenceNode(type)) {
-    return false;
-  }
-  if (type.typeArguments) {
-    // A generic this cannot open. Named because what is inside it is genuinely unknown here.
-    return true;
-  }
-  const shape = namedShape(type.typeName.getText());
-  if (!shape) {
-    return false;
-  }
-  return shape.kind === "members" || shape.arms.some(arm => couldHoldAnObject(arm, depth + 1));
-}
-
-/** Why a structured member went unchecked, in the words that say what to do about it. */
-function describeHole(type: ts.TypeNode, value: ts.Expression): string {
-  if (ts.isTypeReferenceNode(type) && type.typeArguments) {
-    return `${type.typeName.getText()}<…> — this check does not open generics`;
-  }
-  if (ts.isArrayTypeNode(type)) {
-    return "an array — this check compares objects, not their elements";
-  }
-  if (!ts.isObjectLiteralExpression(value)) {
-    return "the fixture reaches it through a name rather than writing it out here";
-  }
-  return "src/ declares no single object-shaped type for it";
-}
-
-/**
- * ⚠️ `null` in a type position is a LiteralTypeNode wrapping the keyword, never the bare keyword.
- * Testing for the keyword itself reported `string | null` as admitting no null and turned every
- * correctly-null field in the fixture red.
- */
-function admitsNull(type: ts.TypeNode): boolean {
-  if (ts.isLiteralTypeNode(type)) {
-    return type.literal.kind === ts.SyntaxKind.NullKeyword;
-  }
-  if (type.kind === ts.SyntaxKind.NullKeyword || type.kind === ts.SyntaxKind.UndefinedKeyword) {
-    return true;
-  }
-  return ts.isUnionTypeNode(type) && type.types.some(admitsNull);
-}
-
-function propertyName(name: ts.PropertyName): string {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
-    return name.text;
-  }
-  return name.getText();
-}
-
-/**
- * Every path the dashboard fetches, and one file that fetches it.
- *
- * A `fetch()` whose argument this cannot read fails rather than being passed over: the endpoint it
- * names would be exactly the one nobody had stubbed.
- */
-async function pathsFetchedByTheDashboard(): Promise<Map<string, string>> {
-  const found = new Map<string, string>();
-  for (const entry of await readdir(join(ROOT, "public"), { recursive: true })) {
-    if (!entry.endsWith(".js") || entry.startsWith("vendor")) {
-      continue;
-    }
-    const text = await readFile(join(ROOT, "public", entry), "utf8");
-    collectFetches(ts.createSourceFile(entry, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS), entry, found);
   }
   return found;
 }
 
-function collectFetches(node: ts.Node, file: string, found: Map<string, string>): void {
-  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
-    const argument = node.arguments[0];
-    const path = argument ? literalPath(argument) : null;
-    if (path === null) {
-      failures.push(`${file}: a fetch() whose path this check cannot read — ${node.getText().slice(0, 60)}`);
-    } else {
-      found.set(path, file);
+/** The wanted names plus everything they reach, so the generated module has no free identifiers. */
+function closure(wanted: Set<string>, declarations: Map<string, ts.Expression>): Set<string> {
+  const needed = new Set(wanted);
+  const pending = [...wanted];
+  while (pending.length > 0) {
+    const initializer = declarations.get(pending.shift()!);
+    if (!initializer) {
+      continue;
+    }
+    for (const referenced of referencedNames(initializer)) {
+      if (declarations.has(referenced) && !needed.has(referenced)) {
+        needed.add(referenced);
+        pending.push(referenced);
+      }
     }
   }
-  ts.forEachChild(node, child => collectFetches(child, file, found));
+  return needed;
 }
 
-/** The path a fetch argument names, up to its query string, or null when it is computed. */
-function literalPath(argument: ts.Expression): string | null {
-  if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) {
-    return argument.text.split("?")[0];
+/** Identifiers an expression READS — not the property names it writes, which reference nothing. */
+function referencedNames(node: ts.Node, into: Set<string> = new Set()): Set<string> {
+  if (ts.isIdentifier(node)) {
+    into.add(node.text);
+    return into;
   }
-  if (ts.isTemplateExpression(argument)) {
-    return argument.head.text.split("?")[0];
+  if (ts.isPropertyAccessExpression(node)) {
+    return referencedNames(node.expression, into);
   }
-  return null;
+  if (ts.isPropertyAssignment(node)) {
+    return referencedNames(node.initializer, into);
+  }
+  ts.forEachChild(node, child => {
+    referencedNames(child, into);
+  });
+  return into;
 }
 
-/** Every path a template answers: the `path === "…"` branches of its stubbed fetch, plus the tables. */
-function pathsAnsweredBy(source: ts.SourceFile): Set<string> {
-  const answered = new Set<string>(tablePaths);
-  collectComparedPaths(source, answered);
-  return answered;
+/** Declaration order, so a name is emitted after everything it reads. SERVER is substituted. */
+function orderedNames(declarations: Map<string, ts.Expression>, needed: Set<string>): string[] {
+  return [...declarations.keys()].filter(name => needed.has(name) && name !== "SERVER");
 }
 
-function collectComparedPaths(node: ts.Node, into: Set<string>): void {
-  if (
-    ts.isBinaryExpression(node) &&
-    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
-    ts.isStringLiteral(node.right) &&
-    node.right.text.startsWith("/")
-  ) {
-    into.add(node.right.text);
+/** The `name: { … }` entries of an object literal. */
+function namedEntries(node: ts.Expression): { name: string; value: ts.Expression }[] {
+  if (!ts.isObjectLiteralExpression(node)) {
+    return [];
   }
-  ts.forEachChild(node, child => collectComparedPaths(child, into));
-}
-
-/**
- * The table paths, read out of the builder rather than restated here.
- *
- * They are keys in `build-service-preview.ts` and not literals in the template, so a template that
- * answered none of them by hand is still answering them.
- */
-async function pathsServedFromTables(): Promise<Set<string>> {
-  const text = await readFile(join(ROOT, "scripts", "build-service-preview.ts"), "utf8");
-  const source = ts.createSourceFile("build-service-preview.ts", text, ts.ScriptTarget.ESNext, true);
-  const literal = findTablesObject(source);
-  if (!literal) {
-    failures.push(
-      "build-service-preview.ts declares no `tables` object, so this check cannot tell which paths it serves"
-    );
-    return new Set<string>();
-  }
-  return new Set(
-    literal.properties.flatMap(property => (ts.isPropertyAssignment(property) ? [propertyName(property.name)] : []))
+  return node.properties.flatMap(property =>
+    ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)
+      ? [{ name: property.name.text, value: property.initializer }]
+      : []
   );
 }
 
-/** `const tables = JSON.stringify({ … })` — the object inside the call. */
-function findTablesObject(node: ts.Node): ts.ObjectLiteralExpression | null {
-  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "tables" && node.initializer) {
-    const initialiser = node.initializer;
-    if (ts.isObjectLiteralExpression(initialiser)) {
-      return initialiser;
-    }
-    const [first] = ts.isCallExpression(initialiser) ? initialiser.arguments : [];
-    if (first && ts.isObjectLiteralExpression(first)) {
-      return first;
-    }
-  }
-  let found: ts.ObjectLiteralExpression | null = null;
-  ts.forEachChild(node, child => {
-    found = found ?? findTablesObject(child);
-  });
-  return found;
+function addImport(imports: Map<string, Set<string>>, from: string, name: string): void {
+  imports.set(from, (imports.get(from) ?? new Set()).add(name));
 }
