@@ -1,10 +1,11 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, peek, signalState, valueOf } from "../lib/store.js";
+import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
 import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
+import { powerLimitsKw } from "../lib/power-limits.js";
 import { PairTile, SectionLabel, SignalTile, Tile } from "../lib/tiles.js";
 import { meter, sparkline, splitBar } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
@@ -117,6 +118,12 @@ function SpeedHero() {
  * Power flow and what it is costing in heat. The I²R figure is here, and not only
  * on the hypermiling screen, because it is the same watts the coolant loop has to
  * carry away — it belongs next to the temperatures it explains.
+ *
+ * The dashed lines are the BMS's own ceilings (lib/power-limits.js). They are what
+ * turns the bar from "how hard am I pulling" into "how much is left before the pack
+ * says no", and they MOVE — the discharge ceiling averages 91 kW over moving time in
+ * the archive against the bike's 126 kW peak, so a rider reading a full-looking bar
+ * without them is usually reading a derate as headroom.
  */
 function PowerRow() {
   return div(
@@ -127,7 +134,16 @@ function PowerRow() {
       () => power(valueOf("pack_kw")),
       span({ class: "unit" }, "kW")
     ),
-    () => splitBar({ value: valueOf("pack_kw"), limit: POWER_LIMIT_KW, color: colors.power(valueOf("pack_kw")) }),
+    () => {
+      const kilowatts = valueOf("pack_kw");
+      const limits = powerLimitsKw(valueOf, isStale);
+      return splitBar({
+        value: kilowatts,
+        fullScale: POWER_LIMIT_KW,
+        color: colors.power(kilowatts),
+        limits,
+      });
+    },
     div({ class: "sub" }, () => {
       const watts = resistiveLossWatts();
       const percent = resistiveLossPercent();

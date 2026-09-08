@@ -128,13 +128,21 @@ export function lossFraction(percent) {
 
 /**
  * Power flow: regen is always green (energy coming back), drive ramps with load.
+ *
+ * ⚠️ `pack_kw` is NEGATIVE under discharge and POSITIVE on regen and charge — the
+ * convention derive.js asserts by name rather than leaving in a minus sign. The
+ * comparison here was `< -0.5` from 2026-08-03 (#33) until this was fixed, which is
+ * the same test with the bike's sign convention read backwards: it painted a 100 kW
+ * pull green and a 20 kW recovery amber. Nothing catches that by looking — both
+ * colours are plausible on their own, and the sentence above the function said the
+ * right thing the whole time. scripts/check-power-bar.ts §1 now asserts the direction.
  * @param {number | null} kilowatts
  */
 export function power(kilowatts) {
   if (kilowatts == null) {
     return MUTED;
   }
-  if (kilowatts < -0.5) {
+  if (kilowatts > 0.5) {
     return GOOD;
   }
   const magnitude = Math.abs(kilowatts);

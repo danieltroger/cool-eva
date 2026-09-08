@@ -431,7 +431,7 @@ Those readings are real, not decode noise: the peak, 3379.3 km/kWh, pairs with 0
 
 ---
 
-## Derived numbers and charts — `lib/derive.js`, `lib/ring.js`, `lib/svg.js`, `lib/tiles.js`, `lib/dwell.js`
+## Derived numbers and charts — `lib/derive.js`, `lib/power-limits.js`, `lib/ring.js`, `lib/svg.js`, `lib/tiles.js`, `lib/dwell.js`
 
 Everything the dashboard shows that the bike does not itself measure is computed on the phone, and none of it is logged: the ride log holds measurements only, so a derivation that later turns out to be wrong can be redone against the raw data instead of poisoning it. The formulas come from the BMS's own configuration — see `HYPERMILING.md`.
 
@@ -502,6 +502,47 @@ The per-tick step is clamped to 2 s: a tab that was backgrounded for a minute mu
 Index pairing looks right and is not: two signals only line up by index if they were sampled together, and nothing here guarantees that. `coolant_in` and `coolant_out` are read from separate awaited calls and each is gated by its own 0.05 °C deadband before it is pushed, so the two rings hold different numbers of samples taken at different moments — on this bike `coolant_in` has roughly ten times the rows of `coolant_out`. Subtracting by index would drift further into the past the further along the window you look, and produce a plausible-looking trace of the rate mismatch rather than of the quantity being measured.
 
 For each sample of `primary`, the function takes the newest `reference` sample at or before it — a zero-order hold, which is the correct reading of "what was the inlet doing when the outlet was measured". Primary samples older than anything in the reference window are skipped: there is nothing to hold from, and extrapolating backwards would invent the value.
+
+### The power bar — `lib/power-limits.js`, `splitBar()` in `lib/svg.js`
+
+The riding screen's centre-out bar: regen grows left, drive grows right, on a full scale of 130 kW per side (`POWER_LIMIT_KW` in `views/ride.js`, sized to contain the Ribelle's 126 kW peak).
+
+**The colour was inverted for five weeks and nothing noticed.** From the dashboard rebuild of 2026-08-03 (#33) until 2026-09-08, `colors.power()` tested `kilowatts < -0.5` for its green — which is the sign convention read backwards, since `pack_kw` is negative under discharge. So a 100 kW pull was painted green and a 20 kW recovery amber, under a doc comment that had said "regen is always green (energy coming back), drive ramps with load" correctly the whole time. Neither colour looks wrong on its own, which is the entire problem: there is no reading of the screen that catches this, only a reading of the sign convention. `scripts/check-power-bar.ts` now asserts the direction against literal kilowatt values rather than against anything imported from `colors.js`.
+
+**The dashed lines are the BMS's own ceilings**, `allowed_discharge_a` and `allowed_regen_a` off `0x202`, converted to kilowatts through the _measured_ `pack_v`. Three choices in that sentence:
+
+- **The BMS pair, not the inverter's `current_max_out_a` / `current_max_regen_a`.** `pack_kw` is `pack_v × pack_a` — a pack-side quantity — so a pack-side limit is the one that sits on the same axis with nothing assumed. The inverter's pair is a second opinion about a different node and is deliberately kept as one.
+- **Measured volts, not nominal.** The ceiling really does fall as the pack sags under load, and that is exactly when a rider wants to see it; a limit computed against a nominal 350 V would draw a line that cannot move for the reason it most needs to.
+- **They earn the space because they move.** Over 1054 minutes of moving time in the archive the discharge ceiling averages **91.3 kW** against the bike's 126 kW peak, and the regen ceiling 25.3 kW with a maximum of 39.2. So most of the time a bar that looks like it has a quarter of its travel left has nothing of the sort, and the line is the difference between reading headroom and reading a derate. Of the discharging `pack_kw` samples only ~0.4% ever exceed the ceiling drawn against them: it really is a wall the bar approaches and rarely crosses, which is what makes it worth drawing at all.
+
+#### ⚠️ How those numbers are weighted, because the first attempt got it wrong
+
+The figures above are **time-weighted**, and the ones that shipped in the first draft of this section were not. That draft quoted a mean of 84.6 kW and "past 130 kW for 0.83% of covered time", both computed over `allowed_discharge_a`'s own 697 log-on-change rows, the second holding each row for at most 30 s.
+
+That estimator is biased, and biased in the direction that flattered the design. `allowed_discharge_a` carries a 1 A deadband, so it emits densely while it is _derating_ and emits almost nothing across the long stretches where it sits pinned at its configured 400 A — which are exactly the stretches above the bar. Counting its rows counts derate events; capping their hold at 30 s throws away the pins. The tell is the sensitivity: that figure moves from 0.83% to **11.4%** on the hold cap alone.
+
+The estimator used now samples on the bike's own clock instead. Each `pack_v` reading (no deadband, so it arrives densely whenever the pack is talking) carries its gap to the next within the same session, capped at 5 s, with both limits held from their last reading:
+
+| over moving time (`speed_can_kmh > 5`) | first draft | measured    |
+| -------------------------------------- | ----------- | ----------- |
+| discharge ceiling, mean                | 84.6 kW     | **91.3 kW** |
+| discharge ceiling above 130 kW         | 0.83%       | **6.2%**    |
+| regen ceiling, mean                    | 22.3 kW     | 25.3 kW     |
+| regen ceiling above 130 kW             | never       | never       |
+
+Unlike the one it replaces this is stable under its own knobs: across hold caps from 1 s to 5 min the mean moves 92.6 → 90.0 kW and the share 5.5% → 8.0%, and swapping the definition of "moving" between `speed_can_kmh`, `speed_kmh` and `gps_speed_kmh` moves the share only 5.4% → 6.2%. An independent re-measurement during review, joining slightly differently, landed at 94.3 kW and 10.9%. Every route agrees the share is somewhere between one minute in twenty and one in nine, and none of them is anywhere near 0.83%.
+
+The extremes are unaffected, being extremes rather than time claims: the discharge ceiling has been seen from 0 to 134.7 kW and the regen ceiling from 0 to 38.5.
+
+**A ceiling wider than the bar is pinned to the end, not dropped.** This is the design decision the bad number was propping up. Dropping makes "the pack allows more than the bike can take" and "`0x202` has not arrived yet" the same picture — which was acceptable at 0.83% and is not at 6%, one minute in every sixteen of riding, concentrated at the cool full-pack start of every ride where 400 A against a `pack_v` over ~325 V clears the bar by construction. Pinning has an ambiguity of its own — a line at the end could be a ceiling at full scale or past it — but those two readings tell a rider the same thing, _the pack is not what is limiting you_, whereas "no line" and "off the scale" tell them opposite things. So the ambiguity is moved to where it costs nothing, and absence now means exactly one thing. The pinned line is inset by `MARKER_INSET` (0.6 viewBox units) so its stroke is not half-clipped by the SVG's own bounds, and it is drawn in the same style as any other: a second visual vocabulary earns its keep only if the two cases want different actions, and these do not.
+
+**Nothing is claimed at all while a charge is up.** The BMS zeroes _both_ limits during a DC session — rightly, since neither the drive nor the regen path is carrying that current — in 6293 of the 6296 archived `pack_kw` samples inside one, while `pack_kw` itself runs to +23.98 kW. Riding is a tab and charging is another, and `views/view-rules.js` deliberately lets the rider come back to this one mid-charge, so without a gate the bar reads _"the pack allows nothing in either direction and you are 24 kW past it"_. Staleness does not save it, because 0 A is a perfectly fresh reading. This is the exact mirror of the fault `views/charge.js` documents from the other side, and it gets the same answer: ask `chargeMode()`, and show no ceiling rather than a wrong one.
+
+**0 A is a real limit; 0 V is a missing reading.** A BMS derated all the way to zero is the single most important thing this bar can say, so the guard in `limitKw()` is deliberately not the `positiveOrNull()` shape used elsewhere in `lib/derive.js` — that one would drop the most alarming value on the floor as "no data". A zero pack voltage has no such reading: nothing on the bus is at 0 V while anything is there to report it.
+
+**The two ceilings travel as one object**, `PowerLimitsKw`, from `powerLimitsKw()` through `splitBar()` to `limitMarkerPositions()`. Two same-typed parameters side by side would be a pair a caller can cross, and a crossed pair draws a screen that looks entirely deliberate — the BMS allowing 96 kW of regen and 38 kW of drive. The first version had exactly that shape, and a check covering both _ends_ of the path stayed green with the sides swapped at the call site between them. One object makes the outer hop unspellable; `check-power-bar.ts` §6 walks the remaining one end to end with deliberately asymmetric amps.
+
+`powerLimitsKw()` takes its reader and its staleness test as parameters rather than importing them, the same arrangement as `chargeMode()` and for the same reason. `store.js` pulls in van, van needs a DOM, and a check that cannot run in Node is a check that does not run.
 
 ### The heatmap — `lib/svg.js`
 
