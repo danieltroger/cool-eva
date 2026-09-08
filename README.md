@@ -163,7 +163,8 @@ Energica BT hub ─┘
 - `src/gps/` — `decode` (the hub's GPS message, pure; shared by CAN `0x410` and the BLE link, which send byte-identical frames), `clock-gate` (whether a satellite time may be stepped to — also pure, so `scripts/check-gps-clock.ts` can replay real sequences through it), `clock` (the I/O half: reads both clocks and runs `date -u -s`, because the Pi has no RTC).
 - `src/ble/` — the Bluetooth link to the Connectivity Hub: `protocol` (framing + handshake, pure), `client` (D-Bus session), `adapter` (bring-up).
 - `src/sensors/max31865.ts` — the coolant probes.
-- `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only.
+- `src/storage/encrypted-log.ts` — the only persistence on the bike: sealed, append-only, write-only. Every append is flushed to the card before it counts as written, because the Pi loses power with the bike and an unflushed one comes back as NULs — [`docs/power-cuts.md`](docs/power-cuts.md).
+- `src/storage/durable.ts` — the flush recipe the four on-bike writes share.
 - `src/db.ts` — SQLite schema (long/EAV: `signal` + `session` + `reading`). Now used **only on the laptop**, by `scripts/decrypt-log.ts`, to rebuild a plaintext DB from decrypted segments. `reading.ts` is a wall-clock stamp and `(session_id, seq)` is the write order; they are separate because the wall clock steps (see [Clock](#clock)), so `ORDER BY ts` is not the order the rows were written. Nothing queries the counter yet and no index covers it — it is recorded so the ordering is _recoverable_, and adding an index over 6.2 M rows is a decision for whoever first needs one.
 - `src/http/` — `static` (serves `public/` from memory), `download` (`/dl`), `waypoint` (`/waypoint`), `status` (`/status`).
 - `src/ws.ts` + `public/` — the live phone riding dashboard (see below).

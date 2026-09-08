@@ -1,5 +1,6 @@
-import { mkdir, open, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, readFile, rm } from "fs/promises";
 import { join } from "path";
+import { openDeferredAppend, replaceFileDurably, syncDirectory } from "../storage/durable.ts";
 import {
   describeChange,
   diffSnapshots,
@@ -10,7 +11,6 @@ import {
   type VcuParameterSnapshot,
 } from "./snapshot.ts";
 import { selectParameterTable } from "./param-table.ts";
-import type { FileHandle } from "fs/promises";
 
 // Where a parameter sweep's results live on disk, and the rules about them that are worth
 // more than the code implementing them. Each is argued in docs/vcu-parameters.md §14; all
@@ -28,6 +28,9 @@ import type { FileHandle } from "fs/promises";
 //  5. ⚠️ A worse run never clobbers `latest.json`. That file is the diff baseline and what
 //     GET /vcu-params and /vcu-backup.csv serve; a three-parameter run must not replace a
 //     file full of real values. See `replacesLatest` below for why it is a comparison.
+//     A power cut must not clobber it either, so it is renamed into place and never
+//     written in place — a truncated one reads as null, which BLOCKS the table gate.
+//     docs/power-cuts.md.
 
 const PARTIAL_FILE = "sweep.partial.jsonl";
 const LATEST_FILE = "latest.json";
@@ -97,22 +100,38 @@ export async function loadPartialRows(directory: string): Promise<Map<number, Vc
  */
 export async function openPartialSweepLog(directory: string): Promise<PartialSweepLog> {
   await mkdir(directory, { recursive: true });
-  const handle: FileHandle = await open(join(directory, PARTIAL_FILE), "a");
+  // ../storage/durable.ts rather than an open() here: it flushes the directory entry on the
+  // call that creates the file, closes the handle if that flush throws, and flushes the rows
+  // once at close(). Hand-rolling those three leaked the handle on the middle one.
+  const log = await openDeferredAppend(join(directory, PARTIAL_FILE));
   return {
-    append: async row => {
+    append: row => {
       // No fsync per row on purpose: 277 of them onto a Pi Zero's SD card buys
       // protection against a power cut, which is not the failure this is built for.
       // A dropped link, an abort or a killed process all leave the page cache — and
-      // therefore the file — intact.
-      await handle.write(`${JSON.stringify({ at: Date.now(), ...row })}\n`);
+      // therefore the file — intact. What a cut costs here is re-ASKING the bike, inside
+      // a procedure someone is standing over; docs/power-cuts.md argues it against the
+      // ride log, where the same bytes are the only copy that will ever exist.
+      return log.write(`${JSON.stringify({ at: Date.now(), ...row })}\n`);
     },
-    close: () => handle.close(),
+    // One flush for the whole sweep rather than 277, at the moment that matters: a sweep
+    // ending is very often the bike being switched off.
+    close: () => log.close(),
   };
 }
 
-/** Throws the resume file away. Only ever called for a sweep that covered everything. */
+/**
+ * Throws the resume file away. Only ever called for a sweep that covered everything.
+ *
+ * ⚠️ The removal is flushed, and that is not tidiness. It runs from inside writeSnapshot
+ * AFTER the snapshot is on the card, so a cut here resurrects the resume file next to a
+ * durable `latest.json` — and the next sweep then "resumes" from a COMPLETE previous run,
+ * asks the bike nothing, and writes those weeks-old values back out stamped with today's
+ * `readAt`, with reportChanges saying nothing moved. docs/power-cuts.md.
+ */
 export async function clearPartialSweep(directory: string): Promise<void> {
   await rm(join(directory, PARTIAL_FILE), { force: true });
+  await syncDirectory(directory);
 }
 
 /**
@@ -198,7 +217,9 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   const baseline = await loadSnapshotFile(join(directory, LATEST_FILE));
   const archivePath = join(directory, `${new Date(snapshot.readAt).toISOString().replace(/:/g, "-")}.json`);
   const serialised = `${JSON.stringify(snapshot, null, 2)}\n`;
-  await writeFile(archivePath, serialised, "utf-8");
+  // Renamed into place rather than written in place, like latest.json below: a JSON file
+  // with a hole in it does not parse, so "no archive" beats "half an archive".
+  await replaceFileDurably(archivePath, serialised);
 
   const read = snapshot.rows.filter(row => row.status === "read").length;
   const baselineRead = baseline?.rows.filter(row => row.status === "read").length ?? 0;
@@ -215,7 +236,7 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   // point. docs/vcu-parameters.md §14.
   const replacesLatest = read > 0 && (snapshot.complete || read >= baselineRead);
   if (replacesLatest) {
-    await writeFile(join(directory, LATEST_FILE), serialised, "utf-8");
+    await replaceFileDurably(join(directory, LATEST_FILE), serialised);
   }
   console.log(
     `vcu-sweep: ${read}/${snapshot.rows.length} read${snapshot.complete ? "" : "  ⚠️ INCOMPLETE — start it again to resume"}` +
@@ -232,7 +253,14 @@ export async function writeSnapshot(directory: string, swept: VcuParameterSnapsh
   if (snapshot.complete) {
     // Only once the sweep finished: deleting the resume file after a partial run is
     // exactly the "losing what we got" rule 1 exists to avoid.
-    await clearPartialSweep(directory);
+    //
+    // ⚠️ Warned, not thrown. Everything that matters is already on the card by this line, so
+    // letting a tidy-up fsync reject would skip reportChanges below — the ⚠️ VALUE(S) CHANGED
+    // line, the loudest thing a sweep can say — and would mark a safely written sweep as
+    // failed on the dashboard (../vcu/read-runner.ts sets `failure` from this rejection).
+    await clearPartialSweep(directory).catch((err: unknown) => {
+      console.warn(`vcu-sweep: could not clear ${PARTIAL_FILE}; a resume file may outlive this sweep:`, err);
+    });
   }
   reportChanges(baseline, snapshot);
 }

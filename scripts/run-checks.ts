@@ -22,8 +22,8 @@ import { fileURLToPath } from "url";
 // Why there is no test framework here: docs/diagnostics-and-checks.md §11.1.
 
 /**
- * Per-check wall-clock limit. The whole suite runs in under ten seconds today, most of
- * which is check-fan-curve.ts sitting still: it replays a 1500 ms kick-start and two
+ * Per-check wall-clock limit. The whole suite runs in about 25 s today, much of which is
+ * check-fan-curve.ts sitting still: it replays a 1500 ms kick-start and two
  * signal-staleness windows in real time, on about a tenth of a second of CPU. So this is
  * not a performance budget — it is only here to turn a hang into a red build instead of
  * an Actions job that runs until the six-hour ceiling.
@@ -344,6 +344,28 @@ const CHECKS: SelfCheck[] = [
       "its OWN scale, hatches nothing at or past full scale, hatches the whole half at zero, and still draws for " +
       "a derate of 1 kW, since a minimum width that swallowed small ones made a blank end mean two things. " +
       "Walked end to end as well as at each end, because covering both ends left a crossed pair between them green",
+  },
+  {
+    script: "scripts/check-power-cut-durability.ts",
+    covers:
+      "the four things the service writes, against the power cut this Pi takes every ride: that appendDurably " +
+      "keeps fs/promises appendFile's full-write behaviour while flushing the file, and flushes the DIRECTORY " +
+      "only on the call that created it; that replaceFileDurably swaps latest.json by rename rather than " +
+      "rewriting it in place — proved against an in-place writeFile mutant by holding an fd open across the " +
+      "write, where in-place hands the held reader the new bytes through the same inode and a rename leaves it " +
+      "on the complete old file; that the readers still behave on the shapes a cut actually leaves (a NUL run " +
+      "over a whole line of the audit journal and of the resume file, a truncated latest.json, one that parses " +
+      "but is not a snapshot), which is the FIRST coverage those readers have had; that the real writers move the " +
+      "flush counters, so a call site reverted to appendFile or writeFile turns this red — though NOT that the " +
+      "syscall happened, since deleting the datasync() and leaving the counter beside it is invisible from " +
+      "userspace, one of two gaps the check names in its own header; that a 1710-byte hole punched into a " +
+      "real sealed .celog costs exactly the segments whose bytes it touches and nothing on either side of it, " +
+      "measured through scripts/decrypt-log.ts itself as a subprocess because check-ride-log-status.ts only has " +
+      "a MIRRORED copy of its segment reader; that the resume file flushes its directory entry on " +
+      "creation and its rows once at close but never per row, and that clearPartialSweep flushes " +
+      "the removal; and that syncFilesystems reports a missing command as a sentence " +
+      "rather than throwing into the update endpoint. ⚠️ macOS fsync is not F_FULLFSYNC, so a green run here " +
+      "proves the code path and the ordering — the durability claim is an ext4-on-Linux one",
   },
   {
     script: "scripts/check-tab-routing.ts",
