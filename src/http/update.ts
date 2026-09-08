@@ -46,14 +46,38 @@ export interface UpdateReply {
 /** git pull can hang on bad garage wifi; don't leave the button spinning forever. */
 const PULL_TIMEOUT_MS = 60_000;
 
-/**
- * How early a kill may arrive and still be counted as the timeout. `since()` reads
- * performance.now() while exec's deadline is a libuv timer, so the two disagree by a
- * hair at the boundary — the margin is for that skew, not for slop. What a zero-margin
- * comparison between two clocks does under load is on the record in
- * scripts/check-fan-endpoint.ts §3.
- */
-const TIMEOUT_SKEW_MS = 250;
+export async function handleUpdateEndpoint(
+  req: IncomingMessage,
+  res: ServerResponse,
+  directory: string
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "POST" });
+    res.end("POST to pull the latest code\n");
+    return;
+  }
+  const startedAt = monotonicNow();
+  // Falls back to our own uid only so a failing stat() still has something to name in the
+  // reply; the pull itself never runs on that guess.
+  let ownerUid = process.getuid?.() ?? 0;
+  try {
+    const pull = await pullCommandFor(directory, process.getuid?.() ?? 0);
+    ownerUid = pull.ownerUid;
+    const { stdout, stderr } = await execFileAsync(pull.command, pull.args, { timeout: PULL_TIMEOUT_MS });
+    const output = `${stdout}${stderr}`.trim();
+    console.log(`update: git pull in ${directory}:\n${output}`);
+    const summary = output || "Already up to date.";
+    respond(res, 200, { ok: true, message: `${summary}\n\nRestarting cool-eva…` });
+    // The restart kills this process, so wait for the reply to leave the socket first.
+    res.once("finish", scheduleServiceRestart);
+  } catch (err) {
+    // A non-zero git exit (merge conflict, no network, detached head) lands here with
+    // its output carried on the error; surface that rather than a bare "failed".
+    const detail = describePullFailure(err, since(startedAt), { directory, ownerUid });
+    console.warn(`update: git pull in ${directory} failed:\n${detail}`);
+    respond(res, 500, { ok: false, message: detail });
+  }
+}
 
 /**
  * The argv that runs a git command as `ownerUid`, from a process running as `currentUid`.
@@ -91,38 +115,26 @@ export function asOwnerCommand(
 /** The pull itself, so the endpoint and the installer cannot describe it differently. */
 export const PULL_ARGS = ["pull", "--ff-only"];
 
-export async function handleUpdateEndpoint(
-  req: IncomingMessage,
-  res: ServerResponse,
-  directory: string
-): Promise<void> {
-  if (req.method !== "POST") {
-    res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "POST" });
-    res.end("POST to pull the latest code\n");
-    return;
-  }
-  const startedAt = monotonicNow();
-  try {
-    const owner = await stat(directory);
-    const { command, args } = asOwnerCommand(
-      ["-C", directory, ...PULL_ARGS],
-      owner.uid,
-      process.getuid?.() ?? owner.uid
-    );
-    const { stdout, stderr } = await execFileAsync(command, args, { timeout: PULL_TIMEOUT_MS });
-    const output = `${stdout}${stderr}`.trim();
-    console.log(`update: git pull in ${directory}:\n${output}`);
-    const summary = output || "Already up to date.";
-    respond(res, 200, { ok: true, message: `${summary}\n\nRestarting cool-eva…` });
-    // The restart kills this process, so wait for the reply to leave the socket first.
-    res.once("finish", scheduleServiceRestart);
-  } catch (err) {
-    // A non-zero git exit (merge conflict, no network, detached head) lands here with
-    // its output carried on the error; surface that rather than a bare "failed".
-    const detail = describePullFailure(err, since(startedAt));
-    console.warn(`update: git pull in ${directory} failed:\n${detail}`);
-    respond(res, 500, { ok: false, message: detail });
-  }
+/**
+ * The pull, aimed at a real checkout: the owner uid comes from the directory itself.
+ *
+ * ⚠️ This one line — where the uid comes from — IS the bug from 2026-09-08, and it is why
+ * this is exported rather than inlined. A check that only exercises asOwnerCommand() with
+ * literal uids passes on a build that pulls as root, because on any machine running the
+ * suite the checkout is owned by whoever runs it and the sudo branch is never taken.
+ *
+ * ⚠️ It stats the WORKTREE root. The invariant is really about the object store, and the
+ * two diverge in a linked `git worktree` (where .git is a file pointing elsewhere) and in
+ * a checkout whose .git was chowned separately — which is exactly the poisoned state this
+ * branch is about. deployHint() names that state when git reports it; the installer
+ * checks for it directly.
+ */
+export async function pullCommandFor(
+  directory: string,
+  currentUid: number
+): Promise<{ command: string; args: string[]; ownerUid: number }> {
+  const { uid } = await stat(directory);
+  return { ...asOwnerCommand(["-C", directory, ...PULL_ARGS], uid, currentUid), ownerUid: uid };
 }
 
 /**
@@ -131,7 +143,7 @@ export async function handleUpdateEndpoint(
  * Pure, and elapsed time arrives as an argument rather than off a clock, so the timeout
  * case is checkable without waiting a minute for it (scripts/check-update-endpoint.ts).
  */
-export function describePullFailure(err: unknown, elapsedMs: number): string {
+export function describePullFailure(err: unknown, elapsedMs: number, deploy: DeployContext): string {
   if (!(err instanceof Error)) {
     return String(err);
   }
@@ -143,7 +155,7 @@ export function describePullFailure(err: unknown, elapsedMs: number): string {
     ? [`Stopped after ${Math.round(PULL_TIMEOUT_MS / 1000)} s — bad wifi, or a remote that never answered.`]
     : [];
   lines.push(streams || err.message);
-  const hint = credentialHint(streams);
+  const hint = deployHint(streams, deploy);
   if (hint) {
     lines.push(hint);
   }
@@ -152,39 +164,81 @@ export function describePullFailure(err: unknown, elapsedMs: number): string {
 
 /**
  * A kill at or past the deadline is exec's own timer firing — once it has elapsed there
- * is no other explanation. A kill BEFORE it is something else (an OOM on a Pi Zero is
+ * is no other explanation. No skew margin: `startedAt` is taken before the spawn and the
+ * elapsed time is read after the rejection has propagated, so it is necessarily past
+ * libuv's deadline already. A margin could only widen the window in which an OOM kill
+ * gets misreported as a timeout, which is the very thing this exists to prevent. A kill BEFORE it is something else (an OOM on a Pi Zero is
  * the likely one) and must not be called a timeout. Elapsed time is the only thing that
  * separates the two: `killed` and `signal` read identically either way.
  */
 function wasKilledByTimeout(failure: { killed?: boolean; signal?: string | null }, elapsedMs: number): boolean {
   const killed = failure.killed === true || typeof failure.signal === "string";
-  return killed && elapsedMs >= PULL_TIMEOUT_MS - TIMEOUT_SKEW_MS;
+  return killed && elapsedMs >= PULL_TIMEOUT_MS;
+}
+
+/** Where the deploy lives, so a hint can name the real path and user rather than `pi`. */
+export interface DeployContext {
+  directory: string;
+  ownerUid: number;
 }
 
 /**
- * The two ssh failures this deploy path actually produces, each with its own fix — a hint
- * that named one cause for both would be wrong half the time. Shared with
- * scripts/setup-service.ts so the installer and the button give the same advice.
+ * Turn a git failure into the one sentence that fixes it, or null when we have nothing
+ * useful to add. Shared with scripts/setup-service.ts so the installer and the button
+ * never give different advice about the same state.
  *
- * The pull runs as the checkout's owner, so these are about THAT user's ~/.ssh; there is
- * no root-cannot-read-pi's-key case left to explain.
+ * ⚠️ Nothing here hardcodes `pi` or `/home/pi`. The hint for a wrongly-owned checkout that
+ * told you to run `sudo -u pi ssh-keyscan … >> /home/pi/.ssh/known_hosts` would create a
+ * ROOT-OWNED file in pi's ~/.ssh, because `>>` is performed by the invoking shell — the
+ * same ownership bug this branch exists to fix, one directory over, caused by the repair
+ * instruction. The commands below run the redirect inside the target user's own shell.
  *
- * ⚠️ Matched on OpenSSH's words rather than git's: OpenSSH ships no NLS at all, so these
- * are byte-identical under every locale, while git has a full message catalog and its
- * `fatal:` lines move with LC_ALL. The method list in `Permission denied (publickey,
- * password)` varies with what the server offered, so the match stops before it.
+ * ⚠️ The ssh arms match OpenSSH's words, not git's: OpenSSH ships no NLS at all, so they
+ * are byte-identical under every locale, while git's `fatal:`/`error:` lines move with
+ * LC_ALL. The method list in `Permission denied (publickey,password)` varies with what the
+ * server offered, so that match stops before the closing paren.
  */
-export function credentialHint(streams: string): string | null {
-  if (/Host key verification failed/.test(streams)) {
+export function deployHint(streams: string, deploy: DeployContext): string | null {
+  const owner = `'#${deploy.ownerUid}'`;
+  if (/insufficient permission|unable to (append to|create|write)[^\n]*\.git\/|cannot update the ref/.test(streams)) {
     return (
-      "github.com is not in the checkout owner's known_hosts: " +
-      "sudo -u pi ssh-keyscan github.com >> /home/pi/.ssh/known_hosts. See INSTALL.md §3."
+      `Files under ${deploy.directory}/.git belong to another user — something ran ` +
+      `\`sudo git pull\` here. The pull cannot write refs, so it silently does not happen. ` +
+      `Repair: sudo chown -R ${deploy.ownerUid} ${deploy.directory}. See INSTALL.md §3.`
     );
   }
   if (/Permission denied \(publickey/.test(streams)) {
     return (
-      "GitHub refused the owner's ssh key. Add ~/.ssh/id_*.pub as a deploy key on the " +
-      "fork, or use an https remote — a public fork needs no key at all. See INSTALL.md §3."
+      "GitHub refused the checkout owner's ssh key. Add their ~/.ssh/id_*.pub as a deploy " +
+      "key on the fork, or use an https remote — a public fork needs no key at all. " +
+      "See INSTALL.md §3."
+    );
+  }
+  if (/Host key verification failed/.test(streams)) {
+    return (
+      "github.com is not in the checkout owner's known_hosts. Add it AS THAT USER, so the " +
+      `file is theirs: sudo -u ${owner} sh -c 'ssh-keyscan github.com >> ~/.ssh/known_hosts'.`
+    );
+  }
+  if (/Not possible to fast-forward/.test(streams)) {
+    return (
+      "The checkout has commits the remote does not — this pull is --ff-only and will not " +
+      `merge them on the bike. To discard them: sudo -u ${owner} git -C ${deploy.directory} ` +
+      "fetch origin && sudo -u " +
+      `${owner} git -C ${deploy.directory} reset --hard origin/HEAD.`
+    );
+  }
+  if (/could not read Username|Authentication failed/.test(streams)) {
+    return (
+      "The https remote wants a login, so this fork is private. Give the Pi an ssh remote " +
+      "and a deploy key on the owner's account instead — there is no terminal here to type " +
+      "a password into. See INSTALL.md §3."
+    );
+  }
+  if (/^sudo:/m.test(streams)) {
+    return (
+      `sudo could not switch to the checkout's owner (uid ${deploy.ownerUid}). The service ` +
+      "runs as root, which needs no password — if this is not root, that is the problem."
     );
   }
   return null;

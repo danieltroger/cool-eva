@@ -284,21 +284,15 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-update-endpoint.ts",
     covers:
-      "the menu's Update button end to end without a Pi: that a real `git pull` through the real handler answers " +
-      "200 and hands the phone git's own output, that a failed one answers 500 with git's `fatal:` rather than the " +
-      "exec wrapper's 'Command failed:', and that a GET is refused. Plus the failure text per shape, which is where " +
-      "this endpoint has actually been wrong: a kill AT the deadline is named as a timeout whether or not git " +
-      "managed to write anything first — the non-empty case is the one an earlier draft dropped — a kill BEFORE it " +
-      "is not (that is an OOM on a Pi Zero, and a confident wrong answer is worse than none), and OpenSSH's two " +
-      "credential failures earn DIFFERENT advice — `Host key verification failed` is a known_hosts entry, " +
-      "`Permission denied (publickey,…` is the key itself, matched short of the closing paren because the method " +
-      "list varies — plus THE USER THE PULL RUNS AS, which is the one that cost a ride: a root pull over a " +
-      "pi-owned checkout leaves root-owned files in .git and the next pull as pi dies on 'unable to append to " +
-      ".git/logs/refs/…' silently, restarting the service on stale code, so the pull goes through sudo as the " +
-      "checkout's owner by uid (with -H, non-interactive, and no sudo at all when we already are the owner) and " +
-      "is --ff-only, proven against a genuinely diverged checkout. " +
-      "\u26a0 The restart is asserted to be ARMED and never fired: a real ServerResponse here would emit 'finish' " +
-      "and `sudo systemctl restart cool-eva` would run on whatever machine ran npm test",
+      "the menu's Update button against real git repos and no Pi: that it pulls AS THE CHECKOUT'S OWNER rather " +
+      "than as root — the 2026-09-08 bug, where a root pull left root-owned files in .git and the next pull as pi " +
+      "died silently, restarting the service on stale code — with the owner uid read from the checkout itself and " +
+      "not from whoever is asking, which is the one line a test of the argv-builder alone cannot see. Plus " +
+      "--ff-only against a genuinely diverged checkout, the 405 guard, git's own words reaching the phone, a " +
+      "timeout named only when the kill is at the deadline (an earlier one is an OOM), and one hint per failure " +
+      "shape — poisoned .git, refused key, unknown host, divergence, https login, sudo — none of them naming a " +
+      "user called pi. \u26a0 The restart is asserted ARMED and never fired: a real ServerResponse would emit " +
+      "'finish' and run `sudo systemctl restart cool-eva` on whatever machine ran npm test",
   },
   {
     script: "scripts/check-virtual-clock.ts",

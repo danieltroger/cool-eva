@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,9 +9,10 @@ import type { UpdateReply } from "../src/http/update.ts";
 import {
   PULL_ARGS,
   asOwnerCommand,
-  credentialHint,
+  deployHint,
   describePullFailure,
   handleUpdateEndpoint,
+  pullCommandFor,
 } from "../src/http/update.ts";
 
 // The Update button's endpoint, against a real git and no Pi.
@@ -93,6 +95,8 @@ function parseReply(recorded: FakeResponse): UpdateReply {
 }
 
 /** git needs an identity to commit, and CI checkouts have no global one. */
+const DEPLOY = { directory: "/home/pi/cool-eva", ownerUid: 1000 };
+
 const GIT_IDENTITY = ["-c", "user.email=check@cool-eva.invalid", "-c", "user.name=cool-eva check"];
 
 const workDir = await mkdtemp(join(tmpdir(), "cool-eva-update-check-"));
@@ -164,7 +168,7 @@ try {
     stdout: "",
     stderr: "",
   });
-  const quietText = describePullFailure(timedOutQuiet, 60_000);
+  const quietText = describePullFailure(timedOutQuiet, 60_000, DEPLOY);
   check("a kill at the deadline with no output is named as a timeout", /Stopped after 60 s/.test(quietText));
 
   const timedOutNoisy = Object.assign(new Error("Command failed: git pull"), {
@@ -173,7 +177,7 @@ try {
     stdout: "",
     stderr: "remote: Enumerating objects: 41, done.\n",
   });
-  const noisyText = describePullFailure(timedOutNoisy, 61_000);
+  const noisyText = describePullFailure(timedOutNoisy, 61_000, DEPLOY);
   check("a kill at the deadline WITH output is also named as a timeout", /Stopped after 60 s/.test(noisyText));
   check(
     "and keeps what git managed to say — the sentence is prepended, never substituted",
@@ -188,7 +192,7 @@ try {
   });
   check(
     "a kill well BEFORE the deadline is not called a timeout — that is an OOM, and a confident wrong answer is worse than none",
-    !/Stopped after/.test(describePullFailure(killedEarly, 900))
+    !/Stopped after/.test(describePullFailure(killedEarly, 900, DEPLOY))
   );
 
   const plainExit = Object.assign(new Error("Command failed: git pull"), {
@@ -197,7 +201,7 @@ try {
     stdout: "",
     stderr: "error: Your local changes would be overwritten.\n",
   });
-  const plainText = describePullFailure(plainExit, 120);
+  const plainText = describePullFailure(plainExit, 120, DEPLOY);
   check("an ordinary non-zero exit is not a timeout either", !/Stopped after/.test(plainText));
   check("and is reported as git wrote it", plainText.includes("would be overwritten"));
 
@@ -208,23 +212,46 @@ try {
   // ⚠️ The two have DIFFERENT fixes — one is a known_hosts entry, the other is the key
   // itself — so a hint that named one cause for both would be wrong half the time.
   const hostKey = "Host key verification failed.\nfatal: Could not read from remote repository.\n";
-  const hostKeyHint = credentialHint(hostKey) ?? "";
+  const hostKeyHint = deployHint(hostKey, DEPLOY) ?? "";
   check("'Host key verification failed' is about known_hosts", /known_hosts/.test(hostKeyHint));
   check("and gives the command that fixes it", /ssh-keyscan/.test(hostKeyHint));
+  // ⚠️ The redirect must happen INSIDE the owner's shell. `sudo -u pi ssh-keyscan … >>
+  // /home/pi/.ssh/known_hosts` from a root shell writes a ROOT-OWNED known_hosts — the
+  // same ownership bug this branch exists to fix, caused by the repair instruction.
+  check("run as the owner, with the redirect inside their shell, not the caller's", /sh -c '.*>>.*'/.test(hostKeyHint));
+  check("and names nobody called pi — the owner is whoever owns the checkout", !/pi/.test(hostKeyHint));
   check("and does not blame the key, which is a different failure", !/deploy key was refused/.test(hostKeyHint));
 
   // OpenSSH prints the METHODS THE SERVER OFFERED, so the real string is often
   // `(publickey,password)`. Matching through the closing paren would miss every
   // multi-method server — which is most of them.
   const refused = "git@github.com: Permission denied (publickey,password).\n";
-  const refusedHint = credentialHint(refused) ?? "";
+  const refusedHint = deployHint(refused, DEPLOY) ?? "";
   check("'Permission denied (publickey,password)' is matched, not just the bare (publickey)", refusedHint !== "");
   check("and is about the key, naming both ways out", /deploy key/.test(refusedHint) && /https/.test(refusedHint));
   check("and does not tell you to run ssh-keyscan, which would not help", !/ssh-keyscan/.test(refusedHint));
 
+  // ⚠️ THE INCIDENT ITSELF, 2026-09-08. A Pi that pressed the old button is in exactly this
+  // state, and after the fix the pull correctly runs as the owner and correctly fails —
+  // so this is the message the phone shows on every Pi that was ever poisoned.
+  const poisoned =
+    "error: cannot update the ref 'refs/remotes/origin/main': unable to append to " +
+    "'.git/logs/refs/remotes/origin/main': Permission denied\n";
+  const poisonedHint = deployHint(poisoned, DEPLOY) ?? "";
+  check("a .git poisoned by an earlier root pull is recognised", poisonedHint !== "");
+  check("and names the chown that repairs it, with the owner's uid", /chown -R 1000/.test(poisonedHint));
+  check("and is not mistaken for an ssh problem", !/ssh|deploy key/.test(poisonedHint));
+
+  const httpsAuth =
+    deployHint("fatal: could not read Username for 'https://github.com': No such device\n", DEPLOY) ?? "";
+  check("an https remote asking for a login says the fork is private", /private/.test(httpsAuth));
+
+  const sudoFailure = deployHint("sudo: a password is required\n", DEPLOY) ?? "";
+  check("and a sudo that cannot switch user is explained rather than shown raw", /uid 1000/.test(sudoFailure));
+
   check(
     "an unrelated failure gets no ssh advice — a hint that fires on everything is noise",
-    credentialHint("fatal: couldn't find remote ref main\n") === null
+    deployHint("fatal: couldn't find remote ref main\n", DEPLOY) === null
   );
 
   const carried = Object.assign(new Error("Command failed: git pull"), {
@@ -235,7 +262,7 @@ try {
   });
   check(
     "and the hint reaches the phone, appended to git's own words",
-    /ssh-keyscan/.test(describePullFailure(carried, 300))
+    /ssh-keyscan/.test(describePullFailure(carried, 300, DEPLOY))
   );
 
   // --- 6. WHO the pull runs as ------------------------------------------------
@@ -257,16 +284,19 @@ try {
 
   const same = asOwnerCommand(["-C", "/srv/cool-eva", ...PULL_ARGS], 1000, 1000);
   check("when we ALREADY are the owner there is nothing to switch to", same.command === "git");
-  check("and no sudo is invoked", !same.args.includes("sudo"));
 
-  check(
-    "the pull is --ff-only, so a diverged checkout cannot merge itself on the bike",
-    PULL_ARGS.includes("--ff-only")
-  );
-  check(
-    "safe.directory is gone — matching the owner is what made it unnecessary",
-    !switched.args.join(" ").includes("safe.directory")
-  );
+  // ⚠️ THE ASSERTION THAT WAS MISSING, and the reason this file exists. Everything above
+  // calls asOwnerCommand() with literal uids, which passes on a build whose CALL SITE
+  // hands it the wrong ones — and that one line, between the stat and the argv, IS the
+  // bug from the bike. On any machine running this suite the checkout is owned by whoever
+  // runs it, so §1 and §7 never take the sudo branch and cannot see it either.
+  const checkoutUid = statSync(checkout).uid;
+  const forRoot = await pullCommandFor(checkout, 0);
+  check("the owner uid is read from the CHECKOUT, not from whoever is asking", forRoot.ownerUid === checkoutUid);
+  check("so a root service goes through sudo for a checkout it does not own", forRoot.command === "sudo");
+  check("naming that checkout's owner", forRoot.args.includes(`#${checkoutUid}`));
+  const forOwner = await pullCommandFor(checkout, checkoutUid);
+  check("and runs git directly when it already is the owner", forOwner.command === "git");
 
   // --- 7. --ff-only against a real divergence ---------------------------------
 
@@ -285,6 +315,10 @@ try {
   check("a diverged checkout is refused rather than merged", diverged.statusCode === 500);
   check("and says so in git's words", /Not possible to fast-forward|diverg/i.test(divergedReply.message));
   check("and does not restart the service on code it did not pull", diverged.finishListeners === 0);
+  check(
+    "and tells the rider how to get out of it, since this repo force-pushes branches",
+    /reset --hard/.test(divergedReply.message)
+  );
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }

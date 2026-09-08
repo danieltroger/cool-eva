@@ -194,7 +194,7 @@ Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/stat
 
 ## 9. Deploying updates later
 
-The dashboard menu's **Update** button does this for you: it runs `git pull` in `/home/pi/cool-eva` (as root, over the https remote — see §3), shows git's output, then restarts the service so the new code takes effect. The WebSocket drops on restart and the dashboard reconnects on its own. It does **not** run `npm install`, so use it only for code changes.
+The dashboard menu's **Update** button does this for you: it runs `git pull --ff-only` in `/home/pi/cool-eva` **as the checkout's owner, not as root** (see §3), shows git's output, then restarts the service so the new code takes effect. The WebSocket drops on restart and the dashboard reconnects on its own. It does **not** run `npm install`, so use it only for code changes.
 
 By hand (or when a dependency changed):
 

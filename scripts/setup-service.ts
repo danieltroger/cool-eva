@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from "child_process";
-import { PULL_ARGS, asOwnerCommand, credentialHint } from "../src/http/update.ts";
+import { PULL_ARGS, asOwnerCommand, deployHint } from "../src/http/update.ts";
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -258,41 +258,86 @@ function warnIfRemoteUnreadable(): void {
       currentUid
     );
     execFileSync(command, args, { timeout: LS_REMOTE_TIMEOUT_MS, stdio: ["ignore", "ignore", "pipe"] });
+    // ⚠️ Readable is NOT the same as pullable, and promising otherwise was a lie this
+    // script told: ls-remote writes nothing into .git, so a checkout poisoned by an
+    // earlier root pull passes it while the button still fails.
+    if (warnIfGitIsWronglyOwned(ownerUid)) {
+      return;
+    }
     console.log(
       `deploy: ${remoteUrl} is readable as the checkout's owner (uid ${ownerUid}) — the Update button will work`
     );
     return;
   } catch (error) {
-    reportUnreadableRemote(remoteUrl, error as Error & { stderr?: Buffer | string });
+    reportUnreadableRemote(remoteUrl, error as Error & { stderr?: Buffer | string }, ownerUid);
   }
 }
 
 /**
- * Split "your credentials are wrong" from "this Pi is simply offline", because the second
- * is the NORMAL case here — CLAUDE.md: there is no reception in the garage, and re-running
- * this script is the documented way to migrate a Pi. A warning that shouts on every
- * offline install is one people learn to scroll past, so only a credential failure gets
- * the loud treatment; anything else gets one quiet line saying what could not be checked.
+ * Split a real failure from "this Pi is simply offline", because the second is the NORMAL
+ * case here — CLAUDE.md: there is no reception in the garage, and re-running this script is
+ * the documented way to migrate a Pi. A warning that shouts on every offline install is one
+ * people learn to scroll past.
+ *
+ * ⚠️ Quiet is the default side of that split, so it must not become a catch-all: anything
+ * deployHint() recognises — a refused key, an unknown host, a sudo that cannot switch user,
+ * an https remote asking for a login — is a real failure in an offline costume, and is said
+ * out loud.
  */
-function reportUnreadableRemote(remoteUrl: string, error: Error & { stderr?: Buffer | string }): void {
+function reportUnreadableRemote(
+  remoteUrl: string,
+  error: Error & { stderr?: Buffer | string },
+  ownerUid: number
+): void {
   const stderr = (error.stderr ?? "").toString().trim();
-  const hint = credentialHint(stderr);
+  const hint = deployHint(stderr, { directory: projectDir, ownerUid });
   if (!hint) {
     console.log("");
-    console.log(`(could not verify ${remoteUrl} as the service user — expected if this Pi is offline.`);
+    console.log(`(could not verify ${remoteUrl} as the checkout's owner — expected if this Pi is offline.`);
     console.log(` git said: ${stderr.split("\n")[0] || error.message})`);
     return;
   }
   console.warn("");
-  console.warn(
-    `\u26a0 The dashboard's Update button (git ${PULL_ARGS.join(" ")}) will NOT be able to pull from ${remoteUrl}.`
-  );
+  console.warn(`\u26a0 The Update button (git ${PULL_ARGS.join(" ")}) will NOT be able to pull from ${remoteUrl}.`);
   console.warn(`  ${stderr.split("\n")[0]}`);
   console.warn("");
   for (const line of hint.split(". ")) {
     console.warn(`  ${line.trim()}`);
   }
   console.warn("");
+}
+
+/**
+ * The state an earlier root pull leaves behind: a pi-owned worktree whose .git belongs to
+ * root. The pull then runs as the owner, correctly, and correctly fails — writing nothing,
+ * so the service restarts on the old commit and the journal looks healthy.
+ *
+ * This is the one moment someone is standing in front of the Pi, so it is worth two stat()
+ * calls. Returns true when it warned, so the caller does not then promise the button works.
+ */
+function warnIfGitIsWronglyOwned(ownerUid: number): boolean {
+  const gitPath = join(projectDir, ".git");
+  if (!existsSync(gitPath)) {
+    return false;
+  }
+  // .git itself, plus the reflog directory the 2026-09-08 incident actually tripped on.
+  const offenders = [gitPath, join(gitPath, "logs", "refs")].filter(
+    candidate => existsSync(candidate) && statSync(candidate).uid !== ownerUid
+  );
+  if (offenders.length === 0) {
+    return false;
+  }
+  console.warn("");
+  console.warn(`\u26a0 ${gitPath} is not owned by the checkout's owner (uid ${ownerUid}).`);
+  console.warn("  Something ran `sudo git pull` here. The Update button pulls as the owner, so it");
+  console.warn("  cannot write refs — the pull silently does nothing and the service restarts on");
+  console.warn("  the OLD commit, with a healthy-looking journal.");
+  for (const offender of offenders) {
+    console.warn(`    ${offender} is owned by uid ${statSync(offender).uid}`);
+  }
+  console.warn(`  Repair: sudo chown -R ${ownerUid} ${projectDir}`);
+  console.warn("");
+  return true;
 }
 
 /**
