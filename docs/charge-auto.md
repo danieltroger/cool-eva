@@ -59,6 +59,12 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 
 That is the whole safety posture, and it is what makes the feature bounded: **it can only ever improve on the status quo, never worsen it.** `scripts/check-charge-auto.ts` §1 asserts all nine branches hold and that none of them produces a current.
 
+### Taking it back
+
+⚠️ A stand-down lasts the **charge**, not the session's memory of it, and clearing it is **one tap**. While stood down the effective mode is still `automatic`, so a plain on/off toggle would read "switch off" — the opposite of what the rider wants — and taking the controller back would mean tapping off and then on, through a label that says the wrong thing. The charge tab's button therefore has three states, and when the reason is `RIDER` it reads _"take the current back"_ and sends `mode=automatic`, which is what clears the flag.
+
+⚠️ **The reason moves with the flag, in both directions.** Standing down and being taken back each refresh it immediately rather than waiting for the next 60 s tick — otherwise the button spends up to a minute offering the wrong action in exactly the window this is about.
+
 ⚠️ **The rider always wins**, from either direction. A `dc_charge_limit_selected_a` event — the dial on the bike — stands the controller down for the rest of the session, and so does a charge current set by hand from the phone: both are the rider saying what they want, and a controller that overrode either three seconds later is the thing that gets a Pi ripped out. Switching the toggle back to automatic is an explicit "you take it again" and clears the stand-down. That event is necessarily the rider and never our own echo: this Pi does not hear its own transmissions (`createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS`) — proven 2026-09-07, when three Pi sends produced no decoded row while all twelve of the dash's did.
 
 ## What it is allowed to do
