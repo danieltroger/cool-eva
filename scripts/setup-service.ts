@@ -1,5 +1,5 @@
 import { execFileSync, execSync } from "child_process";
-import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths } from "../src/http/update.ts";
+import { PULL_ARGS, asOwnerCommand, deployHint, findForeignOwnedPaths, foreignOwner } from "../src/http/update.ts";
 import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -314,10 +314,17 @@ async function warnIfGitIsWronglyOwned(): Promise<void> {
   const gitPath = join(projectDir, ".git");
   // logs/ and refs/ are where a pull writes, and both are small. NOT objects/, and not
   // .git itself: a pull never rewrites those, so they always look innocent.
-  const offenders = await findForeignOwnedPaths(
-    [join(gitPath, "logs"), join(gitPath, "refs"), join(gitPath, "FETCH_HEAD")],
-    ownerUid
-  );
+  // .git itself is checked WITHOUT recursing (that would drag objects/ in): a root-owned
+  // .git directory over owner-owned contents is unpullable too, and the walk below cannot
+  // see it. ⚠️ In a linked `git worktree` all of these are absent and this quietly finds
+  // nothing — which is the shape agents develop in, not the shape the Pi runs.
+  const offenders = [
+    ...(await findForeignOwnedPaths(
+      [join(gitPath, "logs"), join(gitPath, "refs"), join(gitPath, "FETCH_HEAD")],
+      ownerUid
+    )),
+    ...[await foreignOwner(gitPath, ownerUid)].filter(entry => entry !== null),
+  ];
   if (offenders.length === 0) {
     return;
   }

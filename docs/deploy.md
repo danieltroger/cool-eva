@@ -38,6 +38,8 @@ sudo chown -R pi:pi /home/pi/cool-eva
 
 `scripts/setup-service.ts` checks for it at install (`warnIfGitIsWronglyOwned`), and `deployHint()` names the repair if the button hits it.
 
+⚠️ Two failures look almost identical in git's output and want opposite advice. `Unable to create '…/.git/ORIG_HEAD.lock': **Permission denied**` is this ownership bug. `Unable to create '…/.git/index.lock': **File exists**` is a stale lock — a bike switched off mid-pull — where nothing is wrong with ownership and the fix is to delete the file. So the ownership arm requires `Permission denied` on the same line rather than matching the `Unable to create` prefix, which would give a `chown` instruction for a dead battery.
+
 ### ⚠️ Which paths actually go root-owned
 
 Not the obvious ones. **A pull neither creates nor rewrites `.git` or `.git/logs/refs`**, so both keep the ownership the _clone_ gave them however the pull ran — sampling them finds a poisoned checkout perfectly innocent. This is not theory; the first version of the installer check did exactly that and could not have fired on the incident it was written for. Verified by inode:
@@ -55,7 +57,7 @@ What a root pull leaves root-owned is the **leaves it creates**: `logs/refs/remo
 
 Two properties of that walk are load-bearing and neither is obvious. It uses `lstat`, so a symlink is judged by **its own** ownership and is never followed — no loops, and nothing outside the repo gets walked. And it **reports a directory it cannot list rather than throwing**: an unreadable root-owned directory is a likely symptom of the very state being looked for, and this runs at the end of an install that has already started the service, so throwing would fail a good install on the evidence it was called to report.
 
-`.git` itself is deliberately not among the roots. A pull never rewrites it, and the one way it ends up root-owned — someone `sudo git clone`d the checkout — makes root the owner of everything consistently, which pulls fine because the button follows the owner rather than assuming `pi`.
+`.git` itself is checked too, but **without recursing** — walking it would drag `objects/` in for nothing, since a pull never rewrites the directory itself. It still has to be looked at: a root-owned `.git` over owner-owned contents is equally unpullable, and the walk cannot see it. ⚠️ In a linked `git worktree` all these paths are absent and the probe quietly finds nothing — that is the shape agents develop in, not the shape the Pi runs.
 
 ## What matching the user to the owner bought
 

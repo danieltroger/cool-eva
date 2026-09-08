@@ -12,6 +12,7 @@ import {
   deployHint,
   describePullFailure,
   findForeignOwnedPaths,
+  foreignOwner,
   handleUpdateEndpoint,
   pullCommandFor,
 } from "../src/http/update.ts";
@@ -371,6 +372,29 @@ try {
   }
   await chmod(sealed, 0o700);
   check("a directory it cannot list is reported, never thrown — that would fail a good install", resolved);
+
+  // .git-the-directory root-owned over owner-owned contents is equally unpullable, and the
+  // recursive walk cannot see it — walking .git would drag objects/ in for nothing.
+  check("the checkout's own .git is judged without recursing", (await foreignOwner(gitDir, ownUid)) === null);
+  const strangerOwned = await foreignOwner(gitDir, ownUid + 1);
+  check("and is reported when it belongs to someone else", strangerOwned?.path === gitDir);
+  check("a missing path is not an offender", (await foreignOwner(join(gitDir, "nope"), ownUid + 1)) === null);
+
+  // --- 9. the two lock failures that read almost the same ---------------------
+
+  console.log("\n9. telling a wrongly-owned lock from a stale one");
+
+  // ⚠️ Same prefix, opposite advice. `Permission denied` is this branch's ownership bug;
+  // `File exists` is a bike switched off mid-pull, where a chown instruction would be
+  // actively wrong. Matching `Unable to create` alone conflates them.
+  const lockDenied =
+    deployHint("error: Unable to create '/home/pi/cool-eva/.git/ORIG_HEAD.lock': Permission denied\n", DEPLOY) ?? "";
+  check("a lock that cannot be created for permissions is the ownership bug", /chown -R 1000/.test(lockDenied));
+
+  const lockStale =
+    deployHint("fatal: Unable to create '/home/pi/cool-eva/.git/index.lock': File exists\n", DEPLOY) ?? "";
+  check("a lock that already exists is a stale one, not an ownership problem", !/chown/.test(lockStale));
+  check("and says to delete it, which is the opposite instruction", /delete the .lock file/.test(lockStale));
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }

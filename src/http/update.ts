@@ -180,24 +180,35 @@ export interface ForeignPath {
  * `objects/`. Stops at `limit`, since the repair is the same whether 3 files or 3000 are
  * wrong and a warning nobody can read is not a better warning.
  */
+export async function foreignOwner(path: string, ownerUid: number): Promise<ForeignPath | null> {
+  try {
+    const entry = await lstat(path);
+    return entry.uid === ownerUid ? null : { path, uid: entry.uid };
+  } catch (error) {
+    // Absent is normal: FETCH_HEAD before the first fetch, logs/ with reflogs disabled,
+    // and all three roots in a linked `git worktree`. Anything else is worth a line.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`deploy: could not stat ${path}: ${(error as Error).message}`);
+    }
+    return null;
+  }
+}
+
 export async function findForeignOwnedPaths(roots: string[], ownerUid: number, limit = 8): Promise<ForeignPath[]> {
   const found: ForeignPath[] = [];
   const pending = [...roots];
   while (pending.length > 0 && found.length < limit) {
     const current = pending.shift() as string;
+    const foreign = await foreignOwner(current, ownerUid);
+    if (foreign) {
+      found.push(foreign);
+    }
     let entry;
     try {
       entry = await lstat(current);
-    } catch (error) {
-      // Absent is normal: FETCH_HEAD before the first fetch, logs/ with reflogs disabled.
-      // Anything else is worth a line rather than silence.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.warn(`deploy: could not stat ${current}: ${(error as Error).message}`);
-      }
+    } catch {
+      // foreignOwner has already reported anything that matters about this path.
       continue;
-    }
-    if (entry.uid !== ownerUid) {
-      found.push({ path: current, uid: entry.uid });
     }
     if (entry.isDirectory()) {
       try {
@@ -227,11 +238,25 @@ export async function findForeignOwnedPaths(roots: string[], ownerUid: number, l
  */
 export function deployHint(streams: string, deploy: DeployContext): string | null {
   const owner = `'#${deploy.ownerUid}'`;
-  if (/insufficient permission|unable to (append to|create|write)[^\n]*\.git\/|cannot update the ref/.test(streams)) {
+  // ⚠️ The create case REQUIRES "Permission denied" on the same line. A blind match on
+  // `Unable to create '…/.git/…'` also catches `index.lock': File exists`, which is a
+  // stale lock from a bike that lost power mid-pull — handled below, and wanting the
+  // opposite advice. Capital U because git emits both spellings.
+  if (
+    /insufficient permission|cannot update the ref/.test(streams) ||
+    /[Uu]nable to (append to|create|write)[^\n]*Permission denied/.test(streams)
+  ) {
     return (
       `Files under ${deploy.directory}/.git belong to another user — something ran ` +
       `\`sudo git pull\` here. The pull cannot write refs, so it silently does not happen. ` +
       `Repair: sudo chown -R ${deploy.ownerUid} ${deploy.directory}. See INSTALL.md §3.`
+    );
+  }
+  if (/[Uu]nable to create '[^']*\.lock': File exists/.test(streams)) {
+    return (
+      "A previous git command was interrupted and left a lock file behind — switching the " +
+      "bike off mid-pull does this. Nothing is broken: delete the .lock file named above " +
+      "and press Update again."
     );
   }
   if (/Permission denied \(publickey/.test(streams)) {
