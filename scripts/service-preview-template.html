@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Cool Eva — service sheet preview</title>
+    <!-- Copied from public/index.html, where its comment explains the cost on the bike. Here it
+         buys something else: without it Chrome's automatic /favicon.ico request is a console
+         error on every load (an "unsafe attempt to load URL" over file://), and "the console is
+         clean" has to be a gate somebody can actually read. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧊</text></svg>"
+    />
     <style>
       /* The artifact host supplies a reset and a ground; opened as a file, this has to.
      Painted explicitly rather than left transparent so the page holds its own dark
@@ -494,7 +502,16 @@
 
       const WRITE_STATUS = {
         enabled: true,
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [], readings: {} },
+        // ⚠️ Four corrections made in both templates on 2026-09-08, because both carry their own
+        // copy of this fixture (#170). `runningVersion` is the one that mattered: vcu-write.js
+        // destructures it, so every panel here threw at render — seven of them, while this
+        // sheet's own guard reported `data-preview-failed="0"`. A FIXED commit label rather than
+        // this checkout's real one: a review instrument whose text and whose amber +dirty colour
+        // changed with the reader's git state would be worse than one that says a stable thing.
+        runningVersion: { commit: "7f6dbcd", dirty: false, trustworthy: true, label: "7f6dbcd" },
+        chargeAck: null,
+        // ⚠️ No `readings`: that is on the gate's INPUT type, never on the verdict the Pi sends.
+        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
         tableGate: {
           state: "confirmed",
           writesAllowed: true,
@@ -504,15 +521,29 @@
           outstanding: [],
           tableType: 16407,
         },
+        // ⚠️ PiClockVerdict is a UNION, and `reasons` belongs to its untrustworthy arm alone.
         clock: {
           trustworthy: true,
           iso: new Date(NOW).toISOString(),
           offsetFromGpsSeconds: 0.2,
-          reasons: [],
         },
         targets: TARGETS,
         recent: JOURNAL,
         busHeldBy: null,
+      };
+
+      /**
+       * What a lifetime-statistics read answers with (#177), in the shape src/http/lifetime-read.ts
+       * serves. `measurement` is the Pi timing ITSELF during the read — how late its flow control
+       * was, and the worst event-loop delay over the exchange — so a preview with no bus cannot
+       * have measured one. The numbers here are this fixture's own; the SENTENCE is the shape
+       * describeMeasurement() builds, so the panel is laid out as a real answer lays it out.
+       */
+      const LIFETIME_READ = {
+        measurement: "flow control 2.4 ms after the kernel saw the First Frame · worst event-loop delay 1.8 ms",
+        answered: 2,
+        message: null,
+        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
       };
 
       const STATUS = {
@@ -537,16 +568,18 @@
        * panel is the same sweep every other panel would be watching.
        */
       const READ_STATE = {
+        // ⚠️ No `expected` on a finished sweep: VcuReadState's `finished` arm does not carry it.
         run: {
           phase: "finished",
           startedAt: SWEPT_AT,
           finishedAt: SWEPT_AT + 41000,
           complete: true,
-          expected: 277,
           tally: {
             total: 277,
             read: 233,
-            byStatus: { read: 233, refused: 30, "no-response": 14 },
+            // ⚠️ All seven, because tallyOf() seeds every status at 0 (src/vcu/read-runner.ts) —
+            // the Pi never sends a partial one, and views/service-mode.js reads the record.
+            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
             micros: [
               { micro: "A9", read: 201, failed: 22 },
               { micro: "A8", read: 32, failed: 22 },
@@ -605,11 +638,11 @@
        * stayed on "Stop the parameter read" forever, which would have looked like a bug in
        * the sheet and is not one.
        */
-      function json(body) {
+      function json(body, status = 200) {
         const text = JSON.stringify(body);
         return Promise.resolve({
-          ok: true,
-          status: 200,
+          ok: status >= 200 && status < 300,
+          status,
           json: () => Promise.resolve(JSON.parse(text)),
           text: () => Promise.resolve(text),
         });
@@ -767,6 +800,13 @@
         const method = ((init && init.method) || "GET").toUpperCase();
         const path = url.pathname;
 
+        // A Pi with FAN_ENABLED unset does not route /fan at all, and views/fan.js documents that
+        // 404 as "not an error — almost no Eva has this fan", hiding the section either way. That
+        // is the truthful stand-in for THIS page, whose panels are the service sheet's and never
+        // render a fan section; the whole-dashboard preview serves a real FanReply instead.
+        if (path === "/fan") {
+          return json({ error: "preview: this Pi has no fan configured" }, 404);
+        }
         if (path === "/status") {
           return json(STATUS);
         }
@@ -790,6 +830,14 @@
               "fatal: unable to access 'https://github.com/danieltroger/cool-eva.git/': " +
               "Failed to connect to github.com port 443 after 60000 ms: Couldn't connect to server",
           });
+        }
+        if (path === "/lifetime-read") {
+          if (method !== "POST") {
+            // GET /lifetime-stats serves the stored reading; this path only ever reads the bike.
+            return json({ ...LIFETIME_READ, measurement: null, answered: null, message: "use POST" }, 405);
+          }
+          toast("Preview — nothing was sent. A Pi would have opened a diagnostic session on 51 and 52.");
+          return json(LIFETIME_READ);
         }
         if (path === "/vcu-read") {
           if (method === "POST") {
@@ -827,7 +875,9 @@
             return json({
               reading: {
                 status: "read",
-                target: url.searchParams.get("target"),
+                // ⚠️ Narrowed to a real VcuTarget rather than echoed: searchParams.get() is
+                // `string | null`, and the Pi's reply cannot name a micro it cannot address.
+                target: url.searchParams.get("target") === "A8" ? "A8" : "A9",
                 bank: Number(url.searchParams.get("bank")),
                 index,
                 identifier: (Number(url.searchParams.get("bank")) << 12) | index,
@@ -836,6 +886,8 @@
                 signed: 500,
                 value: null,
                 name: null,
+                // Null for the same reason `name` is: the name table describes bank 1 alone.
+                section: null,
                 note: "No name-table row describes this identifier, so only the bytes are known.",
               },
               message: null,
@@ -855,6 +907,7 @@
               signed: target.onBike.value,
               value: target.onBike.value,
               name: target.name,
+              section: "EVSE",
               note: null,
             },
             message: null,

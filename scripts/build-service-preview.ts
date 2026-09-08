@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, posix } from "node:path";
 import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
+import { serverFacts } from "./preview-server-facts.ts";
 import type { LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
 import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
@@ -186,14 +187,18 @@ const css = await readFile(join(PUBLIC, "style.css"), "utf8");
 // String.replace no-ops SILENTLY when the pattern is absent. Deleting either
 // placeholder produced "✓ 32 modules" and an empty registry that renders nothing —
 // the same outcome as the `},,` bug, reached a different way.
-if (!template.includes("__CSS__")) {
-  throw new Error("build-service-preview: the template has no __CSS__ placeholder");
+//
+// Required PER TEMPLATE rather than of both: only the whole-dashboard one stubs /fan and
+// /charge-auto, so only it needs the Pi's constants, and a placeholder the annotated sheet
+// carried unused would be a line nothing could notice the loss of.
+const required = ["__CSS__", "__TABLES__", ...(annotated ? [] : ["__SERVER_FACTS__"])];
+for (const placeholder of required) {
+  if (!template.includes(placeholder)) {
+    throw new Error(`build-service-preview: ${templateFile} has no ${placeholder} placeholder`);
+  }
 }
 if (!/__MODULES__,?/.test(template)) {
-  throw new Error("build-service-preview: the template has no __MODULES__ placeholder");
-}
-if (!template.includes("__TABLES__")) {
-  throw new Error("build-service-preview: the template has no __TABLES__ placeholder");
+  throw new Error(`build-service-preview: ${templateFile} has no __MODULES__ placeholder`);
 }
 // Function replacements, not strings: a `$&` or `$1` inside the substituted CSS or JS
 // would otherwise be read as a replacement pattern and silently corrupt the output.
@@ -211,10 +216,16 @@ const tables = JSON.stringify({
   "/lifetime-stats": buildLifetimePreview(),
 });
 
+// Numbers and prose the Pi owns, handed to the fixtures rather than re-typed beside them. Its own
+// module because scripts/check-preview-fixtures.ts type-checks the fixtures against the identical
+// object; ./preview-server-facts.ts says why each entry is there.
+const serverConstants = JSON.stringify(serverFacts());
+
 const html = template
   .replace("__CSS__", () => css)
   .replace(/__MODULES__,?/, () => modules)
-  .replace("__TABLES__", () => tables);
+  .replace("__TABLES__", () => tables)
+  .replace("__SERVER_FACTS__", () => serverConstants);
 
 const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");
@@ -223,3 +234,19 @@ console.log(
   `✓ ${out} — ${annotated ? "annotated sheet" : "whole dashboard"}, ${registry.size} modules, ` +
     `${Math.round(html.length / 1024)} kB, no network at runtime`
 );
+// The scenes are selected in the URL rather than by a control on the page, so they are invisible
+// to anyone who has not read the template. Printed here because this is where somebody looking for
+// them is standing.
+if (!annotated) {
+  // Read out of the page rather than restated: a fourth scene would otherwise leave this line
+  // quietly listing three, and the whole point of printing it is that the scenes are invisible
+  // to anyone who has not opened the template.
+  const scenes = /const SCENES = \{([\s\S]*?)\n      \};/.exec(html);
+  const names = [...(scenes?.[1].matchAll(/^        (\w+): \{/gm) ?? [])].map(match => match[1]);
+  if (names.length === 0) {
+    throw new Error("build-service-preview: the template declares no scenes, or SCENES changed shape");
+  }
+  console.log(
+    `  ${names.map(name => `?scene=${name}`).join(" · ")} (${names[0]} is the default) — file://${out}?scene=${names[1] ?? names[0]}`
+  );
+}

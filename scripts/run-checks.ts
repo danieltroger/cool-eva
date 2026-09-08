@@ -333,6 +333,20 @@ const CHECKS: SelfCheck[] = [
       "the fan has no tacho, so every one of these is invisible on the bike",
   },
   {
+    script: "scripts/check-preview-fixtures.ts",
+    covers:
+      "that the design preview still stands in for the bike the Pi describes: each NAMED fixture — five of the eleven " +
+      "replies it writes, the other six being built inline from the request — is lifted out of the template into a " +
+      "throwaway .ts annotated with the type its endpoint serves and handed to tsc, so a field the Pi always sends and " +
+      "the fixture lacks is red, and so are a field it invents, a wrong scalar, a wrong array element and a union arm " +
+      "satisfied on the wrong discriminant. Plus every scene reading's unit and group against src/can/registry.ts, " +
+      "since a tuple of the right shape can still file range_km under a section the bike does not use, and every path " +
+      "public/ fetches having an answer. Written after VcuWriteStatus gained runningVersion in #153 and the fixture " +
+      "did not: vcu-write.js destructures it, so the binding threw, the service sheet froze on its loading ellipsis, " +
+      "and twelve days of screenshots silently lacked the safety-gate line and the running commit — with the annotated " +
+      "sheet throwing once per panel while reporting zero failures. It never runs the page; §11.7 says what it misses",
+  },
+  {
     script: "scripts/check-service-preview.ts",
     covers:
       "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",

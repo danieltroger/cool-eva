@@ -381,6 +381,9 @@ function ParameterSelect() {
     return select(
       {
         class: "probe-input",
+        // See the note on the bits picker below for why this is a name rather than an id.
+        name: "vcu-write-parameter",
+        autocomplete: "off",
         onchange: (/** @type {Event} */ event) => {
           selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
           // A different parameter means a different value, a different range and a
@@ -562,6 +565,15 @@ function WantedControl() {
       return select(
         {
           class: "probe-input",
+          // ⚠️ `name`, not `id`, and this is the reason: the annotated design sheet mounts a
+          // separate instance of this module per panel, so up to seven of these exist in one
+          // document and unique ids are not available. A name satisfies the same DevTools issue
+          // ("a form field element should have an id or name attribute") with no uniqueness
+          // contract to break. `autocomplete="off"` because a name is also what Chrome keys
+          // autofill history on, and a remembered value offered on a control that writes to the
+          // motorcycle is a suggestion nobody asked for.
+          name: "vcu-write-bit",
+          autocomplete: "off",
           onchange: (/** @type {Event} */ event) => {
             wanted.val = /** @type {HTMLSelectElement} */ (event.target).value;
             armed.val = "";
@@ -578,6 +590,9 @@ function WantedControl() {
       class: "probe-input",
       type: "text",
       inputmode: "numeric",
+      // See the note on the picker above for why this is a name rather than an id.
+      name: "vcu-write-value",
+      autocomplete: "off",
       placeholder: target?.control.kind === "number" ? `${target.control.min}…${target.control.max}` : "",
       value: wanted,
       oninput: (/** @type {Event} */ event) => {

@@ -58,15 +58,23 @@ export const ARMED_KEY = "charge-current";
 // ⚠️ It used to poll /vcu-write every 2 s for 14 s. That payload re-reads the whole parameter
 // sweep and the entire append-only audit journal per request (#107), on the event loop serving the
 // 10 Hz WebSocket mid-charge — up to nine of them per command, to learn something already pushed.
+//
+// ⚠️ CHARGE_ACK_WAITING is declared ABOVE this derive, not below it. van.derive runs its body
+// once immediately, so with the constant underneath, a store that already held `charge_cmd_ack`
+// at import time threw `Cannot access 'CHARGE_ACK_WAITING' before initialization` and took the
+// charge tab with it. Today app.js imports every view before connect(), so the store is always
+// empty here and the temporal dead zone is unreachable by luck rather than by design — the
+// design preview, which seeds before it mounts, hit it on the first DC fixture ever rendered.
+
+/** `CHARGE_ACK_CODE.waiting` — the one code that means the window is still open. */
+const CHARGE_ACK_WAITING = 0;
+
 van.derive(() => {
   const verdict = valueOf("charge_cmd_ack");
   if (verdict !== null && verdict !== CHARGE_ACK_WAITING && sessionLive.val) {
     void fetchChargeWriteStatus();
   }
 });
-
-/** `CHARGE_ACK_CODE.waiting` — the one code that means the window is still open. */
-const CHARGE_ACK_WAITING = 0;
 
 /**
  * The control, or an empty node when it must not be offered.
@@ -143,6 +151,12 @@ function InputRow() {
       class: "probe-input",
       type: "text",
       inputmode: "numeric",
+      // A name rather than an id, for the reason public/views/vcu-write.js gives: the design
+      // sheet mounts this module more than once per document. `autocomplete="off"` matters more
+      // here than anywhere — an autofilled amperage on the control that commands current into
+      // the pack is a number nobody typed.
+      name: "charge-current-amps",
+      autocomplete: "off",
       placeholder: () => {
         const type = chargeType.val;
         const ceiling = type === null ? null : liveCeiling(type);
