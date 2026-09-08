@@ -505,25 +505,33 @@ For each sample of `primary`, the function takes the newest `reference` sample a
 
 ### The power bar — `lib/power-limits.js`, `splitBar()` in `lib/svg.js`
 
-The riding screen's centre-out bar: regen grows left, drive grows right, on a fixed scale that never re-ranges — 130 kW at the right end and 45 kW at the left (`POWER_SCALE_KW` in `views/ride.js`). What the BMS has taken away is hatched rather than drawn as a line, so the bar answers "how much is left" without the rider measuring anything.
+The riding screen's centre-out bar: regen grows left, drive grows right, on a fixed scale that never re-ranges — 130 kW at the right end and 36 kW at the left (`POWER_SCALE_KW` in `views/ride.js`). What the BMS has taken away is hatched rather than drawn as a line, so the bar answers "how much is left" without the rider measuring anything.
 
 **The colour was inverted for five weeks and nothing noticed.** From the dashboard rebuild of 2026-08-03 (#33) until 2026-09-08, `colors.power()` tested `kilowatts < -0.5` for its green — which is the sign convention read backwards, since `pack_kw` is negative under discharge. So a 100 kW pull was painted green and a 20 kW recovery amber, under a doc comment that had said "regen is always green (energy coming back), drive ramps with load" correctly the whole time. Neither colour looks wrong on its own, which is the entire problem: there is no reading of the screen that catches this, only a reading of the sign convention. `scripts/check-power-bar.ts` now asserts the direction against literal kilowatt values rather than against anything imported from `colors.js`.
 
-**The dashed lines are the BMS's own ceilings**, `allowed_discharge_a` and `allowed_regen_a` off `0x202`, converted to kilowatts through the _measured_ `pack_v`. Three choices in that sentence:
+**The hatching is the BMS's own ceilings**, `allowed_discharge_a` and `allowed_regen_a` off `0x202`, converted to kilowatts through the _measured_ `pack_v` and drawn as the stretch of scale you can no longer reach. Three choices in that sentence:
 
 #### The two halves are not the same size, and pretending they were wasted one of them
 
-`POWER_SCALE_KW` is `{ drive: 130, regen: 45 }`. It was a single 130 for both until the hatching went in, and the hatching is what made the mismatch impossible to ignore.
+`POWER_SCALE_KW` is `{ drive: 130, regen: 36 }` — 400 A at 325 V and 120 A at 300 V, each direction's configured current limit at a representative pack voltage. It was a single 130 for both until the hatching went in, and the hatching is what made the mismatch impossible to ignore.
 
-The machine is asymmetric. Discharge reaches −117.3 kW in the archive against the Ribelle's 126 kW peak; regen reaches **40.9 kW**, sits under 22.4 kW for 99% of positive samples, and cannot exceed ~41 kW at any pack voltage this bike has held, because the BMS's configured regen ceiling is 120 A. So on a symmetric bar the regen half could never fill more than a third of its travel on the best day the pack has ever had.
+The machine is asymmetric. Discharge reaches −117.3 kW in the archive against the Ribelle's 126 kW peak; regen reaches **40.9 kW** with a p99 of 22.6 kW. So on a symmetric bar the regen half could never fill more than a third of its travel on the best day the pack has ever had.
 
-As a plain bar that was merely wasteful. With hatching it is actively harmful: the unreachable two-thirds is, by the rule, _unavailable_, so **~70% of the regen half hatches permanently on a perfectly healthy pack** — which teaches the eye that hatching means nothing, exactly where hatching is the signal. Scaling each half to what that direction can actually do puts both back to hatching ~nothing at full health and a lot under a real derate, which is the whole point.
+⚠️ The obvious reason for that — "120 A cannot make more than ~41 kW" — is _not_ sound, and it is worth recording as refuted rather than quietly dropping. `allowed_regen_a` really is capped at 120.0 A over 598 rows, and 120 A × the highest `pack_v` ever logged (341.2 V) really is 40.944 kW. But the largest positive `pack_a` outside a charge window is **130.2 A** — the same sample as the 40.883 kW peak — so regen current has been measured 8.5% _over_ the allowance. The allowance bounds the ceiling, not the current.
+
+As a plain bar that was merely wasteful. With hatching it is actively harmful: the unreachable two-thirds is, by the rule, _unavailable_, so **~70% of the regen half hatches permanently on a perfectly healthy pack** — which teaches the eye that hatching means nothing, exactly where hatching is the signal.
+
+##### …and the first fix for that reproduced the same fault at a fifth of the size
+
+`regen` was 45 before it was 36, sized to leave a tenth of headroom over the 40.9 kW regen has been recorded at. That is the wrong quantity to size against, and the error is instructive: **a hatched half must be sized against the CEILING it has to be able to clear, not against the power recorded in it.** The regen ceiling is `allowed_regen_a × pack_v` and cannot pass 40.944 kW, so a 45 kW half could never come clean — **0.00% of 1054 minutes of moving time**, a permanent floor of dashes at the left end on a perfectly healthy pack. The same defect, one layer down, and it survived a design argument, a rewrite and a preview session before a reviewer measured it.
+
+Sized against the ceiling instead, the two halves come out even. Over moving time, the drive half is clean for **20.1%** of the time the BMS is allowing its full 400 A and the regen half for **23.0%** of the time it is allowing its full 120 A, so neither is systematically noisier than the other. 36 does _not_ contain regen's largest ever sample and is not meant to: 4 of 57 443 positive samples exceed 38 kW, and clamping that tail costs far less than a half that can never come clean.
 
 The cost is that a given distance from the centre means different kilowatts to left and right. That is accepted rather than hidden: the signed number above the bar is what the magnitude is read from, the bar is for shape and direction, and this is what Tesla's own power meter does for the same reason.
 
 - **The BMS pair, not the inverter's `current_max_out_a` / `current_max_regen_a`.** `pack_kw` is `pack_v × pack_a` — a pack-side quantity — so a pack-side limit is the one that sits on the same axis with nothing assumed. The inverter's pair is a second opinion about a different node and is deliberately kept as one.
-- **Measured volts, not nominal.** The ceiling really does fall as the pack sags under load, and that is exactly when a rider wants to see it; a limit computed against a nominal 350 V would draw a line that cannot move for the reason it most needs to.
-- **They earn the space because they move.** Over 1054 minutes of moving time in the archive the discharge ceiling averages **91.3 kW** against the bike's 126 kW peak, and the regen ceiling 25.3 kW with a maximum of 39.2. So most of the time a bar that looks like it has a quarter of its travel left has nothing of the sort, and the line is the difference between reading headroom and reading a derate. Of the discharging `pack_kw` samples only ~0.4% ever exceed the ceiling drawn against them: it really is a wall the bar approaches and rarely crosses, which is what makes it worth drawing at all.
+- **Measured volts, not nominal.** The ceiling really does fall as the pack sags under load, and that is exactly when a rider wants to see it; a limit computed against a nominal 350 V would be frozen for the reason it most needs to move. It also means the hatching answers "what can I not reach right now" rather than "is the BMS derating me" — sag counts, and should: at 250 V you cannot have 130 kW however healthy the pack is.
+- **They earn the space because they move.** Over 1054 minutes of moving time in the archive the discharge ceiling averages **91.3 kW** against the bike's 126 kW peak, and the regen ceiling 25.3 kW with a maximum of 39.2. So most of the time a bar that looks like it has a quarter of its travel left has nothing of the sort, and the hatching is the difference between reading headroom and reading a derate. Of the discharging `pack_kw` samples only ~0.4% ever exceed the ceiling drawn against them: it really is a wall the bar approaches and rarely crosses, which is what makes it worth drawing at all.
 
 #### ⚠️ How those numbers are weighted, because the first attempt got it wrong
 
@@ -538,7 +546,7 @@ The estimator used now samples on the bike's own clock instead. Each `pack_v` re
 | discharge ceiling, mean                | 84.6 kW     | **91.3 kW** |
 | discharge ceiling above 130 kW         | 0.83%       | **6.2%**    |
 | regen ceiling, mean                    | 22.3 kW     | 25.3 kW     |
-| regen ceiling above 130 kW             | never       | never       |
+| regen ceiling above the drive scale    | never       | never       |
 
 Unlike the one it replaces this is stable under its own knobs: across hold caps from 1 s to 5 min the mean moves 92.6 → 90.0 kW and the share 5.5% → 8.0%, and swapping the definition of "moving" between `speed_can_kmh`, `speed_kmh` and `gps_speed_kmh` moves the share only 5.4% → 6.2%. An independent re-measurement during review, joining slightly differently, landed at 94.3 kW and 10.9%. Every route agrees the share is somewhere between one minute in twenty and one in nine, and none of them is anywhere near 0.83%.
 
@@ -555,7 +563,9 @@ So the marking is no longer the same height as the thing it marks. `HATCH_HEIGHT
 
 It is drawn **over** the fill, not under. A rule marking the unreachable stretch that vanishes the instant you reach into it hides the one reading that needed it — and at under a third of the height it cannot swamp the fill, which is still the loudest thing on the bar.
 
-`MIN_HATCH_WIDTH` drops a stretch narrower than about one dash period: below that it is a smudge at the end of the bar rather than a pattern, and a rider cannot tell a 2% derate from a rendering artifact.
+⚠️ **There is no minimum hatch width, and there was.** `MIN_HATCH_WIDTH` dropped any stretch under 7% of a half, on the reasoning that a sliver is a smudge rather than a pattern. Measured, that swallowed every drive ceiling in (120.9, 130] kW — **a derate of up to 9.1 kW drawn pixel-identically to a healthy pack**, for 10.4% of moving time, against the 6.2% where a blank end is honest. So a blank right end meant "nothing is limiting you" 37% of the time it appeared and "the pack has taken up to 9.1 kW" the other 63%: the _absence has two meanings_ failure this bar has now been walked into three separate ways — by dropping the off-scale line, by pinning it, and by this threshold. It is gone. A derate too small to see renders as a mark too small to see, which is the truthful picture and needs no rule.
+
+It was also, once the halves stopped sharing a scale, one threshold in viewBox units standing for two different physical quantities — 9.1 kW of drive and 2.5 kW of regen — while its comment justified itself in kW.
 
 ⚠️ The hatch is the one stroke in `lib/svg.js` deliberately **not** `vector-effect: non-scaling-stroke`. Both its width and its dash period are fractions of the bar's own dimensions, so the rule keeps its proportions from a 380 px phone to a 1000 px laptop. Everything else stroked in that file is a hairline, where stretching is the bug.
 

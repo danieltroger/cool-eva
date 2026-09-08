@@ -24,11 +24,6 @@ const svgTags = van.tags("http://www.w3.org/2000/svg");
 const TRACK = "#0b1220";
 
 /**
- * The hatching over a stretch of bar the BMS has derated away. Between TRACK and the
- * centre divider's #475569 in weight on purpose: it has to read as "this part is gone"
- * at a glance without competing with the fill, which is the number being displayed.
- */
-/**
  * The dashes over a stretch of bar the BMS has derated away.
  *
  * ⚠️ They are drawn ON the track and the track is NOT recoloured underneath them. The
@@ -54,13 +49,6 @@ const HATCH_GAP = 1.3;
  * a short rule down the middle of a stretch cannot be confused with the stretch itself.
  */
 const HATCH_HEIGHT = 0.3;
-
-/**
- * Narrowest hatched stretch worth drawing, in viewBox units — a bit over one period.
- * Below this it is a smudge at the end of the bar rather than a pattern, and a rider
- * cannot tell a 2% derate from a rendering artifact.
- */
-const MIN_HATCH_WIDTH = 3.5;
 
 /**
  * What each half of a split bar shows at its end. Fixed, and asymmetric on this bike:
@@ -191,7 +179,6 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
       height,
       fill: color,
     }),
-    svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }),
   ];
   // Over the fill, not under it. A rule marking the unreachable stretch that disappears
   // the moment you reach into it hides the one reading that needed it; the fill is still
@@ -199,6 +186,10 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
   for (const span of derateSpans({ limits, fullScale, centre })) {
     children.push(hatching(span, height));
   }
+  // …and the zero mark last of all. At a 0 A ceiling the hatching covers the whole bar,
+  // and drawn before it the divider went under the dashes at 1.6:1 — so the loudest
+  // thing this bar can say came with the loss of the reference you read it against.
+  children.push(svgTags.rect({ x: centre - 0.5, y: 0, width: 1, height, fill: "#475569" }));
   return svgTags.svg({ viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: "none", class: "meter" }, ...children);
 }
 
@@ -210,11 +201,12 @@ export function splitBar({ value, fullScale, color, limits = null, height = 14 }
  * than as a line at the ceiling, which is what this drew first: a line answers "where
  * is the limit" and leaves the rider to measure the gap, while hatching answers "how
  * much has gone" directly, and the two ends stop being special cases. A ceiling wider
- * than its half hatches NOTHING, which is exactly true — the pack is not what is
- * limiting you — where the line had to be either dropped (indistinguishable from "0x202
- * has not arrived", 5-11% of moving time) or pinned to the end (indistinguishable from a
- * ceiling AT full scale). A ceiling of zero hatches the whole half, where the line sat
- * on the centre divider and could be mistaken for it.
+ * than its half hatches NOTHING, and — with no minimum width to swallow the small
+ * cases — an unhatched half means exactly one thing: the pack is not what is limiting
+ * you. The line had to be either dropped (indistinguishable from "0x202 has not
+ * arrived", 5-11% of moving time) or pinned to the end (indistinguishable from a ceiling
+ * AT full scale). A ceiling of zero hatches the whole half, where the line sat on the
+ * centre divider and could be mistaken for it.
  *
  * Each half is measured against ITS OWN full scale, which is why `fullScale` is a pair.
  * A single scale wide enough for the drive side leaves the regen side unable to fill
@@ -245,9 +237,14 @@ export function derateSpans({ limits, fullScale, centre }) {
     }
     const reachable = Math.min(side.value / side.scale, 1) * centre;
     const lost = centre - reachable;
-    // A sliver narrower than one dash cannot be read as hatching — it renders as a
-    // smudge at the end of the bar and invites the reader to wonder what it is.
-    if (lost < MIN_HATCH_WIDTH) {
+    // ⚠️ Strictly zero, and no "too small to bother" threshold. There was one, at 7% of
+    // a half, and it drew NOTHING for any drive ceiling in (120.9, 130] kW — a derate of
+    // up to 9.1 kW rendered identically to a healthy pack, for 10.4% of moving time
+    // against the 6.2% where the blank end is honest. That is the "absence has two
+    // meanings" failure this bar has now been through twice; the threshold was a third
+    // route to it. A derate too small to see renders as a mark too small to see, which
+    // is the truthful picture and needs no rule.
+    if (lost <= 0) {
       continue;
     }
     spans.push({ x: side.direction > 0 ? centre + reachable : 0, width: lost });
@@ -276,6 +273,12 @@ function hatching(span, height) {
     stroke: DERATED,
     "stroke-width": (height * HATCH_HEIGHT).toFixed(2),
     "stroke-dasharray": `${HATCH_DASH} ${HATCH_GAP}`,
+    // Anchors the pattern to the BAR rather than to this span's start. Without it the
+    // dashes are placed from `span.x`, which is a constant 0 on the regen side but the
+    // moving ceiling on the drive side — so the drive texture slid sideways every time
+    // the derate changed, at 2 Hz, reading as motion where there is none, and the two
+    // halves behaved differently for no reason visible to anyone looking at them.
+    "stroke-dashoffset": span.x.toFixed(2),
   });
 }
 

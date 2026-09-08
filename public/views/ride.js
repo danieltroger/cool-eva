@@ -26,12 +26,24 @@ const { div, span } = van.tags;
  * moves, not the scale — and asymmetric, because the two directions are not the same
  * size on this machine and pretending they are wastes most of one half.
  *
- * Drive: the Ribelle peaks around 126 kW, and the archive's deepest sample is −117.3.
- * Regen: the archive's largest is 40.9 kW, under 22.4 for 99% of positive samples, and
- * the BMS's own configured ceiling of 120 A cannot reach 41 kW at any pack voltage this
- * bike has ever held. Both leave about a tenth of headroom over what has been recorded.
+ * ⚠️ Sized against the CEILING each half has to be able to clear, not against the power
+ * recorded in it. That distinction is the whole of why `regen` is not 45: the regen
+ * ceiling is `allowed_regen_a × pack_v` and cannot pass 120 A × 341.2 V = 40.9 kW, so a
+ * 45 kW half could never be un-hatched — 0.00% of moving time in the archive, a
+ * permanent 15% floor of dashes on a healthy pack. Which is the exact fault the hatching
+ * exists to remove, at a fifth of the size.
+ *
+ * 130 = 400 A at 325 V; 36 = 120 A at 300 V — each direction's configured current limit
+ * at a representative pack voltage. Measured over 1054 minutes of moving time, that
+ * clears the drive half for 20.1% of the time the BMS is allowing its full 400 A and the
+ * regen half for 23.0% of the time it is allowing its full 120 A, so neither half is
+ * systematically noisier than the other. 130 also contains the archive's deepest sample
+ * (−117.3 kW) and the Ribelle's ~126 kW peak. 36 does not contain regen's largest ever
+ * (40.9 kW) and is not meant to: 4 of 57 443 positive samples exceed 38 kW, and clamping
+ * that tail costs far less than a half that can never come clean.
+ * docs/dashboard-decisions.md §"The power bar" has the measurements.
  */
-const POWER_SCALE_KW = { drive: 130, regen: 45 };
+const POWER_SCALE_KW = { drive: 130, regen: 36 };
 
 export function RideView() {
   return div(

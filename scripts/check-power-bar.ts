@@ -18,11 +18,12 @@ import { powerLimitsKw } from "../public/lib/power-limits.js";
 // `derateSpans()` decides which stretch of bar each ceiling hatches away, and
 // `powerLimitsKw()` takes its reader as a parameter the way charge-mode.js does.
 //
-// §5 exists because covering those two ENDS is not the same as covering the path
+// §6 exists because covering those two ENDS is not the same as covering the path
 // between them. An earlier draft asserted both and still went green with the two sides
 // crossed at the call site, which draws 96 kW of regen and 38 kW of drive — a screen
 // that looks entirely deliberate. The pair is one object now so the outer hop cannot be
-// spelled wrong at all, and §5 walks the whole way through the remaining one.
+// spelled wrong at all, and §6 walks the whole way through the remaining one. §5 is the
+// charge gate.
 
 /**
  * Sign convention, restated as a literal rather than imported.
@@ -40,7 +41,7 @@ const REGEN_KW = 20;
  * DOM. Asymmetric on purpose — the regen half is a third the size of the drive half,
  * because that is the shape of the machine.
  */
-const FULL_SCALE_KW = { drive: 130, regen: 45 };
+const FULL_SCALE_KW = { drive: 130, regen: 36 };
 const CENTRE = 50;
 
 const failures: string[] = [];
@@ -124,7 +125,7 @@ if (zeroVoltage.drive !== null || zeroVoltage.regen !== null) {
 //    drive ceiling must take the right END away — from the ceiling out to full scale,
 //    never the reachable part. Crossing the two sides would read as the BMS allowing
 //    96 kW of regen and 38 kW of drive, which is a plausible-looking lie.
-const spans = derateSpans({ limits: { drive: 96, regen: 22.5 }, fullScale: FULL_SCALE_KW, centre: CENTRE });
+const spans = derateSpans({ limits: { drive: 96, regen: 27 }, fullScale: FULL_SCALE_KW, centre: CENTRE });
 if (spans.length !== 2) {
   failures.push(`two derated ceilings hatch two stretches, got ${spans.length}`);
 } else {
@@ -149,10 +150,16 @@ if (spans.length !== 2) {
     failures.push(`the regen hatching must stop left of centre (${CENTRE}), ends at ${regen.x + regen.width}`);
   }
   // The reachable part is what is left, and it is the half the rider reads against.
-  // …and each half is measured against ITS OWN scale. 22.5 of 45 kW is exactly half the
-  // regen side; read against the drive side's 130 it would be 83% of it instead.
-  if (Math.abs(regen.width - CENTRE / 2) > 1e-9) {
-    failures.push(`22.5 kW of a ${FULL_SCALE_KW.regen} kW regen half hatches ${CENTRE / 2}, got ${regen.width}`);
+  // …and each half is measured against ITS OWN scale. 27 of 36 kW leaves a quarter of
+  // the regen side unreachable; against the drive side's 130 it would be 79% of it.
+  //
+  // ⚠️ Deliberately NOT a value that is half its scale. It was 22.5 of 45, and half is
+  // the one ratio where hatching the REACHABLE part instead of the lost part produces
+  // the same width — so this assertion held under that mutation and only the drive half
+  // was really carrying it.
+  const expectedRegenWidth = ((FULL_SCALE_KW.regen - 27) / FULL_SCALE_KW.regen) * CENTRE;
+  if (Math.abs(regen.width - expectedRegenWidth) > 1e-9) {
+    failures.push(`27 kW of a ${FULL_SCALE_KW.regen} kW regen half hatches ${expectedRegenWidth}, got ${regen.width}`);
   }
 }
 
@@ -176,13 +183,22 @@ const shutDown = derateSpans({ limits: { drive: 0, regen: 0 }, fullScale: FULL_S
 if (shutDown.length !== 2 || shutDown.some(span => Math.abs(span.width - CENTRE) > 1e-9)) {
   failures.push(`a 0 kW ceiling hatches its ENTIRE half — the loudest thing this bar says — got ${shutDown}`);
 }
-const sliver = derateSpans({
-  limits: { drive: FULL_SCALE_KW.drive - 1, regen: null },
-  fullScale: FULL_SCALE_KW,
-  centre: CENTRE,
-});
-if (sliver.length !== 0) {
-  failures.push(`a derate too narrow to render as hatching is a smudge, not a pattern — got ${sliver.length}`);
+// ⚠️ A derate too small to matter must still DRAW, and this is the case that used not
+// to. A 7%-of-a-half minimum swallowed every drive ceiling in (120.9, 130] kW — up to
+// 9.1 kW of real derate rendered pixel-identically to a healthy pack, for 10.4% of
+// moving time against the 6.2% where a blank end is honest. Absence now means exactly
+// one thing, and it means it on both halves: the regen guard could not fire at all at
+// the old scale, so nothing here would have noticed either.
+for (const half of [
+  { name: "drive", limits: { drive: FULL_SCALE_KW.drive - 1, regen: null } },
+  { name: "regen", limits: { drive: null, regen: FULL_SCALE_KW.regen - 1 } },
+]) {
+  const tiny = derateSpans({ limits: half.limits, fullScale: FULL_SCALE_KW, centre: CENTRE });
+  if (tiny.length !== 1) {
+    failures.push(`1 kW off the ${half.name} ceiling is a real derate and must draw, got ${tiny.length} span(s)`);
+  } else if (tiny[0].width <= 0) {
+    failures.push(`the ${half.name} half drew a zero-width mark for a 1 kW derate`);
+  }
 }
 const noLimits = derateSpans({ limits: { drive: null, regen: null }, fullScale: FULL_SCALE_KW, centre: CENTRE });
 if (noLimits.length !== 0) {
@@ -215,24 +231,42 @@ if (acCharging.drive !== null || acCharging.regen !== null) {
 
 // 6. End to end, through the shape the view actually forwards. §2 and §3 each cover one
 //    end; this is the only case that fails if the two are joined the wrong way round.
-//    Deliberately asymmetric amps, so a swap cannot land on the same number by accident.
+//
+//    ⚠️ Both amps are chosen so that BOTH ceilings stay inside BOTH scales when crossed.
+//    With a drive figure larger than the regen half, crossing saturates the regen side,
+//    which then hatches nothing and the check fails on the span COUNT — leaving every
+//    side and width assertion still passing and the real cover much thinner than this
+//    header claims. 100 A and 60 A at 320 V are 32 and 19.2 kW, and 32 < 36.
+const CROSS_SAFE_DRIVE_KW = 32;
+const CROSS_SAFE_REGEN_KW = 19.2;
 const endToEnd = derateSpans({
-  limits: powerLimitsKw(reading({ "allowed_discharge_a": 300, "allowed_regen_a": 60, "pack_v": 320 }), fresh),
+  limits: powerLimitsKw(reading({ "allowed_discharge_a": 100, "allowed_regen_a": 60, "pack_v": 320 }), fresh),
   fullScale: FULL_SCALE_KW,
   centre: CENTRE,
 });
 if (endToEnd.length !== 2) {
   failures.push(`a riding bike with both ceilings inside the bar hatches two stretches, got ${endToEnd.length}`);
-} else if (endToEnd[0].x <= CENTRE || endToEnd[1].x !== 0) {
-  failures.push(
-    `300 A of discharge and 60 A of regen must hatch the right and left ends respectively, got x=${endToEnd[0].x} ` +
-      `and x=${endToEnd[1].x} — the two ceilings are crossed somewhere between the reader and the bar`
-  );
-} else if (endToEnd[0].width >= endToEnd[1].width) {
-  failures.push(
-    `300 A leaves 96 of 130 kW on the drive half and 60 A leaves 19.2 of 45 on the regen half, so regen must ` +
-      `lose MORE of its own half — got ${endToEnd[0].width} drive against ${endToEnd[1].width} regen`
-  );
+} else {
+  const expected = [
+    { name: "drive", width: ((FULL_SCALE_KW.drive - CROSS_SAFE_DRIVE_KW) / FULL_SCALE_KW.drive) * CENTRE, x: null },
+    { name: "regen", width: ((FULL_SCALE_KW.regen - CROSS_SAFE_REGEN_KW) / FULL_SCALE_KW.regen) * CENTRE, x: 0 },
+  ];
+  for (const [index, want] of expected.entries()) {
+    const got = endToEnd[index];
+    if (Math.abs(got.width - want.width) > 1e-9) {
+      failures.push(
+        `${want.name}: 100 A / 60 A at 320 V is ${CROSS_SAFE_DRIVE_KW} kW of drive and ${CROSS_SAFE_REGEN_KW} of ` +
+          `regen, so the ${want.name} half loses ${want.width} — got ${got.width}. The two ceilings are crossed ` +
+          `somewhere between the reader and the bar`
+      );
+    }
+    if (want.x !== null && got.x !== want.x) {
+      failures.push(`the ${want.name} hatching must start at x=${want.x}, got ${got.x}`);
+    }
+  }
+  if (endToEnd[0].x <= CENTRE) {
+    failures.push(`the drive hatching must start right of centre (${CENTRE}), got ${endToEnd[0].x}`);
+  }
 }
 
 console.log(`colour: ${REGEN_KW} kW regen is ${power(REGEN_KW)}, ${DRIVE_KW} kW drive is ${power(DRIVE_KW)}`);
@@ -240,7 +274,7 @@ console.log(`limits: 300 A / 120 A at 320 V is ${nominal.drive} kW drive and ${n
 console.log(
   `hatching: ${spans.map(s => `${s.x.toFixed(1)}+${s.width.toFixed(1)}`).join(", ")} on ${FULL_SCALE_KW.drive}/${FULL_SCALE_KW.regen} kW halves`
 );
-console.log(`end to end: 300 A / 60 A at 320 V hatches ${endToEnd.map(s => s.width.toFixed(1)).join(" and ")} wide`);
+console.log(`end to end: 100 A / 60 A at 320 V hatches ${endToEnd.map(s => s.width.toFixed(1)).join(" and ")} wide`);
 
 if (failures.length > 0) {
   console.error("FAILED:");
