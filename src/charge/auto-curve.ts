@@ -37,7 +37,7 @@ export const CHARGE_AUTO_REASON = {
   NO_HISTORY: 5,
   /** Too little history to see a rate, and the pack is hot: descending on the bound. */
   BLIND_DESCENT: 6,
-  /** Close enough to the cliff that a merely-bounded rate is not worth trusting. */
+  /** At or above STEP_DOWN_FROM_C: the reading alone is reason enough to reduce. */
   HARD_CEILING: 7,
   /** The rate says the cliff is inside the reaction horizon. */
   CLOSING: 8,
@@ -47,6 +47,8 @@ export const CHARGE_AUTO_REASON = {
   SETTLED: 10,
   /** Already at the floor and still closing: nothing left to give up. */
   AT_FLOOR: 11,
+  /** Near the ceiling and not rising: holding this current rather than raising it. */
+  NEAR_CEILING: 12,
 } as const;
 
 export type ChargeAutoReason = (typeof CHARGE_AUTO_REASON)[keyof typeof CHARGE_AUTO_REASON];
@@ -73,13 +75,33 @@ export const CLIFF_C = 55;
 export const HORIZON_MIN = 8;
 
 /**
- * Where the controller stops trusting a merely-bounded rate and descends anyway.
+ * The reading at which the controller stops raising the current.
  *
- * Binds only when the rate is small; below it a bound of 0.2 K/min still leaves 10 minutes, more
- * than the horizon. Its job is to stop a bounded rate from stepping the current back UP right next
- * to the cliff, and on the two hot 2026-09-07 replays it is the branch that fires most.
+ * ⚠️ `batt_temp_hi` is WHOLE DEGREES, so a reading of 53 means the pack is anywhere in [53, 54).
+ * Adding current there can push it into the band the next tier exists for, before the next tick
+ * shows it. From here the rule may still step DOWN, but never up.
+ *
+ * ⚠️ This half used to step down unconditionally, so a pack sitting still at 53 was ratcheted to
+ * the floor for no reason — and the comment above it described a hold, which is what it should
+ * have been doing. docs/charge-auto.md § "Two tiers, and why they are 53 and 54".
  */
-export const HARD_CEILING_C = 53;
+export const NO_RAISE_FROM_C = 53;
+
+/**
+ * The reading at which temperature ALONE steps the current down, whatever the rate says.
+ *
+ * ⚠️ A reading of 54 means the true temperature is anywhere in [54, 55), and `timeToTargetMinutes`
+ * measures from the READING — so it over-states the time left by up to a whole degree's worth,
+ * `1/R` minutes. A pack reading 54 and rising at 0.1 K/min is told it has ten minutes when it may
+ * have six seconds. Nothing on this bus resolves that: every pack-temperature signal is integral,
+ * including all twelve per-module readings.
+ *
+ * From NO_RAISE_FROM_C upward the time-to-cliff test already targets THIS value rather than the
+ * cliff, which covers a rising pack. What is left uniquely to this tier is the pack that is flat or
+ * COOLING at 54 — where the rate says there is all the time in the world and the reading says the
+ * pack may be six hundredths of a degree from the cliff.
+ */
+export const STEP_DOWN_FROM_C = 54;
 
 /** Above this, no history at all justifies descending blind. Below it, wait and watch. */
 export const BLIND_DESCENT_FROM_C = 50;
@@ -177,11 +199,10 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   const current = input.commandedAmps ?? ceiling;
   const rate = estimateHeatingRate(input.samples, input.nowMs);
 
-  // ⚠️ FIRST, and on temperature ALONE. This used to sit after the `unknown` branch, so whether the
-  // ceiling applied depended on whether a rate happened to be measurable — the same mistake as
-  // gating it behind an estimate, which only looked safe because BLIND_DESCENT_FROM_C happens to be
-  // below it. The check asserts that ordering rather than leaving it to luck.
-  if (temperature >= HARD_CEILING_C) {
+  // ⚠️ FIRST, and on temperature ALONE. This used to sit after the `unknown` branch, so whether it
+  // applied depended on whether a rate happened to be measurable — the same mistake as gating it
+  // behind an estimate. The check asserts the ordering rather than leaving it to luck.
+  if (temperature >= STEP_DOWN_FROM_C) {
     return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.HARD_CEILING);
   }
   if (rate.kind === "unknown") {
@@ -192,11 +213,20 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
     }
     return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
   }
-  const minutesToCliff = timeToCliffMinutes(temperature, rate.perMinute);
-  if (minutesToCliff <= HORIZON_MIN) {
+  // ⚠️ From NO_RAISE_FROM_C the target is the NEXT TIER, not the cliff. A reading of 53 can be a
+  // true 53.99, so measuring against 55 hands the rule a whole degree it does not have — the same
+  // quantisation STEP_DOWN_FROM_C exists for, one degree lower. Measured over 150 plants: without
+  // this the two tiers add six crossings of 55 that today's single ceiling does not have; with it,
+  // none, and the worst margin is unchanged.
+  const target = temperature >= NO_RAISE_FROM_C ? STEP_DOWN_FROM_C : CLIFF_C;
+  const minutesToTarget = timeToTargetMinutes(temperature, target, rate.perMinute);
+  if (minutesToTarget <= HORIZON_MIN) {
     return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.CLOSING);
   }
-  if (minutesToCliff > HORIZON_MIN * RELEASE_FACTOR) {
+  if (temperature >= NO_RAISE_FROM_C) {
+    return { kind: "hold", reason: CHARGE_AUTO_REASON.NEAR_CEILING };
+  }
+  if (minutesToTarget > HORIZON_MIN * RELEASE_FACTOR) {
     return stepTo(current + STEP_A, current, ceiling, CHARGE_AUTO_REASON.CLEAR);
   }
   return { kind: "hold", reason: CHARGE_AUTO_REASON.SETTLED };
@@ -206,14 +236,15 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
  * How long until the pack reaches the cliff at the rate observed, in minutes.
  *
  * A pack that is flat or cooling is never closing, so it gets an infinite answer rather than a
- * division. A `bounded` rate is passed in exactly as a measured one — it is the most the pack CAN
+ * division — which is exactly why STEP_DOWN_FROM_C cannot be expressed as a time and has to be a
+ * temperature. A `bounded` rate is passed in exactly as a measured one — it is the most the pack CAN
  * be doing, which is the conservative direction for a question about how long there is left.
  */
-function timeToCliffMinutes(temperature: number, perMinute: number): number {
+function timeToTargetMinutes(temperature: number, target: number, perMinute: number): number {
   if (perMinute <= 0) {
     return Number.POSITIVE_INFINITY;
   }
-  return (CLIFF_C - temperature) / perMinute;
+  return (target - temperature) / perMinute;
 }
 
 /**

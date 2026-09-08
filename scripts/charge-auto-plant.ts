@@ -161,6 +161,22 @@ export const RECOVERY_PLANT = {
   cooling: COOLING_NOMINAL * 2,
 };
 
+/**
+ * A FIXED grid of plants, for the crossing count in scripts/check-charge-auto.ts §11.
+ *
+ * ⚠️ Named and frozen on purpose. The property that matters — "this rule crosses the cliff no more
+ * often than the one it replaced" — cannot be asserted without keeping the old rule alive to compare
+ * against, so it is pinned as a golden count over a grid that does not move. Change the grid and the
+ * number means nothing; that is why the grid is here rather than generated.
+ */
+export const CROSSING_GRID = {
+  arrivals: [40, 44, 48, 51, 54],
+  ambients: [10, 18, 25, 30, 35, 39],
+  coolings: [0.5, 1.0, 1.5, 2.0, 3.0].map(multiple => COOLING_NOMINAL * multiple),
+  fromSoc: 25,
+  toSoc: 85,
+};
+
 /** Minutes per SOC point at a steady cap — the measured relation, for the floor sweep. */
 export function minutesPerPointAt(amps: number): number {
   return (MIN_PER_POINT_AT_FULL * FULL_CURRENT_A) / amps;

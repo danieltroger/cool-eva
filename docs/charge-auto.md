@@ -53,6 +53,24 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 | `AUTO_TICK_MS` | 60 s | The input changes every 1.5–2.5 min on a steady charge; updating faster than that adds bus frames and dash flicker for nothing. |
 | `RELEASE_FACTOR` | 1.5 | The hysteresis. Give current back only when the cliff is comfortably far, or the controller chatters around the threshold. |
 
+## Two tiers, and why they are 53 and 54
+
+⚠️ **The time-to-cliff rule cannot see the last degree.** `batt_temp_hi` is whole degrees, so a reading of 54 means the pack is anywhere in **[54, 55)** — and the rule measures from the _reading_, so it over-states the time left by up to a whole degree's worth, `1/R` minutes:
+
+| observed rate | rule says | worst true time left | reduced? |
+| ------------- | --------- | -------------------- | -------- |
+| 0.050 K/min   | 20.0 min  | 0.20 min             | **no**   |
+| 0.100 K/min   | 10.0 min  | 0.10 min             | **no**   |
+| 0.125 K/min   | 8.0 min   | 0.08 min             | yes      |
+
+A pack reading 54 and rising slower than 0.125 K/min is invisible to it, yet can be a hundredth of a degree from the cliff. **Nothing on this bus resolves that**: every pack-temperature signal is integral — `batt_temp_hi`, `batt_temp_lo`, `pack_temp_avg`, both `_vcu` variants and all twelve per-module readings. The only fractional thermal signals are the motor, the inverter and the coolant probes. So `STEP_DOWN_FROM_C` is the correction for a quantisation the time-to-cliff test computes as if it were resolved, and 53/54 is the **maximum safe pair** — holding a reading of 54 would mean accepting a true 54.99.
+
+⚠️ **The same correction applies one degree lower, and leaving it out is a safety regression.** From `NO_RAISE_FROM_C` the time-to-cliff test targets **54**, not 55. Without that, a pack reading 53 holds for any rate below 0.25 K/min while possibly being at 53.99 — and over a frozen 150-plant grid the two tiers then cross the cliff in **six places the previous single-ceiling rule did not**. With it: none, and the worst margin is unchanged. `scripts/check-charge-auto.ts` §11 pins that as a golden count, because it is the one property no other assertion can see — every other section compares against the do-nothing baseline, which cannot notice a rule that got less safe without getting wrong.
+
+**Considered and rejected:** applying the same correction _everywhere_ (targeting `reading + 1` at all temperatures). It is safer on every axis, but it makes the equilibrium **colder** — 52.47 °C against 53.01 — which is the opposite of what this change is for. Gating it at 53 keeps the correction where the margin is thin and leaves the rest of the range alone.
+
+⚠️ **What this does NOT show up in.** The simulated plant cannot produce the state these tiers exist for: its packs are always either rising or pinned at the floor, never sitting with a fitted slope near zero at a reading of 53. The real pack gets there by oscillating across the boundary — a limitation of the model's _shape_, not its constants. The evidence is therefore a **real logged episode** (`scripts/charge-auto-episode.ts`, 2026-08-08): across the logged series there are 71 ticks at a reading of 53, and on **20** of them the old rule steps the current down where this one holds, with none the other way round. The clearest is 13:51, where the pack read 53 while _falling_ to 50 and the old rule throttled it three ticks running.
+
 ## Fail-safe
 
 **Any unknown holds, and a hold commands nothing.** Stale or implausible `batt_temp_hi`, no DC session, a session state older than 5 s, an absent `fast_dc_limit_max_a`, the controller switched off, or the rider having moved the dial: in every one of those the bike charges exactly as it does today.
@@ -79,8 +97,8 @@ Three real stops of 2026-09-07 (arrival temperature, ambient and SOC band all me
 
 - **Never peaks above the do-nothing baseline. 12/12.**
 - **Never causes a crossing the baseline did not have. 12/12.**
-- Worst time cost **+3.3 min**; best saving **−9.3 min**.
-- DC2 finishes **9.3 minutes sooner** and stays under the cliff — and neither a controller stuck at the ceiling nor one stuck at the floor can do that, which is the assertion that keeps the rest honest.
+- Worst time cost **+4.0 min**; best saving **−8.0 min**.
+- DC2 finishes **8.0 minutes sooner** and stays under the cliff — and neither a controller stuck at the ceiling nor one stuck at the floor can do that, which is the assertion that keeps the rest honest.
 
 ⚠️ **The limit, and it is not small.** The plant is the two-anchor model from one day, and the controller is designed precisely not to depend on it. So this shows the rule behaves across a 4× spread of cooling — the "works for one day's `b`" failure it exists to avoid — and it shows **nothing about the real bike**. Only a live charge does that.
 
