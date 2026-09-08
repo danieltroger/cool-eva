@@ -4,7 +4,6 @@ import type { FanController, FanPhase } from "../fan/control.ts";
 import type { FanAutomatic, FanMode } from "../fan/auto.ts";
 import { funGateAllows, type FunGate } from "../fan/fun.ts";
 import {
-  DC_CURVE_TOP_C,
   FAN_OFF_TEMPERATURE_C,
   FAN_ON_TEMPERATURE_C,
   RIDING_CURVE_TOP_C,
@@ -60,7 +59,6 @@ export interface FanLimits {
     onTemperatureC: number;
     offTemperatureC: number;
     ridingTopC: number;
-    dcTopC: number;
     speedGateOnKmh: number;
     speedGateOffKmh: number;
     temperatureGraceMs: number;
@@ -250,7 +248,6 @@ function respond(res: ServerResponse, statusCode: number, options: FanEndpointOp
         onTemperatureC: FAN_ON_TEMPERATURE_C,
         offTemperatureC: FAN_OFF_TEMPERATURE_C,
         ridingTopC: RIDING_CURVE_TOP_C,
-        dcTopC: DC_CURVE_TOP_C,
         speedGateOnKmh: SPEED_GATE_ON_KMH,
         speedGateOffKmh: SPEED_GATE_OFF_KMH,
         temperatureGraceMs: TEMPERATURE_GRACE_MS,

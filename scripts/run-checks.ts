@@ -162,20 +162,22 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-fan-curve.ts",
     covers:
       "the automatic cooling-fan curve, which is pure so that three things nobody can stage in a garage are one " +
-      "function call: both curves' endpoints and midpoints (48 °C is 100 % riding and 78 % on DC, so the two are " +
-      "provably not one line), the 30 % floor every DC session gets whatever the pack temperature and the road " +
-      "speed say, the speed gate and BOTH hysteresis pairs asserted at the same input in both directions, and the " +
-      "three staleness tiers — live, held for 60 s, then the floor plus a fault, because a dead batt_temp_hi reads " +
-      "exactly like a cold pack and this fan has no tacho to contradict it. Plus the near-misses each signal has: " +
-      "that charge_type's DC value 2 does not select the DC curve, that an absent or impossible speed opens the " +
-      "gate rather than holding the fan off over a hot pack, that the Pi's own bounds on batt_temp_hi are the " +
-      "dashboard's, that every reason code has both a bound and a sentence, and that no slider stop lands in the " +
-      "dead band under the floor. Every threshold is pinned to a LITERAL — an assertion phrased in the constant it " +
-      "is checking passes for every value of that constant, which is how a stop gate at 110 km/h and a one-hour " +
-      "speed-staleness window were both green here. The last two sections drive the real controller through a " +
-      "recording FanPwm — the only place the running-phase duty change issue #119 reports as unreached is reached " +
-      "— and then a controller that THROWS, since the loop discards each tick's promise and an escaped rejection " +
-      "would end the whole service every two seconds",
+      "function call: the riding curve's endpoints and midpoints, the DC rule's flat 100 % asserted at the two " +
+      "temperatures the retired ramp answered 65 and 30 at, so a resurrected curve cannot pass, and asserted to " +
+      "answer to neither gate nor the hysteresis, the speed gate and BOTH hysteresis pairs asserted at the same input " +
+      "in both directions, and the three staleness tiers — live, held for 60 s, then the floor plus a fault, because " +
+      "a dead batt_temp_hi reads exactly like a cold pack and this fan has no tacho to contradict it. And that the DC " +
+      "rule does NOT swallow that fault: four ways of losing the temperature mid-session each give 100 % AND reason " +
+      "2, the code the dashboard paints red, since a rule that named itself there would hide a broken sensor until " +
+      "the next ride. Plus the near-misses each signal has: that charge_type's DC value 2 does not select the DC " +
+      "rule, that an absent or impossible speed opens the gate rather than holding the fan off over a hot pack, that " +
+      "the Pi's own bounds on batt_temp_hi are the dashboard's, that every reason code has both a bound and a " +
+      "sentence, and that no slider stop lands in the dead band under the floor. Every threshold is pinned to a " +
+      "LITERAL — an assertion phrased in the constant it is checking passes for every value of that constant, which " +
+      "is how a stop gate at 110 km/h and a one-hour speed-staleness window were both green here. The last two " +
+      "sections drive the real controller through a recording FanPwm — the only place the running-phase duty change " +
+      "issue #119 reports as unreached is reached — and then a controller that THROWS, since the loop discards each " +
+      "tick's promise and an escaped rejection would end the whole service every two seconds",
   },
   {
     script: "scripts/check-fan-fun.ts",
@@ -274,13 +276,15 @@ const CHECKS: SelfCheck[] = [
     covers:
       "the riding screen's power bar, every part of which is a direction that looks deliberate when it is " +
       "backwards: that regen reads green and a pull never does — inverted from 2026-08-03 until 2026-09-08, under " +
-      "a doc comment that said the right thing throughout — that the drive ramp only ever gets warmer with load " +
-      "and reaches all four of its colours, that both BMS ceilings convert to kW through the MEASURED pack " +
+      "a doc comment that said the right thing throughout — that drive is WHITE at every load, the ramp by " +
+      "magnitude having been retired, and that the dashed derate rule keeps a 3:1 contrast floor over that fill, " +
+      "computed rather than restated, since it is drawn on top of it. That both BMS ceilings convert to kW through the MEASURED pack " +
       "voltage with a 0 A derate surviving as a real limit and a 0 V reading rejected as a missing one, that both " +
-      "go quiet while a charge is up — the BMS zeroes them there, and drawing them puts two 0 kW ceilings under a " +
-      "bar showing 24 kW of charge — and that the dashed lines land on the sides the fill uses, sit on the centre " +
-      "at zero, and pin INSIDE the bar's end rather than vanishing when a ceiling is wider than the bar. Walked " +
-      "end to end as well as at each end, because covering both ends left a crossed pair between them green",
+      "go quiet while a charge is up — the BMS zeroes them there, and believing them would hatch the whole bar " +
+      "away under a fill showing 24 kW of charge — and that each ceiling hatches its own side's far end against " +
+      "its OWN scale, hatches nothing at or past full scale, hatches the whole half at zero, and still draws for " +
+      "a derate of 1 kW, since a minimum width that swallowed small ones made a blank end mean two things. " +
+      "Walked end to end as well as at each end, because covering both ends left a crossed pair between them green",
   },
   {
     script: "scripts/check-tab-routing.ts",

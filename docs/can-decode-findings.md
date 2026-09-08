@@ -64,6 +64,40 @@ The other six bytes read all-zero across the whole capture. The `.xdbc` splits t
 
 **b4-7 is `D_RUN_TMR`**, a u32 that reads 0 in all 20 429 frames. Not decoded: there is nothing to decode, and recording that it is dead is more useful than a key that only ever writes 0.
 
+### The command-delivery gap, measured on stored rows
+
+Recorded 2026-09-08, when `ride-summary.json` gained the **Inverter torque — commanded vs delivered** panel and needed a number for what "normal" looks like. Both signals are decoded from the **same frame**, so whenever both move past the 0.5 Nm deadband on one frame they are written under one timestamp — which makes an exact-`ts` join legitimate here and a carry-forward join unnecessary. **300 450 such paired rows** in `rides.db`:
+
+| statistic                 | value              |
+| ------------------------- | ------------------ |
+| median command − delivery | **+0.2 Nm**        |
+| mean                      | +0.159 Nm          |
+| 1st-99th percentile       | **−4.8 … +4.6 Nm** |
+| beyond ±20 Nm             | 24 rows (0.008 %)  |
+| full range                | −50.4 … +41.4 Nm   |
+
+This agrees with the **+0.10 Nm** ordinary gap quoted in the ABS section below, which was measured over a different and much smaller window, and it is the quantitative form of the r = +0.9916 above. The practical consequence for anyone reading the panel: the two traces overlap almost everywhere, so **a visible separation is the event**, not the baseline.
+
+### ⚠️ The hub and the CAN pair fail independently, and the hub fails far more
+
+The Connectivity Hub's `motor_torque_nm` is a second path to this same quantity over BLE, which is why it carries the same 0.5 Nm deadband. It is **not** an equally reliable one. Measured over 2026-09-07, a single ride day. Both totals below count only hub silences that have at least one inverter row inside them, so a parked bike is excluded; the definition matters, because the same day gives 12.31 h and 10.12 h if you drop that condition.
+
+- Hub silences longer than 20 s with the inverter pair still logging: **12.29 h** of the day. Longer than 60 s: **10.10 h**.
+- The longest single one is **5.33 h** (12:17-17:37 UTC). The inverter pair logged **314 647** rows inside it — 158 275 of them `drive_torque_feedback_nm`, the other 156 372 `drive_torque_cmd_nm` — ranging **−63.1 to +223.1 Nm**. The hub's last sample before it was **28.0 Nm**, which is where a held line sits for all 5⅓ hours.
+- CAN pair for comparison: p50 0.02 s, p99 0.72 s.
+
+Two things follow, and the second is the one that bites.
+
+**Drawing the line straight through a dropout manufactures a false finding.** A flat trace at 28 Nm beside two traces swinging −63 to +223 Nm renders as the two measurement paths disagreeing violently, which is a real and alarming fault, when the truth is that a BLE link was down and CAN was fine. Per `grafana/README.md`'s own standard — a panel failure that looks like an answer is the worst shape available — that is the failure to design out.
+
+**It takes `insertNulls` AND `spanNulls: false`, and a percentile picks the wrong threshold.** ⚠️ Two ways to get this wrong, both of which happened here. First the mechanism: `insertNulls: <ms>` inserts a null after that much silence, but `spanNulls` decides whether the null survives the frame join — `spanNulls: true` deletes it and restores the flat line, verified by mutation on the panel, and any numeric `spanNulls` above `insertNulls` bridges the gap anyway. Setting only `spanNulls: 60000` changed nothing on screen, which is the observation that produces the wrong conclusion that `spanNulls` is inert. The table in `grafana/README.md` records all three combinations.
+
+Second the threshold. **The hub's p99 of 1.31 s makes 60 s look enormously safe and it is not**, because the gaps are not one population with a tail. Over the whole log: 113 358 under 5 s, then only **79** across the entire 5-35 s span, then a distinct **556** at 35-45 s — a recurring hub stall with the bike moving throughout, not idling. A 60 s threshold swallows that whole second population and hides **332 000** inverter rows behind held segments; 10 s through 30 s each hide 510. The panel uses **20 s**, in the middle of the empty band. The worst case a percentile would have permitted is concrete: a 38.70 s hub gap at 19:33:13 with **2149** inverter samples inside it, held flat.
+
+Verified in Grafana 11.3 at `insertNulls: 20000, spanNulls: false`: at a 2-minute zoom the three traces stay continuous, the 38 s hub gap inside that window now breaks instead of drawing flat, and over a 6¾ h window the hub trace stops at 12:17 and resumes at 17:37. The argument in `grafana/README.md` against a bounded threshold still does not carry over — it is about module temperatures, where a healthy sensor goes 48 minutes between samples, so there is no valley to aim at and the answer there is a dedicated liveness signal.
+
+⚠️ **The neighbouring "Motor power and torque" panel holds `motor_torque_nm` across these dropouts**, and its description credits `spanNulls: true` for drawing "exactly what was recorded". Both halves of that panel are hub signals, so they go silent together and it does not invite a cross-path comparison — the misreading above needs two paths on one axis. Left alone deliberately rather than fixed in passing. If it ever gains a CAN series, note that adding `insertNulls` to it **on its own will do nothing**: it carries `spanNulls: true`, which deletes the inserted nulls. Both settings have to change together, which is exactly the silent-failure shape this section exists to warn about.
+
 ---
 
 ## 0x0A0 — `ABS_INFO`

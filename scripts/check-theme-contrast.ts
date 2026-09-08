@@ -21,7 +21,7 @@ import { readFile } from "fs/promises";
 const INK_TOKENS = ["fg", "label", "sub", "good", "watch", "warn", "bad", "cold", "cool"];
 
 /** Marks sized by visibility rather than readability — see the note in svg.js. */
-const MARK_TOKENS = ["track", "centre-line"];
+const MARK_TOKENS = ["track", "derated"];
 
 /**
  * The floors style.css declares. Values clear 11:1 and everything else 6:1; the dark

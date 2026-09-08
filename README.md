@@ -251,7 +251,7 @@ Not in the unit file — `scripts/setup-service.ts` rewrites that every time it 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `COOLANT_ENABLED` | on | `0` skips the MAX31865 probes entirely. Set this on a bike with no watercooling loop. |
-| `FAN_ENABLED` | **off** | `1` drives the watercooling loop's radiator fan from the Pi's hardware PWM (an IBT-2 half-bridge on GPIO18) and serves `/fan`. It starts in **automatic**, following `batt_temp_hi` up a 35 → 48 °C curve (35 → 54 °C on a DC charge) and stopping above 90 km/h — ⚠️ every one of those four numbers is a considered choice rather than a measurement of this radiator, marked as such wherever it appears ([`docs/fan-control.md`](docs/fan-control.md) §4 and §8) — while the dashboard slider takes it over until the bike is switched off. ⚠️ One of the two opt-**in** switches here, `SERVICE_WRITE_ENABLED` being the other: almost no Eva has this fan, so unset means the Pi never opens `/sys/class/pwm`, never spawns `pinctrl` and answers 404 at `/fan`. Needs the `config.txt` lines in `INSTALL.md` §1 first. See [`docs/fan-control.md`](docs/fan-control.md). |
+| `FAN_ENABLED` | **off** | `1` drives the watercooling loop's radiator fan from the Pi's hardware PWM (an IBT-2 half-bridge on GPIO18) and serves `/fan`. It starts in **automatic**, following `batt_temp_hi` up a 35 → 48 °C curve, running flat out for the whole of a DC charge, and stopping above 90 km/h — ⚠️ every one of those three numbers is a considered choice rather than a measurement of this radiator, marked as such wherever it appears ([`docs/fan-control.md`](docs/fan-control.md) §4 and §8) — while the dashboard slider takes it over until the bike is switched off. ⚠️ One of the two opt-**in** switches here, `SERVICE_WRITE_ENABLED` being the other: almost no Eva has this fan, so unset means the Pi never opens `/sys/class/pwm`, never spawns `pinctrl` and answers 404 at `/fan`. Needs the `config.txt` lines in `INSTALL.md` §1 first. See [`docs/fan-control.md`](docs/fan-control.md). |
 | `CAN_ENABLED` | on | `0` skips CAN altogether — coolant probes only. |
 | `OBD_ENABLED` | on | `0` makes the bus **listen-only**: broadcasts are decoded, nothing is ever transmitted. Costs you the OBD-II PIDs and the trouble-code list. |
 | `ELOCK_ENABLED` | on | `0` skips the one-shot keys-paired read from the E-LOCK ECU at startup. |
@@ -283,16 +283,17 @@ docker compose up -d
 
 The datasource points at `/repo/rides.db` (`grafana/provisioning/datasources/sqlite.yml`), which is this repo's directory mounted into the container — so `rides.db` must sit at the repo root. Decrypt more `.celog` files into the same `rides.db` later and they append; every panel says **No data** until step 2 has run at least once.
 
-Nine dashboards are provisioned from `grafana/dashboards/`, one file each:
+Ten dashboards are provisioned from `grafana/dashboards/`, one file each:
 
 - **Cooling** (`cooling.json`) — ΔT across the pack, heat removed against an assumed coolant flow, inlet/outlet/ambient, per-module temperatures, powertrain temps.
 - **Battery & cell balancing** (`battery-cells.json`) — per-cell voltage and per-module temperature heatmaps, spread over time, the cell limits the BMS is actually configured with.
-- **Ride summary** (`ride-summary.json`) — speed, power, torque, energy, peak temperatures, position, bike state.
+- **Ride summary** (`ride-summary.json`) — speed, power, torque, energy, peak temperatures, position, bike state. Torque appears twice on purpose: against power from the Connectivity Hub, and as the inverter's own commanded-vs-delivered pair off `0x02C` with the hub's reading laid over it as an independent check. See `docs/can-decode-findings.md` §0x02C for what the gap between the two means and why that panel breaks the hub's line rather than holding it.
 - **Charging** (`charging.json`) — charge sessions, charger mains and DC side, the BMS system-state lanes.
 - **Isolation & faults** (`isolation-faults.json`) — the BMS isolation test in raw ADC counts, the error and warning flags, the stored diagnostic code counts, the BMS IO lines.
 - **Explore & data health** (`explore.json`) — every logged signal, a browser over the whole registry, and how long each signal has been quiet.
 - **Charge manager** (`charge-manager.json`) — the DC fast-charge side, off CAN `0x605`/`0x610`/`0x615`/`0x620`/`0x625`: the current the vehicle requests against the three separate limits that bound it and against what the pack actually took, the state machine split back out into its factory fields, and the fault source and code. The **Charging** tab above cannot show a DC session — the onboard charger's frames are absent through one.
 - **Power & battery** (`power-battery.json`) — power in kW against battery percentage, charge power derived from `dc_v × dc_a` and pack power measured, plus cell-vs-board pack temperature.
+- **Route & charging map** (`route-map.json`) — where the bike went and where it charged, on a map. The track is every GPS fix in the window, coloured by speed; charge stops are pins sized by energy added and coloured by how stale their position is, because the hub sleeps while charging and a stop is drawn at the last fix from before it was plugged in. Both tables drill down into the dashboards above with the range already set. See `docs/route-map.md`.
 - **Trouble codes** (`trouble-codes.json`) — every diagnostic code the bike has reported, named from Energica's own type-approval table. The code table in that file is generated; see `grafana/README.md`.
 
 `grafana/README.md` collects the datasource and panel traps that querying log-on-change data in this plugin keeps producing — read it before writing a new dashboard.

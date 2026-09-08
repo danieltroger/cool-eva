@@ -30,7 +30,8 @@ export const SIGNALS: SignalDef[] = [
   { key: "fan_driver_enabled", unit: "", group: "fan", source: "sensor", onDemand: true },
   // Phase 2's automatic curve (src/fan/auto.ts, src/fan/curve.ts). `fan_auto_mode` is
   // FAN_MODE_CODE in src/fan/auto.ts — 0 manual, 1 automatic, 2 fun — and the other two
-  // are the enums in src/fan/curve.ts: FAN_REASON says which rule set the duty and
+  // are the enums in src/fan/curve.ts: FAN_REASON says which rule set the duty — or, on a
+  // DC session with a dead batt_temp_hi, the fault that outranks its naming — and
   // FAN_TEMPERATURE_INPUT whether the temperature under it was live, held from the last
   // in-bounds reading, or absent.
   // Codes rather than text because a signal is a number; the words are the dashboard's.
