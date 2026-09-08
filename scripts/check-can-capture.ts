@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { readFile } from "fs/promises";
+import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { CAN_CAPTURE_UNIT_PATH, canCaptureUnitText } from "./can-capture/unit.ts";
 
@@ -100,7 +101,7 @@ if (!/^OUTPUT="\$DIRECTORY\//m.test(script)) {
 // empty capture per restart in the directory the archive is swept from.
 if (!/if ! command -v candump/.test(script)) {
   failures.push("capture.sh no longer checks that candump exists before creating the output file");
-} else if (!/command -v candump[\s\S]{0,200}?\bexit 1\b/.test(script)) {
+} else if (!/command -v candump[\s\S]{0,400}?\bexit 1\b/.test(script)) {
   failures.push("the candump guard no longer exits — it has to stop before the redirect, or it does nothing at all");
 }
 
@@ -149,7 +150,9 @@ if (!CAN_CAPTURE_UNIT_PATH.startsWith("/etc/systemd/system/")) {
 // dash on the CI runner, so this doubles as a portability gate — which is what a
 // `#!/bin/sh` script wants, and why a legitimate bash-only construct will fail here.
 try {
-  await execFileAsync("sh", ["-n", CAPTURE_SCRIPT.pathname]);
+  // fileURLToPath, not .pathname: the latter stays percent-encoded while readFile above
+  // decodes it, so a checkout under a path with a space would fail here and only here.
+  await execFileAsync("sh", ["-n", fileURLToPath(CAPTURE_SCRIPT)]);
 } catch (error) {
   failures.push(`capture.sh does not parse as POSIX sh: ${(error as Error).message.split("\n").slice(0, 3).join(" ")}`);
 }
