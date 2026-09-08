@@ -60,6 +60,12 @@ export const activeTheme = van.derive(() => {
   if (dayMode !== null && ageOf("dash_day_mode") < DASH_LIVE_MS) {
     return dayMode === 1 ? "light" : "dark";
   }
+  // ⚠️ This ages out a SLEEPING bike, not a dropped link. serverTime freezes with the
+  // messages, so while the socket is down the age stops growing and the theme holds its
+  // last value rather than falling through to here — deliberately, and it is the same
+  // property that stops a twelve-second blip repainting the whole screen. Gating on
+  // `connection` as well would reintroduce that snap. dashboard-decisions.md has the
+  // four-state table.
   return prefersLight.val ? "light" : "dark";
 });
 

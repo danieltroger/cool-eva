@@ -578,9 +578,20 @@ So the tile counts down against the TRUE temperature (`batt_temp_hi`, sourced fr
 
 The dark screen washes out in direct sun. `lib/theme.js` resolves one of two palettes and stamps it on `<html>` as `data-theme`; `style.css` carries both under the same token names.
 
-**The bike chooses it.** `0x400` b5 bit 7 is the dashboard's own day/night flag (`docs/can-0x400-day-night.md`), and the phone follows it directly, with **no hysteresis** — the owner's explicit call: _"it doesn't really strobe that much on the bike, I think it's cooler if they switch in tandem."_ That is worth knowing rather than discovering: the bit changed **55 times on one 5 h 32 min ride**, median run 138 s, shortest 33 s, so the phone flips more often than the bike's own dash appears to. No smoothing layer was needed to build this and none should be added without asking him — `signals.ts` is log-on-change, so a patch only goes out when the bit actually flips and the repaint lands on that frame.
+**The bike chooses it.** `0x400` b5 bit 7 is the dashboard's own day/night flag (`docs/can-0x400-day-night.md`), and the phone follows it directly, with **no hysteresis** — the owner's explicit call: _"it doesn't really strobe that much on the bike, I think it's cooler if they switch in tandem."_ That is worth knowing rather than discovering: the bit changed **55 times on one 5 h 32 min ride**, median run 136.6 s, shortest 32.9 s, so the phone flips more often than the bike's own dash appears to. No smoothing layer was needed to build this and none should be added without asking him — `signals.ts` is log-on-change, so a patch only goes out when the bit actually flips and the repaint lands on that frame.
 
 **The fall-through is the design:** an explicit choice from the menu sheet is never overruled by the bus; otherwise the bike while it is talking; otherwise the phone's own `prefers-color-scheme`. The middle branch is gated on the reading's own age (`ageOf`, 10 s) rather than on `isStale()`, because `isStale` folds in link liveness and would repaint the whole screen over a twelve-second socket blip. `0x400` is 100 Hz, so that window is unreachable while the bus is live and cannot delay a flip; it only decides when a sleeping bike hands the question back to the phone.
+
+There are four states, and the age test only covers three of them:
+
+| state | what happens |
+| --- | --- |
+| never connected, or the bike has never sent `0x400` | `valueOf` is `null` → the phone decides |
+| bike awake | the flag is milliseconds old → the bike decides, and a flip lands on the frame |
+| bike asleep, socket up | heartbeats advance `serverTime` while the flag's `ts` does not, so it ages out → the phone decides |
+| **socket down** | **`serverTime` freezes with the messages, so the age stops growing and the theme HOLDS its last value** |
+
+That last row is deliberate rather than an oversight, and it is the same property that stops a twelve-second blip repainting the screen: while nothing is arriving there is no new evidence about the light outside, and holding is better than snapping on the strength of a dropout. It is also why this is not additionally gated on `connection` — that would reintroduce exactly the snap the age test was chosen to avoid. A link that stays down leaves the theme on the bike's last word until the rider touches the toggle, which is what the toggle is for.
 
 ⚠️ **`style.css` deliberately has no `prefers-color-scheme` media query.** A media query would be a second answer to the same question, and the two would disagree the moment the bike says one thing and the phone says another. The cost is that the first paint is dark until `theme.js` runs.
 

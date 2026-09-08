@@ -31,6 +31,13 @@ const MARK_TOKENS = ["track", "tick", "centre-line"];
  */
 const VALUE_FLOOR = 11;
 const TEXT_FLOOR = 6;
+/**
+ * ⚠️ A RATCHET, not a measurement. Nothing derives 15; it sits just under the light
+ * theme's worst adjacent pair (warn→bad, 16.0) so that ramp cannot be compressed
+ * further without someone deciding to. The dark theme's worst is 38.7, so this floor
+ * only ever binds on light. If a future palette needs to go under it, move it
+ * deliberately and say why in docs/dashboard-decisions.md rather than nudging it.
+ */
 const SEPARATION_FLOOR = 15;
 const EXEMPT = new Set(["dark:bad on tile"]);
 
@@ -40,19 +47,37 @@ const source = await readFile(new URL("../public/style.css", import.meta.url), "
 const dark = parsePalette(source, ":root {");
 const light = parsePalette(source, ':root[data-theme="light"] {');
 
-const failures: string[] = [];
-for (const [themeName, palette] of [
+const palettes = [
   ["dark", dark],
   ["light", light],
-] as const) {
-  for (const token of [...INK_TOKENS, ...MARK_TOKENS]) {
-    if (!palette[token]) {
-      failures.push(`${themeName} palette has no --${token}; colors.js or svg.js draws with it`);
-    }
+] as const;
+
+// Completeness first, for BOTH palettes, and nothing else runs until it holds.
+//
+// ⚠️ This used to be interleaved with the measuring below, guarded by the shared
+// `failures` list, and it was wrong twice over: a failure in the DARK palette skipped
+// every LIGHT check — so light values were printed in the table and silently not
+// asserted — and a missing token still reached the printing pass, where it read
+// `undefined` into luminance() and threw over the diagnostic that had just been
+// composed. Both found in review by breaking one token in each palette at once.
+const incomplete = palettes.flatMap(([themeName, palette]) =>
+  [...INK_TOKENS, ...MARK_TOKENS]
+    .filter(token => !palette[token])
+    .map(
+      token =>
+        `${themeName} palette has no --${token}, or it is not a plain hex value; colors.js or svg.js draws with it`
+    )
+);
+if (incomplete.length > 0) {
+  console.error(`\n✗ ${incomplete.length} missing token(s) — an incomplete palette cannot be measured:`);
+  for (const problem of incomplete) {
+    console.error(`  - ${problem}`);
   }
-  if (failures.length > 0) {
-    continue;
-  }
+  process.exit(1);
+}
+
+const failures: string[] = [];
+for (const [themeName, palette] of palettes) {
   for (const ground of ["bg", "tile"] as const) {
     for (const token of INK_TOKENS) {
       const measured = contrast(palette[token], palette[ground]);
@@ -75,10 +100,7 @@ for (const [themeName, palette] of [
   }
 }
 
-for (const [themeName, palette] of [
-  ["dark", dark],
-  ["light", light],
-] as const) {
+for (const [themeName, palette] of palettes) {
   console.log(`\n${themeName}`);
   for (const ground of ["bg", "tile"] as const) {
     const row = INK_TOKENS.map(token => `${token} ${contrast(palette[token], palette[ground]).toFixed(1)}`).join("  ");

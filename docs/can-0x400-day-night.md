@@ -48,7 +48,7 @@ Satellite UTC can be decoded straight out of the `0x410` GPS sub-`0xFE` records,
 
 **More than half of the archive's `0x400` frames sit on a clock with nothing behind it.** Only **24 of the 97** files contain a validated span at all. The capture clock, where it _is_ validated, is local time — satellite UTC + 2 h (Europe/Stockholm) — not UTC.
 
-This section is about the whole archive rather than about this bit, and it is the reason the first version of this document was wrong. Two events were written up as "flipped nine minutes before sunset" and "mid-twilight"; both were pre-step artefacts, and they were 100 % of the apparent night-time anomaly. `capture-20260802-210358` reads `sats=0` at 21:04 and then `satUTC=2026-08-03 15:53:54` at candump `21:07:41` — the clock was 20 h 50 m fast, and the flip really happened at about **17:53 local on a bright August afternoon**. `capture-20260807-213359` has `sats=0` on every GPS record in the window; its true time is simply unknown.
+This section is about the whole archive rather than about this bit, and it is the reason the first version of this document was wrong. Two events were written up as "flipped nine minutes before sunset" and "mid-twilight"; both were pre-step artefacts, and they were 100 % of the apparent night-time anomaly. `capture-20260802-210358` reads `sats=0` at 21:04 and then `satUTC=2026-08-03 15:53:54` at candump `21:07:41` — so the Pi's clock was **20 h 46 m BEHIND** real time (its stamps run _earlier_ than reality, which is why the real times in §4.3 are all later than the stamps), and the flip really happened at about **17:53 local on a bright August afternoon**. `capture-20260807-213359` has `sats=0` on every GPS record in the window; its true time is simply unknown.
 
 ## 4. What the bit does
 
@@ -72,6 +72,8 @@ Cross-tabbed over all 14 069 994 frames, sampling `0x102`'s lamp bits at each `0
 | low beam **off** | 1 001 802   | 6 546 406   | 13.3 % |
 | low beam **on**  | 2 687 145   | 3 834 593   | 41.2 % |
 
+The two rows sum to 14 069 946 rather than the full 14 069 994: **48 frames arrived before any `0x102` in their own capture**, so no beam state was known for them, and they are excluded rather than guessed.
+
 Both values of b5 occur in **millions** of frames with the beam both on and off; neither implies the other in either direction. High beam is too rare across the corpus (32 771 frames) to say anything either way, and does not separate them either.
 
 ### 4.3 The garage, which is the actual evidence
@@ -93,9 +95,11 @@ A bike in a dark garage on a bright afternoon reads `0`; the same bike outdoors 
 
 On the single continuous **5 h 32 min daytime ride of 2026-08-08** (11:22:29 → 16:54:56, 60–130 km/h, one capture, no gaps):
 
-> **55 transitions. Median run 138 s. Shortest run 33 s. 23 of 54 runs under two minutes.**
+> **55 transitions. Median run 136.6 s. Shortest run 32.9 s. 23 of 54 runs under two minutes.**
 
-Archive-wide: 94 transitions, median run 132 s dark / 190 s light, shortest 13.2 s.
+Archive-wide: 94 transitions, median run 130.1 s dark / 190.3 s light, shortest 13.2 s.
+
+(Medians are the standard mid-point of an even-sized sample. An earlier draft quoted 138 s and 132 s, which are the upper of the two middle values — the same runs, a different convention, and worth naming because the numbers appear in `docs/dashboard-decisions.md` too.)
 
 ## 5. What is still open
 
