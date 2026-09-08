@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { UpdateReply } from "../src/http/update.ts";
-import { describePullFailure, handleUpdateEndpoint } from "../src/http/update.ts";
+import {
+  DEPLOY_SSH_COMMAND,
+  credentialHint,
+  describePullFailure,
+  handleUpdateEndpoint,
+  pullEnvironment,
+} from "../src/http/update.ts";
 
 // The Update button's endpoint, against a real git and no Pi.
 //
@@ -193,43 +199,63 @@ try {
 
   // --- 5. the ssh hint --------------------------------------------------------
 
-  console.log("\n5. the hint for the failure this endpoint lived with for months");
+  console.log("\n5. the two ssh failures, each with its own fix");
 
-  const hostKey = Object.assign(new Error("Command failed: git pull"), {
-    killed: false,
-    signal: null,
-    stdout: "",
-    stderr: "Host key verification failed.\nfatal: Could not read from remote repository.\n",
-  });
-  check(
-    "'Host key verification failed' explains that root cannot use pi's key",
-    /runs as root/.test(describePullFailure(hostKey, 300))
-  );
-  check("and points at the fix", /https/.test(describePullFailure(hostKey, 300)));
+  // ⚠️ The two have DIFFERENT fixes — one is a known_hosts entry, the other is the key
+  // itself — so a hint that named one cause for both would be wrong half the time.
+  const hostKey = "Host key verification failed.\nfatal: Could not read from remote repository.\n";
+  const hostKeyHint = credentialHint(hostKey) ?? "";
+  check("'Host key verification failed' is about known_hosts", /known_hosts/.test(hostKeyHint));
+  check("and gives the command that fixes it", /ssh-keyscan/.test(hostKeyHint));
+  check("and does not blame the key, which is a different failure", !/deploy key was refused/.test(hostKeyHint));
 
-  // ⚠️ OpenSSH prints the METHODS THE SERVER OFFERED, so the real string is often
+  // OpenSSH prints the METHODS THE SERVER OFFERED, so the real string is often
   // `(publickey,password)`. Matching through the closing paren would miss every
   // multi-method server — which is most of them.
-  const multiMethod = Object.assign(new Error("Command failed: git pull"), {
-    killed: false,
-    signal: null,
-    stdout: "",
-    stderr: "git@github.com: Permission denied (publickey,password).\n",
-  });
+  const refused = "git@github.com: Permission denied (publickey,password).\n";
+  const refusedHint = credentialHint(refused) ?? "";
+  check("'Permission denied (publickey,password)' is matched, not just the bare (publickey)", refusedHint !== "");
   check(
-    "'Permission denied (publickey,password)' is matched too, not just the bare (publickey)",
-    /runs as root/.test(describePullFailure(multiMethod, 300))
+    "and is about the key, naming both ways out",
+    /deploy key/.test(refusedHint) && /GIT_SSH_COMMAND/.test(refusedHint)
   );
+  check("and does not tell you to run ssh-keyscan, which would not help", !/ssh-keyscan/.test(refusedHint));
 
-  const unrelated = Object.assign(new Error("Command failed: git pull"), {
-    killed: false,
-    signal: null,
-    stdout: "",
-    stderr: "fatal: couldn't find remote ref main\n",
-  });
   check(
     "an unrelated failure gets no ssh advice — a hint that fires on everything is noise",
-    !/runs as root/.test(describePullFailure(unrelated, 300))
+    credentialHint("fatal: couldn't find remote ref main\n") === null
+  );
+
+  const carried = Object.assign(new Error("Command failed: git pull"), {
+    killed: false,
+    signal: null,
+    stdout: "",
+    stderr: hostKey,
+  });
+  check(
+    "and the hint reaches the phone, appended to git's own words",
+    /ssh-keyscan/.test(describePullFailure(carried, 300))
+  );
+
+  // --- 6. the environment the pull runs in ------------------------------------
+
+  console.log("\n6. the environment shared by the button and the installer");
+
+  const supplied = pullEnvironment({ PATH: "/usr/bin" });
+  check(
+    "a private fork gets pi's key named explicitly, since $HOME cannot redirect ssh",
+    supplied.GIT_SSH_COMMAND === DEPLOY_SSH_COMMAND
+  );
+  check("the key is offered ALONE, so a root agent cannot shadow it", /IdentitiesOnly=yes/.test(DEPLOY_SSH_COMMAND));
+  check(
+    "and an encrypted key fails fast instead of hanging on an askpass nobody can answer",
+    /BatchMode=yes/.test(DEPLOY_SSH_COMMAND)
+  );
+  check("terminal prompts are off, so a credential-wanting remote says so", supplied.GIT_TERMINAL_PROMPT === "0");
+  check("PATH survives — without it git cannot even exec git-remote-https", supplied.PATH === "/usr/bin");
+  check(
+    "an operator's own GIT_SSH_COMMAND wins, so another key path or user needs no code change",
+    pullEnvironment({ GIT_SSH_COMMAND: "ssh -i /custom/key" }).GIT_SSH_COMMAND === "ssh -i /custom/key"
   );
 } finally {
   await rm(workDir, { recursive: true, force: true });

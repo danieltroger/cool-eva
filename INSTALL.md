@@ -75,22 +75,19 @@ sudo apt-get install -y build-essential python3 git
 
 ## 3. Get the code
 
-Deploy convention is a git checkout at `/home/pi/cool-eva`, owned by `pi`, **cloned over https**:
+Deploy convention is a git checkout at `/home/pi/cool-eva`, owned by `pi`:
 
 ```sh
+# Public fork — nothing to configure, the Pi only ever pulls:
 git clone https://github.com/<your-fork>/cool-eva.git /home/pi/cool-eva
-cd /home/pi/cool-eva
 
-# On a Pi that already has an ssh remote:
-git remote set-url origin https://github.com/<your-fork>/cool-eva.git
+# Private fork — keep the ssh remote and see the note below:
+git clone git@github.com:<your-fork>/cool-eva.git /home/pi/cool-eva
+
+cd /home/pi/cool-eva
 ```
 
-**Why https here, when your laptop uses ssh.** The service runs as **root**, and the dashboard's Update button pulls as root. Root cannot borrow `pi`'s ssh credentials:
-
-- `HOME=/home/pi` does **not** do it — OpenSSH expands `~` from the effective uid's passwd entry, not from `$HOME`. Check it yourself: `HOME=/nonexistent ssh -G github.com` still prints your real `known_hosts` path. This was tried, shipped, and was dead weight for months; the symptom is `Host key verification failed.` from the button while `git pull` as `pi` works fine, which is a confusing way to lose an evening.
-- An explicit `GIT_SSH_COMMAND="ssh -i /home/pi/.ssh/id_ed25519 -o UserKnownHostsFile=/home/pi/.ssh/known_hosts"` **would** work. It is declined on purpose: it hardcodes a username, a key filename and a key type into the service, to buy nothing for a public repo the Pi only ever pulls from.
-
-So the convention is per-checkout, not per-repo: **ssh on a machine that pushes, https on the Pi.** `scripts/setup-service.ts` warns at install time if the Pi's `origin` is ssh, and the Update button says the same thing if you hit it anyway. If your fork is private, that is when `GIT_SSH_COMMAND` earns its keep.
+**Which remote, and why it is not the same answer as on your laptop.** The service runs as **root**, so the dashboard's Update button pulls as root — and root does not automatically inherit `pi`'s ssh setup. `HOME=/home/pi` does **not** fix that, which is the trap: OpenSSH expands `~` from the effective uid's passwd entry, not from `$HOME` (check it — `HOME=/nonexistent ssh -G github.com` still prints your real `known_hosts`), so a root `git pull` reads `/root/.ssh` and fails with `Host key verification failed.` while the same pull as `pi` works fine. **Public fork: use https** and the question disappears, since an anonymous pull needs no credentials at all. **Private fork: keep ssh** — the pull names `pi`'s key and `known_hosts` explicitly with `GIT_SSH_COMMAND`, which is the thing `HOME=` was only pretending to do, so put a deploy key at `/home/pi/.ssh/id_ed25519` and make sure the host key is known (`sudo -u pi ssh-keyscan github.com >> /home/pi/.ssh/known_hosts`). For any other user, key path or key type, set your own `GIT_SSH_COMMAND` in `/etc/default/cool-eva` and the pull will use it as-is. Either way `scripts/setup-service.ts` proves the remote is readable **as the service user** at install time, and the Update button names the fix if it ever stops being.
 
 ## 4. Install dependencies
 

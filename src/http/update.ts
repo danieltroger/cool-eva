@@ -19,9 +19,12 @@ const execFileAsync = promisify(execFile);
 // root-owned; a later by-hand pull as `pi` may want its own safe.directory or a chown.
 // Deploying only through this button keeps ownership consistent.
 //
-// The Pi's origin is https, and that is a requirement rather than a taste: this service
-// runs as root, and root cannot borrow pi's ssh key or known_hosts. INSTALL.md §3 has
-// the reason and the one-line fix; credentialHint below says it to whoever hits it.
+// This service runs as root, so pi's ssh setup is not automatically in reach: OpenSSH
+// expands ~ from the effective uid's passwd entry, not from $HOME, which is why the
+// HOME=/home/pi this used to carry did nothing. A public fork pulls over https and needs
+// no credentials at all; a private one keeps its ssh remote and DEPLOY_SSH_COMMAND names
+// pi's key and known_hosts explicitly, which is what HOME= was pretending to do.
+// INSTALL.md §3 has both paths; credentialHint says it to whoever hits it.
 
 /**
  * What the endpoint says, for the caller that acts on it. A named type imported through
@@ -45,6 +48,40 @@ const PULL_TIMEOUT_MS = 60_000;
  */
 const TIMEOUT_SKEW_MS = 250;
 
+/**
+ * How the pull reaches an SSH remote — for a PRIVATE fork; a public one pulls over https
+ * and never invokes ssh at all, so this is inert there.
+ *
+ * Naming the key and the known_hosts file is the only thing that redirects a root git to
+ * pi's credentials, since $HOME cannot (see the header). IdentitiesOnly so a root agent
+ * or a stray /root/.ssh key cannot be offered ahead of this one, and BatchMode so an
+ * encrypted key fails immediately instead of sitting on an askpass prompt nobody can
+ * answer until PULL_TIMEOUT_MS.
+ *
+ * Overridable: set GIT_SSH_COMMAND in /etc/default/cool-eva for another user, key path
+ * or key type, and pullEnvironment leaves it alone.
+ */
+export const DEPLOY_SSH_COMMAND =
+  "ssh -i /home/pi/.ssh/id_ed25519 -o IdentitiesOnly=yes " +
+  "-o UserKnownHostsFile=/home/pi/.ssh/known_hosts -o BatchMode=yes";
+
+/**
+ * The environment the deploy pull runs in, and the same one setup-service.ts verifies the
+ * remote with — so what the installer proves is what the button will do.
+ *
+ * ⚠️ Spreading the caller's environment is load-bearing: without it git loses PATH and
+ * cannot exec git-remote-https at all. GIT_TERMINAL_PROMPT=0 turns a remote that wants
+ * credentials into git's own "terminal prompts disabled" rather than its attempt to open
+ * /dev/tty, which a systemd service does not have.
+ */
+export function pullEnvironment(environment: Record<string, string | undefined>): Record<string, string | undefined> {
+  return {
+    ...environment,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_SSH_COMMAND: environment.GIT_SSH_COMMAND ?? DEPLOY_SSH_COMMAND,
+  };
+}
+
 export async function handleUpdateEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
@@ -57,16 +94,12 @@ export async function handleUpdateEndpoint(
   }
   const startedAt = monotonicNow();
   try {
-    // GIT_TERMINAL_PROMPT=0 turns a remote that wants credentials into git's own
-    // "terminal prompts disabled" rather than its attempt to open /dev/tty, which a
-    // systemd service does not have. ⚠️ The spread is load-bearing: without it git
-    // loses PATH and cannot exec git-remote-https at all.
     const { stdout, stderr } = await execFileAsync(
       "git",
       ["-C", directory, "-c", `safe.directory=${directory}`, "pull"],
       {
         timeout: PULL_TIMEOUT_MS,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        env: pullEnvironment(process.env),
       }
     );
     const output = `${stdout}${stderr}`.trim();
@@ -121,21 +154,32 @@ function wasKilledByTimeout(failure: { killed?: boolean; signal?: string | null 
 }
 
 /**
- * The ssh failure this endpoint existed in for months, named at the moment it happens.
+ * The two ssh failures this deploy path actually produces, each with its own fix — a hint
+ * that named one cause for both would be wrong half the time. Shared with
+ * scripts/setup-service.ts so the installer and the button give the same advice.
  *
  * ⚠️ Matched on OpenSSH's words rather than git's: OpenSSH ships no NLS at all, so these
  * are byte-identical under every locale, while git has a full message catalog and its
  * `fatal:` lines move with LC_ALL. The method list in `Permission denied (publickey,
  * password)` varies with what the server offered, so the match stops before it.
  */
-function credentialHint(streams: string): string | null {
-  if (!/Host key verification failed|Permission denied \(publickey/.test(streams)) {
-    return null;
+export function credentialHint(streams: string): string | null {
+  if (/Host key verification failed/.test(streams)) {
+    return (
+      "github.com is not in the known_hosts the pull reads (by default pi's, since this " +
+      "runs as root): sudo -u pi ssh-keyscan github.com >> /home/pi/.ssh/known_hosts. " +
+      "See INSTALL.md §3."
+    );
   }
-  return (
-    "This service runs as root, and root cannot use pi's ssh key or known_hosts. " +
-    "The Pi's origin should be https — see INSTALL.md §3."
-  );
+  if (/Permission denied \(publickey/.test(streams)) {
+    return (
+      "The deploy key was refused (by default /home/pi/.ssh/id_ed25519): add it as a " +
+      "deploy key on the fork, or set GIT_SSH_COMMAND in /etc/default/cool-eva to point " +
+      "at another key. A public fork can use an https remote and skip keys entirely. " +
+      "See INSTALL.md §3."
+    );
+  }
+  return null;
 }
 
 // Restart the service the moment the reply has flushed. `--no-block` hands the job to

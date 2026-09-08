@@ -1,4 +1,5 @@
 import { execSync } from "child_process";
+import { credentialHint, pullEnvironment } from "../src/http/update.ts";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -47,6 +48,13 @@ const RIDE_LOG_PUBLIC_KEY = join(projectDir, "ride-log-key.public.pem");
  * so a fresh install needs nothing here.
  */
 const ENV_FILE = "/etc/default/cool-eva";
+
+/**
+ * How long to spend proving the remote is readable. Short on purpose: a Pi with no
+ * reception is the common case, and this is advisory — the service is already running by
+ * the time it fires.
+ */
+const LS_REMOTE_TIMEOUT_MS = 10_000;
 
 // `process.execPath`, NOT `which node`: under sudo the PATH is root's, so a Node
 // installed with nvm as the pi user is not on it at all ("sudo: node: command not
@@ -104,7 +112,7 @@ console.log(`  sudo nano ${ENV_FILE}                   — set COOLANT_ENABLED=0
 
 warnIfNodeIsUserWritable();
 warnIfNoRideLogKey();
-warnIfRemoteNeedsSsh();
+warnIfRemoteUnreadable();
 
 /**
  * Refuse to install a unit that cannot start. Without this the only symptom is
@@ -217,19 +225,25 @@ function readEnvFile(): Record<string, string> {
 }
 
 /**
- * The Update button pulls as root, and root cannot use pi's ssh key — OpenSSH resolves
- * ~/.ssh from the effective uid's passwd entry, so no amount of HOME= reaches it. An ssh
- * origin therefore works by hand as `pi` and fails from the phone, months later, in a
- * garage. Say it here instead, where one command fixes it. INSTALL.md §3 has the why.
+ * Prove the Update button will be able to pull, at the one moment someone is sitting in
+ * front of the Pi to fix it — rather than months later, in a garage, from a phone.
  *
- * ⚠️ -c safe.directory because the checkout is pi-owned and this runs as root: without
- * it `remote get-url` is refused for dubious ownership, and the warning would never read
- * the remote on the only machine it exists for.
+ * The scheme alone cannot answer this: https and ssh are both supported (INSTALL.md §3),
+ * so the only real test is to try, as the service user. This script has already refused
+ * to run as anything but root and the unit it just wrote is User=root, so this process IS
+ * that user; pullEnvironment() is the button's own, so what passes here is what the
+ * button will do.
+ *
+ * ⚠️ -c safe.directory because the checkout is pi-owned and this runs as root: without it
+ * git refuses for dubious ownership and this would never read the remote on the only
+ * machine it exists for.
  */
-function warnIfRemoteNeedsSsh(): void {
+function warnIfRemoteUnreadable(): void {
   let remoteUrl: string;
   try {
-    remoteUrl = execSync(`git -C ${projectDir} -c safe.directory=${projectDir} remote get-url origin`)
+    remoteUrl = execSync(`git -C ${projectDir} -c safe.directory=${projectDir} remote get-url origin`, {
+      stdio: ["ignore", "pipe", "pipe"],
+    })
       .toString()
       .trim();
   } catch (error) {
@@ -238,15 +252,42 @@ function warnIfRemoteNeedsSsh(): void {
     console.log(`(could not read this checkout's origin: ${(error as Error).message})`);
     return;
   }
-  if (!/^(ssh:\/\/|[^/]+@[^/]+:)/.test(remoteUrl)) {
+  try {
+    execSync(`git -C ${projectDir} -c safe.directory=${projectDir} ls-remote --exit-code origin HEAD`, {
+      timeout: LS_REMOTE_TIMEOUT_MS,
+      stdio: ["ignore", "ignore", "pipe"],
+      env: pullEnvironment(process.env),
+    });
+    console.log(`deploy: origin is readable as the service user — the Update button will work (${remoteUrl})`);
+    return;
+  } catch (error) {
+    reportUnreadableRemote(remoteUrl, error as Error & { stderr?: Buffer | string });
+  }
+}
+
+/**
+ * Split "your credentials are wrong" from "this Pi is simply offline", because the second
+ * is the NORMAL case here — CLAUDE.md: there is no reception in the garage, and re-running
+ * this script is the documented way to migrate a Pi. A warning that shouts on every
+ * offline install is one people learn to scroll past, so only a credential failure gets
+ * the loud treatment; anything else gets one quiet line saying what could not be checked.
+ */
+function reportUnreadableRemote(remoteUrl: string, error: Error & { stderr?: Buffer | string }): void {
+  const stderr = (error.stderr ?? "").toString().trim();
+  const hint = credentialHint(stderr);
+  if (!hint) {
+    console.log("");
+    console.log(`(could not verify ${remoteUrl} as the service user — expected if this Pi is offline.`);
+    console.log(` git said: ${stderr.split("\n")[0] || error.message})`);
     return;
   }
   console.warn("");
-  console.warn(`\u26a0 origin is an SSH remote (${remoteUrl}), and this unit runs as root.`);
-  console.warn('  The dashboard\'s Update button will fail with "Host key verification failed":');
-  console.warn("  root cannot use pi's key or known_hosts, whatever HOME says. The repo is public");
-  console.warn("  and the Pi never pushes, so point it at https:");
-  console.warn(`  git -C ${projectDir} remote set-url origin https://github.com/<your-fork>/cool-eva.git`);
+  console.warn(`\u26a0 The dashboard's Update button will NOT be able to pull from ${remoteUrl}.`);
+  console.warn(`  ${stderr.split("\n")[0]}`);
+  console.warn("");
+  for (const line of hint.split(". ")) {
+    console.warn(`  ${line.trim()}`);
+  }
   console.warn("");
 }
 

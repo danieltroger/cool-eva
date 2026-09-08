@@ -289,9 +289,12 @@ const CHECKS: SelfCheck[] = [
       "exec wrapper's 'Command failed:', and that a GET is refused. Plus the failure text per shape, which is where " +
       "this endpoint has actually been wrong: a kill AT the deadline is named as a timeout whether or not git " +
       "managed to write anything first — the non-empty case is the one an earlier draft dropped — a kill BEFORE it " +
-      "is not (that is an OOM on a Pi Zero, and a confident wrong answer is worse than none), and OpenSSH's " +
-      "`Host key verification failed` / `Permission denied (publickey,…` earn the hint that this service runs as " +
-      "root and cannot use pi's key, matched short of the closing paren because the method list varies. " +
+      "is not (that is an OOM on a Pi Zero, and a confident wrong answer is worse than none), and OpenSSH's two " +
+      "credential failures earn DIFFERENT advice — `Host key verification failed` is a known_hosts entry, " +
+      "`Permission denied (publickey,…` is the key itself, matched short of the closing paren because the method " +
+      "list varies — plus the environment both the button and the installer pull with: pi's key named explicitly " +
+      "(since $HOME cannot redirect ssh for a root service), offered alone, failing fast rather than hanging on " +
+      "an askpass, with PATH intact and an operator's own GIT_SSH_COMMAND left alone. " +
       "\u26a0 The restart is asserted to be ARMED and never fired: a real ServerResponse here would emit 'finish' " +
       "and `sudo systemctl restart cool-eva` would run on whatever machine ran npm test",
   },
