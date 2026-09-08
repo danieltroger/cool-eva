@@ -125,11 +125,13 @@ Still shown as a candidate rather than a decode: the high byte (11 → 100) is u
 
 ## The trailing byte
 
-Every `0x17` reply carries one byte after the fields. It counts **cycles since the record was stored**: it advances by exactly one per power/ignition cycle with every other byte of the payload frozen, measured across components 44, 51, 52, 53 and 60 over one VCU reset and one key-off/key-on. Not a count of how often the fault happened.
+Every `0x17` reply carries one byte after the fields. It counts **cycles since the record was stored**: five components advanced by exactly +1 across one interval with every other byte of the payload frozen, so it moves at most once per cycle and is not a count of how often the fault happened.
+
+⚠️ **What a "cycle" is remains unresolved.** That interval held _both_ a VCU reset (`ECUReset 11 02`) and a key-off/key-on, and the counters moved **+1, not +2** — so either a reset does not count or the two collapsed into one. Until a reset with no key cycle around it separates them, "cycle" means at least one of those two things happened.
 
 ⚠️ **Not an OBD aging counter.** Those count fault-_free_ cycles and reset on recurrence. `P0A07` is permanently present on this bike — the coolant pump is wired to the heated-grip output, so its driver sits open — and its byte climbs anyway.
 
-⚠️ **No ceiling has been observed.** It read `FF` on all 29 replies captured before the clear at the end of the 2026-08-08 capture, and small counts after; that `FF` was inferred to be a ceiling, never watched being reached, and no record has been seen ageing out. `docs/diagnostics-and-checks.md` has the evidence.
+⚠️ **No ceiling has been observed.** It read `FF` on all 29 replies captured before the clear at the end of the 2026-08-08 capture — `14 FF FF` at 19:04:28.391939, the only one in the archive, and small counts after; that `FF` was inferred to be a ceiling, never watched being reached, and no record has been seen ageing out. `docs/diagnostics-and-checks.md` has the evidence.
 
 It stays outside every field. The check asserts each reply is header + shortlist + exactly one byte, so dropping it from the arithmetic makes all four wrong by one.
 
@@ -145,20 +147,17 @@ Component 54 answered two bytes, `57 00`: the micro saying it has nothing on fil
 
 ```
 sudo systemctl stop cool-eva
-sudo ip link set can0 down
-sudo ip link set can0 type can bitrate 500000 listen-only off
-sudo ip link set can0 up
 node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save
 sudo systemctl start cool-eva
 ```
 
 `--save` writes `vcu-params/lifetime.json`, which `GET /lifetime-stats` serves and the All tab shows with the age of the reading.
 
-⚠️ **`listen-only off` is the flag that decides whether anything transmits.** Without it the interface swallows every request silently and the result is indistinguishable from a switched-off bike. The canonical three commands are in `docs/diagnostics-and-checks.md`.
+⚠️ **`can0` has to be up ACTIVE, and on this Pi it normally already is.** The bring-up is deliberately not repeated here, because the instruction that matters is _read the link before typing anything_: stopping the service does not take the interface down, so on an `OBD_ENABLED=1` Pi the three `ip link` commands are unnecessary — and running them anyway kills every other socket on the bus, which is how the frames for this feature's own first read were lost. The commands, and how to tell ACTIVE from listen-only (it is the **absence** of `LISTEN-ONLY`, not a field that says so): `docs/diagnostics-and-checks.md` §13 and `docs/can-capture.md`.
 
 ⚠️ **The stop is for socket ownership, not because the bike refuses.** Two testers on one bus are resolved by whichever frame lands first — these micros answer on one id with no request tag — and the script opens its own socket while the service holds one. Whether the _service itself_, as the single tester, can run this read in-process is #156's second half.
 
-⚠️ **Start an independent `candump` first if the frames matter.** The command above bounces `can0`, which kills the capture unit; `Restart=on-failure` with `RestartSec=5` then opens a new file five seconds later, and the read falls in the hole. That is how the 2026-09-08 frames for components 51 and 52 were lost — issue #160.
+⚠️ **If the frames matter, start an independent `candump` first — and do not bounce the link.** That is how the 2026-09-08 frames for components 51 and 52 were lost: the interface went down, the capture unit's `Restart=on-failure` / `RestartSec=5` opened a new file five seconds later, and the two reads fell in the hole. Issues #160 and #171.
 
 ## What the store keeps, and why it keeps bytes
 

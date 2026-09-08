@@ -350,7 +350,7 @@ const CHECKS: SelfCheck[] = [
       "settled; that the charge counters' residue grew by one while 71 of 72 new charges classified, so the gap " +
       "is a slow small category and not a decode fault; that AvgDOD's two candidate readings of Energica's " +
       "malformed equation are discriminated by the pair of dates (59→58 against 11→100); that the trailing " +
-      "key-cycle counter is accounted for outside the fields on all four replies; and that a sentinel is shown " +
+      "cycle counter is accounted for outside the fields on all four replies; and that a sentinel is shown " +
       "as a fault rather than clamped while a half reading is labelled rather than presented as whole",
   },
   {

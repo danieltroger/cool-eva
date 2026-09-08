@@ -587,7 +587,7 @@ console.log(
 );
 console.log(
   "✓ 29 CAPTURED 0x17 replies decode, every infokey resolves, and the layout predicts" +
-    " all 29 lengths to the byte — with the trailing key-cycle counter reading FF on all 29, four weeks before the clear"
+    " all 29 lengths to the byte — with the trailing cycle counter reading FF on all 29, before the clear at the end of that same capture"
 );
 
 /** Reassembles and decodes one transfer, printing every step. Returns null on failure. */

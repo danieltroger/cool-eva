@@ -17,10 +17,11 @@ import { parseHexFrame } from "./captured-dtc-transfer.ts";
 //
 // Layout, confirmed against all 29: `57 <recordCount> <DTC-hi> <DTC-lo> <status>`,
 // then the fault's infokey fields in payload order, then ONE trailing byte — a
-// count of KEY CYCLES since the record was stored. It reads `FF` on every reply here
-// because these predate the clear at the end of this same capture; the ceiling has never
-// been watched being reached. ./captured-lifetime-reads.ts holds the same components read
-// after it. See docs/diagnostics-and-checks.md §11.3.1.
+// count of CYCLES since the record was stored. It reads `FF` on every reply here because
+// these predate the clear at the end of this same capture — `14 FF FF` at 2026-08-08
+// 19:04:28.391939, the only one in the whole archive. The ceiling has never been watched
+// being reached. ./captured-lifetime-reads.ts holds the same components read after it.
+// See docs/diagnostics-and-checks.md §11.3.1.
 
 export interface CapturedFreezeFrame {
   readonly component: number;
