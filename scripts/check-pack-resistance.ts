@@ -1,6 +1,8 @@
 import { decodeBmsFrame } from "../src/can/decode-bms.ts";
 import type { LiveValue } from "../src/can/signals.ts";
+import van from "../public/vendor/van-1.6.1.js";
 import { isPlausible } from "../public/lib/bounds.js";
+import { observeAndPublish, packResistance } from "../public/lib/pack-resistance-live.js";
 import { monotonicNow } from "../public/lib/clock.js";
 import { apply } from "../public/lib/store.js";
 import { observeFrame, packResistanceWith, resetPackResistance } from "../public/lib/pack-resistance.js";
@@ -24,7 +26,8 @@ import { LOAD_WINDOW, LOAD_WINDOW_MOHM, REST_WINDOW, type CapturedFrame } from "
 //   §3 a measurement goes stale on the stated interval
 //   §4 only same-frame pairs enter the buffer
 //   §5 the modelled curve is monotone, interpolates, and holds its endpoints
-//   §8 the three gates that a fit has to clear, each shown to be load-bearing
+//   §8 the gates a fit has to clear, each shown to be load-bearing
+//   §9 a VanJS binding on the published estimate actually re-runs when it changes
 //   §6 with no pack temperature at all the answer is `assumed`, never null
 //   §7 store.js hands the buffer only readings that passed the plausibility gate
 
@@ -252,6 +255,35 @@ check(
 // sanity band can reject it — the SE gate cannot, because the fit is perfect.
 const impossible = replay(ohmicWindow(40, 200, 500, 0), noTemperature);
 check(impossible.provenance !== "measured", "a perfectly-fitted 500 mΩ is refused as impossible (sanity band)");
+
+// §9 — the published estimate drives VanJS
+console.log("\n──── §9 a binding on the estimate re-runs ────");
+// This is the regression guard for a shipped bug: the estimate used to be a function,
+// packResistanceWith() returns before reading any signal while a measurement is fresh,
+// and a VanJS binding whose run reads nothing is registered to nothing and never runs
+// again. The Hypermile sub-line froze on its first measured value for the rest of the
+// ride. A van state cannot fail that way — but only if consumers read the STATE.
+resetPackResistance();
+packResistance.val = { milliohms: 999, provenance: "assumed" };
+let bindingRuns = 0;
+const rendered = van.derive(() => {
+  bindingRuns += 1;
+  return `${packResistance.val.milliohms.toFixed(0)} ${packResistance.val.provenance}`;
+});
+const runsBefore = bindingRuns;
+for (const frame of LOAD_WINDOW) {
+  observeAndPublish(liveValuesFor(frame), noTemperature);
+}
+await new Promise(resolve => setTimeout(resolve, 20));
+check(bindingRuns > runsBefore, `the binding re-ran when the estimate changed (${runsBefore} → ${bindingRuns})`);
+check(
+  packResistance.rawVal.provenance === "measured",
+  `the published state is now measured, not the seeded placeholder (${rendered.rawVal})`
+);
+check(
+  Math.abs(packResistance.rawVal.milliohms - LOAD_WINDOW_MOHM) < 1.0,
+  `and carries the fitted value, ${packResistance.rawVal.milliohms.toFixed(1)} mΩ`
+);
 
 console.log("");
 if (failures.length > 0) {

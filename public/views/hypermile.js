@@ -11,14 +11,13 @@ import {
   limitFraction,
   remainingWh,
   resistiveLossPercent,
-  packResistance,
-  packResistanceSampled,
   restingHeadroomMv,
   rollingConsumption,
   rollingRangeKm,
   sagPerCellMv,
 } from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
+import { packResistance } from "../lib/pack-resistance-live.js";
 import { CUTOFF_TIMER_S, dwellSeconds, secondsRemaining } from "../lib/dwell.js";
 import { Fact, Missing, SectionLabel, SignalTile } from "../lib/tiles.js";
 import { barStrip, meter, sparkline } from "../lib/svg.js";
@@ -84,7 +83,7 @@ function HeadroomHero() {
         // current reading at all — say that rather than blaming the resistance.
         return "sag compensation needs a pack current reading";
       }
-      const note = resistanceNote(packResistance());
+      const note = resistanceNote(packResistance.val);
       const qualifier = note === "" ? "" : ` (${note})`;
       return `${Math.round(resting)} mV at rest · ${Math.round(sag)} mV of sag right now${qualifier}`;
     }),
@@ -237,10 +236,7 @@ function LossTile() {
       // the redraw to a signal with no deadband and pace it at frame rate, which is
       // exactly what the tick is meant to prevent.
       chartTick.val;
-      // Sampled, not subscribed: packResistanceSampled() reads batt_temp_hi in its
-      // modelled branch, and reading it reactively here would pace this redraw at the
-      // signal's rate — the thing the tick exists to prevent.
-      const { milliohms } = packResistanceSampled();
+      const { milliohms } = packResistance.rawVal;
       const amps = ringFor("pack_a").since(10 * 60_000, monotonicNow());
       const watts = amps.values.map(value => (value * value * milliohms) / 1000);
       const packKilowatts = peek("pack_kw");
@@ -250,16 +246,8 @@ function LossTile() {
       return sparkline({ values: watts, color: colors.lossFraction(percent), minSpan: 100 });
     },
     div({ class: "sub" }, () => {
-      // ⚠️ chartTick is the DEPENDENCY, not decoration. packResistanceSampled() returns
-      // on its first line while a measurement is fresh, reading no VanJS state at all —
-      // and a binding whose run reads nothing is registered to nothing and never runs
-      // again. Without this the line froze on its first measured value for the rest of
-      // the ride, through both staleness and a 43→50 °C swing.
-      chartTick.val;
-      const resistance = packResistanceSampled();
-      const note = resistanceNote(resistance);
-      const source = note === "" ? "measured" : note;
-      return `pack ${resistance.milliohms.toFixed(0)} mΩ ${source} · halving current quarters this`;
+      const resistance = packResistance.val;
+      return `pack ${resistance.milliohms.toFixed(0)} mΩ ${resistance.provenance} · halving current quarters this`;
     })
   );
 }

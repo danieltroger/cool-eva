@@ -2,7 +2,7 @@
 
 Why the BMS's own figure is not usable, what replaced it, and the measurements behind it.
 
-Code: `public/lib/pack-resistance.js`. Check: `scripts/check-pack-resistance.ts`. Issue: #144.
+Code: `public/lib/pack-resistance.js` (the van-free estimator) and `public/lib/pack-resistance-live.js` (the van state consumers read). Check: `scripts/check-pack-resistance.ts`. Issue: #144.
 
 ## The BMS's estimate is unusable
 
@@ -103,4 +103,4 @@ This is reachable on a real bike, not just in theory: `src/can/pack-temperature.
 
 65 errs low against a cold pack. That understates heat on the informational tiles and is the conservative direction on the safety-relevant one: R enters `sagPerCellMv` as `I·R/81`, so too high an R inflates the sag and makes `restingMinCellMv` read optimistic.
 
-The `assumed` state waits 10 s — twice `THERMAL_FRAME_WAIT_MS` — so a healthy bike deciding which frame owns the true temperature never flashes "assuming" on connect.
+On a fresh connection, before the first `batt_temp_hi` arrives, the tiles briefly read `assumed R`. That is honest — at that instant nothing better is known — and it clears on the first temperature. An earlier draft carried a 10 s grace meant to hide it; the grace could never fire, because `valueOf` keeps returning the last value once a signal has arrived, so the only route to `assumed` is a signal that has never arrived at all. The dead branch is gone rather than repaired.

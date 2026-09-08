@@ -7,14 +7,9 @@ import { heatmap, meter, ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 import { power, whole } from "../lib/format.js";
-import {
-  COOLANT_FLOW_LPH,
-  coolantDelta,
-  coolantHeatRemovedWatts,
-  packResistance,
-  resistiveLossWatts,
-} from "../lib/derive.js";
+import { COOLANT_FLOW_LPH, coolantDelta, coolantHeatRemovedWatts, resistiveLossWatts } from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
+import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
 import { ChargeCurrentControl } from "./charge-current.js";
 import { ChargeStopControl } from "./charge-stop.js";
@@ -461,9 +456,7 @@ function ThermalBalanceTile() {
       const delta = coolantDelta();
       const deltaText =
         delta == null ? "no coolant probes" : `coolant ΔT ${units.tempDelta(delta).toFixed(2)} ${units.tempUnit()}`;
-      // coolantDelta() above reads through valueOf, so this binding has a dependency and
-      // re-runs — unlike the Hypermile sub-line, which needed chartTick for that.
-      const note = resistanceNote(packResistance());
+      const note = resistanceNote(packResistance.val);
       const inNote = note === "" ? "" : ` · in uses ${note}`;
       return `${deltaText} · out assumes the pump's rated ${COOLANT_FLOW_LPH} L/h${inNote}`;
     })

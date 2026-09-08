@@ -77,12 +77,12 @@ const ASSUMED_MOHM = 65;
  * Method, per-bin scatter and the SOC-flatness result: docs/pack-resistance.md.
  */
 const RESISTANCE_BY_TEMPERATURE = [
-  [27.5, 115.4, 24],
-  [32.5, 95.3, 82],
-  [37.5, 80.8, 122],
-  [42.5, 69.8, 178],
-  [47.5, 64.5, 566],
-  [52.5, 61.0, 573],
+  [27.5, 115.4],
+  [32.5, 95.3],
+  [37.5, 80.8],
+  [42.5, 69.8],
+  [47.5, 64.5],
+  [52.5, 61.0],
 ];
 
 /** @typedef {{ milliohms: number, provenance: "measured" | "modelled" | "assumed" }} PackResistance */
@@ -158,26 +158,23 @@ export function observeFrame(accepted, nowMs = monotonicNow()) {
   refreshMeasurement(nowMs);
 }
 
-/** Drops every sample and the held estimate. For checks, and for a fresh connection. */
+/** Drops every sample and the held estimate. Used by the check; nothing in public/ calls it. */
 export function resetPackResistance() {
-  length = 0;
-  next = 0;
+  sampleCount = 0;
+  written = 0;
   lastPairedTs = null;
-  measuredMilliohms = null;
-  measuredAtMs = null;
+  measured = null;
 }
 
 const sampleVolts = new Float64Array(CAPACITY);
 const sampleAmps = new Float64Array(CAPACITY);
 const sampleTimes = new Float64Array(CAPACITY);
-let next = 0;
-let length = 0;
+let written = 0;
+let sampleCount = 0;
 /** @type {number | null} */
 let lastPairedTs = null;
-/** @type {number | null} */
-let measuredMilliohms = null;
-/** @type {number | null} */
-let measuredAtMs = null;
+/** @type {{ milliohms: number, atMs: number } | null} */
+let measured = null;
 
 /**
  * @param {number} volts
@@ -185,13 +182,11 @@ let measuredAtMs = null;
  * @param {number} ts monotonic, from lib/clock.js
  */
 function push(volts, amps, ts) {
-  sampleVolts[next] = volts;
-  sampleAmps[next] = amps;
-  sampleTimes[next] = ts;
-  next = (next + 1) % CAPACITY;
-  if (length < CAPACITY) {
-    length += 1;
-  }
+  sampleVolts[written] = volts;
+  sampleAmps[written] = amps;
+  sampleTimes[written] = ts;
+  written = (written + 1) % CAPACITY;
+  sampleCount = Math.min(sampleCount + 1, CAPACITY);
 }
 
 /**
@@ -200,13 +195,10 @@ function push(volts, amps, ts) {
  * @returns {number | null}
  */
 function freshMeasurement(nowMs) {
-  if (measuredMilliohms == null || measuredAtMs == null) {
+  if (measured == null || nowMs - measured.atMs > MEASURED_HOLD_MS) {
     return null;
   }
-  if (nowMs - measuredAtMs > MEASURED_HOLD_MS) {
-    return null;
-  }
-  return measuredMilliohms;
+  return measured.milliohms;
 }
 
 /**
@@ -219,8 +211,7 @@ function refreshMeasurement(nowMs) {
   if (fitted == null) {
     return;
   }
-  measuredMilliohms = fitted;
-  measuredAtMs = nowMs;
+  measured = { milliohms: fitted, atMs: nowMs };
 }
 
 /**
@@ -238,8 +229,7 @@ function fitWindow(sinceMs) {
   let sumVolts = 0;
   let leastAmps = Infinity;
   let mostAmps = -Infinity;
-  for (let i = 0; i < length; i += 1) {
-    const at = (next - length + i + CAPACITY) % CAPACITY;
+  for (let at = 0; at < sampleCount; at += 1) {
     if (sampleTimes[at] < sinceMs) {
       continue;
     }
@@ -257,8 +247,7 @@ function fitWindow(sinceMs) {
   let ampsSquared = 0;
   let crossProduct = 0;
   let voltsSquared = 0;
-  for (let i = 0; i < length; i += 1) {
-    const at = (next - length + i + CAPACITY) % CAPACITY;
+  for (let at = 0; at < sampleCount; at += 1) {
     if (sampleTimes[at] < sinceMs) {
       continue;
     }
@@ -292,19 +281,16 @@ function fitWindow(sinceMs) {
 function modelledMilliohms(packCelsius) {
   const first = RESISTANCE_BY_TEMPERATURE[0];
   const last = RESISTANCE_BY_TEMPERATURE[RESISTANCE_BY_TEMPERATURE.length - 1];
-  if (packCelsius <= first[0]) {
-    return first[1];
-  }
-  if (packCelsius >= last[0]) {
-    return last[1];
-  }
+  // Clamping is what holds the endpoints flat: at either end `across` lands on 0 or 1
+  // and the interpolation below returns that endpoint unchanged.
+  const celsius = Math.min(Math.max(packCelsius, first[0]), last[0]);
   for (let i = 1; i < RESISTANCE_BY_TEMPERATURE.length; i += 1) {
     const [upperCelsius, upperMilliohms] = RESISTANCE_BY_TEMPERATURE[i];
-    if (packCelsius > upperCelsius) {
+    if (celsius > upperCelsius) {
       continue;
     }
     const [lowerCelsius, lowerMilliohms] = RESISTANCE_BY_TEMPERATURE[i - 1];
-    const across = (packCelsius - lowerCelsius) / (upperCelsius - lowerCelsius);
+    const across = (celsius - lowerCelsius) / (upperCelsius - lowerCelsius);
     return lowerMilliohms + across * (upperMilliohms - lowerMilliohms);
   }
   return last[1];

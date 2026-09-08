@@ -4,7 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { isPlausible } from "./bounds.js";
 import { ringFor } from "./ring.js";
 import { monotonicNow } from "./clock.js";
-import { observeFrame } from "./pack-resistance.js";
+import { observeAndPublish } from "./pack-resistance-live.js";
 import { POLL_MS, createConnection } from "./connection.js";
 
 /** @typedef {import("../../src/can/signals.ts").LiveValue} LiveValue */
@@ -307,7 +307,7 @@ export function apply(message) {
     ringFor(key).push(monotonicNow() - serverAgeMs, reading.value);
     accepted[key] = reading;
   }
-  observeFrame(accepted);
+  observeAndPublish(accepted, valueOf);
   if (added) {
     knownKeys.val = [...seenKeys].sort();
   }

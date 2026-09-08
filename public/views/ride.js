@@ -4,8 +4,9 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
-import { coolantDelta, packResistance, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
+import { coolantDelta, remainingWh, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
+import { packResistance } from "../lib/pack-resistance-live.js";
 import { powerLimitsKw } from "../lib/power-limits.js";
 import { PairTile, SectionLabel, SignalTile, Tile } from "../lib/tiles.js";
 import { meter, sparkline, splitBar } from "../lib/svg.js";
@@ -152,7 +153,7 @@ function PowerRow() {
         return "regen ← → drive";
       }
       const percentText = percent == null ? "" : ` · ${percent.toFixed(1)}% of output`;
-      const note = resistanceNote(packResistance());
+      const note = resistanceNote(packResistance.val);
       const qualifier = note === "" ? "" : ` · ${note}`;
       return `${Math.round(watts)} W lost as heat${percentText}${qualifier}`;
     })
@@ -214,7 +215,7 @@ function CoolantDeltaTile() {
       if (watts == null) {
         return "out − in";
       }
-      const note = resistanceNote(packResistance());
+      const note = resistanceNote(packResistance.val);
       const qualifier = note === "" ? "" : ` (${note})`;
       return `out − in · ${Math.round(watts)} W going in${qualifier}`;
     })
