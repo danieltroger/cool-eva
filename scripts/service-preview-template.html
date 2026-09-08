@@ -164,24 +164,9 @@
 
       /* ---------- close-ups ----------
  *
- * Panels 2-6 are about one block of the write section. The whole section is rendered
- * and left bound — cutting a node out of a VanJS tree leaves the panel showing a copy
- * nothing updates any more — and the blocks the panel is not about are hidden here.
- *
- * VcuWrite() returns five children (heading, its note, availability, the failure
- * message, the controls) and the controls hold three (the parameter form, the service
- * actions, the journal). The runtime checks that shape at render and warns if it has
- * moved, so this cannot rot quietly. */
-      .pv-scope > div > :nth-child(-n + 4) {
-        display: none;
-      }
-
-      .pv-scope-actions > div > :nth-child(5) > :nth-child(1),
-      .pv-scope-actions > div > :nth-child(5) > :nth-child(3),
-      .pv-scope-form > div > :nth-child(5) > :nth-child(2),
-      .pv-scope-form > div > :nth-child(5) > :nth-child(3) {
-        display: none;
-      }
+ * The rules that hide everything a close-up is not about are GENERATED at boot — see
+ * installPanelScoping. They were hand-written :nth-child selectors here, and what that
+ * cost is docs/diagnostics-and-checks.md §11.6. */
 
       /* ---------- the tier key ---------- */
 
@@ -952,7 +937,14 @@
       // stubbed fetch first, so every step waits for the DOM it needs rather than guessing
       // at a delay.
 
-      function settle(test) {
+      function settle(test, what) {
+        // ⚠️ `what` is REQUIRED, and it used to have a default. Every close-up failed for
+        // twelve days behind one unchanging "the sheet to settle", which names neither what
+        // was awaited nor that a shape assumption rather than a slow render was what broke —
+        // and a default put nine of the eleven waits here straight back behind that sentence.
+        if (!what) {
+          throw new Error("preview: settle() needs to say what it is waiting for");
+        }
         return new Promise((resolve, reject) => {
           const deadline = Date.now() + 4000;
           const attempt = () => {
@@ -968,7 +960,7 @@
               return;
             }
             if (Date.now() > deadline) {
-              reject(new Error("preview: timed out waiting for the sheet to settle"));
+              reject(new Error(`preview: timed out waiting for ${what}`));
               return;
             }
             requestAnimationFrame(attempt);
@@ -980,6 +972,79 @@
       /** A button by a distinctive fragment of its caption — never by its glyph. */
       function buttonSaying(root, fragment) {
         return [...root.querySelectorAll("button")].find(node => node.textContent.includes(fragment)) ?? null;
+      }
+
+      /**
+       * The write section's block of controls, named by the view itself.
+       *
+       * ⚠️ The last thing here that counted siblings. It was `SHEET_PREAMBLE = 4` — a fact
+       * owned by another file, restated here — and the growth that broke the close-ups is
+       * exactly the growth that moves it: a seventh child added to VcuWrite() turned every
+       * close-up red while none of them was about the new one.
+       */
+      const CONTROLS_BLOCK = ".write-controls";
+
+      /**
+       * What identifies a close-up's block, FROM INSIDE IT — never by position, and never a
+       * selector that matches more than one element in the view. `select.probe-input` is the
+       * obvious pick for the form and is the wrong one: it is built twice, so renaming the
+       * one a close-up holds cannot be seen. check-service-preview.ts asserts uniqueness.
+       * What both rules cost to learn: docs/diagnostics-and-checks.md §11.6.
+       */
+      const PANEL_BLOCK = { form: "div.readout", actions: "button.risk-fold" };
+
+      /**
+       * Writes one hiding rule per close-up kind, from PANEL_BLOCK.
+       *
+       * ⚠️ A STYLESHEET, not `style.display` on the blocks that happen to exist when a
+       * panel is staged. The write button's first tap re-reads the Pi, which re-renders the
+       * whole controls binding — new nodes, no inline styles — and the panel came back
+       * showing all six blocks. A selector applies to whatever VanJS renders next.
+       */
+      function installPanelScoping() {
+        const sheet = document.createElement("style");
+        sheet.textContent = [
+          // Everything beside the controls — the heading, its note, availability, the failure
+          // line — is no part of any close-up.
+          `.pv-scope > div > :not(${CONTROLS_BLOCK}) { display: none; }`,
+          ...Object.entries(PANEL_BLOCK).map(
+            ([kind, marker]) =>
+              `.pv-scope-${kind} > div > ${CONTROLS_BLOCK} > :not(:has(${marker})) { display: none; }`
+          ),
+        ].join("\n");
+        document.head.appendChild(sheet);
+      }
+
+      /**
+       * That the panel really is showing one block, and the right one.
+       *
+       * ⚠️ Asserted on the COMPUTED result, not just on the marker. Everything between a
+       * good marker and what a reader sees can fail in silence: a wrong :nth-child in the
+       * generated rule hides nothing, and a browser without :has() drops the rule entirely
+       * for the same outcome — six blocks under a caption naming one, which is byte for byte
+       * the 2026-08-27 bug. The marker is counted too, so the diagnosis stays in the message:
+       * with :not(:has(…)) a marker matching NO block hides all six rather than none.
+       */
+      function assertScopedToOneBlock(blocks, marker) {
+        // Belt and braces. controlsOf() re-queries from a `body` that boot() has already put in
+        // the document, so a connected node is the contract — but getComputedStyle on a
+        // detached one answers "" per block, which would read as six visible and blame the CSS.
+        if (!blocks?.isConnected) {
+          throw new Error("preview: the write section has not rendered its controls into the document");
+        }
+        const children = [...blocks.children];
+        const matched = children.filter(block => block.querySelector(marker) !== null);
+        const visible = children.filter(block => getComputedStyle(block).display !== "none");
+        if (matched.length !== 1 || visible.length !== 1 || visible[0] !== matched[0]) {
+          // ⚠️ The INDICES, not just the counts. "matches 1 and 1 is visible", followed by a
+          // failure, reads as self-contradictory — and the number that diagnoses it, which
+          // block is showing instead of which, is the one a bare count leaves out.
+          const at = blocks => blocks.map(block => children.indexOf(block)).join(", ") || "none";
+          throw new Error(
+            `preview: ${marker} matches block ${at(matched)} of ${children.length} but block ${at(visible)} ` +
+              "is what is visible — this panel is not showing the block its caption names"
+          );
+        }
       }
 
       // ── the panels ───────────────────────────────────────────────────────────────
@@ -1092,15 +1157,15 @@
         const sheet = imp("views/sheet.js");
         van.add(stage, sheet.Sheet());
         sheet.openSheet();
-        await settle(() => stage.querySelector("button.risk-fold"));
+        await settle(() => stage.querySelector("button.risk-fold"), "the menu sheet's fold");
       }
 
       /**
        * The write section, scoped to one of its blocks.
        *
        * The whole section is rendered — it is one bound tree and cutting a node out of it
-       * would leave the panel showing a copy VanJS had stopped updating — and the stage
-       * carries a class that hides the blocks this panel is not about. See chrome.css.
+       * would leave the panel showing a copy VanJS had stopped updating — and the blocks
+       * this panel is not about are then hidden by installPanelScoping's rules.
        */
       async function renderWriteSection(stage, panel) {
         const imp = instantiate();
@@ -1117,43 +1182,81 @@
 
         van.add(body, write.VcuWrite());
         await write.refreshVcuWrite();
-        const root = await settle(() => {
-          const candidate = body.firstElementChild;
-          return candidate && candidate.children.length === 5 && candidate.children[4].children.length === 3
-            ? candidate
-            : null;
-        });
-        if (root.children[4].children.length !== 3) {
-          console.warn("preview: the write section's shape has moved — check pv-scope in chrome.css");
+        await settle(() => controlsOf(body)?.children.length > 0, "the write section's controls");
+        const marker = PANEL_BLOCK[panel.kind];
+        if (marker === undefined) {
+          // Otherwise this waits four seconds for the selector "undefined" and reports it as
+          // a timeout, which reads as the sheet being slow rather than as a panel nobody
+          // gave a block to.
+          throw new Error(`preview: no PANEL_BLOCK marker for a panel of kind ${panel.kind}`);
         }
+        // Waited for separately from the blocks: the marker's element is itself behind a
+        // binding, so it can arrive a tick after the block holding it. A marker that never
+        // arrives times out saying WHICH marker, which is the whole difference between this
+        // failing legibly and failing the way it did.
+        await settle(() => controlsOf(body)?.querySelector(marker), `${marker} — this panel's block marker`);
+        assertScopedToOneBlock(controlsOf(body), marker);
 
         if (panel.open) {
-          (await settle(() => body.querySelector("button.risk-fold"))).click();
-          await settle(() => body.querySelector(".danger-zone"));
+          // Resolves on its first attempt: only `actions` panels carry `open`, and the fold's
+          // toggle is the very element PANEL_BLOCK.actions names, so the wait above found it.
+          (await settle(() => body.querySelector("button.risk-fold"), "the fold's toggle")).click();
+          await settle(() => body.querySelector(".danger-zone"), "the fold's contents, opened");
         }
         if (panel.armAction) {
           const zone = body.querySelector(".danger-zone");
-          (await settle(() => buttonSaying(zone, panel.armAction.caption))).click();
-          await settle(() => buttonSaying(body.querySelector(".danger-zone"), panel.armAction.armed));
+          (await settle(() => buttonSaying(zone, panel.armAction.caption), `the button saying ${panel.armAction.caption}`)).click();
+          await settle(
+            () => buttonSaying(body.querySelector(".danger-zone"), panel.armAction.armed),
+            `the armed caption ${panel.armAction.armed}`
+          );
         }
         if (panel.value) {
           const control = TARGETS[0].control;
-          const input = await settle(() =>
-            body.querySelector(`input.probe-input[placeholder="${control.min}…${control.max}"]`)
-          );
+          const placeholder = `input.probe-input[placeholder="${control.min}…${control.max}"]`;
+          const input = await settle(() => body.querySelector(placeholder), placeholder);
           input.value = panel.value;
           input.dispatchEvent(new Event("input", { bubbles: true }));
-          await settle(() => buttonSaying(body, `75 → ${panel.value}`));
+          await settle(() => buttonSaying(body, `75 → ${panel.value}`), `the caption 75 → ${panel.value}`);
         }
         if (panel.armWrite) {
-          (await settle(() => body.querySelector("button.action.writes"))).click();
+          (await settle(() => body.querySelector("button.action.writes"), "the write button")).click();
           // The first tap re-reads the Pi before it arms, so the number the second tap
           // agrees to is the Pi's answer now. Two captions pass through on the way.
-          await settle(() => buttonSaying(body, "Tap again to write"));
+          await settle(() => buttonSaying(body, "Tap again to write"), "the armed write caption");
         }
+
+        // ⚠️ Asserted AGAIN, at the end, and re-queried rather than reusing the node above.
+        // Every staging step here can re-render: the write button's first tap re-reads the Pi,
+        // which replaces the whole controls binding and every block in it. Asserting only
+        // before the interactions left the panel that proves the point — the one that
+        // re-fetches — free to come back showing all six blocks in silence, which is exactly
+        // what it did with an earlier version of the scoping.
+        assertScopedToOneBlock(controlsOf(body), marker);
+      }
+
+      /**
+       * The block of controls inside the rendered write section, or null before it arrives.
+       *
+       * Re-queried on every use, never held: VanJS replaces this node wholesale whenever the
+       * Pi's answer changes, so a reference taken at staging time is detached by the end.
+       */
+      function controlsOf(body) {
+        const section = body.firstElementChild;
+        if (!section) {
+          return null;
+        }
+        const blocks = section.querySelectorAll(`:scope > ${CONTROLS_BLOCK}`);
+        if (blocks.length > 1) {
+          // Thrown rather than left to time out: from a 4 s deadline an ambiguous shape and a
+          // slow render look identical, and that is how this went unnoticed for twelve days.
+          throw new Error(`preview: VcuWrite() rendered ${blocks.length} ${CONTROLS_BLOCK} blocks, not the one it should`);
+        }
+        return blocks[0] ?? null;
       }
 
       async function boot() {
+        installPanelScoping();
         const host = document.getElementById("pv-panels");
         for (const panel of PANELS) {
           const section = document.createElement("section");
@@ -1180,6 +1283,13 @@
             stage.appendChild(failure);
           }
         }
+        // ⚠️ The COUNT too, not just readiness. boot() catches every panel's failure into a
+        // visible note, so a page full of dead panels still reports ready — which is how five
+        // of seven stayed broken for twelve days. Stamped where a check, or a ctrl-F, can see it.
+        // Scoped to `.pv-stage`: a panel's failure note is appended to its stage, while the
+        // page's own intro note is also a `.pv-note` — counting both reported one failure on a
+        // perfect page, which is how a signal stops being read.
+        document.documentElement.dataset.previewFailed = String(document.querySelectorAll(".pv-stage .pv-note").length);
         document.documentElement.dataset.previewReady = "yes";
       }
 

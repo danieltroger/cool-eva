@@ -176,10 +176,23 @@ export function VcuWrite() {
     // that did not exist. `.failure`, not `.action-note`, and Availability() stands its
     // ellipsis down beside it — docs/dashboard-decisions.md §"The section heading".
     () => (!hasControls() && message.val ? div({ class: "action-note failure" }, message.val) : div()),
+    // ⚠️ `write-controls` is a NAME, not a style — nothing in style.css selects it. It is
+    // here because the design preview's close-ups have to find this block, and counting
+    // siblings to reach it is what broke them for twelve days when the section grew from
+    // three blocks to six: docs/diagnostics-and-checks.md §11.6. On BOTH branches, so the
+    // block is findable before the Pi has answered as well as after.
     () =>
       hasControls()
-        ? div(ParameterForm(), HeadlightSection(), AllLightsSection(), ResetVcuSection(), ServiceActions(), Journal())
-        : div()
+        ? div(
+            { class: "write-controls" },
+            ParameterForm(),
+            HeadlightSection(),
+            AllLightsSection(),
+            ResetVcuSection(),
+            ServiceActions(),
+            Journal()
+          )
+        : div({ class: "write-controls" })
   );
 }
 
