@@ -409,15 +409,17 @@ The slider's grid moved from 5 % to **1 %** in the same change, and the old cons
 
 The rider rides with the fan at manual 100 % and drops it when the noise matters — dinner next to a charging bike. That has to work with gloves on, at a stop, with the phone in a pocket. A **1200 ms hold of MODE ENTER** (`0x102` b0 bit 2) does it. Which button, why that one, how a hold is recognised and what the bike itself does with these switches: `docs/handlebar-gestures.md`. This section is only what it does to the fan.
 
-**Three states, one direction:** manual 100 % → automatic → off → manual 100 %.
+**Three states, one direction:** manual 100 % → off → automatic → manual 100 %.
 
 | Where the fan is | Next hold gives | Why |
 | --- | --- | --- |
 | fun mode | automatic | the same place `handBackToCurve()` goes when the gate closes |
-| automatic, bike stopped | off | the quiet state, only where quiet is wanted |
-| automatic, bike moving or speed unknown | manual 100 % | see below |
-| manual at any running duty | automatic | including a duty the slider left, which is still manual |
-| manual at 0 % | manual 100 % | `goIdle()` sets the target to exactly 0 on every stop |
+| manual at any running duty, bike stopped | off | the quiet state, only where quiet is wanted — including a duty the slider left, which is still manual |
+| manual at any running duty, bike moving or speed unknown | automatic | see below |
+| manual at 0 % | automatic | `goIdle()` sets the target to exactly 0 on every stop, so this is exact rather than a threshold |
+| automatic | manual 100 % |  |
+
+⚠️ **The direction is the rider's, and it was reversed on 2026-09-08 after review.** He rides at manual 100 % and drops the fan when the noise matters, so "quiet at the charger" is **one** hold this way round and two the other. That also halves how often the cycle asks for two consecutive holds — the pattern that walks into the dash's own reset mode (`docs/handlebar-gestures.md`). Nothing about the safety argument changes: the states reachable while moving are still automatic and manual 100 %.
 
 ⚠️ **The step is derived from the fan's live state, never from a counter the gesture keeps.** A counter would disagree with the fan the moment the rider touched the slider or fun mode ended by itself, and the rider would then hold the button and get the wrong third of the cycle.
 
@@ -429,9 +431,9 @@ Since #147 automatic **is** 100 % for the whole of every DC session. So at a DC 
 
 `speed_can_kmh` (`0x104`, bit 32, u13 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ stationary. At or below **3 km/h** counts as stopped, which is the bike's own number: its dash menu is stationary-only and >3 km/h exits it.
 
-Failing closed costs nothing measurable. `0x102`, `0x104` and `0x109` arrive and stop **together** — 317 785 / 317 780 frames with identical per-second coverage over a whole AC session, 106 100 / 106 098 at 99.98 Hz over a whole DC one, both above — so a bus that can deliver the button press can always deliver the speed. And the two ways of being wrong are not symmetric: an unknown speed skips _off_ and gives manual 100 %, which is loud, thermally the safe direction, and undone by holding again for 1.2 s.
+Failing closed costs nothing measurable. `0x102`, `0x104` and `0x109` arrive and stop **together** — 317 785 / 317 780 frames with identical per-second coverage over a whole AC session, 106 100 / 106 098 at 99.98 Hz over a whole DC one, both above — so a bus that can deliver the button press can always deliver the speed. And the two ways of being wrong are not symmetric: an unknown speed skips _off_ and hands the fan to the curve, which is the state that watches the pack, rather than silencing it on a bike that might be moving.
 
-**So above 3 km/h the cycle degrades to the two-state toggle the request originally asked for.** That is deliberate. ENTER is pressed while riding — five of the 160 presses in the archive were made at 47–118 km/h — so a false fire at speed has to be harmless, and the only states reachable there are automatic and a fan at full.
+**So above 3 km/h the cycle degrades to the two-state toggle the request originally asked for** — automatic and manual 100 %, with the quiet state simply skipped. That is deliberate. ENTER is pressed while riding — five of the 160 presses in the archive were made at 47–118 km/h — so a false fire at speed has to be harmless, and the only states reachable there are automatic and a fan at full.
 
 #### Riding away with the fan off
 

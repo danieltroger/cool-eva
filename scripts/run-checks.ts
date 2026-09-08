@@ -272,7 +272,7 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-hold-gestures.ts",
     covers:
       "the two handlebar HOLD gestures the Pi now recognises for itself — a 1200 ms hold of MODE ENTER stepping " +
-      "the fan round manual 100 % → automatic → off, and a 1000 ms hold of the indicator-cancel switch saving a " +
+      "the fan round manual 100 % → off → automatic, and a 1000 ms hold of the indicator-cancel switch saving a " +
       "waypoint. Above all the freshness rule, planted rather than argued: a press followed by twenty minutes of " +
       "silence NEVER fires however long the bus has been quiet, because the press is abandoned the moment the " +
       "sample goes stale; a 300 ms press fires nothing; and a 1.3 s hold fires exactly once, while the thumb is " +
@@ -281,7 +281,8 @@ const CHECKS: SelfCheck[] = [
       "clears the longest MODE ENTER press ever recorded (290 ms, over 160 presses, the only decoded handlebar " +
       "bit with no long press anywhere) by more than 4×, and 1000 ms clears the longest ordinary indicator-cancel " +
       "press outside one afternoon's experiment (330 ms over 770 of 779) by 3×. Then the cycle end to end " +
-      "bridge: it walks all three states, SKIPS the quiet state above 3 km/h so a false fire while riding can only " +
+      "bridge: it walks all three states in the rider's own direction — quiet is ONE hold from the manual 100 % he " +
+      "rides in — SKIPS the quiet state above 3 km/h so a false fire while riding can only " +
       "land on the thermally safe side, reverts its own *off* when the bike moves but never a manual 0 the slider " +
       "set, and leaves the fan off when the bus goes silent — because that silence is the AC charge the state " +
       "exists for. Finally the waypoint's gates, including the 2026-08-09 defect: a fix 8 000 km from the one " +

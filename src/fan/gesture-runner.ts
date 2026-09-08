@@ -18,7 +18,7 @@ import {
 // transition between the three modes stays in the one file that owns them, and the
 // gesture cannot leave the loop believing something the fan is not doing.
 //
-// The cycle, what "stationary" means and why *off* survives a silent bus:
+// The cycle and its direction, what "stationary" means, and why *off* survives a silent bus:
 // docs/fan-control.md §"The handlebar gesture".
 
 export interface FanCycleOptions {
@@ -65,7 +65,7 @@ export function startFanCycleGesture(
     gesture: {
       button: FAN_GESTURE_BUTTON,
       holdMs: FAN_HOLD_MS,
-      description: "step the fan round manual 100 % → automatic → off",
+      description: "step the fan round manual 100 % → off → automatic",
       perform: () => stepTheFan(context),
     },
     stop: () => disarmRevert(context),

@@ -4,7 +4,7 @@ A long press of a handlebar button as an input to this project rather than to th
 
 | Button | Hold | What it does |
 | --- | --- | --- |
-| `btn_mode_enter` — MODE ENTER, left pod (`0x102` b0 bit 2) | **1200 ms** | steps the cooling fan round manual 100 % → automatic → off (`docs/fan-control.md`) |
+| `btn_mode_enter` — MODE ENTER, left pod (`0x102` b0 bit 2) | **1200 ms** | steps the cooling fan round manual 100 % → off → automatic (`docs/fan-control.md`) |
 | `btn_indicator_cancel` — the turn-signal switch pushed in (`0x102` b0 bit 5) | **1000 ms** | saves a waypoint |
 
 `src/gestures/long-press.ts` is the recogniser and is pure — samples in, an edge out, no clock read and no I/O — so `scripts/check-hold-gestures.ts` replays press sequences through the very function the bike runs. `src/gestures/runner.ts` is the half that subscribes, beats and acts.
@@ -106,7 +106,7 @@ It is survivable rather than solved, on the two facts above: the hazards announc
 
 Reported by the owner, 2026-09-08: holding MODE ENTER **while parked** puts the dash into a reset mode, where one further ENTER click resets the trip meter. **The hold length that triggers it has not been measured.**
 
-It bites because consecutive holds are ordinary here: parked, going from automatic to a full fan is two holds, and the press that begins the second one may be the click the dash is waiting for.
+It bites because consecutive holds happen: the press that begins a second hold may be the click the dash is waiting for. The cycle's direction was reversed on 2026-09-08 partly for this — the rider's own commonest step, manual 100 % to quiet, is one hold rather than two — but any two holds in a row still reach it.
 
 No mitigation is built, deliberately. An upper bound — fire only if released before X — is the only thing that could keep the dash out of reset mode, it works only if the dash's threshold is longer than ours, and choosing X today means choosing it from no measurement at all. It would also cost the property that makes the gesture usable with gloves: the fan answers **under the thumb**. A minimum gap between holds does nothing, because the trip meter is reset by the rider's thumb reaching the bike's own dash, not by our recogniser.
 

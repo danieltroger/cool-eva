@@ -56,7 +56,13 @@ export interface FanGestureInputs {
 }
 
 /**
- * One hold, one step round the cycle: manual 100 % → automatic → off → manual 100 %.
+ * One hold, one step round the cycle: manual 100 % → off → automatic → manual 100 %.
+ *
+ * ⚠️ THE DIRECTION IS THE RIDER'S, not an arbitrary enumeration. He rides with the fan at
+ * manual 100 % and drops it when the noise matters, so from his riding state "quiet at the
+ * charger" is ONE hold this way round and two the other. That also halves how often the
+ * cycle asks for two consecutive holds, which is what walks into the dash's own reset mode
+ * — docs/handlebar-gestures.md §"Holding ENTER opens the dash's own reset mode".
  *
  * ⚠️ *Off* is only reachable with the bike PROVABLY stopped, so above 3 km/h — or with
  * nothing saying the bike is stopped — the cycle degrades to the two-state toggle the
@@ -71,7 +77,7 @@ export function nextFanGestureAction(inputs: FanGestureInputs): FanGestureAction
     return "automatic";
   }
   if (inputs.mode === "automatic") {
-    return isStationary(inputs.speedKmh) ? "off" : "full";
+    return "full";
   }
   if (!Number.isFinite(inputs.targetPercent)) {
     // Manual, with nothing readable saying what the fan was asked for. Neither "it is
@@ -80,8 +86,12 @@ export function nextFanGestureAction(inputs: FanGestureInputs): FanGestureAction
     // state both ends agree on.
     return "automatic";
   }
-  // Any running manual duty — the gesture's own 100 %, or 45 % left by the slider.
-  return inputs.targetPercent > 0 ? "automatic" : "full";
+  if (inputs.targetPercent === 0) {
+    return "automatic";
+  }
+  // A running manual duty — the gesture's own 100 %, or 45 % left by the slider. Quiet is
+  // the next step, and it is the one step the bike has to agree to.
+  return isStationary(inputs.speedKmh) ? "off" : "automatic";
 }
 
 /**

@@ -253,27 +253,35 @@ function inputs(overrides: Partial<FanGestureInputs> = {}): FanGestureInputs {
   return { mode: "automatic", targetPercent: 0, speedKmh: 0, ...overrides };
 }
 
-check("automatic + stopped → off, which is the quiet state", nextFanGestureAction(inputs()) === "off");
 check(
-  "off (manual at 0 %) → manual 100 %",
-  nextFanGestureAction(inputs({ mode: "manual", targetPercent: 0 })) === "full"
+  `automatic → manual ${MAX_DUTY_PERCENT} %, whatever the bike is doing`,
+  nextFanGestureAction(inputs()) === "full"
 );
 check(
-  "manual 100 % → automatic",
-  nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT })) === "automatic"
+  "⚠️  manual 100 % + stopped → off, which is ONE hold from the state he rides in",
+  nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT })) === "off"
 );
 check(
-  "a manual duty the SLIDER left → automatic, not a fourth state",
-  nextFanGestureAction(inputs({ mode: "manual", targetPercent: 45 })) === "automatic"
+  "off (manual at 0 %) → automatic, closing the cycle",
+  nextFanGestureAction(inputs({ mode: "manual", targetPercent: 0 })) === "automatic"
+);
+check(
+  "a manual duty the SLIDER left is on the cycle too — stopped, it goes quiet",
+  nextFanGestureAction(inputs({ mode: "manual", targetPercent: 45 })) === "off"
 );
 check("fun mode → automatic", nextFanGestureAction(inputs({ mode: "fun" })) === "automatic");
 check(
-  "⚠️  automatic while MOVING skips off and goes to manual 100 % — loud is the safe side",
-  nextFanGestureAction(inputs({ speedKmh: 5 })) === "full"
+  "⚠️  manual 100 % while MOVING skips off and goes to automatic — the two-state toggle",
+  nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: 5 })) === "automatic"
 );
 check(
   "⚠️  …and so does an unknown speed, so *off* needs proof rather than the absence of it",
-  nextFanGestureAction(inputs({ speedKmh: null })) === "full"
+  nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: null })) === "automatic"
+);
+check(
+  "⚠️  and the only two states reachable while moving are still automatic and manual 100 %",
+  nextFanGestureAction(inputs({ speedKmh: 5 })) === "full" &&
+    nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: 5 })) === "automatic"
 );
 check(
   "a NaN target never reads as a stopped fan",
@@ -346,36 +354,42 @@ check("a fresh loop is in automatic", automatic.mode() === "automatic");
 
 await holdEnter(QUICK_HOLD_MS);
 check(
-  `⚠️  hold 1, bike stopped: automatic → off (mode ${automatic.mode()}, ${controller.state().targetPercent} %)`,
-  automatic.mode() === "manual" && controller.state().targetPercent === 0 && !controller.state().driverEnabled
-);
-
-await holdEnter(QUICK_HOLD_MS);
-check(
-  `hold 2: off → manual ${MAX_DUTY_PERCENT} %`,
+  `hold 1: automatic → manual ${MAX_DUTY_PERCENT} %`,
   automatic.mode() === "manual" && controller.state().targetPercent === MAX_DUTY_PERCENT
 );
 
 await holdEnter(QUICK_HOLD_MS);
-check("hold 3: manual 100 % → automatic, closing the cycle", automatic.mode() === "automatic");
+check(
+  `⚠️  hold 2, bike stopped: manual ${MAX_DUTY_PERCENT} % → off — ONE hold from the state he rides in`,
+  automatic.mode() === "manual" && controller.state().targetPercent === 0 && !controller.state().driverEnabled
+);
+
+await holdEnter(QUICK_HOLD_MS);
+check("hold 3: off → automatic, closing the cycle", automatic.mode() === "automatic");
 check("…and the dashboard is told", latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic);
 
-// Moving: the cycle degrades to the two-state toggle.
+// Moving: the cycle degrades to the two-state toggle. From automatic a hold still goes to
+// full — that is the loud, thermally safe side — and from full it goes back to automatic
+// rather than to the quiet state the bike has not agreed to.
 bus.speedKmh = 5;
 record("speed_can_kmh", 5);
 await settle(TICK_MS * 4);
 await holdEnter(QUICK_HOLD_MS);
 check(
-  `⚠️  a hold at ${bus.speedKmh} km/h skips *off* and goes to manual ${MAX_DUTY_PERCENT} %`,
+  `a hold at ${bus.speedKmh} km/h goes to manual ${MAX_DUTY_PERCENT} %`,
   automatic.mode() === "manual" && controller.state().targetPercent === MAX_DUTY_PERCENT
 );
+await holdEnter(QUICK_HOLD_MS);
+check(
+  "⚠️  …and the next one SKIPS off and returns to automatic, because the bike is moving",
+  automatic.mode() === "automatic"
+);
 
-// The revert: *off* must not follow the rider onto a road.
+// The revert: *off* must not follow the rider onto a road. Two holds to reach it now.
 bus.speedKmh = 0;
 record("speed_can_kmh", 0);
 await settle(TICK_MS * 4);
 await holdEnter(QUICK_HOLD_MS);
-check("back to automatic, ready to be switched off again", automatic.mode() === "automatic");
 await holdEnter(QUICK_HOLD_MS);
 check("the fan is off with the bike stopped", automatic.mode() === "manual" && controller.state().targetPercent === 0);
 bus.speedKmh = 5;
@@ -398,13 +412,13 @@ check(
 );
 
 // A bus that goes quiet with the fan off must leave it off: that silence is an AC charge,
-// which is the whole reason the state exists. The mode is put back through the endpoint's
-// own call first, because the slider left the fan at manual 0 and one hold from there is
-// `full`, not `off`.
+// which is the whole reason the state exists. From the slider's manual 0 one hold is
+// `automatic` and the next two walk back round to off.
 bus.speedKmh = 0;
 record("speed_can_kmh", 0);
-await automatic.setMode("automatic");
 await settle(TICK_MS * 4);
+await holdEnter(QUICK_HOLD_MS);
+await holdEnter(QUICK_HOLD_MS);
 await holdEnter(QUICK_HOLD_MS);
 check(
   "the gesture has the fan off again, with the bike stopped",
@@ -455,8 +469,8 @@ check(
 
 await holdEnter(FAN_HOLD_MS);
 check(
-  `⚠️  a hold at the shipped ${FAN_HOLD_MS} ms steps the fan (mode ${automatic.mode()})`,
-  automatic.mode() === "manual" && controller.state().targetPercent === 0
+  `⚠️  a hold at the shipped ${FAN_HOLD_MS} ms steps the fan to manual ${MAX_DUTY_PERCENT} %`,
+  automatic.mode() === "manual" && controller.state().targetPercent === MAX_DUTY_PERCENT
 );
 clearInterval(shippedBus);
 shippedGestures.stop();
@@ -526,6 +540,9 @@ async function holdStubborn(holdMs: number): Promise<void> {
 // One tap first, for the reason §3a gives: a runner started mid-stream has not yet seen
 // the 0 that a watched 0→1 needs, and re-recording an unchanged 0 raises no event.
 await holdStubborn(60);
+// Two holds to reach the quiet state: automatic → full, then full → off. The first one
+// succeeds; it is the second, the STOP, that this controller refuses.
+await holdStubborn(QUICK_HOLD_MS);
 await holdStubborn(QUICK_HOLD_MS);
 check(
   "the hold stopped the fan even though the bridge refused",
@@ -790,7 +807,7 @@ if (failures > 0) {
 } else {
   console.log("✓ a press followed by 20 minutes of silence never fires, a 300 ms press never fires, and a 1.3 s");
   console.log("  hold fires exactly once while the thumb is still down; the longest ENTER press and the longest");
-  console.log("  ordinary cancel press ever recorded both fire nothing; the cycle walks automatic → off → 100 %");
+  console.log("  ordinary cancel press ever recorded both fire nothing; the cycle walks automatic → 100 % → off");
   console.log("  → automatic against a real loop, skips *off* above 3 km/h, reverts its OWN off when the bike");
   console.log("  moves but never the slider's, and leaves the fan off when the bus goes quiet; and a waypoint");
   console.log("  8 000 km from the fix before it is refused with a code the phone can read");
