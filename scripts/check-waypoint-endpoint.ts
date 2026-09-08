@@ -12,8 +12,9 @@ import { LATITUDE_RANGE, LONGITUDE_RANGE, handleWaypointEndpoint } from "../src/
 //   node --experimental-strip-types scripts/check-waypoint-endpoint.ts
 //
 // ⚠️ NOTHING COVERED THIS ENDPOINT UNTIL NOW, which is how it came to save a position
-// 7 000 km from the bike (issue #157). Four refusal branches and five sentences reach a
-// rider through Siri or a red banner, and every one of them was unasserted.
+// 7 000 km from the bike (issue #157). Five refusal branches and five sentences reach a
+// rider through Siri or a red banner, and every one of them was unasserted. Three of the
+// five are asserted here; the two that are not, and why, are at the foot of the file.
 //
 // The awkward part is the clock: handleWaypointEndpoint refuses unless
 // systemClockTrust() says "satellite-backed", and that is process state set by the real
@@ -85,7 +86,7 @@ console.log("\n2. what it refuses, and whether it says why");
 
 const noFix = await ask();
 check("with no fix at all, nothing is saved", !noFix.saved);
-check("…and the sentence says which of the four reasons it was", noFix.message.includes("No GPS fix yet"));
+check("…and the sentence says which of the five reasons it was", noFix.message.includes("No GPS fix yet"));
 
 stageFix(45.374038, 14.321478);
 
@@ -112,7 +113,13 @@ console.log("\n3. a corroborated clock, and then a waypoint");
 for (let reading = 0; reading < 6; reading += 1) {
   await syncSystemClockFromGps(Date.now() / 1000);
 }
-check("six corroborating readings make the clock satellite-backed", systemClockTrust() === "satellite-backed");
+if (process.env.GPS_TIME_SYNC === "0") {
+  // Asserting it here would pass without the readings having done anything, since the
+  // env makes systemClockTrust() answer "satellite-backed" before it looks at the gate.
+  console.log("  – the clock was already trusted by GPS_TIME_SYNC=0, so the corroboration proves nothing here");
+} else {
+  check("six corroborating readings make the clock satellite-backed", systemClockTrust() === "satellite-backed");
+}
 
 const saved = await ask();
 check("a fresh, plausible fix under a trusted clock saves", saved.saved);
@@ -181,14 +188,17 @@ check("any other Accept is Siri's contract, not the dashboard's", (await html.te
 
 server.close();
 
-// One branch is deliberately not covered: a fix older than FIX_MAX_AGE_MS. Its age comes
-// from ageMs(), which reads a monotonic mark taken inside record(), so reaching it means
-// waiting 31 real seconds — against a suite that runs in ten. The branch above it (a
-// signal in liveState with no monotonic mark) cannot be reached from outside signals.ts
-// at all; record() writes both together, which is the property that makes it "cannot
-// happen" in the handler's own words.
+// Two of the five sentences are not asserted here. A fix older than FIX_MAX_AGE_MS takes
+// a 31-second wait, because its age comes from a monotonic mark taken inside record() —
+// against a suite that runs in ten seconds. And "the clock disagrees" needs the gate to
+// reach `contested`, which takes a corroborated time that contradicts one already
+// trusted; check-gps-clock.ts drives that gate directly and is the place for it.
+//
+// The branch with no sentence of its own — a signal in liveState with no monotonic mark —
+// cannot be reached from outside signals.ts at all: record() writes both together, which
+// is the property that makes it "cannot happen" in the handler's own words.
 console.log(
-  `\n${failures === 0 ? "✓" : "✗"} /waypoint: four refusal sentences, the save, the sequence and Siri's contract` +
+  `\n${failures === 0 ? "✓" : "✗"} /waypoint: three of the five refusal sentences, the save, the sequence and Siri's contract` +
     ` — ${failures} failure${failures === 1 ? "" : "s"}`
 );
 if (failures > 0) {

@@ -1,14 +1,14 @@
 // @ts-check
 
 import van from "../vendor/van-1.6.1.js";
-import { chartTick, knownKeys, signalState, valueOf } from "../lib/store.js";
-import { averageMovingSpeedKmh, distanceKm, movingTimeSeconds, topSpeed } from "../lib/trip.js";
-import { bytes, clockTime, compass, duration } from "../lib/format.js";
+import { knownKeys, valueOf } from "../lib/store.js";
+import { bytes } from "../lib/format.js";
 import * as units from "../lib/units.js";
 import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { FanControl, refreshFanStatus } from "./fan.js";
+import { TripStats } from "./trip-stats.js";
 
 const { button, div, h2 } = van.tags;
 
@@ -77,7 +77,7 @@ export function Sheet() {
       h2({ class: "sheet-heading" }, "Units"),
       UnitsToggle(),
       h2({ class: "sheet-heading" }, "This session"),
-      TripStats(),
+      TripStats(status),
       // No subtitle here, deliberately. Three sections carrying a one-line "what can
       // this do to the bike" was one sentence too many for a single bit of
       // information: the controls in this one are in the grey tier, which says the
@@ -126,57 +126,6 @@ export function Sheet() {
         "Close"
       )
     )
-  );
-}
-
-function TripStats() {
-  return div(
-    { class: "stats" },
-    Stat("Distance", () => {
-      chartTick.val;
-      const travelledKm = distanceKm();
-      return travelledKm == null ? "–" : `${units.distance(travelledKm).toFixed(1)} ${units.distanceUnit()}`;
-    }),
-    Stat("Moving", () => {
-      chartTick.val;
-      return duration(movingTimeSeconds());
-    }),
-    Stat("Average", () => {
-      chartTick.val;
-      const average = averageMovingSpeedKmh();
-      return average == null ? "–" : `${units.speed(average).toFixed(0)} ${units.speedUnit()}`;
-    }),
-    Stat("Top", () => {
-      chartTick.val;
-      return `${units.speed(topSpeed()).toFixed(0)} ${units.speedUnit()}`;
-    }),
-    Stat("Altitude", () => {
-      const metres = valueOf("gps_altitude_m");
-      return metres == null ? "–" : `${Math.round(units.altitude(metres))} ${units.altitudeUnit()}`;
-    }),
-    Stat("Heading", () => compass(valueOf("gps_course_deg"))),
-    // Where the last waypoint was and when, rather than a count. The count is still here
-    // as the `#`, but on its own it was a claim about the ride that a restart made false:
-    // waypoint_* live only in the server's liveState, so after a restart with none saved
-    // the old tile said "0" for a ride that may have had a dozen. Now it says so.
-    Stat(
-      "Waypoints",
-      () => {
-        const latitude = signalState("waypoint_lat").val;
-        const longitude = signalState("waypoint_lon").val;
-        // Four decimals is 11 m, which is enough to know which lay-by; the ALL tab has
-        // the full six if you are reading one out to somebody.
-        return latitude && longitude ? `${latitude.value.toFixed(4)}, ${longitude.value.toFixed(4)}` : "–";
-      },
-      () => {
-        const saved = signalState("waypoint_seq").val;
-        return saved ? `#${Math.round(saved.value)} · ${clockTime(saved.ts)}` : "none since restart";
-      }
-    ),
-    Stat("Satellites", () => {
-      const satellites = valueOf("gps_satellites");
-      return satellites == null ? "–" : String(Math.round(satellites));
-    })
   );
 }
 
@@ -386,22 +335,6 @@ function UnitsToggle() {
         system === "metric" ? "Metric · km, °C" : "Imperial · mi, °F"
       )
     )
-  );
-}
-
-/**
- * @param {string} label
- * @param {() => string} value
- * @param {() => string} [sub] a smaller second line, for a tile whose answer is two facts
- */
-function Stat(label, value, sub) {
-  return div(
-    { class: "stat" },
-    div({ class: "stat-label" }, label),
-    div({ class: "stat-value" }, value),
-    // van skips a null child (`child != _undefined` in van-1.6.1.js:90), so a tile
-    // without a second line gets two divs exactly as it always did.
-    sub ? div({ class: "stat-sub" }, sub) : null
   );
 }
 

@@ -20,6 +20,8 @@ The position is **copied** rather than left implicit in whatever `gps_lat`/`gps_
 
 **A repeat of the same position logs nothing but the sequence.** `record()` suppresses a value equal to the last one it logged, and `waypoint_lat`/`waypoint_lon` carry no deadband, so two saves from the same live fix — two presses inside one GPS gap, which is guaranteed while the fix is under `FIX_MAX_AGE_MS` and no new sample has arrived — write only `waypoint_seq`. Anything reading waypoints back must therefore resolve each coordinate as _the last value logged at or before that timestamp_ rather than pivoting the three signals on their shared millisecond. That recovery is exact, not approximate: the coordinate was suppressed precisely because it was equal.
 
+⚠️ That lookup has **no lower time bound**, and it cannot have one — a suppressed coordinate matches a save that may be hours earlier in the same boot. In a complete log it can only ever reach the suppressed row's twin, because the first `record()` of any key after a restart always logs (`lastLogged` starts empty). In an **incomplete** one — a partial decrypt, a truncated download — it can reach across that boundary and pair a sequence with an older boot's position. The `no position logged` verdict is therefore effectively unreachable and exists as a guard rather than as a state anyone has seen.
+
 ## The 2026-08-09 waypoint, and why nothing on the bike could tell
 
 Of the six waypoints in the archive, one sits about 7 000 km from where the bike stood. The chain:
@@ -50,15 +52,19 @@ The bike itself still cannot refuse the 2026-08-09 case — it has only one side
 
 A waypoint is a **copy of a fix**, so the nearest logged fix on each side of it must agree with it. Per axis, because `gps_lat` and `gps_lon` are deadbanded independently — on 2026-08-09 the latitude's nearest witness was 19 minutes old while the longitude's was 148 ms. A witness that does not exist raises no objection.
 
-**The skew is the whole gate.** A waypoint copies liveState, and the coordinates carry a 3 m deadband, so _the fix logged immediately before a waypoint is the fix the waypoint copied_. On 2026-08-09 the previous `gps_lon` row is byte-identical to the waypoint. Comparing against it is not a weak test, it is not a test at all — measured over the whole archive, with the skew set to zero the corrupt waypoint reads `on track` with a witness 0 s old. With a five-second skew it reads `contradicted` from **both** sides, and the five good waypoints keep witnesses 5 s away on either side.
+**The skew is the whole gate.** A waypoint copies liveState, and the coordinates carry a 3 m deadband, so _the fix logged immediately before a waypoint is the fix the waypoint copied_. On 2026-08-09 the previous `gps_lon` row is byte-identical to the waypoint. Comparing against it is not a weak test, it is not a test at all.
+
+Precisely what the skew buys, because a first draft of this paragraph overstated it: **over the whole archive the 2026-08-09 row is caught either way**, since the corrected fix 393 ms later objects on its own. It is at the **end of data** that the skew is the only thing left — a bike switched off straight after a corrupt fix has no later fix at all, and the before-side witness is then the entire gate. Measured on the archive truncated at that waypoint's own millisecond: with the skew, `contradicted` from a witness 1 690 s old; without it, `on track` from a witness 0 s old, which is the corrupt fix vouching for itself. With the skew the five good waypoints keep witnesses 5 s away on either side.
 
 The two constants:
 
-- **Skew, 5 s.** Above the lifetime of a corrupt fix — one row, corrected after 541 ms, and a value can only be copied while it is still live — and far below any distance that matters: 5 s at 200 km/h is 278 m against a threshold of 39–55 km.
+- **Skew, 5 s.** Above the lifetime of a corrupt fix — one row, corrected after 541 ms, and a value can only be copied while it is still live — and far below any distance that matters: 5 s at 200 km/h is 278 m against a threshold of tens of kilometres.
 - **Window, 30 min.** Bounded **below by the archive**: catching the corrupt waypoint from the _before_ side needs a witness 1 690 s old. That is what makes the gate work at the end of data — a bike switched off straight after a corrupt fix has no later fix to be caught by, and truncating the archive at the waypoint's own millisecond still yields `contradicted`. ⚠️ The margin is 6.5 %: at 28 minutes that case is lost, and it rests on a single row. Bounded **above** by the only way a witness gets that stale — at a 3 m deadband and roughly 1 Hz, no logged fix for 30 minutes means the bike did not move, _or_ the hub slept. Only the second can hide real movement, and a bike carried more than 0.5° inside a sub-30-minute sleep is the residual false positive. It lands in the table as `contradicted` rather than silently on the map.
-- **Threshold, 0.5°** — 39–55 km at these latitudes. A waypoint copies a fix at most `FIX_MAX_AGE_MS` old, so at 200 km/h it is under 2 km from the truth and a witness within the window adds at most a few more.
+- **Threshold, 0.5°** — 55.7 km in latitude everywhere, and 30–41 km in longitude across the 42.6–57.7°N this archive spans, since a degree of longitude shortens with the cosine. A waypoint copies a fix at most `FIX_MAX_AGE_MS` old, so at 200 km/h it is under 2 km from the truth and a witness within the window adds at most a few more.
 
-**What it cannot see.** 0.5° is a coarse instrument. `docs/route-map.md` records single fixes that jump 0.3 km, 1.4 km, 4.8 km and 420 km out and back; **only the last of those is visible here.** A waypoint built on one of the small ones is drawn as `on track` and looks perfectly ordinary. Likewise, when neither axis has a witness inside the window the gate is entirely off — which is why `no witness` is a verdict of its own rather than silence, and why the map draws only `on track`.
+**Each axis needs its own witness.** An axis with no witness in the band is an axis that is not gated at all: its comparisons resolve against the waypoint's own value and object to nothing, so the other axis alone would carry the row to `on track`. The archive holds the case — at the 2026-08-08 03:16:58 latitude spike (2.016°, about 224 km) there are **0 latitude witnesses and 5 longitude witnesses** inside the 5 s…30 min band. Run through the verdict logic, a waypoint saved on that fix reads `on track` under an all-four-missing rule and `no witness` under the per-axis one. So the rule is per axis, and it costs the six real waypoints nothing: still five `on track` and the 2026-08-09 row `contradicted`.
+
+**What it cannot see.** 0.5° is a coarse instrument — 30 km at worst. `docs/route-map.md` records single fixes that jump 0.3 km, 1.4 km, 4.8 km and 420 km out and back; **only the last of those is visible here.** A waypoint built on one of the small ones is drawn as `on track` and looks perfectly ordinary. Likewise, when neither axis has a witness inside the window the gate is entirely off — which is why `no witness` is a verdict of its own rather than silence, and why the map draws only `on track`.
 
 **A refuted alternative, so it is not re-derived.** Witnessing against the route query's own despiked `clean` CTE looks stronger and is not. It still returns `on track` on the end-of-data case at both ±30 min and ±6 h spans, because a corrupt fix with no successor cannot be shown to be a spike and so survives into the witness set to vouch for itself; it costs 0.77 s / 2.01 s against 0.022 s; and its `LAG`/`LEAD` over a union of per-waypoint neighbourhoods makes a row's successor depend on which _other_ waypoints are in the window — at ±6 h one row's successor was a fix 28.5 days later. The skew guard needs no window functions at all.
 
@@ -74,7 +80,7 @@ There is still no GPX export.
 
 ## The refusals, and what the rider hears
 
-`GET /waypoint` always answers **200**, refusal included: Siri surfaces a non-2xx as a generic shortcut failure and never speaks the body, which is the one outcome where being told matters most. Four branches, five sentences:
+`GET /waypoint` always answers **200**, refusal included: Siri surfaces a non-2xx as a generic shortcut failure and never speaks the body, which is the one outcome where being told matters most. Five branches, five sentences — two branches share the first one:
 
 | when                                             | what it says                                                 |
 | ------------------------------------------------ | ------------------------------------------------------------ |
@@ -84,7 +90,7 @@ There is still no GPX export.
 | the fix is older than 30 s                       | "GPS fix is N seconds old"                                   |
 | the clock has never synced, or is contested      | two sentences, worded apart: one is waited out, one is not   |
 
-`scripts/check-waypoint-endpoint.ts` covers all of these except the 30-second one, whose age comes from a monotonic mark taken inside `record()` — reaching it means waiting 31 real seconds against a suite that runs in ten.
+`scripts/check-waypoint-endpoint.ts` asserts three of the five sentences. The 30-second one is out because its age comes from a monotonic mark taken inside `record()`, so reaching it means waiting 31 real seconds against a suite that runs in ten; "the clock disagrees" is out because it needs the gate to reach `contested`, which takes a corroborated time contradicting one already trusted — `scripts/check-gps-clock.ts` drives that gate directly and is the place for it.
 
 ## An open question worth not losing
 
