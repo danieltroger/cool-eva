@@ -28,6 +28,7 @@ import {
   MIN_FIX_INTERVAL_MS,
   distanceKm,
   implausibleJumpKmh,
+  isPositionOnEarth,
   type Fix,
 } from "../src/gps/fix-plausibility.ts";
 import { FUN_GATE_MAX_AGE_MS } from "../src/fan/fun.ts";
@@ -621,6 +622,22 @@ check(
 check(
   `the great-circle distance is right to a metre (${distanceKm(here, { latitudeDeg: 57.71, longitudeDeg: 11.97, at: 0 }).toFixed(3)} km for 0.01°)`,
   Math.abs(distanceKm(here, { latitudeDeg: 57.71, longitudeDeg: 11.97, at: 0 }) - 1.112) < 0.001
+);
+
+// ⚠️ THE SEAM WITH #167, which landed the range gate while this branch was open. Both
+// refusals have to survive the merge: one refuses a coordinate that is not a place, the
+// other a place the bike cannot have got to, and neither can see the other's case.
+record("gps_lat", 57.7, Date.now());
+record("gps_lon", 999, Date.now());
+await settle(20);
+const offPlanet = saveWaypointNow();
+check(
+  `⚠️  a longitude off the planet is refused by the range gate (${offPlanet.message})`,
+  !offPlanet.saved && offPlanet.refusal === WAYPOINT_REFUSAL.FIX_NOT_ON_EARTH
+);
+check(
+  "…and the two gates are different gates: 130.3° is ON Earth and still refused as a jump",
+  isPositionOnEarth(57.7, 130.3) && !isPositionOnEarth(57.7, 999)
 );
 
 const refusalBounds = boundsFor("waypoint_refusal", "", "waypoint");
