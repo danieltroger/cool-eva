@@ -38,13 +38,12 @@ export const COOLING_AT_53_MS = 1113576;
  * 2026-09-07T15:09-15:26 UTC, inside the DC stops the plant's own constants were fitted from: the
  * reading comes back to 53 after a 55 excursion and is still drifting UP.
  *
- * ⚠️ This is the band NO_RAISE_FROM_C's own comment is about and the cooling episode does not
- * reach. The reachable rate space at a reading of 53 splits at 1/(RELEASE_FACTOR × HORIZON_MIN) =
- * 0.0833 K/min: above 0.125 the time-to-cliff test steps down anyway, between them the hold and a
- * plain SETTLED behave identically, and only BELOW 0.0833 does the tier decide anything — it is the
- * difference between holding and stepping the current UP. `estimateHeatingRate` reads +0.037 K/min
- * here, squarely in that band. Without this fixture, adding `&& rate.perMinute <= 0` to the hold
- * passes the entire check while re-enabling exactly what the tier exists to prevent.
+ * ⚠️ SUPERSEDED EXPECTATION, kept because the DATA is what matters. Under #181's tiers this fixture
+ * pinned "a pack reading 53 and drifting up must NOT be raised"; under the 54 °C setpoint it pins
+ * the opposite — 53 is a degree below target, so the current goes up. `estimateHeatingRate` reads
+ * +0.037 K/min here, which is the band where the decision is neither forced by the cliff nor
+ * obvious, so it is still the fixture that would go red if the no-raise tier were reinstated.
+ * docs/charge-auto.md § "Superseded: the two tiers at 53 and 54".
  */
 export const DRIFTING_EPISODE: TemperatureSample[] = [
   { atMs: 0, celsius: 53 },
@@ -56,3 +55,34 @@ export const DRIFTING_EPISODE: TemperatureSample[] = [
 
 /** 15:26:08 UTC — a tick with the reading back at 53 and the fitted slope still positive. */
 export const DRIFTING_AT_53_MS = 1008062;
+
+/**
+ * 2026-09-09, the DC stop that produced #186 — `batt_temp_hi` exactly as logged, from the moment
+ * the session opened (`charge_manager_state` → 0x23 at 15:50:56, which is when `forgetSession`
+ * clears the ring) to the moment the pack first read 54.
+ *
+ * ⚠️ THE FIXTURE THAT SHOWS THE STALE-SLOPE BUG: the reading climbs 46 → 50 in four and a half
+ * minutes and then does not move for nearly ten, and the shipped estimator kept reporting the
+ * steep early slope right through that silence. Numbers and consequence:
+ * docs/charge-auto.md § "The silence is a bound too".
+ *
+ * ⚠️ OPEN-LOOP — these show what the rule would have DECIDED on this history, never what would
+ * have HAPPENED. Closed-loop behaviour is the plant grid's job.
+ */
+export const SEPTEMBER_9_EPISODE: TemperatureSample[] = [
+  { atMs: 1000, celsius: 46 },
+  { atMs: 52_000, celsius: 47 },
+  { atMs: 101_000, celsius: 48 },
+  { atMs: 183_000, celsius: 49 },
+  { atMs: 271_000, celsius: 50 },
+  { atMs: 852_000, celsius: 51 },
+  { atMs: 1_344_000, celsius: 52 },
+  { atMs: 1_421_000, celsius: 53 },
+  { atMs: 1_468_000, celsius: 54 },
+];
+
+/** 16:03:08 — the tick where the shipped rule commanded 65 A with the reading at 50. */
+export const SEPTEMBER_9_RATCHET_MS = 732_000;
+
+/** 16:07:08 — four ticks later, where it reached 45 A with the reading at 51. */
+export const SEPTEMBER_9_AT_45A_MS = 972_000;

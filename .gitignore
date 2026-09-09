@@ -201,3 +201,8 @@ energica_probe.py
 # review — and an untracked directory of .html is exactly the kind of local-only state that made a
 # green worktree disagree with CI once already.
 preview-shots/
+
+# Ride logs are large encrypted blobs and are never committed — decrypt them on the Mac with
+# scripts/decrypt-log.ts. The small text extracts beside them ARE tracked: docs/charge-auto.md and
+# docs/can-0x121-charge-command.md cite them as the provenance for #186's measurements.
+evidence/*.celog

@@ -1,0 +1,197 @@
+### HEAD=754dfa2 running=cool-eva: running 754dfa2 uptime=3205.72s
+### git status
+ M docs/charge-auto.md
+ M public/views/charge-auto.js
+ M src/charge/auto.ts
+### git diff (the uncommitted patch)
+diff --git a/docs/charge-auto.md b/docs/charge-auto.md
+index c55f2e2..b08cd41 100644
+--- a/docs/charge-auto.md
++++ b/docs/charge-auto.md
+@@ -80,11 +80,15 @@ That is the whole safety posture, and it is what makes the feature bounded: **it
+ 
+ ### Taking it back
+ 
+-⚠️ A stand-down lasts the **charge**, not the session's memory of it, and clearing it is **one tap**. While stood down the effective mode is still `automatic`, so a plain on/off toggle would read "switch off" — the opposite of what the rider wants — and taking the controller back would mean tapping off and then on, through a label that says the wrong thing. The charge tab's button therefore has three states, and when the reason is `RIDER` it reads _"take the current back"_ and sends `mode=automatic`, which is what clears the flag.
++⚠️ **For now, the only thing that switches the controller off is the toggle on the charge tab.** Setting a current yourself — the dial on the bike or a hand-set current from the phone — no longer stands the controller down; it is a one-off nudge, and the next 60 s tick decides again and takes the current back. `src/charge/auto.ts` no longer calls `standDown` from either path. The pure rule in `auto-curve.ts` still honours `riderOverride` (so the fail-safe branch above is unchanged and `check-charge-auto.ts` still asserts it), but nothing in production sets that flag any more.
++
++The stand-down design below is kept because it is the behaviour this may return to; it is currently dormant, not deleted.
++
++⚠️ A stand-down lasted the **charge**, not the session's memory of it, and clearing it was **one tap**. While stood down the effective mode is still `automatic`, so a plain on/off toggle would read "switch off" — the opposite of what the rider wants — and taking the controller back would mean tapping off and then on, through a label that says the wrong thing. The charge tab's button therefore has three states, and when the reason is `RIDER` it reads _"take the current back"_ and sends `mode=automatic`, which is what clears the flag.
+ 
+ ⚠️ **The reason moves with the flag, in both directions.** Standing down and being taken back each refresh it immediately rather than waiting for the next 60 s tick — otherwise the button spends up to a minute offering the wrong action in exactly the window this is about.
+ 
+-⚠️ **The rider always wins**, from either direction. A `dc_charge_limit_selected_a` event — the dial on the bike — stands the controller down for the rest of the session, and so does a charge current set by hand from the phone: both are the rider saying what they want, and a controller that overrode either three seconds later is the thing that gets a Pi ripped out. Switching the toggle back to automatic is an explicit "you take it again" and clears the stand-down. That event is necessarily the rider and never our own echo: this Pi does not hear its own transmissions (`createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS`) — proven 2026-09-07, when three Pi sends produced no decoded row while all twelve of the dash's did.
++⚠️ **The rider always wins**, from either direction, was the original posture. A `dc_charge_limit_selected_a` event — the dial on the bike — stood the controller down for the rest of the session, and so did a charge current set by hand from the phone: both are the rider saying what they want, and a controller that overrode either three seconds later is the thing that gets a Pi ripped out. Switching the toggle back to automatic is an explicit "you take it again" and clears the stand-down. That event is necessarily the rider and never our own echo: this Pi does not hear its own transmissions (`createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS`) — proven 2026-09-07, when three Pi sends produced no decoded row while all twelve of the dash's did.
+ 
+ ## What it is allowed to do
+ 
+diff --git a/public/views/charge-auto.js b/public/views/charge-auto.js
+index 766f96e..1c52967 100644
+--- a/public/views/charge-auto.js
++++ b/public/views/charge-auto.js
+@@ -130,7 +130,7 @@ export function toggleAction(currentMode, reason, floor_a) {
+     return {
+       label: "Switch off for this charge",
+       mode: "off",
+-      note: `${floor}, and setting the current yourself — on the bike or from here — hands it back to you.`,
++      note: `${floor}, and it stays on until you switch it off here — a current you set yourself, on the bike or from here, is a one-off the next tick takes back.`,
+     };
+   }
+   return {
+diff --git a/src/charge/auto.ts b/src/charge/auto.ts
+index 08e323b..d7be2ce 100644
+--- a/src/charge/auto.ts
++++ b/src/charge/auto.ts
+@@ -56,9 +56,8 @@ export interface ChargeAutomatic {
+   /**
+    * Told when a charge current was commanded by HAND, from the phone.
+    *
+-   * ⚠️ Stands the controller down for the rest of the session, the same as the dial on the bike —
+-   * both are the rider saying what they want, and a controller that overrode either three seconds
+-   * later is the thing that gets a Pi ripped out. Switching the toggle back to automatic clears it.
++   * For now this does NOT stand the controller down: only the toggle on the charge tab switches
++   * automatic off. A hand-set current is a one-off nudge and the next tick takes the current back.
+    */
+   noteManualCommand: () => void;
+   /** Stops the loop and unsubscribes. Called from index.ts's shutdown. */
+@@ -102,13 +101,10 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
+     if (changed["batt_temp_hi"] !== undefined) {
+       remember(context, changed["batt_temp_hi"].value);
+     }
+-    // ⚠️ The rider moving the dial stands this down for the rest of the session. This Pi does not
+-    // hear its own transmissions (`createRawChannel` does not set CAN_RAW_RECV_OWN_MSGS, proven
+-    // 2026-09-07: our three sends produced no decoded row while all twelve of the dash's did), so a
+-    // `dc_charge_limit_selected_a` event is necessarily the RIDER and never our own echo.
+-    if (changed["dc_charge_limit_selected_a"] !== undefined) {
+-      standDown(context);
+-    }
++    // Setting a current — the rider moving the dial (a `dc_charge_limit_selected_a` event) or a
++    // hand-set current from the phone (noteManualCommand) — no longer stands the controller down.
++    // For now the ONLY thing that switches automatic off is the toggle on the charge tab; a manual
++    // current is a one-off nudge and the next tick takes the current back. See docs/charge-auto.md.
+     // ⚠️ Reset on ENTERING a DC session as well as leaving one. Resetting only on exit leaves the
+     // ring full of temperatures from the ride in — a hot pack cooling on the way to the charger
+     // reads as a falling rate, and the first tick of the new charge decides on it.
+@@ -140,8 +136,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
+       console.warn(`charge-auto: mode set to ${mode}`);
+     },
+     noteManualCommand: () => {
+-      standDown(context);
+-      console.warn("charge-auto: a charge current was set by hand — standing down for this charge");
++      console.log("charge-auto: a charge current was set by hand — staying on, the next tick decides again");
+     },
+     stop: () => {
+       if (context.timer) {
+@@ -258,19 +253,6 @@ function publishMode(context: AutoContext): void {
+   record("charge_auto_mode", CHARGE_AUTO_MODE_CODE[stateOf(context).mode]);
+ }
+ 
+-/**
+- * Stands the controller down and says so IMMEDIATELY.
+- *
+- * ⚠️ The reason has to move with the flag. Setting only the flag left `reason` stale until the next
+- * tick, so for up to a minute after the rider set a current the charge tab still offered "switch
+- * off" — the two-tap trap, in the exact window it is supposed to be gone from.
+- */
+-function standDown(context: AutoContext): void {
+-  context.riderOverride = true;
+-  context.reason = CHARGE_AUTO_REASON.RIDER;
+-  record("charge_auto_reason", context.reason);
+-}
+-
+ function stateOf(context: AutoContext): ChargeAutoState {
+   return {
+     mode: context.mode,
+### charge-auto journal lines (all boots journald holds)
+2026-09-09T12:59:13+02:00 cool-eva node[758]: charge-ack: DC 50 A — Sent 50 A — nothing to observe, the request was already 51 A.
+2026-09-09T13:02:28+02:00 cool-eva node[758]: charge-auto: mode set to automatic
+2026-09-09T13:03:13+02:00 cool-eva node[758]: charge-ack: DC 45 A — Station-limited: asked 45 A, the charger is giving 34 A. Not a fault — only a reduction proves a command took.
+2026-09-09T14:07:26+02:00 cool-eva node[755]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T14:07:27+02:00 cool-eva node[755]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T14:31:28+02:00 cool-eva node[757]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T14:31:29+02:00 cool-eva node[757]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T14:55:34+02:00 cool-eva node[757]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T15:50:56+02:00 cool-eva node[760]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T15:50:57+02:00 cool-eva node[760]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T15:56:07+02:00 cool-eva node[760]: charge-ack: DC 70 A — No reading of the charge request yet, so whether it took cannot be said.
+2026-09-09T16:03:18+02:00 cool-eva node[760]: charge-ack: DC 65 A — Command NOT acknowledged after 10 s — the request is still 70 A.
+2026-09-09T16:04:18+02:00 cool-eva node[760]: charge-ack: DC 60 A — Command NOT acknowledged after 10 s — the request is still 65 A.
+2026-09-09T16:05:18+02:00 cool-eva node[760]: charge-ack: DC 55 A — Command NOT acknowledged after 10 s — the request is still 60 A.
+2026-09-09T16:06:18+02:00 cool-eva node[760]: charge-ack: DC 50 A — Command NOT acknowledged after 10 s — the request is still 55 A.
+2026-09-09T16:07:18+02:00 cool-eva node[760]: charge-ack: DC 45 A — Command NOT acknowledged after 10 s — the request is still 50 A.
+2026-09-09T16:08:18+02:00 cool-eva node[760]: charge-ack: DC 40 A — Command NOT acknowledged after 10 s — the request is still 45 A.
+2026-09-09T16:12:18+02:00 cool-eva node[760]: charge-ack: DC 45 A — No reading of the charge request yet, so whether it took cannot be said.
+2026-09-09T16:12:42+02:00 cool-eva node[760]: charge-auto: mode set to off
+2026-09-09T16:12:55+02:00 cool-eva node[760]: charge-auto: a charge current was set by hand — staying on, the next tick decides again
+2026-09-09T16:13:05+02:00 cool-eva node[760]: charge-ack: DC 60 A — Command took: request 45 → 59 A in 0.9 s.
+2026-09-09T16:14:26+02:00 cool-eva node[760]: charge-auto: a charge current was set by hand — staying on, the next tick decides again
+2026-09-09T16:14:36+02:00 cool-eva node[760]: charge-ack: DC 75 A — No reading of the charge request yet, so whether it took cannot be said.
+2026-09-09T16:15:54+02:00 cool-eva node[760]: charge-auto: mode set to automatic
+2026-09-09T16:15:55+02:00 cool-eva node[760]: charge-auto: mode set to off
+2026-09-09T16:15:56+02:00 cool-eva node[760]: charge-auto: mode set to automatic
+2026-09-09T16:16:18+02:00 cool-eva node[760]: charge-ack: DC 40 A — No reading of the charge request yet, so whether it took cannot be said.
+2026-09-09T16:17:18+02:00 cool-eva node[760]: charge-ack: DC 35 A — Command NOT acknowledged after 10 s — the request is still 40 A.
+2026-09-09T16:44:38+02:00 cool-eva node[760]: charge-auto: mode set to off
+2026-09-09T16:44:42+02:00 cool-eva node[760]: charge-auto: a charge current was set by hand — staying on, the next tick decides again
+2026-09-09T16:44:53+02:00 cool-eva node[760]: charge-ack: DC 44 A — No reading of the charge request yet, so whether it took cannot be said.
+2026-09-09T16:44:55+02:00 cool-eva node[760]: charge-auto: a charge current was set by hand — staying on, the next tick decides again
+2026-09-09T16:45:05+02:00 cool-eva node[760]: charge-ack: DC 75 A — Station-limited: asked 75 A, the charger is giving 73 A. Not a fault — only a reduction proves a command took.
+2026-09-09T17:53:49+02:00 cool-eva node[760]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T18:01:19+02:00 cool-eva node[758]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T18:01:20+02:00 cool-eva node[758]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T18:01:24+02:00 cool-eva node[760]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T18:01:25+02:00 cool-eva node[760]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T18:01:38+02:00 cool-eva node[760]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T18:01:29+02:00 cool-eva node[759]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T18:01:30+02:00 cool-eva node[759]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T18:01:34+02:00 cool-eva node[762]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T18:01:35+02:00 cool-eva node[762]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T18:01:40+02:00 cool-eva node[782]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T18:01:41+02:00 cool-eva node[782]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T18:01:44+02:00 cool-eva node[758]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T18:01:45+02:00 cool-eva node[758]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T18:01:53+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T18:54:12+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T18:54:27+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T18:56:43+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T19:08:32+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T19:28:21+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T19:31:56+02:00 cool-eva node[758]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T20:04:23+02:00 cool-eva node[760]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T20:04:24+02:00 cool-eva node[760]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T20:04:31+02:00 cool-eva node[760]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+2026-09-09T20:04:29+02:00 cool-eva node[757]: fan: PWM ready on /sys/class/pwm/pwmchip0/pwm0 at 50000 ns, bridge in standby
+2026-09-09T20:04:30+02:00 cool-eva node[757]: charge-auto: automatic DC charge current is ON (set CHARGE_AUTO_ENABLED=0 to disable)
+2026-09-09T20:04:39+02:00 cool-eva node[757]: gesture: btn_mode_enter held 1200 ms — fan off while the bike is stopped — Fan stopped. Both enables LOW, so the bridge is in standby and the rotor fr
+### automatic commands in the audit journal
+{"at":1788800905529,"clockTrustworthy":true,"action":"charge-current","status":"sent","requested":47,"after":null,"rawHex":"18 FF 2F 01 4B 00 00 00","note":"DC 47 A, ceiling 75 A, on 0x121; event frame with no reply — confirm on the dash / charge_limit_a"}
+{"at":1788800966603,"clockTrustworthy":true,"action":"charge-current","status":"sent","requested":75,"after":null,"rawHex":"18 FF 4B 01 4B 00 00 00","note":"DC 75 A, ceiling 75 A, on 0x121; event frame with no reply — confirm on the dash / charge_limit_a"}
+{"at":1788801288916,"clockTrustworthy":true,"action":"charge-current","status":"sent","requested":40,"after":null,"rawHex":"18 FF 28 01 4B 00 00 00","note":"DC 40 A, ceiling 75 A, on 0x121; event frame with no reply — confirm on the dash / charge_limit_a"}
+{"at":1788950222964,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":70,"after":null,"rawHex":"0x120 98 FF 46 00 00 00 00 00 / 0x121 18 FF 46 01 4B 00 00 00","note":"DC 70 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788950629909,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":75,"after":null,"rawHex":"0x120 98 FF 4B 00 00 00 00 00 / 0x121 18 FF 4B 01 4B 00 00 00","note":"DC 75 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788950675674,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":70,"after":null,"rawHex":"0x120 98 FF 46 00 00 00 00 00 / 0x121 18 FF 46 01 4B 00 00 00","note":"DC 70 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788950702952,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":65,"after":null,"rawHex":"0x120 98 FF 41 00 00 00 00 00 / 0x121 18 FF 41 01 4B 00 00 00","note":"DC 65 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788951182951,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":60,"after":null,"rawHex":"0x120 98 FF 3C 00 00 00 00 00 / 0x121 18 FF 3C 01 4B 00 00 00","note":"DC 60 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788951483614,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":55,"after":null,"rawHex":"0x120 98 FF 37 00 00 00 00 00 / 0x121 18 FF 37 01 4B 00 00 00","note":"DC 55 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788951543660,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":50,"after":null,"rawHex":"0x120 98 FF 32 00 00 00 00 00 / 0x121 18 FF 32 01 4B 00 00 00","note":"DC 50 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788951783604,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":45,"after":null,"rawHex":"0x120 98 FF 2D 00 00 00 00 00 / 0x121 18 FF 2D 01 4B 00 00 00","note":"DC 45 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962157269,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":70,"after":null,"rawHex":"0x120 98 FF 46 00 00 00 00 00 / 0x121 18 FF 46 01 4B 00 00 00","note":"DC 70 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962588483,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":65,"after":null,"rawHex":"0x120 98 FF 41 00 00 00 00 00 / 0x121 18 FF 41 01 4B 00 00 00","note":"DC 65 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962648483,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":60,"after":null,"rawHex":"0x120 98 FF 3C 00 00 00 00 00 / 0x121 18 FF 3C 01 4B 00 00 00","note":"DC 60 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962708482,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":55,"after":null,"rawHex":"0x120 98 FF 37 00 00 00 00 00 / 0x121 18 FF 37 01 4B 00 00 00","note":"DC 55 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962768485,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":50,"after":null,"rawHex":"0x120 98 FF 32 00 00 00 00 00 / 0x121 18 FF 32 01 4B 00 00 00","note":"DC 50 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962828484,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":45,"after":null,"rawHex":"0x120 98 FF 2D 00 00 00 00 00 / 0x121 18 FF 2D 01 4B 00 00 00","note":"DC 45 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788962888483,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":40,"after":null,"rawHex":"0x120 98 FF 28 00 00 00 00 00 / 0x121 18 FF 28 01 4B 00 00 00","note":"DC 40 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788963128490,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":45,"after":null,"rawHex":"0x120 98 FF 2D 00 00 00 00 00 / 0x121 18 FF 2D 01 4B 00 00 00","note":"DC 45 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788963175206,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":60,"after":null,"rawHex":"0x120 98 FF 3C 00 00 00 00 00 / 0x121 18 FF 3C 01 4B 00 00 00","note":"DC 60 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788963266323,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":75,"after":null,"rawHex":"0x120 98 FF 4B 00 00 00 00 00 / 0x121 18 FF 4B 01 4B 00 00 00","note":"DC 75 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788963368487,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":40,"after":null,"rawHex":"0x120 98 FF 28 00 00 00 00 00 / 0x121 18 FF 28 01 4B 00 00 00","note":"DC 40 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788963428485,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":35,"after":null,"rawHex":"0x120 98 FF 23 00 00 00 00 00 / 0x121 18 FF 23 01 4B 00 00 00","note":"DC 35 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788965082917,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":44,"after":null,"rawHex":"0x120 98 FF 2C 00 00 00 00 00 / 0x121 18 FF 2C 01 4B 00 00 00","note":"DC 44 A, ceiling 75 A, on 0x121; event frame with no reply — c
+{"at":1788965095658,"clockTrustworthy":false,"action":"charge-current","status":"sent","requested":75,"after":null,"rawHex":"0x120 98 FF 4B 00 00 00 00 00 / 0x121 18 FF 4B 01 4B 00 00 00","note":"DC 75 A, ceiling 75 A, on 0x121; event frame with no reply — c
+### ride logs today
+5379361 Sep 8 22:46 rides-2026-09-08.celog
+45661837 Sep 9 21:08 rides-2026-09-09.celog
+16261 Feb 16 2060 rides-2060-02-16.celog
+274335 Aug 8 2060 rides-2060-08-08.celog

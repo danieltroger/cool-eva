@@ -51,6 +51,19 @@ export const RATE_MIN_DISTINCT = 3;
 export const RATE_WINDOW_MS = 600_000;
 
 /**
+ * How long since the reading last moved, in minutes, or null when there is no reading at all.
+ *
+ * ⚠️ THE THIRD FACE OF "silence is not an absence". A whole-degree sensor that has not ticked for
+ * `t` minutes proves the pack moved less than one degree in `t`, so the rate is under `1/t` — and
+ * that is a MEASUREMENT, available in exactly the branches that have no fitted slope to offer.
+ * `estimateHeatingRate` caps a stale slope with it; `auto-curve.ts` sizes its blind step from it.
+ */
+export function minutesSinceNewestSample(samples: TemperatureSample[], nowMs: number): number | null {
+  const newest = samples.filter(sample => sample.atMs <= nowMs).at(-1);
+  return newest === undefined ? null : (nowMs - newest.atMs) / 60_000;
+}
+
+/**
  * The heating rate the samples support. Pure.
  *
  * `samples` may hold anything; only those inside the window ending at `nowMs` are read, so the
@@ -86,7 +99,28 @@ export function estimateHeatingRate(samples: TemperatureSample[], nowMs: number)
     // than that, or it would have crossed into another one.
     return { kind: "bounded", perMinute: (distinct * 60_000) / spanMs };
   }
-  return { kind: "rate", perMinute: leastSquaresSlopePerMinute(window) };
+  // ⚠️ CAPPED BY THE SILENCE, and this is the bug that cost 45 A at a reading of 51 °C on
+  // 2026-09-09. A least-squares slope is fitted to the SAMPLES, and a pack that climbs fast and
+  // then flattens emits none at all — so the steep slope outlives its evidence for as long as the
+  // pack stays still. Measured that day: 0.706 K/min reported with the reading unmoved for 7.5
+  // minutes, against a true bulk climb of 0.103. The silence is itself a bound, so the smaller of
+  // the two is the most the pack can be doing. Only ever LOWERS an estimate, so it cannot empty
+  // the window (#163's anchor) and cannot bind during a live saw-tooth, where the reading is
+  // ticking every 1-3 min. ⚠️ NOT applied to `bounded` above: that branch is already derived from
+  // elapsed time, and capping it there spends check-charge-auto's §2. docs/charge-auto.md.
+  const slope = leastSquaresSlopePerMinute(window);
+  // The null is unreachable — a zero-length window returned above — and narrowing is what it is
+  // here for. A zero silence needs no branch: `1/0` is Infinity, which clamps to nothing.
+  const silentMinutes = minutesSinceNewestSample(window, nowMs);
+  if (silentMinutes === null) {
+    return { kind: "rate", perMinute: slope };
+  }
+  // ⚠️ BOTH SIDES. The bound is on the MAGNITUDE — a reading that has not moved cannot have moved
+  // DOWN a degree either — and capping only the heating side lets a stale COOLING slope through,
+  // which reads as free headroom and raises the current. Measured: a −1 K/min slope survived 7 min
+  // of silence, where the bound is 0.143, and commanded a full MAX_STEP_A jump at a reading of 53.
+  const bound = 1 / silentMinutes;
+  return { kind: "rate", perMinute: Math.max(-bound, Math.min(slope, bound)) };
 }
 
 function leastSquaresSlopePerMinute(window: TemperatureSample[]): number {
