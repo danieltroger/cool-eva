@@ -500,7 +500,11 @@ __MODULES__
           commandedAmps: 42,
           // ⚠️ The gate's charging branch, which is deliberately NOT the stationary one: the DC
           // charge parameters cannot be tested unplugged, so a charging bike is allowed to write.
-          gate: { chargingEvidence: "the charge manager reports a DC session" },
+          // ⚠️ The sentence src/vcu/charge-session.ts actually builds for a settled 0x23. Until
+          // #190 this read "…reports a DC session", which NO production code could emit — the
+          // rules then in the gate produced "the charger is reporting DC volts" and friends. A
+          // fixture quoting a caption the Pi cannot produce is the same failure #184 is about.
+          gate: { chargingEvidence: "the charge manager reports a live DC session" },
           // Phrasing mirrors describeChargeAck()'s `took` branch in src/charge/acknowledge.ts.
           chargeAck: {
             verdict: { kind: "took", fromAmps: 68, toAmps: 42, latencyMs: 1840 },
@@ -509,6 +513,20 @@ __MODULES__
           // 100 % for the whole of a DC session, whatever the pack temperature — src/fan/curve.ts.
           fan: { dutyPercent: 100, targetPercent: 100, driverEnabled: true, phase: "running" },
           fanAuto: { reason: SERVER.fanReason.DC_SESSION, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 47, temperatureAgeMs: 310 },
+        },
+        // Episode E0 (docs/vcu-parameters.md §12): the charge manager is on the bus with an
+        // empty inlet, so the settled 0x02 is NOT believed. The two blockers are what
+        // evaluateServiceGate emits, in its order — the cable leads and the drive follows.
+        refused: {
+          signals: { "charge_manager_state": [0x02, "", "charge"] },
+          gate: {
+            safe: false,
+            blockers: [
+              "the charge manager reports nothing in the inlet — a cable that is not seated cannot make the bike safe to service",
+              "the drive is not energized — it reads 1",
+            ],
+            chargingEvidence: null,
+          },
         },
         riding: {
           // Both halves of the power bar hatch here, which is the case lib/svg.js's derateSpans()
@@ -617,7 +635,12 @@ __MODULES__
       // The scene's own answers, laid over the fixtures above. Kept here rather than written into
       // each fixture so the literals stay complete — scripts/check-preview-fixtures.ts reads THEM,
       // and a fixture assembled per scene would be a fixture it could no longer check.
+      // ⚠️ BOTH gates, not just the write panel's. The service sheet's own line is fed by
+      // /vcu-read (READ_STATE), so overriding only WRITE_STATUS left the sheet saying
+      // "Stationary and out of drive" directly above a write panel saying "charging" — two
+      // opinions from one bike, on one screen, in the instrument that gates the design.
       Object.assign(WRITE_STATUS.gate, SCENE.gate);
+      Object.assign(READ_STATE.gate, SCENE.gate);
       Object.assign(FAN, SCENE.fan);
       Object.assign(FAN.auto, SCENE.fanAuto);
       if (SCENE.funGate !== undefined) {
