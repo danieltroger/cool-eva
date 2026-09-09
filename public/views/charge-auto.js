@@ -130,7 +130,7 @@ export function toggleAction(currentMode, reason, floor_a) {
     return {
       label: "Switch off for this charge",
       mode: "off",
-      note: `${floor}, and setting the current yourself — on the bike or from here — hands it back to you.`,
+      note: `${floor}, and setting a different current yourself — on the bike or from here — hands it back to you.`,
     };
   }
   return {

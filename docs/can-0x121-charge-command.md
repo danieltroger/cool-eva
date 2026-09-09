@@ -149,7 +149,7 @@ Eight minutes later the rider turned the dial on the bike itself, twelve times, 
 19:16:45.874  120  98 FF 28 00 00 00 00 00   ← 40 A …
 ```
 
-`0x120` first, `0x121` **4.217–10.122 ms** later (mean 6.685), each pair sent once, `b2` amps 1:1, `b4` = `0x4B` = 75 in every DC command. That these are the rider and not the Pi is settled twice: each is preceded 0–2 s by physical `btn_mode_*` presses whose net count matches the amp delta ÷ 5 (clamped at the ceiling), and each produced a `dc_charge_limit_selected_a` row in the ride log to the millisecond — while the Pi's own three produced **none**, because `createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS` and the service therefore never hears itself.
+`0x120` first, `0x121` **4.217–10.122 ms** later (mean 6.685), each pair sent once, `b2` amps 1:1, `b4` = `0x4B` = 75 in every DC command. That these are the rider and not the Pi is settled twice: each is preceded 0–2 s by physical `btn_mode_*` presses whose net count matches the amp delta ÷ 5 (clamped at the ceiling), and each produced a `dc_charge_limit_selected_a` row in the ride log to the millisecond — while the Pi's own three produced **none**, because `createRawChannel` does not set `CAN_RAW_RECV_OWN_MSGS` and the service therefore never hears itself. ⚠️ That does **not** make such a row necessarily the rider: see the 2026-09-09 section at the end of this file, where the bike answers a Pi `0x120` with a `0x121` of its own.
 
 ### The cause was the deploy, not the design
 
@@ -164,3 +164,31 @@ Eight minutes later the rider turned the dial on the bike itself, twelve times, 
 ### Confirming a DC command took: not `charge_limit_a`
 
 `charge_limit_a` is `0x10A` b7 ÷ 7 and it is an **AC** signal. Across the three DC sessions of 2026-09-07 it read **0.0 for their entire duration** (0, 1 and 1 rows, every value zero) while moving 23 times in the first hour of the AC session that evening. The DC read-back is **`fast_dc_target_a`** (`0x615` b2), the vehicle's own request to the station, which moves whether or not the station can follow. `pack_a` is what actually flowed and conflates the two.
+
+## CONFIRMED — a `0x120` commit is answered by the bike's own `0x121` — 2026-09-09
+
+⚠️ **This is the fact that broke the automatic controller's stand-down (#186), and it is a property of the bus, not of our code.**
+
+When the Pi sends the pair, the bike answers our `0x120` with a **second, byte-identical `0x121`** a few milliseconds later — the same pairing the dash does for its own dial. From `capture-20260909-155050-eee8062d.log` and its 12:18 sibling (`evidence/x120-x121-20260909-around-commands.txt`):
+
+```
+12:37:02.949446  120  98 FF 46 …   ← ours
+12:37:02.955400  121  18 FF 46 …   ← ours, 5.95 ms later (CURRENT_FRAME_GAP_MS = 5)
+12:37:02.958769  121  18 FF 46 …   ← the bike's, 9.32 ms after our 0x120
+
+16:03:08.472767  120  98 FF 41 …   ← ours
+16:03:08.477523  121  18 FF 41 …   ← ours, 4.76 ms
+16:03:08.478242  121  18 FF 41 …   ← the bike's, 5.48 ms after our 0x120
+```
+
+Both answers sit inside the **4.217–10.122 ms** window the dash's own `0x120`→`0x121` pairs occupied on 2026-09-07 (mean 6.685). Measured from _our_ `0x121` the gap is 0.72 ms in one case, far too fast to be a response to that frame — what the bike is answering is the **commit**.
+
+**A lone `0x121` is not answered.** The three Pi commands of 2026-09-07 went out without a `0x120` (the stale deploy #153 diagnosed) and the capture holds no second frame for any of them. That is why this began on 09-09 and not before: our commands did not commit, so there was nothing to announce.
+
+### What this does and does not settle
+
+✅ Every committed Pi charge-current command produces a `dc_charge_limit_selected_a` event carrying **exactly the amps we asked for** — 21 of 22 sends on 2026-09-09, the exception being one command the journal shows aborting.
+
+❌ **It does not say whether our own `0x121` also reaches our decoder**, and a capture never can. `record()` is log-on-change, so two byte-identical frames 0.72 ms apart produce **one** row whether we saw one of them or both. Separately, `candump` runs on its own socket and SocketCAN loops a locally-sent frame to every _other_ socket — which is why our own frames are in the capture at all, and why the capture shows what was on the wire rather than what we decoded. The claim above that this service does not hear its own transmissions rests on the 2026-09-07 ride log, which is quoted here and has not been re-opened.
+
+⚠️ **The wrong inference, and it is the one that shipped.** `docs/charge-auto.md` and this file both said the event "is necessarily the rider and never our own echo", resting on the true premise that the Pi does not hear itself. The premise is true; the conclusion does not follow, because a third possibility was never considered — the **bike** answering our own frame. `src/charge/auto.ts` now stands down only on a setpoint that differs from the last current this Pi put on the bus.

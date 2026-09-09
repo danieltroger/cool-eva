@@ -1,18 +1,27 @@
 import {
-  BLIND_DESCENT_FROM_C,
+  AMPS_PER_KELVIN,
   CHARGE_AUTO_REASON,
   CLIFF_C,
-  NO_RAISE_FROM_C,
-  STEP_DOWN_FROM_C,
-  HORIZON_MIN,
+  MAX_STEP_A,
   MIN_COMMAND_A,
+  MIN_STEP_A,
+  QUANTISATION_K,
+  REACTION_MIN,
+  TARGET_C,
   decideChargeCurrent,
   type ChargeAutoInput,
 } from "../src/charge/auto-curve.ts";
-import { estimateHeatingRate, RATE_MIN_SPAN_MS, RATE_WINDOW_MS, type TemperatureSample } from "../src/charge/rate.ts";
+import {
+  estimateHeatingRate,
+  minutesSinceNewestSample,
+  RATE_MIN_SPAN_MS,
+  RATE_WINDOW_MS,
+  type TemperatureSample,
+} from "../src/charge/rate.ts";
 import {
   COLD_PLANTS,
   CROSSING_GRID,
+  FULL_CURRENT_A,
   PLANTS,
   RECOVERY_PLANT,
   REPLAY_SESSIONS,
@@ -21,9 +30,25 @@ import {
   replayCharge,
 } from "./charge-auto-plant.ts";
 import { boundsFor } from "../public/lib/bounds.js";
-import { COOLING_AT_53_MS, COOLING_EPISODE, DRIFTING_AT_53_MS, DRIFTING_EPISODE } from "./charge-auto-episode.ts";
+import {
+  COOLING_AT_53_MS,
+  COOLING_EPISODE,
+  DRIFTING_AT_53_MS,
+  DRIFTING_EPISODE,
+  SEPTEMBER_9_AT_45A_MS,
+  SEPTEMBER_9_EPISODE,
+  SEPTEMBER_9_RATCHET_MS,
+} from "./charge-auto-episode.ts";
 import { REASON_RIDER, toggleAction } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
+import { mkdtemp } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { CHARGE_MANAGER_STATE_DC } from "../src/fan/curve.ts";
+import { defineSignals, record } from "../src/can/signals.ts";
+import { SIGNALS } from "../src/can/registry.ts";
+import { startChargeAutomatic } from "../src/charge/auto.ts";
+import { createVcuWriteRunner } from "../src/vcu/write-runner.ts";
 
 // The automatic DC charge-current controller, driven through the three real stops of 2026-09-07 and
 // a spread of weather it never saw. On a laptop, with no bike.
@@ -121,22 +146,55 @@ if (boundedClosing.kind !== "command" || boundedClosing.reason !== CHARGE_AUTO_R
     `§2 a bounded rate that puts the cliff inside the horizon must still close: got ${JSON.stringify(boundedClosing)}`
   );
 }
-// ⚠️ The hysteresis band itself, which no replay can see: a pack whose time-to-cliff sits BETWEEN
-// the horizon and the release threshold must HOLD. Without the band every tick either steps up or
-// down, and the current oscillates around the threshold for the whole charge — a frame on the bus
-// and a number moving on the rider's dash each time, while "never crosses the cliff" stays true.
-const inBand = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: 50,
-  commandedAmps: 60,
-  samples: climbing(45, 50),
-  nowMs: 700_000,
-});
-if (inBand.kind !== "hold" || inBand.reason !== CHARGE_AUTO_REASON.SETTLED) {
+// ⚠️ The deadband, BOTH SIDES, and expressed in headroom rather than in amps — 0.5 K is 1 A at a
+// gain of 2 and 4 A at a gain of 8, so an amps-shaped assertion would silently mean something
+// different for every candidate in the sweep. One-sided passes with the deadband deleted, which is
+// why just-outside is asserted too: without it every tick either steps up or down and the current
+// oscillates for the whole charge while "never crosses the cliff" stays true.
+for (const probe of [
+  { name: "inside", headroomKelvin: QUANTISATION_K * 0.5, expectHold: true },
+  { name: "just outside", headroomKelvin: QUANTISATION_K * 1.5, expectHold: false },
+]) {
+  // Pick the rate that puts the pack exactly `headroomKelvin` below the setpoint one reaction away.
+  const temperature = 50;
+  const perMinute = (TARGET_C - temperature - probe.headroomKelvin) / REACTION_MIN;
+  const decision = decideChargeCurrent({
+    ...HEALTHY,
+    packTemperatureC: temperature,
+    commandedAmps: 60,
+    samples: atRate(temperature, perMinute),
+    nowMs: RATE_WINDOW_MS,
+  });
+  const held = decision.kind === "hold";
+  if (held !== probe.expectHold) {
+    failures.push(
+      `§2 ${probe.headroomKelvin.toFixed(2)} K of headroom is ${probe.name} the ${QUANTISATION_K} K deadband, so the ` +
+        `rule must ${probe.expectHold ? "hold" : "act"}: got ${JSON.stringify(decision)}`
+    );
+  }
+}
+
+// ── §2b ⚠️ THE SILENCE CAP — the defect behind 45 A at a reading of 51 °C ──
+//
+// A least-squares slope is fitted to the SAMPLES, and a whole-degree sensor emits none while it
+// sits still — so a pack that climbs fast and then flattens keeps reporting the steep slope. The
+// silence is itself a bound: unmoved for `t` minutes means under `1/t` K/min.
+const staleSlope = estimateHeatingRate(SEPTEMBER_9_EPISODE, SEPTEMBER_9_RATCHET_MS);
+const silence = minutesSinceNewestSample(SEPTEMBER_9_EPISODE, SEPTEMBER_9_RATCHET_MS);
+if (silence === null || Math.abs(silence - 7.683) > 0.01) {
+  failures.push(`§2b the 2026-09-09 fixture should be silent for 7.68 min at the ratchet tick, got ${silence}`);
+}
+if (staleSlope.kind !== "rate" || silence === null || staleSlope.perMinute > 1 / silence + 1e-9) {
   failures.push(
-    `§2 a pack ${HORIZON_MIN}-${HORIZON_MIN * 1.5} min from the cliff is inside the hysteresis band and must hold: ` +
-      `got ${JSON.stringify(inBand)}`
+    `§2b the fitted slope was not capped by the silence: got ${JSON.stringify(staleSlope)} with the reading ` +
+      `unmoved for ${silence?.toFixed(2)} min, which alone bounds the rate at ${silence ? (1 / silence).toFixed(3) : "?"}`
   );
+}
+// ⚠️ And that the cap only ever LOWERS. A pack whose reading is ticking has a large bound, so the
+// fitted slope must survive untouched — otherwise this would flatten a genuinely climbing pack.
+const livelySlope = estimateHeatingRate(climbing(45, 51), 600_000);
+if (livelySlope.kind !== "rate" || Math.abs(livelySlope.perMinute - 0.6) > 0.15) {
+  failures.push(`§2b the cap must not touch a pack that is still ticking: got ${JSON.stringify(livelySlope)}`);
 }
 const early = estimateHeatingRate(climbing(48, 50).slice(0, 3), 40_000);
 if (early.kind !== "unknown") {
@@ -282,28 +340,75 @@ const recovery = replayCharge({ ...RECOVERY_PLANT, fromSoc: 20, toSoc: 80 });
 for (const reason of recovery.reasons.keys()) {
   exercised.add(reason);
 }
-// ⚠️ Step size and chatter, which peak temperature and total time cannot see. A coarse step turns
-// the controller into a bang-bang switch between the ceiling and the floor, and no hysteresis makes
-// it oscillate — both of which "never crosses the cliff" is perfectly happy with.
-const distinctCommands = new Set(recovery.commands).size;
-if (distinctCommands < 3) {
-  failures.push(
-    `§6 the recovery plant only ever commanded ${distinctCommands} distinct current(s) — with STEP_A this coarse ` +
-      `the controller is a switch between the ceiling and the floor, not a controller`
-  );
-}
-let reversals = 0;
-for (let at = 2; at < recovery.commands.length; at += 1) {
-  const before = Math.sign(recovery.commands[at - 1] - recovery.commands[at - 2]);
-  const after = Math.sign(recovery.commands[at] - recovery.commands[at - 1]);
-  if (before !== 0 && after !== 0 && before !== after) {
-    reversals += 1;
+// ⚠️ PROPORTIONALITY, not a distinct-command count. Counting distinct currents on one plant said
+// more about the plant than the rule — the recovery plant needs only two moves and gets them right.
+// What separates a proportional law from a fixed ratchet is the SIZE of its steps varying with the
+// error, so that is what is asserted, over every replay. A 5 A ratchet emits one or two distinct
+// step sizes in a whole charge; this must do better on at least one.
+// ⚠️ INTERIOR steps only — ones that neither land on the floor nor on the ceiling. A clamped step
+// is any size at all: a 5 A ratchet stepping down from 38 A lands on the 35 A floor and looks like
+// a 3 A step, which made an earlier version of this assertion pass under the very mutation it was
+// written to catch.
+const stepSizes = new Set<number>();
+for (const run of everyReplay()) {
+  for (let at = 1; at < run.commands.length; at += 1) {
+    const landedOn = run.commands[at];
+    if (landedOn <= MIN_COMMAND_A || landedOn >= Math.floor(FULL_CURRENT_A)) {
+      continue;
+    }
+    stepSizes.add(Math.abs(Math.round(landedOn - run.commands[at - 1])));
   }
 }
-if (reversals > 2) {
+if (stepSizes.size < 3) {
   failures.push(
-    `§6 the commanded current changed direction ${reversals} times on one charge — the hysteresis is not ` +
-      `holding it, and every reversal is a frame on the bus and a number moving on the rider's dash`
+    `§6 the commanded step took only ${stepSizes.size} distinct size(s) across every replay — a proportional law ` +
+      `whose step does not vary with the error is a fixed ratchet wearing a gain`
+  );
+}
+// ⚠️ #186 defect 2, asserted as a property rather than against the constant: the bike accepts 1 A
+// and the dash's own dial moves in 5 A. A controller that never commands a step finer than the dial
+// has not used the resolution, whatever MIN_STEP_A happens to say.
+const finestStep = Math.min(...[...stepSizes].filter(size => size > 0));
+if (!(finestStep < 5)) {
+  failures.push(
+    `§6 the finest unclamped step across every replay was ${finestStep} A — no finer than the dash's own dial, ` +
+      `so the 1 A resolution the bike accepts is going unused`
+  );
+}
+// ⚠️ CHATTER, scored against the rule this replaces rather than against a number someone liked.
+// The shipped 5 A ratchet reverses 14 times on DC2/b*2 — a fact no assertion in this file used to
+// look at, because the old reversal check scored the recovery plant alone, where it reverses once.
+const SHIPPED_WORST_REVERSALS = 14;
+let worstReversals = 0;
+let worstReversalsOn = "";
+for (const run of everyReplay()) {
+  let reversals = 0;
+  for (let at = 2; at < run.commands.length; at += 1) {
+    const before = Math.sign(run.commands[at - 1] - run.commands[at - 2]);
+    const after = Math.sign(run.commands[at] - run.commands[at - 1]);
+    if (before !== 0 && after !== 0 && before !== after) {
+      reversals += 1;
+    }
+  }
+  if (reversals > worstReversals) {
+    worstReversals = reversals;
+    worstReversalsOn = run.name;
+  }
+}
+if (worstReversals > SHIPPED_WORST_REVERSALS) {
+  failures.push(
+    `§6 the commanded current changed direction ${worstReversals} times on ${worstReversalsOn}, worse than the ` +
+      `${SHIPPED_WORST_REVERSALS} the 5 A ratchet this replaces manages on DC2/b*2 — every reversal is a frame on ` +
+      `the bus and a number moving on the rider's dash`
+  );
+}
+// ⚠️ Pinned WITH the constants it was measured at, like CROSSING_GRID: change the gain and this
+// number means something else. At gain 2 / max step 15 / reaction 12 the worst is 3.
+const EXPECTED_WORST_REVERSALS = 3;
+if (AMPS_PER_KELVIN === 2 && MAX_STEP_A === 15 && REACTION_MIN === 12 && worstReversals !== EXPECTED_WORST_REVERSALS) {
+  failures.push(
+    `§6 the worst reversal count is ${worstReversals}, not the ${EXPECTED_WORST_REVERSALS} pinned for these ` +
+      `constants — re-derive it and say why in the commit rather than letting it drift`
   );
 }
 if ((recovery.reasons.get(CHARGE_AUTO_REASON.CLEAR) ?? 0) === 0) {
@@ -317,25 +422,46 @@ for (const name of ["BLIND_DESCENT", "HARD_CEILING", "CLOSING", "CLEAR"] as cons
     failures.push(`§6 no replay ever reaches ${name} — either it is dead or the replays stopped covering it`);
   }
 }
-if (HORIZON_MIN * 60_000 < RATE_WINDOW_MS / 2) {
+if (REACTION_MIN * 60_000 < RATE_WINDOW_MS / 2) {
   failures.push(
-    `§6 HORIZON_MIN (${HORIZON_MIN} min) no longer covers half the rate window (${RATE_WINDOW_MS / 60_000} min), ` +
-      `which is the estimator's own lag — the horizon was sized against it`
+    `§6 REACTION_MIN (${REACTION_MIN} min) no longer covers half the rate window (${RATE_WINDOW_MS / 60_000} min), ` +
+      `which is the estimator's own lag — the reaction time was sized against it`
   );
 }
-if (STEP_DOWN_FROM_C >= CLIFF_C || NO_RAISE_FROM_C >= STEP_DOWN_FROM_C) {
+if (TARGET_C >= CLIFF_C) {
+  failures.push(`§6 the setpoint (${TARGET_C}) must sit below the cliff (${CLIFF_C})`);
+}
+if (MIN_STEP_A < 1 || MIN_STEP_A > MAX_STEP_A) {
+  failures.push(`§6 the step bounds must read 1 <= MIN_STEP_A (${MIN_STEP_A}) <= MAX_STEP_A (${MAX_STEP_A})`);
+}
+// ⚠️ Replaces the old BLIND_DESCENT_FROM_C ordering assertion rather than dropping it. That one
+// existed to stop a band opening where a pack too hot to see is neither descended nor held down —
+// the "54.16 °C and the controller never acted" scenario. The blind branch now keys on the setpoint
+// itself, so the band cannot open by construction; this asserts the branch still fires there.
+const blindAtTarget = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: TARGET_C,
+  commandedAmps: 70,
+  samples: [{ atMs: 100_000, celsius: TARGET_C }],
+  nowMs: 200_000,
+});
+if (blindAtTarget.kind !== "command" || blindAtTarget.reason !== CHARGE_AUTO_REASON.BLIND_DESCENT) {
   failures.push(
-    `§6 the tiers must read NO_RAISE (${NO_RAISE_FROM_C}) < STEP_DOWN (${STEP_DOWN_FROM_C}) < cliff (${CLIFF_C})`
+    `§6 a pack at the setpoint with no usable rate must descend blind, or there is a band where it is ` +
+      `neither descended nor held down: got ${JSON.stringify(blindAtTarget)}`
   );
 }
-// ⚠️ Asserted rather than left to luck. The hard ceiling is evaluated on temperature ALONE and
-// before the rate branch, but if the blind-descent threshold ever rose above it there would be a
-// band where a pack too hot to see is neither descended nor ceilinged — which is the "54.16 °C and
-// the controller never acted" scenario the plan review caught in an earlier draft.
-if (BLIND_DESCENT_FROM_C > STEP_DOWN_FROM_C) {
+const blindBelowTarget = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: TARGET_C - 1,
+  commandedAmps: 70,
+  samples: [{ atMs: 100_000, celsius: TARGET_C - 1 }],
+  nowMs: 200_000,
+});
+if (blindBelowTarget.kind !== "hold" || blindBelowTarget.reason !== CHARGE_AUTO_REASON.NO_HISTORY) {
   failures.push(
-    `§6 BLIND_DESCENT_FROM_C (${BLIND_DESCENT_FROM_C}) is above STEP_DOWN_FROM_C (${STEP_DOWN_FROM_C}), leaving a band ` +
-      `where a pack with no usable rate is neither descended nor held down`
+    `§6 below the setpoint with no rate the answer is the fail-safe one — hold and change nothing: ` +
+      `got ${JSON.stringify(blindBelowTarget)}`
   );
 }
 
@@ -413,15 +539,23 @@ if (!/you set the current/i.test(stoodDown.note)) {
   failures.push(`§9 the stood-down note does not say why the Pi stopped: "${stoodDown.note}"`);
 }
 
-// ── §10 the two tiers, against a REAL thermal episode ──────────────────────
+// ── §10 the setpoint, against REAL thermal episodes ───────────────────────
 //
-// ⚠️ The simulated plant cannot reach the state these tiers are for — its packs are always rising or
-// pinned at the floor, never sitting with a fitted slope near zero at a reading of 53. The bike gets
-// there by oscillating across the boundary. So this section is driven by logged `batt_temp_hi`
-// (scripts/charge-auto-episode.ts) and it is the ONLY thing that would notice either tier going
-// away. Behaviour is asserted, never the reason code: two of an earlier draft's three fixtures
-// passed with the tier deleted because only the code changed.
-/** Reasons the real-episode fixtures produce, checked below against the ones §6 could not reach. */
+// ⚠️ The simulated plant cannot reach the state this section is for. Over the frozen 150-plant grid
+// there are 2 380 ticks at a reading of 53 or 54 and NOT ONE with a fitted slope at or below zero —
+// its packs are always rising or pinned at the floor. The bike gets there by oscillating across the
+// boundary, so the arbiter for "hold at 54, raise at 53" is logged `batt_temp_hi`, never §11.
+//
+// ⚠️ THREE ASSERTIONS #181 SHIPPED ARE DELIBERATELY REVERSED HERE, and the history is kept because
+// a deleted negative result gets re-derived at the cost of a session:
+//
+//   coolingAt53   53 while falling   #181: hold        now: RAISE   — below the setpoint, cooling
+//   coolingAt54   54 while cooling   #181: step down   now: HOLD    — Daniel's literal ask
+//   driftingAt53  53 drifting up     #181: never raise now: RAISE   — the pack is 1 K below target
+//
+// The margin #181 bought by never raising from 53 is being spent on purpose: the target is 54, not
+// 55, and the ≥54 branch, the ≥55 branch and the `rate × REACTION_MIN` term are what guard the
+// cliff now. §11's frozen grid is what says that trade did not cost a crossing.
 const exercisedByEpisode: number[] = [];
 
 const coolingAt53 = decideChargeCurrent({
@@ -432,17 +566,17 @@ const coolingAt53 = decideChargeCurrent({
   nowMs: COOLING_AT_53_MS,
 });
 exercisedByEpisode.push(coolingAt53.reason);
-if (coolingAt53.kind !== "hold") {
+if (coolingAt53.kind !== "command" || coolingAt53.amps <= 60) {
   failures.push(
-    `§10 the pack read 53 °C while FALLING (13:51 on 2026-08-08, on its way to 50) and the controller ` +
-      `moved to ${coolingAt53.kind === "command" ? `${coolingAt53.amps} A` : "act"} — the old single ceiling ` +
-      `throttled this four ticks running, which is the whole reason for the no-raise tier`
+    `§10 the pack read 53 °C while FALLING (13:51 on 2026-08-08, on its way to 50) — a degree below the ` +
+      `setpoint and cooling, so the current must go UP. The old single ceiling throttled this four ticks ` +
+      `running and #181 held it; both are superseded. Got ${JSON.stringify(coolingAt53)}`
   );
 }
-// ⚠️ STEP_DOWN_FROM_C's remaining unique job. From NO_RAISE_FROM_C upward the time-to-cliff test
-// already targets it, so a RISING pack at 54 steps down with the tier deleted — same amps, only the
-// reason differs. What survives only here is the pack that is flat or COOLING at 54, where the rate
-// says there is all the time in the world and the reading says it may be a hundredth from the cliff.
+// ⚠️ Daniel's literal ask, and the reversal of STEP_DOWN_FROM_C's last unique job: at a reading of
+// 54 with the rate flat or falling the controller HOLDS. He watched the pack sit at 54 for a long
+// time without touching 55 with the controller off, so the equilibrium exists and stepping down
+// from it is what left range on the table. A rising pack at 54 still steps down — asserted below.
 const coolingAt54 = decideChargeCurrent({
   ...HEALTHY,
   packTemperatureC: 54,
@@ -450,16 +584,30 @@ const coolingAt54 = decideChargeCurrent({
   samples: COOLING_EPISODE,
   nowMs: COOLING_AT_53_MS,
 });
-if (coolingAt54.kind !== "command" || coolingAt54.amps >= 60) {
+exercisedByEpisode.push(coolingAt54.reason);
+if (coolingAt54.kind !== "hold" || coolingAt54.reason !== CHARGE_AUTO_REASON.NEAR_CEILING) {
   failures.push(
-    `§10 a pack reading 54 °C while cooling must still be stepped down — the reading says it may be ` +
-      `54.99 and no signal on this bus resolves that. Got ${JSON.stringify(coolingAt54)}`
+    `§10 a pack reading 54 °C while cooling is AT the setpoint and must hold, not step down — that is the ` +
+      `whole of "hold 54 in both directions". Got ${JSON.stringify(coolingAt54)}`
   );
 }
-// ⚠️ THE TIER'S HEADLINE JOB, and the one an earlier draft left unasserted: a pack at a reading of
-// 53 drifting slowly UP must not have its current RAISED. Only rates below 0.0833 K/min decide
-// anything here — above that the time-to-cliff test acts anyway — so this is the band, on real
-// logged data. Adding `&& rate.perMinute <= 0` to the hold passes every other assertion.
+// ⚠️ And the other direction at the same reading, which is what keeps the hold from becoming a
+// ceiling-hugging stall: at 54 with ANY positive rate the current comes down. No deadband applies
+// here, because a reading of 54 can be a true 54.99.
+const risingAt54 = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 54,
+  commandedAmps: 60,
+  samples: climbing(49, 54),
+  nowMs: 700_000,
+});
+if (risingAt54.kind !== "command" || risingAt54.amps >= 60) {
+  failures.push(`§10 a pack reading 54 °C and still heating must be reduced, got ${JSON.stringify(risingAt54)}`);
+}
+// ⚠️ The pack a degree below the setpoint, drifting slowly UP (+0.037 K/min on real logged data).
+// #181 forbade raising here on the grounds that 53 can be a true 53.99; the setpoint rule raises,
+// because 53.99 is still below 54 and the cliff is a further degree away. This is the fixture that
+// would go red if the no-raise tier were quietly reinstated.
 const driftingAt53 = decideChargeCurrent({
   ...HEALTHY,
   packTemperatureC: 53,
@@ -468,14 +616,15 @@ const driftingAt53 = decideChargeCurrent({
   nowMs: DRIFTING_AT_53_MS,
 });
 exercisedByEpisode.push(driftingAt53.reason);
-if (driftingAt53.kind !== "hold") {
+if (driftingAt53.kind !== "command" || driftingAt53.amps <= 60) {
   failures.push(
-    `§10 a pack reading 53 °C and drifting slowly UP (2026-09-07 15:26, +0.037 K/min) must not have its ` +
-      `current raised — it may already be at 53.99. Got ${JSON.stringify(driftingAt53)}`
+    `§10 a pack reading 53 °C and drifting slowly UP (2026-09-07 15:26, +0.037 K/min) is a degree below the ` +
+      `setpoint and must be given current, not held. Got ${JSON.stringify(driftingAt53)}`
   );
 }
 
-// The no-raise tier must not become a no-DESCEND tier: a pack at 53 closing fast still steps down.
+// The setpoint rule must not become a raise-only rule: a pack at 53 climbing fast still steps down,
+// because at that rate it is past 54 well inside one reaction time.
 const risingAt53 = decideChargeCurrent({
   ...HEALTHY,
   packTemperatureC: 53,
@@ -491,7 +640,7 @@ if (risingAt53.kind !== "command" || risingAt53.amps >= 60) {
 // it is asserted here rather than in §6, which runs before them. A reason nothing emits is a reason
 // nobody will ever see on the dash.
 if (!exercisedByEpisode.includes(CHARGE_AUTO_REASON.NEAR_CEILING)) {
-  failures.push("§10 no fixture ever produces NEAR_CEILING — the no-raise tier is not being reached");
+  failures.push("§10 no fixture ever produces NEAR_CEILING — the hold at the setpoint is not being reached");
 }
 
 // ── §11 the crossing set over a frozen grid ────────────────────────────────
@@ -505,13 +654,16 @@ if (!exercisedByEpisode.includes(CHARGE_AUTO_REASON.NEAR_CEILING)) {
 // A golden count over a FROZEN grid, because the alternative is keeping the old rule alive in the
 // tree forever to diff against. If the grid moves the number is meaningless — see CROSSING_GRID.
 // ⚠️ The SET, not just the count. A count alone blames the rule for anything that moves the grid —
-// a plant refit, a different rate window, a different horizon — and reports it as "less safe" with
-// a confident and wrong diagnosis. Naming which plants cross says whether the change added new ones
-// or merely moved the boundary, which are different findings. The old and shipped rules cross on
-// exactly these, worst margin 0.0145 K for both.
+// a plant refit, a different rate window, a different gain — and reports it as "less safe" with a
+// confident and wrong diagnosis. Naming which plants cross says whether the change added new ones
+// or merely moved the boundary, which are different findings.
+//
+// ⚠️ RE-DERIVED for #186, from 24 to 16, and it is a STRICT SUBSET of the 24 the two-tier rule
+// crossed — eight plants stopped crossing and none started. ⚠️ Two changes moved it in OPPOSITE
+// directions and the PR body carries both tables: the estimator's silence cap alone takes it from
+// 24 to 26 (it stops over-stating the rate, which was buying margin by accident), and the setpoint
+// law more than pays that back. Do not read 16 as the estimator fix being free.
 const EXPECTED_CROSSINGS = [
-  "40/39/0.0044",
-  "44/30/0.0044",
   "44/35/0.0044",
   "44/39/0.0044",
   "48/30/0.0044",
@@ -522,18 +674,12 @@ const EXPECTED_CROSSINGS = [
   "51/35/0.0044",
   "51/39/0.0044",
   "51/39/0.0089",
-  "54/10/0.0044",
   "54/18/0.0044",
   "54/25/0.0044",
-  "54/25/0.0089",
   "54/30/0.0044",
-  "54/30/0.0089",
   "54/35/0.0044",
-  "54/35/0.0089",
-  "54/35/0.0134",
   "54/39/0.0044",
   "54/39/0.0089",
-  "54/39/0.0134",
 ];
 const crossed: string[] = [];
 for (const arrivalC of CROSSING_GRID.arrivals) {
@@ -568,6 +714,142 @@ if (removed.length > 0 && added.length === 0) {
 }
 const crossings = crossed.length;
 
+// ── §12 ⚠️ THE ECHO, AND THE ORDERING THAT MADE IT BITE ────────────────────
+//
+// The bike answers our own `0x120` commit with a `0x121` carrying the amps we just asked for, so on
+// 2026-09-09 five of six automatic commands in one session stood the controller down 1 ms after
+// their own echo and Daniel tapped "take the current back" six times. Two things have to hold:
+// only a DIFFERENT setpoint is the rider, and the value we sent has to be recorded BEFORE the
+// frames go out — `sendChargeCommand` awaits twice and the echo lands inside that window.
+//
+// ⚠️ Driven through the REAL write runner with a stub channel, not through a fake sink. A fake sink
+// replaces the very function whose internal ordering is the bug, so it would pass with the hook
+// left where it was. `send()` here fires the setpoint change synchronously, exactly as the bus does.
+{
+  defineSignals(SIGNALS);
+  record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
+  record("fast_dc_limit_max_a", 75);
+  record("dc_charge_limit_selected_a", 70);
+  const automatic = startChargeAutomatic({ commandChargeCurrent: async () => ({ succeeded: true, message: "" }) });
+  const runner = createVcuWriteRunner({
+    enabled: true,
+    busIsActive: true,
+    directory: await mkdtemp(join(tmpdir(), "charge-auto-check-")),
+    gate: () => ({ safe: true, blockers: [], checks: [], chargingEvidence: null }) as never,
+    latestSweep: async () => null,
+    onChargeCurrentOutgoing: (amps, origin) => automatic.noteChargeCurrentOutgoing(amps, origin),
+    // The bus, as far as this test is concerned: a 0x121 carrying our own amps, delivered while
+    // the send is still awaiting — which is what the capture measured at 3-10 ms.
+    channel: () =>
+      ({
+        send: (frame: { id: number; data: Buffer }) => {
+          if (frame.id === 0x121 && frame.data[0] === 0x18) {
+            record("dc_charge_limit_selected_a", frame.data[2]);
+          }
+        },
+      }) as never,
+  });
+  const answer = await runner.perform({ kind: "charge-current", amps: 45, origin: "automatic" });
+  // The microtask that delivers the change batch has to run before the state is read.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  if (!answer.ok) {
+    failures.push(`§12 the stubbed charge-current command did not reach the bus: ${answer.reason}`);
+  }
+  if (automatic.state().reason === CHARGE_AUTO_REASON.RIDER) {
+    failures.push(
+      "§12 the controller stood itself down on the echo of its OWN command — this is #186 defect 1, and it is " +
+        "what happens whenever the sent value is recorded after `sendChargeCommand` rather than before it"
+    );
+  }
+  // And the other half: a setpoint that is NOT ours is still the rider, or the feature is gone.
+  record("dc_charge_limit_selected_a", 62);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  if (automatic.state().reason !== CHARGE_AUTO_REASON.RIDER) {
+    failures.push(
+      `§12 a setpoint of 62 A after we commanded 45 A is the rider turning the dial and must stand the ` +
+        `controller down, got reason ${automatic.state().reason}`
+    );
+  }
+  automatic.stop();
+}
+
+// ── §13 today's episode, open-loop: the two things Daniel asked for ────────
+//
+// ⚠️ OPEN-LOOP. These show what the rule DECIDES seeing the logged history, never what would have
+// happened — a different current changes the pack's trajectory and the log cannot say how. §3 and
+// §11 are the closed-loop half. The readings are `batt_temp_hi` exactly as logged on 2026-09-09.
+const atTheRatchet = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 50,
+  commandedAmps: 70,
+  samples: SEPTEMBER_9_EPISODE,
+  nowMs: SEPTEMBER_9_RATCHET_MS,
+});
+if (atTheRatchet.kind === "command" && atTheRatchet.amps < 70) {
+  failures.push(
+    `§13 at 16:03:08 on 2026-09-09 the pack read 50 °C and had not moved a whole degree for 7.7 minutes, and the ` +
+      `rule reduced the current to ${atTheRatchet.amps} A — that is the ratchet #186 is about, six ticks of which ` +
+      `took 70 A to 40 A while the pack sat at 50-51`
+  );
+}
+const atFortyFive = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: 51,
+  commandedAmps: 45,
+  samples: SEPTEMBER_9_EPISODE,
+  nowMs: SEPTEMBER_9_AT_45A_MS,
+});
+if (atFortyFive.kind !== "command" || atFortyFive.amps <= 45) {
+  failures.push(
+    `§13 Daniel found the pack at 51 °C with 45 A commanded and the controller declining to climb back. Three ` +
+      `degrees below the setpoint it must give current back: got ${JSON.stringify(atFortyFive)}`
+  );
+}
+
+// ── §14 the blind descent, where the frozen grid cannot see it ─────────────
+//
+// ⚠️ §11 CANNOT arbitrate this branch: it only runs while the span is under RATE_MIN_SPAN_MS, and
+// the silence cannot exceed the span, so on the grid the deficit always saturates and a fixed
+// maximum step is byte-identical. The evidence for sizing it from the silence is therefore this
+// fixture and the argument, never the crossing count.
+const blindLongSilence = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: TARGET_C,
+  commandedAmps: 70,
+  // Four minutes since the reading moved bounds the rate at 0.25 K/min, so the deficit is
+  // REACTION_MIN / 4 kelvin and the step is well inside MAX_STEP_A.
+  samples: [{ atMs: 0, celsius: TARGET_C }],
+  nowMs: 240_000,
+});
+const expectedBlindStep = Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round((AMPS_PER_KELVIN * REACTION_MIN) / 4)));
+if (blindLongSilence.kind !== "command" || 70 - blindLongSilence.amps !== expectedBlindStep) {
+  failures.push(
+    `§14 with the reading unmoved for 4 min the blind descent should step ${expectedBlindStep} A — the silence ` +
+      `bounds the rate at 0.25 K/min and that is ${REACTION_MIN / 4} K of deficit. Got ${JSON.stringify(blindLongSilence)}`
+  );
+}
+if (expectedBlindStep >= MAX_STEP_A) {
+  failures.push(
+    `§14 the fixture is saturated (${expectedBlindStep} A = the cap), so it cannot tell the derivation from a ` +
+      `fixed maximum step — which is the whole reason this section exists`
+  );
+}
+// ⚠️ No samples at all is the one case with no bound to read. A pack at the setpoint with no history
+// whatsoever is the least safe thing this branch sees, so it takes the largest step allowed.
+const blindNoSamples = decideChargeCurrent({
+  ...HEALTHY,
+  packTemperatureC: TARGET_C,
+  commandedAmps: 70,
+  samples: [],
+  nowMs: 240_000,
+});
+if (blindNoSamples.kind !== "command" || 70 - blindNoSamples.amps !== MAX_STEP_A) {
+  failures.push(
+    `§14 with no samples at all there is no silence to bound the rate with, so the blind descent takes the ` +
+      `full ${MAX_STEP_A} A: got ${JSON.stringify(blindNoSamples)}`
+  );
+}
+
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);
   for (const failure of failures) {
@@ -576,16 +858,22 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✓ all ${FAIL_SAFE.length} fail-safe branches hold and none commands a current; the estimator bounds a flat pack ` +
-    `rather than calling it unknown, reads unknown on too little history, recovers a known slope, and is not driven ` +
-    `by the saw-tooth; across ${REPLAY_SESSIONS.length}×${PLANTS.length} replays the controller never peaks above ` +
-    `the do-nothing baseline and never causes a crossing, costing at worst ${worstPenalty.toFixed(1)} min and saving ` +
-    `at best ${(-bestSaving).toFixed(1)}; DC2 finishes ${saved.toFixed(1)} min sooner and under the cliff, which ` +
-    `neither a controller stuck at the ceiling nor one stuck at the floor can do; the floor stays above the ` +
-    `${breakEven.toFixed(1)} A break-even; every branch is exercised, every reason code is inside bounds.js, ` +
-    `and every reason code has wording; and taking the controller back after a manual change is one tap; and against a real 2026-08-08 ` +
-    `thermal episode a pack cooling through 53 °C is left alone while one at 54 °C is still reduced; and ` +
-    `${crossings} of ${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} frozen-grid plants cross the cliff, as many as before and no more`
+  `✓ all ${FAIL_SAFE.length} fail-safe branches hold and none commands a current; the estimator bounds a flat ` +
+    `pack rather than calling it unknown, caps a fitted slope by the silence that outlived it, reads unknown on ` +
+    `too little history and is not driven by the saw-tooth; across ${REPLAY_SESSIONS.length}×${PLANTS.length} ` +
+    `replays the controller never peaks above the do-nothing baseline and never causes a crossing, costing at ` +
+    `worst ${worstPenalty.toFixed(1)} min and saving at best ${(-bestSaving).toFixed(1)}; DC2 finishes ` +
+    `${saved.toFixed(1)} min sooner and under the cliff, which neither a controller stuck at the ceiling nor one ` +
+    `stuck at the floor can do; the floor stays above the ${breakEven.toFixed(1)} A break-even; the step varies ` +
+    `with the error down to ${finestStep} A unclamped and reverses at worst ${worstReversals} times against the ` +
+    `5 A ratchet's ${SHIPPED_WORST_REVERSALS}; every branch is exercised, every reason code is inside bounds.js ` +
+    `and has wording, and taking the controller back is one tap; against real logged episodes a pack at 54 °C ` +
+    `holds when it is not heating and is reduced when it is, and one at 53 °C is given current back; the ` +
+    `controller does not stand down on the echo of its own command through the real write runner, and does on a ` +
+    `setpoint that is not ours; on 2026-09-09's own readings it neither throttles at 50-51 °C nor refuses to ` +
+    `climb from 45 A; and ${crossings} of ` +
+    `${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} frozen-grid ` +
+    `plants cross the cliff, a strict subset of the 24 the rule this replaces crossed`
 );
 
 /** A whole-degree ramp over ten minutes, sampled when the integer changes, as the bike delivers it. */
@@ -593,6 +881,64 @@ function climbing(fromC: number, toC: number): TemperatureSample[] {
   const samples: TemperatureSample[] = [];
   for (let step = 0; step <= 10; step += 1) {
     samples.push({ atMs: 100_000 + step * 60_000, celsius: Math.floor(fromC + ((toC - fromC) * step) / 10) });
+  }
+  return samples;
+}
+
+/**
+ * Every replay the chatter and proportionality assertions are scored over, named.
+ *
+ * ⚠️ The set A7 names, not a convenient subset. The old reversal check scored `RECOVERY_PLANT`
+ * alone — the one plant where the shipped 5 A ratchet reverses once — and so never noticed it
+ * reversing fourteen times on DC2/b*2.
+ */
+function everyReplay(): { name: string; commands: number[] }[] {
+  const runs: { name: string; commands: number[] }[] = [];
+  for (const session of REPLAY_SESSIONS) {
+    for (const plant of PLANTS) {
+      runs.push({
+        name: `${session.name}/${plant.name}`,
+        commands: replayCharge({
+          arrivalC: session.arrivalC,
+          ambientC: session.ambientC + plant.ambientOffset,
+          fromSoc: session.fromSoc,
+          toSoc: session.toSoc,
+          cooling: plant.cooling,
+        }).commands,
+      });
+    }
+  }
+  for (const cold of COLD_PLANTS) {
+    runs.push({
+      name: cold.name,
+      commands: replayCharge({
+        arrivalC: cold.arrivalC,
+        ambientC: cold.ambientC,
+        fromSoc: 20,
+        toSoc: 80,
+        cooling: cold.cooling,
+      }).commands,
+    });
+  }
+  runs.push({
+    name: RECOVERY_PLANT.name,
+    commands: replayCharge({ ...RECOVERY_PLANT, fromSoc: 20, toSoc: 80 }).commands,
+  });
+  return runs;
+}
+
+/**
+ * Whole-degree crossings at exactly `perMinute`, the newest landing on `RATE_WINDOW_MS`.
+ *
+ * Three points, so the estimator fits a slope rather than bounding one, and zero silence at the
+ * end, so the silence cap cannot bind and the rate under test is the rate asked for.
+ */
+function atRate(celsius: number, perMinute: number): TemperatureSample[] {
+  const stepMs = 60_000 / Math.abs(perMinute);
+  const direction = Math.sign(perMinute);
+  const samples: TemperatureSample[] = [];
+  for (let back = 2; back >= 0; back -= 1) {
+    samples.push({ atMs: RATE_WINDOW_MS - back * stepMs, celsius: celsius - back * direction });
   }
   return samples;
 }

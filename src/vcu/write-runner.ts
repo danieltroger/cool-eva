@@ -37,6 +37,7 @@ import {
 import { parameterTableFor } from "./table-catalog.ts";
 import { readRunningVersion, type RunningVersion } from "../version.ts";
 import { chargeAckState, noteChargeCommandSent, type ChargeAckState } from "../charge/ack-watch.ts";
+import type { ChargeCommandOrigin } from "../charge/auto.ts";
 
 // Service mode's WRITE engine: decide whether the bike may be changed, do exactly one thing
 // to it, read the result back, and write down what happened. The read engine is
@@ -104,9 +105,9 @@ export type ServiceWriteRequest =
        * Who asked. ⚠️ `manual` stands the automatic controller down for the session — the rider
        * setting a current by hand means the same thing from the phone as from the dial. It is on the
        * REQUEST rather than inferred from the route because a POST refused for a bad header or a
-       * stale confirm token must not stand anything down; only a frame that actually went out does.
+       * stale confirm token must not stand anything down; only one that gets past every gate does.
        */
-      origin: "manual" | "automatic";
+      origin: ChargeCommandOrigin;
     }
   /**
    * Stop an active charge by injecting the 0x120 request-twin `96 ff 01 …` — the half of the
@@ -276,10 +277,14 @@ export interface SweptValue {
 
 export interface VcuWriteRunnerOptions {
   /**
-   * Called when a charge current the RIDER asked for really reached the bus. The automatic
-   * controller stands down on it; nothing else listens.
+   * Called with every charge current about to reach the bus, and where it came from.
+   *
+   * ⚠️ BEFORE the frames go out, not after. The bike answers our `0x120` commit with its own
+   * `0x121` a few milliseconds later — inside the two `await`s `sendChargeCommand` takes — so a
+   * controller told afterwards has already stood itself down on its own command. The automatic
+   * controller is the only listener; it stands down only for `manual`.
    */
-  onManualChargeCurrent?: () => void;
+  onChargeCurrentOutgoing?: (amps: number, origin: ChargeCommandOrigin) => void;
   /** The service's already-started channel; null when CAN is off, in which case everything is refused. */
   channel: () => RawChannel | null;
   /** False when the bus is listen-only (OBD_ENABLED=0) — every frame would be swallowed silently. */
@@ -1115,17 +1120,17 @@ async function performChargeCurrent(
   console.warn(
     `vcu-write: about to command ${mode.toUpperCase()} charge current ${request.amps} A (ceiling ${ceiling} A) on 0x121`
   );
+  // ⚠️ BEFORE the send, and this ordering is load-bearing. `sendChargeCommand` awaits twice, and the
+  // bike answers our `0x120` with a `0x121` carrying these exact amps inside that window — so told
+  // afterwards, the automatic controller has already read its own command as the rider and stood
+  // down. Still after every gate, the range check and the confirm token, so a REFUSED request
+  // records nothing; a frame that then fails to transmit is harmless, because no echo can follow it.
+  context.onChargeCurrentOutgoing?.(request.amps, request.origin);
   const outcome = await sendChargeCommand(channel, mode, request.amps, ceiling);
   if (outcome.status === "sent") {
     // Starts the acknowledgement window. ⚠️ After the send, so a frame that never left the Pi is
     // not watched for an answer it could not produce.
     noteChargeCommandSent(mode, request.amps);
-    if (request.origin === "manual") {
-      // ⚠️ Only for a frame that actually went out, and only for a HAND-set current. Beside the ack
-      // hook rather than in the HTTP router, which fires before the header, the confirm token and
-      // every gate are checked — a refused POST used to stand the controller down for the session.
-      context.onManualChargeCurrent?.();
-    }
   }
   await appendAuditRecord(context.directory, {
     at: Date.now(),

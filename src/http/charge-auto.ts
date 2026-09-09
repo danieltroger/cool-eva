@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import { CHARGE_AUTO_REASON, MIN_COMMAND_A } from "../charge/auto-curve.ts";
+import { CHARGE_AUTO_REASON, MIN_COMMAND_A, TARGET_C } from "../charge/auto-curve.ts";
 import type { ChargeAutoMode, ChargeAutoState, ChargeAutomatic } from "../charge/auto.ts";
 
 // /charge-auto — the switch for the automatic DC charge-current controller.
@@ -87,13 +87,13 @@ export const CHARGE_AUTO_REASON_TEXT: Record<number, string> = {
   [CHARGE_AUTO_REASON.NOT_DC]: "Waiting for a DC fast charge.",
   [CHARGE_AUTO_REASON.NO_TEMPERATURE]: "No trustworthy pack temperature — not commanding anything.",
   [CHARGE_AUTO_REASON.NO_CEILING]: "The DC ceiling has not arrived, so there is nothing to command against.",
-  [CHARGE_AUTO_REASON.RIDER]: "You set the current on the bike — stood down for this charge.",
+  [CHARGE_AUTO_REASON.RIDER]: "You set a different current — stood down for this charge.",
   [CHARGE_AUTO_REASON.NO_HISTORY]: "Watching. Not enough temperature history yet to see a trend.",
   [CHARGE_AUTO_REASON.BLIND_DESCENT]: "Arrived hot with no trend yet — easing the current down.",
-  [CHARGE_AUTO_REASON.HARD_CEILING]: "At the temperature limit — reducing the current.",
-  [CHARGE_AUTO_REASON.CLOSING]: "Heating towards the limit — reducing the current.",
-  [CHARGE_AUTO_REASON.CLEAR]: "Plenty of thermal room — giving current back.",
-  [CHARGE_AUTO_REASON.SETTLED]: "Holding — this current keeps the pack where it should be.",
-  [CHARGE_AUTO_REASON.NEAR_CEILING]: "Near the limit — holding this current steady, not raising it.",
+  [CHARGE_AUTO_REASON.HARD_CEILING]: `At ${TARGET_C} °C and still warming — easing the current down.`,
+  [CHARGE_AUTO_REASON.CLOSING]: `Warming towards ${TARGET_C} °C too fast to catch — easing the current down.`,
+  [CHARGE_AUTO_REASON.CLEAR]: `Below ${TARGET_C} °C with room to spare — giving current back.`,
+  [CHARGE_AUTO_REASON.SETTLED]: "Holding — this current is taking the pack where it should be.",
+  [CHARGE_AUTO_REASON.NEAR_CEILING]: `At ${TARGET_C} °C and not warming — holding this current.`,
   [CHARGE_AUTO_REASON.AT_FLOOR]: `At the ${MIN_COMMAND_A} A floor — going lower would be slower than not acting.`,
 };

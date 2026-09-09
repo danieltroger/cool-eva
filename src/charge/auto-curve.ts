@@ -1,15 +1,16 @@
-import { estimateHeatingRate, type TemperatureSample } from "./rate.ts";
+import { estimateHeatingRate, minutesSinceNewestSample, type TemperatureSample } from "./rate.ts";
 import { CHARGE_MANAGER_STATE_DC } from "../fan/curve.ts";
 
 // What current to command during a DC fast charge, so the pack does not reach the cliff. Pure —
 // readings in, a decision out, no I/O and no clock read. The half that touches the world is
 // ./auto.ts, the same split as src/fan/curve.ts and src/fan/auto.ts.
 //
-// The rule, whole: command the ceiling while the observed heating rate says the cliff is more than
-// a reaction horizon away; step down while it says otherwise; hold in between. There is no target
-// temperature and no thermal model — the rate IS the measurement of the cooling, so sun, wind, fan
-// duty and ambient all arrive already accounted for, and it needs no departure time because it
-// never aims at one. docs/charge-auto.md has the derivations and the limits.
+// The rule, whole: hold the pack AT 54 °C from both directions. One line does the work —
+// `headroomKelvin = (54 − T) − rate × REACTION_MIN`, how far below the setpoint the pack is
+// predicted to be one reaction time from now — and the step is proportional to it, bounded, never
+// below 1 A. There is still no thermal model: the rate IS the measurement of the cooling, so sun,
+// wind, fan duty and ambient arrive already accounted for, and it needs no departure time because
+// it never aims at one. docs/charge-auto.md has the derivations, the sweep and the limits.
 
 /** What to do with the charge current this tick. Closed, so the runner cannot invent a case. */
 export type ChargeAutoDecision =
@@ -31,23 +32,23 @@ export const CHARGE_AUTO_REASON = {
   NO_TEMPERATURE: 2,
   /** `fast_dc_limit_max_a` has never arrived, so there is no ceiling to command against. */
   NO_CEILING: 3,
-  /** The rider moved the dial on the bike. Stood down for the rest of the session. */
+  /** The rider set a current that is not the one we asked for. Stood down for this charge. */
   RIDER: 4,
   /** Too little history to see a rate yet, and the pack is not hot enough to act blind. */
   NO_HISTORY: 5,
   /** Too little history to see a rate, and the pack is hot: descending on the bound. */
   BLIND_DESCENT: 6,
-  /** At or above STEP_DOWN_FROM_C: the reading alone is reason enough to reduce. */
+  /** At or above the setpoint (or past the cliff): reducing, because the reading itself says so. */
   HARD_CEILING: 7,
-  /** The rate says the cliff is inside the reaction horizon. */
+  /** Below the setpoint but heating towards it faster than the reaction time allows. */
   CLOSING: 8,
-  /** The cliff is comfortably far; giving current back. */
+  /** Predicted to stay below the setpoint with room to spare; giving current back. */
   CLEAR: 9,
-  /** Inside the hysteresis band — the current is right. */
+  /** Below the setpoint and inside the sensor's own half-degree; the current is right. */
   SETTLED: 10,
   /** Already at the floor and still closing: nothing left to give up. */
   AT_FLOOR: 11,
-  /** Near the ceiling and not rising: holding this current rather than raising it. */
+  /** At the setpoint and not heating: holding this current, and never raising from here. */
   NEAR_CEILING: 12,
 } as const;
 
@@ -64,47 +65,25 @@ export type ChargeAutoReason = (typeof CHARGE_AUTO_REASON)[keyof typeof CHARGE_A
 export const CLIFF_C = 55;
 
 /**
- * How much warning the controller needs to bend the curve before the cliff.
+ * The setpoint. The controller holds the pack here from BOTH directions.
  *
- * ⚠️ Sized by simulating the closed loop, not chosen: at 5 minutes the simulated peak is
- * 54.0-54.3 °C, inside ONE quantisation step of the cliff on a whole-degree sensor read against a
- * two-anchor model — which is not a margin. At 8 the peak is 51.7-52.7 for 3-11 % of mean current.
- * ⚠️ Coupled to RATE_WINDOW_MS: the horizon must cover the estimator's own lag (half the window)
- * plus the descent, so shortening the window without revisiting this breaks the sizing.
+ * ⚠️ Daniel watched the pack sit at 54 for a long time without touching 55 with the controller off,
+ * so the equilibrium exists and charging below it leaves range on the table — the hotter the pack,
+ * the larger the coolant-to-pack ΔT and the more heat the loop pulls out. `batt_temp_hi` is WHOLE
+ * degrees, so a reading of 54 means anywhere in [54, 55): that is why nothing may RAISE from here,
+ * and why the 0.5 K deadband below is not applied at or above it. docs/charge-auto.md.
  */
-export const HORIZON_MIN = 8;
+export const TARGET_C = 54;
 
 /**
- * The reading at which the controller stops raising the current.
+ * How far ahead the rule looks when deciding whether the pack is heading past the setpoint.
  *
- * ⚠️ `batt_temp_hi` is WHOLE DEGREES, so a reading of 53 means the pack is anywhere in [53, 54).
- * Adding current there can push it into the band the next tier exists for, before the next tick
- * shows it. From here the rule may still step DOWN, but never up.
- *
- * ⚠️ This half used to step down unconditionally, so a pack sitting still at 53 was ratcheted to
- * the floor for no reason — and the comment above it described a hold, which is what it should
- * have been doing. docs/charge-auto.md § "Two tiers, and why they are 53 and 54".
+ * ⚠️ The old `HORIZON_MIN` under a new name and aimed one degree lower: `headroomKelvin < 0` is
+ * exactly `(TARGET_C − T) / rate < REACTION_MIN`, so this inherits that sizing rather than
+ * replacing it. ⚠️ Still coupled to RATE_WINDOW_MS — it must cover the estimator's own lag (half
+ * the window) plus the descent, so shortening the window without revisiting this breaks it.
  */
-export const NO_RAISE_FROM_C = 53;
-
-/**
- * The reading at which temperature ALONE steps the current down, whatever the rate says.
- *
- * ⚠️ A reading of 54 means the true temperature is anywhere in [54, 55), and `timeToTargetMinutes`
- * measures from the READING — so it over-states the time left by up to a whole degree's worth,
- * `1/R` minutes. A pack reading 54 and rising at 0.1 K/min is told it has ten minutes when it may
- * have six seconds. Nothing on this bus resolves that: every pack-temperature signal is integral,
- * including all twelve per-module readings.
- *
- * From NO_RAISE_FROM_C upward the time-to-cliff test already targets THIS value rather than the
- * cliff, which covers a rising pack. What is left uniquely to this tier is the pack that is flat or
- * COOLING at 54 — where the rate says there is all the time in the world and the reading says the
- * reading cannot say how near the cliff the pack is.
- */
-export const STEP_DOWN_FROM_C = 54;
-
-/** Above this, no history at all justifies descending blind. Below it, wait and watch. */
-export const BLIND_DESCENT_FROM_C = 50;
+export const REACTION_MIN = 12;
 
 /**
  * The floor, and ⚠️ THE ONE KNOB THAT MATTERS. Capping below this is worse than doing nothing: the
@@ -114,11 +93,34 @@ export const BLIND_DESCENT_FROM_C = 50;
  */
 export const MIN_COMMAND_A = 35;
 
-/** One 5 A step per update — the dash's own dial granularity, so a rider taking over sees the same numbers. */
-export const STEP_A = 5;
+/**
+ * How many amps one kelvin of predicted headroom is worth — the loop's gain.
+ *
+ * ⚠️ A GAIN, not a thermal model: it converts an error into a step and its only job is to be small
+ * enough not to oscillate against the estimator's ~5 min lag and large enough to matter. Chosen by
+ * the frozen-grid sweep in docs/charge-auto.md, where a gain of 2 gives the fewest cliff crossings
+ * AND the least chatter of any feasible point. Under-gaining costs time; over-gaining costs frames
+ * and dash flicker. Both are bounded by MAX_STEP_A and by the deadband.
+ */
+export const AMPS_PER_KELVIN = 2;
 
-/** Give current back only when the cliff is this many horizons away. The hysteresis; stops chatter. */
-export const RELEASE_FACTOR = 1.5;
+/** The bike accepts 1 A (verified against the manual sheet), so the loop is not a coarse ratchet. */
+export const MIN_STEP_A = 1;
+
+/**
+ * The largest single move, in amps. ⚠️ NOT a preference — every A1-feasible point in the sweep sits
+ * here, and a cap of 5 crosses the cliff on 28-30 of the 150 frozen plants against 16 at this value:
+ * a proportional law that cannot move faster than the pack is a slower ratchet, not a gentler one.
+ */
+export const MAX_STEP_A = 15;
+
+/**
+ * The deadband, in kelvin of predicted headroom: half a least count of a whole-degree sensor.
+ *
+ * ⚠️ Derived, not chosen, and applied ONLY BELOW the setpoint. At or above a reading of 54 the pack
+ * may be at 54.99 and there is no slack to spend, so any positive rate acts there.
+ */
+export const QUANTISATION_K = 0.5;
 
 /**
  * How old `batt_temp_hi` may be. Matches TEMPERATURE_FRESH_MS in src/fan/curve.ts and for the same
@@ -196,55 +198,71 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
 
   const temperature = input.packTemperatureC;
   const ceiling = input.ceilingAmps;
-  const current = input.commandedAmps ?? ceiling;
+  // ⚠️ FLOORED, both of them. The plant's ceiling is 72.6 A and the bike refuses a non-integer, so
+  // an unfloored `current` makes the rule command 72 while already at 72.6 and call that acting —
+  // which failed the cold-plant assertion outright and moved the frozen-grid crossing count.
+  const current = Math.floor(input.commandedAmps ?? ceiling);
   const rate = estimateHeatingRate(input.samples, input.nowMs);
 
-  // ⚠️ FIRST, and on temperature ALONE. This used to sit after the `unknown` branch, so whether it
-  // applied depended on whether a rate happened to be measurable — the same mistake as gating it
-  // behind an estimate. The check asserts the ordering rather than leaving it to luck.
-  if (temperature >= STEP_DOWN_FROM_C) {
-    return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.HARD_CEILING);
+  // ⚠️ FIRST, and on temperature ALONE: at or past the cliff the clamp has already released, so the
+  // reading is no longer evidence about anything except that we are too late. Give up the most the
+  // rule is allowed to give up in one move.
+  if (temperature >= CLIFF_C) {
+    return stepTo(current - MAX_STEP_A, current, ceiling, CHARGE_AUTO_REASON.HARD_CEILING);
   }
   if (rate.kind === "unknown") {
-    // Cannot see. Acting blind is justified only by the pack already being hot — otherwise waiting
-    // costs nothing, because a cool pack is minutes of climbing away from mattering.
-    if (temperature < BLIND_DESCENT_FROM_C) {
+    if (temperature < TARGET_C) {
       return { kind: "hold", reason: CHARGE_AUTO_REASON.NO_HISTORY };
     }
-    return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
+    return stepTo(current - blindStepAmps(input), current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
   }
-  // ⚠️ From NO_RAISE_FROM_C the target is the NEXT TIER, not the cliff. A reading of 53 can be a
-  // true 53.99, so measuring against 55 hands the rule a whole degree it does not have — the same
-  // quantisation STEP_DOWN_FROM_C exists for, one degree lower. Measured over 150 plants: without
-  // this the two tiers add six crossings of 55 that today's single ceiling does not have; with it,
-  // none, and the worst margin is unchanged.
-  const target = temperature >= NO_RAISE_FROM_C ? STEP_DOWN_FROM_C : CLIFF_C;
-  const minutesToTarget = timeToTargetMinutes(temperature, target, rate.perMinute);
-  if (minutesToTarget <= HORIZON_MIN) {
-    return stepTo(current - STEP_A, current, ceiling, CHARGE_AUTO_REASON.CLOSING);
+
+  // The whole rule: how far below the setpoint the pack is predicted to be one reaction time from
+  // now. Positive is room to give, negative is a move to take back. ⚠️ `headroomKelvin < 0` is
+  // algebraically the shipped time-to-cliff test aimed at 54 instead of 55, which is why the steep
+  // -heating guard needs no branch of its own — it IS this line.
+  let headroomKelvin = TARGET_C - temperature - rate.perMinute * REACTION_MIN;
+  // ⚠️ Never raise at or above the setpoint. A reading of 54 can be a true 54.99, and this is the
+  // surviving half of the quantisation argument the 53/54 tiers were built on.
+  if (temperature >= TARGET_C) {
+    headroomKelvin = Math.min(headroomKelvin, 0);
   }
-  if (temperature >= NO_RAISE_FROM_C) {
+  if (temperature < TARGET_C && Math.abs(headroomKelvin) < QUANTISATION_K) {
+    return { kind: "hold", reason: CHARGE_AUTO_REASON.SETTLED };
+  }
+  if (headroomKelvin === 0) {
     return { kind: "hold", reason: CHARGE_AUTO_REASON.NEAR_CEILING };
   }
-  if (minutesToTarget > HORIZON_MIN * RELEASE_FACTOR) {
-    return stepTo(current + STEP_A, current, ceiling, CHARGE_AUTO_REASON.CLEAR);
+  const step = Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * Math.abs(headroomKelvin))));
+  if (headroomKelvin > 0) {
+    return stepTo(current + step, current, ceiling, CHARGE_AUTO_REASON.CLEAR);
   }
-  return { kind: "hold", reason: CHARGE_AUTO_REASON.SETTLED };
+  const lowering = temperature >= TARGET_C ? CHARGE_AUTO_REASON.HARD_CEILING : CHARGE_AUTO_REASON.CLOSING;
+  return stepTo(current - step, current, ceiling, lowering);
 }
 
 /**
- * How long until the pack reaches the cliff at the rate observed, in minutes.
+ * How far to descend with no fitted slope to descend on.
  *
- * A pack that is flat or cooling is never closing, so it gets an infinite answer rather than a
- * division — which is exactly why STEP_DOWN_FROM_C cannot be expressed as a time and has to be a
- * temperature. A `bounded` rate is passed in exactly as a measured one — it is the most the pack CAN
- * be doing, which is the conservative direction for a question about how long there is left.
+ * ⚠️ Sized from the SILENCE, not from a constant: the reading has not moved for `t` minutes, so the
+ * rate is under `1/t`, and substituting that bound into `headroomKelvin` at the setpoint leaves
+ * `REACTION_MIN / t` kelvin of deficit. Same bound the estimator's cap uses, so the blind branch
+ * and the headline fix rest on one measurement rather than two guesses. No samples at all is the
+ * one case with no bound to read, and it takes the largest step the rule allows — a pack reading
+ * ≥ 54 with no history whatsoever is the least safe thing this branch ever sees.
+ *
+ * ⚠️ It SATURATES: this branch only runs while the span is under RATE_MIN_SPAN_MS, and the silence
+ * cannot exceed the span, so for short silences the deficit exceeds the cap and the step is simply
+ * MAX_STEP_A. The frozen grid therefore cannot tell this apart from a fixed maximum step — the
+ * evidence for the derivation is the argument and the unit fixture, not the crossing count.
  */
-function timeToTargetMinutes(temperature: number, target: number, perMinute: number): number {
-  if (perMinute <= 0) {
-    return Number.POSITIVE_INFINITY;
+function blindStepAmps(input: ChargeAutoInput): number {
+  const silentMinutes = minutesSinceNewestSample(input.samples, input.nowMs);
+  if (silentMinutes === null || silentMinutes <= 0) {
+    return MAX_STEP_A;
   }
-  return (target - temperature) / perMinute;
+  const deficitKelvin = REACTION_MIN / silentMinutes;
+  return Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * deficitKelvin)));
 }
 
 /**
@@ -260,7 +278,7 @@ function stepTo(wanted: number, current: number, ceiling: number, reason: Charge
   if (ceiling <= MIN_COMMAND_A) {
     return { kind: "hold", reason: CHARGE_AUTO_REASON.AT_FLOOR };
   }
-  const amps = Math.min(ceiling, Math.max(MIN_COMMAND_A, wanted));
+  const amps = Math.min(Math.floor(ceiling), Math.max(MIN_COMMAND_A, Math.round(wanted)));
   if (amps === current) {
     return { kind: "hold", reason: amps === MIN_COMMAND_A ? CHARGE_AUTO_REASON.AT_FLOOR : CHARGE_AUTO_REASON.SETTLED };
   }

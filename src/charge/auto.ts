@@ -44,6 +44,9 @@ export interface ChargeCommandSink {
   commandChargeCurrent: (amps: number) => Promise<{ succeeded: boolean; message: string }>;
 }
 
+/** Where a charge current came from. `manual` is the rider, from the phone; `automatic` is us. */
+export type ChargeCommandOrigin = "manual" | "automatic";
+
 export interface ChargeAutomaticOptions {
   /** Whether the controller may act at all — `CHARGE_AUTO_ENABLED`, read once in src/index.ts. */
   enabled?: boolean;
@@ -54,13 +57,15 @@ export interface ChargeAutomatic {
   /** Switches the controller on or off from the dashboard. In memory only. */
   setMode: (mode: ChargeAutoMode) => void;
   /**
-   * Told when a charge current was commanded by HAND, from the phone.
+   * Told about EVERY charge current this Pi is about to put on the bus, and where it came from.
    *
-   * ⚠️ Stands the controller down for the rest of the session, the same as the dial on the bike —
-   * both are the rider saying what they want, and a controller that overrode either three seconds
-   * later is the thing that gets a Pi ripped out. Switching the toggle back to automatic clears it.
+   * ⚠️ Called BEFORE the frames are sent, not after, and that ordering is the whole fix: the bike
+   * answers our `0x120` commit with its own `0x121` within ~3-10 ms, well inside the two `await`s
+   * `sendChargeCommand` takes, so a value recorded afterwards arrives after the echo has already
+   * stood the controller down. Measured 2026-09-09: reason RIDER at .961, the send's own stamp at
+   * .964. A hand-set current still stands down; an automatic one only records the number.
    */
-  noteManualCommand: () => void;
+  noteChargeCurrentOutgoing: (amps: number, origin: ChargeCommandOrigin) => void;
   /** Stops the loop and unsubscribes. Called from index.ts's shutdown. */
   stop: () => void;
 }
@@ -82,7 +87,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     return {
       state: () => ({ mode: "off", reason: CHARGE_AUTO_REASON.DISABLED, commandedAmps: null }),
       setMode: () => console.warn("charge-auto: ignoring a mode change — CHARGE_AUTO_ENABLED is 0"),
-      noteManualCommand: () => {},
+      noteChargeCurrentOutgoing: () => {},
       stop: () => {},
     };
   }
@@ -91,6 +96,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     mode: "automatic",
     reason: CHARGE_AUTO_REASON.NO_HISTORY,
     commandedAmps: null,
+    lastSentAmps: null,
     riderOverride: false,
     samples: [],
     inFlight: false,
@@ -102,11 +108,12 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     if (changed["batt_temp_hi"] !== undefined) {
       remember(context, changed["batt_temp_hi"].value);
     }
-    // ⚠️ The rider moving the dial stands this down for the rest of the session. This Pi does not
-    // hear its own transmissions (`createRawChannel` does not set CAN_RAW_RECV_OWN_MSGS, proven
-    // 2026-09-07: our three sends produced no decoded row while all twelve of the dash's did), so a
-    // `dc_charge_limit_selected_a` event is necessarily the RIDER and never our own echo.
-    if (changed["dc_charge_limit_selected_a"] !== undefined) {
+    // ⚠️ ONLY a setpoint that is NOT the one we asked for is the rider. The bike answers our own
+    // `0x120` commit with a `0x121` carrying the amps we just commanded, so on 2026-09-09 every one
+    // of our commands stood the controller down — 5 of 6 automatic commands in one session, each
+    // 1 ms after its own echo, and Daniel had to tap "take the current back" six times.
+    const observed = changed["dc_charge_limit_selected_a"];
+    if (observed !== undefined && isRiderSetpoint(context, observed.value)) {
       standDown(context);
     }
     // ⚠️ Reset on ENTERING a DC session as well as leaving one. Resetting only on exit leaves the
@@ -139,9 +146,12 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
       record("charge_auto_reason", context.reason);
       console.warn(`charge-auto: mode set to ${mode}`);
     },
-    noteManualCommand: () => {
-      standDown(context);
-      console.warn("charge-auto: a charge current was set by hand — standing down for this charge");
+    noteChargeCurrentOutgoing: (amps, origin) => {
+      context.lastSentAmps = amps;
+      if (origin === "manual") {
+        standDown(context);
+        console.warn("charge-auto: a charge current was set by hand — standing down for this charge");
+      }
     },
     stop: () => {
       if (context.timer) {
@@ -159,6 +169,8 @@ interface AutoContext {
   mode: ChargeAutoMode;
   reason: ChargeAutoReason;
   commandedAmps: number | null;
+  /** The last current this Pi put on the bus, automatic or hand-set. The echo test compares to it. */
+  lastSentAmps: number | null;
   riderOverride: boolean;
   samples: TemperatureSample[];
   /** True while a command is in flight, so a slow POST cannot overlap the next tick. */
@@ -243,8 +255,33 @@ function remember(context: AutoContext, celsius: number): void {
  */
 function forgetSession(context: AutoContext): void {
   context.commandedAmps = null;
+  context.lastSentAmps = null;
   context.riderOverride = false;
   context.samples.length = 0;
+}
+
+/**
+ * Whether an observed setpoint is the rider rather than the bike answering our own command.
+ *
+ * ⚠️ Equality is safe because it is EXACT: across 21 matched sends on 2026-09-09 the echoed byte
+ * was identical to the commanded one every time, including 44 A, which is not on the dash's own
+ * 5 A grid. If the rider dials to exactly the value we commanded, nothing stands down and nothing
+ * changes on the bike — they asked for the current already flowing.
+ *
+ * ⚠️ The CEILING is exempt unless we asked for it ourselves. The one setpoint event of 2026-09-09
+ * that no Pi command caused was 75 A — the ceiling — at session teardown, which is the setting
+ * resetting on unplug and not a rider. A rider who genuinely dials to maximum after we have
+ * commanded the maximum is indistinguishable from that reset, and we take the safe reading.
+ */
+function isRiderSetpoint(context: AutoContext, observedAmps: number): boolean {
+  if (context.lastSentAmps !== null && observedAmps === context.lastSentAmps) {
+    return false;
+  }
+  const ceiling = latestValue("fast_dc_limit_max_a");
+  if (ceiling !== null && observedAmps === ceiling && context.lastSentAmps !== ceiling) {
+    return false;
+  }
+  return true;
 }
 
 /**

@@ -21,7 +21,7 @@ export const COOLING_NOMINAL = 0.0089;
 
 /** Measured: minutes per SOC point at the 72.6 A the bike pulls when nothing is in the way. */
 const MIN_PER_POINT_AT_FULL = 0.53;
-const FULL_CURRENT_A = 72.6;
+export const FULL_CURRENT_A = 72.6;
 
 /** Measured: what the saw-tooth actually averages once the clamp releases at 55 °C. */
 export const SAWTOOTH_MIN_PER_POINT = 1.3;

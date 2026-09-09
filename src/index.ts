@@ -269,10 +269,10 @@ const vcuWriteRunner = createVcuWriteRunner({
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
   // opinions about whether a motorcycle is safe to touch is one opinion too many.
   gate: () => vcuReadRunner.gate(),
-  // ⚠️ A charge current the RIDER set by hand stands the automatic controller down for the session,
-  // exactly as the dial on the bike does. Called from the runner's own send path, so a POST refused
-  // for a bad header or a stale confirm token stands nothing down.
-  onManualChargeCurrent: () => chargeAutomatic.noteManualCommand(),
+  // ⚠️ Every charge current about to reach the bus, hand-set or automatic, and told BEFORE the
+  // frames go out — the bike answers our own commit within milliseconds, so a controller told
+  // afterwards reads its own command as the rider. A hand-set one still stands it down.
+  onChargeCurrentOutgoing: (amps, origin) => chargeAutomatic.noteChargeCurrentOutgoing(amps, origin),
   // ⚠️ The last sweep's snapshot, which the write half asks two things of.
   //
   // Which of Energica's parameter tables this bike runs: a parameter is written BY INDEX
