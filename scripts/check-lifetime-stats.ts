@@ -11,7 +11,7 @@ import {
   EXPECTED_20260908_C52,
   lifetimeReadPayload,
 } from "./captured-lifetime-reads.ts";
-import { readFile } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
 import { infokeysFor } from "../src/diagnostics/fault-infokeys.ts";
 import {
   decodeFreezeFrameResponse,
@@ -447,7 +447,6 @@ for (const [key, liveKey, group] of [
 console.log("  the four cell bands match public/lib/bounds.js");
 
 // ── §7b The instruction the dashboard shows must be a command that runs ────
-const failuresBeforeInstruction = failures.length;
 console.log("\n── §7b the on-screen instruction ──────────────────────────────────");
 
 // ⚠️ PARSED, not eyeballed. The first version of this string named `--components 51,52`,
@@ -486,14 +485,49 @@ check(
 // interpolating it — so the tool you reach for BECAUSE the service is stopped, and the app
 // therefore is not running, answered a question about --save by saying "open the app".
 // The assertions above cannot see that: the string is fine, its caller was not.
-const freezeFrameSource = await readFile(new URL("./read-freeze-frame.ts", import.meta.url), "utf-8");
-check(
-  !/\bHOW_TO_READ\b(?!_WITH_SERVICE_STOPPED)/.test(freezeFrameSource),
-  "read-freeze-frame.ts must not print HOW_TO_READ — its reader has no app running"
-);
-if (failures.length === failuresBeforeInstruction) {
-  console.log(`  "${HOW_TO_READ}" is an in-app path, and no shell tool prints it`);
+//
+// Swept over the whole directory rather than that one file: every script here runs from a
+// shell by definition, so any of them printing the in-app path is the same bug.
+//
+// ⚠️ Named exceptions rather than a cleverer pattern. The two below reference the constant
+// for reasons that are not printing it, and a regex that tried to tell "interpolated into
+// a usage string" from "assigned to a payload field" would be guessing at intent from
+// punctuation. A list makes every new reference a decision somebody had to make on
+// purpose, which is the same argument scripts/check-all-view-tiles.ts makes for MUST_LATCH.
+// `_` is a word character, so \b already refuses to match HOW_TO_READ_WITH_SERVICE_STOPPED.
+const MAY_NAME_HOW_TO_READ: Record<string, string> = {
+  "build-service-preview.ts":
+    "builds the /lifetime-stats payload for the preview — it serves the string, it does not print it",
+  "freeze-frame-args.ts": "names it in a comment, pointing at where the instruction lives",
+  "check-lifetime-stats.ts": "this file",
+};
+const scriptsDirectory = new URL(".", import.meta.url);
+const shellCallers: string[] = [];
+for (const entry of await readdir(scriptsDirectory)) {
+  if (!entry.endsWith(".ts") || entry in MAY_NAME_HOW_TO_READ) {
+    continue;
+  }
+  const source = await readFile(new URL(entry, scriptsDirectory), "utf-8");
+  if (/\bHOW_TO_READ\b/.test(source)) {
+    shellCallers.push(entry);
+  }
 }
+check(
+  shellCallers.length === 0,
+  `no script may print HOW_TO_READ — its reader has no app running, and ${shellCallers.join(", ")} does`
+);
+console.log(`  headline: "${HOW_TO_READ}"`);
+
+// ⚠️ And the control it names must exist. HOW_TO_READ quotes the service sheet's button
+// verbatim; rename that button and a never-read Pi's only instruction points at a control
+// that is not there — the --components 51,52 failure again, moved to the in-app half.
+const lifetimeReadView = await readFile(new URL("../public/views/lifetime-read.js", import.meta.url), "utf-8");
+const quotedLabel = HOW_TO_READ.match(/"([^"]+)"/)?.[1] ?? "";
+check(
+  quotedLabel !== "" && lifetimeReadView.includes(quotedLabel),
+  `HOW_TO_READ quotes "${quotedLabel}", which public/views/lifetime-read.js no longer renders`
+);
+console.log(`  and "${quotedLabel}" is a button the service sheet renders`);
 
 if (failures.length > 0) {
   console.error("\nFAILED:");

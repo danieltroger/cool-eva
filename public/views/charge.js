@@ -7,7 +7,13 @@ import { heatmap, meter, ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 import { power, whole } from "../lib/format.js";
-import { COOLANT_FLOW_LPH, coolantDelta, coolantHeatRemovedWatts, resistiveLossWatts } from "../lib/derive.js";
+import {
+  COOLANT_FLOW_LPH,
+  coolantDelta,
+  coolantHeatRemovedWatts,
+  heatInOutText,
+  resistiveLossWatts,
+} from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
 import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
@@ -18,7 +24,9 @@ import {
   CELL_COUNT,
   CELL_VOLTAGE_PATTERN,
   MAX_CELLS_PER_MODULE,
+  MODULES_WITHOUT_BATTERY_SENSOR,
   MODULE_COUNT,
+  MODULE_SENSOR_COUNT,
   cellVoltageKeys,
   cellsInModule,
   moduleTemperatureGrid,
@@ -434,12 +442,8 @@ function ThermalBalanceTile() {
     div(
       { class: "value" },
       () => {
-        const into = resistiveLossWatts();
-        const out = coolantHeatRemovedWatts();
-        if (into == null && out == null) {
-          return "–";
-        }
-        return `${into == null ? "?" : Math.round(into)} / ${out == null ? "?" : Math.round(out)}`;
+        const heat = heatInOutText();
+        return heat == null ? "–" : `${heat.into} / ${heat.removed}`;
       },
       span({ class: "unit" }, "W")
     ),
@@ -516,9 +520,11 @@ function TemperatureGrid() {
     label: String(row.module),
     cells: row.cells.map(cell => ({ ...cell, color: colors.temperature(cell.value) })),
   }));
-  const without = grid.modulesWithoutBatterySensor;
-  const note = without.length === 0 ? "" : ` · modules ${without.join(" & ")} have no battery sensor`;
-  return div(heatmap({ rows }), div({ class: "sub" }, `${grid.seen} of ${grid.expected}${note}`));
+  const absentModules = MODULES_WITHOUT_BATTERY_SENSOR.join(" & ");
+  return div(
+    heatmap({ rows }),
+    div({ class: "sub" }, `${grid.seen} of ${MODULE_SENSOR_COUNT} · modules ${absentModules} have no battery sensor`)
+  );
 }
 
 /** Rows are modules, columns are the cells in them; colour is millivolts below the best. */

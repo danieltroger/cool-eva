@@ -47,10 +47,18 @@ export function cellVoltageKeys(keys) {
 export const MODULE_SENSORS = /** @type {const} */ (["bat1", "pcb1", "pcb2"]);
 
 /** Modules 6 and 8 have no battery sensor — mirrors LMUS_WITHOUT_BATTERY_TEMP. */
-const MODULES_WITHOUT_BATTERY_SENSOR = [6, 8];
+export const MODULES_WITHOUT_BATTERY_SENSOR = [6, 8];
 
 /** Modules in the pack, 1-indexed. */
 export const MODULE_COUNT = 11;
+
+/**
+ * Sensors the pack actually has: 11 modules x 3 positions, less the two thermistors that
+ * are not fitted. Derived rather than written as 31, so it cannot disagree with the two
+ * facts above it — and computed once, because it is a property of the pack rather than
+ * of any reading.
+ */
+export const MODULE_SENSOR_COUNT = MODULE_COUNT * MODULE_SENSORS.length - MODULES_WITHOUT_BATTERY_SENSOR.length;
 
 /** Widest module. Mirrors cellsInLmu() in src/can/decode-bms.ts: 8 for modules 1-4. */
 export const MAX_CELLS_PER_MODULE = 8;
@@ -87,9 +95,7 @@ export function moduleTemperatureKey(moduleNumber, sensor) {
 /**
  * @typedef {object} ModuleTemperatures
  * @property {Array<{ module: number, cells: ModuleSensorCell[] }>} rows
- * @property {number} seen sensors currently reading
- * @property {number} expected sensors the pack actually has — 31, not 33
- * @property {number[]} modulesWithoutBatterySensor
+ * @property {number} seen sensors currently reading, against MODULE_SENSOR_COUNT
  */
 
 /**
@@ -99,8 +105,10 @@ export function moduleTemperatureKey(moduleNumber, sensor) {
  * module whose thermistor is disabled in the BMS config apart from one whose reading
  * stopped arriving, and only moduleTemperatureKey() knows which is which — so the
  * distinction is drawn here, where that knowledge is, rather than at the drawing code.
- * `expected` counts what the pack HAS, so the caption can say 31 rather than count
- * whatever turned up.
+ *
+ * ⚠️ Returns only what depends on the readings. How many sensors the pack HAS, and which
+ * modules lack one, are constants above — a caption that needs them imports them rather
+ * than having them rebuilt on every redraw.
  *
  * `read` is a parameter for the same reason packResistanceWith()'s is: it lets
  * scripts/check-module-heatmap.ts drive this with no DOM. ⚠️ The view passes `peek`,
@@ -111,26 +119,20 @@ export function moduleTemperatureKey(moduleNumber, sensor) {
  */
 export function moduleTemperatureGrid(read) {
   const rows = [];
-  const modulesWithoutBatterySensor = [];
   let seen = 0;
-  let expected = 0;
   for (let module = 1; module <= MODULE_COUNT; module++) {
     const cells = MODULE_SENSORS.map(sensor => {
       const key = moduleTemperatureKey(module, sensor);
       if (key == null) {
         return { value: null, absent: true };
       }
-      expected += 1;
       const value = read(key);
       if (value != null) {
         seen += 1;
       }
       return { value, absent: false };
     });
-    if (moduleTemperatureKey(module, "bat1") == null) {
-      modulesWithoutBatterySensor.push(module);
-    }
     rows.push({ module, cells });
   }
-  return { rows, seen, expected, modulesWithoutBatterySensor };
+  return { rows, seen };
 }

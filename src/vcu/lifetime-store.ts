@@ -43,13 +43,17 @@ export const HOW_TO_READ = 'menu → Service mode → "Read the lifetime battery
 /**
  * The same read from a shell, for a Pi whose service is stopped.
  *
- * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts runs it through
- * the script's own argument parser, because the first version said `--components 51,52`
- * — a flag that never existed — and it was the first instruction every Pi would show.
- * That guard follows the command; it did not stay with the name.
+ * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts §7b runs it through
+ * the script's own argument parser, because the first version said `--components 51,52` —
+ * a flag that never existed — and it was the first instruction every Pi would show. The
+ * guard is on THIS constant, not on HOW_TO_READ above, since this is the one that is a
+ * command.
  *
- * It lives here rather than with the endpoint that serves it because this module owns
- * the file the command produces, and both the CLI and the HTTP layer already import it.
+ * It lives here rather than with the endpoint that serves it because this module owns the
+ * file the command produces. ⚠️ The CLI no longer imports it — §7b forbids that, so
+ * read-freeze-frame.ts names the output file instead — leaving the HTTP layer as the only
+ * consumer. Whether that makes `public/` the better home for HOW_TO_READ above is an open
+ * question; see the note on #187.
  */
 export const HOW_TO_READ_WITH_SERVICE_STOPPED =
   "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save";

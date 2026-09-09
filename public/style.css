@@ -294,9 +294,6 @@ body {
    tile's height is the constraint this layout exists to respect, and a wrapped aside
    would spend the row it was meant to save. */
 .value-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
   gap: 0.5rem;
   margin-top: auto;
 }
@@ -389,10 +386,16 @@ body {
 /* Two labels on one line, two figures on the next, the sub-line and charge on a third.
    Baseline rather than centre alignment, so the small figure sits on the big one's feet
    instead of floating in the middle of it. */
-.hero-row {
+/* Shared with .value-row above: a big figure and a small one on one baseline. Listed
+   together so the alignment cannot drift between the hero and the tiles — only the gap
+   and the tile's margin differ, and those stay with each. */
+.hero-row,
+.value-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+}
+.hero-row {
   gap: 1rem;
 }
 

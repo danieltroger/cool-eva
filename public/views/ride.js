@@ -4,7 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
-import { coolantDelta, coolantHeatRemovedWatts, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
+import { coolantDelta, heatInOutText, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
 import { packResistance } from "../lib/pack-resistance-live.js";
 import { powerLimitsKw } from "../lib/power-limits.js";
@@ -203,14 +203,8 @@ function CoolantDeltaTile() {
       div(
         { class: "value-aside" },
         () => {
-          const into = resistiveLossWatts();
-          const removed = coolantHeatRemovedWatts();
-          if (into == null && removed == null) {
-            return "–";
-          }
-          const inText = into == null ? "?" : String(Math.round(into));
-          const outText = removed == null ? "?" : String(Math.round(removed));
-          return `I²R ${inText} / loop ${outText}`;
+          const heat = heatInOutText();
+          return heat == null ? "–" : `I²R ${heat.into} / loop ${heat.removed}`;
         },
         span({ class: "unit" }, "W")
       )

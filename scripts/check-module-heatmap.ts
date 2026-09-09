@@ -1,6 +1,13 @@
 import { LMUS_WITHOUT_BATTERY_TEMP, LMU_COUNT } from "../src/can/decode-bms.ts";
 import { SIGNALS } from "../src/can/registry.ts";
-import { MODULE_COUNT, MODULE_SENSORS, moduleTemperatureGrid, moduleTemperatureKey } from "../public/lib/cells.js";
+import {
+  MODULES_WITHOUT_BATTERY_SENSOR,
+  MODULE_COUNT,
+  MODULE_SENSORS,
+  MODULE_SENSOR_COUNT,
+  moduleTemperatureGrid,
+  moduleTemperatureKey,
+} from "../public/lib/cells.js";
 
 // The Charge tab's module-temperature grid, checked from Node.
 //
@@ -40,21 +47,15 @@ function check(condition: boolean, description: string): void {
  * The pack, written out rather than only imported — and then checked against the import.
  *
  * These are here because since #187 they are RENDERED: the caption reads "31 of 31 ·
- * modules 6 & 8 have no battery sensor", so pinning them pins a sentence the rider reads,
- * and §1's set equality on its own says nothing about what the set CONTAINS.
- *
- * ⚠️ The secondary reason is real but weaker than an earlier draft of this comment
- * claimed: set equality is satisfied by two empty sets, and `expectedKeys.size === 31` is
- * what catches that. It is not the scripts/check-all-view-tiles.ts trap, though — there
- * the check would have derived its expectation from the one function under test, whereas
- * cells.js imports nothing from registry.ts, so emptying both sides here takes two
- * deliberate edits rather than one.
+ * modules 6 & 8 have no battery sensor", so pinning them pins a sentence the rider reads.
+ * §1's set equality says the two sides agree; only a literal says what they agree ON, and
+ * two empty sets agree perfectly.
  *
  * If the bike's BMS config ever changes, verify the new numbers against it and update
  * these — do not delete them.
  */
 const SENSOR_COUNT = 31;
-const MODULES_WITHOUT_BATTERY_SENSOR = [6, 8];
+const WITHOUT_BATTERY_SENSOR = [6, 8];
 
 console.log("──── §1 the dashboard expects exactly what the Pi can send ────");
 
@@ -99,18 +100,16 @@ check(
   `that set has ${expectedKeys.size} members, and the caption promises ${SENSOR_COUNT}`
 );
 
-const withoutBatterySensor = [];
-for (let module = 1; module <= MODULE_COUNT; module++) {
-  if (moduleTemperatureKey(module, "bat1") == null) {
-    withoutBatterySensor.push(module);
-  }
-}
 check(
-  withoutBatterySensor.join(",") === MODULES_WITHOUT_BATTERY_SENSOR.join(","),
-  `cells.js withholds a battery key for modules ${withoutBatterySensor.join(" & ")}`
+  MODULE_SENSOR_COUNT === SENSOR_COUNT,
+  `cells.js counts ${MODULE_SENSOR_COUNT} sensors, and the caption promises ${SENSOR_COUNT}`
 );
 check(
-  [...LMUS_WITHOUT_BATTERY_TEMP].sort().join(",") === MODULES_WITHOUT_BATTERY_SENSOR.join(","),
+  MODULES_WITHOUT_BATTERY_SENSOR.join(",") === WITHOUT_BATTERY_SENSOR.join(","),
+  `cells.js withholds a battery key for modules ${MODULES_WITHOUT_BATTERY_SENSOR.join(" & ")}`
+);
+check(
+  [...LMUS_WITHOUT_BATTERY_TEMP].sort().join(",") === WITHOUT_BATTERY_SENSOR.join(","),
   `and decode-bms.ts withholds the reading for the same two — the mirror cells.js only asked for in a comment`
 );
 
@@ -127,18 +126,13 @@ for (const key of expectedKeys) {
 }
 
 const healthy = moduleTemperatureGrid(readerFor(everySensor));
-check(healthy.seen === SENSOR_COUNT, `with every sensor reporting the caption says ${healthy.seen} of ${SENSOR_COUNT}`);
-check(healthy.expected === SENSOR_COUNT, `and counts against the pack's ${healthy.expected}, not against 33`);
+check(healthy.seen === SENSOR_COUNT, `with every sensor reporting the grid sees ${healthy.seen} of ${SENSOR_COUNT}`);
 check(healthy.rows.length === MODULE_COUNT, `the grid is ${healthy.rows.length} rows, one per module`);
-check(
-  healthy.modulesWithoutBatterySensor.join(",") === MODULES_WITHOUT_BATTERY_SENSOR.join(","),
-  `and names modules ${healthy.modulesWithoutBatterySensor.join(" & ")} in the caption`
-);
 
 // Rows are 1-indexed by module; cells are in MODULE_SENSORS order, battery first.
 const batteryCellOf = (grid: typeof healthy, module: number) => grid.rows[module - 1].cells[0];
 
-for (const module of MODULES_WITHOUT_BATTERY_SENSOR) {
+for (const module of WITHOUT_BATTERY_SENSOR) {
   const cell = batteryCellOf(healthy, module);
   check(
     cell.absent && cell.value === null,
@@ -146,7 +140,7 @@ for (const module of MODULES_WITHOUT_BATTERY_SENSOR) {
   );
 }
 check(
-  healthy.rows.flatMap(row => row.cells).filter(cell => cell.absent).length === MODULES_WITHOUT_BATTERY_SENSOR.length,
+  healthy.rows.flatMap(row => row.cells).filter(cell => cell.absent).length === WITHOUT_BATTERY_SENSOR.length,
   `and nothing else on the grid is marked absent`
 );
 
@@ -160,18 +154,15 @@ const withDropout = moduleTemperatureGrid(readerFor(droppedOut));
 const dropped = batteryCellOf(withDropout, 4);
 check(!dropped.absent && dropped.value === null, "a sensor that exists and stopped reporting is NOT marked absent");
 check(
-  withDropout.seen === SENSOR_COUNT - 1 && withDropout.expected === SENSOR_COUNT,
-  `and the caption says ${withDropout.seen} of ${withDropout.expected}, so the gap is countable`
+  withDropout.seen === SENSOR_COUNT - 1,
+  `and the grid sees ${withDropout.seen} of ${SENSOR_COUNT}, so the gap is countable`
 );
-for (const module of MODULES_WITHOUT_BATTERY_SENSOR) {
+for (const module of WITHOUT_BATTERY_SENSOR) {
   check(batteryCellOf(withDropout, module).absent, `module ${module} is still absent beside it, not merged with it`);
 }
 
 const silent = moduleTemperatureGrid(readerFor(new Map()));
-check(
-  silent.seen === 0 && silent.expected === SENSOR_COUNT,
-  "with nothing on the bus the grid reports 0 seen and still expects 31 — the view's waiting branch"
-);
+check(silent.seen === 0, "with nothing on the bus the grid sees 0 — the view's waiting branch");
 
 console.log("");
 if (failures.length > 0) {
