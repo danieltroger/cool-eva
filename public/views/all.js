@@ -107,12 +107,18 @@ function LifetimeBlock() {
       return failure && needle === "" ? div({ class: "section" }, `lifetime · ${failure}`) : div();
     }
     if (!response.reading) {
-      // Not an error: most Pis have never taken one. Says how, because the answer is a
-      // command somebody has to run at the bike with the service stopped.
+      // Not an error: most Pis have never taken one. Says how — and since #177 that is a
+      // button on this same phone, so the in-app path leads and the shell command is a
+      // footnote for a Pi whose service is stopped. It read the other way round from
+      // #177 until #187.
       return needle === ""
         ? div(
             div({ class: "section" }, "lifetime · never read"),
-            div({ class: "raw-grid" }, div({ class: "raw" }, div({ class: "raw-sub" }, response.howToRead)))
+            div(
+              { class: "raw raw-notice" },
+              div({ class: "raw-sub" }, response.howToRead),
+              div({ class: "raw-sub raw-footnote" }, `service stopped: ${response.howToReadWithServiceStopped}`)
+            )
           )
         : div();
     }

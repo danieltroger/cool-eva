@@ -376,6 +376,14 @@ The one interaction this view has is the filter box, and a pinned block that ign
 
 The first version gave every decoded field its own tile and pushed the signal grid off the bottom of a 414 px screen — on the tab whose whole purpose is going to look at a raw number. The charge counters became one tile carrying `969 AC · 17 DC · 32 neither`, and the four cell readings became a spread with its bounds and ids underneath. Rows carry a `detail` array for exactly this, formatted in `src/diagnostics/lifetime-rows.ts` rather than in the browser: what belongs with what, and what a rejected constituent should look like, is the same judgement as the row itself.
 
+### The empty block tells the rider what to do NEXT, not what an agent would do
+
+A Pi that has never taken a reading shows one instruction, and after [#177](https://github.com/danieltroger/cool-eva/issues/177) it was still `node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save, with the service stopped` — a shell command, on a phone, held one-handed at the bike. #177 had already made the read a button in the service sheet; the sentence just never moved. It stood that way from #177 to #187 the following evening. It now leads with the in-app path and keeps the command as a footnote for the case it is still the answer to, a Pi whose service is stopped.
+
+⚠️ **It says "parked with the drive down", NOT "not charging".** The safety gate deliberately excuses `energized` while a charge session is confirmed (`src/vcu/service-gate.ts`, and §12 of `docs/vcu-parameters.md` for why servicing a charging bike is reasonable) — so an instruction to unplug first would invent a rule the code does not have, which is the same class of error as the flag that never existed. What the gate actually requires is the drive down and the bike stationary, and the sheet prints whichever check is blocking, which is the thing worth pointing at.
+
+`scripts/check-lifetime-stats.ts` §7b parses the footnote through the script's own argument parser — it always did, because the first version of that string named `--components 51,52`, a flag that has never existed — and now also asserts that the headline is **not** a command, since a revert would otherwise look exactly like what used to be correct.
+
 ### The notes are the feature, not decoration
 
 Two of these numbers are shown **unscaled** — `TotalExchangedAh` because its scale is refused, `AvgDOD` because Energica's equation for it is malformed — so the line underneath is what makes the number mean anything at all. It renders at the same weight as a rejected reading rather than tucked away, and it carries the thing a person standing at the bike can act on: what would settle it. `docs/lifetime-battery-statistics.md`.
@@ -600,9 +608,28 @@ What ships instead is the owner's own specification, taken from his photographs 
 
 Rows are modules and columns are the sensors or cells within one, so the shape on screen is the shape of the pack. That is the whole point over the flat 81-bar strip: a strip shows that something is drifting, a grid shows _which module_, and during a fast charge that is the difference between a curiosity and something you can act on.
 
-Cells with no reading are drawn as an empty outline rather than skipped, so the grid keeps its geometry — modules 6 and 8 have no battery sensor, and a hole there should look like a missing sensor, not like a shifted row.
+**Three cell states, and the outline means only one of them.** A cell with no reading is drawn as an empty outline rather than skipped, so the grid keeps its geometry — a hole must not look like a shifted row. But an outline is now reserved for a sensor that is EXPECTED and not arriving, which is a probe worth going and wiggling: 0x663/0x664 have been observed never sampling some modules, and `decode-bms.ts` drops a battery byte outside [−40, 100] °C, the 122 °C pad a module reports when the BMCU has not polled it. Modules 6 and 8 are not that. They have `BattTemp1Enabled = False` and no thermistor at all, so their cell keeps the outline — the geometry argument is unchanged — and carries **a centred dot** inside it, and the caption says which two they are: `31 of 31 · modules 6 & 8 have no battery sensor`. It read `${seen} sensors` until #187, which counted whatever turned up and so could never be short of anything.
 
-Row labels are HTML beside the SVG, not `<text>` inside it. The grid stretches to the tile width with `preserveAspectRatio="none"` so the cells stay big enough to read, and that stretch would render glyphs about 1.9× wider than tall — by a different amount in each mode, since the two grids have different viewBox heights.
+⚠️ **The dot is a round-capped `<path>` with `vector-effect: non-scaling-stroke`, not a `<circle>`.** The viewBox is stretched horizontally (below), so a circle arrives as an ellipse — measured 9.8 × 6.1 px at 390 px. `sparkline()` uses the same property against the same stretch.
+
+⚠️⚠️ **And the path is `l 0.01 0`, not `l 0 0` — WebKit ignores `non-scaling-stroke` on a zero-length subpath.** This is the trap that nearly shipped: `l 0 0` is how a dot wants to be written, it renders a true 3 px-radius round dot in Blink, and it was designed, measured and gated there. `public/index.html` says iOS is the only platform this page is ever opened on. Four cases in one stretched viewBox (`0 0 100 88` at 800 × 352, anisotropy 2.0), rendered in Blink and in WebKit via `qlmanage -t`:
+
+|  | mark | Blink | WebKit |
+| --- | --- | --- | --- |
+| A | `l 0 0`, round cap, **with** `vector-effect` | round dot, hit-tests 3/3/3/3 | **flat ellipse** |
+| D | the same path **without** `vector-effect` | ellipse, 24/24 × 12/12 | flat ellipse — **pixel-identical to A** |
+| E | `l 0.01 0`, **with** `vector-effect` | round dot, 3/3/3/3 | **round dot** |
+| B/C | a real `<line>` with / without it | thin / 4× thicker | thin / 4× thicker |
+
+B against C proves the property works in WebKit at all; A against D proves the zero-length subpath is what it refuses to apply it to. On the real grid that costs `scaleX` 3.256 against `scaleY` 2.045, so an un-scaled 6-unit stroke paints **19.5 × 12.3 px** in a cell 106.6 × 15.1 px — a lopsided blob at exactly the 1.59:1 the `<circle>` was rejected for, filling 81 % of the row. 0.01 user units is 0.03 device px: invisible in both engines, degenerate in neither.
+
+⚠️ The lesson outlives the mark. This dashboard is gated with screenshots from **Blink** and read on **WebKit**, and `lib/svg.js`'s header has warned since it was written that "WebKit is untested and this page is only ever read on a phone". A measurement in one engine written up as a property of the code is the shape of mistake CLAUDE.md's citation bullet is about — it _was_ measured, and the sentence said "at any width" when it meant "in Chrome".
+
+**The count is against 31, not against 33 and not against whatever arrived.** `moduleTemperatureGrid()` in `lib/cells.js` decides all three states, and `moduleTemperatureKey()` returning `null` is the only thing in `public/` that knows a sensor does not exist — so the distinction is drawn where that knowledge is, rather than at the drawing code, which sees only a `null`. `scripts/check-module-heatmap.ts` holds the expected set against `registry.ts` and the two module numbers against `decode-bms.ts`'s `LMUS_WITHOUT_BATTERY_TEMP`, a mirror this repo had only ever asked for in a comment.
+
+Row labels are HTML beside the SVG, not `<text>` inside it. The grid stretches to the tile width with `preserveAspectRatio="none"` so the cells stay big enough to read, and that stretch would render glyphs noticeably wider than tall.
+
+⚠️ **How much wider is not a constant, and this paragraph claimed one for a year.** `scaleY` is pinned — `.heatmap` is `height: 180px` over a viewBox 88 units tall, so it is always 2.045 — while `scaleX` is just the tile width, which is the viewport's. Measured: **1.59 at the 390 px this screen is designed for** (svg 325.61 × 180), and **2.13 at 500 px**. The figure this paragraph used to give, 1.9, is neither, and back-solves to a ~453 px viewport that nothing here targets; it could not be sourced and has been replaced by the mechanism plus one anchored measurement. The claim beside it — that the two grids stretch by different amounts "since the two grids have different viewBox heights" — was simply false: `heatmap()` computes `height = rows.length * 8` and both grids build `MODULE_COUNT` rows, so both are `0 0 100 88`.
 
 ### Tile pacing — `lib/tiles.js`
 

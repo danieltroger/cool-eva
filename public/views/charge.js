@@ -7,7 +7,13 @@ import { heatmap, meter, ring } from "../lib/svg.js";
 import * as colors from "../lib/colors.js";
 import * as units from "../lib/units.js";
 import { power, whole } from "../lib/format.js";
-import { COOLANT_FLOW_LPH, coolantDelta, coolantHeatRemovedWatts, resistiveLossWatts } from "../lib/derive.js";
+import {
+  COOLANT_FLOW_LPH,
+  coolantDelta,
+  coolantHeatRemovedWatts,
+  heatInOutText,
+  resistiveLossWatts,
+} from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
 import { packResistance } from "../lib/pack-resistance-live.js";
 import { chargeMode } from "../lib/charge-mode.js";
@@ -18,11 +24,12 @@ import {
   CELL_COUNT,
   CELL_VOLTAGE_PATTERN,
   MAX_CELLS_PER_MODULE,
+  MODULES_WITHOUT_BATTERY_SENSOR,
   MODULE_COUNT,
-  MODULE_SENSORS,
+  MODULE_SENSOR_COUNT,
   cellVoltageKeys,
   cellsInModule,
-  moduleTemperatureKey,
+  moduleTemperatureGrid,
 } from "../lib/cells.js";
 
 const { div, span } = van.tags;
@@ -435,12 +442,8 @@ function ThermalBalanceTile() {
     div(
       { class: "value" },
       () => {
-        const into = resistiveLossWatts();
-        const out = coolantHeatRemovedWatts();
-        if (into == null && out == null) {
-          return "–";
-        }
-        return `${into == null ? "?" : Math.round(into)} / ${out == null ? "?" : Math.round(out)}`;
+        const heat = heatInOutText();
+        return heat == null ? "–" : `${heat.into} / ${heat.removed}`;
       },
       span({ class: "unit" }, "W")
     ),
@@ -499,25 +502,29 @@ function HeatmapTile() {
   );
 }
 
-/** Rows are modules, columns are that module's battery and two board sensors. */
+/**
+ * Rows are modules, columns are that module's battery and two board sensors.
+ *
+ * The count is `of 31` rather than a bare tally because two of the 33 positions are not
+ * sensors: modules 6 and 8 have BattTemp1Enabled=False and never report one. The
+ * caption names them, and the grid marks them, so a gap by design cannot be read as a
+ * probe worth going and wiggling.
+ */
 function TemperatureGrid() {
-  const rows = [];
-  let seen = 0;
-  for (let module = 1; module <= MODULE_COUNT; module++) {
-    const cells = MODULE_SENSORS.map(sensor => {
-      const key = moduleTemperatureKey(module, sensor);
-      const value = key == null ? null : peek(key);
-      if (value != null) {
-        seen += 1;
-      }
-      return { value, color: colors.temperature(value) };
-    });
-    rows.push({ label: String(module), cells });
-  }
-  if (seen === 0) {
+  // peek, not valueOf: this redraw is paced by chartTick above.
+  const grid = moduleTemperatureGrid(peek);
+  if (grid.seen === 0) {
     return div({ class: "sub" }, "Module temperatures: waiting for 0x664");
   }
-  return div(heatmap({ rows }), div({ class: "sub" }, `${seen} sensors · battery, board 1, board 2 per module`));
+  const rows = grid.rows.map(row => ({
+    label: String(row.module),
+    cells: row.cells.map(cell => ({ ...cell, color: colors.temperature(cell.value) })),
+  }));
+  const absentModules = MODULES_WITHOUT_BATTERY_SENSOR.join(" & ");
+  return div(
+    heatmap({ rows }),
+    div({ class: "sub" }, `${grid.seen} of ${MODULE_SENSOR_COUNT} · modules ${absentModules} have no battery sensor`)
+  );
 }
 
 /** Rows are modules, columns are the cells in them; colour is millivolts below the best. */

@@ -25,17 +25,38 @@ import { bytesFromHex } from "./snapshot.ts";
 const LATEST_FILE = "lifetime.json";
 
 /**
- * How a reading is taken today, verbatim, shown on a Pi that has never taken one.
+ * How a reading is taken today, shown on a Pi that has never taken one.
  *
- * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts runs it through
- * the script's own argument parser, because the first version said `--components 51,52`
- * — a flag that never existed — and it was the first instruction every Pi would show.
+ * ⚠️ It is no longer a shell command, and that is the point. #177 made the read a button
+ * in the service sheet and this sentence did not move with it, so the only instruction on
+ * screen was one you cannot follow on the phone that is showing it. The script is still
+ * the answer when the service IS stopped, so it stays below rather than being deleted.
  *
- * It lives here rather than with the endpoint that serves it because this module owns
- * the file the command produces, and both the CLI and the HTTP layer already import it.
+ * ⚠️ "with the drive down" and not "not charging": the safety gate deliberately EXCUSES
+ * `energized` while a charge session is confirmed (src/vcu/service-gate.ts), so telling
+ * the rider to unplug first would be inventing a rule the code does not have. What the
+ * gate does require is the drive down and the bike stationary, and the sheet prints
+ * whichever check is blocking — which is the honest thing to point at.
  */
-export const HOW_TO_READ =
-  "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save, with the service stopped";
+export const HOW_TO_READ = 'menu → Service mode → "Read the lifetime battery statistics", parked with the drive down';
+
+/**
+ * The same read from a shell, for a Pi whose service is stopped.
+ *
+ * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts §7b runs it through
+ * the script's own argument parser, because the first version said `--components 51,52` —
+ * a flag that never existed — and it was the first instruction every Pi would show. The
+ * guard is on THIS constant, not on HOW_TO_READ above, since this is the one that is a
+ * command.
+ *
+ * It lives here rather than with the endpoint that serves it because this module owns the
+ * file the command produces. ⚠️ The CLI no longer imports it — §7b forbids that, so
+ * read-freeze-frame.ts names the output file instead — leaving the HTTP layer as the only
+ * consumer. Whether that makes `public/` the better home for HOW_TO_READ above is an open
+ * question; see the note on #187.
+ */
+export const HOW_TO_READ_WITH_SERVICE_STOPPED =
+  "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save";
 
 /** How the reading was taken. Not cosmetic — see the header. */
 export type LifetimeReadSource = "service" | "read-freeze-frame.ts";

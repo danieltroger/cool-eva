@@ -392,3 +392,26 @@ export function coolantHeatRemovedWatts() {
   }
   return delta * COOLANT_WATTS_PER_KELVIN;
 }
+
+/**
+ * The heat pair as both screens print it: in first, out second, whole watts, and `?` for
+ * a half that is not there — or null when neither half is.
+ *
+ * One home for the convention because two screens make the same CLAIM about it. The
+ * Charge tab's HEAT IN / OUT tile and the riding screen's ΔT aside are the same two
+ * numbers in the same order, and both say so in a comment; written twice, a change to
+ * how a missing half reads reaches one of them and the comment goes on asserting they
+ * match. The labels stay with the views, which is the part that differs.
+ * @returns {{ into: string, removed: string } | null}
+ */
+export function heatInOutText() {
+  const into = resistiveLossWatts();
+  const removed = coolantHeatRemovedWatts();
+  if (into == null && removed == null) {
+    return null;
+  }
+  return {
+    into: into == null ? "?" : String(Math.round(into)),
+    removed: removed == null ? "?" : String(Math.round(removed)),
+  };
+}

@@ -4,7 +4,7 @@ import van from "../vendor/van-1.6.1.js";
 import { chartTick, isStale, peek, signalState, valueOf } from "../lib/store.js";
 import { differenceByTime, ringFor } from "../lib/ring.js";
 import { monotonicNow } from "../lib/clock.js";
-import { coolantDelta, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
+import { coolantDelta, heatInOutText, resistiveLossPercent, resistiveLossWatts } from "../lib/derive.js";
 import { resistanceNote } from "../lib/pack-resistance.js";
 import { packResistance } from "../lib/pack-resistance-live.js";
 import { powerLimitsKw } from "../lib/power-limits.js";
@@ -185,12 +185,29 @@ function CoolantDeltaTile() {
     },
     div({ class: "label" }, "Coolant ΔT"),
     div(
-      { class: "value", style: () => `color:${deltaColor()}` },
-      () => {
-        const delta = coolantDelta();
-        return delta == null ? "–" : units.tempDelta(delta).toFixed(2);
-      },
-      span({ class: "unit" }, units.tempUnit)
+      { class: "value-row" },
+      div(
+        { class: "value", style: () => `color:${deltaColor()}` },
+        () => {
+          const delta = coolantDelta();
+          return delta == null ? "–" : units.tempDelta(delta).toFixed(2);
+        },
+        span({ class: "unit" }, units.tempUnit)
+      ),
+      // The same two numbers as the Charge tab's HEAT IN / OUT, in the same order and
+      // units, on a row that was 94 px of ink in 348. Named for the two MECHANISMS and
+      // not for two directions: the Coolant tile two rows down is already captioned
+      // "in / out", for the inlet and the outlet, and a second in/out pair on one
+      // screen means neither. I²R earns the riding screen on its own account —
+      // docs/dashboard-decisions.md §"Resistive loss".
+      div(
+        { class: "value-aside" },
+        () => {
+          const heat = heatInOutText();
+          return heat == null ? "–" : `I²R ${heat.into} / loop ${heat.removed}`;
+        },
+        span({ class: "unit" }, "W")
+      )
     ),
     () => {
       chartTick.val;
@@ -211,18 +228,22 @@ function CoolantDeltaTile() {
       return sparkline({ values: deltas, color: traceColor, minSpan: 0.5, baseline: 0 });
     },
     div({ class: "sub" }, () => {
-      const watts = resistiveLossWatts();
-      if (watts == null) {
-        return "out − in";
-      }
       // The Power card carried this sentence's other half — the same watts as a share of
       // output — and the card is gone. Both belong here anyway: these are the watts the
       // loop above has to carry away, which is what the ΔT beside them measures.
       const percent = resistiveLossPercent();
       const share = percent == null ? "" : ` · ${percent.toFixed(1)}% of output`;
-      const note = resistanceNote(packResistance.val);
-      const qualifier = note === "" ? "" : ` (${note})`;
-      return `out − in · ${Math.round(watts)} W going in${share}${qualifier}`;
+      // Both halves of the aside above are qualified, not just the one. `out` is the
+      // shakier of the two — COOLANT_FLOW_LPH is specified rather than measured, and an
+      // upper bound — and it arrives on this screen with the Charge tab's full sentence
+      // about the pump left behind, so the assumption has to travel with the number.
+      //
+      // ⚠️ The R note is dropped when there are no watts to qualify. With no pack_a the
+      // aside reads `I²R ? / loop 4428 W`, and "modelled R" beside it would be a
+      // provenance for a number that is not on screen.
+      const resistanceCaveat = resistiveLossWatts() == null ? "" : resistanceNote(packResistance.val);
+      const caveat = resistanceCaveat === "" ? "rated flow" : `${resistanceCaveat}, rated flow`;
+      return `out − in${share} · ${caveat}`;
     })
   );
 }

@@ -463,6 +463,41 @@ const CHECKS: SelfCheck[] = [
       "whose replies are not replies, reads as no reading rather than throwing inside an HTTP handler",
   },
   {
+    script: "scripts/check-module-heatmap.ts",
+    covers:
+      "the Charge tab's module-temperature grid, whose cells have three states and only two of them are a fault: " +
+      "that the keys the dashboard expects are EXACTLY the keys registry.ts declares, matched as a set rather " +
+      "than counted, so a renamed sensor fails here instead of leaving a cell that can never fill; that the set " +
+      "has 31 members and the two modules withheld are 6 and 8, both written out as literals, because a set " +
+      "equality is satisfied by two EMPTY sets and because since #187 those numbers are RENDERED — the caption " +
+      "reads '31 of 31 · modules 6 & 8 have no battery sensor', so pinning them pins a sentence the rider reads; " +
+      "and that cells.js and decode-bms.ts withhold the same two, a mirror the code had only ever asked for in a " +
+      "comment. Then the three states themselves, driven through the real grid: a module whose thermistor is " +
+      "disabled in the BMS config is marked absent on a pack reporting everything, a sensor that EXISTS and " +
+      "stopped reporting is not — that one is the failure the whole change exists to keep legible, since " +
+      "0x663/0x664 have been seen skipping modules and decode-bms.ts drops the 122 °C pad — and the two states " +
+      "stay distinct in the same grid, one countable in the caption and one not. What it cannot see is whether " +
+      "the DOT is visibly different from the OUTLINE, which is pixels and belongs to the screenshots the " +
+      "dashboard gate requires",
+  },
+  {
+    script: "scripts/check-coolant-heat.ts",
+    covers:
+      "the watts the coolant loop is carrying away — ṁ·cp·ΔT, one multiplication, which is why nothing checked it " +
+      "for a year and why nothing in scripts/ imported derive.js at all until this file. #187 put the number on " +
+      "the riding screen beside the Charge tab's, so one constant decides what two screens say and every way it " +
+      "can be wrong is a plausible-looking number: the multiplier is asserted against the arithmetic written out " +
+      "by hand — the Bosch PAD's rated 850 L/h, glycol's 3800 J/(kg·K) and 1.05 kg/L — and against water's " +
+      "figures, which are the substitution a reader would never catch on screen. Then the function driven through " +
+      "the REAL store and apply(), because coolantDelta() reads through valueOf() rather than a passed-in reader: " +
+      "the worked 0.07 °C → 65.95 W, the riding fixture's 4.70 °C → 4428 W so the screenshot's number is the " +
+      "checked one, a reversed ΔT keeping its sign since dropping it would report a loop working hardest when it " +
+      "has stopped, an unfitted probe answering null rather than 0 W, and the failed-PT100 −242 °C leaving the last " +
+      "good reading standing instead of reaching a multiplier that would turn it " +
+      "into −259 kW of cooling. Every comparison carries a tolerance, since the delta of a 0.07 step is " +
+      "0.07000000000000028",
+  },
+  {
     script: "scripts/check-power-bar.ts",
     covers:
       "the riding screen's power meter, every part of which is a direction that looks deliberate when it is " +

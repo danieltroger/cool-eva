@@ -5,7 +5,7 @@ import { buildPayload as buildDtcTable } from "../src/http/dtc-table.ts";
 import { buildPayload as buildFaultInfokeys } from "../src/http/fault-infokeys.ts";
 import { serverFacts } from "./preview-server-facts.ts";
 import type { LifetimeStatsResponse } from "../src/http/lifetime-stats.ts";
-import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
+import { HOW_TO_READ, HOW_TO_READ_WITH_SERVICE_STOPPED } from "../src/vcu/lifetime-store.ts";
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
 import { summariseLifetimeStatistics } from "../src/diagnostics/lifetime-stats.ts";
 import { LIFETIME_READ_PAYLOADS } from "./captured-lifetime-reads.ts";
@@ -51,6 +51,7 @@ function buildLifetimePreview(): LifetimeStatsResponse {
       source: "read-freeze-frame.ts",
     },
     howToRead: HOW_TO_READ,
+    howToReadWithServiceStopped: HOW_TO_READ_WITH_SERVICE_STOPPED,
   };
 }
 
