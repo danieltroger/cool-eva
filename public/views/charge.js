@@ -19,10 +19,9 @@ import {
   CELL_VOLTAGE_PATTERN,
   MAX_CELLS_PER_MODULE,
   MODULE_COUNT,
-  MODULE_SENSORS,
   cellVoltageKeys,
   cellsInModule,
-  moduleTemperatureKey,
+  moduleTemperatureGrid,
 } from "../lib/cells.js";
 
 const { div, span } = van.tags;
@@ -499,25 +498,27 @@ function HeatmapTile() {
   );
 }
 
-/** Rows are modules, columns are that module's battery and two board sensors. */
+/**
+ * Rows are modules, columns are that module's battery and two board sensors.
+ *
+ * The count is `of 31` rather than a bare tally because two of the 33 positions are not
+ * sensors: modules 6 and 8 have BattTemp1Enabled=False and never report one. The
+ * caption names them, and the grid marks them, so a gap by design cannot be read as a
+ * probe worth going and wiggling.
+ */
 function TemperatureGrid() {
-  const rows = [];
-  let seen = 0;
-  for (let module = 1; module <= MODULE_COUNT; module++) {
-    const cells = MODULE_SENSORS.map(sensor => {
-      const key = moduleTemperatureKey(module, sensor);
-      const value = key == null ? null : peek(key);
-      if (value != null) {
-        seen += 1;
-      }
-      return { value, color: colors.temperature(value) };
-    });
-    rows.push({ label: String(module), cells });
-  }
-  if (seen === 0) {
+  // peek, not valueOf: this redraw is paced by chartTick above.
+  const grid = moduleTemperatureGrid(peek);
+  if (grid.seen === 0) {
     return div({ class: "sub" }, "Module temperatures: waiting for 0x664");
   }
-  return div(heatmap({ rows }), div({ class: "sub" }, `${seen} sensors · battery, board 1, board 2 per module`));
+  const rows = grid.rows.map(row => ({
+    label: String(row.module),
+    cells: row.cells.map(cell => ({ ...cell, color: colors.temperature(cell.value) })),
+  }));
+  const without = grid.modulesWithoutBatterySensor;
+  const note = without.length === 0 ? "" : ` · modules ${without.join(" & ")} have no battery sensor`;
+  return div(heatmap({ rows }), div({ class: "sub" }, `${grid.seen} of ${grid.expected}${note}`));
 }
 
 /** Rows are modules, columns are the cells in them; colour is millivolts below the best. */

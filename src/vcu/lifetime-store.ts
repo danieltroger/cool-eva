@@ -25,17 +25,35 @@ import { bytesFromHex } from "./snapshot.ts";
 const LATEST_FILE = "lifetime.json";
 
 /**
- * How a reading is taken today, verbatim, shown on a Pi that has never taken one.
+ * How a reading is taken today, shown on a Pi that has never taken one.
+ *
+ * ⚠️ It is no longer a shell command, and that is the point. #177 made the read a button
+ * in the service sheet, and this sentence went on telling the rider to stop the service
+ * and run a script for a month — an instruction that is both harder and, on a phone at
+ * the bike, impossible. The script is still the answer when the service IS stopped, so
+ * it stays below rather than being deleted.
+ *
+ * ⚠️ "with the drive down" and not "not charging": the safety gate deliberately EXCUSES
+ * `energized` while a charge session is confirmed (src/vcu/service-gate.ts), so telling
+ * the rider to unplug first would be inventing a rule the code does not have. What the
+ * gate does require is the drive down and the bike stationary, and the sheet prints
+ * whichever check is blocking — which is the honest thing to point at.
+ */
+export const HOW_TO_READ = 'menu → Service mode → "Read the lifetime battery statistics", parked with the drive down';
+
+/**
+ * The same read from a shell, for a Pi whose service is stopped.
  *
  * ⚠️ ONE STRING, AND IT IS EXECUTABLE. scripts/check-lifetime-stats.ts runs it through
  * the script's own argument parser, because the first version said `--components 51,52`
  * — a flag that never existed — and it was the first instruction every Pi would show.
+ * That guard follows the command; it did not stay with the name.
  *
  * It lives here rather than with the endpoint that serves it because this module owns
  * the file the command produces, and both the CLI and the HTTP layer already import it.
  */
-export const HOW_TO_READ =
-  "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save, with the service stopped";
+export const HOW_TO_READ_WITH_SERVICE_STOPPED =
+  "node --experimental-strip-types scripts/read-freeze-frame.ts --lifetime --save";
 
 /** How the reading was taken. Not cosmetic — see the header. */
 export type LifetimeReadSource = "service" | "read-freeze-frame.ts";

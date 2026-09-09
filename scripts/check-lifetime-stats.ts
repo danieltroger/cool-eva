@@ -19,7 +19,7 @@ import {
 } from "../src/diagnostics/freeze-frame.ts";
 import { lookupInfokey, scaleInfokeyValue } from "../src/diagnostics/infokey-table.ts";
 import { summariseLifetimeStatistics, type LifetimeRow } from "../src/diagnostics/lifetime-stats.ts";
-import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
+import { HOW_TO_READ, HOW_TO_READ_WITH_SERVICE_STOPPED } from "../src/vcu/lifetime-store.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 import { bandFor } from "../src/diagnostics/lifetime-bands.ts";
@@ -450,16 +450,34 @@ console.log("\n── §7b the on-screen instruction ─────────
 
 // ⚠️ PARSED, not eyeballed. The first version of this string named `--components 51,52`,
 // a flag that has never existed, and it is what a Pi that has never taken a reading
-// shows as its only instruction.
-const instruction = HOW_TO_READ.replace(/,.*$/, "").split(/\s+/);
+// shows as its only instruction. The guard follows the COMMAND, which since #187 is the
+// footnote rather than the headline.
+const instruction = HOW_TO_READ_WITH_SERVICE_STOPPED.replace(/,.*$/, "").split(/\s+/);
 const scriptIndex = instruction.findIndex(word => word.endsWith("read-freeze-frame.ts"));
-check(scriptIndex !== -1, `HOW_TO_READ should name the script, got ${JSON.stringify(HOW_TO_READ)}`);
+check(
+  scriptIndex !== -1,
+  `the service-stopped instruction should name the script, got ${JSON.stringify(HOW_TO_READ_WITH_SERVICE_STOPPED)}`
+);
 const parsed = parseFreezeFrameArguments(instruction.slice(scriptIndex + 1));
 check(
   parsed !== null && parsed.kind === "lifetime" && parsed.save,
-  `HOW_TO_READ must parse as a saving lifetime read, got ${JSON.stringify(parsed)}`
+  `it must parse as a saving lifetime read, got ${JSON.stringify(parsed)}`
 );
-console.log(`  "${HOW_TO_READ}" parses as ${JSON.stringify(parsed)}`);
+console.log(`  "${HOW_TO_READ_WITH_SERVICE_STOPPED}" parses as ${JSON.stringify(parsed)}`);
+
+// ⚠️ And the headline must NOT be a command. #177 put the read on a button and this
+// sentence went on telling the rider to stop the service and run a script for a month —
+// unfollowable on the phone that is showing it. A revert would be silent otherwise,
+// because a shell command in this slot looks exactly like what used to be correct.
+check(
+  !HOW_TO_READ.includes("node ") && !HOW_TO_READ.includes(".ts"),
+  `HOW_TO_READ is what a rider does in the app, not a shell command, got ${JSON.stringify(HOW_TO_READ)}`
+);
+check(
+  HOW_TO_READ.includes("Service mode"),
+  `HOW_TO_READ should name the service sheet that carries the button, got ${JSON.stringify(HOW_TO_READ)}`
+);
+console.log(`  "${HOW_TO_READ}" is an in-app path`);
 
 if (failures.length > 0) {
   console.error("\nFAILED:");

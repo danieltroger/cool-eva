@@ -1,14 +1,19 @@
 import type { ServerResponse } from "http";
-import { HOW_TO_READ, loadLifetimeStatistics, type StoredLifetimeReading } from "../vcu/lifetime-store.ts";
+import {
+  HOW_TO_READ,
+  HOW_TO_READ_WITH_SERVICE_STOPPED,
+  loadLifetimeStatistics,
+  type StoredLifetimeReading,
+} from "../vcu/lifetime-store.ts";
 
 // GET /lifetime-stats — the bike's lifetime battery statistics as last read, with the
 // age of the reading.
 //
 // ⚠️ THIS ENDPOINT DOES NOT TOUCH THE BUS. It serves a file. The statistics are not
 // broadcast (obd-garage/DC_CHARGE_LIMITS.md §10.6), so they arrive only from a
-// freeze-frame read — today `scripts/read-freeze-frame.ts --lifetime --save`, run with
-// the service stopped, which is why this is a reader and not a control. Nothing here
-// can reach the bus: it has no `req`, no gate and no client.
+// freeze-frame read — since #177 the service sheet's own button, and `read-freeze-frame.ts`
+// when the service is stopped. Either way this is a reader and not a control: nothing here
+// can reach the bus, it has no `req`, no gate and no client.
 //
 // The reading is decoded per request rather than at startup: the file is written by
 // another process, and a `--save` run while the dashboard is open should show up on
@@ -19,12 +24,15 @@ export interface LifetimeStatsResponse {
   reading: StoredLifetimeReading | null;
   /** How a reading gets taken today. Shown on the page, so the answer is not "ask an agent". */
   howToRead: string;
+  /** The same read from a shell, for a Pi whose service is stopped. Shown as a footnote. */
+  howToReadWithServiceStopped: string;
 }
 
 export async function handleLifetimeStatsEndpoint(res: ServerResponse, directory: string): Promise<void> {
   const payload: LifetimeStatsResponse = {
     reading: await loadLifetimeStatistics(directory),
     howToRead: HOW_TO_READ,
+    howToReadWithServiceStopped: HOW_TO_READ_WITH_SERVICE_STOPPED,
   };
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(200, {

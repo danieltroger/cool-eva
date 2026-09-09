@@ -183,13 +183,14 @@ export function barStrip({ bars, low, high, height = 60 }) {
  *
  * Rows are modules and columns are the sensors or cells within one, so the shape on
  * screen is the shape of the pack: a strip shows that something is drifting, a grid
- * shows *which module*. Cells with no reading are drawn as an empty outline rather than
- * skipped, so a hole looks like a missing sensor and not like a shifted row, and row
- * labels are HTML beside the SVG because preserveAspectRatio="none" would stretch
- * glyphs ~1.9x wider than tall. See docs/dashboard-decisions.md §"The heatmap".
+ * shows *which module*. A cell with no reading is drawn as an empty outline rather than
+ * skipped, so a hole looks like a missing sensor and not like a shifted row; `absent`
+ * puts a dot inside that outline, for a sensor the pack does not have at all. Row
+ * labels are HTML beside the SVG because preserveAspectRatio="none" stretches glyphs
+ * horizontally. See docs/dashboard-decisions.md §"The heatmap".
  *
  * @param {object} options
- * @param {Array<{ label: string, cells: Array<{ value: number | null, color: string }> }>} options.rows
+ * @param {Array<{ label: string, cells: Array<{ value: number | null, color: string, absent?: boolean }> }>} options.rows
  * @param {number} [options.columns] widest row; defaults to the longest supplied
  * @returns {Element}
  */
@@ -219,6 +220,20 @@ export function heatmap({ rows, columns }) {
             "stroke-width": 0.4,
           })
         );
+        if (cell.absent) {
+          // A zero-length path with a round cap, so the mark is a dot. ⚠️ NOT a
+          // <circle>: the viewBox is stretched to the tile width and a circle arrives
+          // as an ellipse — measured 9.8 x 6.1 px at 390 px. non-scaling-stroke is
+          // what sparkline() uses against the same stretch, and it makes this a true
+          // 6 px round dot at any width.
+          children.push(
+            svgTags.path({
+              d: `M ${x + cellWidth / 2} ${y + rowHeight / 2} l 0 0`,
+              style: `stroke:${MUTED};stroke-width:6;stroke-linecap:round`,
+              "vector-effect": "non-scaling-stroke",
+            })
+          );
+        }
         return;
       }
       children.push(

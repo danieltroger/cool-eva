@@ -449,6 +449,49 @@ __MODULES__
             "charge_cmd_ack_ms": [1840, "ms", "charge"],
             "charge_auto_mode": [1, "", "charge"],
             "charge_auto_target_a": [42, "A", "charge"],
+            // The module heatmap, which renders NOTHING without these — the Charge tab
+            // showed "waiting for 0x664" on every scene, so the dashboard gate could not
+            // look at the tile it was gating.
+            //
+            // One real sample, 2026-08-08 11:00:00 UTC, taken as the last value of each
+            // key at that instant. bat1 43-45, pcb 27-34, inside this scene's own
+            // batt_temp_lo/hi of 43/47.
+            //
+            // ⚠️ There is deliberately no lmu6_bat1_c or lmu8_bat1_c, and there CANNOT
+            // be: those two modules have BattTemp1Enabled=False, registry.ts declares no
+            // such key, and check-preview-fixtures.ts resolves every key here against
+            // SIGNALS — inventing one fails the suite rather than drawing a sensor.
+            "lmu1_bat1_c": [43, "°C", "battery"],
+            "lmu1_pcb1_c": [30, "°C", "battery"],
+            "lmu1_pcb2_c": [29, "°C", "battery"],
+            "lmu2_bat1_c": [44, "°C", "battery"],
+            "lmu2_pcb1_c": [33, "°C", "battery"],
+            "lmu2_pcb2_c": [33, "°C", "battery"],
+            "lmu3_bat1_c": [43, "°C", "battery"],
+            "lmu3_pcb1_c": [28, "°C", "battery"],
+            "lmu3_pcb2_c": [28, "°C", "battery"],
+            "lmu4_bat1_c": [45, "°C", "battery"],
+            "lmu4_pcb1_c": [29, "°C", "battery"],
+            "lmu4_pcb2_c": [29, "°C", "battery"],
+            "lmu5_bat1_c": [44, "°C", "battery"],
+            "lmu5_pcb1_c": [29, "°C", "battery"],
+            "lmu5_pcb2_c": [29, "°C", "battery"],
+            "lmu6_pcb1_c": [28, "°C", "battery"],
+            "lmu6_pcb2_c": [28, "°C", "battery"],
+            "lmu7_bat1_c": [44, "°C", "battery"],
+            "lmu7_pcb1_c": [28, "°C", "battery"],
+            "lmu7_pcb2_c": [28, "°C", "battery"],
+            "lmu8_pcb1_c": [34, "°C", "battery"],
+            "lmu8_pcb2_c": [33, "°C", "battery"],
+            "lmu9_bat1_c": [45, "°C", "battery"],
+            "lmu9_pcb1_c": [34, "°C", "battery"],
+            "lmu9_pcb2_c": [33, "°C", "battery"],
+            "lmu10_bat1_c": [44, "°C", "battery"],
+            "lmu10_pcb1_c": [28, "°C", "battery"],
+            "lmu10_pcb2_c": [27, "°C", "battery"],
+            "lmu11_bat1_c": [43, "°C", "battery"],
+            "lmu11_pcb1_c": [29, "°C", "battery"],
+            "lmu11_pcb2_c": [29, "°C", "battery"],
           },
           // The stand-down #176 is about: the controller is still on, and standing back because
           // the rider set a current themselves. Its reason code and its sentence both come from

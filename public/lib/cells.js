@@ -77,3 +77,60 @@ export function moduleTemperatureKey(moduleNumber, sensor) {
   }
   return `lmu${moduleNumber}_${sensor}_c`;
 }
+
+/**
+ * @typedef {object} ModuleSensorCell
+ * @property {number | null} value what it reads, or null if nothing has arrived
+ * @property {boolean} absent true where the module has no such sensor at all
+ */
+
+/**
+ * @typedef {object} ModuleTemperatures
+ * @property {Array<{ module: number, cells: ModuleSensorCell[] }>} rows
+ * @property {number} seen sensors currently reading
+ * @property {number} expected sensors the pack actually has — 31, not 33
+ * @property {number[]} modulesWithoutBatterySensor
+ */
+
+/**
+ * The module-temperature grid's state: a row per module, a cell per sensor.
+ *
+ * Three states per cell and not two, which is the whole point. A `null` cannot tell a
+ * module whose thermistor is disabled in the BMS config apart from one whose reading
+ * stopped arriving, and only moduleTemperatureKey() knows which is which — so the
+ * distinction is drawn here, where that knowledge is, rather than at the drawing code.
+ * `expected` counts what the pack HAS, so the caption can say 31 rather than count
+ * whatever turned up.
+ *
+ * `read` is a parameter for the same reason packResistanceWith()'s is: it lets
+ * scripts/check-module-heatmap.ts drive this with no DOM. ⚠️ The view passes `peek`,
+ * never `valueOf` — the grid redraws on chartTick, and subscribing it to 31 signals
+ * would cancel that throttle silently.
+ * @param {(key: string) => number | null} read
+ * @returns {ModuleTemperatures}
+ */
+export function moduleTemperatureGrid(read) {
+  const rows = [];
+  const modulesWithoutBatterySensor = [];
+  let seen = 0;
+  let expected = 0;
+  for (let module = 1; module <= MODULE_COUNT; module++) {
+    const cells = MODULE_SENSORS.map(sensor => {
+      const key = moduleTemperatureKey(module, sensor);
+      if (key == null) {
+        return { value: null, absent: true };
+      }
+      expected += 1;
+      const value = read(key);
+      if (value != null) {
+        seen += 1;
+      }
+      return { value, absent: false };
+    });
+    if (moduleTemperatureKey(module, "bat1") == null) {
+      modulesWithoutBatterySensor.push(module);
+    }
+    rows.push({ module, cells });
+  }
+  return { rows, seen, expected, modulesWithoutBatterySensor };
+}

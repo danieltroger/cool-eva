@@ -287,6 +287,34 @@ body {
   margin-top: auto;
 }
 
+/* A second, smaller reading on the value's own row — the riding screen's coolant ΔT,
+   which spends 94 px of a 348 px row on its number and left the rest empty.
+   A modifier and not a change to .value, which every tile on the dashboard uses.
+   Baseline-aligned so the two figures sit on one line, and the aside never wraps: the
+   tile's height is the constraint this layout exists to respect, and a wrapped aside
+   would spend the row it was meant to save. */
+.value-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+.value-row > .value {
+  margin-top: 0;
+}
+.value-aside {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* .unit is sized for a 2.15rem numeral; beside a 0.95rem one it would be the same size. */
+.value-aside .unit {
+  font-size: 0.8rem;
+}
+
 .unit {
   font-weight: 500;
   font-size: 0.95rem;
@@ -1038,6 +1066,23 @@ body {
 .raw-sub {
   font-size: 0.6rem;
   color: var(--sub);
+}
+
+/* The second of two instructions, where the first is the one to follow: the lifetime
+   block's shell fallback for a Pi with the service stopped. --label rather than a
+   dimmer token because it is still an instruction someone has to read and type; the
+   separation is the gap and the ordering, not a colour nobody can see. */
+.raw-footnote {
+  margin-top: 0.25rem;
+  color: var(--label);
+}
+
+/* An instruction rather than a reading, so it takes the whole grid width: the two
+   sentences below "lifetime · never read" wrap to seven lines in a half-width tile, and
+   a sentence someone has to follow at the bike is the wrong thing to make them unpick.
+   The data tiles either side of it stay two-up, which is what the column is for. */
+.raw.raw-notice {
+  grid-column: 1 / -1;
 }
 
 /* A handlebar button, held down or released within the last 600 ms.
