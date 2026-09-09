@@ -187,7 +187,7 @@ Both answers sit inside the **4.217–10.122 ms** window the dash's own `0x120`�
 
 ### What this does and does not settle
 
-✅ Every committed Pi charge-current command produces a `dc_charge_limit_selected_a` event carrying **exactly the amps we asked for** — 21 of 22 sends on 2026-09-09, the exception being one command the journal shows aborting.
+✅ Every committed Pi charge-current command produces a `dc_charge_limit_selected_a` event carrying **exactly the amps we asked for** — 21 of 22 sends on 2026-09-09, the exception being 12:58:03, which is **unexplained**: the `vcu-write: ABORTING` line in that same second belongs to the stationary service gate's 200 ms watchdog and cannot be the charge-current action, which is exempt from that gate and lives about 15 ms.
 
 ❌ **It does not say whether our own `0x121` also reaches our decoder**, and a capture never can. `record()` is log-on-change, so two byte-identical frames 0.72 ms apart produce **one** row whether we saw one of them or both. Separately, `candump` runs on its own socket and SocketCAN loops a locally-sent frame to every _other_ socket — which is why our own frames are in the capture at all, and why the capture shows what was on the wire rather than what we decoded. The claim above that this service does not hear its own transmissions rests on the 2026-09-07 ride log, which is quoted here and has not been re-opened.
 

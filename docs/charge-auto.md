@@ -140,7 +140,7 @@ A pack past **55** is unaffected: that branch runs first and on temperature alon
 
 **Also recorded, and not re-litigated here:** applying the correction _everywhere_ (targeting `reading + 1` at all temperatures) was tried under #181 and rejected — safer on every axis but a **colder** equilibrium, 52.47 °C against 53.01, which is the opposite of what both changes are for.
 
-⚠️ **The simulated plant cannot reach the state any of this is about**, then or now. Over the frozen 150-plant grid there are 2 380 ticks at a reading of 53 or 54 and **not one** with a fitted slope at or below zero: its packs are always rising or pinned at the floor. The real pack gets there by oscillating across the boundary — a limitation of the model's _shape_, not its constants. So the arbiter is logged `batt_temp_hi` (`scripts/charge-auto-episode.ts`), and `check-charge-auto.ts` §10 names the three assertions #181 shipped that the setpoint deliberately reverses.
+⚠️ **The simulated plant barely reaches the state any of this is about**, then or now. Measured on the rule this replaces, over the frozen 150-plant grid: 2 380 ticks at a reading of 53 or 54 and **not one** with a fitted slope at or below zero. Under the setpoint rule it is **2 072 and 13** — better, because the pack now sits at the setpoint instead of being ratcheted past it, but still 0.6 %: its packs are always rising or pinned at the floor. The real pack gets there by oscillating across the boundary — a limitation of the model's _shape_, not its constants. So the arbiter is logged `batt_temp_hi` (`scripts/charge-auto-episode.ts`), and `check-charge-auto.ts` §10 names the three assertions #181 shipped that the setpoint deliberately reverses.
 
 ## Fail-safe
 

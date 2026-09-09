@@ -220,12 +220,9 @@ if (onStaleCooling.kind === "command" && onStaleCooling.amps - 50 >= MAX_STEP_A)
   );
 }
 
-// ⚠️ And that the cap only ever LOWERS. A pack whose reading is ticking has a large bound, so the
-// fitted slope must survive untouched — otherwise this would flatten a genuinely climbing pack.
-const livelySlope = estimateHeatingRate(climbing(45, 51), 600_000);
-if (livelySlope.kind !== "rate" || Math.abs(livelySlope.perMinute - 0.6) > 0.15) {
-  failures.push(`§2b the cap must not touch a pack that is still ticking: got ${JSON.stringify(livelySlope)}`);
-}
+// ⚠️ And that the cap only ever LOWERS: §2's `climbingRate` above recovers 0.6 K/min from a pack
+// whose reading is still ticking, which is the same assertion — the bound there is large and must
+// leave the fitted slope untouched, or this would flatten a genuinely climbing pack.
 const early = estimateHeatingRate(climbing(48, 50).slice(0, 3), 40_000);
 if (early.kind !== "unknown") {
   failures.push(`§2 ${RATE_MIN_SPAN_MS / 1000} s of history should read unknown, got ${early.kind}`);

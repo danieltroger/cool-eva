@@ -109,8 +109,10 @@ export function estimateHeatingRate(samples: TemperatureSample[], nowMs: number)
   // ticking every 1-3 min. ⚠️ NOT applied to `bounded` above: that branch is already derived from
   // elapsed time, and capping it there spends check-charge-auto's §2. docs/charge-auto.md.
   const slope = leastSquaresSlopePerMinute(window);
+  // The null is unreachable — a zero-length window returned above — and narrowing is what it is
+  // here for. A zero silence needs no branch: `1/0` is Infinity, which clamps to nothing.
   const silentMinutes = minutesSinceNewestSample(window, nowMs);
-  if (silentMinutes === null || silentMinutes <= 0) {
+  if (silentMinutes === null) {
     return { kind: "rate", perMinute: slope };
   }
   // ⚠️ BOTH SIDES. The bound is on the MAGNITUDE — a reading that has not moved cannot have moved
