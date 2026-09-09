@@ -588,6 +588,10 @@ const AT_54 = [
     atMs: 660_000,
     hold: true,
   },
+  // ⚠️ The MAJORITY case, and the one a fixture was missing: 387 of the 417 grid holds are on a
+  // pack that is genuinely still rising. Read early, so the bound is LARGE (0.4 K/min) — the point
+  // is that no bound, however big, lowers at the setpoint, because a bound is not a measurement.
+  { name: "still rising onto 54, on a large bound", samples: rampTo(53, 54), atMs: 300_000, hold: true },
   { name: "falling onto 54", samples: rampTo(57, 54), atMs: 480_000, hold: true },
   { name: "rising onto 54", samples: rampTo(51, 54), atMs: 480_000, hold: false },
 ];

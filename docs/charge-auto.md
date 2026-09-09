@@ -100,7 +100,7 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 | 6 / 15 / 12     | 16        | none       | 4                     | 4.6 min    |
 | 8 / 15 / 12     | 16        | none       | 5                     | 5.0 min    |
 | 5 / 15 / 12     | 17        | none       | 5                     | 4.1 min    |
-| 6 / 15 / 10     | 17        | none       | 5                     | 3.9 min    |
+| 6 / 15 / 10     | 17        | none       | 4                     | 3.9 min    |
 | 3 / 15 / 12     | 16        | none       | 6                     | 4.5 min    |
 
 Against the rule this replaces — **24 crossings and 14 reversals** — the chosen point is 16 and 3. Its DC1/b\*2 trace is what a proportional controller should look like, next to the 5 A ratchet's:
