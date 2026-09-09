@@ -1,4 +1,9 @@
-import { CHARGE_MANAGER_STATE_DC, decideChargeCurrent, type ChargeAutoReason } from "../src/charge/auto-curve.ts";
+import {
+  CHARGE_MANAGER_STATE_DC,
+  CLIFF_C,
+  decideChargeCurrent,
+  type ChargeAutoReason,
+} from "../src/charge/auto-curve.ts";
 import type { TemperatureSample } from "../src/charge/rate.ts";
 
 // A simulated pack, so the controller can be driven through a whole DC stop in a check. Data and
@@ -26,8 +31,6 @@ export const FULL_CURRENT_A = 72.6;
 /** Measured: what the saw-tooth actually averages once the clamp releases at 55 °C. */
 export const SAWTOOTH_MIN_PER_POINT = 1.3;
 const SAWTOOTH_CURRENT_A = 35.3;
-
-const CLIFF_C = 55;
 
 export interface PlantRun {
   peakC: number;

@@ -42,7 +42,7 @@ import {
 } from "./charge-auto-episode.ts";
 import { REASON_RIDER, toggleAction } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
-import { mkdtemp } from "fs/promises";
+import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CHARGE_MANAGER_STATE_DC } from "../src/fan/curve.ts";
@@ -77,7 +77,9 @@ const HEALTHY: ChargeAutoInput = {
   ceilingAmps: 75,
   commandedAmps: null,
   riderOverride: false,
-  samples: climbing(48, 54),
+  // ⚠️ The ring ENDS on the reading. Both come from `batt_temp_hi`, so a base fixture whose ring
+  // says 54 while it claims 51 is the shape `decideOnRing` below exists to forbid, one spread away.
+  samples: climbing(45, 51),
   nowMs: 700_000,
 };
 
@@ -130,18 +132,16 @@ if (flat.kind === "bounded") {
 }
 // ⚠️ And that a bound is USED. Treating it as "no rate" downstream would quietly undo the fix it
 // exists to be: this pack is 1 °C from the cliff with a bound that says it arrives inside the horizon.
-const boundedClosing = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: 52,
-  commandedAmps: 70,
-  // Two distinct degrees across five minutes bounds the rate at 0.4 K/min, which puts a pack 3 K
-  // from the cliff 7.5 minutes away — inside the horizon.
-  samples: [
+// Two distinct degrees across five minutes bounds the rate at 0.4 K/min, which puts a pack 3 K
+// from the cliff 7.5 minutes away — inside the horizon.
+const boundedClosing = decideOnRing(
+  [
     { atMs: 100_000, celsius: 51 },
     { atMs: 200_000, celsius: 52 },
   ],
-  nowMs: 400_000,
-});
+  400_000,
+  70
+);
 if (boundedClosing.kind !== "command" || boundedClosing.reason !== CHARGE_AUTO_REASON.CLOSING) {
   failures.push(
     `§2 a bounded rate that puts the cliff inside the horizon must still close: got ${JSON.stringify(boundedClosing)}`
@@ -159,13 +159,7 @@ for (const probe of [
   // Pick the rate that puts the pack exactly `headroomKelvin` below the setpoint one reaction away.
   const temperature = 50;
   const perMinute = (TARGET_C - temperature - probe.headroomKelvin) / REACTION_MIN;
-  const decision = decideChargeCurrent({
-    ...HEALTHY,
-    packTemperatureC: temperature,
-    commandedAmps: 60,
-    samples: atRate(temperature, perMinute),
-    nowMs: RATE_WINDOW_MS,
-  });
+  const decision = decideOnRing(atRate(temperature, perMinute), RATE_WINDOW_MS, 60);
   const held = decision.kind === "hold";
   if (held !== probe.expectHold) {
     failures.push(
@@ -465,26 +459,14 @@ if (MIN_STEP_A < 1 || MIN_STEP_A > MAX_STEP_A) {
 // existed to stop a band opening where a pack too hot to see is neither descended nor held down —
 // the "54.16 °C and the controller never acted" scenario. The blind branch now keys on the setpoint
 // itself, so the band cannot open by construction; this asserts the branch still fires there.
-const blindAtTarget = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: TARGET_C,
-  commandedAmps: 70,
-  samples: [{ atMs: 100_000, celsius: TARGET_C }],
-  nowMs: 200_000,
-});
+const blindAtTarget = decideOnRing([{ atMs: 100_000, celsius: TARGET_C }], 200_000, 70);
 if (blindAtTarget.kind !== "command" || blindAtTarget.reason !== CHARGE_AUTO_REASON.BLIND_DESCENT) {
   failures.push(
     `§6 a pack at the setpoint with no usable rate must descend blind, or there is a band where it is ` +
       `neither descended nor held down: got ${JSON.stringify(blindAtTarget)}`
   );
 }
-const blindBelowTarget = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: TARGET_C - 1,
-  commandedAmps: 70,
-  samples: [{ atMs: 100_000, celsius: TARGET_C - 1 }],
-  nowMs: 200_000,
-});
+const blindBelowTarget = decideOnRing([{ atMs: 100_000, celsius: TARGET_C - 1 }], 200_000, 70);
 if (blindBelowTarget.kind !== "hold" || blindBelowTarget.reason !== CHARGE_AUTO_REASON.NO_HISTORY) {
   failures.push(
     `§6 below the setpoint with no rate the answer is the fail-safe one — hold and change nothing: ` +
@@ -597,11 +579,12 @@ if (coolingAt53.kind !== "command" || coolingAt53.amps <= 60) {
 // fix and 417 after. All three states are asserted, because the middle one is what "hold 54 in both
 // directions" means and the other two are what it must not break.
 const AT_54 = [
-  // ⚠️ Ten minutes past the newest sample, so the estimator is in the `bounded` branch — which is
-  // the whole point: a bound is what a still pack produces, and it is not evidence of heating.
+  // ⚠️ 8.5 minutes past the newest sample, so the estimator is in the `bounded` branch — which is
+  // the whole point: a bound is what a still pack produces, and it is not evidence of heating. The
+  // three entries share one ring builder; what separates them is the tick they are read at.
   {
     name: "sitting still at 54 (the reading has not moved — a bound, not evidence of heating)",
-    samples: settledAt(54),
+    samples: rampTo(53, 54),
     atMs: 660_000,
     hold: true,
   },
@@ -739,11 +722,14 @@ const crossings = crossed.length;
   record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
   record("fast_dc_limit_max_a", 75);
   record("dc_charge_limit_selected_a", 70);
+  // The write runner appends an audit record per command, so it needs somewhere to put them.
+  // Removed at the end of the section rather than left behind once per run.
+  const auditDirectory = await mkdtemp(join(tmpdir(), "charge-auto-check-"));
   const automatic = startChargeAutomatic({ commandChargeCurrent: async () => ({ succeeded: true, message: "" }) });
   const runner = createVcuWriteRunner({
     enabled: true,
     busIsActive: true,
-    directory: await mkdtemp(join(tmpdir(), "charge-auto-check-")),
+    directory: auditDirectory,
     gate: () => ({ safe: true, blockers: [], checks: [], chargingEvidence: null }) as never,
     latestSweep: async () => null,
     onChargeCurrentOutgoing: (amps, origin) => automatic.noteChargeCurrentOutgoing(amps, origin),
@@ -800,6 +786,7 @@ const crossings = crossed.length;
     );
   }
   automatic.stop();
+  await rm(auditDirectory, { recursive: true, force: true });
 }
 
 // ── §13 today's episode, open-loop: the two things Daniel asked for ────────
@@ -807,13 +794,7 @@ const crossings = crossed.length;
 // ⚠️ OPEN-LOOP. These show what the rule DECIDES seeing the logged history, never what would have
 // happened — a different current changes the pack's trajectory and the log cannot say how. §3 and
 // §11 are the closed-loop half. The readings are `batt_temp_hi` exactly as logged on 2026-09-09.
-const atTheRatchet = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: 50,
-  commandedAmps: 70,
-  samples: SEPTEMBER_9_EPISODE,
-  nowMs: SEPTEMBER_9_RATCHET_MS,
-});
+const atTheRatchet = decideOnRing(SEPTEMBER_9_EPISODE, SEPTEMBER_9_RATCHET_MS, 70);
 if (atTheRatchet.kind === "command" && atTheRatchet.amps < 70) {
   failures.push(
     `§13 at 16:03:08 on 2026-09-09 the pack read 50 °C and had not moved a whole degree for 7.7 minutes, and the ` +
@@ -821,13 +802,7 @@ if (atTheRatchet.kind === "command" && atTheRatchet.amps < 70) {
       `took 70 A to 40 A while the pack sat at 50-51`
   );
 }
-const atFortyFive = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: 51,
-  commandedAmps: 45,
-  samples: SEPTEMBER_9_EPISODE,
-  nowMs: SEPTEMBER_9_AT_45A_MS,
-});
+const atFortyFive = decideOnRing(SEPTEMBER_9_EPISODE, SEPTEMBER_9_AT_45A_MS, 45);
 if (atFortyFive.kind !== "command" || atFortyFive.amps <= 45) {
   failures.push(
     `§13 Daniel found the pack at 51 °C with 45 A commanded and the controller declining to climb back. Three ` +
@@ -841,15 +816,9 @@ if (atFortyFive.kind !== "command" || atFortyFive.amps <= 45) {
 // the silence cannot exceed the span, so on the grid the deficit always saturates and a fixed
 // maximum step is byte-identical. The evidence for sizing it from the silence is therefore this
 // fixture and the argument, never the crossing count.
-const blindLongSilence = decideChargeCurrent({
-  ...HEALTHY,
-  packTemperatureC: TARGET_C,
-  commandedAmps: 70,
-  // Four minutes since the reading moved bounds the rate at 0.25 K/min, so the deficit is
-  // REACTION_MIN / 4 kelvin and the step is well inside MAX_STEP_A.
-  samples: [{ atMs: 0, celsius: TARGET_C }],
-  nowMs: 240_000,
-});
+// Four minutes since the reading moved bounds the rate at 0.25 K/min, so the deficit is
+// REACTION_MIN / 4 kelvin and the step is well inside MAX_STEP_A.
+const blindLongSilence = decideOnRing([{ atMs: 0, celsius: TARGET_C }], 240_000, 70);
 const expectedBlindStep = Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round((AMPS_PER_KELVIN * REACTION_MIN) / 4)));
 if (blindLongSilence.kind !== "command" || 70 - blindLongSilence.amps !== expectedBlindStep) {
   failures.push(
@@ -986,19 +955,6 @@ function atRate(celsius: number, perMinute: number): TemperatureSample[] {
     samples.push({ atMs: RATE_WINDOW_MS - back * stepMs, celsius: celsius - back * direction });
   }
   return samples;
-}
-
-/**
- * A pack that reached `celsius` and then stopped emitting — the state the setpoint hold is for.
- *
- * Ten minutes of silence after the newest sample, so the estimator returns a BOUND rather than a
- * slope: the reading did not move, which is not evidence that the pack is heating.
- */
-function settledAt(celsius: number): TemperatureSample[] {
-  return [
-    { atMs: 0, celsius: celsius - 1 },
-    { atMs: 60_000, celsius },
-  ];
 }
 
 /** A whole-degree ramp ending exactly on `toC`, so the ring's newest sample is the reading. */

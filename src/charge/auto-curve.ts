@@ -233,17 +233,16 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   // now. Positive is room to give, negative is a move to take back. ⚠️ `headroomKelvin < 0` is
   // algebraically the shipped time-to-cliff test aimed at 54 instead of 55, which is why the steep
   // -heating guard needs no branch of its own — it IS this line.
-  let headroomKelvin = TARGET_C - temperature - rate.perMinute * REACTION_MIN;
+  const headroomKelvin = TARGET_C - temperature - rate.perMinute * REACTION_MIN;
   // ⚠️ Never raise at or above the setpoint. A reading of 54 can be a true 54.99, and this is the
-  // surviving half of the quantisation argument the 53/54 tiers were built on.
-  if (temperature >= TARGET_C) {
-    headroomKelvin = Math.min(headroomKelvin, 0);
+  // surviving half of the quantisation argument the 53/54 tiers were built on. Expressed as a hold
+  // rather than by clamping the headroom to 0 and testing for it: that test was a float equality
+  // that only ever worked because the clamp wrote the literal back.
+  if (temperature >= TARGET_C && headroomKelvin >= 0) {
+    return { kind: "hold", reason: CHARGE_AUTO_REASON.NEAR_CEILING };
   }
   if (temperature < TARGET_C && Math.abs(headroomKelvin) < QUANTISATION_K) {
     return { kind: "hold", reason: CHARGE_AUTO_REASON.SETTLED };
-  }
-  if (headroomKelvin === 0) {
-    return { kind: "hold", reason: CHARGE_AUTO_REASON.NEAR_CEILING };
   }
   const step = Math.min(MAX_STEP_A, Math.max(MIN_STEP_A, Math.round(AMPS_PER_KELVIN * Math.abs(headroomKelvin))));
   if (headroomKelvin > 0) {
@@ -269,8 +268,10 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
  * evidence for the derivation is the argument and the unit fixture, not the crossing count.
  */
 function blindStepAmps(input: ChargeAutoInput): number {
+  // No samples at all is the only case with no bound to read. A zero silence needs no branch of its
+  // own: `REACTION_MIN / 0` is Infinity, which the clamp below turns into MAX_STEP_A anyway.
   const silentMinutes = minutesSinceNewestSample(input.samples, input.nowMs);
-  if (silentMinutes === null || silentMinutes <= 0) {
+  if (silentMinutes === null) {
     return MAX_STEP_A;
   }
   const deficitKelvin = REACTION_MIN / silentMinutes;
