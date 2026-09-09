@@ -27,18 +27,19 @@ export const WAYPOINT_GESTURE_BUTTON = "btn_indicator_cancel";
 /**
  * How long that switch must be held.
  *
- * ⚠️ 1000 ms, SHORTER than the fan gesture's 1200 ms on MODE ENTER, and the difference is
- * the bike's own doing: holding this switch turns the HAZARD LIGHTS on. The earliest
- * activation in the archive is 2.011 s after the press edge, so firing at 1000 ms leaves
- * a second for the thumb to come off before the bike does something the rider did not
- * ask for. It is also why the save fires AT the threshold rather than on the release.
+ * ⚠️ 500 ms since 2026-09-09, down from 1000, because the rider was letting go too early:
+ * holding this switch turns the HAZARD LIGHTS on, so a thumb that is unsure stops short.
+ * The cost is asymmetric and that is the whole argument — a false fire is one row that can
+ * be deleted, a missed hold is a place you cannot go back to — which is why this margin is
+ * 1.5× where the fan's is 4.1×.
  *
- * Above, it clears the longest press of this switch outside one afternoon's deliberate
- * experiment — 0.330 s, across 770 of the archive's 779 — by 3.0×. The other nine all
- * fall inside a single minute on 2026-08-03, the minute the hazards were activated twice.
- * Both numbers, and why it must not be trimmed further: docs/handlebar-gestures.md.
+ * It clears the longest press outside one afternoon's deliberate experiment (0.330 s,
+ * across 770 of the archive's 779) by 1.5×, and over the whole archive fires on 4 presses
+ * against 1000 ms's 3 — all four inside an 11-second span of that experiment. The beat
+ * means the thumb is really down for 500-607 ms, still a second and a half short of the
+ * earliest hazard activation ever recorded. Corpus and margins: docs/handlebar-gestures.md.
  */
-export const WAYPOINT_HOLD_MS = 1000;
+export const WAYPOINT_HOLD_MS = 500;
 
 /**
  * Why a waypoint was refused, as `waypoint_refusal` carries it.

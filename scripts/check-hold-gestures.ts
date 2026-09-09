@@ -81,14 +81,20 @@ function check(what: string, condition: boolean) {
 // candump instances recorded some of the same seconds. Method and caveats:
 // docs/handlebar-gestures.md.
 
-/** 160 ENTER presses; the longest anywhere in the archive. No other decoded bit is this clean. */
+/** 156 ENTER presses; the longest anywhere in the archive. No other decoded bit is this clean. */
 const LONGEST_ENTER_PRESS_MS = 290;
 
 /** 770 of the 779 indicator-cancel presses. The other nine are one afternoon's experiment. */
 const LONGEST_ORDINARY_CANCEL_PRESS_MS = 330;
 
-/** The 0.940 s press from inside that experiment — the nearest thing to a false positive. */
-const LONGEST_CANCEL_PRESS_ANYWHERE_MS = 940;
+/**
+ * ⚠️ THE NINE PRESSES OF 2026-08-03 18:51, in milliseconds, and the only cancel presses in
+ * the archive over 0.330 s. One deliberate experiment: somebody holding the switch to find
+ * out what it does, which is how the hazard threshold was measured at all. Held as the
+ * corpus rather than as a "longest press" constant so that changing WAYPOINT_HOLD_MS
+ * re-derives how many presses fire instead of leaving a stale figure behind.
+ */
+const HAZARD_EXPERIMENT_PRESSES_MS = [159, 210, 249, 250, 409, 940, 1320, 4331, 5771];
 
 /** Earliest observed hazard-light activation, 2026-08-03. The switch is at or before this. */
 const EARLIEST_HAZARD_ACTIVATION_MS = 2011;
@@ -190,7 +196,17 @@ const realPresses: [string, number, number, number][] = [
   ["the longest ENTER press in the archive", LONGEST_ENTER_PRESS_MS, FAN_HOLD_MS, 0],
   ["the median handlebar press", 140, FAN_HOLD_MS, 0],
   ["the longest ORDINARY cancel press", LONGEST_ORDINARY_CANCEL_PRESS_MS, WAYPOINT_HOLD_MS, 0],
-  ["the 0.940 s cancel press from the hazard experiment", LONGEST_CANCEL_PRESS_ANYWHERE_MS, WAYPOINT_HOLD_MS, 0],
+  // ⚠️ The accepted cost of the trim to 500 ms: this one now fires, where at 1000 ms it did
+  // not. It is a deliberate hold from the hazard experiment, sixteen days before the gesture
+  // existed, and a spurious waypoint is one deletable row against a place you cannot revisit.
+  ["the 0.940 s cancel press from the hazard experiment", 940, WAYPOINT_HOLD_MS, 1],
+  // ⚠️ 480 and 520 are asserted HERE, against the pure recogniser at the bus's own 10 ms
+  // rate, and deliberately not end to end: a gesture fires only ON a beat, so a 520 ms press
+  // through the runner is a coin flip (measured 2/10 at a 100 ms beat, 5/10 at 50 ms) and
+  // becomes reliable only around 580 ms. The threshold is what this table is about; the
+  // latency the beat adds is HOLD_BEAT_MS's business and is checked as arithmetic below.
+  ["a press 20 ms short of the waypoint threshold", 480, WAYPOINT_HOLD_MS, 0],
+  ["a press 20 ms past the waypoint threshold", 520, WAYPOINT_HOLD_MS, 1],
   ["one millisecond short of the fan threshold", FAN_HOLD_MS - 1, FAN_HOLD_MS, 0],
   ["one millisecond short of the waypoint threshold", WAYPOINT_HOLD_MS - 1, WAYPOINT_HOLD_MS, 0],
   ["a deliberate 10 s hold", 10_000, FAN_HOLD_MS, 1],
@@ -332,11 +348,22 @@ async function settle(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * How long a press is held PAST its threshold before the release, so the fire is certain.
+ *
+ * ⚠️ A FIXED GRACE AND NOT A MULTIPLE OF HOLD_BEAT_MS. A gesture fires only on a beat, and
+ * the worst latency measured under a loaded event loop is ~107 ms past a 500 ms threshold —
+ * so a slack expressed as `HOLD_BEAT_MS * 2` shrinks whenever the beat is tuned and lands
+ * inside the jitter. It was 100 ms of slack until the beat was halved in #192, which would
+ * have made this suite's greenness depend on how busy the machine running it happened to be.
+ */
+const FIRE_GRACE_MS = 400;
+
 /** One press of a button, held past whatever that gesture's threshold is, then released. */
 async function pressAndHold(button: "enter" | "cancel", key: string, holdMs: number): Promise<void> {
   bus[button] = 1;
   record(key, 1);
-  await settle(holdMs + HOLD_BEAT_MS * 2);
+  await settle(holdMs + FIRE_GRACE_MS);
   bus[button] = 0;
   record(key, 0);
   await settle(TICK_MS * 4);
@@ -531,7 +558,7 @@ await settle(TICK_MS * 4);
 async function holdStubborn(holdMs: number): Promise<void> {
   stubbornPress = 1;
   record("btn_mode_enter", 1);
-  await settle(holdMs + HOLD_BEAT_MS * 2);
+  await settle(holdMs + FIRE_GRACE_MS);
   stubbornPress = 0;
   record("btn_mode_enter", 0);
   await settle(TICK_MS * 4);
@@ -597,7 +624,7 @@ check(
 
 // ⚠️ THROUGH THE RUNNER, not by calling saveWaypointNow() again: everything above proves
 // the gates, and nothing yet proves the hold reaches them. This is the second gesture on
-// the shared recogniser, at its own shipped 1000 ms, on its own button.
+// the shared recogniser, at its own shipped 500 ms, on its own button.
 const waypointBus = setInterval(() => {
   record("btn_indicator_cancel", bus.cancel);
 }, TICK_MS);
@@ -742,12 +769,25 @@ check(
   FAN_HOLD_MS > LONGEST_ENTER_PRESS_MS * 4
 );
 check(
-  `the waypoint hold (${WAYPOINT_HOLD_MS} ms) clears the longest ordinary cancel press (${LONGEST_ORDINARY_CANCEL_PRESS_MS} ms) 3×`,
-  WAYPOINT_HOLD_MS > LONGEST_ORDINARY_CANCEL_PRESS_MS * 3
+  `the waypoint hold (${WAYPOINT_HOLD_MS} ms) clears the longest ordinary cancel press (${LONGEST_ORDINARY_CANCEL_PRESS_MS} ms) 1.5×`,
+  WAYPOINT_HOLD_MS > LONGEST_ORDINARY_CANCEL_PRESS_MS * 1.5
 );
+// ⚠️ The whole cost of the trim, in one line and re-derived from the corpus rather than
+// asserted as a constant: 4 of the archive's 779 cancel presses fire at 500 ms against 3 at
+// 1000, and every one of them is a deliberate hold from the 2026-08-03 experiment.
 check(
-  `…and still clears the ${LONGEST_CANCEL_PRESS_ANYWHERE_MS} ms press from the hazard experiment`,
-  WAYPOINT_HOLD_MS > LONGEST_CANCEL_PRESS_ANYWHERE_MS
+  `${HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= WAYPOINT_HOLD_MS).length} archive presses fire at ` +
+    `${WAYPOINT_HOLD_MS} ms, and all of them are from the hazard experiment`,
+  HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= WAYPOINT_HOLD_MS).length === 4 &&
+    HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= 1000).length === 3
+);
+// ⚠️ ARITHMETIC OVER THE CONSTANTS, never a measured latency. A gesture fires only on a
+// beat, so the thumb is down for holdMs plus up to one beat; a hard-coded millisecond figure
+// would be a number from one idle Mac shipped into a suite that also runs on CI and a Pi.
+check(
+  `a hold plus its beat (${WAYPOINT_HOLD_MS + HOLD_BEAT_MS * 2} ms) still fires well before the hazards ` +
+    `(${EARLIEST_HAZARD_ACTIVATION_MS} ms earliest observed)`,
+  WAYPOINT_HOLD_MS + HOLD_BEAT_MS * 2 < EARLIEST_HAZARD_ACTIVATION_MS
 );
 check(
   `⚠️  the waypoint hold fires before the hazards can come on (${EARLIEST_HAZARD_ACTIVATION_MS} ms earliest observed)`,
