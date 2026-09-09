@@ -32,13 +32,21 @@ const LATEST_FILE = "lifetime.json";
  * screen was one you cannot follow on the phone that is showing it. The script is still
  * the answer when the service IS stopped, so it stays below rather than being deleted.
  *
- * ⚠️ "with the drive down" and not "not charging": the safety gate deliberately EXCUSES
- * `energized` while a charge session is confirmed (src/vcu/service-gate.ts), so telling
- * the rider to unplug first would be inventing a rule the code does not have. What the
- * gate does require is the drive down and the bike stationary, and the sheet prints
- * whichever check is blocking — which is the honest thing to point at.
+ * ⚠️ "plugged in" and not "charging": the gate's evidence is a cable being LIVE, which
+ * includes a paused AC trickle. docs/charge-manager.md:60 has `charge_type` reading 0 for
+ * up to 8 minutes inside one continuous plug-in while current still flowed.
+ *
+ * ⚠️ The comma is load-bearing. This parses as *parked, with (the drive down OR plugged
+ * in)*, which is the gate's own shape. Without it, *(parked with the drive down) or
+ * (plugged in)* sanctions a moving bike on a cable — the one thing it exists to prevent.
+ *
+ * #187 wrote "parked with the drive down" because the gate then refused a charging bike in
+ * practice: the escape existed and was never sampled, so it had never once run on the
+ * motorcycle (#190). Now that it does, that wording is too strict in the other direction —
+ * a rider at a charger would unplug and key off, undoing the state the feature is for.
  */
-export const HOW_TO_READ = 'menu → Service mode → "Read the lifetime battery statistics", parked with the drive down';
+export const HOW_TO_READ =
+  'menu → Service mode → "Read the lifetime battery statistics", parked, with the drive down or plugged in';
 
 /**
  * The same read from a shell, for a Pi whose service is stopped.

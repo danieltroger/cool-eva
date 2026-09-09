@@ -209,7 +209,7 @@ async function runLifetime(save: boolean): Promise<void> {
   for (const component of [LIFETIME_COMPONENTS.packState, LIFETIME_COMPONENTS.counters]) {
     replies.push(await runFreezeFrame(component));
   }
-  const answered = replies.filter(reply => reply.payloadHex !== null).length;
+  const answered = replies.filter(reply => reply.failure === null).length;
   if (!save) {
     console.log(`\n  → ${answered}/2 answered. Add --save to store them where the dashboard reads them.`);
     return;

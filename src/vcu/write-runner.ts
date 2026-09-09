@@ -4,13 +4,7 @@ import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
-import {
-  CHARGE_MANAGER_STATE_AC,
-  CHARGE_MANAGER_STATE_DC,
-  CHARGE_SESSION_MAX_AGE_MS,
-  chargeManagerIsLive,
-  chargeSessionFrom,
-} from "./charge-session.ts";
+import { CHARGE_SESSION_MAX_AGE_MS, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
 import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
@@ -557,14 +551,15 @@ async function checkPreconditions(
     }
   }
   if (
+    // ⚠️ chargePathIsActive, not the charge-manager state alone: the gate has three witnesses
+    // and keying this on one of them permitted `11 02` into a DC fast charge the contactor
+    // was witnessing. Same sampling shape as the gate's, so the two cannot disagree.
     policy.refusedWhileCharging &&
-    chargeManagerIsLive(latestValue("charge_manager_state"), ageMs("charge_manager_state"))
+    chargePathIsActive(key => ({ value: latestValue(key), ageMs: ageMs(key) }))
   ) {
     return {
       ok: false,
-      reason:
-        `a charge session is live (charge_manager_state is fresh) — do not ${request.kind} mid-charge. ` +
-        "Stop the charge or unplug first.",
+      reason: `the charge path is live — do not ${request.kind} mid-charge. ` + "Stop the charge or unplug first.",
     };
   }
   // Sampled ONLY for the actions that thread it, which is the invariant worth keeping:
@@ -632,7 +627,11 @@ async function perform(context: WriteContext, request: ServiceWriteRequest): Pro
   if (!ready.ok) {
     return { ok: false, reason: ready.reason };
   }
-  const watchdog = startGateWatchdog(context);
+  // ⚠️ Only for actions the gate governs. It ran for every one, so a charge-current command
+  // — exempt at the precondition precisely because a charging bike's drive is up — could
+  // still be aborted mid-exchange by the same gate that was told not to judge it. A write
+  // cut short between `2E` and its read-back has changed the bike and not confirmed what to.
+  const watchdog = serviceActionPolicy(request.kind).bikeStateGateApplies ? startGateWatchdog(context) : null;
   try {
     return await performOnBus(context, request, ready.channel, ready.tableType);
   } catch (err) {
@@ -642,7 +641,9 @@ async function perform(context: WriteContext, request: ServiceWriteRequest): Pro
     console.error(`vcu-write: the ${request.kind} action failed:`, err);
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
-    clearInterval(watchdog);
+    if (watchdog) {
+      clearInterval(watchdog);
+    }
     context.running = null;
     ready.lease.release();
   }
@@ -1112,27 +1113,14 @@ async function performChargeCurrent(
 ): Promise<ServiceWriteAnswer> {
   const chargeState = latestValue("charge_manager_state");
   const chargeStateAge = ageMs("charge_manager_state");
-  if (chargeState === null || chargeStateAge === null || chargeStateAge > CHARGE_SESSION_MAX_AGE_MS) {
-    return {
-      ok: false,
-      reason:
-        "not charging — charge_manager_state is absent or stale, so there is no live session to command a current into. Plug the bike in first.",
-    };
+  // The settled-session predicate, from ./charge-session.ts, so the check that asserts this
+  // column of the truth table calls the shipped decision instead of a copy of it.
+  const session = chargeSessionFrom(chargeState, chargeStateAge);
+  if (!session) {
+    return { ok: false, reason: describeNoSession(chargeState, chargeStateAge, "command a current into") };
   }
-  let mode: ChargeMode;
-  let ceilingKey: string;
-  if (chargeState === CHARGE_MANAGER_STATE_AC) {
-    mode = "ac";
-    ceilingKey = "ac_charge_ceiling_a";
-  } else if (chargeState === CHARGE_MANAGER_STATE_DC) {
-    mode = "dc";
-    ceilingKey = "fast_dc_limit_max_a";
-  } else {
-    return {
-      ok: false,
-      reason: `charge_manager_state reads 0x${chargeState.toString(16)}, not a settled AC (0x02) or DC (0x23) session — the charge handshake may still be in progress. Retry in a moment.`,
-    };
-  }
+  const mode: ChargeMode = session.mode;
+  const ceilingKey = session.mode === "ac" ? "ac_charge_ceiling_a" : "fast_dc_limit_max_a";
 
   // AC falls back to a known ceiling when the dash has not broadcast one this session, so a remote
   // command works without someone at the bike to nudge the dial. DC still refuses: its ceiling is a
@@ -1222,21 +1210,11 @@ async function performChargeCurrent(
 async function performChargeStop(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
   const chargeState = latestValue("charge_manager_state");
   const chargeStateAge = ageMs("charge_manager_state");
-  if (chargeState === null || chargeStateAge === null || chargeStateAge > CHARGE_SESSION_MAX_AGE_MS) {
-    return {
-      ok: false,
-      reason:
-        "not charging — charge_manager_state is absent or stale, so there is no live session to stop. Nothing to do.",
-    };
+  const session = chargeSessionFrom(chargeState, chargeStateAge);
+  if (!session) {
+    return { ok: false, reason: describeNoSession(chargeState, chargeStateAge, "stop") };
   }
-  if (chargeState !== CHARGE_MANAGER_STATE_AC && chargeState !== CHARGE_MANAGER_STATE_DC) {
-    return {
-      ok: false,
-      reason: `charge_manager_state reads 0x${chargeState.toString(16)}, not a settled AC (0x02) or DC (0x23) session — the charge handshake may still be in progress. Retry in a moment.`,
-    };
-  }
-
-  const mode = chargeState === CHARGE_MANAGER_STATE_AC ? "AC" : "DC";
+  const mode = session.mode.toUpperCase();
   console.warn(`vcu-write: about to stop the ${mode} charge — injecting the 0x120 Mode-stop request-twin`);
   const outcome = await sendChargeStopCommand(channel);
   await appendAuditRecord(context.directory, {
@@ -1272,15 +1250,31 @@ async function performChargeStop(context: WriteContext, channel: RawChannel): Pr
 }
 
 /**
+ * Why there is no settled session to act on — absent, stale, or mid-handshake.
+ *
+ * One sentence for both charge actions: they had a copy each, and a copy is how "absent or
+ * stale" and "not settled" end up worded differently for the same bike.
+ */
+function describeNoSession(state: number | null, ageMs: number | null, what: string): string {
+  if (state === null || ageMs === null || ageMs > CHARGE_SESSION_MAX_AGE_MS) {
+    return `not charging — charge_manager_state is absent or stale, so there is no live session to ${what}. Plug the bike in first.`;
+  }
+  return (
+    `charge_manager_state reads 0x${state.toString(16)}, not a settled AC (0x02) or DC (0x23) session — ` +
+    "the charge handshake may still be in progress. Retry in a moment."
+  );
+}
+
+/**
  * Restarts both VCU micros with ECUReset (`11 02`) — a key-cycle restart, nothing erased.
  *
- * Reversible, so it is NOT on the irreversible tier — but it drops the bike off the bus for a
- * second or two, and `11 02` is also the charge manager's bootloader-entry service, so it is
- * refused mid-charge: a live charge is managed by these very controllers. The charge check keys
- * on charge_manager_state (present and fresh = a live session), matching performChargeStop — the
- * reliable session signal, NOT the 0x625 dc_charging flag that false-refused the scratch script
- * on 2026-08-27. The stationary check is inherited from the shared gate; this action is not
- * gate-exempt, unlike the two charge actions. Both nodes always reset together — see resetVcu.
+ * Reversible, so NOT on the irreversible tier — but it drops the bike off the bus for a second
+ * or two, and `11 02` is also the charge manager's bootloader-entry service, so it is refused
+ * mid-charge: a live charge is managed by these very controllers. Both the stationary check and
+ * the mid-charge refusal now come from serviceActionPolicy and are applied in
+ * checkPreconditions; the refusal reads the WHOLE charge path, not the 0x625 dc_charging flag
+ * that false-refused the scratch script on 2026-08-27. Both nodes always reset together — see
+ * resetVcu.
  */
 async function performResetVcu(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
   // The mid-charge refusal is in serviceActionPolicy, with every other per-action gate, and

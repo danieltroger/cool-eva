@@ -11,9 +11,11 @@ import {
   CHARGE_INLET_VETO,
   CHARGE_SESSION_MAX_AGE_MS,
   chargeManagerIsLive,
+  chargePathIsActive,
   chargeSessionFrom,
 } from "../src/vcu/charge-session.ts";
 import { serviceActionPolicy } from "../src/vcu/write-runner.ts";
+import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 
 // May a CHARGING motorcycle be serviced? The gate's charge behaviour, end to end.
 //
@@ -278,8 +280,9 @@ for (const row of TABLE) {
   // session is live — the two reasons compose, and a row that is unsafe for a read is
   // unsafe for a reset whether or not anything is plugged in.
   const resetPolicy = serviceActionPolicy("reset-vcu");
+  const pathActive = chargePathIsActive(key => readings[key] ?? { value: null, ageMs: null });
   const resetAllowed =
-    (!resetPolicy.bikeStateGateApplies || verdict.safe) && !(resetPolicy.refusedWhileCharging && sessionLive);
+    (!resetPolicy.bikeStateGateApplies || verdict.safe) && !(resetPolicy.refusedWhileCharging && pathActive);
   check(`${row.state} · reset-vcu ${row.reset ? "allowed" : "refused"}`, resetAllowed === row.reset);
   // charge-current is gate-EXEMPT and needs a settled session — bike state cannot refuse it.
   const chargeAllowed = !serviceActionPolicy("charge-current").bikeStateGateApplies && settled;
@@ -289,6 +292,94 @@ for (const row of TABLE) {
     serviceActionPolicy("charge-stop").bikeStateGateApplies ===
       serviceActionPolicy("charge-current").bikeStateGateApplies
   );
+}
+
+console.log("\n3b. the two holes the diff review found, so they cannot come back");
+
+// ⚠️ HOLE 1 — a DC fast charge witnessed ONLY by the contactor. This is the exact state the
+// third witness exists to insure against (the 0x610 decode gate dropping), and keying the
+// reset refusal on charge_manager_state alone permitted `11 02` straight into it.
+const contactorOnly = readingsFrom([
+  [0x102, DC_102_CONTACTOR],
+  [0x104, AC_104_STILL],
+]);
+const contactorVerdict = evaluateServiceGate(contactorOnly);
+check("a contactor-only DC charge is serviceable", contactorVerdict.safe);
+check("…and is named as charge evidence", contactorVerdict.chargingEvidence !== null);
+check(
+  "…and reset-vcu REFUSES it, even though charge_manager_state never arrived",
+  chargePathIsActive(key => contactorOnly[key] ?? { value: null, ageMs: null })
+);
+check(
+  "…which the narrower predicate would have missed",
+  !chargeManagerIsLive(
+    contactorOnly["charge_manager_state"]?.value ?? null,
+    contactorOnly["charge_manager_state"]?.ageMs ?? null
+  )
+);
+
+// ⚠️ HOLE 2 — the veto must speak only when it DECIDED the refusal. An empty inlet on a bike
+// whose drive is down has cancelled nothing, and refusing it blamed a cable for a bike that
+// was fine. `0x102` b1 = 0x00 is the drive down with the key off.
+const inletEmptyDriveDown = evaluateServiceGate(
+  readingsFrom([
+    [0x102, "00 00 00 44 94 FF D8 FF"],
+    [0x104, AC_104_STILL],
+    [0x610, E0_610],
+  ])
+);
+check("an empty inlet on a bike with the drive down changes nothing, so the gate stays open", inletEmptyDriveDown.safe);
+check("…and the rider is not told about a cable", inletEmptyDriveDown.blockers.length === 0);
+check(
+  "…while the veto is still on the record",
+  inletEmptyDriveDown.checks.find(row => row.key === CHARGE_INLET_VETO.key)?.state === "inlet-empty"
+);
+// …and when something else is the reason, the cable is not blamed for it either.
+const inletEmptyRolling = evaluateServiceGate(
+  readingsFrom([
+    [0x102, AC_102_ENERGIZED],
+    [0x104, ROLLING_104],
+    [0x610, E0_610],
+  ])
+);
+check("a moving bike with an empty inlet is refused for the motion", !inletEmptyRolling.safe);
+check(
+  "…and not for the cable, which was never what let it in",
+  !inletEmptyRolling.blockers.some(blocker => blocker.includes("inlet"))
+);
+
+// ⚠️ And every witness has to be STALE-PROOF, because `liveState` keeps the last value for
+// ever. Widening any of these windows is the mutation the first version of this check let
+// through: a 10-minute contactor window makes a bike that finished charging an hour ago
+// still "charging". One row per witness, each at 30 s.
+for (const [label, frames] of [
+  [
+    "the contactor",
+    [
+      [0x102, DC_102_CONTACTOR, 30_000],
+      [0x104, AC_104_STILL],
+    ],
+  ],
+  [
+    "the charger frames",
+    [
+      [0x102, AC_102_ENERGIZED],
+      [0x104, AC_104_STILL],
+      [0x305, AC_305, 30_000],
+    ],
+  ],
+  [
+    "the charge manager",
+    [
+      [0x102, AC_102_ENERGIZED],
+      [0x104, AC_104_STILL],
+      [0x610, AC_610, 30_000],
+    ],
+  ],
+] as [string, [number, string, number?][]][]) {
+  const verdict = evaluateServiceGate(readingsFrom(frames));
+  check(`${label} 30 s old is not a bike that is plugged in`, verdict.chargingEvidence === null);
+  check(`…so ${label} being stale cannot excuse an energized drive`, !verdict.safe);
 }
 
 console.log("\n4. the sampler asks for everything the decision reads");
@@ -379,6 +470,41 @@ check(
   "exactly one action is refused while charging",
   KINDS.filter(kind => serviceActionPolicy(kind).refusedWhileCharging).length === 1
 );
+
+console.log("\n7. the on-screen instruction and the gate describe the same bike");
+
+// ⚠️ PINNED TO THE VERDICT, not to a second copy of the sentence. The instruction the All
+// tab shows on a Pi that has never taken a reading has to describe the bike this gate
+// actually admits, and it has drifted twice: it named a shell flag that never existed, and
+// then (#187) a bike with the drive down, which was right only because the charging escape
+// was dead. These four assertions fail whichever of the two moves alone.
+const chargingBike = evaluateServiceGate(
+  readingsFrom([
+    [0x102, DC_102_CONTACTOR],
+    [0x104, AC_104_STILL],
+  ])
+);
+check("a stationary charging bike passes the gate", chargingBike.safe);
+check(
+  `…so the instruction must name that case, got ${JSON.stringify(HOW_TO_READ)}`,
+  HOW_TO_READ.includes("or plugged in")
+);
+// Duplicates check-vcu-params.ts's `energizedNotCharging` on a different fixture. Said out
+// loud rather than presented as new coverage: what is new is the pairing with the copy.
+const energizedUnplugged = evaluateServiceGate(
+  readingsFrom([
+    [0x102, AC_102_ENERGIZED],
+    [0x104, AC_104_STILL],
+  ])
+);
+check("…while an energized, unplugged bike is still refused", !energizedUnplugged.safe);
+check("…so the instruction must still name the drive", HOW_TO_READ.includes("drive down"));
+// ⚠️ The exact disjunct, and the negatives. An alternation like /plugged in|charg/ matches
+// "and NOT plugged in" just as happily, and polarity is the one distinction a safety
+// instruction cannot afford to get wrong.
+for (const forbidden of ["not charging", "unplug", "not plugged"]) {
+  check(`…and must not tell the rider to ${forbidden}`, !HOW_TO_READ.toLowerCase().includes(forbidden));
+}
 
 if (failures > 0) {
   console.error(`\nFAILED — ${failures} checks`);

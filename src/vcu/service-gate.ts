@@ -354,10 +354,24 @@ export function evaluateServiceGate(readings: ServiceGateReadings): ServiceGateV
   const chargingEvidence = inletEmpty ? null : witnessed;
   const checks = RULES.map(rule => checkRule(rule, readings[rule.key], chargingEvidence !== null));
   checks.push(inletCheck(readings, inletEmpty));
-  const blockers: string[] = [];
-  if (inletEmpty && witnessed !== null) {
-    blockers.push(CHARGE_INLET_BLOCKER);
+  const blockers = blockersFrom(checks);
+  // ⚠️ The veto gets a sentence only when it DECIDED the refusal — believing the witness
+  // would have opened the gate, and cancelling it is what shut it. An empty inlet on a bike
+  // whose drive is down has changed nothing, and refusing it (or blaming the cable for a
+  // bike that is simply moving) is a false alarm on the one control the rider needs to
+  // trust. Deciding this needs the counterfactual, which is why the rules are judged twice.
+  if (inletEmpty && witnessed !== null && blockers.length > 0) {
+    const hadTheWitnessBeenBelieved = blockersFrom(RULES.map(rule => checkRule(rule, readings[rule.key], true)));
+    if (hadTheWitnessBeenBelieved.length === 0) {
+      blockers.unshift(CHARGE_INLET_BLOCKER);
+    }
   }
+  return { safe: blockers.length === 0, blockers, checks, chargingEvidence };
+}
+
+/** Every check that blocks, as the sentences the page shows, in RULES order. */
+function blockersFrom(checks: ServiceGateCheck[]): string[] {
+  const blockers: string[] = [];
   for (const check of checks) {
     if (check.state === "ok" || check.state === "excused-by-charging" || check.state === "inlet-empty") {
       continue;
@@ -382,7 +396,7 @@ export function evaluateServiceGate(readings: ServiceGateReadings): ServiceGateV
     }
     blockers.push(describeBlocker(check));
   }
-  return { safe: blockers.length === 0, blockers, checks, chargingEvidence };
+  return blockers;
 }
 
 /**

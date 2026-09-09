@@ -1,4 +1,4 @@
-import type { ServiceGateReadings } from "./service-gate.ts";
+import type { ServiceGateReadings, ServiceGateSample } from "./service-gate.ts";
 
 // What proves the bike is tethered to a charger — and what refutes it.
 //
@@ -206,12 +206,36 @@ export function chargeEvidenceKeys(): string[] {
  * bad a moment to reset as one in progress. Settled-only here would have quietly allowed a
  * reset through every handshake.
  *
- * Being a superset of chargeSessionFrom is also what keeps the gate honest: there is no state
- * where the safety gate excuses `energized` as "charging" while reset-vcu considers the bike
- * unplugged. scripts/check-service-gate-charging.ts asserts that ordering.
+ * ⚠️ It is NOT on its own enough to keep reset-vcu behind the gate's own opinion. The gate has
+ * three witnesses and this reads one of them, so a DC fast charge witnessed only by the
+ * contactor — the very case the third witness exists to insure against — left `11 02`
+ * permitted. Use chargePathIsActive below for that question; this one stays because
+ * "the charge manager is on the bus" is a narrower fact that is still worth naming.
  */
 export function chargeManagerIsLive(value: number | null, ageMs: number | null): boolean {
   return value !== null && ageMs !== null && ageMs <= CHARGE_SESSION_MAX_AGE_MS;
+}
+
+/**
+ * Is ANY charge path live — the question an action that must not run mid-charge has to ask.
+ *
+ * ⚠️ The union of every witness the safety gate believes, plus the charge manager merely
+ * being on the bus. Narrower predicates have already been wrong here twice: reading only
+ * `charge_manager_state` permitted a VCU reset into a DC fast charge witnessed by the
+ * contactor, and reading only the settled values would permit one through a handshake.
+ *
+ * Deliberately ignores the inlet veto. The veto answers "may a charge EXCUSE something",
+ * which is a question about trusting evidence; this answers "is the charge path doing
+ * anything", and a charge manager awake with an empty inlet is mid-attempt — E0 is exactly
+ * the moment not to reset it.
+ */
+export function chargePathIsActive(read: (key: string) => ServiceGateSample): boolean {
+  const readings = Object.fromEntries(chargeEvidenceKeys().map(key => [key, read(key)]));
+  if (findChargingEvidence(readings) !== null) {
+    return true;
+  }
+  const state = readings["charge_manager_state"];
+  return chargeManagerIsLive(state?.value ?? null, state?.ageMs ?? null);
 }
 
 /** A live charge session as the write actions ask about it: present, fresh, settled. */
