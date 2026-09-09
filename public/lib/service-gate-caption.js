@@ -22,7 +22,13 @@ export function serviceRefusal(state) {
   if (!state.gate.safe) {
     // Deliberately not repeating the reasons: they are in full above the buttons, and a
     // caption is the wrong place for four of them.
-    return "🚫  The bike is not parked and out of drive";
+    //
+    // ⚠️ And deliberately not NAMING one either. Since a charge session excuses the drive
+    // being energized, the blocking set depends on whether the bike is plugged in — an
+    // unplugged bike can be refused for the drive alone while a charging one cannot — so no
+    // five-word summary is right in both branches. "not parked and out of drive" was wrong
+    // for the energized case even before that, which is the refusal #190 opened on.
+    return "🚫  The bike is not safe to service";
   }
   return null;
 }

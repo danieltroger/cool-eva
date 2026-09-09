@@ -4,6 +4,13 @@ import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
+import {
+  CHARGE_MANAGER_STATE_AC,
+  CHARGE_MANAGER_STATE_DC,
+  CHARGE_SESSION_MAX_AGE_MS,
+  chargeManagerIsLive,
+  chargeSessionFrom,
+} from "./charge-session.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
 import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
@@ -331,20 +338,11 @@ const RECENT_AUDIT_LINES = 12;
  */
 const MAX_PARAMETERS_PER_BATCH = 8;
 
-/**
- * How fresh charge_manager_state must be before a charge-current command is honoured.
- *
- * ⚠️ charge_manager_state (0x610 b7), NOT charge_type (0x605 b2). charge_type names "AC current
- * flowing right now", not "a session exists" — it flaps 1↔0 within one plug-in as the charger
- * pauses delivery (measured 8 min at 0 mid-trickle, 2026-08-25; docs/charge-manager.md §charge_type
- * flaps). charge_manager_state holds 0x02 (AC) / 0x23 (DC) steady for the whole session, and 0x610
- * broadcasts continuously, so a stale reading means the cable came out — exactly when to refuse.
- */
-const CHARGE_SESSION_MAX_AGE_MS = 5000;
-
-/** charge_manager_state (0x610 b7) settled values — the cleanest AC/DC discriminator. docs/charge-manager.md. */
-const CHARGE_MANAGER_STATE_AC = 0x02;
-const CHARGE_MANAGER_STATE_DC = 0x23;
+// ⚠️ The session predicate, its freshness budget and the settled values all live in
+// ./charge-session.ts now — the safety gate asks the same question and there were three
+// copies of these four lines in this file. charge_manager_state (0x610 b7) and NOT
+// charge_type (0x605 b2): charge_type flaps 1↔0 within one plug-in as the charger pauses
+// delivery (8 min at 0 mid-trickle, 2026-08-25; docs/charge-manager.md §charge_type flaps).
 
 /**
  * The AC ceiling (0x121 b4) to use when the dash has NOT broadcast ac_charge_ceiling_a this
@@ -456,22 +454,62 @@ export function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | 
   };
 }
 
+/** What the three gates do about one action. Every field is a policy decision, not a derivation. */
+export interface ServiceActionPolicy {
+  /** Whether the bike-state gate (./service-gate.ts) applies. */
+  bikeStateGateApplies: boolean;
+  /** Whether a live charge session REFUSES the action outright. */
+  refusedWhileCharging: boolean;
+  /** Whether the table-type gate (./table-gate.ts) applies. */
+  tableGateApplies: boolean;
+}
+
 /**
- * ⚠️ Which actions the table-type gate applies to — and, more usefully, why the others are
- * deliberately exempt.
+ * ⚠️ ONE TABLE, TOTAL OVER `ServiceWriteRequest`, and both of those properties are load-bearing.
  *
- * The gate exists for ONE failure: a parameter is addressed by index, what an index means
- * comes from the parameter table, and a write under the wrong table is accepted, reads back
- * cleanly and has changed something else. `31 FC`, Mode 04, the 0x120 clock broadcast and
- * read-service-stamp carry no bank-1 parameter index at all, so `TABLE_TYPE` says nothing
- * about any of them and gating them would be superstition — a refusal resting on evidence
- * with no bearing on the action, which is how a gate stops being believed.
+ * Total, because the failure it prevents is silent: an action quietly classified as exempt takes
+ * itself out from behind a gate and no behavioural check moves. The `switch` has no `default`, so
+ * a new kind is a type error here rather than a gap discovered on the bike.
  *
- * The four exemptions one by one, and the honest counter-argument about Set Service Point
- * being irreversible: docs/vcu-parameters.md §4.
+ * One table, because these three questions were answered in three places — two of them in prose —
+ * and `charge-stop` was already reachable only through an `&&` chain nobody could see the end of.
+ *
+ * Why each exemption, one by one: docs/vcu-parameters.md §4 for the table gate, §12 for the rest.
  */
-function tableGateAppliesTo(request: ServiceWriteRequest): boolean {
-  return request.kind === "parameter" || request.kind === "bit" || request.kind === "parameters";
+export function serviceActionPolicy(kind: ServiceWriteRequest["kind"]): ServiceActionPolicy {
+  switch (kind) {
+    // The table gate exists for ONE failure: a parameter is addressed by index, what an index
+    // means comes from the parameter table, and a write under the wrong table is accepted, reads
+    // back cleanly and has changed something else.
+    case "parameter":
+    case "bit":
+    case "parameters":
+      return { bikeStateGateApplies: true, refusedWhileCharging: false, tableGateApplies: true };
+
+    // `31 FC`, Mode 04, the 0x120 clock broadcast and read-service-stamp carry no bank-1
+    // parameter index at all, so TABLE_TYPE says nothing about any of them and gating them
+    // would be superstition — a refusal resting on evidence with no bearing on the action.
+    case "read-service-stamp":
+    case "set-service-point":
+    case "sync-clock":
+    case "clear-dtcs":
+      return { bikeStateGateApplies: true, refusedWhileCharging: false, tableGateApplies: false };
+
+    // ⚠️ EXEMPT FROM THE BIKE-STATE GATE, deliberately. Commanding a charge current — or
+    // stopping the charge — is a charging operation, and the gate's charge evidence flaps with
+    // the trickle, so applying it here refuses a legitimate command mid-charge. Their real
+    // precondition is a live settled session, checked in performChargeCurrent / performChargeStop.
+    // Stopping is the benign direction regardless: worst case the charge halts, which is the
+    // whole point of the button.
+    case "charge-current":
+    case "charge-stop":
+      return { bikeStateGateApplies: false, refusedWhileCharging: false, tableGateApplies: false };
+
+    // ⚠️ Reversible, so not on the irreversible tier — but `11 02` is also the charge manager's
+    // bootloader-entry service and a live charge is managed by these very controllers.
+    case "reset-vcu":
+      return { bikeStateGateApplies: true, refusedWhileCharging: true, tableGateApplies: false };
+  }
 }
 
 /**
@@ -509,22 +547,25 @@ async function checkPreconditions(
         "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so a write would silently do nothing",
     };
   }
-  // ⚠️ charge-current AND charge-stop are EXEMPT from the stationary gate, and this is a
-  // deliberate exemption, not a hole. That gate refuses PARAMETER writes while the bike could move
-  // or its drive is live — but a charging bike is energized by definition and tethered by
-  // definition (it cannot be ridden away while plugged in, the same argument service-gate.ts's
-  // CHARGE_EVIDENCE rests on), and commanding its charge current — or stopping the charge — is a
-  // charging operation. Worse, the gate only excuses `energized` while it sees fresh charger
-  // frames, and those flap with the trickle, so applying it here refuses a legitimate command
-  // mid-charge. Their real precondition — a live, established session — is checked off
-  // charge_manager_state in performChargeCurrent / performChargeStop. So this Pi's own switches
-  // (enabled/CAN/bus, above) still gate them; the bike-state gate does not. Stopping is the benign
-  // direction regardless: worst case the charge halts, which is the whole point of the button.
-  if (request.kind !== "charge-current" && request.kind !== "charge-stop") {
+  // Which gates apply to this action is one table, and it is total over the request union —
+  // see serviceActionPolicy. This Pi's own switches (enabled/CAN/bus, above) gate everything.
+  const policy = serviceActionPolicy(request.kind);
+  if (policy.bikeStateGateApplies) {
     const verdict = context.gate();
     if (!verdict.safe) {
       return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
     }
+  }
+  if (
+    policy.refusedWhileCharging &&
+    chargeManagerIsLive(latestValue("charge_manager_state"), ageMs("charge_manager_state"))
+  ) {
+    return {
+      ok: false,
+      reason:
+        `a charge session is live (charge_manager_state is fresh) — do not ${request.kind} mid-charge. ` +
+        "Stop the charge or unplug first.",
+    };
   }
   // Sampled ONLY for the actions that thread it, which is the invariant worth keeping:
   // the report this refusal is decided from is the same object ./write-codec.ts
@@ -533,7 +574,7 @@ async function checkPreconditions(
   // JSON.parse of a 277-row file off an SD card — `sync-clock` least of all, since its
   // confirmation has a deadline attached.
   let tableType: TableTypeReport | null = null;
-  if (tableGateAppliesTo(request)) {
+  if (policy.tableGateApplies) {
     tableType = (await context.latestSweep())?.report ?? null;
     const table = evaluateTableGate(tableType);
     if (!table.writesAllowed) {
@@ -1242,17 +1283,9 @@ async function performChargeStop(context: WriteContext, channel: RawChannel): Pr
  * gate-exempt, unlike the two charge actions. Both nodes always reset together — see resetVcu.
  */
 async function performResetVcu(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
-  const chargeState = latestValue("charge_manager_state");
-  const chargeStateAge = ageMs("charge_manager_state");
-  if (chargeState !== null && chargeStateAge !== null && chargeStateAge <= CHARGE_SESSION_MAX_AGE_MS) {
-    return {
-      ok: false,
-      reason:
-        "a charge session is live (charge_manager_state is fresh) — do not reset the VCU mid-charge. " +
-        "Stop the charge or unplug first.",
-    };
-  }
-
+  // The mid-charge refusal is in serviceActionPolicy, with every other per-action gate, and
+  // checkPreconditions has already applied it by the time this runs. It used to be a fourth
+  // copy of the same four lines here.
   console.warn("vcu-write: about to reset both VCU micros (ECUReset 11 02) — the bike drops off the bus briefly");
   const session = resetVcu(channel);
   context.running = session.session;

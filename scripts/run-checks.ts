@@ -347,6 +347,19 @@ const CHECKS: SelfCheck[] = [
       "sheet throwing once per panel while reporting zero failures. It never runs the page; §11.7 says what it misses",
   },
   {
+    script: "scripts/check-service-gate-charging.ts",
+    covers:
+      "whether a charging motorcycle may be serviced, on real bytes replayed through the decoders: the two " +
+      "fixtures the ruling names — episode E0 (a settled AC state with an empty inlet, which must be REFUSED " +
+      "with the cable named rather than the drive) and the 2026-08-09 14:42:53-14:44:52 DC handshake (which " +
+      "must be ALLOWED) — then each of the three charge witnesses excusing an energized bike on its own, a " +
+      "nine-row truth table crossed with reads, parameter writes, reset-vcu, charge-current and charge-stop, " +
+      "that the gate's sampler asks for every signal the decision reads and every one of them is a registered " +
+      "signal (the bug that left the charging escape dead on the bike for its whole life), that the gate's " +
+      "charge window can never outlive the one reset-vcu refuses on, and that the per-action policy table is " +
+      "total over all ten ServiceWriteRequest kinds",
+  },
+  {
     script: "scripts/check-service-preview.ts",
     covers:
       "that scripts/build-service-preview.ts produces a file whose script blocks actually parse — the one failure mode nothing else here can see, since no other check executes generated output — plus the handles the annotated sheet's close-ups hold the shipped page by: every PANEL_BLOCK marker is read out of the template and asserted to be built EXACTLY ONCE across public/views/, tag and whole class token, so a rename goes red — uniqueness being what makes one visible at all — and every panel kind has a marker to be scoped by. It proves that and nothing more: it parses the generated page rather than running it, so it cannot see a dead panel. docs/diagnostics-and-checks.md §11.6 says what that cost and what the runtime asserts instead",

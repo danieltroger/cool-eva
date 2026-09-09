@@ -151,12 +151,27 @@ function latencyOf(outcome: VcuMultiFrameOutcome): ArrivalLatency | null {
     : null;
 }
 
-/** The outcome in the store's own shape. A non-frame reply still carries its bytes. */
+/**
+ * The outcome in the store's own shape.
+ *
+ * ⚠️ A `reply` IS NOT AN ANSWER. `7F A8 22` — the micro refusing, which is the likeliest
+ * thing a first read during a live charge will get — arrives as a successful exchange
+ * carrying a negative answer, and filing it as a payload made it count as one of the two
+ * components answering: enough to overwrite a good lifetime.json with two refusals. The
+ * bytes are kept regardless, because a refused run still has to leave a trace.
+ */
 function toStoredReply(component: number, outcome: VcuMultiFrameOutcome): StoredLifetimeReply {
   if (outcome.status !== "reply") {
     return { component, payloadHex: null, failure: outcome.status };
   }
-  return { component, payloadHex: toHex(outcome.payload), failure: null };
+  if (outcome.reply.kind === "positive") {
+    return { component, payloadHex: toHex(outcome.payload), failure: null };
+  }
+  const failure =
+    outcome.reply.kind === "refused"
+      ? `refused: ${outcome.reply.description} (NRC 0x${outcome.reply.negativeResponseCode.toString(16).padStart(2, "0")})`
+      : `unrecognised: ${outcome.reply.reason}`;
+  return { component, payloadHex: toHex(outcome.payload), failure };
 }
 
 async function readBothComponents(

@@ -61,12 +61,20 @@ export const HOW_TO_READ_WITH_SERVICE_STOPPED =
 /** How the reading was taken. Not cosmetic — see the header. */
 export type LifetimeReadSource = "service" | "read-freeze-frame.ts";
 
-/** One component's reply, as bytes or as the reason there are none. */
+/**
+ * One component's reply: the bytes, and whether they are an answer.
+ *
+ * ⚠️ THE TWO FIELDS ARE NOT COMPLEMENTARY, and reading them as though they were is what
+ * made a refusal count as an answer. A micro replying `7F A8 22` is a successful exchange
+ * carrying a negative answer, so it has BOTH a payload and a failure — the bytes are kept
+ * because rule 1 says every run leaves a trace, and `failure` is what stops it being
+ * counted, stored over a good reading, or decoded as a freeze frame.
+ */
 export interface StoredLifetimeReply {
   component: number;
-  /** The reassembled payload, uppercase hex, PCI stripped. Null when nothing came back. */
+  /** The reassembled payload, uppercase hex, PCI stripped. Null when nothing came back at all. */
   payloadHex: string | null;
-  /** Why there is no payload. Null when there is one. */
+  /** Why these bytes are not a reading. Null when they are one — that is the test to use. */
   failure: string | null;
 }
 
@@ -123,12 +131,12 @@ export async function writeLifetimeRead(
   directory: string,
   read: StoredLifetimeRead
 ): Promise<{ stored: boolean; reason: string }> {
-  const answered = read.replies.filter(reply => reply.payloadHex !== null).length;
+  const answered = read.replies.filter(reply => reply.failure === null).length;
   const path = join(directory, LATEST_FILE);
   await mkdir(directory, { recursive: true });
   await archive(directory, read);
   const previous = await loadStoredRead(directory);
-  const previousAnswered = previous?.replies.filter(reply => reply.payloadHex !== null).length ?? 0;
+  const previousAnswered = previous?.replies.filter(reply => reply.failure === null).length ?? 0;
   if (answered === 0) {
     const reason = `nothing answered, so ${path} is left as it was — ${previousAnswered} stored replies stand`;
     console.warn(`lifetime: ⚠️  ${reason}`);
@@ -214,8 +222,14 @@ function isStoredReply(reply: unknown): reply is StoredLifetimeReply {
  * non-frame outcomes are the ones a real bus produces.
  */
 function decodeStoredReply(reply: StoredLifetimeReply) {
+  // ⚠️ `failure` first, not `payloadHex`: a refusal carries bytes, and handing `7F A8 22`
+  // to the freeze-frame decoder would report our own read as an unrecognised frame instead
+  // of as the micro saying no. The bytes still travel, in rawHex.
+  if (reply.failure !== null) {
+    return { kind: "unrecognised" as const, reason: reply.failure, rawHex: reply.payloadHex ?? "" };
+  }
   if (reply.payloadHex === null) {
-    return { kind: "unrecognised" as const, reason: reply.failure ?? "no reply", rawHex: "" };
+    return { kind: "unrecognised" as const, reason: "no reply", rawHex: "" };
   }
   // ⚠️ ./snapshot.ts's parser, not a local one. The copy this replaced split on a
   // literal space and validated the parsed NUMBER rather than the token, so `"AB\tCD"`

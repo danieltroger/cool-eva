@@ -19,6 +19,8 @@
 // that pin the passing and blocking paths, and the six days of riding that changed four
 // rules in this file: docs/vcu-parameters.md §12.
 
+import { CHARGE_INLET_VETO, chargeEvidenceKeys, findChargingEvidence, inletIsEmpty } from "./charge-session.ts";
+
 /** One signal as the caller found it. `null` in both fields means it has never arrived. */
 export interface ServiceGateSample {
   value: number | null;
@@ -35,7 +37,14 @@ export interface ServiceGateSample {
 /** What the caller sampled, keyed by signal name. Anything not present counts as never seen. */
 export type ServiceGateReadings = Record<string, ServiceGateSample>;
 
-/** How one requirement came out. Carried whole so the page can show which one blocks and why. */
+/**
+ * How one requirement came out. Served on the verdict so the endpoints carry the whole
+ * gate and not only its complaint, and so a check can assert on a single row.
+ *
+ * ⚠️ Nothing in `public/` renders this today. An earlier comment here claimed the page
+ * showed it, which was never true and was used to justify adding a row; the row is worth
+ * having as a served record, and what the rider actually reads is `blockers`.
+ */
 export interface ServiceGateCheck {
   key: string;
   /** The requirement in the words the dashboard shows, e.g. "road speed is zero". */
@@ -43,6 +52,13 @@ export interface ServiceGateCheck {
   state: ServiceGateCheckState;
   value: number | null;
   ageMs: number | null;
+  /**
+   * Whether an ABSENT or STALE reading blocks. Carried on the check rather than looked up
+   * in RULES by position — the loop below used to index `RULES[position]`, which made
+   * "add a rule" and "add a row" silently different operations and threw a `TypeError`
+   * out of every gate call the first time they diverged.
+   */
+  required: boolean;
 }
 
 export type ServiceGateCheckState =
@@ -56,11 +72,16 @@ export type ServiceGateCheckState =
   | "missing"
   /**
    * Would have blocked, and does not, because the bike is on a charger. Only
-   * `energized` can ever be this — see CHARGE_EVIDENCE. A state of its own rather
-   * than silently reporting `ok`, so the page can say WHY it is allowed and nobody
-   * reads a passing gate as "the drive is down" when it is not.
+   * `energized` can ever be this — see CHARGE_EVIDENCE in ./charge-session.ts. A state of
+   * its own rather than silently reporting `ok`, so the page can say WHY it is allowed and
+   * nobody reads a passing gate as "the drive is down" when it is not.
    */
-  | "excused-by-charging";
+  | "excused-by-charging"
+  /**
+   * The charge manager is on the bus and says the inlet is empty. Only the veto row can
+   * ever be this. It cancels every charge excuse — see CHARGE_INLET_VETO.
+   */
+  | "inlet-empty";
 
 export type ServiceGateVerdict = {
   /** True only when every required check is `ok` and no corroborating one contradicts it. */
@@ -121,104 +142,26 @@ interface ServiceGateRule {
    *    `energized` uses it: a charging bike's HV side is up by definition.
    *  • `allow-absent` — a MISSING or STALE reading is accepted, but a fresh one that
    *    says the bike is moving still blocks. Only the two 0x104 signals use it, and
-   *    only because the bike stops broadcasting that frame while it charges — see
-   *    the note under CHARGE_EVIDENCE_LIVENESS below.
+   *    on the argument — since refuted, see CHARGE_EVIDENCE_LIVENESS below — that the bike
+   *    stops broadcasting that frame while it charges.
    */
   whileCharging?: "excuse-unsafe" | "allow-absent";
 }
 
 /**
- * How long a charger frame may be silent and still count as "plugged in".
- *
- * 0x305 and 0x306 are 5 Hz and are broadcast only while a charger is attached
- * (src/can/decode.ts), so their FRESHNESS is the evidence and their values are not
- * consulted at all. Two seconds is ten frames of margin.
- *
- * ⚠️ It has to be a freshness test rather than a value test, because `liveState`
- * keeps the last value of every signal for ever: `dc_v` reads 400 V until the next
- * reboot, whether or not anything is plugged in. Only the age tells the difference,
- * which is the same trap the rest of this file is built around.
- */
-const CHARGER_FRAME_MAX_AGE_MS = 2000;
-
-interface ChargeEvidenceRule {
-  key: string;
-  /** How the page says it, e.g. "the charger is reporting DC volts". */
-  meaning: string;
-  /** True when this reading, being fresh, means a charger is attached. */
-  counts: (value: number) => boolean;
-  maxAgeMs: number;
-}
-
-/**
- * What makes a charge session believable. ANY ONE of these, fresh, is enough.
- *
- * ⚠️ The escape is deliberately narrow, and that is what makes it cheap: it excuses
- * exactly ONE check, `energized`. Speed, motor rpm, `moving`, `go`, `go_request` and
- * `throttle_on` all still have to be clear. So the worst a WRONG charge detection can do —
- * a false positive, this list firing when nothing is plugged in — is degrade the gate to
- * "stationary and not in drive". It cannot admit a moving bike, nor one in drive.
- *
- * ⚠️ 0x102 carries no usable charge bit: b2 bit0 is the HIGH BEAM (see the block under this
- * list), and `fast_dc_contactor` (b3 bit0) is set only on DC. The charger frames cover both
- * AC and DC, which is why they are the whole list. Why the escape exists at all, and why a
- * charging bike is a reasonable thing to service: docs/vcu-parameters.md §12.
- */
-const CHARGE_EVIDENCE: ChargeEvidenceRule[] = [
-  // The charger's own frames, 0x305 and 0x306 at 5 Hz, which decode.ts records as
-  // present only while a charger is attached. Their VALUES are never consulted —
-  // that the frame arrived at all is the claim — so this detects "plugged in"
-  // rather than "current is flowing", which is the property that matters here: a
-  // tethered bike cannot be ridden away without someone unplugging it first.
-  //
-  // Verified against rides.db 2026-08-16: 162 377 charger-frame rows in 30 clusters,
-  // 25 of them drawing ≥ 2 A. The idle clusters (mains ~1.4 A) are plugged-in-but-
-  // not-charging, and they count here on purpose.
-  { key: "dc_v", meaning: "the charger is reporting DC volts", counts: () => true, maxAgeMs: CHARGER_FRAME_MAX_AGE_MS },
-  { key: "dc_a", meaning: "the charger is reporting DC amps", counts: () => true, maxAgeMs: CHARGER_FRAME_MAX_AGE_MS },
-  {
-    key: "mains_v",
-    meaning: "the charger is reporting mains volts",
-    counts: () => true,
-    maxAgeMs: CHARGER_FRAME_MAX_AGE_MS,
-  },
-  {
-    key: "mains_a",
-    meaning: "the charger is reporting mains amps",
-    counts: () => true,
-    maxAgeMs: CHARGER_FRAME_MAX_AGE_MS,
-  },
-];
-
-// ⚠️⚠️ 0x102 b2 bit0 IS DELIBERATELY NOT IN THAT LIST, and the reason is worth more than
-// the rule: **it is not a charging bit. It is the high beam.** It is now decoded under its
-// real name, `high_beam_lamp`; it was called `charging` until 2026-08-16.
-//
-// It agrees with `high_beam` (0x102 b0 bit6) at 1 103 000 of 1 103 000 frames of 0x102
-// across the 14 candump captures, with zero disagreements either way — while the cross-pair
-// (b2 bit0 against b0 bit7) agrees only 49.35 %. It reads 0 through all 25 real charging
-// sessions. Two different bytes, so it is not decoder aliasing. The third-party .xdbc's
-// "b2 bit0 = charge" is simply wrong.
-//
-// Using it here would have meant SWITCHING ON THE HIGH BEAM EXCUSED THE DRIVE BEING
-// ENERGIZED. The rename removes the trap's bait; this note stays because the list of things
-// that are NOT charge evidence is worth more than the name that misled us. The rest of the
-// measurement is in docs/vcu-parameters.md §12.
-
-/**
  * ⚠️ Why two of the motion checks may go ABSENT while charging, and what still holds them
- * up. Across all 25 real charging sessions in rides.db there is not one live
- * `speed_can_kmh` or `motor_rpm_can` sample: the bike stops broadcasting 0x104 while it
- * charges, so a gate demanding a fresh one could never open on a charging bike — the single
- * state this whole feature exists to serve.
+ * up: `speed_can_kmh` and `motor_rpm_can` may be missing or stale while a charger is
+ * attached, and the four named here must still be FRESH and clear. A fresh 0x104 that says
+ * the bike IS moving still blocks, charger or no charger — this relaxes "we must see it",
+ * not "it must be zero".
  *
  * ⚠️ NEVER fall back to the last value, and never fall back to zero. Forward-filling hands
- * you 47.0 km/h and 1 976 rpm for a bike that had been plugged in for seven hours.
+ * you 47.0 km/h and 1 976 rpm for a bike plugged in for seven hours — a real trap, and
+ * untouched by the next paragraph.
  *
- * So those two may be missing or stale while a charger is attached, and the four below must
- * still be FRESH and clear. A fresh 0x104 that says the bike IS moving still blocks,
- * charger or no charger: this relaxes "we must see it", not "it must be zero".
- * docs/vcu-parameters.md §12.
+ * ❌ The JUSTIFICATION for this escape does not hold: "the bike stops broadcasting 0x104
+ * while it charges" counted log-on-change rows as frame presence. Left standing anyway
+ * rather than removed in a commit about charge evidence — issue #194, and §12.
  */
 const CHARGE_EVIDENCE_LIVENESS = ["moving", "go", "go_request", "throttle_on"] as const;
 
@@ -279,7 +222,8 @@ const RULES: ServiceGateRule[] = [
   //
   // ⚠️⚠️ SO IT IS EXCUSED WHILE CHARGING, DELIBERATELY, AND MUST NOT BE "FIXED" BACK.
   // Refusing the one state the feature is FOR is not caution; it is a gate that gets
-  // switched off. What keeps it safe is that the excuse is narrow (see CHARGE_EVIDENCE) and
+  // switched off. What keeps it safe is that the excuse is narrow (see CHARGE_EVIDENCE in
+  // ./charge-session.ts, and the inlet veto beside it) and
   // that every other check still applies — zero speed, zero motor rpm, `moving` clear and
   // the whole drive-request trio clear. The implication that matters is unchanged:
   // `energized` 0 ⇒ the drive is down. Full argument: docs/vcu-parameters.md §12.
@@ -401,15 +345,24 @@ const EXCLUDED_FROM_GATE = [
  * is how a gate gets trusted for the wrong reason.
  */
 export function evaluateServiceGate(readings: ServiceGateReadings): ServiceGateVerdict {
-  const chargingEvidence = findChargingEvidence(readings);
+  // ⚠️ The veto is decided BEFORE the evidence is believed, and whether it actually
+  // cancelled anything is what decides if the rider is told about the cable. An inlet
+  // that is empty while nothing was claiming a charge has changed no outcome and says
+  // nothing worth interrupting them with.
+  const inletEmpty = inletIsEmpty(readings);
+  const witnessed = findChargingEvidence(readings);
+  const chargingEvidence = inletEmpty ? null : witnessed;
   const checks = RULES.map(rule => checkRule(rule, readings[rule.key], chargingEvidence !== null));
+  checks.push(inletCheck(readings, inletEmpty));
   const blockers: string[] = [];
-  for (const [position, check] of checks.entries()) {
-    const rule = RULES[position];
-    if (check.state === "ok" || check.state === "excused-by-charging") {
+  if (inletEmpty && witnessed !== null) {
+    blockers.push(CHARGE_INLET_BLOCKER);
+  }
+  for (const check of checks) {
+    if (check.state === "ok" || check.state === "excused-by-charging" || check.state === "inlet-empty") {
       continue;
     }
-    if ((check.state === "missing" || check.state === "stale") && !rule.required) {
+    if ((check.state === "missing" || check.state === "stale") && !check.required) {
       // A corroborator we have not heard from lately, or at all. Recorded in
       // `checks` so it stays visible on the page, but it cannot block.
       //
@@ -433,35 +386,30 @@ export function evaluateServiceGate(readings: ServiceGateReadings): ServiceGateV
 }
 
 /**
- * What says a charger is attached, or null.
+ * Every signal this gate reads — rules, charge evidence and the inlet veto.
  *
- * The FIRST match wins and is reported by name, so the page and the journal say
- * which signal carried the argument rather than a bare "charging: yes". On a gate
- * that relaxes a safety check, the evidence is the part worth being able to audit.
+ * ⚠️ DERIVED FROM THE TABLES, never written out. A hand-kept list is how the charging
+ * escape came to be dead code on the motorcycle for its whole life: `CHARGE_EVIDENCE`'s
+ * keys were not in it, so the sampler never asked for them, `findChargingEvidence` could
+ * only ever return null on the Pi, and every check passed because the checks build their
+ * own readings from decoded frames. docs/vcu-parameters.md §12.
  */
-function findChargingEvidence(readings: ServiceGateReadings): string | null {
-  for (const rule of CHARGE_EVIDENCE) {
-    const sample = readings[rule.key];
-    if (sample === undefined || sample.value === null || sample.ageMs === null) {
-      continue;
-    }
-    // Freshness first, exactly as in checkRule and for the same reason: `liveState`
-    // holds the last value of every signal for ever, so an unplugged bike still
-    // reports whatever `dc_v` last was. Only the age separates "plugged in" from
-    // "was plugged in, once".
-    if (sample.ageMs > rule.maxAgeMs) {
-      continue;
-    }
-    if (rule.counts(sample.value)) {
-      return rule.meaning;
-    }
-  }
-  return null;
+export function serviceGateSignalKeys(): string[] {
+  return [...new Set([...RULES.map(rule => rule.key), ...chargeEvidenceKeys()])];
 }
 
-/** The signal keys this gate reads, so a caller knows what to sample without duplicating the list. */
-export function serviceGateSignalKeys(): string[] {
-  return RULES.map(rule => rule.key);
+/**
+ * Samples exactly what the gate reads, from a reader the caller supplies.
+ *
+ * ⚠️ THE POINT IS THAT THE CALLER CANNOT EXPRESS A SMALLER SET. src/vcu/read-runner.ts used
+ * to build the readings map itself from a key list, and the one time that list disagreed
+ * with what the decision consulted, the disagreement was invisible for a month and on
+ * every code path — reads, writes, probes and the watchdog alike.
+ *
+ * Injected rather than imported so this file stays pure: no signal registry, no clock.
+ */
+export function sampleServiceGate(read: (key: string) => ServiceGateSample): ServiceGateReadings {
+  return Object.fromEntries(serviceGateSignalKeys().map(key => [key, read(key)]));
 }
 
 /** The signals considered and rejected, exported so a check can assert they stayed rejected. */
@@ -472,11 +420,11 @@ export function serviceGateExcludedKeys(): readonly string[] {
 function checkRule(rule: ServiceGateRule, sample: ServiceGateSample | undefined, charging: boolean): ServiceGateCheck {
   const value = sample?.value ?? null;
   const ageMs = sample?.ageMs ?? null;
-  const base = { key: rule.key, requirement: rule.requirement, value, ageMs };
-  // A charging bike stops broadcasting 0x104, so for the two signals that ride on
-  // it, "we cannot see it" becomes an accepted answer — and ONLY while a charger is
-  // attached, and ONLY for absence. See CHARGE_EVIDENCE_LIVENESS for what still has
-  // to be live for this to be safe.
+  const base = { key: rule.key, requirement: rule.requirement, value, ageMs, required: rule.required };
+  // For the two signals that ride on 0x104, "we cannot see it" is an accepted answer while
+  // a charger is attached — ONLY then, and ONLY for absence. See CHARGE_EVIDENCE_LIVENESS
+  // for what still has to be live, and for why the reason this rule exists is refuted (#194)
+  // while the rule itself stands.
   const absenceAllowed = rule.whileCharging === "allow-absent" && charging;
   if (value === null || ageMs === null) {
     return { ...base, state: absenceAllowed ? "excused-by-charging" : "missing" };
@@ -497,6 +445,45 @@ function checkRule(rule: ServiceGateRule, sample: ServiceGateSample | undefined,
   return { ...base, state: rule.whileCharging === "excuse-unsafe" && charging ? "excused-by-charging" : "unsafe" };
 }
 
+/**
+ * The veto as a row, whether or not it fired.
+ *
+ * `required: false`, so "the charge manager has never spoken" — which is every parked,
+ * unplugged bike — falls through the same machinery every other corroborator uses instead
+ * of being a special case here.
+ */
+function inletCheck(readings: ServiceGateReadings, inletEmpty: boolean): ServiceGateCheck {
+  const sample = readings[CHARGE_INLET_VETO.key];
+  const value = sample?.value ?? null;
+  const ageMs = sample?.ageMs ?? null;
+  const base = {
+    key: CHARGE_INLET_VETO.key,
+    requirement: CHARGE_INLET_VETO.requirement,
+    value,
+    ageMs,
+    required: false,
+  };
+  if (inletEmpty) {
+    return { ...base, state: "inlet-empty" };
+  }
+  if (value === null || ageMs === null) {
+    return { ...base, state: "missing" };
+  }
+  if (ageMs > CHARGE_INLET_VETO.maxAgeMs) {
+    return { ...base, state: "stale" };
+  }
+  return { ...base, state: "ok" };
+}
+
+/**
+ * What the rider reads when the veto cancelled a charge that something else was claiming.
+ *
+ * A fixed sentence rather than one built from the byte: the value is a bitfield and
+ * "it reads 16" would send somebody to a decode table to learn that their cable is loose.
+ */
+const CHARGE_INLET_BLOCKER =
+  "the charge manager reports nothing in the inlet — a cable that is not seated cannot make the bike safe to service";
+
 /** One failed check as the sentence the page shows. */
 function describeBlocker(check: ServiceGateCheck): string {
   switch (check.state) {
@@ -506,6 +493,8 @@ function describeBlocker(check: ServiceGateCheck): string {
       return `${check.requirement}: ${check.key} last arrived ${Math.round((check.ageMs ?? 0) / 1000)} s ago, too old to go on`;
     case "missing":
       return `${check.requirement}: ${check.key} has never arrived, so there is nothing to check`;
+    case "inlet-empty":
+      return CHARGE_INLET_BLOCKER;
     case "ok":
     case "excused-by-charging":
       // Unreachable — the caller filters these out — and left loud rather than
