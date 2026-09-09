@@ -64,6 +64,12 @@ export interface ChargeAutomatic {
    * `sendChargeCommand` takes, so a value recorded afterwards arrives after the echo has already
    * stood the controller down. Measured 2026-09-09: reason RIDER at .961, the send's own stamp at
    * .964. A hand-set current still stands down; an automatic one only records the number.
+   *
+   * ⚠️ THE PRICE of being early: this also fires for a command whose frames then fail to transmit.
+   * For a hand-set one that stands the controller down anyway — safe, because the rider did ask.
+   * For an automatic one it leaves `lastSentAmps` holding a value that never reached the bus, so a
+   * rider dialling to exactly that number would be read as our echo and ignored. Narrow, and the
+   * safe alternative — recording it later — is the bug this exists to fix.
    */
   noteChargeCurrentOutgoing: (amps: number, origin: ChargeCommandOrigin) => void;
   /** Stops the loop and unsubscribes. Called from index.ts's shutdown. */
@@ -264,21 +270,18 @@ function forgetSession(context: AutoContext): void {
  * Whether an observed setpoint is the rider rather than the bike answering our own command.
  *
  * ⚠️ Equality is safe because it is EXACT: across 21 matched sends on 2026-09-09 the echoed byte
- * was identical to the commanded one every time, including 44 A, which is not on the dash's own
- * 5 A grid. If the rider dials to exactly the value we commanded, nothing stands down and nothing
- * changes on the bike — they asked for the current already flowing.
+ * was identical to the commanded one every time, including 44 A, off the dash's own 5 A grid.
  *
- * ⚠️ The CEILING is exempt unless we asked for it ourselves. The one setpoint event of 2026-09-09
- * that no Pi command caused was 75 A — the ceiling — at session teardown, which is the setting
- * resetting on unplug and not a rider. A rider who genuinely dials to maximum after we have
- * commanded the maximum is indistinguishable from that reset, and we take the safe reading.
+ * ⚠️ A setpoint equal to the CEILING never stands the controller down — unconditionally, because
+ * the one case that would qualify it is already the equality above. The cost, and the 2026-09-09
+ * teardown event it is derived from: docs/charge-auto.md § "Taking it back".
  */
 function isRiderSetpoint(context: AutoContext, observedAmps: number): boolean {
   if (context.lastSentAmps !== null && observedAmps === context.lastSentAmps) {
     return false;
   }
   const ceiling = latestValue("fast_dc_limit_max_a");
-  if (ceiling !== null && observedAmps === ceiling && context.lastSentAmps !== ceiling) {
+  if (ceiling !== null && observedAmps === ceiling) {
     return false;
   }
   return true;

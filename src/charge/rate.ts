@@ -113,7 +113,12 @@ export function estimateHeatingRate(samples: TemperatureSample[], nowMs: number)
   if (silentMinutes === null || silentMinutes <= 0) {
     return { kind: "rate", perMinute: slope };
   }
-  return { kind: "rate", perMinute: Math.min(slope, 1 / silentMinutes) };
+  // ⚠️ BOTH SIDES. The bound is on the MAGNITUDE — a reading that has not moved cannot have moved
+  // DOWN a degree either — and capping only the heating side lets a stale COOLING slope through,
+  // which reads as free headroom and raises the current. Measured: a −1 K/min slope survived 7 min
+  // of silence, where the bound is 0.143, and commanded a full MAX_STEP_A jump at a reading of 53.
+  const bound = 1 / silentMinutes;
+  return { kind: "rate", perMinute: Math.max(-bound, Math.min(slope, bound)) };
 }
 
 function leastSquaresSlopePerMinute(window: TemperatureSample[]): number {

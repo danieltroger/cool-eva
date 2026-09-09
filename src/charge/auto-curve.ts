@@ -217,6 +217,18 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
     return stepTo(current - blindStepAmps(input), current, ceiling, CHARGE_AUTO_REASON.BLIND_DESCENT);
   }
 
+  // ⚠️ AT THE SETPOINT, A BOUND IS NOT EVIDENCE OF HEATING. `bounded` is strictly positive by
+  // construction — it says only "the reading did not move" — so feeding it into the law below at a
+  // reading of 54, where the headroom is already clamped to at most 0, guarantees a step down every
+  // single tick. That is #163's "descend because it is stable" one level up, and it made the hold
+  // Daniel asked for unreachable: NEAR_CEILING fired 0 times in 6 770 ticks of the frozen grid, and
+  // a pack sitting perfectly still at 54 for fifteen minutes was still being ratcheted down. Only a
+  // FITTED slope can establish that a pack at the setpoint is heating; a pack past the cliff is
+  // handled above, on temperature alone, where no rate is needed.
+  if (temperature >= TARGET_C && rate.kind === "bounded") {
+    return { kind: "hold", reason: CHARGE_AUTO_REASON.NEAR_CEILING };
+  }
+
   // The whole rule: how far below the setpoint the pack is predicted to be one reaction time from
   // now. Positive is room to give, negative is a move to take back. ⚠️ `headroomKelvin < 0` is
   // algebraically the shipped time-to-cliff test aimed at 54 instead of 55, which is why the steep

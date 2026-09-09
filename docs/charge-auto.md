@@ -48,7 +48,9 @@ Measured on 2026-09-09, replayed from the ride log:
 
 The pack actually went 50 → 51 between 15:55:27 and 16:05:08: **1 K in 9.7 min = 0.103 K/min.** The estimate was **6.8× the truth**, `(55 − 50)/0.706 = 7.1 min` put the cliff inside the horizon, and `CLOSING` fired six ticks running — 70 → 40 A while the pack read 50-51. That is the "51 °C and 45 A already" in the issue.
 
-The fix is the same argument the section below makes about _too few_ readings, pointed at the newest one instead of the oldest: **a reading that has not moved for `t` minutes proves the pack moved less than a degree in `t`, so the rate is under `1/t`.** `estimateHeatingRate` returns `min(fitted slope, 1/t)`.
+The fix is the same argument the section below makes about _too few_ readings, pointed at the newest one instead of the oldest: **a reading that has not moved for `t` minutes proves the pack moved less than a degree in `t`, so the rate is under `1/t` in MAGNITUDE.** `estimateHeatingRate` clamps the fitted slope to `±1/t`.
+
+⚠️ **Both sides, and the second one is not decorative.** A stale _cooling_ slope is exactly as expired as a stale heating one, and capping only the heating side lets it through as free headroom — which raises the current. Measured on the one-sided version: a −1 K/min slope survived 7 minutes of silence, where the bound is 0.143, and jumped 50 → 65 A at a reading of 53 where the rule it replaces holds.
 
 ⚠️ **It is not free, and the PR carries both halves.** Over the frozen 150-plant grid the cap _alone_, against the old rule, takes crossings of 55 from **24 to 26** — it stops over-stating the rate, and the old rule had been buying margin by accident. The setpoint law more than pays that back (16, a strict subset). Do not read the final 16 as the cap being harmless on its own.
 
@@ -110,6 +112,16 @@ Against the rule this replaces — **24 crossings and 14 reversals** — the cho
 
 ⚠️ **Chatter is scored against the shipped rule, not against a number someone liked.** The 5 A ratchet reverses **14 times** on DC2/b\*2 and no assertion in the suite ever noticed, because the old reversal check scored `RECOVERY_PLANT` alone — the one plant where it reverses once. `check-charge-auto.ts` §6 now scores every replay and pins the worst against that 14, with the constants it was measured at.
 
+## At the setpoint, a bound is not evidence of heating
+
+⚠️ **Without this the headline behaviour does not exist.** `bounded` is strictly positive by construction — it says only _"the reading did not move"_ — so feeding it into a headroom already clamped to at most 0 makes every tick at a reading of 54 a step down. A pack sitting perfectly still at 54 for fifteen minutes was still being ratcheted, and `NEAR_CEILING` fired **0 times in 6 770 ticks** of the frozen grid.
+
+That is #163's _"descend because it is stable"_ one level up, and this document argues against it two sections above. **Only a fitted slope can establish that a pack at the setpoint is heating.** With the fix, `NEAR_CEILING` fires **417 times in 6 770 ticks** — 417 of the 623 ticks at a reading of 54 — and the frozen grid's crossings are unchanged at 16.
+
+A pack past **55** is unaffected: that branch runs first and on temperature alone, needing no rate at all.
+
+⚠️ **What no logged episode we hold can show.** There is no tick in any captured series where the reading is 54 _and_ the fitted slope is ≤ 0 — on 2026-08-08 the window still remembers the climb to 55, so the slope is positive and the rule correctly reduces. The `rate ≤ 0 at exactly 54` case is therefore asserted on a synthetic ring, and the honest statement is that the bike has not yet shown it. What the bike _has_ shown is the `bounded` case, which is the common one.
+
 ## Superseded: the two tiers at 53 and 54, and what survives them
 
 #181 replaced a single ceiling with `NO_RAISE_FROM_C = 53` and `STEP_DOWN_FROM_C = 54`. Both constants are gone, replaced by the setpoint. **The measurements that justified them are not, because every one of them is still true** — they are what the `min(headroom, 0)` clamp now rests on, and re-deriving them would cost a session.
@@ -146,7 +158,8 @@ That is the whole safety posture, and it is what makes the feature bounded: **it
 
 - Exact equality is safe because it is exact — across 21 matched sends that day the echoed byte was identical to the commanded one every time, including 44 A, which is not on the dash's own 5 A grid.
 - If the rider dials to exactly the value we commanded, nothing stands down and nothing changes on the bike: they asked for the current already flowing, and "switch off for this charge" is still one tap away.
-- ⚠️ **The ceiling is exempt unless we asked for it ourselves.** The one setpoint event of that whole day which no Pi command caused was 75 A — the ceiling — at session teardown, i.e. the setting resetting on unplug. A rider dialling to maximum after we have commanded maximum is indistinguishable from that reset, and the safe reading wins.
+- ⚠️ **A setpoint equal to the ceiling never stands the controller down.** The one setpoint event of that whole day which no Pi command caused was 75 A — the ceiling — at session teardown, i.e. the setting resetting on unplug. A rider dialling to maximum is indistinguishable from that reset, so it is not honoured; they still switch the controller off in one tap.
+- ⚠️ **The clearing is not a guarantee.** `lastSentAmps` is cleared by `forgetSession()` on a `charge_manager_state` edge — but that signal is logged on change, and on 2026-09-09 it recorded `2` at 12:19:56 and did not record again until 15:50:56, across a whole DC session. So the edge can simply not fire, and a value can outlive an unplug inside one process life. It fails safe: a stale value only ever suppresses a stand-down for a current we really did command.
 
 ⚠️ **And the value is recorded BEFORE the frames go out.** `sendChargeCommand` awaits twice, 5 ms either side of the `0x121`, and the bike's answer lands inside that window — measured 3-10 ms after our `0x120`. Recorded afterwards, the controller has already stood itself down on its own command. `check-charge-auto.ts` §12 drives the real write runner against a stub channel whose `send()` fires the echo synchronously, because a fake sink replaces the very function whose ordering is the bug and would pass either way.
 

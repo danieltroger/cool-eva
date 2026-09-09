@@ -90,7 +90,7 @@ export const CHARGE_AUTO_REASON_TEXT: Record<number, string> = {
   [CHARGE_AUTO_REASON.RIDER]: "You set a different current — stood down for this charge.",
   [CHARGE_AUTO_REASON.NO_HISTORY]: "Watching. Not enough temperature history yet to see a trend.",
   [CHARGE_AUTO_REASON.BLIND_DESCENT]: "Arrived hot with no trend yet — easing the current down.",
-  [CHARGE_AUTO_REASON.HARD_CEILING]: `At ${TARGET_C} °C and still warming — easing the current down.`,
+  [CHARGE_AUTO_REASON.HARD_CEILING]: `At ${TARGET_C} °C or above — easing the current down.`,
   [CHARGE_AUTO_REASON.CLOSING]: `Warming towards ${TARGET_C} °C too fast to catch — easing the current down.`,
   [CHARGE_AUTO_REASON.CLEAR]: `Below ${TARGET_C} °C with room to spare — giving current back.`,
   [CHARGE_AUTO_REASON.SETTLED]: "Holding — this current is taking the pack where it should be.",

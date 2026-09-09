@@ -61,16 +61,13 @@ export const DRIFTING_AT_53_MS = 1008062;
  * the session opened (`charge_manager_state` → 0x23 at 15:50:56, which is when `forgetSession`
  * clears the ring) to the moment the pack first read 54.
  *
- * ⚠️ THE FIXTURE THAT SHOWS THE STALE-SLOPE BUG. The reading climbs 46 → 50 in four and a half
- * minutes and then does not move for nearly ten. The shipped estimator keeps reporting the steep
- * early slope through that silence — 0.706 K/min at 16:03 against a true bulk climb of 0.103 —
- * and `CLOSING` fired six ticks running, taking the current 70 → 40 A while the pack read 50-51.
- * That is the 45 A at 51 °C Daniel reported. The silence cap in `src/charge/rate.ts` is what
- * turns those ticks back into "hold" and then "raise".
+ * ⚠️ THE FIXTURE THAT SHOWS THE STALE-SLOPE BUG: the reading climbs 46 → 50 in four and a half
+ * minutes and then does not move for nearly ten, and the shipped estimator kept reporting the
+ * steep early slope right through that silence. Numbers and consequence:
+ * docs/charge-auto.md § "The silence is a bound too".
  *
- * ⚠️ OPEN-LOOP. Replaying these readings shows what the rule would have DECIDED seeing this
- * history, never what would have HAPPENED — a different current changes the pack's trajectory and
- * the log cannot say how. Closed-loop behaviour is the plant grid's job. docs/charge-auto.md.
+ * ⚠️ OPEN-LOOP — these show what the rule would have DECIDED on this history, never what would
+ * have HAPPENED. Closed-loop behaviour is the plant grid's job.
  */
 export const SEPTEMBER_9_EPISODE: TemperatureSample[] = [
   { atMs: 1000, celsius: 46 },
