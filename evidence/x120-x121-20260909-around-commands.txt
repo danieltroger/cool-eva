@@ -1,0 +1,23 @@
+### /home/pi/ride-captures/capture-20260909-100517-175c10a3.log
+### /home/pi/ride-captures/capture-20260909-121845-717ecf63.log
+### /home/pi/ride-captures/capture-20260909-121850-31dfc9f5.log
+### /home/pi/ride-captures/capture-20260909-121855-5303d25f.log
+ (2026-09-09 12:37:02.949446)  can0       120   [8]  98 FF 46 00 00 00 00 00
+ (2026-09-09 12:37:02.955400)  can0       121   [8]  18 FF 46 01 4B 00 00 00
+ (2026-09-09 12:37:02.958769)  can0       121   [8]  18 FF 46 01 4B 00 00 00
+### /home/pi/ride-captures/capture-20260909-140719-8db7d0db.log
+### /home/pi/ride-captures/capture-20260909-143122-ed0eb915.log
+### /home/pi/ride-captures/capture-20260909-154852-be955d0a.log
+### /home/pi/ride-captures/capture-20260909-155050-eee8062d.log
+ (2026-09-09 16:03:08.472767)  can0       120   [8]  98 FF 41 00 00 00 00 00
+ (2026-09-09 16:03:08.477523)  can0       121   [8]  18 FF 41 01 4B 00 00 00
+ (2026-09-09 16:03:08.478242)  can0       121   [8]  18 FF 41 01 4B 00 00 00
+### /home/pi/ride-captures/capture-20260909-180113-3cefdfe8.log
+### /home/pi/ride-captures/capture-20260909-180118-a98e9ef9.log
+### /home/pi/ride-captures/capture-20260909-180123-76d5e16d.log
+### /home/pi/ride-captures/capture-20260909-180128-ad4166b4.log
+### /home/pi/ride-captures/capture-20260909-180134-5681cefc.log
+### /home/pi/ride-captures/capture-20260909-180138-4eb7bf57.log
+### /home/pi/ride-captures/capture-20260909-200417-1dd86b99.log
+### /home/pi/ride-captures/capture-20260909-200423-8f0b8194.log
+done
