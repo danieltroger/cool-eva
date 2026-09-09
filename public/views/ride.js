@@ -243,8 +243,12 @@ function CoolantDeltaTile() {
       // shakier of the two — COOLANT_FLOW_LPH is specified rather than measured, and an
       // upper bound — and it arrives on this screen with the Charge tab's full sentence
       // about the pump left behind, so the assumption has to travel with the number.
-      const note = resistanceNote(packResistance.val);
-      const caveat = note === "" ? "rated flow" : `${note}, rated flow`;
+      //
+      // ⚠️ The R note is dropped when there are no watts to qualify. With no pack_a the
+      // aside reads `I²R ? / loop 4428 W`, and "modelled R" beside it would be a
+      // provenance for a number that is not on screen.
+      const resistanceCaveat = resistiveLossWatts() == null ? "" : resistanceNote(packResistance.val);
+      const caveat = resistanceCaveat === "" ? "rated flow" : `${resistanceCaveat}, rated flow`;
       return `out − in${share} · ${caveat}`;
     })
   );

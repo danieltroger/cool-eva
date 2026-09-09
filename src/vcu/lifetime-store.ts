@@ -28,10 +28,9 @@ const LATEST_FILE = "lifetime.json";
  * How a reading is taken today, shown on a Pi that has never taken one.
  *
  * ⚠️ It is no longer a shell command, and that is the point. #177 made the read a button
- * in the service sheet, and this sentence went on telling the rider to stop the service
- * and run a script for a month — an instruction that is both harder and, on a phone at
- * the bike, impossible. The script is still the answer when the service IS stopped, so
- * it stays below rather than being deleted.
+ * in the service sheet and this sentence did not move with it, so the only instruction on
+ * screen was one you cannot follow on the phone that is showing it. The script is still
+ * the answer when the service IS stopped, so it stays below rather than being deleted.
  *
  * ⚠️ "with the drive down" and not "not charging": the safety gate deliberately EXCUSES
  * `energized` while a charge session is confirmed (src/vcu/service-gate.ts), so telling

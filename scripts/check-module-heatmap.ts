@@ -39,15 +39,19 @@ function check(condition: boolean, description: string): void {
 /**
  * The pack, written out rather than only imported — and then checked against the import.
  *
- * A check that derived these from the code under test would agree with it by
- * construction: §1's set equality is satisfied by two EMPTY sets, so break
- * moduleTemperatureKey() and strip perLmuSignals() and it goes green having asserted
- * nothing. That is the trap scripts/check-all-view-tiles.ts names in its own words.
+ * These are here because since #187 they are RENDERED: the caption reads "31 of 31 ·
+ * modules 6 & 8 have no battery sensor", so pinning them pins a sentence the rider reads,
+ * and §1's set equality on its own says nothing about what the set CONTAINS.
  *
- * These two literals earn their place twice over, because since #187 they are also
- * RENDERED: the caption reads "31 of 31 · modules 6 & 8 have no battery sensor", so
- * pinning them here pins a sentence the rider reads. If the bike's BMS config ever
- * changes, verify the new numbers against it and update these — do not delete them.
+ * ⚠️ The secondary reason is real but weaker than an earlier draft of this comment
+ * claimed: set equality is satisfied by two empty sets, and `expectedKeys.size === 31` is
+ * what catches that. It is not the scripts/check-all-view-tiles.ts trap, though — there
+ * the check would have derived its expectation from the one function under test, whereas
+ * cells.js imports nothing from registry.ts, so emptying both sides here takes two
+ * deliberate edits rather than one.
+ *
+ * If the bike's BMS config ever changes, verify the new numbers against it and update
+ * these — do not delete them.
  */
 const SENSOR_COUNT = 31;
 const MODULES_WITHOUT_BATTERY_SENSOR = [6, 8];

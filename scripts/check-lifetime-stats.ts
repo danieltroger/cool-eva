@@ -11,6 +11,7 @@ import {
   EXPECTED_20260908_C52,
   lifetimeReadPayload,
 } from "./captured-lifetime-reads.ts";
+import { readFile } from "fs/promises";
 import { infokeysFor } from "../src/diagnostics/fault-infokeys.ts";
 import {
   decodeFreezeFrameResponse,
@@ -446,6 +447,7 @@ for (const [key, liveKey, group] of [
 console.log("  the four cell bands match public/lib/bounds.js");
 
 // ── §7b The instruction the dashboard shows must be a command that runs ────
+const failuresBeforeInstruction = failures.length;
 console.log("\n── §7b the on-screen instruction ──────────────────────────────────");
 
 // ⚠️ PARSED, not eyeballed. The first version of this string named `--components 51,52`,
@@ -466,9 +468,9 @@ check(
 console.log(`  "${HOW_TO_READ_WITH_SERVICE_STOPPED}" parses as ${JSON.stringify(parsed)}`);
 
 // ⚠️ And the headline must NOT be a command. #177 put the read on a button and this
-// sentence went on telling the rider to stop the service and run a script for a month —
-// unfollowable on the phone that is showing it. A revert would be silent otherwise,
-// because a shell command in this slot looks exactly like what used to be correct.
+// sentence did not move with it, leaving an instruction unfollowable on the phone that is
+// showing it. A revert would be silent otherwise, because a shell command in this slot
+// looks exactly like what used to be correct.
 check(
   !HOW_TO_READ.includes("node ") && !HOW_TO_READ.includes(".ts"),
   `HOW_TO_READ is what a rider does in the app, not a shell command, got ${JSON.stringify(HOW_TO_READ)}`
@@ -477,7 +479,21 @@ check(
   HOW_TO_READ.includes("Service mode"),
   `HOW_TO_READ should name the service sheet that carries the button, got ${JSON.stringify(HOW_TO_READ)}`
 );
-console.log(`  "${HOW_TO_READ}" is an in-app path`);
+
+// ⚠️ And no SHELL-facing caller may print it. This is the regression the split actually
+// caused: HOW_TO_READ changed meaning from "the command" to "the in-app path", two of its
+// three consumers were updated, and read-freeze-frame.ts's own --help went on
+// interpolating it — so the tool you reach for BECAUSE the service is stopped, and the app
+// therefore is not running, answered a question about --save by saying "open the app".
+// The assertions above cannot see that: the string is fine, its caller was not.
+const freezeFrameSource = await readFile(new URL("./read-freeze-frame.ts", import.meta.url), "utf-8");
+check(
+  !/\bHOW_TO_READ\b(?!_WITH_SERVICE_STOPPED)/.test(freezeFrameSource),
+  "read-freeze-frame.ts must not print HOW_TO_READ — its reader has no app running"
+);
+if (failures.length === failuresBeforeInstruction) {
+  console.log(`  "${HOW_TO_READ}" is an in-app path, and no shell tool prints it`);
+}
 
 if (failures.length > 0) {
   console.error("\nFAILED:");

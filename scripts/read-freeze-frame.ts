@@ -12,7 +12,7 @@ import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
 import { LIFETIME_COMPONENTS } from "../src/diagnostics/lifetime-stats.ts";
 import { readOneComponent } from "../src/vcu/lifetime-read.ts";
-import { HOW_TO_READ, writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
+import { writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
 
 // The first live test for the multi-frame KWP transport. **This is the only way to
 // run it against the bike**, and it exists because the read cannot be done by hand:
@@ -58,7 +58,7 @@ if (!job) {
       "  --list                 0x18 — which components have a stored code. Start here.",
       "  --component <1-63>     0x17 — one component's freeze frame.",
       `  --lifetime [--save]    0x17 on components 51 and 52 — the lifetime battery statistics.`,
-      `                         --save writes them where the dashboard reads them: ${HOW_TO_READ}`,
+      "                         --save writes them where the dashboard reads them (lifetime.json).",
       "  --log [--max <n>]      0x35/0x36/0x37 — the whole stored log. Minutes, and cancellable with Ctrl-C.",
       "",
       "Stop the cool-eva service first, and bring can0 up ACTIVE yourself — see the header.",

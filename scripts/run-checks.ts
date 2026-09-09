@@ -492,8 +492,8 @@ const CHECKS: SelfCheck[] = [
       "the REAL store and apply(), because coolantDelta() reads through valueOf() rather than a passed-in reader: " +
       "the worked 0.07 °C → 65.95 W, the riding fixture's 4.70 °C → 4428 W so the screenshot's number is the " +
       "checked one, a reversed ΔT keeping its sign since dropping it would report a loop working hardest when it " +
-      "has stopped, an unfitted probe answering null rather than 0 W, and the −242 °C sentinel that sat in 59 450 " +
-      "archive rows leaving the last good reading standing instead of reaching a multiplier that would turn it " +
+      "has stopped, an unfitted probe answering null rather than 0 W, and the failed-PT100 −242 °C leaving the last " +
+      "good reading standing instead of reaching a multiplier that would turn it " +
       "into −259 kW of cooling. Every comparison carries a tolerance, since the delta of a 0.07 step is " +
       "0.07000000000000028",
   },

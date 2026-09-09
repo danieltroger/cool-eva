@@ -65,7 +65,7 @@ check(
   Math.abs(COOLANT_WATTS_PER_KELVIN - WATTS_PER_KELVIN) < TOLERANCE_W,
   `${COOLANT_WATTS_PER_KELVIN.toFixed(4)} W/K is (${RATED_FLOW_LPH}/3600) × ${GLYCOL_DENSITY_KG_PER_L} × ${GLYCOL_SPECIFIC_HEAT_J_PER_KG_K}`
 );
-// Water is the mistake this catches: 4180 J/(kg·K) at 1.0 kg/L gives 987 W/K, an 5%
+// Water is the mistake this catches: 4180 J/(kg·K) at 1.0 kg/L gives 987 W/K, a 5%
 // error that no screen could show as anything but a slightly different plausible number.
 check(
   Math.abs(COOLANT_WATTS_PER_KELVIN - (RATED_FLOW_LPH / 3600) * 4180) > 10,
@@ -129,8 +129,14 @@ seed(41.2, 36.5);
 const reversed = coolantHeatRemovedWatts();
 check(reversed !== null && reversed < 0, `a reversed ΔT gives ${reversed?.toFixed(0)} W, not its absolute value`);
 
-// The sentinel must never reach the arithmetic. coolant_in sat at −242 °C for 59 450
-// rows of the archive, and −242 through this multiplier is −259 kW of "cooling".
+// The sentinel must never reach the arithmetic: −242 °C through this multiplier is
+// −259 kW of "cooling". That −242 is the failed-PT100 reading public/lib/bounds.js and
+// CLAUDE.md both cite as the reason the plausibility gate exists.
+//
+// ⚠️ Their row count for it is NOT restated here: the figure is canon in six places but
+// I could not reproduce it in today's rides.db (coolant_in: 32 813 rows, min 17.86 °C,
+// none below −200, and the `readings` table empty), so it is presumably from an earlier
+// database. The BAND is what this asserts, and the band is checkable.
 //
 // ⚠️ What apply() does with a rejected reading is hold the last good one, not null it —
 // the value is diverted to faultState and the signal keeps what it had. So the tile goes

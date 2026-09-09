@@ -1069,20 +1069,23 @@ body {
 }
 
 /* The second of two instructions, where the first is the one to follow: the lifetime
-   block's shell fallback for a Pi with the service stopped. --label rather than a
-   dimmer token because it is still an instruction someone has to read and type; the
-   separation is the gap and the ordering, not a colour nobody can see. */
+   block's shell fallback for a Pi with the service stopped.
+   ⚠️ It INHERITS .raw-sub's --sub and sets no colour of its own. An earlier version put
+   --label here, reasoning that a command someone has to type should not be dimmed — but
+   --label is the BRIGHTER token (9.85:1 against --sub's 8.12:1 on a dark tile, 14.63:1
+   against 10.35:1 on a light one), so the line being demoted became the loudest text in
+   the block and out-shouted the instruction it is subordinate to. The separation is the
+   gap and the ordering; that argument is satisfied by inheriting, not by promoting. */
 .raw-footnote {
   margin-top: 0.25rem;
-  color: var(--label);
 }
 
-/* An instruction rather than a reading, so it takes the whole grid width: the two
-   sentences below "lifetime · never read" wrap to seven lines in a half-width tile, and
-   a sentence someone has to follow at the bike is the wrong thing to make them unpick.
-   The data tiles either side of it stay two-up, which is what the column is for. */
-.raw.raw-notice {
-  grid-column: 1 / -1;
+/* An instruction rather than a reading, so it takes the whole width: the two sentences
+   below "lifetime · never read" wrap to seven lines and 100.5 px in a half-width tile
+   against two lines and 66 px across the full one, and a sentence someone has to follow
+   at the bike is the wrong thing to make them unpick. */
+.raw-notice {
+  margin-top: 0.35rem;
 }
 
 /* A handlebar button, held down or released within the last 600 ms.

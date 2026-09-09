@@ -109,18 +109,15 @@ function LifetimeBlock() {
     if (!response.reading) {
       // Not an error: most Pis have never taken one. Says how — and since #177 that is a
       // button on this same phone, so the in-app path leads and the shell command is a
-      // footnote for a Pi whose service is stopped. It read the other way round for a
-      // month after the button shipped.
+      // footnote for a Pi whose service is stopped. It read the other way round from
+      // #177 until #187.
       return needle === ""
         ? div(
             div({ class: "section" }, "lifetime · never read"),
             div(
-              { class: "raw-grid" },
-              div(
-                { class: "raw raw-notice" },
-                div({ class: "raw-sub" }, response.howToRead),
-                div({ class: "raw-sub raw-footnote" }, `service stopped: ${response.howToReadWithServiceStopped}`)
-              )
+              { class: "raw raw-notice" },
+              div({ class: "raw-sub" }, response.howToRead),
+              div({ class: "raw-sub raw-footnote" }, `service stopped: ${response.howToReadWithServiceStopped}`)
             )
           )
         : div();

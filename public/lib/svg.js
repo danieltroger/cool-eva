@@ -221,14 +221,20 @@ export function heatmap({ rows, columns }) {
           })
         );
         if (cell.absent) {
-          // A zero-length path with a round cap, so the mark is a dot. ⚠️ NOT a
-          // <circle>: the viewBox is stretched to the tile width and a circle arrives
-          // as an ellipse — measured 9.8 x 6.1 px at 390 px. non-scaling-stroke is
-          // what sparkline() uses against the same stretch, and it makes this a true
-          // 6 px round dot at any width.
+          // A round-capped path a hair long, so the mark is a dot. ⚠️ NOT a <circle>:
+          // the viewBox is stretched to the tile width, so a circle arrives as an
+          // ellipse — 9.8 x 6.1 px at 390 px. non-scaling-stroke is what sparkline()
+          // uses against the same stretch.
+          //
+          // ⚠️⚠️ AND NOT `l 0 0`, which is what a dot wants to be written as. WebKit
+          // ignores non-scaling-stroke on a ZERO-LENGTH subpath — rendering the very
+          // ellipse the attribute is here to prevent, 19.5 x 12.3 px, on the only
+          // engine this page is ever opened in. 0.01 user units is 0.03 device px, so
+          // it is invisible in both engines and degenerate in neither.
+          // docs/dashboard-decisions.md §"The heatmap" has the four-case render.
           children.push(
             svgTags.path({
-              d: `M ${x + cellWidth / 2} ${y + rowHeight / 2} l 0 0`,
+              d: `M ${x + cellWidth / 2} ${y + rowHeight / 2} l 0.01 0`,
               style: `stroke:${MUTED};stroke-width:6;stroke-linecap:round`,
               "vector-effect": "non-scaling-stroke",
             })
