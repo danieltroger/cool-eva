@@ -926,6 +926,14 @@ The other two witnesses refuse E0 on their own (zero `0x305`/`0x306` in the wind
 
 ⚠️ It is a MASK on `charge_manager_status`, not a decoded key. `src/can/charge-manager.ts` logs b0 whole because "the raw byte survives a bit-position error and the split fields do not".
 
+#### What the phone tells the rider
+
+`HOW_TO_READ` (`src/vcu/lifetime-store.ts`) is the only instruction a Pi that has never taken a lifetime reading shows, and it has now been wrong twice in opposite directions. It named a `--components 51,52` flag that never existed; then #187 changed it to _"parked with the drive down"_, which was right about the SHIPPED behaviour and wrong about the intended one — the charging escape existed and was never sampled, so a charging bike really was refused. It now reads _"parked, with the drive down or plugged in"_.
+
+**"plugged in" and not "charging"**, because the evidence is a cable being live, which includes a paused AC trickle: `docs/charge-manager.md:60` records `charge_type` reading 0 for up to **8 minutes** inside one continuous plug-in while current still flowed. **The comma is load-bearing** — without it the sentence parses as _(parked with the drive down) or (plugged in)_, which sanctions a moving bike on a cable.
+
+`scripts/check-service-gate-charging.ts` §7 pins the sentence to the gate's own verdict in both directions, so whichever of the two moves alone goes red.
+
 #### Why the third witness earns its place, and what is still unmeasured
 
 `capture-20260809-080235-cd40b535.log`, `14:42:53.883 → 14:44:52.390` — 118.5 s of a DC handshake with the cable in and latched (`0x610` b0 = `0x08`/`0x0A`, b7 = `0x23`):

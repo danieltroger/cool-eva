@@ -192,7 +192,10 @@ const css = await readFile(join(PUBLIC, "style.css"), "utf8");
 // Required PER TEMPLATE rather than of both: only the whole-dashboard one stubs /fan and
 // /charge-auto, so only it needs the Pi's constants, and a placeholder the annotated sheet
 // carried unused would be a line nothing could notice the loss of.
-const required = ["__CSS__", "__TABLES__", ...(annotated ? [] : ["__SERVER_FACTS__"])];
+// ⚠️ __SERVER_FACTS__ is required of BOTH templates since #190 — the annotated sheet now
+// quotes the gate's own refusal sentences, and a missing placeholder there would leave the
+// literal token on screen rather than failing the build.
+const required = ["__CSS__", "__TABLES__", "__SERVER_FACTS__"];
 for (const placeholder of required) {
   if (!template.includes(placeholder)) {
     throw new Error(`build-service-preview: ${templateFile} has no ${placeholder} placeholder`);
@@ -238,10 +241,12 @@ console.log(
 // The scenes are selected in the URL rather than by a control on the page, so they are invisible
 // to anyone who has not read the template. Printed here because this is where somebody looking for
 // them is standing.
-if (!annotated) {
+{
   // Read out of the page rather than restated: a fourth scene would otherwise leave this line
   // quietly listing three, and the whole point of printing it is that the scenes are invisible
-  // to anyone who has not opened the template.
+  // to anyone who has not opened the template. ⚠️ Both templates, since #190 gave the
+  // annotated sheet its own — printing only the whole-dashboard one meant a reviewer
+  // screenshotted the default parked sheet and never saw the refusal it had just added.
   const scenes = /const SCENES = \{([\s\S]*?)\n      \};/.exec(html);
   const names = [...(scenes?.[1].matchAll(/^        (\w+): \{/gm) ?? [])].map(match => match[1]);
   if (names.length === 0) {

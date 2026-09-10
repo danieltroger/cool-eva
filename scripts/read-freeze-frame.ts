@@ -12,7 +12,7 @@ import { kwpResponseCanIds } from "../src/vcu/param-codec.ts";
 import { parseFreezeFrameArguments } from "./freeze-frame-args.ts";
 import { LIFETIME_COMPONENTS } from "../src/diagnostics/lifetime-stats.ts";
 import { readOneComponent } from "../src/vcu/lifetime-read.ts";
-import { writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
+import { answeredCount, writeLifetimeRead, type StoredLifetimeReply } from "../src/vcu/lifetime-store.ts";
 
 // The first live test for the multi-frame KWP transport. **This is the only way to
 // run it against the bike**, and it exists because the read cannot be done by hand:
@@ -209,7 +209,7 @@ async function runLifetime(save: boolean): Promise<void> {
   for (const component of [LIFETIME_COMPONENTS.packState, LIFETIME_COMPONENTS.counters]) {
     replies.push(await runFreezeFrame(component));
   }
-  const answered = replies.filter(reply => reply.failure === null).length;
+  const answered = answeredCount(replies);
   if (!save) {
     console.log(`\n  → ${answered}/2 answered. Add --save to store them where the dashboard reads them.`);
     return;

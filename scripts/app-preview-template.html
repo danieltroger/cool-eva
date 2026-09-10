@@ -63,6 +63,18 @@ __CSS__
       // written out again here. See its comment for why a second copy is the failure, not the fix.
       const SERVER = __SERVER_FACTS__;
 
+      /**
+       * ⚠️ ONE gate object, referenced from every fixture that carries one, and declared HERE
+       * because `const` has a temporal dead zone and the fixtures below are built at parse
+       * time — putting it beside the scene that mutates it rendered a blank page.
+       *
+       * The scene overlay used to patch two of the five gate literals, so `?scene=refused`
+       * showed a refused write panel above a lifetime panel and probe answers still claiming
+       * the bike was fine: two opinions from one bike on one screen, in the instrument that
+       * gates dashboard merges. Mutated in place below, since the fixtures hold a reference.
+       */
+      const GATE = { safe: true, blockers: [], chargingEvidence: null, checks: [] };
+
       const __MODULES = {
 __MODULES__
       };
@@ -276,7 +288,7 @@ __MODULES__
         chargeAck: null,
         // ⚠️ No `readings` here. It is on ServiceGateEvidence, the gate's INPUT, and never on the
         // verdict the Pi sends — one of three fields the fixture had invented.
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+        gate: GATE,
         tableGate: {
           state: "confirmed",
           writesAllowed: true,
@@ -309,7 +321,7 @@ __MODULES__
         measurement: "flow control 2.4 ms after the kernel saw the First Frame · worst event-loop delay 1.8 ms",
         answered: 2,
         message: null,
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+        gate: GATE,
       };
 
       const STATUS = {
@@ -354,7 +366,7 @@ __MODULES__
             ],
           },
         },
-        gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+        gate: GATE,
         enabled: true,
         export: { rows: 233, readAt: SWEPT_AT, complete: true },
         message: null,
@@ -500,11 +512,10 @@ __MODULES__
           commandedAmps: 42,
           // ⚠️ The gate's charging branch, which is deliberately NOT the stationary one: the DC
           // charge parameters cannot be tested unplugged, so a charging bike is allowed to write.
-          // ⚠️ The sentence src/vcu/charge-session.ts actually builds for a settled 0x23. Until
-          // #190 this read "…reports a DC session", which NO production code could emit — the
-          // rules then in the gate produced "the charger is reporting DC volts" and friends. A
-          // fixture quoting a caption the Pi cannot produce is the same failure #184 is about.
-          gate: { chargingEvidence: "the charge manager reports a live DC session" },
+          // ⚠️ SERVER.chargingDcEvidence, not a typed copy of it. Until #190 this read
+          // "…reports a DC session", which NO production code could emit for a fortnight — a
+          // fixture quoting a caption the Pi cannot say is the failure #184 is about.
+          gate: { chargingEvidence: SERVER.chargingDcEvidence },
           // Phrasing mirrors describeChargeAck()'s `took` branch in src/charge/acknowledge.ts.
           chargeAck: {
             verdict: { kind: "took", fromAmps: 68, toAmps: 42, latencyMs: 1840 },
@@ -521,10 +532,7 @@ __MODULES__
           signals: { "charge_manager_state": [0x02, "", "charge"] },
           gate: {
             safe: false,
-            blockers: [
-              "the charge manager reports nothing in the inlet — a cable that is not seated cannot make the bike safe to service",
-              "the drive is not energized — it reads 1",
-            ],
+            blockers: [SERVER.inletBlocker, "the drive is not energized — it reads 1"],
             chargingEvidence: null,
           },
         },
@@ -569,6 +577,7 @@ __MODULES__
         console.warn(`preview: there is no scene called "${WANTED_SCENE}" — showing parked. Try ${Object.keys(SCENES).join(", ")}.`);
       }
       const SCENE = SCENES[SCENE_NAME];
+
 
       /** Everything the bike is broadcasting right now. Patches write here, so a snapshot carries them. */
       const LIVE = Object.assign({}, PARKED_SIGNALS, SCENE.signals);
@@ -635,12 +644,7 @@ __MODULES__
       // The scene's own answers, laid over the fixtures above. Kept here rather than written into
       // each fixture so the literals stay complete — scripts/check-preview-fixtures.ts reads THEM,
       // and a fixture assembled per scene would be a fixture it could no longer check.
-      // ⚠️ BOTH gates, not just the write panel's. The service sheet's own line is fed by
-      // /vcu-read (READ_STATE), so overriding only WRITE_STATUS left the sheet saying
-      // "Stationary and out of drive" directly above a write panel saying "charging" — two
-      // opinions from one bike, on one screen, in the instrument that gates the design.
-      Object.assign(WRITE_STATUS.gate, SCENE.gate);
-      Object.assign(READ_STATE.gate, SCENE.gate);
+      Object.assign(GATE, SCENE.gate);
       Object.assign(FAN, SCENE.fan);
       Object.assign(FAN.auto, SCENE.fanAuto);
       if (SCENE.funGate !== undefined) {
@@ -1073,7 +1077,7 @@ __MODULES__
                 note: "No name-table row describes this identifier, so only the bytes are known.",
               },
               message: null,
-              gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+              gate: GATE,
               targets: [],
             });
           }
@@ -1093,7 +1097,7 @@ __MODULES__
               note: null,
             },
             message: null,
-            gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+            gate: GATE,
             targets: [],
           });
         }

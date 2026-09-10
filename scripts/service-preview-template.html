@@ -501,7 +501,7 @@
       ];
 
       /**
-       * Which gate the sheet is standing in for, chosen with `?gate=` in the URL.
+       * Which bike the sheet is standing in for, chosen with `?scene=` in the URL.
        *
        * ⚠️ A query string and not a control on the page: this file's claim is that what you
        * see is what the bike serves, and chrome of its own weakens that for every screenshot
@@ -509,34 +509,38 @@
        *
        * `charging` and `refused` exist because the gate line, the write panel's mid-charge
        * warning and the shared refusal caption render NOTHING on a parked bike — and a design
-       * gate blind to the panel it is gating is not a gate (#184).
+       * gate blind to the panel it is gating is not a gate (#184). Named `SCENES` and keyed on
+       * `?scene=` to match the whole-dashboard template: two vocabularies for the same bike is
+       * how a state gets added to one and never exists in the other, and it is also what
+       * build-service-preview.ts's discoverability line greps for.
        */
-      const GATES = {
-        parked: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
-        charging: {
+      // The numbers and prose the Pi owns, substituted at build time — see
+      // scripts/preview-server-facts.ts. The annotated sheet needs it for the same reason the
+      // whole-dashboard one does: it quotes two sentences only the gate may word.
+      const SERVER = __SERVER_FACTS__;
+
+      const SCENES = {
+        parked: { gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] } },
+        charging: { gate: {
           safe: true,
           blockers: [],
-          // The sentence src/vcu/charge-session.ts builds for a settled 0x23. It is quoted
-          // rather than invented: the Pi is the only thing that may word this.
-          chargingEvidence: "the charge manager reports a live DC session",
+          // SERVER.chargingDcEvidence: the Pi is the only thing that may word this.
+          chargingEvidence: SERVER.chargingDcEvidence,
           checks: [],
-        },
-        refused: {
+        } },
+        refused: { gate: {
           safe: false,
           // ⚠️ Episode E0's own refusal, in the order evaluateServiceGate emits it: the cable
           // leads, and the drive follows. Before #190 this state said only the second.
-          blockers: [
-            "the charge manager reports nothing in the inlet — a cable that is not seated cannot make the bike safe to service",
-            "the drive is not energized — it reads 1",
-          ],
+          blockers: [SERVER.inletBlocker, "the drive is not energized — it reads 1"],
           chargingEvidence: null,
           checks: [],
-        },
+        } },
       };
       // ⚠️ hasOwn on a narrowed string, not a bare lookup: `?gate=constructor` would
       // otherwise select a function, the trap the app template's ?scene= already names.
-      const WANTED_GATE = new URLSearchParams(window.location.search).get("gate") ?? "parked";
-      const GATE = (Object.hasOwn(GATES, WANTED_GATE) ? GATES[WANTED_GATE] : undefined) ?? GATES.parked;
+      const WANTED_GATE = new URLSearchParams(window.location.search).get("scene") ?? "parked";
+      const GATE = ((Object.hasOwn(SCENES, WANTED_GATE) ? SCENES[WANTED_GATE] : undefined) ?? SCENES.parked).gate;
 
       const WRITE_STATUS = {
         enabled: true,

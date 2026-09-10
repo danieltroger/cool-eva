@@ -409,8 +409,13 @@ function blockersFrom(checks: ServiceGateCheck[]): string[] {
  * own readings from decoded frames. docs/vcu-parameters.md §12.
  */
 export function serviceGateSignalKeys(): string[] {
-  return [...new Set([...RULES.map(rule => rule.key), ...chargeEvidenceKeys()])];
+  return GATE_SIGNAL_KEYS;
 }
+
+// Derived once at import, from the tables, because they cannot change afterwards — 16× the
+// work of the old hand-kept list when it was rebuilt on every call, and this runs on two
+// 200 ms watchdogs. Still derived, which is the whole point of the note above; just once.
+const GATE_SIGNAL_KEYS: string[] = [...new Set([...RULES.map(rule => rule.key), ...chargeEvidenceKeys()])];
 
 /**
  * Samples exactly what the gate reads, from a reader the caller supplies.
@@ -495,7 +500,7 @@ function inletCheck(readings: ServiceGateReadings, inletEmpty: boolean): Service
  * A fixed sentence rather than one built from the byte: the value is a bitfield and
  * "it reads 16" would send somebody to a decode table to learn that their cable is loose.
  */
-const CHARGE_INLET_BLOCKER =
+export const CHARGE_INLET_BLOCKER =
   "the charge manager reports nothing in the inlet — a cable that is not seated cannot make the bike safe to service";
 
 /** One failed check as the sentence the page shows. */
@@ -507,10 +512,9 @@ function describeBlocker(check: ServiceGateCheck): string {
       return `${check.requirement}: ${check.key} last arrived ${Math.round((check.ageMs ?? 0) / 1000)} s ago, too old to go on`;
     case "missing":
       return `${check.requirement}: ${check.key} has never arrived, so there is nothing to check`;
-    case "inlet-empty":
-      return CHARGE_INLET_BLOCKER;
     case "ok":
     case "excused-by-charging":
+    case "inlet-empty":
       // Unreachable — the caller filters these out — and left loud rather than
       // silently rendering an empty reason if that ever stops being true.
       return `${check.requirement} (no fault; this should not have been reported)`;

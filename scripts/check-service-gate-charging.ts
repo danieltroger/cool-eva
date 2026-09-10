@@ -1,4 +1,6 @@
+import { readFile } from "node:fs/promises";
 import { decodeFrame } from "../src/can/decode.ts";
+import { parseHexBytes } from "./captured-vcu-records.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import {
   evaluateServiceGate,
@@ -14,7 +16,7 @@ import {
   chargePathIsActive,
   chargeSessionFrom,
 } from "../src/vcu/charge-session.ts";
-import { serviceActionPolicy } from "../src/vcu/write-runner.ts";
+import { serviceActionPolicy, serviceActionRefusal, type ServiceWriteRequest } from "../src/vcu/write-runner.ts";
 import { HOW_TO_READ } from "../src/vcu/lifetime-store.ts";
 
 // May a CHARGING motorcycle be serviced? The gate's charge behaviour, end to end.
@@ -44,7 +46,9 @@ function check(what: string, condition: boolean) {
 function readingsFrom(frames: [number, string, number?][], defaultAgeMs = 50): ServiceGateReadings {
   const readings: ServiceGateReadings = {};
   for (const [id, hex, frameAgeMs] of frames) {
-    const bytes = Buffer.from(hex.split(/\s+/).map(byte => parseInt(byte, 16)));
+    // parseHexBytes, not parseInt: it THROWS on a malformed byte, where parseInt turns a
+    // typo into NaN and then 0 — a frame nobody ever wrote, asserted against in a safety gate.
+    const bytes = Buffer.from(parseHexBytes(hex));
     for (const { key, value } of decodeFrame(id, bytes)) {
       readings[key] = { value, ageMs: frameAgeMs ?? defaultAgeMs };
     }
@@ -270,22 +274,23 @@ for (const row of TABLE) {
   const sessionLive = chargeManagerIsLive(state.value, state.ageMs);
   const settled = chargeSessionFrom(state.value, state.ageMs) !== null;
 
-  check(`${row.state} · read ${row.gate ? "allowed" : "refused"}`, verdict.safe === row.gate);
-  // A parameter write is the gate plus the table gate, which is not about the bike.
-  check(
-    `${row.state} · parameter write ${row.gate ? "allowed" : "refused"}`,
-    serviceActionPolicy("parameter").bikeStateGateApplies && verdict.safe === row.gate
-  );
+  // Reads and parameter writes both ride the bike-state gate — that they do is §6's job, so
+  // this row asserts the verdict once rather than twice with a constant `&&`ed onto it.
+  check(`${row.state} · read and parameter write ${row.gate ? "allowed" : "refused"}`, verdict.safe === row.gate);
   // ⚠️ reset-vcu is NOT gate-exempt, so it refuses wherever the gate does AND wherever a
   // session is live — the two reasons compose, and a row that is unsafe for a read is
   // unsafe for a reset whether or not anything is plugged in.
+  // ⚠️ The SHIPPED composition, not a rebuild of it beside the table. Rebuilding
+  // `(!gateApplies || safe) && !(refused && charging)` here is how a check goes green while
+  // checkPreconditions composes it differently — the failure this whole PR is about.
   const resetPolicy = serviceActionPolicy("reset-vcu");
   const pathActive = chargePathIsActive(key => readings[key] ?? { value: null, ageMs: null });
-  const resetAllowed =
-    (!resetPolicy.bikeStateGateApplies || verdict.safe) && !(resetPolicy.refusedWhileCharging && pathActive);
+  const resetAllowed = serviceActionRefusal(resetPolicy, verdict, pathActive, "reset-vcu") === null;
   check(`${row.state} · reset-vcu ${row.reset ? "allowed" : "refused"}`, resetAllowed === row.reset);
   // charge-current is gate-EXEMPT and needs a settled session — bike state cannot refuse it.
-  const chargeAllowed = !serviceActionPolicy("charge-current").bikeStateGateApplies && settled;
+  const chargeCurrentPolicy = serviceActionPolicy("charge-current");
+  const chargeAllowed =
+    serviceActionRefusal(chargeCurrentPolicy, verdict, pathActive, "charge-current") === null && settled;
   check(`${row.state} · charge-current ${row.charge ? "allowed" : "refused"}`, chargeAllowed === row.charge);
   check(
     `${row.state} · charge-stop follows charge-current`,
@@ -293,6 +298,11 @@ for (const row of TABLE) {
       serviceActionPolicy("charge-current").bikeStateGateApplies
   );
 }
+
+check(
+  "charge-stop is exempt from the bike-state gate exactly as charge-current is",
+  serviceActionPolicy("charge-stop").bikeStateGateApplies === serviceActionPolicy("charge-current").bikeStateGateApplies
+);
 
 console.log("\n3b. the two holes the diff review found, so they cannot come back");
 
@@ -388,13 +398,40 @@ console.log("\n4. the sampler asks for everything the decision reads");
 // and never sampled by the runner, so the escape was dead on the motorcycle for its entire
 // life while every check passed — the checks build their own readings from frames.
 const sampled = new Set(Object.keys(sampleServiceGate(() => ({ value: 0, ageMs: 0 }))));
-const consulted = new Set([...CHARGE_EVIDENCE.map(rule => rule.key), CHARGE_INLET_VETO.key]);
-for (const key of consulted) {
-  check(`the sampler asks for ${key}, which the decision reads`, sampled.has(key));
-}
+
+// ⚠️ WATCH THE DECISION READ, rather than comparing two spellings of the same list. An
+// earlier version of this section looped over `CHARGE_EVIDENCE.map(rule => rule.key)` and
+// asserted the sampler had them — which is character-for-character what the sampler derives
+// from, so it could not fail. This asks the only question that matters: does
+// evaluateServiceGate touch a key nobody sampled?
+const readKeys = new Set<string>();
+const probe = new Proxy({} as ServiceGateReadings, {
+  get(_target, key) {
+    if (typeof key === "string") {
+      readKeys.add(key);
+    }
+    return undefined;
+  },
+  has() {
+    return true;
+  },
+});
+evaluateServiceGate(probe);
+const unsampled = [...readKeys].filter(key => !sampled.has(key));
 check(
-  "…and asks for nothing it does not read",
-  serviceGateSignalKeys().every(key => sampled.has(key)) && sampled.size === serviceGateSignalKeys().length
+  `the decision reads nothing the sampler skips, unsampled: ${unsampled.join(", ") || "none"}`,
+  unsampled.length === 0
+);
+check("…and the decision really did read something", readKeys.size > 0);
+
+// …and the PRODUCTION caller has to go through it. The bug was never in the list; it was a
+// runner that built its own readings map beside it, which no assertion about the list could
+// have seen. src/index.ts hands this one gate to every service endpoint and both watchdogs.
+const runnerSource = await readFile(new URL("../src/vcu/read-runner.ts", import.meta.url), "utf8");
+check("read-runner samples through the gate", /sampleServiceGate\(/.test(runnerSource));
+check(
+  "…and does not build a readings map of its own",
+  !/Object\.fromEntries\(\s*serviceGateSignalKeys/.test(runnerSource)
 );
 // A key list with no spelling check is a comment wearing a check's clothes: a signal nothing
 // produces would sit here for ever, sampled as `null`, and the rule reading it never fires.
@@ -425,22 +462,11 @@ check(
 
 console.log("\n6. every action kind is classified");
 
-// ⚠️ TOTAL over the union, so an action cannot be quietly reclassified as exempt. The kinds
-// are read off the type, not listed here: serviceActionPolicy's switch has no `default`, so
-// a new member is a type error before it is a hole.
-const KINDS = [
-  "parameter",
-  "parameters",
-  "bit",
-  "read-service-stamp",
-  "set-service-point",
-  "sync-clock",
-  "clear-dtcs",
-  "charge-current",
-  "charge-stop",
-  "reset-vcu",
-] as const;
-const EXPECTED: Record<(typeof KINDS)[number], [boolean, boolean, boolean]> = {
+// ⚠️ TOTAL over the union, and the totality is the TYPE's, not a list's: EXPECTED is keyed on
+// `ServiceWriteRequest["kind"]`, so a new action is a type error HERE as well as in
+// serviceActionPolicy's `default`-less switch. A hand-written array beside it would have gone
+// on passing with the new kind simply absent.
+const EXPECTED: Record<ServiceWriteRequest["kind"], [boolean, boolean, boolean]> = {
   "parameter": [true, false, true],
   "parameters": [true, false, true],
   "bit": [true, false, true],
@@ -452,6 +478,7 @@ const EXPECTED: Record<(typeof KINDS)[number], [boolean, boolean, boolean]> = {
   "charge-stop": [false, false, false],
   "reset-vcu": [true, true, false],
 };
+const KINDS = Object.keys(EXPECTED) as ServiceWriteRequest["kind"][];
 for (const kind of KINDS) {
   const policy = serviceActionPolicy(kind);
   const [gate, charging, table] = EXPECTED[kind];

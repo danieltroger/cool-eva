@@ -32,18 +32,12 @@ const LATEST_FILE = "lifetime.json";
  * screen was one you cannot follow on the phone that is showing it. The script is still
  * the answer when the service IS stopped, so it stays below rather than being deleted.
  *
- * ⚠️ "plugged in" and not "charging": the gate's evidence is a cable being LIVE, which
- * includes a paused AC trickle. docs/charge-manager.md:60 has `charge_type` reading 0 for
- * up to 8 minutes inside one continuous plug-in while current still flowed.
- *
  * ⚠️ The comma is load-bearing. This parses as *parked, with (the drive down OR plugged
  * in)*, which is the gate's own shape. Without it, *(parked with the drive down) or
  * (plugged in)* sanctions a moving bike on a cable — the one thing it exists to prevent.
  *
- * #187 wrote "parked with the drive down" because the gate then refused a charging bike in
- * practice: the escape existed and was never sampled, so it had never once run on the
- * motorcycle (#190). Now that it does, that wording is too strict in the other direction —
- * a rider at a charger would unplug and key off, undoing the state the feature is for.
+ * Why "plugged in" and not "charging", and why #187's wording had to change once the
+ * charging escape actually ran: docs/vcu-parameters.md §12.
  */
 export const HOW_TO_READ =
   'menu → Service mode → "Read the lifetime battery statistics", parked, with the drive down or plugged in';
@@ -138,24 +132,24 @@ export async function loadLifetimeStatistics(directory: string): Promise<StoredL
 export async function writeLifetimeRead(
   directory: string,
   read: StoredLifetimeRead
-): Promise<{ stored: boolean; reason: string }> {
-  const answered = read.replies.filter(reply => reply.failure === null).length;
+): Promise<{ stored: boolean; reason: string; answered: number }> {
+  const answered = answeredCount(read.replies);
   const path = join(directory, LATEST_FILE);
   await mkdir(directory, { recursive: true });
   await archive(directory, read);
   const previous = await loadStoredRead(directory);
-  const previousAnswered = previous?.replies.filter(reply => reply.failure === null).length ?? 0;
+  const previousAnswered = previous === null ? 0 : answeredCount(previous.replies);
   if (answered === 0) {
     const reason = `nothing answered, so ${path} is left as it was — ${previousAnswered} stored replies stand`;
     console.warn(`lifetime: ⚠️  ${reason}`);
-    return { stored: false, reason };
+    return { stored: false, reason, answered };
   }
   if (answered < previousAnswered) {
     // Said out loud rather than done quietly, for the reason snapshot-store.ts gives:
     // "your page still says yesterday" is baffling when it is silent.
     const reason = `${answered} replies would replace ${previousAnswered} — KEPT the previous ${LATEST_FILE}`;
     console.warn(`lifetime: ⚠️  ${reason}`);
-    return { stored: false, reason };
+    return { stored: false, reason, answered };
   }
   // Renamed into place, never written in place: a truncated lifetime.json reads as
   // null, the page says "never read", and a reading that cost a service stop and a
@@ -164,7 +158,18 @@ export async function writeLifetimeRead(
   await replaceFileDurably(path, `${JSON.stringify(read, null, 2)}\n`);
   const reason = `stored ${answered}/${read.replies.length} replies from ${read.source} in ${path}`;
   console.log(`lifetime: ${reason}`);
-  return { stored: true, reason };
+  return { stored: true, reason, answered };
+}
+
+/**
+ * How many of these replies are READINGS.
+ *
+ * ⚠️ The one place that rule lives. It was written out at four call sites, all four said
+ * `payloadHex !== null`, and all four were wrong in the same way — a refusal carries bytes.
+ * A fifth site, or a fifth hand-edit, is how it comes back.
+ */
+export function answeredCount(replies: readonly StoredLifetimeReply[]): number {
+  return replies.filter(reply => reply.failure === null).length;
 }
 
 /**

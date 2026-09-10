@@ -84,15 +84,12 @@ export async function handleLifetimeReadEndpoint(
     source: "service",
     replies: outcome.result.replies,
   });
-  // ⚠️ `failure === null`, not `payloadHex !== null`: a micro answering `7F A8 22` sent bytes
-  // and did not answer. See toStoredReply in ../vcu/lifetime-read.ts.
-  const answered = outcome.result.replies.filter(reply => reply.failure === null).length;
   // ⚠️ The measurement goes back WHATEVER happened to the store. A read that answered
   // 1 of 2 and was correctly refused storage is exactly the run whose flow-control
   // number is worth having, and putting only the refusal here hid it.
   respond(res, 200, options, {
     measurement: describeMeasurement(outcome.result),
-    answered,
+    answered: stored.answered,
     // What each component actually said, when they did not all answer. The count alone
     // cannot tell a silent micro from one that refused, and those send you to different
     // places — the first to the bus, the second to the conditions the read was taken in.

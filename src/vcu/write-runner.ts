@@ -4,7 +4,7 @@ import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
-import { CHARGE_SESSION_MAX_AGE_MS, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
+import { chargeManagerIsLive, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
 import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
@@ -448,6 +448,36 @@ export function sweptValueOf(target: WriteTarget, sweep: VcuParameterSnapshot | 
   };
 }
 
+/**
+ * Stands in for the gate on the actions it does not govern, so the composition below takes
+ * one shape. Never consulted for those — `bikeStateGateApplies` is false when it is passed.
+ */
+const NOT_CONSULTED: ServiceGateVerdict = { safe: true, blockers: [], checks: [], chargingEvidence: null };
+
+/**
+ * May this action run, given its policy and what the bike is doing? Null means yes.
+ *
+ * ⚠️ Exported so scripts/check-service-gate-charging.ts asserts the SHIPPED composition
+ * instead of rebuilding `(!gateApplies || safe) && !(refused && charging)` beside it — the
+ * check-writes-its-own-version-of-production failure this whole change exists to close.
+ */
+export function serviceActionRefusal(
+  policy: ServiceActionPolicy,
+  gate: ServiceGateVerdict,
+  chargePathActive: boolean,
+  kind: ServiceWriteRequest["kind"]
+): string | null {
+  if (policy.bikeStateGateApplies && !gate.safe) {
+    return `the bike is not safe to service — ${gate.blockers.join("; ")}`;
+  }
+  if (policy.refusedWhileCharging && chargePathActive) {
+    // The rider's words, not the wire enum: nobody standing at a charger calls it "reset-vcu".
+    const doing = kind === "reset-vcu" ? "restart the VCU" : `send a ${kind}`;
+    return `the charge path is live — do not ${doing} mid-charge. Stop the charge or unplug first.`;
+  }
+  return null;
+}
+
 /** What the three gates do about one action. Every field is a policy decision, not a derivation. */
 export interface ServiceActionPolicy {
   /** Whether the bike-state gate (./service-gate.ts) applies. */
@@ -541,26 +571,22 @@ async function checkPreconditions(
         "the bus is listen-only (OBD_ENABLED=0) — nothing can be transmitted, so a write would silently do nothing",
     };
   }
-  // Which gates apply to this action is one table, and it is total over the request union —
-  // see serviceActionPolicy. This Pi's own switches (enabled/CAN/bus, above) gate everything.
+  // Which gates apply is one table (serviceActionPolicy) and how they compose into a refusal
+  // is one function (serviceActionRefusal), so the check calls both rather than restating
+  // either. This Pi's own switches (enabled/CAN/bus, above) gate everything.
+  //
+  // ⚠️ chargePathIsActive, not the charge-manager state alone: the gate has three witnesses
+  // and keying this on one of them permitted `11 02` into a DC fast charge the contactor was
+  // witnessing. Sampled the way the gate samples, so the two cannot disagree.
   const policy = serviceActionPolicy(request.kind);
-  if (policy.bikeStateGateApplies) {
-    const verdict = context.gate();
-    if (!verdict.safe) {
-      return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
-    }
-  }
-  if (
-    // ⚠️ chargePathIsActive, not the charge-manager state alone: the gate has three witnesses
-    // and keying this on one of them permitted `11 02` into a DC fast charge the contactor
-    // was witnessing. Same sampling shape as the gate's, so the two cannot disagree.
-    policy.refusedWhileCharging &&
-    chargePathIsActive(key => ({ value: latestValue(key), ageMs: ageMs(key) }))
-  ) {
-    return {
-      ok: false,
-      reason: `the charge path is live — do not ${request.kind} mid-charge. ` + "Stop the charge or unplug first.",
-    };
+  const refusal = serviceActionRefusal(
+    policy,
+    policy.bikeStateGateApplies ? context.gate() : NOT_CONSULTED,
+    policy.refusedWhileCharging && chargePathIsActive(key => ({ value: latestValue(key), ageMs: ageMs(key) })),
+    request.kind
+  );
+  if (refusal) {
+    return { ok: false, reason: refusal };
   }
   // Sampled ONLY for the actions that thread it, which is the invariant worth keeping:
   // the report this refusal is decided from is the same object ./write-codec.ts
@@ -1098,7 +1124,7 @@ function describeClear(outcome: ClearDtcsOutcome): string {
  * is silently ignored by the VCU, so a page that opened during a DC charge must not be able to
  * command DC into the AC charge that replaced it. For the same reason the command is refused
  * outright unless a session is established — charge_manager_state present, fresh, and one of
- * AC (0x02) / DC (0x23). ⚠️ NOT charge_type: it flaps 1↔0 mid-session (see CHARGE_SESSION_MAX_AGE_MS).
+ * AC (0x02) / DC (0x23). ⚠️ NOT charge_type: it flaps 1↔0 mid-session (./charge-session.ts).
  *
  * The ceiling (b4) is not a guess: DC uses fast_dc_limit_max_a (a 10 Hz broadcast, always
  * present awake), AC uses ac_charge_ceiling_a (the dash's own last b4, an EVENT). If the AC
@@ -1256,7 +1282,7 @@ async function performChargeStop(context: WriteContext, channel: RawChannel): Pr
  * stale" and "not settled" end up worded differently for the same bike.
  */
 function describeNoSession(state: number | null, ageMs: number | null, what: string): string {
-  if (state === null || ageMs === null || ageMs > CHARGE_SESSION_MAX_AGE_MS) {
+  if (state === null || !chargeManagerIsLive(state, ageMs)) {
     return `not charging — charge_manager_state is absent or stale, so there is no live session to ${what}. Plug the bike in first.`;
   }
   return (
