@@ -284,13 +284,12 @@ for (const row of TABLE) {
   // `(!gateApplies || safe) && !(refused && charging)` here is how a check goes green while
   // checkPreconditions composes it differently — the failure this whole PR is about.
   const resetPolicy = serviceActionPolicy("reset-vcu");
-  const pathActive = chargePathIsActive(key => readings[key] ?? { value: null, ageMs: null });
-  const resetAllowed = serviceActionRefusal(resetPolicy, verdict, pathActive, "reset-vcu") === null;
+  const read = (key: string) => readings[key] ?? { value: null, ageMs: null };
+  const resetAllowed = serviceActionRefusal(resetPolicy, verdict, read, "reset-vcu") === null;
   check(`${row.state} · reset-vcu ${row.reset ? "allowed" : "refused"}`, resetAllowed === row.reset);
   // charge-current is gate-EXEMPT and needs a settled session — bike state cannot refuse it.
   const chargeCurrentPolicy = serviceActionPolicy("charge-current");
-  const chargeAllowed =
-    serviceActionRefusal(chargeCurrentPolicy, verdict, pathActive, "charge-current") === null && settled;
+  const chargeAllowed = serviceActionRefusal(chargeCurrentPolicy, verdict, read, "charge-current") === null && settled;
   check(`${row.state} · charge-current ${row.charge ? "allowed" : "refused"}`, chargeAllowed === row.charge);
   check(
     `${row.state} · charge-stop follows charge-current`,
@@ -326,6 +325,18 @@ check(
     contactorOnly["charge_manager_state"]?.value ?? null,
     contactorOnly["charge_manager_state"]?.ageMs ?? null
   )
+);
+// ⚠️ THROUGH THE SHIPPED COMPOSITION, not through chargePathIsActive in isolation. Testing
+// the predicate alone left the WIRING unfenced: reverting checkPreconditions to the narrow
+// one typechecked and kept every assertion green. This row can only pass on the wide one.
+check(
+  "…and serviceActionRefusal — the function checkPreconditions calls — refuses the reset",
+  serviceActionRefusal(
+    serviceActionPolicy("reset-vcu"),
+    contactorVerdict,
+    key => contactorOnly[key] ?? { value: null, ageMs: null },
+    "reset-vcu"
+  ) !== null
 );
 
 // ⚠️ HOLE 2 — the veto must speak only when it DECIDED the refusal. An empty inlet on a bike
@@ -427,12 +438,17 @@ check("…and the decision really did read something", readKeys.size > 0);
 // …and the PRODUCTION caller has to go through it. The bug was never in the list; it was a
 // runner that built its own readings map beside it, which no assertion about the list could
 // have seen. src/index.ts hands this one gate to every service endpoint and both watchdogs.
+// ⚠️ THE FUNCTION BODY, with comments stripped. Matching the whole file passed on a readGate
+// that hand-rolled its own key list, as long as a `sampleServiceGate(` call survived anywhere
+// else — or appeared only in a comment. That mutation IS the #190 bug.
 const runnerSource = await readFile(new URL("../src/vcu/read-runner.ts", import.meta.url), "utf8");
-check("read-runner samples through the gate", /sampleServiceGate\(/.test(runnerSource));
-check(
-  "…and does not build a readings map of its own",
-  !/Object\.fromEntries\(\s*serviceGateSignalKeys/.test(runnerSource)
-);
+const readGateBody = /function readGate\(\)[^{]*\{([\s\S]*?)\n\}/
+  .exec(runnerSource)?.[1]
+  ?.replace(/\/\/[^\n]*/g, "")
+  ?.replace(/\/\*[\s\S]*?\*\//g, "");
+check("readGate() is still there to check", readGateBody !== undefined && readGateBody.length > 0);
+check("readGate samples through the gate", /sampleServiceGate\(/.test(readGateBody ?? ""));
+check("…and builds no readings map of its own", !/Object\.fromEntries|serviceGateSignalKeys/.test(readGateBody ?? ""));
 // A key list with no spelling check is a comment wearing a check's clothes: a signal nothing
 // produces would sit here for ever, sampled as `null`, and the rule reading it never fires.
 const registered = new Set(SIGNALS.map(signal => signal.key));

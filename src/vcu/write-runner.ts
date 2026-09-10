@@ -3,7 +3,7 @@ import { ageMs, latestValue } from "../can/signals.ts";
 import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
-import type { ServiceGateVerdict } from "./service-gate.ts";
+import type { ServiceGateSample, ServiceGateVerdict } from "./service-gate.ts";
 import { chargeManagerIsLive, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
 import type { TableTypeReport, VcuParameterSnapshot } from "./snapshot.ts";
@@ -464,13 +464,18 @@ const NOT_CONSULTED: ServiceGateVerdict = { safe: true, blockers: [], checks: []
 export function serviceActionRefusal(
   policy: ServiceActionPolicy,
   gate: ServiceGateVerdict,
-  chargePathActive: boolean,
+  read: (key: string) => ServiceGateSample,
   kind: ServiceWriteRequest["kind"]
 ): string | null {
   if (policy.bikeStateGateApplies && !gate.safe) {
     return `the bike is not safe to service — ${gate.blockers.join("; ")}`;
   }
-  if (policy.refusedWhileCharging && chargePathActive) {
+  // ⚠️ chargePathIsActive is called HERE, not handed in. Sharing only the composition left
+  // the argument computed twice — once in checkPreconditions, once in the check — so a
+  // one-line revert to the narrower `charge_manager_state` predicate typechecked clean, kept
+  // every assertion green, and put `11 02` back into a contactor-witnessed DC fast charge.
+  // There is no argument to get wrong now, and the truth table exercises this path.
+  if (policy.refusedWhileCharging && chargePathIsActive(read)) {
     // The rider's words, not the wire enum: nobody standing at a charger calls it "reset-vcu".
     const doing = kind === "reset-vcu" ? "restart the VCU" : `send a ${kind}`;
     return `the charge path is live — do not ${doing} mid-charge. Stop the charge or unplug first.`;
@@ -582,7 +587,7 @@ async function checkPreconditions(
   const refusal = serviceActionRefusal(
     policy,
     policy.bikeStateGateApplies ? context.gate() : NOT_CONSULTED,
-    policy.refusedWhileCharging && chargePathIsActive(key => ({ value: latestValue(key), ageMs: ageMs(key) })),
+    key => ({ value: latestValue(key), ageMs: ageMs(key) }),
     request.kind
   );
   if (refusal) {
@@ -653,10 +658,14 @@ async function perform(context: WriteContext, request: ServiceWriteRequest): Pro
   if (!ready.ok) {
     return { ok: false, reason: ready.reason };
   }
-  // ⚠️ Only for actions the gate governs. It ran for every one, so a charge-current command
-  // — exempt at the precondition precisely because a charging bike's drive is up — could
-  // still be aborted mid-exchange by the same gate that was told not to judge it. A write
-  // cut short between `2E` and its read-back has changed the bike and not confirmed what to.
+  // ⚠️ Only for actions the gate governs. It ran for every one, including the two the
+  // precondition deliberately exempts — so the gate that was told not to judge a charge
+  // command judged it anyway, 5 times a second, for the whole exchange.
+  //
+  // What that actually cost is worth stating exactly, because the obvious answer is wrong:
+  // neither charge action sets `context.running`, so `abort()` reached nothing and no frame
+  // was ever cut short. The damage was a WARN line in the journal announcing an abort that
+  // did not happen — on a bike whose journal is the only witness anyone has.
   const watchdog = serviceActionPolicy(request.kind).bikeStateGateApplies ? startGateWatchdog(context) : null;
   try {
     return await performOnBus(context, request, ready.channel, ready.tableType);

@@ -529,7 +529,15 @@ __MODULES__
         // empty inlet, so the settled 0x02 is NOT believed. The two blockers are what
         // evaluateServiceGate emits, in its order — the cable leads and the drive follows.
         refused: {
-          signals: { "charge_manager_state": [0x02, "", "charge"] },
+          // ⚠️ BOTH bytes of 0x610, because the inlet byte is what the refusal is about and
+          // the fixture used to display a verdict its own signals could not produce. 0x00 is
+          // E0's own reading: no inlet, no lock. The Charge tab reading "live AC session"
+          // beside "nothing in the inlet" is not a fixture bug — it is exactly the
+          // contradiction episode E0 is, and the gate is the thing that resolves it.
+          signals: {
+            "charge_manager_state": [0x02, "", "charge"],
+            "charge_manager_status": [0x00, "", "charge"],
+          },
           gate: {
             safe: false,
             blockers: [SERVER.inletBlocker, "the drive is not energized — it reads 1"],
@@ -567,6 +575,20 @@ __MODULES__
           fan: { dutyPercent: 62, targetPercent: 62, driverEnabled: true, phase: "running" },
           fanAuto: { reason: SERVER.fanReason.PACK_TEMPERATURE, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 41, temperatureAgeMs: 240 },
           funGate: SERVER.funGate.GO_SET,
+          // ⚠️ A riding bike is the one state where the gate MUST refuse, and this scene had
+          // no `gate` at all — harmless while the override reached only the write panel,
+          // wrong the moment one binding fed all five fixtures. The blockers are the
+          // sentences evaluateServiceGate builds for 74 km/h with the drive engaged.
+          gate: {
+            safe: false,
+            blockers: [
+              "road speed is zero — it reads 74.0",
+              "the motor is not turning — it reads 4210",
+              "the bike is not moving — it reads 1",
+              "the bike is not in drive — it reads 1",
+            ],
+            chargingEvidence: null,
+          },
         },
       };
 
