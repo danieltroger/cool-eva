@@ -241,7 +241,7 @@ A **guarded derive** is the shape used wherever a WebSocket signal has to trigge
 
 That shape has three traps. Two of them have shipped here, both in `views/charge-auto.js`, and both put a wrong number about the motorcycle on the screen — see `docs/charge-auto.md` § "What wakes this tile" for what each one looked like to the rider.
 
-**1. A read behind an early `return` registers no listener at all.** VanJS collects a derive's dependencies from the reads it _actually performs_ on each run (`runAndCaptureDeps` at `van-1.6.1.js:12-22`, called again from `updateDoms` at `:127`), by intercepting the `val` getter. So in
+**1. A read behind an early `return` registers no listener at all.** VanJS collects a derive's dependencies from the reads it _actually performs_ on each run (`runAndCaptureDeps` at `van-1.6.1.js:12-23`, reached again through the `derive(l.f, l.s, l._dom)` at `:128` in `updateDoms`, via `derive` at `:79`), by intercepting the `val` getter. So in
 
 ```js
 const a = valueOf("first");

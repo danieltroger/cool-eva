@@ -1,9 +1,25 @@
-import { CHARGE_AUTO_REASON, MIN_COMMAND_A, type ChargeAutoReason } from "../src/charge/auto-curve.ts";
-import { CHARGE_AUTO_REASON_TEXT, type ChargeAutoResponse } from "../src/http/charge-auto.ts";
-import type { ChargeAutoMode } from "../src/charge/auto.ts";
-import { SIGNALS } from "../src/can/registry.ts";
-import type { LiveValue } from "../src/can/signals.ts";
-import { HEARTBEAT_MS, type DashboardMessage } from "../src/ws.ts";
+import { CHARGE_AUTO_REASON } from "../src/charge/auto-curve.ts";
+import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
+import { HEARTBEAT_MS } from "../src/ws.ts";
+import {
+  AC_SESSION,
+  COMMAND_MS,
+  DC_SESSION,
+  NO_SESSION,
+  SLOW_REPLY_MS,
+  applyWriteStatus,
+  controllerSentence,
+  countOf,
+  failNextChargeAutoRead,
+  fetchChargeWriteStatus,
+  heartbeat,
+  holdNextReply,
+  patch,
+  pause,
+  pi,
+  setWritesOn,
+  settle,
+} from "./charge-auto-live-harness.ts";
 
 // Whether the charge tab's automatic-current tile still says what the Pi is doing WHILE it does it.
 //
@@ -16,68 +32,14 @@ import { HEARTBEAT_MS, type DashboardMessage } from "../src/ws.ts";
 // enough; #193's rule sits in one reason for many ticks while the current moves 1-15 A per tick, so
 // nothing refreshed and the sentence — "Commanding x A" included — froze until a page reload.
 //
-// ⚠️ NO BROWSER AND NO DOM. It drives the real public/views/charge-auto.js against the real
-// public/lib/store.js, feeding real DashboardMessages through apply() so readings pass the real
-// plausibility gate and get the fresh object identity every heartbeat actually has. Only `fetch` is
-// stood in for, and it must be stood in for BEFORE the modules load — hence the dynamic imports.
-// The tile's DOM is not rendered (van.tags needs a document); controllerSentence() is the text that
-// binding puts on screen, so asserting it asserts what a rider reads.
+// The fake Pi and the fake browser are ./charge-auto-live-harness.ts, which drives the REAL view
+// and the REAL store; this file is only the assertions. Importing it is what stands `fetch` in
+// before those modules load, so the import above is load-bearing rather than tidy.
 //
 // What it cannot show: that the Pi records what it claims to. src/charge/auto.ts's own records are
 // scripts/check-charge-auto.ts's business, and the bus is nobody's without a bike.
 
 const failures: string[] = [];
-
-/** The controller as the stubbed Pi holds it, so a section can step it the way `runTick` does. */
-const pi = {
-  mode: "automatic" as ChargeAutoMode,
-  reason: CHARGE_AUTO_REASON.NO_HISTORY as ChargeAutoReason,
-  commandedAmps: null as number | null,
-};
-
-/** Whether GET /vcu-write reports writes on for this Pi, so a section can shut that gate. */
-let writesAreOn = true;
-
-/** Every path the page asked for, in order — so a section can assert what it did and did NOT fetch. */
-const fetched: string[] = [];
-
-globalThis.fetch = (async (input: string | URL | Request) => {
-  const path = new URL(String(input), "http://eva.local/").pathname;
-  fetched.push(path);
-  if (path === "/vcu-write") {
-    return new Response(JSON.stringify({ status: { enabled: writesAreOn } }));
-  }
-  if (path === "/charge-auto") {
-    // The body src/http/charge-auto.ts's respond() would build for this state. The sentence comes
-    // from the Pi's own table rather than being written again here, which is the whole reason it
-    // travels on the wire — see CHARGE_AUTO_REASON_TEXT's header.
-    const body: ChargeAutoResponse = {
-      state: { mode: pi.mode, reason: pi.reason, commandedAmps: pi.commandedAmps },
-      reasonText: CHARGE_AUTO_REASON_TEXT[pi.reason] ?? "",
-      floorAmps: MIN_COMMAND_A,
-      message: null,
-    };
-    return new Response(JSON.stringify(body));
-  }
-  throw new Error(`the charge tab asked for ${path}, which this check does not stand in for`);
-}) as typeof fetch;
-
-const { apply, connection } = await import("../public/lib/store.js");
-const { applyWriteStatus, fetchChargeWriteStatus } = await import("../public/lib/charge-write.js");
-const { controllerSentence } = await import("../public/views/charge-auto.js");
-
-/** charge_manager_state (0x610 b7): 0x23 a settled DC session, 0x02 AC, 0x00 nothing plugged in. */
-const DC_SESSION = 0x23;
-const AC_SESSION = 0x02;
-const NO_SESSION = 0x00;
-
-/** The bus as the page has been told it, so a heartbeat can re-send all of it the way ws.ts does. */
-const bus: Record<string, number> = {};
-
-/** The server clock the messages carry. Advanced explicitly, so every age in the run is deliberate. */
-let serverClockMs = 1_000;
-
-connection.val = "live";
 
 // ── §1 ⚠️ THE BUG: the amps move, the reason stands still ──────────────────
 //
@@ -157,8 +119,12 @@ expect("§2", `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding
     failures.push("§4 returning to a DC charge did not re-read /charge-auto, so the tile shows pre-AC state");
   }
 
+  // ⚠️ The Pi SAYING no, through the real fetchChargeWriteStatus(), rather than applyWriteStatus(null)
+  // — that is the session-end clear, which is §7's path and would prove the wrong thing here.
   const beforeWritesOff = countOf("/charge-auto");
-  applyWriteStatus(null);
+  setWritesOn(false);
+  await fetchChargeWriteStatus();
+  await settle();
   patch({ charge_auto_target_a: 44 });
   await settle();
   if (countOf("/charge-auto") !== beforeWritesOff) {
@@ -177,7 +143,8 @@ expect("§2", `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding
 // session that produced it and the tile would print a current this charge never commanded. The
 // reason is moved here so the refresh fires either way — this section is about which number wins,
 // not about what wakes the tile.
-writesAreOn = true;
+// Writes back on for the rest of the run, through the same door §4 shut.
+setWritesOn(true);
 await fetchChargeWriteStatus();
 await settle();
 pi.reason = CHARGE_AUTO_REASON.NEAR_CEILING;
@@ -198,6 +165,8 @@ expect(
 // settled rule can be a very long time. The window is real: charge-write.js clears the status on
 // the session edge and the reopening GET is an async HTTP round trip.
 {
+  // The session-edge clear, not the stub — charge-write.js:121 is what really runs here, and the
+  // reopening fetchChargeWriteStatus() below is the async round trip the change has to survive.
   applyWriteStatus(null);
   const before = countOf("/charge-auto");
   pi.reason = CHARGE_AUTO_REASON.HARD_CEILING;
@@ -242,11 +211,105 @@ expect(
   // The cable back in, at the same charger, inside the same tick. Neither signal has moved.
   patch({ charge_manager_state: DC_SESSION });
   await settle();
+  // ⚠️ The wanted text is the PREVIOUS session's reason, and that is not this check blessing it:
+  // `forgetSession()` does not clear `context.reason`, so it really is what /charge-auto answers,
+  // and the page's job is to show what the Pi says rather than to guess better. The amps stopped
+  // lying here; the sentence has not, and closing that is Pi-side — issue #204.
   expect(
     "§7 a re-plug quick enough that no controller tick intervenes — neither signal moved, and the Pi is " +
-      "commanding nothing",
+      "commanding nothing (the reason is still the last session's, which is issue #204, not this)",
     CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.AT_FLOOR]
   );
+}
+
+// ── §8 ⚠️ TWO READS FROM ONE TICK, REPLIED OUT OF ORDER ────────────────────
+//
+// The wake-up on the commanded current is what makes this reachable, so it ships with the fix that
+// creates it. One tick issues TWO reads tens of milliseconds apart — the reason at auto.ts:197, the
+// amps at :206 — and the FIRST carries `commandedAmps` from before the command. If that reply lands
+// last, `apply()` cannot tell it is older and the tile keeps the pre-command number for the rest of
+// a settled charge. That is #200's own symptom, reached through #200's own fix; on main one tick
+// fired one read and there was nothing to race.
+{
+  pi.reason = CHARGE_AUTO_REASON.CLOSING;
+  pi.commandedAmps = 70;
+  patch({ charge_auto_reason: CHARGE_AUTO_REASON.CLOSING, charge_auto_target_a: 70 });
+  await settle(SLOW_REPLY_MS * 2);
+  expect(
+    "§8 (setting up) the tile is current before the tick",
+    `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.CLOSING]} Commanding 70 A.`
+  );
+
+  // The reason, recorded while the Pi still holds the OLD amps, answered slowly.
+  pi.reason = CHARGE_AUTO_REASON.SETTLED;
+  holdNextReply(SLOW_REPLY_MS);
+  patch({ charge_auto_reason: CHARGE_AUTO_REASON.SETTLED });
+  await settle();
+  // The command lands, and the amps are recorded — answered at once, so it overtakes.
+  await pause(COMMAND_MS);
+  pi.commandedAmps = 55;
+  patch({ charge_auto_target_a: 55 });
+  await settle(SLOW_REPLY_MS * 2);
+  expect(
+    "§8 the reason's read was answered after the amps' read, carrying the amps from before the command",
+    `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding 55 A.`
+  );
+
+  // ⚠️ And it must STAY right: a settled controller records nothing further, so a tile that lost
+  // this race holds the wrong number for the rest of the charge rather than for one tick.
+  for (let beat = 0; beat < 5; beat += 1) {
+    heartbeat();
+    await settle();
+  }
+  expect(
+    "§8 five heartbeats later — a settled controller records nothing, so a lost race is permanent",
+    `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding 55 A.`
+  );
+}
+
+// ── §9 ⚠️ A READ THAT FAILS MUST NOT COUNT AS ONE THAT ACTED ───────────────
+//
+// The same trap as §6, on the error path instead of the gated one: the guards are advanced before
+// the round trip, so a read that ATTEMPTED and did not land leaves them agreeing with the signals
+// and nothing will ever re-deliver the change. A settled controller records nothing further, so the
+// tile then holds the wrong reason AND the wrong current for the rest of the charge. Wifi on a bike
+// at a motorway charger drops packets; this is not a hypothetical path.
+{
+  // refresh()'s own console.warn reaches stderr here and is EXPECTED — this section makes a read
+  // fail on purpose, and run-checks.ts inherits stdio. Said out loud so a reader of a green
+  // `npm test` does not take the stack trace under it for a real fault.
+  console.log("  (the 'charge-auto: status fetch failed' warning below is §9 failing a read on purpose)");
+  pi.reason = CHARGE_AUTO_REASON.CLEAR;
+  pi.commandedAmps = 66;
+  failNextChargeAutoRead();
+  patch({ charge_auto_reason: CHARGE_AUTO_REASON.CLEAR, charge_auto_target_a: 66 });
+  await settle();
+  expect(
+    "§9 (setting up) the failed read left the tile on the previous answer, which is the safe direction",
+    `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding 55 A.`
+  );
+
+  // Nothing further moves — only the heartbeat re-sending what it already sent.
+  heartbeat();
+  await settle();
+  expect(
+    "§9 the next heartbeat retries the read the failure lost, rather than the guards having eaten it",
+    `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.CLEAR]} Commanding 66 A.`
+  );
+
+  // ⚠️ And it must not have become a retry loop: once the read lands, the guards are consumed again
+  // and the heartbeat goes back to costing nothing. §3's property, re-asserted after an error.
+  const before = countOf("/charge-auto");
+  for (let beat = 0; beat < 5; beat += 1) {
+    heartbeat();
+    await settle();
+  }
+  if (countOf("/charge-auto") !== before) {
+    failures.push(
+      `§9 five heartbeats after the recovery cost ${countOf("/charge-auto") - before} fetch(es) — rolling the ` +
+        `guards back on failure turned the tile into a poll`
+    );
+  }
 }
 
 if (failures.length > 0) {
@@ -261,7 +324,9 @@ console.log(
     `reason unchanged updates it (the #200 freeze), the reason moving alone still does, five heartbeats repeating ` +
     `the same values cost nothing, neither an AC session nor a phone with writes off fetches anything, the amps ` +
     `shown are the endpoint's and not the signal's, a move that lands while the write gate is shut is not thrown ` +
-    `away, and a re-plug inside one controller tick never leaves the last session's "Commanding x A" on screen`
+    `away, a re-plug inside one controller tick never leaves the last session's "Commanding x A" on screen, ` +
+    `one tick's two reads replied out of order still end on the commanded current, and a read that fails ` +
+    `outright is retried on the next heartbeat rather than being swallowed`
 );
 
 /**
@@ -275,50 +340,4 @@ function expect(label: string, wanted: string): void {
   if (got !== wanted) {
     failures.push(`${label}: the tile reads "${got}", the Pi's state says "${wanted}"`);
   }
-}
-
-/** How many times the page has fetched a path this run. */
-function countOf(path: string): number {
-  return fetched.filter(seen => seen === path).length;
-}
-
-/**
- * One WebSocket patch, exactly as src/ws.ts sends a change batch.
- *
- * The unit and group come from the registry rather than being written here, because
- * public/lib/bounds.js gates on all three and a hand-typed group is how a check ends up asserting
- * against a reading the real page would have rejected as a dead sensor.
- */
-function patch(signals: Record<string, number>): void {
-  serverClockMs += 100;
-  apply(messageOf("patch", signals));
-}
-
-/** The 5 s full snapshot — every signal again, unchanged, with the fresh identity that churns. */
-function heartbeat(): void {
-  serverClockMs += HEARTBEAT_MS;
-  apply(messageOf("snapshot", bus));
-}
-
-function messageOf(type: "patch" | "snapshot", signals: Record<string, number>): DashboardMessage {
-  const readings: Record<string, LiveValue> = {};
-  for (const [key, value] of Object.entries(signals)) {
-    const definition = SIGNALS.find(signal => signal.key === key);
-    if (!definition) {
-      throw new Error(`${key} is not in src/can/registry.ts — the bike cannot broadcast it and neither may this`);
-    }
-    bus[key] = value;
-    readings[key] = { value, unit: definition.unit, group: definition.group, ts: serverClockMs };
-  }
-  return { type, ts: serverClockMs, signals: readings };
-}
-
-/**
- * Lets the store's derive, the view's fetch and its `apply()` all run.
- *
- * A macrotask, because the chain is several microtask hops deep: VanJS flushes with
- * queueMicrotask, refresh() awaits the response and awaits its .json(), and only then assigns.
- */
-function settle(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 0));
 }

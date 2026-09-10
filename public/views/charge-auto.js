@@ -188,11 +188,34 @@ export function controllerSentence() {
   return `${reasonSentence.val}${suffix}`;
 }
 
+/**
+ * Which read has spoken most recently, so a slow answer cannot overwrite a newer one.
+ *
+ * ⚠️ ONE controller tick issues TWO reads, tens of milliseconds apart — src/charge/auto.ts records
+ * the reason, awaits the command, then records the amps — and the FIRST reply carries the amps from
+ * BEFORE the command. Replied out of order, which one retransmit is enough to cause, the stale one
+ * lands last and the tile keeps the pre-command number for the rest of a settled charge: issue
+ * #200's own symptom, reached through its own fix. Measured to need ~45 ms of skew.
+ */
+let latestRead = 0;
+
 async function refresh() {
+  const read = (latestRead += 1);
   try {
     const response = await fetch("/charge-auto", { cache: "no-store" });
-    apply(/** @type {ChargeAutoResponse} */ (await response.json()));
+    const payload = /** @type {ChargeAutoResponse} */ (await response.json());
+    if (read !== latestRead) {
+      // A newer read was issued while this one was in flight, so its answer is at least as fresh.
+      return;
+    }
+    apply(payload);
   } catch (error) {
+    // ⚠️ The guards were advanced on the assumption this would land, so a read that ATTEMPTED and
+    // did not act must un-consume them or the wake-up is gone for good — trap #2 in
+    // docs/dashboard-decisions.md, on the failing path rather than the gated one. The next
+    // heartbeat re-sends both signals and tries again.
+    lastReason = null;
+    lastTargetAmps = null;
     // Loud but not fatal: with no status the control renders its label and nothing else, which is
     // the safe direction — it never claims the controller is on when it does not know.
     console.warn("charge-auto: status fetch failed", error);
@@ -224,6 +247,11 @@ async function toggle(wanted) {
       headers: { "X-Cool-Eva": "charge-auto" },
     });
     const payload = /** @type {ChargeAutoResponse} */ (await response.json());
+    // ⚠️ Takes a read number rather than checking one, so a POST reply is never dropped: it is the
+    // Pi's answer to something we just asked for, and it is the only reply carrying `message` — the
+    // refusal text when CHARGE_AUTO_ENABLED pins the mode off. Any read already in flight is older
+    // than it by construction, and setMode() records the reason immediately, so one usually is.
+    latestRead += 1;
     apply(payload);
   } catch (error) {
     failure.val = `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}.`;
