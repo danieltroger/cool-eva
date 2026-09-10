@@ -500,6 +500,48 @@
         { at: NOW - 26 * DAY, clockTrustworthy: false, action: "clear-dtcs", status: "cleared" },
       ];
 
+      /**
+       * Which bike the sheet is standing in for, chosen with `?scene=` in the URL.
+       *
+       * ⚠️ A query string and not a control on the page: this file's claim is that what you
+       * see is what the bike serves, and chrome of its own weakens that for every screenshot
+       * taken through it. Same reasoning as the app preview's `?scene=`.
+       *
+       * `charging` and `refused` exist because the gate line, the write panel's mid-charge
+       * warning and the shared refusal caption render NOTHING on a parked bike — and a design
+       * gate blind to the panel it is gating is not a gate (#184). Named `SCENES` and keyed on
+       * `?scene=` to match the whole-dashboard template: two vocabularies for the same bike is
+       * how a state gets added to one and never exists in the other, and it is also what
+       * build-service-preview.ts's discoverability line greps for.
+       */
+      // The numbers and prose the Pi owns, substituted at build time — see
+      // scripts/preview-server-facts.ts. The annotated sheet needs it for the same reason the
+      // whole-dashboard one does: it quotes two sentences only the gate may word.
+      const SERVER = __SERVER_FACTS__;
+
+      const SCENES = {
+        parked: { gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] } },
+        charging: { gate: {
+          safe: true,
+          blockers: [],
+          // SERVER.chargingDcEvidence: the Pi is the only thing that may word this.
+          chargingEvidence: SERVER.chargingDcEvidence,
+          checks: [],
+        } },
+        refused: { gate: {
+          safe: false,
+          // ⚠️ Episode E0's own refusal, in the order evaluateServiceGate emits it: the cable
+          // leads, and the drive follows. Before #190 this state said only the second.
+          blockers: [SERVER.inletBlocker, "the drive is not energized — it reads 1"],
+          chargingEvidence: null,
+          checks: [],
+        } },
+      };
+      // ⚠️ hasOwn on a narrowed string, not a bare lookup: `?gate=constructor` would
+      // otherwise select a function, the trap the app template's ?scene= already names.
+      const WANTED_GATE = new URLSearchParams(window.location.search).get("scene") ?? "parked";
+      const GATE = ((Object.hasOwn(SCENES, WANTED_GATE) ? SCENES[WANTED_GATE] : undefined) ?? SCENES.parked).gate;
+
       const WRITE_STATUS = {
         enabled: true,
         // ⚠️ Four corrections made in both templates on 2026-09-08, because both carry their own
@@ -511,7 +553,7 @@
         runningVersion: { commit: "7f6dbcd", dirty: false, trustworthy: true, label: "7f6dbcd" },
         chargeAck: null,
         // ⚠️ No `readings`: that is on the gate's INPUT type, never on the verdict the Pi sends.
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+        gate: GATE,
         tableGate: {
           state: "confirmed",
           writesAllowed: true,
@@ -543,7 +585,7 @@
         measurement: "flow control 2.4 ms after the kernel saw the First Frame · worst event-loop delay 1.8 ms",
         answered: 2,
         message: null,
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+        gate: GATE,
       };
 
       const STATUS = {
@@ -586,7 +628,7 @@
             ],
           },
         },
-        gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+        gate: GATE,
         enabled: true,
         export: { rows: 233, readAt: SWEPT_AT, complete: true },
         message: null,
@@ -891,7 +933,7 @@
                 note: "No name-table row describes this identifier, so only the bytes are known.",
               },
               message: null,
-              gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+              gate: GATE,
               targets: [],
             });
           }
@@ -911,7 +953,7 @@
               note: null,
             },
             message: null,
-            gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+            gate: GATE,
             targets: [],
           });
         }

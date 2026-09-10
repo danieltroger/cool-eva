@@ -63,6 +63,32 @@ __CSS__
       // written out again here. See its comment for why a second copy is the failure, not the fix.
       const SERVER = __SERVER_FACTS__;
 
+      /**
+       * A derived gate verdict as a MUTABLE object.
+       *
+       * ⚠️ Only because the fixture type-check substitutes SERVER as a frozen literal, so its
+       * arrays come back `readonly` and will not satisfy `Partial<ServiceGateVerdict>`. The
+       * values are the gate's own; this copies them, it does not restate them.
+       */
+      const gateOf = verdict => ({
+        safe: verdict.safe,
+        blockers: [...verdict.blockers],
+        checks: [...verdict.checks],
+        chargingEvidence: verdict.chargingEvidence,
+      });
+
+      /**
+       * ⚠️ ONE gate object, referenced from every fixture that carries one, and declared HERE
+       * because `const` has a temporal dead zone and the fixtures below are built at parse
+       * time — putting it beside the scene that mutates it rendered a blank page.
+       *
+       * The scene overlay used to patch two of the five gate literals, so `?scene=refused`
+       * showed a refused write panel above a lifetime panel and probe answers still claiming
+       * the bike was fine: two opinions from one bike on one screen, in the instrument that
+       * gates dashboard merges. Mutated in place below, since the fixtures hold a reference.
+       */
+      const GATE = { safe: true, blockers: [], chargingEvidence: null, checks: [] };
+
       const __MODULES = {
 __MODULES__
       };
@@ -276,7 +302,7 @@ __MODULES__
         chargeAck: null,
         // ⚠️ No `readings` here. It is on ServiceGateEvidence, the gate's INPUT, and never on the
         // verdict the Pi sends — one of three fields the fixture had invented.
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+        gate: GATE,
         tableGate: {
           state: "confirmed",
           writesAllowed: true,
@@ -309,7 +335,7 @@ __MODULES__
         measurement: "flow control 2.4 ms after the kernel saw the First Frame · worst event-loop delay 1.8 ms",
         answered: 2,
         message: null,
-        gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] },
+        gate: GATE,
       };
 
       const STATUS = {
@@ -354,7 +380,7 @@ __MODULES__
             ],
           },
         },
-        gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+        gate: GATE,
         enabled: true,
         export: { rows: 233, readAt: SWEPT_AT, complete: true },
         message: null,
@@ -500,7 +526,10 @@ __MODULES__
           commandedAmps: 42,
           // ⚠️ The gate's charging branch, which is deliberately NOT the stationary one: the DC
           // charge parameters cannot be tested unplugged, so a charging bike is allowed to write.
-          gate: { chargingEvidence: "the charge manager reports a DC session" },
+          // ⚠️ SERVER.chargingDcEvidence, not a typed copy of it. Until #190 this read
+          // "…reports a DC session", which NO production code could emit for a fortnight — a
+          // fixture quoting a caption the Pi cannot say is the failure #184 is about.
+          gate: { chargingEvidence: SERVER.chargingDcEvidence },
           // Phrasing mirrors describeChargeAck()'s `took` branch in src/charge/acknowledge.ts.
           chargeAck: {
             verdict: { kind: "took", fromAmps: 68, toAmps: 42, latencyMs: 1840 },
@@ -509,6 +538,21 @@ __MODULES__
           // 100 % for the whole of a DC session, whatever the pack temperature — src/fan/curve.ts.
           fan: { dutyPercent: 100, targetPercent: 100, driverEnabled: true, phase: "running" },
           fanAuto: { reason: SERVER.fanReason.DC_SESSION, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 47, temperatureAgeMs: 310 },
+        },
+        // Episode E0 (docs/vcu-parameters.md §12): the charge manager is on the bus with an
+        // empty inlet, so the settled 0x02 is NOT believed. The two blockers are what
+        // evaluateServiceGate emits, in its order — the cable leads and the drive follows.
+        refused: {
+          // ⚠️ BOTH bytes of 0x610, because the inlet byte is what the refusal is about and
+          // the fixture used to display a verdict its own signals could not produce. 0x00 is
+          // E0's own reading: no inlet, no lock. The Charge tab reading "live AC session"
+          // beside "nothing in the inlet" is not a fixture bug — it is exactly the
+          // contradiction episode E0 is, and the gate is the thing that resolves it.
+          signals: {
+            "charge_manager_state": [0x02, "", "charge"],
+            "charge_manager_status": [0x00, "", "charge"],
+          },
+          gate: gateOf(SERVER.refusedGate),
         },
         riding: {
           // Both halves of the power bar hatch here, which is the case lib/svg.js's derateSpans()
@@ -530,10 +574,10 @@ __MODULES__
             "cell_min_mv": [3489, "mV", "cells"],
             "cell_max_mv": [3527, "mV", "cells"],
             "cell_spread_mv": [38, "mV", "cells"],
-            "gps_speed_kmh": [72, "km/h", "gps"],
-            "speed_can_kmh": [74, "km/h", "drive"],
+            "gps_speed_kmh": [SERVER.ridingSpeedKmh - 2, "km/h", "gps"],
+            "speed_can_kmh": [SERVER.ridingSpeedKmh, "km/h", "drive"],
             "gps_course_deg": [113, "°", "gps"],
-            "motor_rpm": [4210, "rpm", "obd"],
+            "motor_rpm": [SERVER.ridingMotorRpm, "rpm", "obd"],
             "throttle_pct": [34, "%", "drive"],
             "go": [1, "", "controls"],
           },
@@ -541,6 +585,16 @@ __MODULES__
           fan: { dutyPercent: 62, targetPercent: 62, driverEnabled: true, phase: "running" },
           fanAuto: { reason: SERVER.fanReason.PACK_TEMPERATURE, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 41, temperatureAgeMs: 240 },
           funGate: SERVER.funGate.GO_SET,
+          // ⚠️ A riding bike is the one state where the gate MUST refuse, and this scene had
+          // no `gate` at all — harmless while the override reached only the write panel, wrong
+          // the moment one binding fed all five fixtures.
+          //
+          // ⚠️ DERIVED, after the hand-written version got it wrong: a riding bike emits SEVEN
+          // blockers and the typed list had four, missing `energized` from the middle — a
+          // refusal no motorcycle can produce, under a comment claiming it was what the gate
+          // builds. SERVER.ridingGate runs evaluateServiceGate over the same frame the speed
+          // and rpm tiles above decode from.
+          gate: gateOf(SERVER.ridingGate),
         },
       };
 
@@ -551,6 +605,7 @@ __MODULES__
         console.warn(`preview: there is no scene called "${WANTED_SCENE}" — showing parked. Try ${Object.keys(SCENES).join(", ")}.`);
       }
       const SCENE = SCENES[SCENE_NAME];
+
 
       /** Everything the bike is broadcasting right now. Patches write here, so a snapshot carries them. */
       const LIVE = Object.assign({}, PARKED_SIGNALS, SCENE.signals);
@@ -617,7 +672,7 @@ __MODULES__
       // The scene's own answers, laid over the fixtures above. Kept here rather than written into
       // each fixture so the literals stay complete — scripts/check-preview-fixtures.ts reads THEM,
       // and a fixture assembled per scene would be a fixture it could no longer check.
-      Object.assign(WRITE_STATUS.gate, SCENE.gate);
+      Object.assign(GATE, SCENE.gate);
       Object.assign(FAN, SCENE.fan);
       Object.assign(FAN.auto, SCENE.fanAuto);
       if (SCENE.funGate !== undefined) {
@@ -1050,7 +1105,7 @@ __MODULES__
                 note: "No name-table row describes this identifier, so only the bytes are known.",
               },
               message: null,
-              gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+              gate: GATE,
               targets: [],
             });
           }
@@ -1070,7 +1125,7 @@ __MODULES__
               note: null,
             },
             message: null,
-            gate: { safe: true, blockers: [], checks: [], chargingEvidence: null },
+            gate: GATE,
             targets: [],
           });
         }

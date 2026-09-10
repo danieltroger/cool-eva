@@ -269,7 +269,7 @@ function Availability() {
         { style: `color:${GOOD}` },
         status.gate.chargingEvidence === null
           ? "✅  Stationary and out of drive."
-          : `🔌  Stationary and charging (${status.gate.chargingEvidence}) — which is deliberately allowed, because the DC charge parameters cannot be tested unplugged.`
+          : `🔌  Stationary and charging (${status.gate.chargingEvidence}) — deliberately allowed: a tethered bike cannot be ridden away, and the charge parameters cannot be tested unplugged.`
       ),
       TableTypeNote(),
       RunningVersion(status)
@@ -411,7 +411,7 @@ function TargetNote() {
     if (!target) {
       return div();
     }
-    const notes = warningsOf(target);
+    const notes = warningsOf(target, state.val?.status?.gate.chargingEvidence ?? null);
     return div(
       div({ style: `color:${MUTED}` }, target.purpose),
       notes.length === 0
@@ -445,11 +445,30 @@ function TargetNote() {
  * warnings about the same act, and two separately-headed lists of amber paragraphs was
  * half the problem.
  * @param {WriteTargetSummary} target
+ * @param {string | null} chargingEvidence what says the bike is on a charger, or null
  */
-function warningsOf(target) {
+function warningsOf(target, chargingEvidence) {
+  const base =
+    target.control.kind === "bits"
+      ? [...target.warnings, ...target.control.bits.map(bit => `⚠️ ${bit.label}: ${bit.caveat}`)]
+      : target.warnings;
+  return chargingEvidence === null ? base : [...base, whileChargingNote(target)];
+}
+
+/**
+ * What writing THIS parameter mid-charge does to the session in progress.
+ *
+ * ⚠️ Two different claims, and they are not interchangeable. The config word is READ AT
+ * BOOT — that is in the allowlist's own `verify` line and is a fact about the firmware. For
+ * everything else nothing establishes whether a running session re-negotiates, so this says
+ * that rather than inventing a rule: docs/vcu-parameters.md §5 goes as far as "change ONE
+ * parameter per charge session" and no further.
+ * @param {WriteTargetSummary} target
+ */
+function whileChargingNote(target) {
   return target.control.kind === "bits"
-    ? [...target.warnings, ...target.control.bits.map(bit => `⚠️ ${bit.label}: ${bit.caveat}`)]
-    : target.warnings;
+    ? "⚠️ The bike is charging. This is a config word and the VCU only reads those at BOOT, so the charge in progress cannot be affected by it either way — key-cycle before judging the result."
+    : "⚠️ The bike is charging. The read-back confirms the parameter took; whether the session already running picks up the new value has never been measured. Treat this as taking effect from the next session.";
 }
 
 /**

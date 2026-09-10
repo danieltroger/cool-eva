@@ -59,6 +59,35 @@ await writeLifetimeRead(storeDirectory, {
     failure: null,
   })),
 });
+// ⚠️ A REFUSAL IS NOT AN ANSWER, and it is the shape a first read during a live charge is
+// likeliest to produce. `7F A8 22` arrives as a successful exchange carrying a negative
+// answer, so the reply has BOTH bytes and a failure — the one shape where `payloadHex !==
+// null` and `failure === null` disagree. Counting the bytes made two refusals look like two
+// answers, enough to clear the "would replace" guard and overwrite a good reading. Every
+// site was reverted in review and no fixture noticed, because none of them built this shape.
+const REFUSAL_HEX = "7FA822";
+const twoRefusals = await writeLifetimeRead(storeDirectory, {
+  readAt: Date.UTC(2026, 8, 9, 22, 10, 0),
+  source: "service",
+  replies: LIFETIME_READ_PAYLOADS.map(entry => ({
+    component: entry.component,
+    payloadHex: REFUSAL_HEX,
+    failure: "refused: conditionsNotCorrect (NRC 0x22)",
+  })),
+});
+check(!twoRefusals.stored, `two refusals must not be stored as two answers, got: ${twoRefusals.reason}`);
+// The sharpest form of it: a good 2-of-2 reading is already on disk here, so counting the
+// refusals' bytes as answers would clear `answered < previousAnswered` and destroy it.
+const survivor = await loadLifetimeStatistics(storeDirectory);
+check(
+  survivor !== null && survivor.statistics.rows.find(row => row.key === "odometer_km")?.value === ODOMETER_KM,
+  "…and the good reading that was already stored must survive them untouched"
+);
+check(
+  (await readdir(storeDirectory)).some(name => name.startsWith("lifetime-2026-09-09")),
+  "…while still archiving the refusal's own bytes, because a refused run leaves a trace too"
+);
+
 const restored = await loadLifetimeStatistics(storeDirectory);
 check(
   restored !== null && restored.source === "read-freeze-frame.ts",

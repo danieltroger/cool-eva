@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import type { VcuReadRunner } from "../vcu/read-runner.ts";
 import type { ServiceGateVerdict } from "../vcu/service-gate.ts";
-import { writeLifetimeRead } from "../vcu/lifetime-store.ts";
+import { writeLifetimeRead, type StoredLifetimeReply } from "../vcu/lifetime-store.ts";
 import { describeMeasurement } from "../vcu/lifetime-read.ts";
 import type { LifetimeReadResult } from "../vcu/lifetime-read.ts";
 import { SERVICE_MODE_HEADER, SERVICE_MODE_HEADER_VALUE } from "./vcu-read.ts";
@@ -32,9 +32,9 @@ import { SERVICE_MODE_HEADER, SERVICE_MODE_HEADER_VALUE } from "./vcu-read.ts";
 export interface LifetimeReadResponse {
   /** How late our flow control was, in words. Null when nothing was read. */
   measurement: string | null;
-  /** How many of the two components answered with bytes. */
+  /** How many of the two components answered with a READING — a refusal sent bytes and is not one. */
   answered: number | null;
-  /** Why nothing was read, or why the result was not stored. Null when it was. */
+  /** Why nothing was read, why it was not stored, or what the components that failed said. Null when all is well. */
   message: string | null;
   /** The gate as it reads now, so the page can explain a refusal without a second request. */
   gate: ServiceGateVerdict;
@@ -84,15 +84,26 @@ export async function handleLifetimeReadEndpoint(
     source: "service",
     replies: outcome.result.replies,
   });
-  const answered = outcome.result.replies.filter(reply => reply.payloadHex !== null).length;
   // ⚠️ The measurement goes back WHATEVER happened to the store. A read that answered
   // 1 of 2 and was correctly refused storage is exactly the run whose flow-control
   // number is worth having, and putting only the refusal here hid it.
   respond(res, 200, options, {
     measurement: describeMeasurement(outcome.result),
-    answered,
-    message: stored.stored ? null : stored.reason,
+    answered: stored.answered,
+    // What each component actually said, when they did not all answer. The count alone
+    // cannot tell a silent micro from one that refused, and those send you to different
+    // places — the first to the bus, the second to the conditions the read was taken in.
+    message: stored.stored ? describeFailures(outcome.result.replies) : stored.reason,
   });
+}
+
+/** The components that did not answer, by name and reason, or null when they all did. */
+function describeFailures(replies: readonly StoredLifetimeReply[]): string | null {
+  const failed = replies.filter(reply => reply.failure !== null);
+  if (failed.length === 0) {
+    return null;
+  }
+  return failed.map(reply => `component ${reply.component}: ${reply.failure}`).join("; ");
 }
 
 function respond(

@@ -500,6 +500,9 @@ const MAY_NAME_HOW_TO_READ: Record<string, string> = {
     "builds the /lifetime-stats payload for the preview — it serves the string, it does not print it",
   "freeze-frame-args.ts": "names it in a comment, pointing at where the instruction lives",
   "check-lifetime-stats.ts": "this file",
+  "check-service-gate-charging.ts":
+    "asserts the instruction against the GATE VERDICT rather than against a second copy of the sentence — #190. It " +
+    "compares, and deliberately does not interpolate it into any message, so a shell reader is never handed the in-app path.",
 };
 const scriptsDirectory = new URL(".", import.meta.url);
 const shellCallers: string[] = [];

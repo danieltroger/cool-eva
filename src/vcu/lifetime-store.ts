@@ -32,13 +32,15 @@ const LATEST_FILE = "lifetime.json";
  * screen was one you cannot follow on the phone that is showing it. The script is still
  * the answer when the service IS stopped, so it stays below rather than being deleted.
  *
- * ⚠️ "with the drive down" and not "not charging": the safety gate deliberately EXCUSES
- * `energized` while a charge session is confirmed (src/vcu/service-gate.ts), so telling
- * the rider to unplug first would be inventing a rule the code does not have. What the
- * gate does require is the drive down and the bike stationary, and the sheet prints
- * whichever check is blocking — which is the honest thing to point at.
+ * ⚠️ The comma is load-bearing. This parses as *parked, with (the drive down OR plugged
+ * in)*, which is the gate's own shape. Without it, *(parked with the drive down) or
+ * (plugged in)* sanctions a moving bike on a cable — the one thing it exists to prevent.
+ *
+ * Why "plugged in" and not "charging", and why #187's wording had to change once the
+ * charging escape actually ran: docs/vcu-parameters.md §12.
  */
-export const HOW_TO_READ = 'menu → Service mode → "Read the lifetime battery statistics", parked with the drive down';
+export const HOW_TO_READ =
+  'menu → Service mode → "Read the lifetime battery statistics", parked, with the drive down or plugged in';
 
 /**
  * The same read from a shell, for a Pi whose service is stopped.
@@ -61,12 +63,20 @@ export const HOW_TO_READ_WITH_SERVICE_STOPPED =
 /** How the reading was taken. Not cosmetic — see the header. */
 export type LifetimeReadSource = "service" | "read-freeze-frame.ts";
 
-/** One component's reply, as bytes or as the reason there are none. */
+/**
+ * One component's reply: the bytes, and whether they are an answer.
+ *
+ * ⚠️ THE TWO FIELDS ARE NOT COMPLEMENTARY, and reading them as though they were is what
+ * made a refusal count as an answer. A micro replying `7F A8 22` is a successful exchange
+ * carrying a negative answer, so it has BOTH a payload and a failure — the bytes are kept
+ * because rule 1 says every run leaves a trace, and `failure` is what stops it being
+ * counted, stored over a good reading, or decoded as a freeze frame.
+ */
 export interface StoredLifetimeReply {
   component: number;
-  /** The reassembled payload, uppercase hex, PCI stripped. Null when nothing came back. */
+  /** The reassembled payload, uppercase hex, PCI stripped. Null when nothing came back at all. */
   payloadHex: string | null;
-  /** Why there is no payload. Null when there is one. */
+  /** Why these bytes are not a reading. Null when they are one — that is the test to use. */
   failure: string | null;
 }
 
@@ -122,24 +132,24 @@ export async function loadLifetimeStatistics(directory: string): Promise<StoredL
 export async function writeLifetimeRead(
   directory: string,
   read: StoredLifetimeRead
-): Promise<{ stored: boolean; reason: string }> {
-  const answered = read.replies.filter(reply => reply.payloadHex !== null).length;
+): Promise<{ stored: boolean; reason: string; answered: number }> {
+  const answered = answeredCount(read.replies);
   const path = join(directory, LATEST_FILE);
   await mkdir(directory, { recursive: true });
   await archive(directory, read);
   const previous = await loadStoredRead(directory);
-  const previousAnswered = previous?.replies.filter(reply => reply.payloadHex !== null).length ?? 0;
+  const previousAnswered = previous === null ? 0 : answeredCount(previous.replies);
   if (answered === 0) {
     const reason = `nothing answered, so ${path} is left as it was — ${previousAnswered} stored replies stand`;
     console.warn(`lifetime: ⚠️  ${reason}`);
-    return { stored: false, reason };
+    return { stored: false, reason, answered };
   }
   if (answered < previousAnswered) {
     // Said out loud rather than done quietly, for the reason snapshot-store.ts gives:
     // "your page still says yesterday" is baffling when it is silent.
     const reason = `${answered} replies would replace ${previousAnswered} — KEPT the previous ${LATEST_FILE}`;
     console.warn(`lifetime: ⚠️  ${reason}`);
-    return { stored: false, reason };
+    return { stored: false, reason, answered };
   }
   // Renamed into place, never written in place: a truncated lifetime.json reads as
   // null, the page says "never read", and a reading that cost a service stop and a
@@ -148,7 +158,18 @@ export async function writeLifetimeRead(
   await replaceFileDurably(path, `${JSON.stringify(read, null, 2)}\n`);
   const reason = `stored ${answered}/${read.replies.length} replies from ${read.source} in ${path}`;
   console.log(`lifetime: ${reason}`);
-  return { stored: true, reason };
+  return { stored: true, reason, answered };
+}
+
+/**
+ * How many of these replies are READINGS.
+ *
+ * ⚠️ The one place that rule lives. It was written out at four call sites, all four said
+ * `payloadHex !== null`, and all four were wrong in the same way — a refusal carries bytes.
+ * A fifth site, or a fifth hand-edit, is how it comes back.
+ */
+export function answeredCount(replies: readonly StoredLifetimeReply[]): number {
+  return replies.filter(reply => reply.failure === null).length;
 }
 
 /**
@@ -214,8 +235,14 @@ function isStoredReply(reply: unknown): reply is StoredLifetimeReply {
  * non-frame outcomes are the ones a real bus produces.
  */
 function decodeStoredReply(reply: StoredLifetimeReply) {
+  // ⚠️ `failure` first, not `payloadHex`: a refusal carries bytes, and handing `7F A8 22`
+  // to the freeze-frame decoder would report our own read as an unrecognised frame instead
+  // of as the micro saying no. The bytes still travel, in rawHex.
+  if (reply.failure !== null) {
+    return { kind: "unrecognised" as const, reason: reply.failure, rawHex: reply.payloadHex ?? "" };
+  }
   if (reply.payloadHex === null) {
-    return { kind: "unrecognised" as const, reason: reply.failure ?? "no reply", rawHex: "" };
+    return { kind: "unrecognised" as const, reason: "no reply", rawHex: "" };
   }
   // ⚠️ ./snapshot.ts's parser, not a local one. The copy this replaced split on a
   // literal space and validated the parsed NUMBER rather than the token, so `"AB\tCD"`

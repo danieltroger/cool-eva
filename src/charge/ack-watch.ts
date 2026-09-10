@@ -28,9 +28,11 @@ import type { ChargeMode } from "../can/charge-command.ts";
 /**
  * charge_manager_state (0x610 b7) settled values.
  *
- * ⚠️ The fourth private copy of these two bytes (fan/curve.ts exports DC only, write-runner.ts and
- * public/lib/charge-write.js each keep their own pair). Left alone deliberately: folding them into
- * one shared charge module means editing three files this change has no other business in.
+ * ⚠️ A private copy of these two bytes (fan/curve.ts exports DC only, public/lib/charge-write.js
+ * keeps its own — the browser cannot import TS). ⚠️ The shared module the old note here was
+ * waiting for now exists: src/vcu/charge-session.ts owns them, and write-runner.ts's copy is
+ * gone (#190). Folding this one in is a one-line import and is worth doing next time this file
+ * is open; it is left alone here only because #190 had no other business in src/charge/.
  */
 const CHARGE_MANAGER_STATE_AC = 0x02;
 const CHARGE_MANAGER_STATE_DC = 0x23;

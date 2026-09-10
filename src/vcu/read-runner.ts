@@ -2,7 +2,7 @@ import type { RawChannel } from "socketcan";
 import type { FrameArrival } from "../can/frame-arrival.ts";
 import { ageMs, latestValue } from "../can/signals.ts";
 import { acquireBus, type BusLease } from "./bus-lease.ts";
-import { evaluateServiceGate, serviceGateSignalKeys, type ServiceGateVerdict } from "./service-gate.ts";
+import { evaluateServiceGate, sampleServiceGate, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
 import { describeMeasurement, startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
@@ -225,10 +225,10 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
  * motorcycle parked.
  */
 function readGate(): ServiceGateVerdict {
-  const readings = Object.fromEntries(
-    serviceGateSignalKeys().map(key => [key, { value: latestValue(key), ageMs: ageMs(key) }])
-  );
-  return evaluateServiceGate(readings);
+  // ⚠️ The gate chooses what to sample, not this file. It used to be the other way round
+  // and the two disagreed: the charge evidence was never asked for, so a charging bike was
+  // refused for a month with "the drive is not energized" while every check said otherwise.
+  return evaluateServiceGate(sampleServiceGate(key => ({ value: latestValue(key), ageMs: ageMs(key) })));
 }
 
 /**

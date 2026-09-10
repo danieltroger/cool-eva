@@ -1008,9 +1008,12 @@ const parkedReadings = gateReadingsFrom([
 ]);
 const parked = evaluateServiceGate(parkedReadings);
 expect(parked.safe, `a parked bike should pass the gate, blocked by: ${parked.blockers.join(" · ")}`);
+// ⚠️ `!check.required`, not a `speed_kmh` name check. Naming the one corroborator that
+// existed when this was written made the assertion blind to every later one — and the
+// gate now carries two, the OBD speed and the charge manager's inlet veto.
 expect(
-  parked.checks.every(check => check.state === "ok" || check.key === "speed_kmh"),
-  "every gated signal should read ok on the parked capture"
+  parked.checks.every(check => check.state === "ok" || !check.required),
+  "every required signal should read ok on the parked capture"
 );
 
 // The single most important assertion in this file: the frames really do decode to
@@ -1086,7 +1089,7 @@ expect(!nothing.safe, "a gate with no readings at all must refuse");
 // rule quietly became the excused one.
 expect(
   nothing.checks
-    .filter(check => check.key !== "speed_kmh")
+    .filter(check => check.required)
     .every(check =>
       nothing.blockers.some(blocker => blocker.includes(check.key) || blocker.includes(check.requirement))
     ),

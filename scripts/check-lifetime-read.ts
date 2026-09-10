@@ -54,7 +54,9 @@ const result = await read.finished;
 
 check(result.replies.length === 2, `both components should be asked about, got ${result.replies.length}`);
 for (const reply of result.replies) {
-  check(reply.payloadHex !== null, `component ${reply.component} should have answered, got ${reply.failure}`);
+  // `failure === null`, not `payloadHex !== null`: a refusal carries bytes, so the old
+  // predicate called `7F A8 22` an answer — the exact bug this file would have to catch.
+  check(reply.failure === null, `component ${reply.component} should have answered, got ${reply.failure}`);
 }
 for (const expected of LIFETIME_READ_PAYLOADS) {
   const reply = result.replies.find(candidate => candidate.component === expected.component);

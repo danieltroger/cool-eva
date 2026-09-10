@@ -875,18 +875,78 @@ The bike is unavailable, so the only honest statement is about captured bytes.
 
 - The PASSING path is checked against real ones. `0x102` = `80 10 02 44 99 FF D8 FF` and `0x104` with its speed and rpm fields zero are the 2026-08-02 parked capture, and `scripts/check-vcu-params.ts` §10 runs them through the real `src/can/decode.ts` and this gate and asserts `safe`. So "this refuses to let anyone in, ever" is ruled out on evidence rather than on hope.
 - The BLOCKING path is checked the same way, from the same day's garage lap: `5F 00 32 00` in `0x104` b4-7 is 9.5 km/h and 400 rpm, measured against OBD PIDs 0D and 0C, and the gate must refuse it.
-- Six days of real riding (`rides.db`, 6.2 M rows, analysed 2026-08-16) settled four things the captures alone could not, and every one of them changed this file: the bit then called `charging` is the high beam; a charging bike stops sending `0x104` entirely; `go_request` does not lead `go`; and `go`/`energized` read 0 while the bike rolls at up to 6.7 km/h.
+- Six days of real riding (`rides.db`, 6.2 M rows, analysed 2026-08-16) settled four things the captures alone could not, and every one of them changed this file: the bit then called `charging` is the high beam; a charging bike appeared to stop sending `0x104` entirely (❌ refuted 2026-09-09 — that was log-on-change row counts read as frame presence; see below and #194); `go_request` does not lead `go`; and `go`/`energized` read 0 while the bike rolls at up to 6.7 km/h.
 - What CANNOT be checked without the bike is the thing the gate exists for: that these bits move the instant a real motorcycle starts to roll away, and that the sweep is out of the way before it does. Every signal has been seen in both states on a real bike, which is the strongest available evidence — but the LATENCY between the wheel turning and the last frame leaving the socket has only ever been reasoned about.
 
-### Charge evidence: what makes a charge session believable
+### Charge evidence: three witnesses and one veto
 
-ANY ONE of the charger frames, fresh, is enough.
+ANY ONE of three witnesses, fresh, says the bike is tethered — and one signal can cancel all of them.
 
-**Why the list exists at all.** The owner needs to read (and later write) the DC charge-current limits, and that work happens PLUGGED IN — you cannot test `MAX_DC_CHG_CURRENT` on a bike that is not charging. A stationary charging bike is also arguably a safer thing to be servicing than a stationary ready-to-ride one: it is tethered to a cable, the rider is off it, and it cannot be ridden away without unplugging first.
+**Why the list exists at all.** The owner needs to read (and write) the DC charge-current limits, and that work happens PLUGGED IN — you cannot test `MAX_DC_CHG_CURRENT` on a bike that is not charging. A stationary charging bike is also arguably a safer thing to be servicing than a stationary ready-to-ride one: it is tethered to a cable, the rider is off it, and it cannot be ridden away without unplugging first.
 
-**Why the escape is narrow, and why that makes it cheap.** It excuses exactly ONE check, `energized`. Speed, motor rpm, `moving`, `go`, `go_request` and `throttle_on` all still have to be clear. So the worst a WRONG charge detection can do — a false positive, the list firing when nothing is plugged in — is degrade the gate to "stationary and not in drive", which is precisely what it would be if `energized` had never been in it. It cannot admit a moving bike, and it cannot admit one in drive.
+**Why the escape is narrow, and why that makes it cheap.** It excuses exactly ONE check, `energized`. Speed, motor rpm, `moving`, `go`, `go_request` and `throttle_on` all still have to be clear. So the worst a WRONG charge detection can do — a false positive, the list firing when nothing is plugged in — is degrade the gate to "stationary and not in drive". It cannot admit a moving bike, and it cannot admit one in drive.
 
-**Why `0x102` carries no usable charge bit.** It used to look as though it did. `charging` (`0x102` b2 bit0) was reasoned about as "the AC bit", on the grounds that it reads 0 through a DC fast charge. That was too generous: it reads 0 through AC charging too, because it is the high beam. `0x102` does now carry ONE real charge signal, `fast_dc_contactor` (b3 bit0), but it is set only on DC, so it cannot cover the AC case on its own either. The charger frames cover both, which is why they are the whole list. Their VALUES are never consulted — that the frame arrived at all is the claim — so this detects "plugged in" rather than "current is flowing".
+#### ❌ It shipped dead. For its whole life.
+
+The escape was written in PR #50 and did not work on the motorcycle once. `read-runner.ts` built the gate's readings from `serviceGateSignalKeys()`, which returned the RULES keys only, so `dc_v`, `dc_a`, `mains_v` and `mains_a` were never sampled, `findChargingEvidence` could only ever return `null` on the Pi, and `energized` always blocked. The checks passed throughout because they build their own readings by decoding frames, which reaches keys the runner never asked for. It surfaced on 2026-09-09 when an in-service lifetime read was refused during an AC charge with _"the bike is not safe to service — the drive is not energized — it reads 1"_.
+
+⚠️ **So the gate now chooses what to sample.** `sampleServiceGate()` derives the key set from RULES ∪ CHARGE_EVIDENCE ∪ the veto and the caller passes only a reader, which makes "the decision consults something the sampler never asked for" unrepresentable rather than merely asserted. `scripts/check-service-gate-charging.ts` §4 asserts it as well.
+
+#### The three witnesses
+
+| witness | frame | covers | why it is not enough alone |
+| --- | --- | --- | --- |
+| `fast_dc_contactor` = 1 | `0x102` b3 bit 0, 100 Hz | DC | set only on DC — 0 through every AC session |
+| `dc_v` / `dc_a` / `mains_v` / `mains_a`, fresh | `0x305`/`0x306`, 5 Hz | AC | ❌ **AC only** — a DC fast charge bypasses the onboard charger and sends neither frame |
+| `charge_manager_state` ∈ {`0x02`, `0x23`}, fresh | `0x610` b7, 10 Hz | AC + DC, and names the mode | ❌ reads `0x02` with nothing in the inlet — see the veto |
+
+❌ **"The charger frames cover both AC and DC" was wrong**, and it stood in this file and in `service-gate.ts` until 2026-09-09. `0x305`/`0x306` are the ONBOARD AC CHARGER's frames and do not exist during a DC fast charge — `src/can/registry.ts:285`, `docs/charge-manager.md:210`, `docs/can-decode-findings.md:641` and `docs/route-map.md:122` all say so, and this bike's own log agrees: sessions 42, 43 and 49 (`rides.db`, 2026-09-07) each carry `charge_manager_state` = `0x23` with **zero** `dc_v` and `mains_v` rows, while the AC session 50 carries 488 and 290. So the list did not cover the state `MAX_DC_CHG_CURRENT` exists to be read in.
+
+**How much of the archive the charger frames actually cover**, restored here because the code comment that carried it was deleted with the rule it annotated: `rides.db`, 2026-08-16 — **162 377 charger-frame rows in 30 clusters, 25 of them drawing ≥ 2 A**. The idle clusters (mains ~1.4 A) are plugged-in-but-not-charging, and they count as evidence on purpose: the claim being made is "a cable is live", not "current is flowing".
+
+**Their VALUES are mostly not consulted** — that a charger frame arrived at all is the claim — so this detects "plugged in" rather than "current is flowing". That is the property that matters, and it is why `charge_type` is not used: `docs/charge-manager.md:60` records it flapping 1↔0 fourteen times inside one continuous AC plug-in, reading 0 for up to **8 minutes** while current still flowed.
+
+⚠️ **Freshness, never the value.** `liveState` keeps the last reading of every signal for ever. `rides.db` session 42 holds one `charge_manager_state` row, `0x23`, logged at 14:01:49 — and the bike reaches **151.8 km/h at 15:34** with that value still standing. Only the age separates "plugged in" from "was plugged in, once".
+
+#### ⚠️ The inlet veto, and the episode that forced it
+
+A fresh `charge_manager_status` (`0x610` b0) whose bit 3 — factory `CM_INL_STS`, inlet present — is CLEAR cancels every witness above.
+
+It is not belt-and-braces. On **2026-08-09, episode E0** (`capture-20260809-080235-cd40b535.log`, `14:36:59.856562 → 14:37:14.657580`) a failed charge attempt broadcast 123 frames of `0x610` with:
+
+    b7  charge_manager_state = 0x02   in 123 of 123     the SETTLED AC value
+    b4  family byte          = 0xF1   in 123 of 123     so it decodes cleanly
+    b0  charge_manager_status = 0x00 ×107, 0x10 ×16     bit 3 clear in all 123
+
+`docs/charge-manager.md:586` gives the episode's own diagnosis: _"the most likely diagnosis for E0 is an inlet or plug-detection failure"_. Without the veto, that state is a live tether and a parameter write to a calibration EEPROM is allowed on a bike whose own charge manager reports an empty inlet. ⚠️ **Restricting the witness to the settled values does not fix it** — `0x02` IS what E0 reads; that was tried and refuted on these bytes.
+
+The other two witnesses refuse E0 on their own (zero `0x305`/`0x306` in the window; `0x102` b3 bit 0 clear in all 1 480 frames), so the hole belongs to the third witness alone and the veto is what makes it safe to have.
+
+**What the veto costs**, over the 49 inlet-present rows in `rides.db`: only `charge_manager_status` = `0x10` — locked but not present, E0's own signature — clears bit 3, in 5 rows, each 800-802 ms, at plug-in transitions. Two of the five are a logger run's first value, so it can fire at service start-up as well. A refusal of about a second at the moment a cable goes in, with a true sentence attached.
+
+⚠️ It is a MASK on `charge_manager_status`, not a decoded key. `src/can/charge-manager.ts` logs b0 whole because "the raw byte survives a bit-position error and the split fields do not".
+
+#### What the phone tells the rider
+
+`HOW_TO_READ` (`src/vcu/lifetime-store.ts`) is the only instruction a Pi that has never taken a lifetime reading shows, and it has now been wrong twice in opposite directions. It named a `--components 51,52` flag that never existed; then #187 changed it to _"parked with the drive down"_, which was right about the SHIPPED behaviour and wrong about the intended one — the charging escape existed and was never sampled, so a charging bike really was refused. It now reads _"parked, with the drive down or plugged in"_.
+
+**"plugged in" and not "charging"**, because the evidence is a cable being live, which includes a paused AC trickle: `docs/charge-manager.md:60` records `charge_type` reading 0 for up to **8 minutes** inside one continuous plug-in while current still flowed. **The comma is load-bearing** — without it the sentence parses as _(parked with the drive down) or (plugged in)_, which sanctions a moving bike on a cable.
+
+`scripts/check-service-gate-charging.ts` §7 pins the sentence to the gate's own verdict in both directions, so whichever of the two moves alone goes red.
+
+**What E0 looks like on the phone, and why it is not tidied up.** The preview's `?scene=refused` renders the Charge tab saying _"Live AC charge"_ beside a service sheet saying _"nothing in the inlet"_. That is not a fixture defect: it is what episode E0 **is**. The Charge tab faithfully reports `charge_manager_state`, which really does read `0x02`; the gate is the thing that declines to believe it. A fixture that made the two agree would describe a bike this software does not serve. Both refusal fixtures are now derived by running `evaluateServiceGate` over the episode's own frames rather than typed out — the hand-written riding one had four blockers where the gate emits seven, missing `energized` from the middle, which is a refusal no motorcycle can produce.
+
+#### Why the third witness earns its place, and what is still unmeasured
+
+`capture-20260809-080235-cd40b535.log`, `14:42:53.883 → 14:44:52.390` — 118.5 s of a DC handshake with the cable in and latched (`0x610` b0 = `0x08`/`0x0A`, b7 = `0x23`):
+
+    fast_dc_contactor  set in 0 of 11 850 frames of 0x102
+    0x305 / 0x306      0 frames
+    charge_manager_state  settled DC throughout
+
+Both other witnesses are blind to a bike that is plugged in, latched and negotiating — which is exactly when the owner wants to read `MAX_DC_CHG_CURRENT`.
+
+⚠️ **What that window does NOT show.** `energized` reads 0 in all 11 850 of those `0x102` frames, so the gate would have opened there anyway. No capture in this archive holds an energized, stationary bike witnessed ONLY by the charge manager — at the one moment it could be seen, 14:46:47, `energized` and the contactor are already both set, and the transition is inside a capture gap. So the third witness is justified by the window the other two miss, and it has not been shown to change an outcome on captured data. The fixture for it in `scripts/check-service-gate-charging.ts` §2 is marked CONSTRUCTED for that reason.
 
 ### ⚠️⚠️ `0x102` b2 bit0 is not a charging bit. It is the high beam.
 
@@ -905,15 +965,24 @@ Two different bytes, so it is not decoder aliasing — they are two genuinely di
 
 Using it as charge evidence would have meant SWITCHING ON THE HIGH BEAM EXCUSED THE DRIVE BEING ENERGIZED. The rename removes the trap's bait; the finding is kept because the list of things that are NOT charge evidence is worth more than the name that misled us.
 
-### ⚠️ Why two motion checks may go ABSENT while charging
+### ❌ Why two motion checks may go ABSENT while charging — and why the reason is refuted
 
-`rides.db`, 2026-08-16: across all 25 real charging sessions there is **not one live `speed_can_kmh` or `motor_rpm_can` sample**. The bike stops broadcasting `0x104` while it charges (an Energica on a charger is asleep apart from the charge manager and the BMS), so a gate that demanded a fresh one could never open on a charging bike — which is the single state this whole feature exists to serve.
+`speed_can_kmh` and `motor_rpm_can` are allowed to be missing or stale while a charger is attached, and `moving`, `go`, `go_request` and `throttle_on` must still be FRESH and clear. A fresh `0x104` that says the bike IS moving still blocks, charger or no charger: this relaxes "we must see it" and not "it must be zero".
 
-Worse, the naive workaround is a trap the same data documents: forward-filling the last value hands you **47.0 km/h and 1 976 rpm** for a bike that had been plugged in for seven hours, because that is what it was doing when it last spoke. Never fall back to the last value, and never fall back to zero.
+⚠️ The forward-fill trap is real and is untouched by anything below: never fall back to the last value and never fall back to zero, because that hands you **47.0 km/h and 1 976 rpm** for a bike that had been plugged in for seven hours.
 
-So while a charger is attached, those two are allowed to be missing or stale — and `moving`, `go`, `go_request` and `throttle_on` still have to be FRESH and clear. All four are `0x102`, which is 100 Hz and which `CAN_MAP.md` records as live through a DC session (it caught b1 going `0x10` → `0x12` at the start of one). So the gate still requires proof that the bike is awake and talking; it just no longer requires the one frame the bike is known to stop sending. If `0x102` goes quiet too, everything blocks and service mode is unavailable — correct, because a sleeping VCU answers no `10 81` either.
+❌ **The JUSTIFICATION does not hold.** This section read: _"across all 25 real charging sessions there is not one live `speed_can_kmh` or `motor_rpm_can` sample. The bike stops broadcasting `0x104` while it charges."_ Counted off the captures instead, with the file and the window printed:
 
-A fresh `0x104` that says the bike IS moving still blocks, charger or no charger. This relaxes "we must see it" and not "it must be zero".
+| window | file | `0x104` |
+| --- | --- | --- |
+| AC, 21:08:02 → 03:58:36 (6.84 h) | `capture-20260803-210802-8579bbf4.log` | 2 463 173 frames, max inter-frame gap 0.130 s, none > 0.5 s |
+| AC, 01:00:00 → 01:59:59 | same | b4-b7 = `00 00 00 00` in 359 971 of 359 971 |
+| DC, 14:50:00 → 14:52:59 | `capture-20260809-144317-edcdcf23.log` | 18 011 (~100 Hz) |
+| DC handshake, 14:42:53 → 14:44:52 | `capture-20260809-080235-cd40b535.log` | 11 850 |
+
+The bike broadcasts a live, correct "speed 0, rpm 0" a hundred times a second throughout a charge, AC and DC. The original finding read `rides.db` **row** counts as frame presence: the logger writes on change, a parked bike's speed is a constant 0, so one row is written at session start and none after. `src/can/signals.ts:128` sets `lastSeenMonotonic` on every decoded sample _before_ the deadband, so the live gate sees these as fresh even when the log is silent.
+
+⚠️ **The rule is left in place anyway**, and that is a deliberate call rather than an oversight: removing a gate escape in the same commit that changes the gate's charge evidence would give a refusal at a charger two candidate causes, found by the owner at night on a bike with no debugger. **Issue #194** carries the measurement and the decision. Either it is dead code, or it fires in a state no capture here covers — and that state needs naming before the rule goes.
 
 ### `energized` — and why it is excused while charging
 
