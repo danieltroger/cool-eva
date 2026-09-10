@@ -554,6 +554,64 @@ Both were replaced by `8` `DC_SESSION`, a flat 100 % — §4 "The automatic curv
 
 ⚠️ Widening `fan_auto_mode`'s bound to `[0, 2]` was **not** bookkeeping. At `[0, 1]` the new code 2 is rejected as a sentinel, `public/lib/store.js` keeps the previous value, and the sheet reads "Manual" over a fan taking its orders from a throttle.
 
+### The two fan signals must reach the phone duty-first
+
+`fan_auto_mode` and `fan_target_pct` are published by two different files — the mode by `src/fan/auto.ts`, the duty by `src/fan/control.ts` — and `public/lib/announce.js` words the phone's banner from **both**: the mode picks which of the four sentences, the duty fills in the number. `src/can/signals.ts` coalesces changes per **microtask** and `src/ws.ts` sends one patch per batch, so two records separated by an `await` are two patches; `public/lib/store.js` applies a whole patch before the derive runs. **A mode published ahead of its duty therefore reaches the phone beside the duty of the mode before it, and the banner names that one.**
+
+That is #199. Measured over sessions 33–50 of the ride log, 2026-09-03 → 2026-09-07 — every switch into manual the archive holds:
+
+| mode flip (UTC)    | sess | on the wire | asked for | gap      | the banner said                          |
+| ------------------ | ---- | ----------- | --------- | -------- | ---------------------------------------- |
+| 09-03 18:30:37.660 | 33   | 0           | 37        | 41 ms    | **Fan: off**                             |
+| 09-03 18:30:44.935 | 33   | 0           | —         | 7 644 ms | Fan: off — **and it was off**, see below |
+| 09-06 13:20:11.828 | 34   | 0           | 30        | 41 ms    | **Fan: off**                             |
+| 09-06 13:20:41.912 | 34   | 30          | a stop    | 49 ms    | Fan: manual 30 %                         |
+| 09-07 09:18:36.766 | 36   | 0           | 35        | 42 ms    | **Fan: off**                             |
+| 09-07 12:15:09.907 | 41   | 0           | 31        | 57 ms    | **Fan: off**                             |
+| 09-07 14:06:49.909 | 42   | 78          | 76        | 2 ms     | Fan: manual 78 %                         |
+| 09-07 16:32:42.231 | 43   | 93          | 99        | 4 ms     | Fan: manual 93 %                         |
+| 09-07 19:36:51.886 | 45   | 78          | 70        | 4 ms     | Fan: manual 78 %                         |
+| 09-07 19:46:04.679 | 46   | 78          | 79        | 3 ms     | Fan: manual 78 %                         |
+| 09-07 20:51:13.026 | 49   | 56          | 62        | 3 ms     | Fan: manual 56 %                         |
+| 09-07 22:16:15.489 | 50   | 84          | 83        | 3 ms     | Fan: manual 84 %                         |
+
+**Twelve flips, eleven torn banners**, and mode-before-target in twelve of twelve by `seq` as well as by `ts`. Four of them said "Fan: off" over a fan being commanded 30–37 % and then raised a _second_ banner when the duty caught up. 09-03 18:30:44 is **not** a tear: its next target row is 7.6 s away, which no `commandManual()` can produce — its two records are milliseconds apart — so that flip commanded no duty and the fan really was off.
+
+⚠️ **Read this archive session-scoped or not at all.** `record()` keeps `liveState` per process and these sessions overlap (48 was still writing when 49 started; 38/39/40 overlap for two minutes), so a `fan_target_pct` lookup without `session_id` pinned can return a row from a different process — in one case 2.8 days away. Two of the twelve rows above were wrong that way before the plan review caught it.
+
+`commandManual()` is the only path that changes the mode and the duty in one action, so it is the only one that has to care: it publishes the mode **after** the awaited command. `switchMode()` is deliberately exempt — `/fan?mode=manual` commands no duty, so the duty already on the wire is the true one — and the automatic and fun paths need no target to word their sentence at all.
+
+⚠️ **The trade this makes.** Publishing after an awaited command means a bridge write that _hangs_ — not one that throws, which the `finally` covers — leaves `fan_auto_mode` unpublished, where before it went out first. Accepted: a dashboard reading "automatic" over a wedged bridge is no more wrong than one reading "manual" over a wedged bridge, and neither is the fan. `scripts/check-fan-banner.ts` §7 drives a never-settling `openPwm` so the choice is a check rather than a claim.
+
+#### The second hole, same signal
+
+`commandDuty()` set `targetPercent` and then published only in its `fromRest` and `running` branches. A command landing **mid kick-start** took neither, so `fan_target_pct` kept the previous value for the rest of `KICK_START_MS`. Measured against the real controller with a stand-in bridge: 68 % commanded, then 100 % at 50 ms into the kick — the wire read 68 at 200, 700 and 1200 ms and only became 100 at ~1700 ms, once the kick ended. Re-ordering alone does **not** fix the banner in that window, which is the likeliest shape of the reported one: the curve had just started the fan.
+
+### ⚠️ REFUTED: log-on-change does not starve the gesture's stationary proof
+
+The hypothesis, and it is a reasonable one: _off_ is only reachable with a fresh `speed_can_kmh` ≤ 3 km/h inside 500 ms (`src/fan/gesture.ts`), the ride log seals a row only when a value **moves**, and a bike parked at a charger holds a constant 0 — so the proof should starve exactly where the rider wants quiet.
+
+**It does not**, and the reason is one line of ordering: `record()` writes `lastSeenMonotonic` **before** the deadband gate, and `src/index.ts` calls `record()` for every decoded key on every frame. `ageMs()` — which `freshValue()` reads — therefore measures **frame arrival**, not value change.
+
+Both halves measured:
+
+- `obd-garage/captures/2026-08-02_bms_90s.log`, 89.996 s standing still: **8 999** frames of 0x104 and **8 999** of 0x102, longest gap **10.78 ms** and **12.19 ms**, none over 500 ms, and `speed_can_kmh` decoded to exactly 0.0 in all 8 999 of them.
+- The same signal in the ride log, same bike, 2026-09-07: **one gap of 578.8 s** between consecutive `speed_can_kmh` rows (20:14:24.691 → 20:24:03.451) with **46 `btn_mode_enter` edges sealed inside it**, so the bus was awake throughout. A freshness check reading the last logged VALUE would have called the speed 578 s stale on every hold in that window. The shipped one saw ~10 ms.
+
+Keep this. Deleting it costs a session to re-derive, and the wrong belief ships in between.
+
+### What is left of "the long press never reaches _off_"
+
+Daniel, 2026-09-10: _"sometimes long pressing mode never goes into the off setting … sometimes it just kicks on in auto … maybe I'm pressing too long and then it skips past off?"_ Ranked, with what would settle each:
+
+1. **Several holds in one bout, each one a step.** 2026-09-07 11:49:43–11:49:55, session 41: **eight** press→release pairs in 12.27 s — 180, 129, **3 000**, **1 910**, 130, 160, 269, **1 691** ms — with `btn_mode_right` moving six times between them. Three of them clear `FAN_HOLD_MS` inside **8.4 s**, and each is one fire, so that bout is **three whole steps round the cycle**: automatic → 100 % → off → automatic. The fan spins up and hands itself back, and _"it skips past off"_ and _"it kicks on in auto"_ are both true descriptions of it. ⚠️ Those presses predate the gesture (7f6dbcd, 2026-09-08) so nothing fired then — what they prove is that this is a press pattern Daniel **actually makes**, on the button the bike's own dash menu also lives on. **Settled by:** three `gesture: btn_mode_enter held 1200 ms` lines inside ten seconds in the journal.
+2. **The banner was lying.** From automatic with a cold pack the first hold said **"Fan: off"** while commanding 100 %. Counting the cycle by what the phone said puts a rider a step out of phase. Fixed above.
+3. **Automatic is the default on every start** and the mode is memory-only, on purpose. The archive holds **13 sessions on 2026-09-07** (38–50), each writing `fan_auto_mode = 1`. ⚠️ Session count is not restart count here — 38/39/40 and 47/48/49 overlap at their seams — and most are expected to be key cycles rather than crashes. **Settled by:** the journal, and nothing else.
+4. **A sleeping bus recognises no hold at all.** 0x102 goes quiet with 0x104, so the press cannot be proved either, and the hold silently does nothing.
+5. **The _off_ watchdog handing back above 3 km/h**, by design, including rolling the bike.
+
+**A long hold firing twice is not among them.** `observeHold()` latches `fired` until the release, and `scripts/check-hold-gestures.ts` replays a deliberate 10 s hold and asserts exactly one fire.
+
 ## 7. Running it
 
 ```sh

@@ -376,9 +376,20 @@ async function commandManual(context: AutoContext, percent: number): Promise<Fan
   // whatever this command does, and a stale match would make the first automatic tick
   // after the mode goes back skip its own command.
   context.lastCommandedPercent = null;
-  publishMode(context);
-  publishDecision(null);
-  return await context.controller.setDutyPercent(percent);
+  try {
+    return await context.controller.setDutyPercent(percent);
+  } finally {
+    // ⚠️ AFTER the duty, never before. This is the one path that changes the mode AND the
+    // duty in a single action, and the phone words its banner from both — the mode picks
+    // the sentence, `fan_target_pct` fills in the number. ../can/signals.ts batches per
+    // microtask, so a mode published ahead of an awaited command arrives in its own patch
+    // beside the duty of the mode BEFORE it, and the banner names that one. Measured:
+    // eleven of the twelve switches into manual in the archive said a duty the fan was not
+    // being asked for, four of them "Fan: off" over a running command.
+    // docs/fan-control.md §"The two fan signals must reach the phone duty-first".
+    publishMode(context);
+    publishDecision(null);
+  }
 }
 
 /**

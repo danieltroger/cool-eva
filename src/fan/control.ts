@@ -222,6 +222,12 @@ async function commandDuty(context: FanContext, requested: number): Promise<FanC
       await beginKickStart(context);
     } else if (context.phase === "running") {
       await applyDuty(context, capped);
+    } else {
+      // Mid-kick. The bridge keeps KICK_DUTY_PERCENT for the rest of the kick or it is
+      // not a kick — but what was ASKED for has just changed, and `fan_target_pct` is the
+      // signal that says so. Without this it kept the previous target for the remaining
+      // KICK_START_MS: measured at 68 % on the wire 1200 ms after 100 % was commanded.
+      publish(context);
     }
   } catch (error) {
     console.error(`fan: commanding ${capped} % failed:`, (error as Error).message);

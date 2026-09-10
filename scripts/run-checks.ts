@@ -319,6 +319,26 @@ const CHECKS: SelfCheck[] = [
       "otherwise have taken away",
   },
   {
+    script: "scripts/check-fan-banner.ts",
+    covers:
+      "that the phone's fan banner names the duty the fan was actually ASKED for. `fan_auto_mode` and " +
+      "`fan_target_pct` are published by two different files and the banner is worded from BOTH — the mode picks " +
+      "the sentence, the duty fills in the number — so they are a pair, and src/can/signals.ts flushes one batch " +
+      "per microtask, which makes two records separated by an `await` two WebSocket patches. A mode published " +
+      "ahead of its duty therefore arrives beside the duty of the mode BEFORE it: #199, where a hold said " +
+      "'Fan: manual 68 %' over a fan at 100 %, and off a cold pack said 'Fan: off' over a fan going to full and " +
+      "then raised a second banner when the duty caught up. Driven through the REAL batch sequence — onChange() " +
+      "subscribed the way src/ws.ts subscribes, replayed one patch at a time through public/lib/store.js's own " +
+      "apply() and public/lib/announce.js's own foldFanAnnouncement(), because sampling latestValue() afterwards " +
+      "is exactly what cannot see this: both signals are right a few milliseconds later and it is the ARRIVAL " +
+      "ORDER that lies. Every step of the cycle must raise exactly ONE banner and it must name 100 %, 0 % or " +
+      "automatic — held against a settled curve duty AND against one still inside its 1500 ms kick-start, which " +
+      "are two different bugs and fail separately. Then the property under the wording: the duty reaches the wire " +
+      "in the mode's batch or an earlier one, never a later one; a duty commanded mid-kick is published rather " +
+      "than held for the rest of the kick; and a bridge that never answers leaves the loop's mode readable rather " +
+      "than ending the process",
+  },
+  {
     script: "scripts/check-fan-endpoint.ts",
     covers:
       "both ends of the /fan wire: that the X-Cool-Eva header stands in front of every POST — the only thing " +
