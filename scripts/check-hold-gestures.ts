@@ -77,7 +77,7 @@ function check(what: string, condition: boolean) {
 
 // --- The corpus these thresholds are argued from --------------------------------
 //
-// Whole archive, 268 capture files, deduped by absolute press instant because two
+// Whole archive, 268 top-level files, deduped by absolute press instant because two
 // candump instances recorded some of the same seconds. Method and caveats:
 // docs/handlebar-gestures.md.
 
@@ -97,12 +97,12 @@ const LONGEST_ENTER_PRESS_MS = 290;
 const LONGEST_ORDINARY_CANCEL_PRESS_MS = 330;
 
 /**
- * ⚠️ THE NINE PRESSES OF 2026-08-03 18:51, in milliseconds, and the only cancel presses in
- * the archive over 0.330 s. One deliberate experiment: somebody holding the switch to find
- * out what it does, which is how the hazard threshold was measured at all. Held as the
- * corpus rather than as a "longest press" constant so that the count below is filtered out
- * of real durations; the expected 4 and 3 are still literals, because a check that derived
- * both sides from the same array would pass for every threshold and assert nothing.
+ * ⚠️ THE NINE PRESSES OF 2026-08-03 18:51, in milliseconds. One deliberate experiment:
+ * somebody holding the switch to find out what it does, which is how the hazard threshold
+ * was measured at all. Five of the nine clear 0.330 s, and those five are the only cancel
+ * presses in the archive that do. Held as the corpus rather than as a "longest press"
+ * constant so the count below is filtered out of real durations; the expected 4 stays a
+ * literal, because deriving both sides from this array would pass for every threshold.
  */
 const HAZARD_EXPERIMENT_PRESSES_MS = [159, 210, 249, 250, 409, 940, 1320, 4331, 5771];
 
@@ -829,7 +829,7 @@ check(
   SAMPLE_MAX_AGE_MS > LONGEST_GAP_INSIDE_A_PRESS_MS * 20
 );
 check(
-  "a gesture fires within one beat of its threshold",
+  "the beat is fine enough that a gesture fires promptly after its threshold",
   HOLD_BEAT_MS <= FAN_HOLD_MS / 10 && HOLD_BEAT_MS <= WAYPOINT_HOLD_MS / 10
 );
 check("the browser's surviving double-click window is untouched by all this", DOUBLE_CLICK_WINDOW_MS === 700);
