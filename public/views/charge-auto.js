@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
-import { chargeType, writesEnabled } from "../lib/charge-write.js";
+import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
 import { valueOf } from "../lib/store.js";
 
 const { button, div } = van.tags;
@@ -33,26 +33,55 @@ const busy = van.state(false);
 const failure = van.state("");
 const loaded = van.state(false);
 
-// The controller records `charge_auto_reason` every tick, so the page learns it moved over the
-// WebSocket and re-reads the Pi's phrasing once.
+// THREE wake-ups, and the Pi's phrasing is re-read once on each: the reason moved, the commanded
+// current moved, or the tile just became commandable at all. The controller records
+// `charge_auto_reason` every tick and `charge_auto_target_a` on every command that lands.
 //
-// ⚠️ GUARDED on the VALUE, not on the state changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s and
-// store.js assigns a freshly parsed object, so this signal's identity changes every heartbeat
-// whether or not the number moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
+// ⚠️ GUARDED on the VALUES, not on the states changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s
+// and store.js assigns a freshly parsed object, so these signals' identity changes every heartbeat
+// whether or not the numbers moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
 // exactly what the comment here used to claim it was not. charge-write.js guards the same way.
+//
+// ⚠️ Both signals are read BEFORE the gate returns, and no guard is CONSUMED on a run that did not
+// refresh. Both traps, and the bug each one produces:
+// docs/dashboard-decisions.md § "A guarded derive, and the three ways to lose the change".
 let lastReason = /** @type {number | null} */ (null);
+let lastTargetAmps = /** @type {number | null} */ (null);
+let wasCommandable = false;
 van.derive(() => {
   const reason = valueOf("charge_auto_reason");
-  if (reason === null || reason === lastReason) {
+  const targetAmps = valueOf("charge_auto_target_a");
+  if (chargeType.val !== "dc" || !writesEnabled()) {
+    wasCommandable = false;
+    return;
+  }
+  const reasonMoved = reason !== null && reason !== lastReason;
+  const targetMoved = targetAmps !== null && targetAmps !== lastTargetAmps;
+  const justCommandable = !wasCommandable;
+  wasCommandable = true;
+  if (!justCommandable && !reasonMoved && !targetMoved) {
     return;
   }
   lastReason = reason;
-  if (chargeType.val === "dc" && writesEnabled()) {
-    void refresh();
-  }
+  lastTargetAmps = targetAmps;
+  void refresh();
 });
 
-/** Fetched on the session edge and after every toggle — never polled; the reason rides the WebSocket. */
+// The cable coming out, alongside the two sibling controls — charge-current.js clears its form here
+// and charge-stop.js its outcome.
+//
+// ⚠️ NOT belt-and-braces. forgetSession() in src/charge/auto.ts nulls the controller's commanded
+// amps on the `charge_manager_state` edge and RECORDS NOTHING, so until the next 60 s tick
+// /charge-auto answers "commanding nothing" while both signals still hold the last session's
+// values. No signal moves, so no guard above can notice: what corrects the tile is this reset plus
+// the just-commandable wake-up when the next session opens the gate.
+onChargeSessionEnd(() => {
+  loaded.val = false;
+  lastReason = null;
+  lastTargetAmps = null;
+});
+
+/** Fetched on the three wake-ups above and after every toggle — never polled. docs/charge-auto.md. */
 export function ChargeAutoControl() {
   return div(() => {
     // ⚠️ Gated on writesEnabled() like the two sibling controls: the controller transmits through
@@ -71,7 +100,7 @@ export function ChargeAutoControl() {
       { class: "tile span2" },
       div({ class: "label" }, "Automatic charge current"),
       div({ class: "action-note" }, () =>
-        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, sentence())
+        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, controllerSentence())
       ),
       ToggleButton(),
       div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
@@ -141,13 +170,20 @@ export function toggleAction(currentMode, reason, floor_a) {
 }
 
 /**
- * What the controller is doing, in words.
+ * What the controller is doing, in words — the text the tile renders, and nothing else.
  *
  * ⚠️ No special case for the rider override: the controller already reports it as its REASON, and a
  * branch here beat that — with the toggle off and an override latched the tile said "you set the
  * current on the bike" instead of "off".
+ *
+ * ⚠️ The amps come from the ENDPOINT, never from `charge_auto_target_a` — that signal is only a
+ * wake-up. It outlives the session that produced it (forgetSession() nulls the controller's own
+ * copy and records nothing), so reading it here would print a current this charge never commanded.
+ *
+ * Exported so scripts/check-charge-auto-live.ts can read the tile's own words without a browser,
+ * on the same footing as toggleAction() above.
  */
-function sentence() {
+export function controllerSentence() {
   const suffix = commandedAmps.val === null ? "" : ` Commanding ${commandedAmps.val} A.`;
   return `${reasonSentence.val}${suffix}`;
 }

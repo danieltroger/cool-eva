@@ -235,6 +235,37 @@ Reading `signalState(key).val` inside that derive subscribes it to each button. 
 
 `rawVal` is used when incrementing the count: reading `.val` of a state the same derive assigns to would make the derive depend on itself, and VanJS would then re-run it until its 100-iteration ceiling stopped it.
 
+### A guarded derive, and the three ways to lose the change
+
+A **guarded derive** is the shape used wherever a WebSocket signal has to trigger something expensive — an HTTP fetch, most often. `lib/charge-write.js` and `views/charge-auto.js` both have one. The guard is needed because `ws.ts` heartbeats a **full snapshot** every `HEARTBEAT_MS` and `lib/store.js:311` assigns a freshly parsed object each message, so a signal's _identity_ churns at 0.2 Hz whether or not its number moved. Bind naively and the derive is a poll of an HTTP endpoint, on a phone strapped to a handlebar. So the derive keeps a module-level `last…` of the **value** it last acted on and returns when nothing moved.
+
+That shape has three traps. Two of them have shipped here, both in `views/charge-auto.js`, and both put a wrong number about the motorcycle on the screen — see `docs/charge-auto.md` § "What wakes this tile" for what each one looked like to the rider.
+
+**1. A read behind an early `return` registers no listener at all.** VanJS collects a derive's dependencies from the reads it _actually performs_ on each run (`runAndCaptureDeps` at `van-1.6.1.js:12-22`, called again from `updateDoms` at `:127`), by intercepting the `val` getter. So in
+
+```js
+const a = valueOf("first");
+if (a === last) return; // ← the run stops here
+const b = valueOf("second"); // ← never read, so `second` gets no listener
+```
+
+the second signal can never wake the derive, and the omission is invisible: the code reads as if it watches both. **Read every signal the derive cares about before any guard can return.** One derive reading two states is still one listener object, and `updateDoms` de-duplicates through a `Set` (`van-1.6.1.js:127`), so both moving in one batch costs one run, not two.
+
+**2. A guard consumed on a run that did not act throws the change away for good.** This is the subtle one. If the `last…` is advanced _above_ the gate that decides whether to do the work —
+
+```js
+last = value; // ← consumed unconditionally
+if (chargeType.val === "dc" && writesEnabled()) {
+  void refresh();
+}
+```
+
+— then every run where the gate is shut eats a real change. It is not deferred; nothing will ever re-deliver it, because the guard now agrees with the signal. The window is not hypothetical: `lib/charge-write.js:121` clears the write status the moment a session ends and the reopening `fetchChargeWriteStatus()` at `:117` is an async round trip, so anything landing across a session boundary is swallowed. **Advance the guard only on the path that acts**, and let an unacted run cost the two comparisons it costs.
+
+**3. Some state changes with no signal behind it, and no guard can see those.** A guarded derive can only ever notice what the bus says. When the thing on screen depends on Pi state that changes _without_ a `record()` — `forgetSession()` in `src/charge/auto.ts:262-267` is the case here, nulling the controller's commanded amps on a `charge_manager_state` edge and recording nothing — there is nothing to guard on and nothing to wake. The answer is an edge of a different kind: `onChargeSessionEnd()` for the teardown, and treating "this control just became usable" as its own wake-up, so the next session re-reads the Pi instead of rendering what it last heard. That second one also subsumes the once-per-page-life `!loaded` fetch a view's render does.
+
+`scripts/check-charge-auto-live.ts` holds all three, without a browser: it drives the real view against the real store and asserts on the text the tile's binding renders.
+
 ### The button tile's three readouts — `views/all.js`
 
 `ButtonTile` is the same card as `RawTile`, but built to be watched rather than read. Which signals reach it is `lib/latched.js`'s question — the whole `buttons` group plus the keys named there — and `views/all.js` asks it per KEY, not per group. Three readouts, in decreasing order of how much you should trust them:
