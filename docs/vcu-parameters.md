@@ -934,6 +934,8 @@ The other two witnesses refuse E0 on their own (zero `0x305`/`0x306` in the wind
 
 `scripts/check-service-gate-charging.ts` §7 pins the sentence to the gate's own verdict in both directions, so whichever of the two moves alone goes red.
 
+**What E0 looks like on the phone, and why it is not tidied up.** The preview's `?scene=refused` renders the Charge tab saying _"Live AC charge"_ beside a service sheet saying _"nothing in the inlet"_. That is not a fixture defect: it is what episode E0 **is**. The Charge tab faithfully reports `charge_manager_state`, which really does read `0x02`; the gate is the thing that declines to believe it. A fixture that made the two agree would describe a bike this software does not serve. Both refusal fixtures are now derived by running `evaluateServiceGate` over the episode's own frames rather than typed out — the hand-written riding one had four blockers where the gate emits seven, missing `energized` from the middle, which is a refusal no motorcycle can produce.
+
 #### Why the third witness earns its place, and what is still unmeasured
 
 `capture-20260809-080235-cd40b535.log`, `14:42:53.883 → 14:44:52.390` — 118.5 s of a DC handshake with the cable in and latched (`0x610` b0 = `0x08`/`0x0A`, b7 = `0x23`):

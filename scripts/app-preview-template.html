@@ -64,6 +64,20 @@ __CSS__
       const SERVER = __SERVER_FACTS__;
 
       /**
+       * A derived gate verdict as a MUTABLE object.
+       *
+       * ⚠️ Only because the fixture type-check substitutes SERVER as a frozen literal, so its
+       * arrays come back `readonly` and will not satisfy `Partial<ServiceGateVerdict>`. The
+       * values are the gate's own; this copies them, it does not restate them.
+       */
+      const gateOf = verdict => ({
+        safe: verdict.safe,
+        blockers: [...verdict.blockers],
+        checks: [...verdict.checks],
+        chargingEvidence: verdict.chargingEvidence,
+      });
+
+      /**
        * ⚠️ ONE gate object, referenced from every fixture that carries one, and declared HERE
        * because `const` has a temporal dead zone and the fixtures below are built at parse
        * time — putting it beside the scene that mutates it rendered a blank page.
@@ -538,11 +552,7 @@ __MODULES__
             "charge_manager_state": [0x02, "", "charge"],
             "charge_manager_status": [0x00, "", "charge"],
           },
-          gate: {
-            safe: false,
-            blockers: [SERVER.inletBlocker, "the drive is not energized — it reads 1"],
-            chargingEvidence: null,
-          },
+          gate: gateOf(SERVER.refusedGate),
         },
         riding: {
           // Both halves of the power bar hatch here, which is the case lib/svg.js's derateSpans()
@@ -564,10 +574,10 @@ __MODULES__
             "cell_min_mv": [3489, "mV", "cells"],
             "cell_max_mv": [3527, "mV", "cells"],
             "cell_spread_mv": [38, "mV", "cells"],
-            "gps_speed_kmh": [72, "km/h", "gps"],
-            "speed_can_kmh": [74, "km/h", "drive"],
+            "gps_speed_kmh": [SERVER.ridingSpeedKmh - 2, "km/h", "gps"],
+            "speed_can_kmh": [SERVER.ridingSpeedKmh, "km/h", "drive"],
             "gps_course_deg": [113, "°", "gps"],
-            "motor_rpm": [4210, "rpm", "obd"],
+            "motor_rpm": [SERVER.ridingMotorRpm, "rpm", "obd"],
             "throttle_pct": [34, "%", "drive"],
             "go": [1, "", "controls"],
           },
@@ -576,19 +586,15 @@ __MODULES__
           fanAuto: { reason: SERVER.fanReason.PACK_TEMPERATURE, temperatureInput: SERVER.fanTemperatureInput.LIVE, temperatureC: 41, temperatureAgeMs: 240 },
           funGate: SERVER.funGate.GO_SET,
           // ⚠️ A riding bike is the one state where the gate MUST refuse, and this scene had
-          // no `gate` at all — harmless while the override reached only the write panel,
-          // wrong the moment one binding fed all five fixtures. The blockers are the
-          // sentences evaluateServiceGate builds for 74 km/h with the drive engaged.
-          gate: {
-            safe: false,
-            blockers: [
-              "road speed is zero — it reads 74.0",
-              "the motor is not turning — it reads 4210",
-              "the bike is not moving — it reads 1",
-              "the bike is not in drive — it reads 1",
-            ],
-            chargingEvidence: null,
-          },
+          // no `gate` at all — harmless while the override reached only the write panel, wrong
+          // the moment one binding fed all five fixtures.
+          //
+          // ⚠️ DERIVED, after the hand-written version got it wrong: a riding bike emits SEVEN
+          // blockers and the typed list had four, missing `energized` from the middle — a
+          // refusal no motorcycle can produce, under a comment claiming it was what the gate
+          // builds. SERVER.ridingGate runs evaluateServiceGate over the same frame the speed
+          // and rpm tiles above decode from.
+          gate: gateOf(SERVER.ridingGate),
         },
       };
 

@@ -441,6 +441,11 @@ check("…and the decision really did read something", readKeys.size > 0);
 // ⚠️ THE FUNCTION BODY, with comments stripped. Matching the whole file passed on a readGate
 // that hand-rolled its own key list, as long as a `sampleServiceGate(` call survived anywhere
 // else — or appeared only in a comment. That mutation IS the #190 bug.
+//
+// ⚠️ What it pins is readGate's SHAPE, not the readings' content: a caller that samples
+// correctly and then deletes a key still passes here. The Proxy above is what would have to
+// catch that, and it cannot see a caller. Nothing in the tree does it; it is written down so
+// the next person does not read this pair as a stronger guarantee than it is.
 const runnerSource = await readFile(new URL("../src/vcu/read-runner.ts", import.meta.url), "utf8");
 const readGateBody = /function readGate\(\)[^{]*\{([\s\S]*?)\n\}/
   .exec(runnerSource)?.[1]
