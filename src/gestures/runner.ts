@@ -43,7 +43,7 @@ export interface HoldGesture {
  * the threshold plus up to one beat — measured under load, 500-607 ms for the waypoint's
  * 500. Halved from 100 with that hold (#192); it can never fire a gesture EARLY, since
  * observeHold() still demands the full holdMs, so this removes lateness and nothing else.
- * It runs ONLY while a press is open, and the median press is 0.17 s.
+ * It runs ONLY while a press is open, and the median press is 0.18 s.
  */
 export const HOLD_BEAT_MS = 50;
 

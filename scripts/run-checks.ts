@@ -293,7 +293,7 @@ const CHECKS: SelfCheck[] = [
       "silence NEVER fires however long the bus has been quiet, because the press is abandoned the moment the " +
       "sample goes stale; a 300 ms press fires nothing; and a 1.3 s hold fires exactly once, while the thumb is " +
       "still down rather than on the release — which is what keeps a thumb clear of the hazard lights the cancel " +
-      "switch turns on at or before 2.011 s. Then the thresholds against the whole 268-capture archive: 1200 ms " +
+      "switch turns on at or before 2.011 s. Then the thresholds against the whole 268-file archive: 1200 ms " +
       "clears the longest MODE ENTER press ever recorded (290 ms, over 160 presses, the only decoded handlebar " +
       "bit with no long press anywhere) by more than 4×, and 500 ms clears the longest ordinary indicator-cancel " +
       "press outside one afternoon's experiment (330 ms over 770 of 779) by 1.5×. Then the cycle end to end " +

@@ -35,9 +35,9 @@ export const WAYPOINT_GESTURE_BUTTON = "btn_indicator_cancel";
  *
  * It clears the longest press outside one afternoon's deliberate experiment (0.330 s,
  * across 770 of the archive's 779) by 1.5×, and over the whole archive fires on 4 presses
- * against 1000 ms's 3 — all four inside an 11-second span of that experiment. The beat
- * means the thumb is really down for 500-607 ms, still a second and a half short of the
- * earliest hazard activation ever recorded. Corpus and margins: docs/handlebar-gestures.md.
+ * against 1000 ms's 3 — all four inside 15 seconds of that experiment. The beat means the
+ * thumb is really down for 500-607 ms, still 1.4 s short of the earliest hazard activation
+ * ever recorded. Corpus and margins: docs/handlebar-gestures.md.
  */
 export const WAYPOINT_HOLD_MS = 500;
 

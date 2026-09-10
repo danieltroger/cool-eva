@@ -81,7 +81,7 @@ function check(what: string, condition: boolean) {
 // candump instances recorded some of the same seconds. Method and caveats:
 // docs/handlebar-gestures.md.
 
-/** 156 ENTER presses; the longest anywhere in the archive. No other decoded bit is this clean. */
+/** 160 ENTER presses; the longest anywhere in the archive. No other decoded bit is this clean. */
 const LONGEST_ENTER_PRESS_MS = 290;
 
 /** 770 of the 779 indicator-cancel presses. The other nine are one afternoon's experiment. */
@@ -91,8 +91,9 @@ const LONGEST_ORDINARY_CANCEL_PRESS_MS = 330;
  * ⚠️ THE NINE PRESSES OF 2026-08-03 18:51, in milliseconds, and the only cancel presses in
  * the archive over 0.330 s. One deliberate experiment: somebody holding the switch to find
  * out what it does, which is how the hazard threshold was measured at all. Held as the
- * corpus rather than as a "longest press" constant so that changing WAYPOINT_HOLD_MS
- * re-derives how many presses fire instead of leaving a stale figure behind.
+ * corpus rather than as a "longest press" constant so that the count below is filtered out
+ * of real durations; the expected 4 and 3 are still literals, because a check that derived
+ * both sides from the same array would pass for every threshold and assert nothing.
  */
 const HAZARD_EXPERIMENT_PRESSES_MS = [159, 210, 249, 250, 409, 940, 1320, 4331, 5771];
 
@@ -359,17 +360,28 @@ async function settle(ms: number): Promise<void> {
  */
 const FIRE_GRACE_MS = 400;
 
-/** One press of a button, held past whatever that gesture's threshold is, then released. */
-async function pressAndHold(button: "enter" | "cancel", key: string, holdMs: number): Promise<void> {
+/** Presses a button for EXACTLY this long, then releases it. The negatives need this. */
+async function pressFor(button: "enter" | "cancel", key: string, downMs: number): Promise<void> {
   bus[button] = 1;
   record(key, 1);
-  await settle(holdMs + FIRE_GRACE_MS);
+  await settle(downMs);
   bus[button] = 0;
   record(key, 0);
   await settle(TICK_MS * 4);
 }
 
-const holdEnter = (holdMs: number): Promise<void> => pressAndHold("enter", "btn_mode_enter", holdMs);
+/**
+ * Presses a button PAST a threshold by FIRE_GRACE_MS, so the fire is certain.
+ *
+ * ⚠️ Separate from pressFor() because conflating the two broke a negative: while this was
+ * the only helper, "a 200 ms tap saves nothing" actually held the button for 200 + the
+ * grace and passed only because HoldState.previous was still null on the runner's first
+ * press. A helper that silently extends a press must never be the one a negative uses.
+ */
+const pressAndHold = (button: "enter" | "cancel", key: string, thresholdMs: number): Promise<void> =>
+  pressFor(button, key, thresholdMs + FIRE_GRACE_MS);
+
+const holdEnter = (thresholdMs: number): Promise<void> => pressAndHold("enter", "btn_mode_enter", thresholdMs);
 
 const controller = await startFanControl({ enabled: true, openPwm: async () => recording });
 const automatic = startFanAutomatic(controller, { tickMs: TICK_MS, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
@@ -480,7 +492,7 @@ await settle(TICK_MS * 4);
 // MOVES, so re-recording the 0 this button already holds raises no event and a runner
 // started mid-stream would never see the 0 that a watched 0→1 needs. On the bike the
 // first 0x102 frame after boot is that key's first record and does notify.
-await holdEnter(60);
+await pressFor("enter", "btn_mode_enter", 60);
 check("a tap far below the threshold changes nothing", automatic.mode() === "automatic");
 
 bus.enter = 1;
@@ -555,18 +567,21 @@ const stubbornGestures = startHoldGestures([{ ...stubbornCycle.gesture, holdMs: 
 await settle(TICK_MS * 4);
 
 /** A press on the stubborn bus. Its own, because that bus carries its own variables. */
-async function holdStubborn(holdMs: number): Promise<void> {
+async function pressStubbornFor(downMs: number): Promise<void> {
   stubbornPress = 1;
   record("btn_mode_enter", 1);
-  await settle(holdMs + FIRE_GRACE_MS);
+  await settle(downMs);
   stubbornPress = 0;
   record("btn_mode_enter", 0);
   await settle(TICK_MS * 4);
 }
 
+/** The same split as pressAndHold()/pressFor() above, and for the same reason. */
+const holdStubborn = (thresholdMs: number): Promise<void> => pressStubbornFor(thresholdMs + FIRE_GRACE_MS);
+
 // One tap first, for the reason §3a gives: a runner started mid-stream has not yet seen
 // the 0 that a watched 0→1 needs, and re-recording an unchanged 0 raises no event.
-await holdStubborn(60);
+await pressStubbornFor(60);
 // Two holds to reach the quiet state: automatic → full, then full → off. The first one
 // succeeds; it is the second, the STOP, that this controller refuses.
 await holdStubborn(QUICK_HOLD_MS);
@@ -632,8 +647,13 @@ const waypointGestures = startHoldGestures([waypointHoldGesture()]);
 record("gps_lat", 57.7, Date.now());
 record("gps_lon", 11.97, Date.now());
 await settle(TICK_MS * 4);
+// ⚠️ A PRIMING TAP FIRST, for the reason §3a gives: a runner started mid-stream has not
+// seen the 0 that a watched 0→1 needs, so without this the negative below would pass
+// because HoldState.previous is still null rather than because 200 ms is under the
+// threshold — which is exactly how it passed while pressAndHold() was the only helper.
+await pressFor("cancel", "btn_indicator_cancel", 60);
 const savedBefore = waypointsSaved();
-await pressAndHold("cancel", "btn_indicator_cancel", 200);
+await pressFor("cancel", "btn_indicator_cancel", 200);
 check("a 200 ms tap of the cancel switch saves nothing", waypointsSaved() === savedBefore);
 await pressAndHold("cancel", "btn_indicator_cancel", WAYPOINT_HOLD_MS);
 check(
