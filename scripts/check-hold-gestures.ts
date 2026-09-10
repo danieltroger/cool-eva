@@ -85,7 +85,7 @@ function check(what: string, condition: boolean) {
  * 160 ENTER presses; the longest anywhere in the CAPTURE archive. No other decoded bit is
  * this clean.
  *
- * ⚠️ The corpus is the 268 candump captures and not the ride log, which holds four ENTER
+ * ⚠️ The corpus is the 268-file capture archive and not the ride log, which holds four ENTER
  * presses at or past FAN_HOLD_MS — 4 260 ms the longest. They are deliberate holds for
  * the bike's own dash menu, so they do not move this threshold; they are why the
  * sentences around it now name which archive they mean.
@@ -829,7 +829,7 @@ check(
   SAMPLE_MAX_AGE_MS > LONGEST_GAP_INSIDE_A_PRESS_MS * 20
 );
 check(
-  "the beat is fine enough that a gesture fires promptly after its threshold",
+  "the beat is at most a tenth of either hold threshold",
   HOLD_BEAT_MS <= FAN_HOLD_MS / 10 && HOLD_BEAT_MS <= WAYPOINT_HOLD_MS / 10
 );
 check("the browser's surviving double-click window is untouched by all this", DOUBLE_CLICK_WINDOW_MS === 700);
