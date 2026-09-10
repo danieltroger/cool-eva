@@ -31,13 +31,27 @@ export const FAN_GESTURE_BUTTON = "btn_mode_enter";
 export const FAN_HOLD_MS = 1200;
 
 /**
- * At or below this the bike counts as stopped, so the fan may be silenced.
+ * At or below this the fan may be silenced, and above it the gesture's *off* is handed
+ * back. Read on BOTH sides, so there is one threshold rather than a band nobody measured.
  *
- * The bike's own number: its dash menu is stationary-only and >3 km/h exits it
- * (obd-garage/CAN_MAP.md, owner's manual pp. 2-4 and 49). Used on BOTH sides — entering
- * *off* and leaving it — so there is one threshold rather than a band nobody measured.
+ * ⚠️ 15 and NOT the bike's own 3. The 3 came from the dash menu, which is stationary-only
+ * and exits above 3 km/h — a true fact about the bike that turned out to be answering the
+ * wrong question. Daniel, 2026-09-11, from two real cases on day 2: a toll queue where he
+ * silenced the fan to hear the booth, and a hotel forecourt where he silenced it while
+ * manoeuvring and being talked to. Both crept, both put the fan back to full. Creeping is
+ * exactly when the noise matters and exactly what 3 km/h refuses.
+ *
+ * The hysteresis that keeps a shunt in a queue from tripping the hand-back is a DURATION
+ * and not a second speed — ./gesture-runner.ts's FAN_OFF_REVERT_HOLD_MS — so this stays a
+ * single number. ⚠️ `speed_can_kmh` reads ~3.5 % high (../can/registry.ts), so 15
+ * indicated is about 14.5 true; nothing here needs that precision, but the constant is in
+ * indicated km/h like every other speed in this repo.
+ *
+ * What it costs, stated because it is a safety property moving: a hold that fires at
+ * 14 km/h now silences the fan, where before it could not. docs/fan-control.md
+ * §"The handlebar gesture" has the bound and the retired 3 km/h rationale.
  */
-export const STATIONARY_MAX_KMH = 3;
+export const FAN_OFF_CEILING_KMH = 15;
 
 /**
  * How old `speed_can_kmh` may be and still say whether the bike is stopped.
@@ -76,7 +90,8 @@ export interface FanGestureInputs {
  * nothing saying the bike is stopped — the cycle degrades to the two-state toggle the
  * issue originally asked for, between automatic and a fan at full. That is deliberate on
  * both counts: a false fire while riding can then only ever land on the thermally safe
- * side, and the 160 ENTER presses in the archive include five made at 47–118 km/h.
+ * side, and the 160 ENTER presses in the capture archive include five made at 47–118 km/h,
+ * every one of them far above the ceiling.
  */
 export function nextFanGestureAction(inputs: FanGestureInputs): FanGestureAction {
   if (inputs.mode === "fun") {
@@ -99,21 +114,25 @@ export function nextFanGestureAction(inputs: FanGestureInputs): FanGestureAction
   }
   // A running manual duty — the gesture's own 100 %, or 45 % left by the slider. Quiet is
   // the next step, and it is the one step the bike has to agree to.
-  return isStationary(inputs.speedKmh) ? "off" : "automatic";
+  return isBelowOffCeiling(inputs.speedKmh) ? "off" : "automatic";
 }
 
 /**
- * Whether the bike is provably stopped.
+ * Whether the bike is slow enough for the fan to be silenced.
+ *
+ * ⚠️ Named for what it tests and not for what it used to test: at 15 km/h the bike is not
+ * stationary, and a predicate called `isStationary` returning true at 14 km/h would be a
+ * worse lie than the number is a change.
  *
  * ⚠️ FAILS CLOSED: null, NaN and a negative all answer false, so *off* needs positive
- * evidence of a standstill and never merely the absence of evidence. It costs nothing —
+ * evidence of a slow bike and never merely the absence of evidence. It costs nothing —
  * 0x102 and 0x104 arrive and stop together, measured over a whole AC and a whole DC
  * session (docs/fan-control.md) — so a bus that can deliver the button press can always
  * deliver the speed too.
  */
-export function isStationary(speedKmh: number | null): boolean {
+export function isBelowOffCeiling(speedKmh: number | null): boolean {
   if (speedKmh === null || !Number.isFinite(speedKmh)) {
     return false;
   }
-  return speedKmh >= 0 && speedKmh <= STATIONARY_MAX_KMH;
+  return speedKmh >= 0 && speedKmh <= FAN_OFF_CEILING_KMH;
 }

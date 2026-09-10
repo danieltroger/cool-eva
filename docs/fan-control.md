@@ -429,15 +429,15 @@ Since #147 automatic **is** 100 % for the whole of every DC session. So at a DC 
 
 #### "Stationary", and what happens when it cannot be established
 
-`speed_can_kmh` (`0x104`, bit 32, u13 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ stationary. At or below **3 km/h** counts as stopped, which is the bike's own number: its dash menu is stationary-only and >3 km/h exits it.
+`speed_can_kmh` (`0x104`, bit 32, u13 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ stationary. At or below **15 km/h** the fan may be silenced — see §"Why the ceiling is 15 and not the bike's own 3" below.
 
 Failing closed costs nothing measurable. `0x102`, `0x104` and `0x109` arrive and stop **together** — 317 785 / 317 780 frames with identical per-second coverage over a whole AC session, 106 100 / 106 098 at 99.98 Hz over a whole DC one, both above — so a bus that can deliver the button press can always deliver the speed. And the two ways of being wrong are not symmetric: an unknown speed skips _off_ and hands the fan to the curve, which is the state that watches the pack, rather than silencing it on a bike that might be moving.
 
-**So above 3 km/h the cycle degrades to the two-state toggle the request originally asked for** — automatic and manual 100 %, with the quiet state simply skipped. That is deliberate. ENTER is pressed while riding — five of the 160 presses in the archive were made at 47–118 km/h — so a false fire at speed has to be harmless, and the only states reachable there are automatic and a fan at full.
+**So above 15 km/h the cycle degrades to the two-state toggle the request originally asked for** — automatic and manual 100 %, with the quiet state simply skipped. That is deliberate. ENTER is pressed while riding — five of the 160 presses in the archive were made at 47–118 km/h — so a false fire at speed has to be harmless, and the only states reachable there are automatic and a fan at full. Every one of those five is far above the ceiling.
 
 #### Riding away with the fan off
 
-While _off_ is armed, `src/fan/gesture-runner.ts` beats every `AUTO_TICK_MS` and hands the fan back to the curve on a **fresh** reading above 3 km/h.
+While _off_ is armed, `src/fan/gesture-runner.ts` beats every `FAN_OFF_BEAT_MS` (500 ms) and hands the fan back to the curve once **fresh** readings have been above the ceiling continuously for `FAN_OFF_REVERT_HOLD_MS` (2 s).
 
 ⚠️ **Staleness does not revert it**, which is the opposite polarity to `fun.ts`'s gate and is chosen rather than inherited. Fun mode must _prove_ the bike cannot move before wiring a throttle to a fan; _off_ claims nothing and merely declines to spin one. And an AC charge silences the bus for up to 23.7 minutes — that silence **is** the dinner this state exists for, so failing closed would start the fan in the middle of the one situation it was built for. A bike that has stopped broadcasting `0x104` is a bike that is not moving, which is how the curve's own speed gate already reads the same silence.
 
@@ -587,9 +587,49 @@ That is #199. Measured over sessions 33–50 of the ride log, 2026-09-03 → 202
 
 `commandDuty()` set `targetPercent` and then published only in its `fromRest` and `running` branches. A command landing **mid kick-start** took neither, so `fan_target_pct` kept the previous value for the rest of `KICK_START_MS`. Measured against the real controller with a stand-in bridge: 68 % commanded, then 100 % at 50 ms into the kick — the wire read 68 at 200, 700 and 1200 ms and only became 100 at ~1700 ms, once the kick ended. Re-ordering alone does **not** fix the banner in that window, which is the likeliest shape of the reported one: the curve had just started the fan.
 
+### Why the ceiling is 15 and not the bike's own 3
+
+⚠️ **The 3 km/h was a true fact answering the wrong question.** It came from the bike: the dash menu is stationary-only and >3 km/h exits it (`obd-garage/CAN_MAP.md`, owner's manual pp. 2-4 and 49), so it was the bike's own idea of "stopped". That is exactly why it was chosen, and exactly why it failed — the rider does not want the fan silenced _when the bike thinks it is stopped_, but _when the noise is in the way_, and those come apart the moment the bike creeps.
+
+Daniel, 2026-09-11, day 2 of the trip, two cases in one day:
+
+> First time was at a toll booth. I stopped and waited in the queue - turned it off when only one car was left so I could hear what the guy was gonna say. Drove up and the fan started blasting haha. Second was when arriving to the hotel, guy was receiving us and started talking while I was parking - while low-speed maneuvering I turned the fan off but then after a while it started blasting again.
+
+Both are the same shape: silence the fan, then roll a few metres, then be back at full before the conversation the silence was for. The retired rationale is kept here rather than deleted because it is a real measurement about the bike and will be right again the next time somebody wants "is it stopped" — it is just not the question _off_ is asking.
+
+**The hysteresis is a duration, not a second speed.** A revert-at-18/enter-at-15 band would put the fan's behaviour in a range nobody measured, and would not help anyway: what separates a shunt forward in a queue from riding away is not how fast the bike gets but _how long it stays there_. So the ceiling stays a single number and `FAN_OFF_REVERT_HOLD_MS` carries the chatter. ⚠️ This repo does run speed hysteresis on this very signal — the 90/93 km/h road gate above — so the choice is about which axis suits this question, not about speed hysteresis being foreign.
+
+⚠️ **`FAN_OFF_REVERT_HOLD_MS` = 2 000 ms is CHOSEN, NOT MEASURED**, in the same sense as the 90/93 gap. The archive cannot settle it, and the attempt to make it look settled is worth recording because it nearly shipped: filtering the ride log's excursions above 15 km/h to a "creep shape" (more than one sample, peaking under 25 km/h) and reporting the longest gives 1.95 s — but only because the filter used to produce it also capped duration at 2 s. **The number was the filter's own ceiling.** Without that clause the same filter leaves **272 excursions of which 101 run past 2 s, the longest 25.9 s at 21.2 km/h over 70 samples** — plainly not creeps. Peak speed does not separate a parking manoeuvre from riding 20 km/h down a lane, so no window length is derivable from this data at all.
+
+What the log does support, over 49 sessions from 2026-08-02 to 2026-09-11 (⚠️ ~1.24 M `speed_can_kmh` rows; the exact count moves ~0.2 % with how the 2060 clock-corrupt rows are dropped, so it is quoted to two figures on purpose):
+
+| excursions above 15 km/h | 898                                |
+| ------------------------ | ---------------------------------- |
+| shorter than 2 s         | 562 (336 of those a single sample) |
+| 2 s or longer            | 336                                |
+
+So a 2 s window discards the great majority of border crossings. The tiebreaker for the exact value is the asymmetry rather than the data: **trip early and the fan comes back in automatic, one hold away; trip late and a silent fan goes onto a road.** ⚠️ `speed_can_kmh` is deadbanded at 0.5 km/h, so crossings the deadband hid are missing from all of the above.
+
+**A null clears the mark.** The hold measures _proven_ sustained motion, and silence proves nothing — the same polarity as the staleness rule that leaves the fan off through an AC charge. The cost is that a bus stuttering at the beat rate could never accumulate the hold; that is theoretical against 0x104 at 100 Hz, and its failure direction is the fan staying off slightly longer, which the next fresh sample bounds. ⚠️ The hold must stay **longer than the speed's 500 ms freshness window**, or a bus going silent could complete a hand-back by itself on a stale-but-still-fresh reading; `scripts/check-fan-off-ceiling.ts` pins that relationship.
+
+**What it costs, since this is a safety property moving.** A hold firing at 14 km/h now silences the fan, where before it could not. The bound is not "that cannot happen" — it is that the only known reason to hold ENTER for 1 200 ms is the bike's own dash menu, which is stationary-only and exits above 3 km/h, so in the 3–15 km/h band this newly exposes, the one thing that makes a rider hold that button has already been taken away by the bike. All four ENTER presses at or past 1 200 ms in the ride log were made at a standstill: the bout of three on 2026-09-07 11:49:43–55 has its last speed row at **0.1 km/h at 11:49:18.870** and no further row until 11:52:20, and the 4 260 ms press on 2026-08-29 20:53:25 sits in a window (20:52:34 → 20:53:18) whose maximum is **1.1 km/h**. And the exposure is bounded: at 15 km/h, 2.0–2.5 s is **about 10 m** of riding with the fan silent, against a pack whose thermal time constant is minutes.
+
+### What the phone says about it
+
+Two sentences, because a state the rider cannot see is the surprise this whole issue is about:
+
+| when                            | banner                        |
+| ------------------------------- | ----------------------------- |
+| entering _off_ with the gesture | **"Fan: off until 15 km/h"**  |
+| the watchdog handing back       | **"Fan: automatic (moving)"** |
+
+Both are worded from `fan_off_state` (`FAN_OFF_STATE` in `src/fan/gesture-runner.ts` — 0 nobody's, 1 the gesture's and in force, 2 just handed back). ⚠️ A **0 the slider set says a plain "Fan: off"**, deliberately: nothing is watching it, it survives until the bike is switched off, and telling that rider it ends at 15 km/h would be inventing a rule the Pi is not applying to them.
+
+Both obey #199's ordering rule — whatever _words_ a banner reaches the phone no later than whatever _moves_ its key. ARMED is recorded before the awaited duty command; MOVED is recorded on the line before `setMode("automatic")`, which publishes the mode synchronously before its first `await`, so the two share a batch. ⚠️ The disarm is the other half and was the subtler bug: `src/http/fan.ts` calls the loop directly and tells the gesture nothing, so a slider drag from 0 up and back to 0 — seven commands a second — used to fit inside one beat, leaving the watchdog armed over a duty a thumb had chosen and the phone promising a ceiling on it. A subscription to `fan_target_pct` now disarms in the batch after the duty that woke it, still strictly before the drag's return to zero.
+
 ### ⚠️ REFUTED: log-on-change does not starve the gesture's stationary proof
 
-The hypothesis, and it is a reasonable one: _off_ is only reachable with a fresh `speed_can_kmh` ≤ 3 km/h inside 500 ms (`src/fan/gesture.ts`), the ride log seals a row only when a value **moves**, and a bike parked at a charger holds a constant 0 — so the proof should starve exactly where the rider wants quiet.
+The hypothesis, and it is a reasonable one: _off_ is only reachable with a fresh `speed_can_kmh` under the ceiling inside 500 ms (`src/fan/gesture.ts`), the ride log seals a row only when a value **moves**, and a bike parked at a charger holds a constant 0 — so the proof should starve exactly where the rider wants quiet.
 
 **It does not**, and the reason is one line of ordering: `record()` writes `lastSeenMonotonic` **before** the deadband gate, and `src/index.ts` calls `record()` for every decoded key on every frame. `ageMs()` — which `freshValue()` reads — therefore measures **frame arrival**, not value change.
 
@@ -608,7 +648,7 @@ Daniel, 2026-09-10: _"sometimes long pressing mode never goes into the off setti
 2. **The banner was lying.** From automatic with a cold pack the first hold said **"Fan: off"** while commanding 100 %. Counting the cycle by what the phone said puts a rider a step out of phase. Fixed above.
 3. **Automatic is the default on every start** and the mode is memory-only, on purpose. The archive holds **13 sessions on 2026-09-07** (38–50), each writing `fan_auto_mode = 1`. ⚠️ Session count is not restart count here — 38/39/40 and 47/48/49 overlap at their seams — and most are expected to be key cycles rather than crashes. **Settled by:** the journal, and nothing else.
 4. **A sleeping bus recognises no hold at all.** 0x102 goes quiet with 0x104, so the press cannot be proved either, and the hold silently does nothing.
-5. **The _off_ watchdog handing back above 3 km/h**, by design, including rolling the bike.
+5. **The _off_ watchdog handing back above the ceiling**, by design. ⚠️ Until 2026-09-11 that ceiling was 3 km/h, which is why this ranked so high: a toll queue or a parking manoeuvre tripped it. #205 moved it to 15 km/h with a 2 s hold, which removes this explanation for the creeping cases and leaves it only for genuinely riding away.
 
 **A long hold firing twice is not among them.** `observeHold()` latches `fired` until the release, and `scripts/check-hold-gestures.ts` replays a deliberate 10 s hold and asserts exactly one fire.
 

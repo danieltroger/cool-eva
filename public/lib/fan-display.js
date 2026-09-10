@@ -126,6 +126,26 @@ export const FAN_TEMPERATURE_NOTE = {
 export const FAN_MODE_CODE = { MANUAL: 0, AUTOMATIC: 1, FUN: 2 };
 
 /**
+ * `fan_off_state` — whose *off* this is, and why it ended.
+ *
+ * ⚠️ A second copy of FAN_OFF_STATE in src/fan/gesture-runner.ts, for the reason
+ * FAN_MODE_CODE above is: the browser cannot import a .ts module and the code is the wire
+ * format. scripts/check-fan-off-ceiling.ts asserts the two agree.
+ */
+export const FAN_OFF_STATE_CODE = { NOT_ARMED: 0, ARMED: 1, MOVED: 2 };
+
+/**
+ * The speed the gesture's *off* survives up to, in the sentence the rider reads.
+ *
+ * ⚠️ A second copy of FAN_OFF_CEILING_KMH in src/fan/gesture.ts, and the ONLY one that is
+ * a promise rather than a threshold: "off until 15 km/h" is what the phone tells a rider
+ * who has just silenced the fan at a toll booth, so it moving out of step with the Pi
+ * would be a lie rather than a mismatch. scripts/check-fan-off-ceiling.ts asserts the two
+ * agree, which is what makes it safe for this file to hold a number at all.
+ */
+export const FAN_OFF_CEILING_KMH = 15;
+
+/**
  * One sentence per FUN_GATE in src/fan/fun.ts, keyed by its code — why fun mode is or is
  * not on offer. Same arrangement as FAN_REASON_TEXT above and asserted the same way.
  * @type {Record<number, string>}
@@ -205,19 +225,30 @@ export function fanAnnouncementKey(modeCode, targetPercent) {
  * gesture's step reads "manual 100 %" with the number coming off the wire rather than
  * from a copy of src/fan/control.ts's cap.
  *
+ * ⚠️ `offState` words two of the four and NEVER enters fanAnnouncementKey(). A key that
+ * carried it would raise a banner on a bare disarm — the fan unchanged, the sentence
+ * changing — and would break the four-distinct-keys rule the cycle depends on.
+ *
  * @param {string | null} key from fanAnnouncementKey()
  * @param {number | null} targetPercent `fan_target_pct`
+ * @param {number | null} [offState] `fan_off_state`, read in the same pass as the key
  * @returns {string}
  */
-export function fanAnnouncementText(key, targetPercent) {
+export function fanAnnouncementText(key, targetPercent, offState = null) {
   if (key === "automatic") {
-    return "Fan: automatic";
+    // The bike did this, not the rider: the gesture's *off* was handed back because the
+    // bike went over the ceiling and stayed there. Saying so is the whole point — the
+    // complaint that produced #205 was "drove up and the fan started blasting".
+    return offState === FAN_OFF_STATE_CODE.MOVED ? "Fan: automatic (moving)" : "Fan: automatic";
   }
   if (key === "fun") {
     return "Fan: fun mode";
   }
   if (key === "manual-stopped") {
-    return "Fan: off";
+    // Only the GESTURE's off carries the promise. A 0 the slider set has always survived
+    // until the bike is switched off, and telling that rider it ends at 15 km/h would be
+    // inventing a rule the Pi is not applying to them.
+    return offState === FAN_OFF_STATE_CODE.ARMED ? `Fan: off until ${FAN_OFF_CEILING_KMH} km/h` : "Fan: off";
   }
   if (key === "manual-running") {
     return targetPercent === null ? "Fan: manual" : `Fan: manual ${formatDuty(targetPercent)} %`;

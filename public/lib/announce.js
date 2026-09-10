@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { connection, peek, valueOf } from "./store.js";
-import { fanAnnouncementKey, fanAnnouncementText } from "./fan-display.js";
+import { FAN_OFF_STATE_CODE, fanAnnouncementKey, fanAnnouncementText } from "./fan-display.js";
 import { showToast } from "./toast.js";
 
 // Banners for things the BIKE did, which nothing on this screen asked for.
@@ -86,6 +86,16 @@ function blank() {
 }
 
 /**
+ * What the fan announcement remembers between readings.
+ *
+ * `offState` is here rather than derived because MOVED has to be one-shot: the fold needs
+ * the previous reading to tell "the bike just handed the fan back" from "the bike handed
+ * it back a while ago and we are still in automatic".
+ *
+ * @typedef {{ value: string | null, baselined: boolean, offState?: number | null }} FanAnnouncementMemory
+ */
+
+/**
  * One reading of the fan's two signals, folded into a banner or into nothing.
  *
  * Pure, and exported so scripts/check-fan-banner.ts drives THE WORDING THE PHONE USES
@@ -95,16 +105,31 @@ function blank() {
  * apart — and stayed green through the whole of #199, whose defect is precisely a pair
  * that came apart.
  *
- * @param {{ value: string | null, baselined: boolean }} state
+ * @param {FanAnnouncementMemory} state
  * @param {number | null} modeCode `fan_auto_mode`
  * @param {number | null} targetPercent `fan_target_pct`, read in the same pass as the mode
- * @returns {{ state: { value: string | null, baselined: boolean }, banner: string | null }}
+ * @param {number | null} [offState] `fan_off_state`, peeked to word two of the four
+ * @returns {{ state: FanAnnouncementMemory, banner: string | null }}
  */
-export function foldFanAnnouncement(state, modeCode, targetPercent) {
+export function foldFanAnnouncement(state, modeCode, targetPercent, offState = null) {
   const folded = foldAnnouncement(state, fanAnnouncementKey(modeCode, targetPercent));
+  // ⚠️ ONE-SHOT, and remembered on EVERY call rather than only on the ones that announce.
+  // `fan_off_state` goes back to NOT_ARMED one batch after a hand-back, so MOVED is
+  // normally gone by the time anything else reaches `automatic` — this is the guard for
+  // the day that clear is removed or delayed, not the mechanism. Without it, a fan handed
+  // back by the bike and then re-entered through fun mode would say "(moving)" twice.
+  const movedIsNews = offState === FAN_OFF_STATE_CODE.MOVED && state.offState !== FAN_OFF_STATE_CODE.MOVED;
+  const nextState = { ...folded.state, offState };
+  if (!folded.announce) {
+    return { state: nextState, banner: null };
+  }
+  // ⚠️ The one-shot gates MOVED only. ARMED must always word its banner: it is a standing
+  // fact about the fan, not news, and passing it through the same gate said plain
+  // "Fan: off" over the gesture's own off — the promise dropped, silently.
+  const wordedWith = offState === FAN_OFF_STATE_CODE.MOVED && !movedIsNews ? null : offState;
   return {
-    state: folded.state,
-    banner: folded.announce ? fanAnnouncementText(folded.state.value, targetPercent) : null,
+    state: nextState,
+    banner: fanAnnouncementText(folded.state.value, targetPercent, wordedWith),
   };
 }
 
@@ -128,7 +153,15 @@ function announceFanState() {
     // key moves on it while the mode is manual. src/fan/auto.ts is what guarantees the
     // pair is consistent by the time the mode arrives — docs/fan-control.md §"The two fan
     // signals must reach the phone duty-first".
-    const folded = foldFanAnnouncement(memory, valueOf("fan_auto_mode"), valueOf("fan_target_pct"));
+    // peek() for the off state, valueOf() for the pair: the key is what this reacts to,
+    // and the off state is only read to word a banner already decided on. store.js §peek
+    // has the rule; ./announce.js's waypoint_refusal is the same shape.
+    const folded = foldFanAnnouncement(
+      memory,
+      valueOf("fan_auto_mode"),
+      valueOf("fan_target_pct"),
+      peek("fan_off_state")
+    );
     memory = folded.state;
     if (folded.banner !== null) {
       showToast(folded.banner, "good");

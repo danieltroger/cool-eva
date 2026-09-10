@@ -7,13 +7,13 @@ import type { FanPwm } from "../src/fan/pwm.ts";
 import {
   FAN_GESTURE_BUTTON,
   FAN_HOLD_MS,
+  FAN_OFF_CEILING_KMH,
   STATIONARY_MAX_AGE_MS,
-  STATIONARY_MAX_KMH,
-  isStationary,
+  isBelowOffCeiling,
   nextFanGestureAction,
   type FanGestureInputs,
 } from "../src/fan/gesture.ts";
-import { startFanCycleGesture } from "../src/fan/gesture-runner.ts";
+import { FAN_OFF_REVERT_HOLD_MS, startFanCycleGesture } from "../src/fan/gesture-runner.ts";
 import { HOLD_BEAT_MS, startHoldGestures } from "../src/gestures/runner.ts";
 import {
   HOLD_OUTCOME,
@@ -276,6 +276,16 @@ check(
 
 console.log("\n2. one hold, one step round the cycle");
 
+/**
+ * A speed the gesture must read as riding away rather than creeping.
+ *
+ * ⚠️ Derived from the ceiling, not typed as a literal. Every "moving" case in this file
+ * used to be 5 km/h, which was above the old 3 and is BELOW the 15 that replaced it — so
+ * a literal would have quietly inverted every one of them, and one of them (the slider's
+ * own 0 surviving) would have gone green while testing nothing. #205.
+ */
+const ABOVE_CEILING_KMH = FAN_OFF_CEILING_KMH + 5;
+
 function inputs(overrides: Partial<FanGestureInputs> = {}): FanGestureInputs {
   return { mode: "automatic", targetPercent: 0, speedKmh: 0, ...overrides };
 }
@@ -299,7 +309,8 @@ check(
 check("fun mode → automatic", nextFanGestureAction(inputs({ mode: "fun" })) === "automatic");
 check(
   "⚠️  manual 100 % while MOVING skips off and goes to automatic — the two-state toggle",
-  nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: 5 })) === "automatic"
+  nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: ABOVE_CEILING_KMH })) ===
+    "automatic"
 );
 check(
   "⚠️  …and so does an unknown speed, so *off* needs proof rather than the absence of it",
@@ -307,20 +318,21 @@ check(
 );
 check(
   "⚠️  and the only two states reachable while moving are still automatic and manual 100 %",
-  nextFanGestureAction(inputs({ speedKmh: 5 })) === "full" &&
-    nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: 5 })) === "automatic"
+  nextFanGestureAction(inputs({ speedKmh: ABOVE_CEILING_KMH })) === "full" &&
+    nextFanGestureAction(inputs({ mode: "manual", targetPercent: MAX_DUTY_PERCENT, speedKmh: ABOVE_CEILING_KMH })) ===
+      "automatic"
 );
 check(
   "a NaN target never reads as a stopped fan",
   nextFanGestureAction(inputs({ mode: "manual", targetPercent: Number.NaN })) === "automatic"
 );
 check(
-  `${STATIONARY_MAX_KMH} km/h is stationary and ${STATIONARY_MAX_KMH + 0.1} km/h is not`,
-  isStationary(STATIONARY_MAX_KMH) && !isStationary(STATIONARY_MAX_KMH + 0.1)
+  `${FAN_OFF_CEILING_KMH} km/h is under the ceiling and ${FAN_OFF_CEILING_KMH + 0.1} km/h is not`,
+  isBelowOffCeiling(FAN_OFF_CEILING_KMH) && !isBelowOffCeiling(FAN_OFF_CEILING_KMH + 0.1)
 );
 check(
   "null, NaN and a negative speed are all NOT stationary",
-  !isStationary(null) && !isStationary(Number.NaN) && !isStationary(-5)
+  !isBelowOffCeiling(null) && !isBelowOffCeiling(Number.NaN) && !isBelowOffCeiling(-5)
 );
 
 // --- 3. The fan cycle, end to end -----------------------------------------------
@@ -395,7 +407,7 @@ const holdEnter = (thresholdMs: number): Promise<void> => pressAndHold("enter", 
 
 const controller = await startFanControl({ enabled: true, openPwm: async () => recording });
 const automatic = startFanAutomatic(controller, { tickMs: TICK_MS, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
-const fanCycle = startFanCycleGesture(automatic, { revertBeatMs: 50 });
+const fanCycle = startFanCycleGesture(automatic, { revertBeatMs: 50, revertHoldMs: 100 });
 const quickGestures = startHoldGestures([{ ...fanCycle.gesture, holdMs: QUICK_HOLD_MS }]);
 await settle(TICK_MS * 4);
 
@@ -420,8 +432,8 @@ check("…and the dashboard is told", latestValue("fan_auto_mode") === FAN_MODE_
 // Moving: the cycle degrades to the two-state toggle. From automatic a hold still goes to
 // full — that is the loud, thermally safe side — and from full it goes back to automatic
 // rather than to the quiet state the bike has not agreed to.
-bus.speedKmh = 5;
-record("speed_can_kmh", 5);
+bus.speedKmh = ABOVE_CEILING_KMH;
+record("speed_can_kmh", bus.speedKmh);
 await settle(TICK_MS * 4);
 await holdEnter(QUICK_HOLD_MS);
 check(
@@ -441,10 +453,13 @@ await settle(TICK_MS * 4);
 await holdEnter(QUICK_HOLD_MS);
 await holdEnter(QUICK_HOLD_MS);
 check("the fan is off with the bike stopped", automatic.mode() === "manual" && controller.state().targetPercent === 0);
-bus.speedKmh = 5;
-record("speed_can_kmh", 5);
-await settle(250);
-check("⚠️  the bike moving above 3 km/h takes *off* back to automatic", automatic.mode() === "automatic");
+bus.speedKmh = ABOVE_CEILING_KMH;
+record("speed_can_kmh", bus.speedKmh);
+await settle(400);
+check(
+  `⚠️  the bike sustained above ${FAN_OFF_CEILING_KMH} km/h takes *off* back to automatic`,
+  automatic.mode() === "automatic"
+);
 
 // ⚠️ …but only the *off* THIS gesture commanded. A duty the rider chose with the slider
 // is a deliberate instruction that has always survived until the bike is switched off.
@@ -452,9 +467,13 @@ bus.speedKmh = 0;
 record("speed_can_kmh", 0);
 await settle(TICK_MS * 4);
 await automatic.commandManualDuty(0);
-bus.speedKmh = 5;
-record("speed_can_kmh", 5);
-await settle(250);
+// ⚠️ ABOVE the ceiling and waited past the hold, both deliberately. At the old 5 km/h this
+// assertion would pass under a 15 km/h ceiling without testing anything — nothing reverts
+// below the ceiling — and it is the ONE guard for "the watchdog must not take a duty the
+// rider chose by hand". A guard that cannot fail is worse than one that is red.
+bus.speedKmh = ABOVE_CEILING_KMH;
+record("speed_can_kmh", bus.speedKmh);
+await settle(400);
 check(
   "⚠️  a manual 0 the SLIDER set is NOT reverted by riding away — only the gesture's own is",
   automatic.mode() === "manual" && controller.state().targetPercent === 0
@@ -572,7 +591,7 @@ const stubbornLoop = startFanAutomatic(failingStopController, {
   speedMaxAgeMs: 400,
   chargeSessionMaxAgeMs: 400,
 });
-const stubbornCycle = startFanCycleGesture(stubbornLoop, { revertBeatMs: 50 });
+const stubbornCycle = startFanCycleGesture(stubbornLoop, { revertBeatMs: 50, revertHoldMs: 100 });
 const stubbornGestures = startHoldGestures([{ ...stubbornCycle.gesture, holdMs: QUICK_HOLD_MS }]);
 await settle(TICK_MS * 4);
 
@@ -597,12 +616,12 @@ check(
   "the hold stopped the fan even though the bridge refused",
   stubbornLoop.mode() === "manual" && failingStopController.state().targetPercent === 0
 );
-stubbornSpeed = 5;
-record("speed_can_kmh", 5);
-await settle(250);
+stubbornSpeed = ABOVE_CEILING_KMH;
+record("speed_can_kmh", stubbornSpeed);
+await settle(400);
 check(
   "⚠️  …and riding away STILL hands it back — the watchdog is armed on the attempt, not on the reply",
-  stubbornLoop.mode() === "automatic"
+  stubbornLoop.mode() === "automatic" && failingStopController.state().targetPercent === 0
 );
 clearInterval(stubbornBus);
 stubbornGestures.stop();
@@ -879,7 +898,9 @@ if (failures > 0) {
   console.log("✓ a press followed by 20 minutes of silence never fires, a 300 ms press never fires, and a 1.3 s");
   console.log("  hold fires exactly once while the thumb is still down; the longest ENTER press and the longest");
   console.log("  ordinary cancel press ever recorded both fire nothing; the cycle walks automatic → 100 % → off");
-  console.log("  → automatic against a real loop, skips *off* above 3 km/h, reverts its OWN off when the bike");
+  console.log(
+    "  → automatic against a real loop, skips *off* above the 15 km/h ceiling, reverts its OWN off when the bike"
+  );
   console.log("  moves but never the slider's, and leaves the fan off when the bus goes quiet; and a waypoint");
   console.log("  8 000 km from the fix before it is refused with a code the phone can read");
 }

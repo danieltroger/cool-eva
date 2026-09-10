@@ -39,6 +39,12 @@ export const SIGNALS: SignalDef[] = [
   // combination bounds.js renders ungated — so each is named in its BY_KEY, and
   // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
   { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true },
+  // Whose *off* the fan is in, and why it ended — FAN_OFF_STATE in src/fan/gesture-runner.ts:
+  // 0 nobody's, 1 the handlebar gesture's and still in force, 2 the gesture's and just handed
+  // back because the bike went over the ceiling. ⚠️ It is what lets the phone say "off until
+  // 15 km/h" over the gesture's 0 and plain "off" over the slider's, which are the same
+  // `fan_target_pct` and are not the same promise to the rider (#205).
+  { key: "fan_off_state", unit: "", group: "fan", source: "sensor", onDemand: true },
 
   { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true },
   { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true },
