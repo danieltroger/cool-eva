@@ -200,12 +200,14 @@ const realPresses: [string, number, number, number][] = [
   // ⚠️ The accepted cost of the trim to 500 ms: this one now fires, where at 1000 ms it did
   // not. A deliberate hold from the hazard experiment, sixteen days before the gesture existed.
   ["the 0.940 s cancel press from the hazard experiment", 940, WAYPOINT_HOLD_MS, 1],
-  // ⚠️ 480 and 520 are asserted HERE, against the pure recogniser at the bus's own 10 ms
-  // rate, and deliberately not end to end: a gesture fires only ON a beat, so a 520 ms press
-  // through the runner is a coin flip (measured 2/10 at a 100 ms beat, 5/10 at 50 ms) and
-  // becomes reliable only around 580 ms. The threshold is what this table is about; the
-  // latency the beat adds is HOLD_BEAT_MS's business.
-  ["a press 20 ms short of the waypoint threshold", 480, WAYPOINT_HOLD_MS, 0],
+  // ⚠️ Asserted HERE, against the pure recogniser at the bus's own 10 ms rate, and
+  // deliberately not end to end: a gesture fires only ON a beat, so a 520 ms press through
+  // the runner is a coin flip (measured 2/10 at a 100 ms beat, 5/10 at 50 ms) and becomes
+  // reliable only around 580 ms. The threshold is what this table is about; the latency the
+  // beat adds is HOLD_BEAT_MS's business.
+  //
+  // The matching 480 ms negative was dropped: the row below it replays 499 ms, the
+  // recogniser is monotone in press duration, so 480 could never have been the first to go red.
   ["a press 20 ms past the waypoint threshold", 520, WAYPOINT_HOLD_MS, 1],
   ["one millisecond short of the fan threshold", FAN_HOLD_MS - 1, FAN_HOLD_MS, 0],
   ["one millisecond short of the waypoint threshold", WAYPOINT_HOLD_MS - 1, WAYPOINT_HOLD_MS, 0],
