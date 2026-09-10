@@ -66,6 +66,13 @@ const COLD_PACK_C = 10;
 const TICK_MS = 20;
 
 /**
+ * The loop every section stands up. The tick is long enough that the curve never
+ * re-commands mid-assertion: every duty below is commanded by something this file did, so
+ * the recorded batches carry no third party's noise.
+ */
+const LOOP_OPTIONS = { tickMs: 60_000, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 };
+
+/**
  * The batches src/ws.ts would have turned into patches, in order.
  *
  * ⚠️ Subscribed through onChange() — the same list src/ws.ts subscribes to — rather than
@@ -132,13 +139,7 @@ const busTimer = setInterval(() => {
 }, TICK_MS);
 
 const controller = await startFanControl({ enabled: true, openPwm: async () => recording });
-// A tick long enough that the curve never re-commands mid-assertion: every duty below is
-// commanded by something this file did, so the patches carry no third party's noise.
-const automatic = startFanAutomatic(controller, {
-  tickMs: 60_000,
-  speedMaxAgeMs: 400,
-  chargeSessionMaxAgeMs: 400,
-});
+const automatic = startFanAutomatic(controller, LOOP_OPTIONS);
 const cycle = startFanCycleGesture(automatic, { revertBeatMs: 60_000 });
 
 // --- 1. The reported failure: a hold off a warm pack -------------------------------
@@ -182,7 +183,6 @@ console.log("\n1b. …and the same hold while the fan is still kick-starting");
 // §1 left the fan manual and running, so this hands it back to the curve without a kick:
 // the fan has to be STOPPED first, which is what the cold pack below is for. The kick
 // this section needs is the one the warm pack then starts.
-await automatic.setMode("automatic");
 bus.packC = COLD_PACK_C;
 await settle(TICK_MS * 3);
 await automatic.setMode("automatic");
@@ -311,11 +311,7 @@ batches.splice(0);
 console.log("\n6. the duty never arrives after the mode that needs it");
 
 const ordering = await startFanControl({ enabled: true, openPwm: async () => recording });
-const orderingLoop = startFanAutomatic(ordering, {
-  tickMs: 60_000,
-  speedMaxAgeMs: 400,
-  chargeSessionMaxAgeMs: 400,
-});
+const orderingLoop = startFanAutomatic(ordering, LOOP_OPTIONS);
 await settle(TICK_MS * 3);
 batches.splice(0);
 await orderingLoop.commandManualDuty(MAX_DUTY_PERCENT);
@@ -323,9 +319,9 @@ await settle(TICK_MS * 3);
 const collected = [...batches];
 const dutyAt = batchIndexOf(collected, "fan_target_pct");
 const modeAt = batchIndexOf(collected, "fan_auto_mode");
-check(`both signals reached the wire (duty in batch ${dutyAt}, mode in batch ${modeAt})`, dutyAt >= 0 && modeAt >= 0);
 check(
-  "⚠️  the duty is in the same batch as the mode or an earlier one — never a later one",
+  `⚠️  the duty is in the mode's batch or an earlier one, never a later one ` +
+    `(duty in batch ${dutyAt}, mode in batch ${modeAt})`,
   dutyAt >= 0 && modeAt >= 0 && dutyAt <= modeAt
 );
 orderingLoop.stop();
@@ -347,7 +343,7 @@ const wedged = await startFanControl({
   enabled: true,
   openPwm: async () => ({ ...recording, setDutyPercent: () => new Promise<void>(() => {}) }),
 });
-const wedgedLoop = startFanAutomatic(wedged, { tickMs: 60_000, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
+const wedgedLoop = startFanAutomatic(wedged, LOOP_OPTIONS);
 await settle(TICK_MS * 3);
 let wedgedSettled = false;
 let wedgedThrew: unknown = null;
@@ -366,10 +362,8 @@ await settle(TICK_MS * 6);
 check("the command has not answered, because the bridge has not", !wedgedSettled);
 check("…and it did not reject either — it is wedged, not failed", wedgedThrew === null);
 check("…the loop still knows which mode it is in", wedgedLoop.mode() === "manual");
-// ⚠️ The assertion that makes this section the check the doc claims it is. `mode()` reads
-// a field assigned before the try and is true under every ordering; the WIRE is where the
-// trade shows. Publishing after the command means a bridge that never answers leaves the
-// mode unpublished — accepted, and asserted so nobody "fixes" it by accident.
+// ⚠️ `mode()` above is the premise, not the property: it reads a field assigned before the
+// try and is true under every ordering. The WIRE is where the trade shows.
 check(
   "⚠️  …while the WIRE still says automatic — the documented cost of publishing after the command",
   latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic
@@ -397,7 +391,7 @@ const unhurried = await startFanControl({
     setDutyPercent: () => new Promise<void>(resolve => setTimeout(resolve, TICK_MS)),
   }),
 });
-const racingLoop = startFanAutomatic(unhurried, { tickMs: 60_000, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
+const racingLoop = startFanAutomatic(unhurried, LOOP_OPTIONS);
 await settle(TICK_MS * 3);
 await racingLoop.setMode("automatic");
 // Settled, so the slider command below really does span its three awaited writes rather

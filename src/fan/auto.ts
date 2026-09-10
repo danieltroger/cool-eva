@@ -393,8 +393,10 @@ async function commandManual(context: AutoContext, percent: number): Promise<Fan
     // guarded: a "back to Auto" tap landing inside this command has already published the
     // curve's real decision, and stamping MANUAL over it would put "The slider is driving
     // the fan." under Automatic until the next tick, or clear the red line a dead sensor
-    // has just raised. The pair still leaves in ONE batch, which is why the guard rather
-    // than moving this back above the await. scripts/check-fan-banner.ts §8.
+    // has just raised. ⚠️ The MODE AND THE DECISION still leave in one batch, which is why
+    // a guard rather than moving this back above the await — but the mode and the DUTY
+    // never do, and cannot: the duty's flush is queued a microtask before this resumption.
+    // Duty-first is an order, not a batch. scripts/check-fan-banner.ts §6 and §8.
     publishMode(context);
     if (context.mode === "manual") {
       publishDecision(null);
