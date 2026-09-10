@@ -1,6 +1,7 @@
 import { CHARGE_AUTO_REASON, MIN_COMMAND_A, type ChargeAutoReason } from "../src/charge/auto-curve.ts";
 import { CHARGE_AUTO_REASON_TEXT, type ChargeAutoResponse } from "../src/http/charge-auto.ts";
 import type { ChargeAutoMode } from "../src/charge/auto.ts";
+import { CHARGE_MANAGER_STATE_AC, CHARGE_MANAGER_STATE_DC } from "../src/vcu/charge-session.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import type { LiveValue } from "../src/can/signals.ts";
 import { HEARTBEAT_MS, type DashboardMessage } from "../src/ws.ts";
@@ -20,34 +21,31 @@ import { HEARTBEAT_MS, type DashboardMessage } from "../src/ws.ts";
 // ⚠️ NO DOM. van.tags needs a document, so the tile is never rendered; controllerSentence() is the
 // text its binding puts on screen, and asserting that asserts what a rider reads.
 
-/** The controller as the stubbed Pi holds it. Mutated by a section to step it the way `runTick` does. */
+/** The controller as the stubbed Pi holds it. A section steps `reason` and `commandedAmps` as `runTick` would. */
 export const pi = {
   mode: "automatic" as ChargeAutoMode,
   reason: CHARGE_AUTO_REASON.NO_HISTORY as ChargeAutoReason,
   commandedAmps: null as number | null,
 };
 
-/** charge_manager_state (0x610 b7): 0x23 a settled DC session, 0x02 AC, 0x00 nothing plugged in. */
-export const DC_SESSION = 0x23;
-export const AC_SESSION = 0x02;
+// charge_manager_state (0x610 b7). The two settled values are the Pi's own constants rather than a
+// fifth hand-typed copy of a reverse-engineered byte; only "nothing plugged in" is local, because
+// no rule anywhere keys on it — it is just a value that is neither AC nor DC.
+export const DC_SESSION = CHARGE_MANAGER_STATE_DC;
+export const AC_SESSION = CHARGE_MANAGER_STATE_AC;
 export const NO_SESSION = 0x00;
-
-/**
- * The two round trips of one controller tick, in wall-clock milliseconds.
- *
- * ⚠️ Real durations, not `monotonicNow()` arithmetic — nothing here MEASURES an elapsed time, it
- * only asks the stub to wait, which is what lands two replies in the order the out-of-order section
- * is about. `COMMAND_MS` is the 3-10 ms the bike takes to answer a `0x120`, rounded up; the hold is
- * comfortably over the ~45 ms of skew the race needs, so the run is not a coin toss on a busy laptop.
- */
-export const COMMAND_MS = 30;
-export const SLOW_REPLY_MS = 150;
 
 /** Whether GET /vcu-write reports writes on for this Pi. */
 let writesAreOn = true;
 
-/** Milliseconds to hold the NEXT /charge-auto reply for, so two can be landed out of order. */
-let holdNextReplyMs = 0;
+/**
+ * Held open while a reply is parked, so the next read can overtake it.
+ *
+ * ⚠️ A promise the check RESOLVES, not a timer it outruns. Ordering two replies by sleeping longer
+ * than the other one is a wall-clock bet, and `run-checks.ts` runs on whatever CI box it lands on;
+ * this makes "the stale reply arrives last" a fact of the run rather than a race it usually wins.
+ */
+let parkedReply: Promise<void> | null = null;
 
 /** Makes the NEXT /charge-auto read fail the way a dropped packet does. */
 let failNextRead = false;
@@ -86,10 +84,10 @@ globalThis.fetch = (async (input: string | URL | Request) => {
       message: null,
     };
     const serialised = JSON.stringify(body);
-    const hold = holdNextReplyMs;
-    holdNextReplyMs = 0;
-    if (hold > 0) {
-      await pause(hold);
+    const parked = parkedReply;
+    parkedReply = null;
+    if (parked) {
+      await parked;
     }
     return new Response(serialised);
   }
@@ -107,9 +105,13 @@ export function setWritesOn(on: boolean): void {
   writesAreOn = on;
 }
 
-/** Holds the next /charge-auto reply, so a later read can overtake it. */
-export function holdNextReply(ms: number): void {
-  holdNextReplyMs = ms;
+/** Parks the next /charge-auto reply. Returns the function that delivers it. */
+export function parkNextReply(): () => void {
+  let release = () => {};
+  parkedReply = new Promise(resolve => {
+    release = resolve;
+  });
+  return release;
 }
 
 /** Fails the next /charge-auto read outright. */
@@ -145,14 +147,10 @@ export function heartbeat(): void {
  *
  * A macrotask, because the chain is several microtask hops deep: VanJS flushes with
  * queueMicrotask, refresh() awaits the response and awaits its .json(), and only then assigns.
+ * Zero milliseconds is enough for every one of them — nothing in this harness sleeps to win a race.
  */
-export function settle(ms = 0): Promise<void> {
-  return pause(ms);
-}
-
-/** A plain timer. Named so `settle()` reads as intent and the stub's holds read as duration. */
-export function pause(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+export function settle(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 function messageOf(type: "patch" | "snapshot", signals: Record<string, number>): DashboardMessage {

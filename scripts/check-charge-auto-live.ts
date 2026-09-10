@@ -3,19 +3,16 @@ import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
 import { HEARTBEAT_MS } from "../src/ws.ts";
 import {
   AC_SESSION,
-  COMMAND_MS,
   DC_SESSION,
   NO_SESSION,
-  SLOW_REPLY_MS,
   applyWriteStatus,
   controllerSentence,
   countOf,
   failNextChargeAutoRead,
   fetchChargeWriteStatus,
   heartbeat,
-  holdNextReply,
+  parkNextReply,
   patch,
-  pause,
   pi,
   setWritesOn,
   settle,
@@ -81,20 +78,7 @@ expect("§2", `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding
 // heartbeats a FULL SNAPSHOT every HEARTBEAT_MS and store.js assigns a freshly parsed object, so
 // every signal's identity churns whether or not its number moved. Unguarded, the derive would be a
 // 0.2 Hz poll of an HTTP endpoint on a phone strapped to a handlebar.
-{
-  const before = countOf("/charge-auto");
-  for (let beat = 0; beat < 5; beat += 1) {
-    heartbeat();
-    await settle();
-  }
-  const beats = countOf("/charge-auto") - before;
-  if (beats !== 0) {
-    failures.push(
-      `§3 five heartbeats repeating the same values cost ${beats} fetch(es) of /charge-auto — the guard is ` +
-        `gone and the tile now polls the Pi at ${(1000 / HEARTBEAT_MS).toFixed(1)} Hz`
-    );
-  }
-}
+await expectQuietHeartbeats("§3 repeating the same values");
 
 // ── §4 both gates hold: not a DC charge, and writes switched off ───────────
 //
@@ -234,22 +218,25 @@ expect(
   pi.reason = CHARGE_AUTO_REASON.CLOSING;
   pi.commandedAmps = 70;
   patch({ charge_auto_reason: CHARGE_AUTO_REASON.CLOSING, charge_auto_target_a: 70 });
-  await settle(SLOW_REPLY_MS * 2);
+  await settle();
   expect(
     "§8 (setting up) the tile is current before the tick",
     `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.CLOSING]} Commanding 70 A.`
   );
 
-  // The reason, recorded while the Pi still holds the OLD amps, answered slowly.
+  // The reason, recorded while the Pi still holds the OLD amps. Its reply is parked, not slowed:
+  // the ordering under test is made a fact of the run rather than a bet on two timers.
   pi.reason = CHARGE_AUTO_REASON.SETTLED;
-  holdNextReply(SLOW_REPLY_MS);
+  const deliverTheStaleReply = parkNextReply();
   patch({ charge_auto_reason: CHARGE_AUTO_REASON.SETTLED });
   await settle();
-  // The command lands, and the amps are recorded — answered at once, so it overtakes.
-  await pause(COMMAND_MS);
+  // The command lands and the amps are recorded. This read is not parked, so it answers first.
   pi.commandedAmps = 55;
   patch({ charge_auto_target_a: 55 });
-  await settle(SLOW_REPLY_MS * 2);
+  await settle();
+  // And only now does the older reply arrive, carrying the amps from before the command.
+  deliverTheStaleReply();
+  await settle();
   expect(
     "§8 the reason's read was answered after the amps' read, carrying the amps from before the command",
     `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding 55 A.`
@@ -257,10 +244,7 @@ expect(
 
   // ⚠️ And it must STAY right: a settled controller records nothing further, so a tile that lost
   // this race holds the wrong number for the rest of the charge rather than for one tick.
-  for (let beat = 0; beat < 5; beat += 1) {
-    heartbeat();
-    await settle();
-  }
+  await expectQuietHeartbeats("§8 after the out-of-order pair");
   expect(
     "§8 five heartbeats later — a settled controller records nothing, so a lost race is permanent",
     `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.SETTLED]} Commanding 55 A.`
@@ -297,19 +281,9 @@ expect(
     `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.CLEAR]} Commanding 66 A.`
   );
 
-  // ⚠️ And it must not have become a retry loop: once the read lands, the guards are consumed again
-  // and the heartbeat goes back to costing nothing. §3's property, re-asserted after an error.
-  const before = countOf("/charge-auto");
-  for (let beat = 0; beat < 5; beat += 1) {
-    heartbeat();
-    await settle();
-  }
-  if (countOf("/charge-auto") !== before) {
-    failures.push(
-      `§9 five heartbeats after the recovery cost ${countOf("/charge-auto") - before} fetch(es) — rolling the ` +
-        `guards back on failure turned the tile into a poll`
-    );
-  }
+  // ⚠️ And it must not have become a retry loop: once the read lands the pair is held again and the
+  // heartbeat goes back to costing nothing. §3's property, re-asserted on the far side of an error.
+  await expectQuietHeartbeats("§9 after the recovery");
 }
 
 if (failures.length > 0) {
@@ -339,5 +313,28 @@ function expect(label: string, wanted: string): void {
   const got = controllerSentence();
   if (got !== wanted) {
     failures.push(`${label}: the tile reads "${got}", the Pi's state says "${wanted}"`);
+  }
+}
+
+/**
+ * Five heartbeats that repeat what the page already has, and the assertion that they cost nothing.
+ *
+ * ⚠️ THE PROPERTY THE VALUE GUARD EXISTS FOR, asserted at three points because three different
+ * mechanisms could break it. ws.ts heartbeats a FULL SNAPSHOT every HEARTBEAT_MS and store.js
+ * assigns a freshly parsed object, so every signal's identity churns whether or not its number
+ * moved. Unguarded, the tile is a 0.2 Hz poll of an HTTP endpoint on a phone strapped to a handlebar.
+ */
+async function expectQuietHeartbeats(label: string): Promise<void> {
+  const before = countOf("/charge-auto");
+  for (let beat = 0; beat < 5; beat += 1) {
+    heartbeat();
+    await settle();
+  }
+  const cost = countOf("/charge-auto") - before;
+  if (cost !== 0) {
+    failures.push(
+      `${label}: five heartbeats cost ${cost} fetch(es) of /charge-auto — the guard is gone and the tile now ` +
+        `polls the Pi at ${(1000 / HEARTBEAT_MS).toFixed(1)} Hz`
+    );
   }
 }

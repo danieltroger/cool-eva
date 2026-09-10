@@ -33,8 +33,9 @@ const busy = van.state(false);
 const failure = van.state("");
 const loaded = van.state(false);
 
-// THREE wake-ups, and the Pi's phrasing is re-read once on each: the reason moved, the commanded
-// current moved, or the tile just became commandable at all. The controller records
+// ONE invariant: the pair below is the answer currently ON SCREEN, and whenever this cannot act it
+// forgets it. So the Pi's phrasing is re-read when the reason moves, when the commanded current
+// moves, and when the gate reopens over a pair we deliberately forgot. The controller records
 // `charge_auto_reason` every tick and `charge_auto_target_a` on every command that lands.
 //
 // ⚠️ GUARDED on the VALUES, not on the states changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s
@@ -42,24 +43,22 @@ const loaded = van.state(false);
 // whether or not the numbers moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
 // exactly what the comment here used to claim it was not. charge-write.js guards the same way.
 //
-// ⚠️ Both signals are read BEFORE the gate returns, and no guard is CONSUMED on a run that did not
-// refresh. Both traps, and the bug each one produces:
-// docs/dashboard-decisions.md § "A guarded derive, and the three ways to lose the change".
+// ⚠️ Both signals are read BEFORE the gate returns, and the pair is never CONSUMED on a run that
+// did not refresh — forgotten instead. Both traps, and the bug each one produces:
+// docs/dashboard-decisions.md § "A guarded derive, and the three ways to lose the change". (The
+// gate's own `||` short-circuits, so a run with no DC session never reads `writesEnabled()`. That
+// is trap #1's letter, and it is harmless only because the half that short-circuits also hides the
+// tile: either way there is nothing to refresh for.)
 let lastReason = /** @type {number | null} */ (null);
 let lastTargetAmps = /** @type {number | null} */ (null);
-let wasCommandable = false;
 van.derive(() => {
   const reason = valueOf("charge_auto_reason");
   const targetAmps = valueOf("charge_auto_target_a");
   if (chargeType.val !== "dc" || !writesEnabled()) {
-    wasCommandable = false;
+    forgetTheAnswerOnScreen();
     return;
   }
-  const reasonMoved = reason !== null && reason !== lastReason;
-  const targetMoved = targetAmps !== null && targetAmps !== lastTargetAmps;
-  const justCommandable = !wasCommandable;
-  wasCommandable = true;
-  if (!justCommandable && !reasonMoved && !targetMoved) {
+  if (reason === lastReason && targetAmps === lastTargetAmps) {
     return;
   }
   lastReason = reason;
@@ -70,15 +69,14 @@ van.derive(() => {
 // The cable coming out, alongside the two sibling controls — charge-current.js clears its form here
 // and charge-stop.js its outcome.
 //
-// ⚠️ NOT belt-and-braces. forgetSession() in src/charge/auto.ts nulls the controller's commanded
-// amps on the `charge_manager_state` edge and RECORDS NOTHING, so until the next 60 s tick
-// /charge-auto answers "commanding nothing" while both signals still hold the last session's
-// values. No signal moves, so no guard above can notice: what corrects the tile is this reset plus
-// the just-commandable wake-up when the next session opens the gate.
+// ⚠️ `loaded` is the whole of it, and it is load-bearing. forgetSession() in src/charge/auto.ts
+// nulls the controller's commanded amps on the `charge_manager_state` edge and RECORDS NOTHING, so
+// until the next 60 s tick /charge-auto answers "commanding nothing" while both signals still hold
+// the last session's values — and clearing this is what stops the tile flashing the last session's
+// "Commanding 35 A" at the next one. The pair above needs nothing here: a session that ended shut
+// the gate, and the derive forgot it on its way out.
 onChargeSessionEnd(() => {
   loaded.val = false;
-  lastReason = null;
-  lastTargetAmps = null;
 });
 
 /** Fetched on the three wake-ups above and after every toggle — never polled. docs/charge-auto.md. */
@@ -210,16 +208,29 @@ async function refresh() {
     }
     apply(payload);
   } catch (error) {
-    // ⚠️ The guards were advanced on the assumption this would land, so a read that ATTEMPTED and
-    // did not act must un-consume them or the wake-up is gone for good — trap #2 in
-    // docs/dashboard-decisions.md, on the failing path rather than the gated one. The next
-    // heartbeat re-sends both signals and tries again.
-    lastReason = null;
-    lastTargetAmps = null;
+    // ⚠️ The pair was taken on the assumption this would land, so a read that ATTEMPTED and did not
+    // act must forget it or the wake-up is gone for good — trap #2 in docs/dashboard-decisions.md,
+    // on the failing path rather than the gated one. The next heartbeat re-sends both signals, sees
+    // a pair we no longer hold, and tries again.
+    forgetTheAnswerOnScreen();
     // Loud but not fatal: with no status the control renders its label and nothing else, which is
     // the safe direction — it never claims the controller is on when it does not know.
     console.warn("charge-auto: status fetch failed", error);
   }
+}
+
+/**
+ * Drops the page's memory of what the tile is showing, so the next opportunity re-reads the Pi.
+ *
+ * The one place the invariant is expressed, called from the two paths that must not consume a
+ * change: the gate being shut, and a read that failed. `null` is not "no reason" — it is "we are no
+ * longer claiming to know", which is why a signal genuinely absent (a controller that has not
+ * ticked yet) compares equal to it and does NOT fire a read. The tile's own `!loaded` render fetch
+ * is what covers that case, and it is the reason that fetch is still there.
+ */
+function forgetTheAnswerOnScreen() {
+  lastReason = null;
+  lastTargetAmps = null;
 }
 
 /**
