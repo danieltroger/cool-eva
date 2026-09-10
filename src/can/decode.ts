@@ -484,8 +484,10 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
     // Timings and the full sequence: docs/can-decode-findings.md § "bits 0 and 1".
     { key: "btn_mode_right", value: bit(handlebar, 1) },
     // bit 2 — MODE ENTER. ✅ The cleanest of the three, and the only decoded handlebar
-    // bit in the archive with no long press anywhere: 160 presses, 0.010-0.290 s, median
-    // 0.140 s. That is what qualified it to carry the fan's 1200 ms hold gesture.
+    // bit in the CAPTURE archive with no long press anywhere: 160 presses, 0.010-0.290 s,
+    // median 0.140 s. That is what qualified it to carry the fan's 1200 ms hold gesture.
+    // ⚠️ "No long press anywhere" is that corpus only — the ride log has four at or past
+    // 1200 ms. docs/handlebar-gestures.md §"Long ENTER presses in the ride log".
     //
     // 🚨 "Every one below 3 km/h" was true of 40 presses and is FALSE of 160 — five were
     // made at 47-118 km/h. Corrected 2026-09-08; docs/can-decode-findings.md § "bit 2"

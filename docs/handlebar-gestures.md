@@ -57,7 +57,7 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — **268 top-
 
 **At the 500 ms threshold this switch has been held to since 2026-09-09, the count for `btn_indicator_cancel` is 4 rather than 3.** The fourth is the 0.940 s press below. The ≥ 1.2 s column is kept as it was because it is what the fan's threshold is argued from; it is **not** a guide to what a 500 ms threshold would catch on any other button — `btn_cruise_enable`, whose column reads 0, has a median of 0.995 s and would cross 500 ms on nearly every press. Only `btn_indicator_cancel` carries a 500 ms gesture, so only its count is re-derived here.
 
-**`btn_mode_enter` is the only decoded handlebar bit in the archive with no long press anywhere.** Every other button that is held for anything reaches 1.2 s to 191 s — the 191 s being the jacket resting on `btn_mode_right` that `src/can/decode.ts` already records. That, rather than anything about the fan, is why the fan cycle is on ENTER and not on either MODE arrow.
+**`btn_mode_enter` is the only decoded handlebar bit in THIS archive with no long press anywhere.** Every other button that is held for anything reaches 1.2 s to 191 s — the 191 s being the jacket resting on `btn_mode_right` that `src/can/decode.ts` already records. That, rather than anything about the fan, is why the fan cycle is on ENTER and not on either MODE arrow. ⚠️ The **ride log** is a second archive and it does not agree — four ENTER presses at or past 1.2 s, the longest 4.260 s — which changes no threshold and does change the sentence: §"Long ENTER presses in the ride log".
 
 ⚠️ **This retires `LONGEST_ORDINARY_PRESS_MS = 920`**, which `scripts/check-handlebar-gestures.ts` carried until 2026-09-08 and which `docs/dashboard-decisions.md` argued `LONG_PRESS_MS` from. It came from 14 captures and two presses of `btn_cruise_enable`; over 36 presses that button reaches **1.125 s**. The figure was not wrong when it was written, and it is wrong now — which is the argument for recording the sample size next to every number in this table.
 
@@ -79,7 +79,7 @@ Presses are paired per file and then **deduped by absolute press instant**, beca
 
 Different buttons, different things the bike does with a long press.
 
-**ENTER: 1200 ms** clears the longest ENTER press ever recorded by **4.1×** and every one of the 160 by at least 910 ms.
+**ENTER: 1200 ms** clears the longest ENTER press _in the capture corpus_ by **4.1×** and every one of the 160 by at least 910 ms. It does **not** clear the four deliberate holds in the ride log, and is not meant to: those are made for the bike's own dash menu, and no hold length can tell them from a fan gesture (§"Long ENTER presses in the ride log").
 
 **Indicator-cancel: 500 ms since 2026-09-09**, down from 1000. The reason is the rider, not the archive: _"some waypoints didn't register cuz I was afraid of turning on hazards"_ — **holding that switch turns the HAZARD LIGHTS on** (below), so a thumb that is unsure comes off early and the save never happens. It still clears the longest press of that switch outside one afternoon's experiment — **0.330 s**, over 770 of the 779 — by **1.5×**.
 
@@ -123,6 +123,25 @@ It is survivable rather than solved, on the two facts above: the hazards announc
 🚨 **This section used to end "it is also the argument against trimming the hold below 1000 ms". The rider has overruled that, and the reasoning was wrong anyway.** Daniel, 2026-09-09: _"some waypoints didn't register cuz I was afraid of turning on hazards"_. The old argument was that a shorter hold fires sooner but leaves the same gap between firing and the rider knowing — true, and beside the point. The gap it protects is a gap in _confirmation_; what it was costing was the _save itself_. A rider who has already decided the hold is not worth the risk gets no confirmation of anything, because there is nothing to confirm. **500 ms does not close the confirmation gap and is not meant to; it makes the save happen before the thumb gives up.** The hazards remain where they were; what changed is the margin to them, measured from the _worst-case fire_ rather than from the threshold — 2011 ÷ 607 = **3.3×**, against 2011 ÷ 1130 = 1.8× at the old hold and beat.
 
 **Still to measure:** whether the hold-to-hazard behaves the same rolling as parked. 749 of the 779 cancel presses in the archive were made above 3 km/h and not one of them was held long enough to find out.
+
+## Long ENTER presses in the ride log
+
+⚠️ **The per-button table above is the 268-capture corpus, and it is not the only archive on this bike.** Re-measured on 2026-09-10 against `rides.db` — a different corpus, written by the service itself rather than by `candump` — `btn_mode_enter` has **94 press→release pairs, 100 ms to 4 260 ms**, and four of them clear the fan gesture's 1 200 ms:
+
+| press began (UTC)       | held         | session |
+| ----------------------- | ------------ | ------- |
+| 2026-08-29 20:53:25.601 | **4 260 ms** | 31      |
+| 2026-09-07 11:49:45.463 | **3 000 ms** | 41      |
+| 2026-09-07 11:49:48.832 | **1 910 ms** | 41      |
+| 2026-09-07 11:49:53.851 | **1 691 ms** | 41      |
+
+(Method: `lag()` partitioned by `session_id`, so no pair spans a restart. A fifth press, 2026-08-19 16:24:25 at 821 ms, clears nothing but is the longest of the rest.)
+
+⚠️ **Checked against §"A warning about this method" before being believed, and it does not balance at first glance:** 237 edges, **94 rises against 143 falls**. The 49-edge difference is not unpaired releases — it is the boot baseline `record()` seals for every signal on the first sample after a restart, one `btn_mode_enter = 0` per session across 49 of the 50 sessions. Pairing per session on a _watched_ 1→0 ignores those, and all three sessions holding a long press open on a `0`, so none of them opens mid-press — the exact artefact that produced a confident wrong sentence on 2026-09-09. A press still open at a session's end is discarded, which can only undercount.
+
+**This does not move `FAN_HOLD_MS`, and the reason matters more than the number.** The threshold's job is that an _ordinary_ press never fires, and none of these is ordinary: every one is a thumb held on purpose. They are held for the **bike's** dash menu, not for the fan — which is exactly why no hold length can separate the two, and why §"Holding ENTER opens the dash's own reset mode" below is a collision to be lived with rather than tuned away. What they do refute is the _sentence_: "the only decoded handlebar bit in the whole archive with no long press anywhere" is true of the captures and false of the ride log, and `src/fan/gesture.ts`, `src/can/decode.ts`, `docs/can-decode-findings.md` and `docs/diagnostics-and-checks.md` now each name which archive they mean.
+
+The three on 2026-09-07 are eight presses in 12.27 s — 180, 129, **3 000**, **1 910**, 130, 160, 269, **1 691** ms — with **nothing else touched between the first press and the last release**; the six `btn_mode_right` edges are three presses landing 2.0–4.8 s _after_ the bout (11:49:57.501 → 11:50:00.363), and the previous one is 4 min 35 s back. They _look_ like the measurement §"Holding ENTER opens the dash's own reset mode" asks for, but the ride log cannot say what the dash did: nothing the reset mode touches is decoded, and no trip or odometer signal moves in that window. So that measurement is still owed, and it still wants a person at the bike. ⚠️ They also predate the fan gesture (7f6dbcd, 2026-09-08), so nothing fired then — but on today's code that bout is **three fires, three whole steps round the cycle**, which is the leading explanation for Daniel's "sometimes it just kicks on in auto". `docs/fan-control.md` §"What is left of 'the long press never reaches _off_'" ranks it against the alternatives.
 
 ## ⚠️ Holding ENTER opens the dash's own reset mode
 

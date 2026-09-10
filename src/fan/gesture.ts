@@ -16,9 +16,17 @@ export const FAN_GESTURE_BUTTON = "btn_mode_enter";
 /**
  * ⚠️ 1200 ms, and NOT the 500 ms the waypoint hold uses. The two buttons differ in what
  * the BIKE does with a long press: 160 recorded ENTER presses top out at 0.290 s and it
- * is the only decoded handlebar bit in the whole archive with no long press anywhere,
+ * is the only decoded handlebar bit in the CAPTURE archive with no long press anywhere,
  * whereas indicator-cancel lights the hazards somewhere at or before 2.011 s and wants
  * the shorter hold to keep a thumb clear of it.
+ *
+ * ⚠️ "No long press anywhere" is TRUE OF THAT CORPUS ONLY. The ride log has four ENTER
+ * presses at or past this threshold, the longest 4 260 ms, measured 2026-09-10. They are
+ * presses made on purpose — for the bike's own dash menu, not for the fan — which is
+ * exactly why no hold length can tell them from a fan gesture, and why this constant does
+ * not move on account of them. docs/handlebar-gestures.md §"Long ENTER presses in the
+ * ride log" has the four, and §"Holding ENTER opens the dash's own reset mode" the
+ * collision they land in.
  */
 export const FAN_HOLD_MS = 1200;
 

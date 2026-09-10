@@ -376,9 +376,32 @@ async function commandManual(context: AutoContext, percent: number): Promise<Fan
   // whatever this command does, and a stale match would make the first automatic tick
   // after the mode goes back skip its own command.
   context.lastCommandedPercent = null;
-  publishMode(context);
-  publishDecision(null);
-  return await context.controller.setDutyPercent(percent);
+  try {
+    return await context.controller.setDutyPercent(percent);
+  } finally {
+    // ⚠️ AFTER the duty, never before. This is the one path that changes the mode AND the
+    // duty in a single action, and the phone words its banner from both — the mode picks
+    // the sentence, `fan_target_pct` fills in the number. ../can/signals.ts batches per
+    // microtask, so a mode published ahead of an awaited command arrives in its own patch
+    // beside the duty of the mode BEFORE it, and the banner names that one. Measured:
+    // eleven of the twelve switches into manual in the archive said a duty the fan was not
+    // being asked for, four of them "Fan: off" over a running command.
+    // docs/fan-control.md §"The two fan signals must reach the phone duty-first".
+    //
+    // ⚠️ publishMode re-reads the mode, so it is safe here whatever happened during the
+    // await. publishDecision is NOT — it stamps MANUAL/NONE unconditionally — so it is
+    // guarded: a "back to Auto" tap landing inside this command has already published the
+    // curve's real decision, and stamping MANUAL over it would put "The slider is driving
+    // the fan." under Automatic until the next tick, or clear the red line a dead sensor
+    // has just raised. ⚠️ The MODE AND THE DECISION still leave in one batch, which is why
+    // a guard rather than moving this back above the await — but the mode and the DUTY
+    // never do, and cannot: the duty's flush is queued a microtask before this resumption.
+    // Duty-first is an order, not a batch. scripts/check-fan-banner.ts §6 and §8.
+    publishMode(context);
+    if (context.mode === "manual") {
+      publishDecision(null);
+    }
+  }
 }
 
 /**

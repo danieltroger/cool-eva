@@ -86,6 +86,29 @@ function blank() {
 }
 
 /**
+ * One reading of the fan's two signals, folded into a banner or into nothing.
+ *
+ * Pure, and exported so scripts/check-fan-banner.ts drives THE WORDING THE PHONE USES
+ * rather than a replica of it. ⚠️ That is the whole reason this is a function and not
+ * three lines inside the derive below: the replica in scripts/check-hold-gestures.ts fed
+ * the same percentage to the key and to the text, so it asserted a pair that cannot come
+ * apart — and stayed green through the whole of #199, whose defect is precisely a pair
+ * that came apart.
+ *
+ * @param {{ value: string | null, baselined: boolean }} state
+ * @param {number | null} modeCode `fan_auto_mode`
+ * @param {number | null} targetPercent `fan_target_pct`, read in the same pass as the mode
+ * @returns {{ state: { value: string | null, baselined: boolean }, banner: string | null }}
+ */
+export function foldFanAnnouncement(state, modeCode, targetPercent) {
+  const folded = foldAnnouncement(state, fanAnnouncementKey(modeCode, targetPercent));
+  return {
+    state: folded.state,
+    banner: folded.announce ? fanAnnouncementText(folded.state.value, targetPercent) : null,
+  };
+}
+
+/**
  * The fan's mode, as the Pi reports it.
  *
  * ⚠️ The memory is thrown away whenever the link is not live, so the snapshot that comes
@@ -101,11 +124,14 @@ function announceFanState() {
       memory = blank();
       return;
     }
-    const target = valueOf("fan_target_pct");
-    const folded = foldAnnouncement(memory, fanAnnouncementKey(valueOf("fan_auto_mode"), target));
+    // ⚠️ Both through valueOf(), so the duty is a dependency and not merely a lookup: the
+    // key moves on it while the mode is manual. src/fan/auto.ts is what guarantees the
+    // pair is consistent by the time the mode arrives — docs/fan-control.md §"The two fan
+    // signals must reach the phone duty-first".
+    const folded = foldFanAnnouncement(memory, valueOf("fan_auto_mode"), valueOf("fan_target_pct"));
     memory = folded.state;
-    if (folded.announce) {
-      showToast(fanAnnouncementText(memory.value, target), "good");
+    if (folded.banner !== null) {
+      showToast(folded.banner, "good");
     }
   });
 }

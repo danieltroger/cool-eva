@@ -223,6 +223,13 @@ async function commandDuty(context: FanContext, requested: number): Promise<FanC
     } else if (context.phase === "running") {
       await applyDuty(context, capped);
     }
+    // ⚠️ Unconditional, and NOT inside the branches above. `targetPercent` changed before
+    // them, and mid-kick neither branch runs — so what was ASKED for went unpublished for
+    // the rest of KICK_START_MS: measured at 68 % on the wire 1200 ms after 100 % was
+    // commanded. A branch that has to remember to publish is a branch that forgets, and
+    // this is free: record() gates on a moved value, so re-publishing what beginKickStart
+    // or applyDuty just wrote appends nothing and notifies nobody.
+    publish(context);
   } catch (error) {
     console.error(`fan: commanding ${capped} % failed:`, (error as Error).message);
     await forceIdle(context);

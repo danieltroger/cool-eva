@@ -33,8 +33,8 @@ import {
 } from "../src/gps/fix-plausibility.ts";
 import { FUN_GATE_MAX_AGE_MS } from "../src/fan/fun.ts";
 import { boundsFor } from "../public/lib/bounds.js";
-import { fanAnnouncementKey, fanAnnouncementText } from "../public/lib/fan-display.js";
-import { WAYPOINT_REFUSAL_TEXT, foldAnnouncement } from "../public/lib/announce.js";
+import { fanAnnouncementKey } from "../public/lib/fan-display.js";
+import { WAYPOINT_REFUSAL_TEXT, foldAnnouncement, foldFanAnnouncement } from "../public/lib/announce.js";
 import { DOUBLE_CLICK_WINDOW_MS } from "../public/lib/gestures.js";
 
 // The handlebar hold gestures — the fan cycle on MODE ENTER and the waypoint on the
@@ -81,7 +81,16 @@ function check(what: string, condition: boolean) {
 // candump instances recorded some of the same seconds. Method and caveats:
 // docs/handlebar-gestures.md.
 
-/** 160 ENTER presses; the longest anywhere in the archive. No other decoded bit is this clean. */
+/**
+ * 160 ENTER presses; the longest anywhere in the CAPTURE archive. No other decoded bit is
+ * this clean.
+ *
+ * ⚠️ The corpus is the 268 candump captures and not the ride log, which holds four ENTER
+ * presses at or past FAN_HOLD_MS — 4 260 ms the longest. They are deliberate holds for
+ * the bike's own dash menu, so they do not move this threshold; they are why the
+ * sentences around it now name which archive they mean.
+ * docs/handlebar-gestures.md §"Long ENTER presses in the ride log".
+ */
 const LONGEST_ENTER_PRESS_MS = 290;
 
 /** 770 of the 779 indicator-cancel presses. The other nine are one afternoon's experiment. */
@@ -194,7 +203,7 @@ check(
 );
 
 const realPresses: [string, number, number, number][] = [
-  ["the longest ENTER press in the archive", LONGEST_ENTER_PRESS_MS, FAN_HOLD_MS, 0],
+  ["the longest ENTER press in the capture archive", LONGEST_ENTER_PRESS_MS, FAN_HOLD_MS, 0],
   ["the median handlebar press", 140, FAN_HOLD_MS, 0],
   ["the longest ORDINARY cancel press", LONGEST_ORDINARY_CANCEL_PRESS_MS, WAYPOINT_HOLD_MS, 0],
   // ⚠️ The accepted cost of the trim to 500 ms: this one now fires, where at 1000 ms it did
@@ -503,7 +512,7 @@ bus.enter = 0;
 record("btn_mode_enter", 0);
 await settle(TICK_MS * 6);
 check(
-  `⚠️  a ${LONGEST_ENTER_PRESS_MS} ms press — the longest ever recorded — changes nothing`,
+  `⚠️  a ${LONGEST_ENTER_PRESS_MS} ms press — the longest in the capture archive — changes nothing`,
   automatic.mode() === "automatic"
 );
 
@@ -772,10 +781,24 @@ check(
   "…and a slider drag inside the running band raises nothing either",
   fanAnnouncementKey(FAN_MODE_CODE.manual, 45) === fanAnnouncementKey(FAN_MODE_CODE.manual, 60)
 );
+
+// ⚠️ THROUGH foldFanAnnouncement, which is what public/lib/announce.js's derive calls.
+// This assertion used to word the banner itself, and it fed the SAME percentage to the
+// key and to the text — so it asserted a pair that cannot come apart, and stayed green
+// through the whole of #199, whose defect is a pair that came apart. A step's wording is
+// now one call with one duty in it, and the arrival ORDER that makes that duty the right
+// one is scripts/check-fan-banner.ts's job.
+const blankFan: { value: string | null; baselined: boolean } = { value: null, baselined: true };
+const steppedToFull = foldFanAnnouncement({ ...blankFan, value: "automatic" }, FAN_MODE_CODE.manual, MAX_DUTY_PERCENT);
 check(
-  `the gesture's own step names the duty off the wire (${fanAnnouncementText(fanAnnouncementKey(FAN_MODE_CODE.manual, MAX_DUTY_PERCENT), MAX_DUTY_PERCENT)})`,
-  fanAnnouncementText(fanAnnouncementKey(FAN_MODE_CODE.manual, MAX_DUTY_PERCENT), MAX_DUTY_PERCENT) ===
-    `Fan: manual ${MAX_DUTY_PERCENT} %`
+  `the gesture's own step names the duty off the wire (${steppedToFull.banner})`,
+  steppedToFull.banner === `Fan: manual ${MAX_DUTY_PERCENT} %`
+);
+const steppedToOff = foldFanAnnouncement({ ...blankFan, value: "manual-running" }, FAN_MODE_CODE.manual, 0);
+check(`…and the *off* step says off (${steppedToOff.banner})`, steppedToOff.banner === "Fan: off");
+check(
+  "…while a duty that has not moved the key raises no banner at all",
+  foldFanAnnouncement({ ...blankFan, value: "manual-running" }, FAN_MODE_CODE.manual, 60).banner === null
 );
 
 // --- 5. The thresholds, against the corpus ----------------------------------------
