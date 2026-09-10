@@ -387,8 +387,18 @@ async function commandManual(context: AutoContext, percent: number): Promise<Fan
     // eleven of the twelve switches into manual in the archive said a duty the fan was not
     // being asked for, four of them "Fan: off" over a running command.
     // docs/fan-control.md §"The two fan signals must reach the phone duty-first".
+    //
+    // ⚠️ publishMode re-reads the mode, so it is safe here whatever happened during the
+    // await. publishDecision is NOT — it stamps MANUAL/NONE unconditionally — so it is
+    // guarded: a "back to Auto" tap landing inside this command has already published the
+    // curve's real decision, and stamping MANUAL over it would put "The slider is driving
+    // the fan." under Automatic until the next tick, or clear the red line a dead sensor
+    // has just raised. The pair still leaves in ONE batch, which is why the guard rather
+    // than moving this back above the await. scripts/check-fan-banner.ts §8.
     publishMode(context);
-    publishDecision(null);
+    if (context.mode === "manual") {
+      publishDecision(null);
+    }
   }
 }
 

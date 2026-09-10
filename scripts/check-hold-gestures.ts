@@ -788,7 +788,7 @@ check(
 // through the whole of #199, whose defect is a pair that came apart. A step's wording is
 // now one call with one duty in it, and the arrival ORDER that makes that duty the right
 // one is scripts/check-fan-banner.ts's job.
-const blankFan = { value: /** @type {string | null} */ null, baselined: true };
+const blankFan: { value: string | null; baselined: boolean } = { value: null, baselined: true };
 const steppedToFull = foldFanAnnouncement({ ...blankFan, value: "automatic" }, FAN_MODE_CODE.manual, MAX_DUTY_PERCENT);
 check(
   `the gesture's own step names the duty off the wire (${steppedToFull.banner})`,

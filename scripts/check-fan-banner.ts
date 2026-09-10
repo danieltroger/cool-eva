@@ -1,7 +1,8 @@
 import { SIGNALS } from "../src/can/registry.ts";
-import { defineSignals, onChange, record, type LiveValue } from "../src/can/signals.ts";
-import { startFanAutomatic } from "../src/fan/auto.ts";
+import { defineSignals, latestValue, onChange, record, type LiveValue } from "../src/can/signals.ts";
+import { FAN_MODE_CODE, startFanAutomatic } from "../src/fan/auto.ts";
 import { KICK_START_MS, MAX_DUTY_PERCENT, startFanControl } from "../src/fan/control.ts";
+import { FAN_REASON } from "../src/fan/curve.ts";
 import type { FanPwm } from "../src/fan/pwm.ts";
 import { startFanCycleGesture } from "../src/fan/gesture-runner.ts";
 import { apply, valueOf } from "../public/lib/store.js";
@@ -21,6 +22,10 @@ import { foldFanAnnouncement } from "../public/lib/announce.js";
 //
 // The order this file pins is therefore not tidiness: it is the whole property.
 // docs/fan-control.md §"The two fan signals must reach the phone duty-first".
+//
+// ⚠️ The sibling hole is NOT covered here: a /fan?mode=manual tap landing inside a curve
+// command tears the same way and is issue #206, whose remedy is a change to the seam
+// between auto.ts and control.ts rather than a re-ordering.
 //
 // ⚠️ It does NOT press a button. scripts/check-hold-gestures.ts owns the road from a
 // 0x102 bit to a fired gesture; this drives the gesture's own action so that what is on
@@ -174,8 +179,10 @@ check(
 
 console.log("\n1b. …and the same hold while the fan is still kick-starting");
 
+// §1 left the fan manual and running, so this hands it back to the curve without a kick:
+// the fan has to be STOPPED first, which is what the cold pack below is for. The kick
+// this section needs is the one the warm pack then starts.
 await automatic.setMode("automatic");
-await settleKick();
 bus.packC = COLD_PACK_C;
 await settle(TICK_MS * 3);
 await automatic.setMode("automatic");
@@ -252,12 +259,16 @@ await automatic.setMode("automatic");
 bus.packC = WARM_PACK_C;
 await settle(TICK_MS * 4);
 await automatic.setMode("automatic");
-await settle(TICK_MS * 3);
+// ⚠️ Waited out, so this is the SETTLED case and not a second copy of §1b. Without it the
+// command lands ~60 ms into the curve's kick, §4 goes red under BOTH mutations, and
+// nothing anywhere exercises a slider move against a settled duty — which is the shape of
+// all twelve flips measured in the archive.
+await settleKick();
 drainBanners();
 const SLIDER_DUTY = 45;
 check(
-  `the curve is holding ${controller.state().targetPercent} %, not ${SLIDER_DUTY} %`,
-  controller.state().targetPercent !== SLIDER_DUTY
+  `the curve is holding ${controller.state().targetPercent} % and has settled there`,
+  controller.state().targetPercent !== SLIDER_DUTY && controller.state().phase === "running"
 );
 await automatic.commandManualDuty(SLIDER_DUTY);
 await settle(TICK_MS * 3);
@@ -339,13 +350,77 @@ const wedged = await startFanControl({
 const wedgedLoop = startFanAutomatic(wedged, { tickMs: 60_000, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
 await settle(TICK_MS * 3);
 let wedgedSettled = false;
-void wedgedLoop.commandManualDuty(MAX_DUTY_PERCENT).then(() => {
-  wedgedSettled = true;
-});
+let wedgedThrew: unknown = null;
+void wedgedLoop
+  .commandManualDuty(MAX_DUTY_PERCENT)
+  .then(() => {
+    wedgedSettled = true;
+  })
+  // Not decoration: this promise is deliberately never awaited, so an escaped rejection
+  // would end the process with a stack trace and no ✗ line — a red run that looks like a
+  // crash rather than a failure.
+  .catch(error => {
+    wedgedThrew = error;
+  });
 await settle(TICK_MS * 6);
 check("the command has not answered, because the bridge has not", !wedgedSettled);
-check("…and the loop still knows which mode it is in", wedgedLoop.mode() === "manual");
+check("…and it did not reject either — it is wedged, not failed", wedgedThrew === null);
+check("…the loop still knows which mode it is in", wedgedLoop.mode() === "manual");
+// ⚠️ The assertion that makes this section the check the doc claims it is. `mode()` reads
+// a field assigned before the try and is true under every ordering; the WIRE is where the
+// trade shows. Publishing after the command means a bridge that never answers leaves the
+// mode unpublished — accepted, and asserted so nobody "fixes" it by accident.
+check(
+  "⚠️  …while the WIRE still says automatic — the documented cost of publishing after the command",
+  latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic
+);
 wedgedLoop.stop();
+batches.splice(0);
+
+// --- 8. A tap back to Auto that lands INSIDE a slider command ---------------------
+//
+// ⚠️ The hazard the `finally` in commandManual() creates and its guard removes. Publishing
+// after an awaited command means those writes land after anything that happened during the
+// await — and `publishDecision(null)` stamps MANUAL/NONE unconditionally, where
+// publishMode() re-reads the mode. A rider tapping Auto while a slider POST is in flight
+// would otherwise be left in AUTOMATIC with the MANUAL reason on the wire until the next
+// tick: public/views/fan.js prints "The slider is driving the fan." under Automatic, and
+// over a TEMPERATURE_FAULT it clears the red line a dead sensor has just raised.
+
+console.log("\n8. a tap back to Auto inside an in-flight slider command");
+
+/** A bridge whose writes take time, the way sysfs writes and a spawned `pinctrl` do. */
+const unhurried = await startFanControl({
+  enabled: true,
+  openPwm: async () => ({
+    ...recording,
+    setDutyPercent: () => new Promise<void>(resolve => setTimeout(resolve, TICK_MS)),
+  }),
+});
+const racingLoop = startFanAutomatic(unhurried, { tickMs: 60_000, speedMaxAgeMs: 400, chargeSessionMaxAgeMs: 400 });
+await settle(TICK_MS * 3);
+await racingLoop.setMode("automatic");
+// Settled, so the slider command below really does span its three awaited writes rather
+// than returning through the mid-kick branch before the tap can land.
+await settleKick();
+check(
+  `the curve is driving a settled fan (${unhurried.state().targetPercent} %, ${unhurried.state().phase})`,
+  unhurried.state().phase === "running" && unhurried.state().targetPercent > 0
+);
+
+const sliderInFlight = racingLoop.commandManualDuty(45);
+await settle(TICK_MS / 2);
+await racingLoop.setMode("automatic");
+await sliderInFlight;
+await settle(TICK_MS * 3);
+check(`⚠️  the tap wins: the loop is in automatic (${racingLoop.mode()})`, racingLoop.mode() === "automatic");
+check(
+  `⚠️  …and the wire agrees — no MANUAL reason under an AUTOMATIC mode ` +
+    `(mode ${latestValue("fan_auto_mode")}, reason ${latestValue("fan_auto_reason")})`,
+  latestValue("fan_auto_mode") === FAN_MODE_CODE.automatic && latestValue("fan_auto_reason") !== FAN_REASON.MANUAL
+);
+racingLoop.stop();
+await unhurried.stop();
 batches.splice(0);
 
 clearInterval(busTimer);
@@ -361,6 +436,7 @@ if (failures > 0) {
   console.log("✓ every step of the fan cycle raises exactly ONE banner and it names the duty the fan was asked");
   console.log("  for: manual 100 % off a warm pack and off a cold one, off, automatic, and the slider's own");
   console.log("  first move. The duty reaches the wire in the mode's batch or an earlier one, a command landing");
-  console.log("  mid kick-start is published rather than held for 1500 ms, and a bridge that never answers");
-  console.log("  leaves the loop's mode readable rather than taking the process with it");
+  console.log("  mid kick-start is published rather than held for 1500 ms, a bridge that never answers leaves the");
+  console.log("  loop's mode readable rather than taking the process with it, and a tap back to Auto inside a");
+  console.log("  slider command is not overwritten with the MANUAL reason by the command it interrupted");
 }
