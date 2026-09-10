@@ -88,6 +88,19 @@ const CHECKS: SelfCheck[] = [
       "through its window, that the ride-log codes are distinct, and that nothing in the adjudicator reads pack_a",
   },
   {
+    script: "scripts/check-charge-auto-live.ts",
+    covers:
+      "whether the charge tab's automatic-current tile says what the Pi is doing WHILE it does it, driving the " +
+      "real view against the real store with no browser: that the commanded current moving while the reason " +
+      "stands still updates the sentence — which is issue #200, the freeze #193's rule made reachable by sitting " +
+      "in one reason for many ticks — that the reason moving alone still does, that five heartbeats repeating the " +
+      "same values cost zero fetches so the tile is not a 0.2 Hz poll of an HTTP endpoint, that neither an AC " +
+      "session nor a phone with writes switched off fetches anything, that the amps on screen are the endpoint's " +
+      "and never `charge_auto_target_a` (which outlives the session that produced it), that a move landing while " +
+      "the write gate is momentarily shut is not consumed and thrown away, and that a re-plug inside one 60 s " +
+      'controller tick never leaves the previous session\'s "Commanding x A" on screen',
+  },
+  {
     script: "scripts/check-charge-auto.ts",
     covers:
       "the automatic DC charge-current controller: that all nine fail-safe branches hold and NONE of them " +

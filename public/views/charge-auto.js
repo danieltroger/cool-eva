@@ -2,7 +2,7 @@
 
 import van from "../vendor/van-1.6.1.js";
 import { GOOD, MUTED, WARN } from "../lib/colors.js";
-import { chargeType, writesEnabled } from "../lib/charge-write.js";
+import { chargeType, onChargeSessionEnd, writesEnabled } from "../lib/charge-write.js";
 import { valueOf } from "../lib/store.js";
 
 const { button, div } = van.tags;
@@ -33,26 +33,53 @@ const busy = van.state(false);
 const failure = van.state("");
 const loaded = van.state(false);
 
-// The controller records `charge_auto_reason` every tick, so the page learns it moved over the
-// WebSocket and re-reads the Pi's phrasing once.
+// ONE invariant: the pair below is the answer currently ON SCREEN, and whenever this cannot act it
+// forgets it. So the Pi's phrasing is re-read when the reason moves, when the commanded current
+// moves, and when the gate reopens over a pair we deliberately forgot. The controller records
+// `charge_auto_reason` every tick and `charge_auto_target_a` on every command that lands.
 //
-// ⚠️ GUARDED on the VALUE, not on the state changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s and
-// store.js assigns a freshly parsed object, so this signal's identity changes every heartbeat
-// whether or not the number moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
+// ⚠️ GUARDED on the VALUES, not on the states changing. ws.ts heartbeats a FULL SNAPSHOT every 5 s
+// and store.js assigns a freshly parsed object, so these signals' identity changes every heartbeat
+// whether or not the numbers moved — an unguarded derive is then a 0.2 Hz poll of an HTTP endpoint,
 // exactly what the comment here used to claim it was not. charge-write.js guards the same way.
+//
+// ⚠️ Both signals are read BEFORE the gate returns, and the pair is never CONSUMED on a run that
+// did not refresh — forgotten instead. Both traps, and the bug each one produces:
+// docs/dashboard-decisions.md § "A guarded derive, and the three ways to lose the change". (The
+// gate's own `||` short-circuits, so a run with no DC session never reads `writesEnabled()`. That
+// is trap #1's letter, and it is harmless only because the half that short-circuits also hides the
+// tile: either way there is nothing to refresh for.)
 let lastReason = /** @type {number | null} */ (null);
+let lastTargetAmps = /** @type {number | null} */ (null);
 van.derive(() => {
   const reason = valueOf("charge_auto_reason");
-  if (reason === null || reason === lastReason) {
+  const targetAmps = valueOf("charge_auto_target_a");
+  if (chargeType.val !== "dc" || !writesEnabled()) {
+    forgetTheAnswerOnScreen();
+    return;
+  }
+  if (reason === lastReason && targetAmps === lastTargetAmps) {
     return;
   }
   lastReason = reason;
-  if (chargeType.val === "dc" && writesEnabled()) {
-    void refresh();
-  }
+  lastTargetAmps = targetAmps;
+  void refresh();
 });
 
-/** Fetched on the session edge and after every toggle — never polled; the reason rides the WebSocket. */
+// The cable coming out, alongside the two sibling controls — charge-current.js clears its form here
+// and charge-stop.js its outcome.
+//
+// ⚠️ `loaded` is the whole of it, and it is load-bearing. forgetSession() in src/charge/auto.ts
+// nulls the controller's commanded amps on the `charge_manager_state` edge and RECORDS NOTHING, so
+// until the next 60 s tick /charge-auto answers "commanding nothing" while both signals still hold
+// the last session's values — and clearing this is what stops the tile flashing the last session's
+// "Commanding 35 A" at the next one. The pair above needs nothing here: a session that ended shut
+// the gate, and the derive forgot it on its way out.
+onChargeSessionEnd(() => {
+  loaded.val = false;
+});
+
+/** Fetched on the three wake-ups above and after every toggle — never polled. docs/charge-auto.md. */
 export function ChargeAutoControl() {
   return div(() => {
     // ⚠️ Gated on writesEnabled() like the two sibling controls: the controller transmits through
@@ -71,7 +98,7 @@ export function ChargeAutoControl() {
       { class: "tile span2" },
       div({ class: "label" }, "Automatic charge current"),
       div({ class: "action-note" }, () =>
-        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, sentence())
+        div({ style: `color:${mode.val === "automatic" ? GOOD : MUTED}` }, controllerSentence())
       ),
       ToggleButton(),
       div({ class: "action-note", style: `color:${WARN}` }, () => failure.val)
@@ -141,26 +168,69 @@ export function toggleAction(currentMode, reason, floor_a) {
 }
 
 /**
- * What the controller is doing, in words.
+ * What the controller is doing, in words — the text the tile renders, and nothing else.
  *
  * ⚠️ No special case for the rider override: the controller already reports it as its REASON, and a
  * branch here beat that — with the toggle off and an override latched the tile said "you set the
  * current on the bike" instead of "off".
+ *
+ * ⚠️ The amps come from the ENDPOINT, never from `charge_auto_target_a` — that signal is only a
+ * wake-up. It outlives the session that produced it (forgetSession() nulls the controller's own
+ * copy and records nothing), so reading it here would print a current this charge never commanded.
+ *
+ * Exported so scripts/check-charge-auto-live.ts can read the tile's own words without a browser,
+ * on the same footing as toggleAction() above.
  */
-function sentence() {
+export function controllerSentence() {
   const suffix = commandedAmps.val === null ? "" : ` Commanding ${commandedAmps.val} A.`;
   return `${reasonSentence.val}${suffix}`;
 }
 
+/**
+ * Which read has spoken most recently, so a slow answer cannot overwrite a newer one.
+ *
+ * ⚠️ ONE controller tick issues TWO reads, tens of milliseconds apart — src/charge/auto.ts records
+ * the reason, awaits the command, then records the amps — and the FIRST reply carries the amps from
+ * BEFORE the command. Replied out of order, which one retransmit is enough to cause, the stale one
+ * lands last and the tile keeps the pre-command number for the rest of a settled charge: issue
+ * #200's own symptom, reached through its own fix. Measured to need ~45 ms of skew.
+ */
+let latestRead = 0;
+
 async function refresh() {
+  const read = (latestRead += 1);
   try {
     const response = await fetch("/charge-auto", { cache: "no-store" });
-    apply(/** @type {ChargeAutoResponse} */ (await response.json()));
+    const payload = /** @type {ChargeAutoResponse} */ (await response.json());
+    if (read !== latestRead) {
+      // A newer read was issued while this one was in flight, so its answer is at least as fresh.
+      return;
+    }
+    apply(payload);
   } catch (error) {
+    // ⚠️ The pair was taken on the assumption this would land, so a read that ATTEMPTED and did not
+    // act must forget it or the wake-up is gone for good — trap #2 in docs/dashboard-decisions.md,
+    // on the failing path rather than the gated one. The next heartbeat re-sends both signals, sees
+    // a pair we no longer hold, and tries again.
+    forgetTheAnswerOnScreen();
     // Loud but not fatal: with no status the control renders its label and nothing else, which is
     // the safe direction — it never claims the controller is on when it does not know.
     console.warn("charge-auto: status fetch failed", error);
   }
+}
+
+/**
+ * Drops the page's memory of what the tile is showing, so the next opportunity re-reads the Pi.
+ *
+ * The one place the invariant is expressed, called from the two paths that must not consume a
+ * change: the gate being shut, and a read that failed. `null` is not "no reason" — it is "we are no
+ * longer claiming to know", which is why a signal genuinely absent (a controller that has not
+ * ticked yet) compares equal to it and does NOT fire a read. The tile's own `!loaded` render fetch
+ * is what covers that case, and it is the reason that fetch is still there.
+ */
+function forgetTheAnswerOnScreen() {
+  lastReason = null;
+  lastTargetAmps = null;
 }
 
 /**
@@ -188,6 +258,11 @@ async function toggle(wanted) {
       headers: { "X-Cool-Eva": "charge-auto" },
     });
     const payload = /** @type {ChargeAutoResponse} */ (await response.json());
+    // ⚠️ Takes a read number rather than checking one, so a POST reply is never dropped: it is the
+    // Pi's answer to something we just asked for, and it is the only reply carrying `message` — the
+    // refusal text when CHARGE_AUTO_ENABLED pins the mode off. Any read already in flight is older
+    // than it by construction, and setMode() records the reason immediately, so one usually is.
+    latestRead += 1;
     apply(payload);
   } catch (error) {
     failure.val = `Could not reach the Pi — ${error instanceof Error ? error.message : String(error)}.`;

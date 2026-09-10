@@ -474,6 +474,11 @@ __MODULES__
             "charge_cmd_ack": [1, "", "charge"],
             "charge_cmd_ack_ms": [1840, "ms", "charge"],
             "charge_auto_mode": [1, "", "charge"],
+            // ⚠️ The reason too, and from the same constant the HTTP fixture below uses. The scene
+            // broadcast the mode and the commanded amps but never the reason, while its
+            // /charge-auto reply said RIDER — and src/charge/auto.ts records the reason on EVERY
+            // tick, so that was a bike the Pi cannot be.
+            "charge_auto_reason": [SERVER.chargeAutoReason.RIDER, "", "charge"],
             "charge_auto_target_a": [42, "A", "charge"],
             // The module heatmap, which renders NOTHING without these — the Charge tab
             // showed "waiting for 0x664" on every scene, so the dashboard gate could not
