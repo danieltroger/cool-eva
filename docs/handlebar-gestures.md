@@ -5,7 +5,7 @@ A long press of a handlebar button as an input to this project rather than to th
 | Button | Hold | What it does |
 | --- | --- | --- |
 | `btn_mode_enter` — MODE ENTER, left pod (`0x102` b0 bit 2) | **1200 ms** | steps the cooling fan round manual 100 % → off → automatic (`docs/fan-control.md`) |
-| `btn_indicator_cancel` — the turn-signal switch pushed in (`0x102` b0 bit 5) | **1000 ms** | saves a waypoint |
+| `btn_indicator_cancel` — the turn-signal switch pushed in (`0x102` b0 bit 5) | **500 ms** | saves a waypoint |
 
 `src/gestures/long-press.ts` is the recogniser and is pure — samples in, an edge out, no clock read and no I/O — so `scripts/check-hold-gestures.ts` replays press sequences through the very function the bike runs. `src/gestures/runner.ts` is the half that subscribes, beats and acts.
 
@@ -24,9 +24,11 @@ On the Pi the recogniser also gets a better clock. The browser version measures 
 A hold is asserted by **fresh samples** and never by a stale pressed value:
 
 1. a real observed 0→1 opens a press, timed at the instant the _bus_ said so (`nowMs − sampleAgeMs`, the same trick `sampleTemperature()` uses in `src/fan/auto.ts`);
-2. while a press is open the runner **beats** at `HOLD_BEAT_MS` = 100 ms, because a held button raises no change event — `src/can/signals.ts` notifies only when a reading moves, so between the two edges of a hold the signal is untouched;
+2. while a press is open the runner **beats** at `HOLD_BEAT_MS` = 50 ms, because a held button raises no change event — `src/can/signals.ts` notifies only when a reading moves, so between the two edges of a hold the signal is untouched;
 3. a sample older than `SAMPLE_MAX_AGE_MS` = 500 ms **abandons** the press. It is over, unfired, and only a fresh 0→1 starts another;
 4. the gesture fires when a fresh sample shows the threshold passed — normally with the thumb still down, within one beat.
+
+⚠️ **So the threshold is not the whole duration the rider must produce, and the overshoot is not one beat's worth.** A gesture can only fire _on_ a beat, so the thumb is down for the threshold, plus a beat of quantisation, plus whatever a busy event loop adds to the timer. Measured end to end through the real runner, a 500 ms hold fires anywhere in **500–607 ms** — 107 ms over, or **2.1 beats**, of which only 50 ms is the beat itself — and a press becomes reliable at about **580 ms**. It is not a clean two-mode distribution — on an idle machine it looks like one, but under a loaded event loop the beat itself lands late and the fires smear continuously across the range. `HOLD_BEAT_MS` was halved from 100 to 50 in #192 for this reason; at 100 ms the same band ran to 630 ms. **Nothing fires early at either beat** — `observeHold()` still demands the full `holdMs`, so the beat only ever adds lateness — and a 480 ms press fired 0 times in every configuration measured.
 
 ⚠️ **It never fires on the release.** The browser version does, deliberately: on a stalling link the release is the only evidence it will ever get. Here that would be the bug. An AC charge silences the whole bus for **up to 23.7 minutes** (`docs/fan-control.md` §"Is the throttle even on the bus while charging?"), so a release delivered when the bus wakes carries a 23-minute press. The Pi is at the bus at 100 Hz and needs no such fallback.
 
@@ -36,7 +38,11 @@ Three sequences are planted in the check rather than argued here: a press follow
 
 ## The corpus the thresholds are argued from
 
-Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — 268 capture files — with each button's rising and falling edges paired into presses.
+Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — **268 top-level files, 266 `.log` + 2 `.txt`** — with each button's rising and falling edges paired into presses.
+
+⚠️ **98 of the 268 carry `0x102`, and only 97 of those are candump `-tA` text.** The 98th is `can_log-2026-06-14.txt`, 453 MB in `<epoch> <id> <hex>` form (`1781428137.328 102 8010…` — no `can0`, no `[8]`), which a `can0`-anchored `grep` silently drops every line of. It holds **980 976 frames of `0x102` and 14 presses**: 4 cancel at 0.170–0.229 s and 10 ENTER at up to 0.250 s, on 2026-06-14. No `capture-*.log` covers June at all — they begin 2026-08-02 — so those presses dedupe against nothing and are absent from any sweep that misses the file.
+
+⚠️ **And a second file goes missing for an unrelated reason.** `capture-20260807-213342-1e1b5c60.log` ends in 488 NUL bytes, so `grep` calls it binary and prints nothing without `-a` — 177 frames of `0x102`, dropped in silence by exactly the sweep that was written to catch the first omission. **Use `grep -a`.** Two files, two different ways of being invisible, and neither announces itself; a sweep that reports a file count rather than a frame count cannot tell you it happened.
 
 | button                 | presses | median  | max           | ≥ 1.2 s |
 | ---------------------- | ------- | ------- | ------------- | ------- |
@@ -49,6 +55,8 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — 268 captur
 | `btn_cruise_set`       | 78      | 1.198 s | 6.225 s       | 38      |
 | `btn_heated_grip`      | 0       | —       | —             | —       |
 
+**At the 500 ms threshold this switch has been held to since 2026-09-09, the count for `btn_indicator_cancel` is 4 rather than 3.** The fourth is the 0.940 s press below. The ≥ 1.2 s column is kept as it was because it is what the fan's threshold is argued from; it is **not** a guide to what a 500 ms threshold would catch on any other button — `btn_cruise_enable`, whose column reads 0, has a median of 0.995 s and would cross 500 ms on nearly every press. Only `btn_indicator_cancel` carries a 500 ms gesture, so only its count is re-derived here.
+
 **`btn_mode_enter` is the only decoded handlebar bit in the archive with no long press anywhere.** Every other button that is held for anything reaches 1.2 s to 191 s — the 191 s being the jacket resting on `btn_mode_right` that `src/can/decode.ts` already records. That, rather than anything about the fan, is why the fan cycle is on ENTER and not on either MODE arrow.
 
 ⚠️ **This retires `LONGEST_ORDINARY_PRESS_MS = 920`**, which `scripts/check-handlebar-gestures.ts` carried until 2026-09-08 and which `docs/dashboard-decisions.md` argued `LONG_PRESS_MS` from. It came from 14 captures and two presses of `btn_cruise_enable`; over 36 presses that button reaches **1.125 s**. The figure was not wrong when it was written, and it is wrong now — which is the argument for recording the sample size next to every number in this table.
@@ -57,23 +65,35 @@ Every `0x102` and `0x400` frame in `~/Documents/cool-eva-archive` — 268 captur
 
 Presses are paired per file and then **deduped by absolute press instant**, because two `candump` instances recorded some of the same seconds — the artefact `src/can/decode.ts` warns about, which turns one hold into hundreds of 10 ms toggles if the files are concatenated first. It caught two duplicated ENTER presses across two files.
 
-⚠️ **Two independent parsers do not agree on the counts to better than ~6 %.** A second implementation, written from this description without seeing the first, got 150 ENTER presses to 160, 775 cancel presses to 779, and 15.68 M frames of `0x102` to 15.99 M. Every _derived_ figure matched exactly — the same longest ENTER press at 0.290 s, the same three cancel presses over 1000 ms, the same five presses above 3 km/h, the hazard timings to the microsecond. The gap is edge pairing at file boundaries and dedupe tolerance (10 ms here, 50 ms there), and it is recorded because a method that promises reproducibility should say how reproducible it actually was.
+⚠️ **Two independent parsers do not agree on the counts to better than ~6 %**, and 2026-09-09 found out why for one of the two buttons. A second implementation, written from this description without seeing the first, got 150 ENTER presses to 160 and 775 cancel presses to 779. Every _derived_ figure matched exactly — the same longest ENTER press at 0.290 s, the same three cancel presses over 1000 ms, the same five presses above 3 km/h, the hazard timings to the microsecond.
+
+🚨 **The explanation recorded here — "edge pairing at file boundaries and dedupe tolerance" — is retired for `btn_indicator_cancel`.** A third sweep, run for #192, reproduced the second implementation's 775 exactly and then found the missing 4 in `can_log-2026-06-14.txt`, the second log format above. **775 + 4 = 779**, closing the cancel gap to zero. It was never a tolerance question; it was one parser reading a format the other silently dropped.
+
+⚠️ **ENTER is not closed, and the two sweeps run for #192 do not agree on it either.** One counted 147 presses in the candump half, the other 150; adding the June file's 10 gives **157 or 160** against the 160 recorded here, so the residual is somewhere between **3 and 0** depending on whose edge pairing you take. **Neither was forced to agree with the other**, because a reconciliation nobody can reproduce is worth less than a disagreement with both rules written down. The 147 sweep's rule, stated so it can be re-run: read every top-level `.log`/`.txt` with `grep -a`; per file, emit the first `0x102` frame as a baseline and every subsequent change as an edge; open a press only on a **watched** 0→1, so a file whose first frame already has the bit set contributes no press from it; discard a press still open at end of file; then dedupe across files by absolute press start instant at 10 ms. The 150 sweep's file-boundary handling is not recorded here, which is precisely the gap — and `docs/can-decode-findings.md` shows the same 10 ms-here / 50 ms-there tolerance question producing the same size of gap elsewhere. The format explains most of the ENTER gap and possibly all of it, and the honest position is that nobody has yet produced two sweeps that agree on this button — which is the original ~6 % observation, narrowed to one button and one small remainder rather than retired.
+
+⚠️ **A warning about this method, paid for twice on 2026-09-09.** Both errors were the same shape: a sweep that silently omits input and then gets explained rather than checked. The first was the two invisible files above. The second was worse — a pairing script assumed its extractor always emitted the file's first frame as a baseline, which was true of one extractor and false of the other, so the June file's first _rising edge_ was eaten as a baseline and the count came out one short. That produced a confident sentence in an earlier draft of this section claiming the file "opens mid-press on ENTER". **It does not**: its first `0x102` frame is byte 0 = `0x00` and 83 551 frames pass with ENTER released before the first rise. The number was wrong and the explanation invented to fit it was wrong; both survived because they were mutually consistent. **Check `rises == falls` before believing any press count**, and state which end of the file the baseline came from.
 
 ⚠️ The dedupe assumes the wall clock is right on both sides of a duplicated pair. The archive contains at least one capture whose clock is wrong by decades (`capture-20600808-220833-0887e861.log`, epochs in 2060 — issue #59's corrupt hub frame) and which steps mid-file. It moved none of the numbers above, but a method recorded without its failure mode is a method that gets reused where it does not hold.
 
-## Why 1000 ms on the cancel switch and 1200 ms on ENTER
+## Why 500 ms on the cancel switch and 1200 ms on ENTER
 
 Different buttons, different things the bike does with a long press.
 
 **ENTER: 1200 ms** clears the longest ENTER press ever recorded by **4.1×** and every one of the 160 by at least 910 ms.
 
-**Indicator-cancel: 1000 ms**, because **holding that switch turns the HAZARD LIGHTS on** (below). It clears the longest press of that switch outside one afternoon's experiment — **0.330 s** — by 3.0×, and fires a full second before the earliest hazard activation ever observed.
+**Indicator-cancel: 500 ms since 2026-09-09**, down from 1000. The reason is the rider, not the archive: _"some waypoints didn't register cuz I was afraid of turning on hazards"_ — **holding that switch turns the HAZARD LIGHTS on** (below), so a thumb that is unsure comes off early and the save never happens. It still clears the longest press of that switch outside one afternoon's experiment — **0.330 s**, over 770 of the 779 — by **1.5×**.
+
+⚠️ **The margin is 1.5× where the fan's is 4.1×, and that is deliberate, because the two failures do not cost the same.** A false fire writes one waypoint that can be deleted. A missed hold loses a place you were standing in and are not going back to. Where the fan's threshold is set to make a spurious step impossible, this one is set to make a missed save unlikely, and the asymmetry is the whole argument for accepting a margin that would be too thin on any other button.
+
+**What it costs, measured over the whole archive: one press.** At 500 ms the recogniser fires on **4** of the 779 cancel presses against 1000 ms's **3** — the extra being the 0.940 s press below — and all four fall within 15 seconds of one another (press starts `18:51:02.680` to `18:51:13.501`, 10.8 s apart). **Not one ordinary press fires at either threshold.**
+
+⚠️ **The nearest press in the archive to the new threshold is 0.409 s, 91 ms below it.** That figure is stated rather than buried, but it is not what the margin rests on, because that press is not a press ordinary riding can produce: the trace below shows the hazards flashing before it and out at its press edge. It is a **hazard-cancelling tap**, and reaching the state that makes one requires having already held the switch to ~2 s. The exclusion is by class, not by clock — which is the part of the old 1000 ms argument that was worth keeping and the part that was worth attacking.
 
 The experiment is a **single minute** — 18:51 on 2026-08-03, bike stationary — and it holds **9** of the 779 presses: 0.159, 0.210, 0.249, 0.250, 0.409, 0.940, 1.320, 4.331 and 5.771 s. **The other 770 top out at 0.330 s and not one of them reaches 0.4 s.** That minute is not ordinary riding; it is somebody deliberately holding the button to find out what it does, and the trace below is what they found — two hazard activations and two cancellations, inside the same minute.
 
-⚠️ Read without that exclusion the nearest press is 0.940 s and the margin is 60 ms; count the 0.409 s one as ordinary and it is 2.4×. Both are stated rather than buried, because the exclusion is the load-bearing step in the argument for 1000 ms and it should be attacked rather than assumed. It is the reason the hold is not trimmed any further.
+⚠️ Read without that exclusion the threshold sits **below** two of the minute's presses rather than above them, which is exactly what the count of 4-versus-3 above already says out loud. The exclusion was the load-bearing step in the argument for 1000 ms and it is still the load-bearing step at 500 ms — which is why it is now argued by class (a hazard-cancelling tap) rather than by the clock, and why the whole minute is listed here for attacking.
 
-Replaying the whole archive through the shipped recogniser fires the fan gesture **0 times** and the waypoint gesture **3 times** — the 1.320 s, 4.331 s and 5.771 s presses from that one afternoon, sixteen days before the gesture existed.
+Replaying the whole archive through the shipped recogniser fires the fan gesture **0 times** and the waypoint gesture **4 times** — the 0.940 s, 1.320 s, 4.331 s and 5.771 s presses from that one afternoon, sixteen days before the gesture existed. At the old 1000 ms it was 3; the 0.940 s press is the entire difference.
 
 ## ⚠️ Holding the cancel switch turns on the hazard lights
 
@@ -98,7 +118,9 @@ Two more things the same trace shows, and both matter to the rider:
 
 **A rider with the phone in a pocket gets no confirmation that the waypoint saved**, and the banner is the only confirmation there is. So the natural thing to do — keep holding to be sure — walks into the hazards at ~2 s. This is a failure the move to the Pi _creates_: while the phone recognised the hold it also showed the banner, and it now does neither until it is next looked at.
 
-It is survivable rather than solved, on the two facts above: the hazards announce themselves (dash tell-tale, and the relay is audible on a stationary bike), and a tap puts them out. It is also the argument against trimming the hold below 1000 ms — a shorter hold would fire sooner but leave the same gap between firing and the rider knowing.
+It is survivable rather than solved, on the two facts above: the hazards announce themselves (dash tell-tale, and the relay is audible on a stationary bike), and a tap puts them out.
+
+🚨 **This section used to end "it is also the argument against trimming the hold below 1000 ms". The rider has overruled that, and the reasoning was wrong anyway.** Daniel, 2026-09-09: _"some waypoints didn't register cuz I was afraid of turning on hazards"_. The old argument was that a shorter hold fires sooner but leaves the same gap between firing and the rider knowing — true, and beside the point. The gap it protects is a gap in _confirmation_; what it was costing was the _save itself_. A rider who has already decided the hold is not worth the risk gets no confirmation of anything, because there is nothing to confirm. **500 ms does not close the confirmation gap and is not meant to; it makes the save happen before the thumb gives up.** The hazards remain where they were; what changed is the margin to them, measured from the _worst-case fire_ rather than from the threshold — 2011 ÷ 607 = **3.3×**, against 2011 ÷ 1130 = 1.8× at the old hold and beat.
 
 **Still to measure:** whether the hold-to-hazard behaves the same rolling as parked. 749 of the 779 cancel presses in the archive were made above 3 km/h and not one of them was held long enough to find out.
 

@@ -14,7 +14,7 @@ import type { FanMode } from "./auto.ts";
 export const FAN_GESTURE_BUTTON = "btn_mode_enter";
 
 /**
- * ⚠️ 1200 ms, and NOT the 1000 ms the waypoint hold uses. The two buttons differ in what
+ * ⚠️ 1200 ms, and NOT the 500 ms the waypoint hold uses. The two buttons differ in what
  * the BIKE does with a long press: 160 recorded ENTER presses top out at 0.290 s and it
  * is the only decoded handlebar bit in the whole archive with no long press anywhere,
  * whereas indicator-cancel lights the hazards somewhere at or before 2.011 s and wants

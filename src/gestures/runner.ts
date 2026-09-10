@@ -8,7 +8,7 @@ import { HOLD_OUTCOME, isPressOpen, newHoldState, observeHold, type HoldState } 
 // so a press sequence can be replayed. docs/handlebar-gestures.md.
 //
 // ⚠️ One subscription and one recogniser serving several gestures, each with its OWN
-// hold length: 1200 ms on MODE ENTER for the fan, 1000 ms on indicator-cancel for a
+// hold length: 1200 ms on MODE ENTER for the fan, 500 ms on indicator-cancel for a
 // waypoint, because the second button lights the hazards if it is held to ~2 s and the
 // first does not.
 
@@ -39,11 +39,13 @@ export interface HoldGesture {
  * ever be learned about from the release, which is exactly the evidence the freshness
  * rule refuses to trust.
  *
- * 100 ms is one tenth of the shorter hold, so a gesture fires within a beat of its
- * threshold. It runs ONLY while a press is open — the median handlebar press is 0.18 s,
- * so nearly every press costs one beat and the timer does not exist the rest of the time.
+ * ⚠️ THE BEAT IS THE LATENCY, and it is NOT one beat's worth. A gesture fires only ON a
+ * beat, so the thumb is down for the threshold, plus a beat of quantisation, plus whatever
+ * a busy event loop adds to the timer: measured 500-607 ms for the waypoint's 500, which
+ * is 2.1 beats. Halved from 100 with that hold (#192); it can never fire a gesture EARLY,
+ * since observeHold() still demands the full holdMs. It runs only while a press is open.
  */
-export const HOLD_BEAT_MS = 100;
+export const HOLD_BEAT_MS = 50;
 
 interface GestureRun {
   gesture: HoldGesture;
@@ -146,7 +148,7 @@ function clearBeat(run: GestureRun): void {
  */
 function fireGesture(run: GestureRun): void {
   if (run.inFlight) {
-    // Unreachable while two holds cannot be 100 ms apart, and guarded anyway because the
+    // Unreachable while two holds cannot be one beat apart, and guarded anyway because the
     // state it would read is briefly inconsistent: ../fan/auto.ts's commandManual() sets
     // the mode synchronously and only clears the target inside its awaited stop, so a
     // second fire landing in that window would pick its next step from half a change.
