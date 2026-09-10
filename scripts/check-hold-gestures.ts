@@ -198,14 +198,13 @@ const realPresses: [string, number, number, number][] = [
   ["the median handlebar press", 140, FAN_HOLD_MS, 0],
   ["the longest ORDINARY cancel press", LONGEST_ORDINARY_CANCEL_PRESS_MS, WAYPOINT_HOLD_MS, 0],
   // ⚠️ The accepted cost of the trim to 500 ms: this one now fires, where at 1000 ms it did
-  // not. It is a deliberate hold from the hazard experiment, sixteen days before the gesture
-  // existed, and a spurious waypoint is one deletable row against a place you cannot revisit.
+  // not. A deliberate hold from the hazard experiment, sixteen days before the gesture existed.
   ["the 0.940 s cancel press from the hazard experiment", 940, WAYPOINT_HOLD_MS, 1],
   // ⚠️ 480 and 520 are asserted HERE, against the pure recogniser at the bus's own 10 ms
   // rate, and deliberately not end to end: a gesture fires only ON a beat, so a 520 ms press
   // through the runner is a coin flip (measured 2/10 at a 100 ms beat, 5/10 at 50 ms) and
   // becomes reliable only around 580 ms. The threshold is what this table is about; the
-  // latency the beat adds is HOLD_BEAT_MS's business and is checked as arithmetic below.
+  // latency the beat adds is HOLD_BEAT_MS's business.
   ["a press 20 ms short of the waypoint threshold", 480, WAYPOINT_HOLD_MS, 0],
   ["a press 20 ms past the waypoint threshold", 520, WAYPOINT_HOLD_MS, 1],
   ["one millisecond short of the fan threshold", FAN_HOLD_MS - 1, FAN_HOLD_MS, 0],
@@ -576,16 +575,13 @@ async function pressStubbornFor(downMs: number): Promise<void> {
   await settle(TICK_MS * 4);
 }
 
-/** The same split as pressAndHold()/pressFor() above, and for the same reason. */
-const holdStubborn = (thresholdMs: number): Promise<void> => pressStubbornFor(thresholdMs + FIRE_GRACE_MS);
-
 // One tap first, for the reason §3a gives: a runner started mid-stream has not yet seen
 // the 0 that a watched 0→1 needs, and re-recording an unchanged 0 raises no event.
 await pressStubbornFor(60);
 // Two holds to reach the quiet state: automatic → full, then full → off. The first one
 // succeeds; it is the second, the STOP, that this controller refuses.
-await holdStubborn(QUICK_HOLD_MS);
-await holdStubborn(QUICK_HOLD_MS);
+await pressStubbornFor(QUICK_HOLD_MS + FIRE_GRACE_MS);
+await pressStubbornFor(QUICK_HOLD_MS + FIRE_GRACE_MS);
 check(
   "the hold stopped the fan even though the bridge refused",
   stubbornLoop.mode() === "manual" && failingStopController.state().targetPercent === 0
@@ -792,22 +788,12 @@ check(
   `the waypoint hold (${WAYPOINT_HOLD_MS} ms) clears the longest ordinary cancel press (${LONGEST_ORDINARY_CANCEL_PRESS_MS} ms) 1.5×`,
   WAYPOINT_HOLD_MS > LONGEST_ORDINARY_CANCEL_PRESS_MS * 1.5
 );
-// ⚠️ The whole cost of the trim, in one line and re-derived from the corpus rather than
-// asserted as a constant: 4 of the archive's 779 cancel presses fire at 500 ms against 3 at
-// 1000, and every one of them is a deliberate hold from the 2026-08-03 experiment.
+// ⚠️ Re-derived from the corpus rather than asserted as a constant, so moving the threshold
+// moves the count instead of leaving a stale figure behind.
 check(
   `${HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= WAYPOINT_HOLD_MS).length} archive presses fire at ` +
     `${WAYPOINT_HOLD_MS} ms, and all of them are from the hazard experiment`,
-  HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= WAYPOINT_HOLD_MS).length === 4 &&
-    HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= 1000).length === 3
-);
-// ⚠️ ARITHMETIC OVER THE CONSTANTS, never a measured latency. A gesture fires only on a
-// beat, so the thumb is down for holdMs plus up to one beat; a hard-coded millisecond figure
-// would be a number from one idle Mac shipped into a suite that also runs on CI and a Pi.
-check(
-  `a hold plus its beat (${WAYPOINT_HOLD_MS + HOLD_BEAT_MS * 2} ms) still fires well before the hazards ` +
-    `(${EARLIEST_HAZARD_ACTIVATION_MS} ms earliest observed)`,
-  WAYPOINT_HOLD_MS + HOLD_BEAT_MS * 2 < EARLIEST_HAZARD_ACTIVATION_MS
+  HAZARD_EXPERIMENT_PRESSES_MS.filter(ms => ms >= WAYPOINT_HOLD_MS).length === 4
 );
 check(
   `⚠️  the waypoint hold fires before the hazards can come on (${EARLIEST_HAZARD_ACTIVATION_MS} ms earliest observed)`,

@@ -656,7 +656,7 @@ The names are a trap: `btn_cruise_enable` sits next to `btn_cruise_set` and both
 - **a press released at 300 ms** — must fire nothing.
 - **a 1.3 s hold** — must fire exactly once, and while the button is still down rather than on the release. Firing at the threshold is what lets a thumb come off the cancel switch before the bike's own hazard lights come on at or before 2.011 s.
 
-Its thresholds are checked against the whole 268-file archive rather than the 14-capture corpus above: **290 ms** is the longest MODE ENTER press ever recorded, over 160 presses, and the 1200 ms fan hold clears it by 4.1×; **330 ms** is the longest `btn_indicator_cancel` press outside one afternoon's experiment, over 770 of 779, and the **500 ms** waypoint hold clears it by **1.5×** — a thinner margin than the fan's on purpose, because a false waypoint is a deletable row and a missed one is a place you cannot return to. The full per-button table, the nine presses inside that one minute, the 500-607 ms band the beat actually produces, and the method's failure mode are in `docs/handlebar-gestures.md`.
+Its thresholds are checked against the whole 268-file archive rather than the 14-capture corpus above: **290 ms** is the longest MODE ENTER press ever recorded, over 160 presses, and the 1200 ms fan hold clears it by 4.1×; **330 ms** is the longest `btn_indicator_cancel` press outside one afternoon's experiment, over 770 of 779, and the **500 ms** waypoint hold clears it by **1.5×**. The full per-button table, the nine presses inside that one minute, the 500-607 ms band the beat actually produces, and the method's failure mode are in `docs/handlebar-gestures.md`.
 
 #### 11.3.1 What the 29 captured replies settled
 

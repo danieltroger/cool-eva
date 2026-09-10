@@ -39,11 +39,11 @@ export interface HoldGesture {
  * ever be learned about from the release, which is exactly the evidence the freshness
  * rule refuses to trust.
  *
- * ⚠️ THE BEAT IS THE LATENCY. A gesture fires only ON a beat, so the thumb is down for
- * the threshold plus up to one beat — measured under load, 500-607 ms for the waypoint's
- * 500. Halved from 100 with that hold (#192); it can never fire a gesture EARLY, since
- * observeHold() still demands the full holdMs, so this removes lateness and nothing else.
- * It runs ONLY while a press is open, and the median press is 0.18 s.
+ * ⚠️ THE BEAT IS THE LATENCY, and it is NOT one beat's worth. A gesture fires only ON a
+ * beat, so the thumb is down for the threshold, plus a beat of quantisation, plus whatever
+ * a busy event loop adds to the timer: measured 500-607 ms for the waypoint's 500, which
+ * is 2.1 beats. Halved from 100 with that hold (#192); it can never fire a gesture EARLY,
+ * since observeHold() still demands the full holdMs. It runs only while a press is open.
  */
 export const HOLD_BEAT_MS = 50;
 
