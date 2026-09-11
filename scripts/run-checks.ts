@@ -311,12 +311,32 @@ const CHECKS: SelfCheck[] = [
       "bit with no long press anywhere) by more than 4×, and 500 ms clears the longest ordinary indicator-cancel " +
       "press outside one afternoon's experiment (330 ms over 770 of 779) by 1.5×. Then the cycle end to end " +
       "bridge: it walks all three states in the rider's own direction — quiet is ONE hold from the manual 100 % he " +
-      "rides in — SKIPS the quiet state above 3 km/h so a false fire while riding can only " +
+      "rides in — SKIPS the quiet state above the 15 km/h ceiling so a false fire while riding can only " +
       "land on the thermally safe side, reverts its own *off* when the bike moves but never a manual 0 the slider " +
       "set, and leaves the fan off when the bus goes silent — because that silence is the AC charge the state " +
       "exists for. Finally the waypoint's gates, including the 2026-08-09 defect: a fix 8 000 km from the one " +
       "before it is refused with a code the phone can turn back into the red banner the move to the Pi would " +
       "otherwise have taken away",
+  },
+  {
+    script: "scripts/check-fan-off-ceiling.ts",
+    covers:
+      "the fan's *off* step at a creep, and the hand-back when a creep becomes a departure. Daniel silenced the " +
+      "fan in a toll queue to hear the booth and again on a hotel forecourt while manoeuvring, and at the old " +
+      "3 km/h ceiling both put it straight back to full before he had finished — so *off* is enterable to " +
+      "15 km/h now and handed back only once the bike has been ABOVE it continuously for 2 s. The hysteresis is " +
+      "a DURATION and not a second speed threshold, because a duration is the only thing that separates a shunt " +
+      "forward in a queue from riding away: a blip does not hand back, two blips that SUM past the hold do not " +
+      "either (the clock restarts rather than accumulating), and a bus that goes quiet mid-excursion restarts it " +
+      "as well — silence proves nothing, which is the same polarity that leaves the fan off through an AC " +
+      "charge. ⚠️ The hold outlasts the speed's own freshness window on purpose; invert that and a silent bus " +
+      "could complete a hand-back by itself. Then the two sentences: entering says what it will survive and the " +
+      "hand-back says the BIKE did it, once, while the SLIDER's own 0 still says a plain 'off' because nothing " +
+      "is watching it — and a slider drag through zero takes the fan off the gesture in the batch after the duty " +
+      "that woke it — a record() made inside a change listener can never join the batch it was notified about — " +
+      "which is what stops the phone promising a ceiling over a duty a thumb chose. Finally " +
+      "the safety price, since this moved one: the five ENTER presses recorded at 47-118 km/h still cannot " +
+      "reach *off*, and a Pi with no fan driver refuses the mode rather than claiming it",
   },
   {
     script: "scripts/check-fan-banner.ts",

@@ -5,7 +5,8 @@ import { KICK_START_MS, MAX_DUTY_PERCENT, startFanControl } from "../src/fan/con
 import { FAN_REASON } from "../src/fan/curve.ts";
 import type { FanPwm } from "../src/fan/pwm.ts";
 import { startFanCycleGesture } from "../src/fan/gesture-runner.ts";
-import { apply, valueOf } from "../public/lib/store.js";
+import { FAN_OFF_CEILING_KMH } from "../src/fan/gesture.ts";
+import { apply, peek, valueOf } from "../public/lib/store.js";
 import { foldFanAnnouncement } from "../public/lib/announce.js";
 
 // The banner the phone raises for the fan, driven through the REAL patch sequence the Pi
@@ -82,7 +83,11 @@ const LOOP_OPTIONS = { tickMs: 60_000, speedMaxAgeMs: 400, chargeSessionMaxAgeMs
 const batches: Record<string, LiveValue>[] = [];
 onChange(changed => batches.push({ ...changed }));
 
-let memory: { value: string | null; baselined: boolean } = { value: null, baselined: false };
+let memory: { value: string | null; baselined: boolean; offState?: number | null } = {
+  value: null,
+  baselined: false,
+  offState: null,
+};
 
 /**
  * Replays every batch collected so far the way the phone consumes them, and answers with
@@ -98,7 +103,12 @@ function drainBanners(): string[] {
   const raised: string[] = [];
   for (const signals of batches.splice(0)) {
     apply({ type: "patch", ts: Date.now(), signals });
-    const folded = foldFanAnnouncement(memory, valueOf("fan_auto_mode"), valueOf("fan_target_pct"));
+    const folded = foldFanAnnouncement(
+      memory,
+      valueOf("fan_auto_mode"),
+      valueOf("fan_target_pct"),
+      peek("fan_off_state")
+    );
     memory = folded.state;
     if (folded.banner !== null) {
       raised.push(folded.banner);
@@ -212,7 +222,10 @@ console.log("\n2. the other two steps say what they did");
 await cycle.gesture.perform();
 await settle(TICK_MS * 3);
 const offHold = drainBanners();
-check(`⚠️  the *off* step says off (${JSON.stringify(offHold)})`, offHold.length === 1 && offHold[0] === "Fan: off");
+check(
+  `⚠️  the *off* step says off, and names the ceiling it holds to (${JSON.stringify(offHold)})`,
+  offHold.length === 1 && offHold[0] === `Fan: off until ${FAN_OFF_CEILING_KMH} km/h`
+);
 check("…with a 0 on the wire behind it", valueOf("fan_target_pct") === 0);
 
 await cycle.gesture.perform();

@@ -47,6 +47,9 @@ const BY_KEY = {
   // [0, 1] the new code 2 was rejected as a sentinel and the page held the PREVIOUS mode
   // on screen — the fan taking its orders from a throttle while the sheet said "Manual".
   "fan_auto_mode": [0, 2],
+  // FAN_OFF_STATE in src/fan/gesture-runner.ts. Named for the reason `fan_driver_enabled`
+  // is: blank unit in a non-boolean group is the combination that renders ungated.
+  "fan_off_state": [0, 2],
   "fan_auto_reason": [0, 8],
   "fan_temp_input": [0, 2],
   // Fun mode's gate (src/fan/fun.ts). `fan_fun_available` MUST be named for the reason

@@ -4,7 +4,7 @@ A long press of a handlebar button as an input to this project rather than to th
 
 | Button | Hold | What it does |
 | --- | --- | --- |
-| `btn_mode_enter` — MODE ENTER, left pod (`0x102` b0 bit 2) | **1200 ms** | steps the cooling fan round manual 100 % → off → automatic (`docs/fan-control.md`) |
+| `btn_mode_enter` — MODE ENTER, left pod (`0x102` b0 bit 2) | **1200 ms** | steps the cooling fan round manual 100 % → off → automatic (`docs/fan-control.md`). ⚠️ _Off_ is enterable up to **15 km/h** since 2026-09-11 and handed back above it — so a hold made while creeping now silences the fan, where before it could not |
 | `btn_indicator_cancel` — the turn-signal switch pushed in (`0x102` b0 bit 5) | **500 ms** | saves a waypoint |
 
 `src/gestures/long-press.ts` is the recogniser and is pure — samples in, an edge out, no clock read and no I/O — so `scripts/check-hold-gestures.ts` replays press sequences through the very function the bike runs. `src/gestures/runner.ts` is the half that subscribes, beats and acts.
