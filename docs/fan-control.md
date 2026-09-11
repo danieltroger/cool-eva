@@ -427,9 +427,9 @@ The rider rides with the fan at manual 100 % and drops it when the noise matters
 
 Since #147 automatic **is** 100 % for the whole of every DC session. So at a DC stop "manual 100 ↔ automatic" is inaudible and gives no quiet at all — the thing the gesture was asked for. Quiet is a manual 0, which is why the cycle has three states rather than two.
 
-#### "Stationary", and what happens when it cannot be established
+#### Under the ceiling, and what happens when that cannot be established
 
-`speed_can_kmh` (`0x104`, bit 32, u13 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ stationary. At or below **15 km/h** the fan may be silenced — see §"Why the ceiling is 15 and not the bike's own 3" below.
+`speed_can_kmh` (`0x104`, bit 32, u13 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ under the ceiling. At or below **15 km/h** the fan may be silenced — see §"Why the ceiling is 15 and not the bike's own 3" below.
 
 Failing closed costs nothing measurable. `0x102`, `0x104` and `0x109` arrive and stop **together** — 317 785 / 317 780 frames with identical per-second coverage over a whole AC session, 106 100 / 106 098 at 99.98 Hz over a whole DC one, both above — so a bus that can deliver the button press can always deliver the speed. And the two ways of being wrong are not symmetric: an unknown speed skips _off_ and hands the fan to the curve, which is the state that watches the pack, rather than silencing it on a bike that might be moving.
 
@@ -603,16 +603,16 @@ Both are the same shape: silence the fan, then roll a few metres, then be back a
 
 What the log does support, over 49 sessions from 2026-08-02 to 2026-09-11 (⚠️ ~1.24 M `speed_can_kmh` rows; the exact count moves ~0.2 % with how the 2060 clock-corrupt rows are dropped, so it is quoted to two figures on purpose):
 
-| excursions above 15 km/h | 898                                |
-| ------------------------ | ---------------------------------- |
-| shorter than 2 s         | 562 (336 of those a single sample) |
-| 2 s or longer            | 336                                |
+| excursions above 15 km/h | 898                                    |
+| ------------------------ | -------------------------------------- |
+| shorter than 2 s         | 562 — of which 336 are a single sample |
+| 2 s or longer            | 336 — a different 336, the remainder   |
 
 So a 2 s window discards the great majority of border crossings. The tiebreaker for the exact value is the asymmetry rather than the data: **trip early and the fan comes back in automatic, one hold away; trip late and a silent fan goes onto a road.** ⚠️ `speed_can_kmh` is deadbanded at 0.5 km/h, so crossings the deadband hid are missing from all of the above.
 
 **A null clears the mark.** The hold measures _proven_ sustained motion, and silence proves nothing — the same polarity as the staleness rule that leaves the fan off through an AC charge. The cost is that a bus stuttering at the beat rate could never accumulate the hold; that is theoretical against 0x104 at 100 Hz, and its failure direction is the fan staying off slightly longer, which the next fresh sample bounds. ⚠️ The hold must stay **longer than the speed's 500 ms freshness window**, or a bus going silent could complete a hand-back by itself on a stale-but-still-fresh reading; `scripts/check-fan-off-ceiling.ts` pins that relationship.
 
-**What it costs, since this is a safety property moving.** A hold firing at 14 km/h now silences the fan, where before it could not. The bound is not "that cannot happen" — it is that the only known reason to hold ENTER for 1 200 ms is the bike's own dash menu, which is stationary-only and exits above 3 km/h, so in the 3–15 km/h band this newly exposes, the one thing that makes a rider hold that button has already been taken away by the bike. All four ENTER presses at or past 1 200 ms in the ride log were made at a standstill: the bout of three on 2026-09-07 11:49:43–55 has its last speed row at **0.1 km/h at 11:49:18.870** and no further row until 11:52:20, and the 4 260 ms press on 2026-08-29 20:53:25 sits in a window (20:52:34 → 20:53:18) whose maximum is **1.1 km/h**. And the exposure is bounded: at 15 km/h, 2.0–2.5 s is **about 10 m** of riding with the fan silent, against a pack whose thermal time constant is minutes.
+**What it costs, since this is a safety property moving.** A hold firing at 14 km/h now silences the fan, where before it could not. The bound is not "that cannot happen" — it is that the only known reason to hold ENTER for 1 200 ms is the bike's own dash menu, which is stationary-only and exits above 3 km/h, so in the 3–15 km/h band this newly exposes, the one thing that makes a rider hold that button has already been taken away by the bike. All four ENTER presses at or past 1 200 ms in the ride log were made at a standstill: the bout of three on 2026-09-07 11:49:43–55 has its last speed row at **0.1 km/h at 11:49:18.870** and no further row until 11:52:20, and the 4 260 ms press on 2026-08-29 began at 20:53:25.601, after a window (20:52:34 → 20:53:18, 14 rows) whose maximum is **1.1 km/h** and whose last row is **0.0 km/h at 20:53:18.918** — the log then says nothing until 20:58:51. And the exposure is bounded: at 15 km/h, 2.0–2.5 s is **about 10 m** of riding with the fan silent, against a pack whose thermal time constant is minutes.
 
 ### What the phone says about it
 

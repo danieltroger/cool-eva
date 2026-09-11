@@ -6,7 +6,7 @@ import { FAN_REASON } from "../src/fan/curve.ts";
 import type { FanPwm } from "../src/fan/pwm.ts";
 import { startFanCycleGesture } from "../src/fan/gesture-runner.ts";
 import { FAN_OFF_CEILING_KMH } from "../src/fan/gesture.ts";
-import { apply, valueOf } from "../public/lib/store.js";
+import { apply, peek, valueOf } from "../public/lib/store.js";
 import { foldFanAnnouncement } from "../public/lib/announce.js";
 
 // The banner the phone raises for the fan, driven through the REAL patch sequence the Pi
@@ -107,7 +107,7 @@ function drainBanners(): string[] {
       memory,
       valueOf("fan_auto_mode"),
       valueOf("fan_target_pct"),
-      valueOf("fan_off_state")
+      peek("fan_off_state")
     );
     memory = folded.state;
     if (folded.banner !== null) {

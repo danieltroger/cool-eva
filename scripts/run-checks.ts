@@ -332,8 +332,9 @@ const CHECKS: SelfCheck[] = [
       "charge. ⚠️ The hold outlasts the speed's own freshness window on purpose; invert that and a silent bus " +
       "could complete a hand-back by itself. Then the two sentences: entering says what it will survive and the " +
       "hand-back says the BIKE did it, once, while the SLIDER's own 0 still says a plain 'off' because nothing " +
-      "is watching it — and a slider drag through zero takes the fan off the gesture in the same batch rather " +
-      "than a beat later, which is what stops the phone promising a ceiling over a duty a thumb chose. Finally " +
+      "is watching it — and a slider drag through zero takes the fan off the gesture in the batch after the duty " +
+      "that woke it — a record() made inside a change listener can never join the batch it was notified about — " +
+      "which is what stops the phone promising a ceiling over a duty a thumb chose. Finally " +
       "the safety price, since this moved one: the five ENTER presses recorded at 47-118 km/h still cannot " +
       "reach *off*, and a Pi with no fan driver refuses the mode rather than claiming it",
   },

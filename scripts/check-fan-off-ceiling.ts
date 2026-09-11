@@ -15,7 +15,7 @@ import {
   FAN_OFF_STATE,
   startFanCycleGesture,
 } from "../src/fan/gesture-runner.ts";
-import { apply, valueOf } from "../public/lib/store.js";
+import { apply, peek, valueOf } from "../public/lib/store.js";
 import { foldFanAnnouncement } from "../public/lib/announce.js";
 import { FAN_OFF_CEILING_KMH as BROWSER_CEILING_KMH, FAN_OFF_STATE_CODE } from "../public/lib/fan-display.js";
 
@@ -91,7 +91,7 @@ function drainBanners(): string[] {
       memory,
       valueOf("fan_auto_mode"),
       valueOf("fan_target_pct"),
-      valueOf("fan_off_state")
+      peek("fan_off_state")
     );
     memory = folded.state;
     if (folded.banner !== null) {
@@ -129,11 +129,18 @@ async function silenceTheFan(gesture: { perform: () => Promise<string> }): Promi
   await settle(TICK_MS * 3);
 }
 
-/** Sets a speed and lets the watchdog beat on it for `beats` beats. */
-async function rideAt(speedKmh: number, beats: number, beatMs: number): Promise<void> {
+/**
+ * Sets a speed and holds it for a stated DURATION.
+ *
+ * ⚠️ One duration and not a (beats, beatMs) pair. The pair multiplied, so five call sites
+ * passing `beats: 0` silently asked for 40 ms of excursion while their labels said 200,
+ * 240 and 750 — and two assertions about the hysteresis clock were green whether the clock
+ * restarted or accumulated, because two 40 ms blips cannot sum past any hold worth having.
+ */
+async function rideAt(speedKmh: number, forMs: number): Promise<void> {
   bus.speedKmh = speedKmh;
   record("speed_can_kmh", speedKmh);
-  await settle(beatMs * beats + TICK_MS * 2);
+  await settle(forMs + TICK_MS * 2);
 }
 
 // --- 1. The toll booth, at the SHIPPED constants ----------------------------------
@@ -162,7 +169,7 @@ check("…and the wire says whose *off* it is", latestValue("fan_off_state") ===
 // The queue shuffles forward. Every one of these is above the OLD 3 km/h ceiling, so
 // every one of them used to put the fan back to full before the rider reached the booth.
 for (const speedKmh of CREEP_KMH) {
-  await rideAt(speedKmh, 2, FAN_OFF_BEAT_MS);
+  await rideAt(speedKmh, FAN_OFF_BEAT_MS * 2);
   check(
     `⚠️  creeping at ${speedKmh} km/h — the fan is STILL off (this is the bug #205 is about)`,
     automatic.mode() === "manual" && controller.state().targetPercent === 0
@@ -219,27 +226,27 @@ await silenceTheFan(blipCycle.gesture);
 check("the fan is off at the kerb", blipLoop.mode() === "manual" && blipController.state().targetPercent === 0);
 
 // Over the ceiling, but for less than the hold, then back down.
-await rideAt(DEPARTURE_KMH, 0, SHORT_HOLD_MS / 2);
-await rideAt(CREEP_KMH[0], 3, FAST_BEAT_MS);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS / 2);
+await rideAt(CREEP_KMH[0], FAST_BEAT_MS * 3);
 check(
-  `⚠️  a ${SHORT_HOLD_MS / 2} ms blip over ${FAN_OFF_CEILING_KMH} km/h does NOT hand the fan back`,
+  `⚠️  a ${SHORT_HOLD_MS / 2} ms blip over ${FAN_OFF_CEILING_KMH} km/h (hold is ${SHORT_HOLD_MS} ms) does NOT hand the fan back`,
   blipLoop.mode() === "manual" && blipController.state().targetPercent === 0
 );
 check("…and the wire still says the gesture has it", latestValue("fan_off_state") === FAN_OFF_STATE.ARMED);
 
 // ⚠️ And the clock restarts rather than accumulating: two blips that add up to more than
 // the hold, separated by a creep, must still not hand back.
-await rideAt(DEPARTURE_KMH, 0, SHORT_HOLD_MS * 0.6);
-await rideAt(CREEP_KMH[1], 2, FAST_BEAT_MS);
-await rideAt(DEPARTURE_KMH, 0, SHORT_HOLD_MS * 0.6);
-await rideAt(CREEP_KMH[1], 2, FAST_BEAT_MS);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS * 0.6);
+await rideAt(CREEP_KMH[1], FAST_BEAT_MS * 3);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS * 0.6);
+await rideAt(CREEP_KMH[1], FAST_BEAT_MS * 3);
 check(
   "⚠️  two blips that SUM past the hold still do not — the clock restarts, it does not accumulate",
   blipLoop.mode() === "manual" && blipController.state().targetPercent === 0
 );
 
 // Sustained, and it goes back.
-await rideAt(DEPARTURE_KMH, 4, SHORT_HOLD_MS);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS * 4);
 check("sustained over the ceiling hands it back", blipLoop.mode() === "automatic");
 blipCycle.stop();
 blipLoop.stop();
@@ -275,7 +282,7 @@ await silenceTheFan(quietCycle.gesture);
 check("the fan is off", quietLoop.mode() === "manual" && quietController.state().targetPercent === 0);
 
 // Above the ceiling for most of the hold, then the bus stops saying anything at all.
-await rideAt(DEPARTURE_KMH, 0, SILENT_HOLD_MS * 0.2);
+await rideAt(DEPARTURE_KMH, SILENT_HOLD_MS * 0.2);
 clearInterval(busTimer);
 await settle(STATIONARY_MAX_AGE_MS * 2);
 check(
@@ -287,12 +294,12 @@ const resumedBus = setInterval(() => {
   record("batt_temp_hi", bus.packC);
 }, TICK_MS);
 // …and the clock restarted, so the remaining 30 % of the hold is not enough on its own.
-await rideAt(DEPARTURE_KMH, 0, SILENT_HOLD_MS * 0.5);
+await rideAt(DEPARTURE_KMH, SILENT_HOLD_MS * 0.5);
 check(
   "⚠️  …and the clock RESTARTED — what was left of the hold before the silence does not count",
   quietLoop.mode() === "manual"
 );
-await rideAt(DEPARTURE_KMH, 4, SILENT_HOLD_MS);
+await rideAt(DEPARTURE_KMH, SILENT_HOLD_MS * 4);
 check("a full hold after the bus returns does hand it back", quietLoop.mode() === "automatic");
 quietCycle.stop();
 quietLoop.stop();
@@ -325,7 +332,7 @@ check(
   offBanner.length === 1 && offBanner[0] === `Fan: off until ${FAN_OFF_CEILING_KMH} km/h`
 );
 
-await rideAt(DEPARTURE_KMH, 4, SHORT_HOLD_MS);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS * 4);
 const movedBanner = drainBanners();
 check(
   `⚠️  the hand-back says the BIKE did it, not the rider (${JSON.stringify(movedBanner)})`,
@@ -394,9 +401,10 @@ check(
 );
 
 // ⚠️ A NEW assertion, not a re-pointed one — nothing pinned this before. The five ENTER
-// presses in the capture archive that were made while moving, from
-// docs/can-decode-findings.md § "bits 0 and 1". None may reach *off* at the new ceiling.
-const PRESSES_MADE_WHILE_MOVING_KMH = [47, 63, 79, 101, 118];
+// presses in the capture archive that were made while moving, quoted from
+// docs/can-decode-findings.md § "bit 2 — MODE ENTER" rather than rounded from memory.
+// None may reach *off* at the new ceiling.
+const PRESSES_MADE_WHILE_MOVING_KMH = [47.0, 52.2, 88.0, 93.6, 118.1];
 for (const speedKmh of PRESSES_MADE_WHILE_MOVING_KMH) {
   check(
     `a hold at ${speedKmh} km/h — one of the five recorded — cannot reach *off*`,
@@ -434,7 +442,7 @@ check(
 );
 
 batches.splice(0);
-await rideAt(DEPARTURE_KMH, 4, SHORT_HOLD_MS);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS * 4);
 const revertBatches = [...batches];
 const movedAt = batchIndexOf(revertBatches, "fan_off_state");
 const modeAt = batchIndexOf(revertBatches, "fan_auto_mode");
@@ -446,6 +454,38 @@ orderCycle.stop();
 orderLoop.stop();
 await orderController.stop();
 bus.speedKmh = 0;
+batches.splice(0);
+
+// ⚠️ THE OTHER HALF OF THE ASYMMETRY. `record(ARMED)` sits before the awaited command and
+// `armRevert()` after it, and only the first half is pinned above. Arming EARLY has its
+// own hazard: the beat would start while the duty is still on its way down, see a target
+// that is not yet 0, conclude somebody else has the fan and disarm — leaving a stopped fan
+// with nothing watching for the bike moving again.
+//
+// A bridge that takes its time plus a beat far shorter than it is what makes that visible:
+// with the arming after the command there is no beat between the two, and with it before
+// there are several.
+const slowBridge = await startFanControl({
+  enabled: true,
+  openPwm: async () => ({
+    ...recording,
+    setBridgeEnabled: () => new Promise<void>(resolve => setTimeout(resolve, TICK_MS * 4)),
+  }),
+});
+const slowLoop = startFanAutomatic(slowBridge, LOOP_OPTIONS);
+const slowCycle = startFanCycleGesture(slowLoop, { revertBeatMs: 5, revertHoldMs: SHORT_HOLD_MS });
+await settle(TICK_MS * 3);
+await slowLoop.setMode("automatic");
+await settle(TICK_MS * 3);
+await silenceTheFan(slowCycle.gesture);
+check(
+  "⚠️  a slow bridge does not let the watchdog disarm itself mid-stop — armed AFTER the command",
+  latestValue("fan_off_state") === FAN_OFF_STATE.ARMED
+);
+check("…and the fan really is stopped behind it", slowBridge.state().targetPercent === 0);
+slowCycle.stop();
+slowLoop.stop();
+await slowBridge.stop();
 batches.splice(0);
 
 // --- 7. The slider taking the fan off the gesture ----------------------------------
@@ -485,7 +525,7 @@ check(
   dragBanners.length > 0 && dragBanners[dragBanners.length - 1] === "Fan: off"
 );
 // And riding away does not take back a duty the rider chose by hand.
-await rideAt(DEPARTURE_KMH, 4, SHORT_HOLD_MS);
+await rideAt(DEPARTURE_KMH, SHORT_HOLD_MS * 4);
 check(
   "⚠️  riding away does NOT revert the slider's 0 — only the gesture's own",
   dragLoop.mode() === "manual" && dragController.state().targetPercent === 0
@@ -542,8 +582,6 @@ check("a Pi with no fan driver refuses the mode rather than claiming it", !inert
 check("…and its controller refuses a duty, so the cycle cannot reach *off* there", !(await inert.setDutyPercent(0)).ok);
 inertLoop.stop();
 await inert.stop();
-
-clearInterval(busTimer);
 
 console.log("");
 if (failures > 0) {

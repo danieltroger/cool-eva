@@ -86,12 +86,12 @@ export interface FanGestureInputs {
  * cycle asks for two consecutive holds, which is what walks into the dash's own reset mode
  * — docs/handlebar-gestures.md §"Holding ENTER opens the dash's own reset mode".
  *
- * ⚠️ *Off* is only reachable with the bike PROVABLY stopped, so above 3 km/h — or with
- * nothing saying the bike is stopped — the cycle degrades to the two-state toggle the
- * issue originally asked for, between automatic and a fan at full. That is deliberate on
- * both counts: a false fire while riding can then only ever land on the thermally safe
- * side, and the 160 ENTER presses in the capture archive include five made at 47–118 km/h,
- * every one of them far above the ceiling.
+ * ⚠️ *Off* needs positive evidence that the bike is under FAN_OFF_CEILING_KMH, so above
+ * the ceiling — or with nothing saying how fast the bike is going — the cycle degrades to
+ * the two-state toggle the issue originally asked for, between automatic and a fan at
+ * full. That is deliberate on both counts: a false fire at road speed can then only ever
+ * land on the thermally safe side, and the 160 ENTER presses in the capture archive
+ * include five made at 47.0–118.1 km/h, every one far above the ceiling.
  */
 export function nextFanGestureAction(inputs: FanGestureInputs): FanGestureAction {
   if (inputs.mode === "fun") {
