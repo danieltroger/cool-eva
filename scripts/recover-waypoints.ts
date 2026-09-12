@@ -4,6 +4,7 @@ import { resolve } from "path";
 import {
   RECOVERY_OUTCOME,
   distanceKm,
+  fireInstant,
   judgeHolds,
   pairPresses,
   type Fix,
@@ -38,6 +39,14 @@ const LIVE_MATCH_TOLERANCE_MS = 200;
  */
 const BEAT_MS_ON_THE_RECOVERY_DAYS = 100;
 
+/**
+ * The waypoint threshold in force on the days being recovered, before #197 trimmed it.
+ *
+ * ⚠️ Also NOT imported. WAYPOINT_HOLD_MS is 500 today; these holds were made under 1000, and
+ * which of the two a hold cleared is what decides where its point goes (fireInstant()).
+ */
+const LEGACY_HOLD_MS = 1000;
+
 interface Options {
   dbPath: string;
   fromMs: number;
@@ -59,6 +68,7 @@ async function main(): Promise<void> {
     waypointRows: readSignal(db, "waypoint_seq", options),
     holdMs: options.holdMs,
     beatMs: BEAT_MS_ON_THE_RECOVERY_DAYS,
+    legacyHoldMs: LEGACY_HOLD_MS,
     liveToleranceMs: LIVE_MATCH_TOLERANCE_MS,
   };
 
@@ -159,17 +169,13 @@ function validateAgainstLiveWaypoints(
     if (press === null) {
       continue;
     }
-    const placed = positionAt(
-      inputs.latitudeRows,
-      inputs.longitudeRows,
-      press.startedAt + inputs.holdMs + inputs.beatMs
-    );
+    const placed = positionAt(inputs.latitudeRows, inputs.longitudeRows, fireInstant(press, inputs));
     if (placed !== null) {
       placementErrors.push(metresBetween(saved, placed));
     }
   }
   describe("carry-back fidelity, at the instant the bike wrote the waypoint", carryBackErrors);
-  describe(`placement, at this recovery's own fire instant (+${inputs.holdMs + inputs.beatMs} ms)`, placementErrors);
+  describe("placement, at the fire instant this recovery chooses", placementErrors);
   console.log("\nThe second is the error a recovered point carries. The first only says carry-back is exact.");
 }
 

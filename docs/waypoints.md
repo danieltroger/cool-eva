@@ -135,22 +135,25 @@ Measured against the 28 waypoints the bike really saved on 2026-09-09 — the on
 
 ### ⚠️ But carry-back is not the error a recovered point carries
 
-🚨 **The number above flatters the result and an earlier draft quoted it alone.** Carry-back fidelity asks _"at the instant the bike wrote this, does the last logged row reproduce it?"_ A recovered waypoint has no such instant — the script has to **choose** one, and that choice is the dominant error:
+🚨 **The number above flatters the result and two drafts quoted it alone.** Carry-back fidelity asks _"at the instant the bike wrote this, does the last logged row reproduce it?"_ A recovered waypoint has no such instant — the script has to **choose** one, and that choice is the dominant error, an order above the carry-back bound.
 
-| fire instant                                                      | exact    | median     | worst      |
-| ----------------------------------------------------------------- | -------- | ---------- | ---------- |
-| `pressStart + 1000` (what the bike's own 1000 ms rule did)        | 21 of 28 | 0.0 m      | 15.0 m     |
-| `pressStart + holdMs + beat` = **+600** (what this recovery does) | 3 of 28  | **10.6 m** | **19.6 m** |
+**Two populations, and one rule for both is wrong for one of them.**
 
-At 100 km/h a 400 ms difference in the chosen instant is 11 m, which is **an order above the 4.72 m carry-back bound**. So a recovered point is good to about **20 m**, not to 3.5 m, and `--validate` now prints both numbers with the larger one named as the real bound.
+- A hold that **cleared the 1000 ms threshold then in force** was already recognisable when it was made. The phone's hidden page, or the beat, is what lost it — so the place it belongs is where the bike would have written it.
+- A hold **shorter than that** was never going to be saved by anything then in force, has no such instant, and belongs where the **new** 500 ms rule fires.
 
-That offset is not a bug to be tuned away: the bike fires on a **beat** at **threshold + up to one beat**, and this recovery deliberately applies the _new_ 500 ms threshold to holds the old 1000 ms one missed. Under the new rule the bike itself would place these points at +600 too. The 10.6 m is the honest cost of recovering holds that were never long enough for the old rule.
+`fireInstant()` splits on exactly that, and the ground truth discriminates sharply. All 28 waypoints the bike really saved on 2026-09-09 came from holds of **1141 ms or longer**, so they test the first population directly:
 
-🚨 **An earlier draft gated on `rowAge × speedAtThatTime` above 50 m. That was wrong in kind and is deleted.** The two axes are deadbanded independently, so an old `gps_lat` row means latitude is not changing — it multiplies a speed in one axis by an age in the other. Worse, at a 3 m deadband a bike at 100 km/h forces a row every ~0.11 s, so **a large row age is evidence of low speed**, and the gate fired hardest exactly where it was most wrong. It refused two of the bike's own 28 waypoints (estimating 97.1 m and 57.2 m against true errors of 3.5 m and 1.5 m) and one real candidate at an estimated 73.8 m. It was invented for a failure that cannot happen.
+| fire instant                                         | exact        | median    | worst  |
+| ---------------------------------------------------- | ------------ | --------- | ------ |
+| `pressStart + 1000` — where the old rule fired       | **21 of 28** | **0.0 m** | 15.0 m |
+| `pressStart + 500 + beat` — where the new rule fires | 3 of 28      | 10.6 m    | 19.6 m |
 
-What the deadband bound **cannot** see is a receiver that went silent while the bike kept moving — and that is the one gate kept: `gps_epoch_s` age ≤ `FIX_MAX_AGE_MS`. It is what refuses the 2026-09-07 09:02:20 hold, which sits inside an 85-minute GPS silence.
+⚠️ **A draft shipped the second rule for both populations and put seven of the twelve recovered points 11–19 m adrift.** It survived review once because `--validate` measured carry-back at each live waypoint's _own_ timestamp and so was structurally incapable of seeing a placement error at all. Both numbers are printed now, with the larger named as the real bound.
 
-⚠️ **The premise this corrects, which had been in `src/can/registry.ts` since the phone era.** That file argued the position is copied into its own signals because the last logged fix "can be minutes stale at a standstill — exactly when you stop to save a waypoint". The handlebar hold **inverted** that: **13 of 14** holds on 09-07 and **4 of 4** recoverable on 09-09 were made at **30–119 km/h**, because the whole point of a bar button is that your hands stay on the bars. `docs/handlebar-gestures.md` already recorded the same fact from the other side — 749 of 779 cancel presses above 3 km/h. The copying is still right; the reason was not. And "stale" implied an error that does not exist: the one waypoint of the 28 saved at a standstill had a `gps_lat` row **21.8 s** old and a carry-back **3.5 m** from what the bike wrote.
+⚠️ **And a `beatMs` parameter added in between changed nothing.** `+500` and `+600` agree to the digit on every statistic, because the deadband only logs a fix about every 550 ms — a 100 ms shift lands on the same row for 12 of 14 holds. A knob that moves no point is not a fix.
+
+**What a recovered point is actually worth:** for a hold past the old threshold, the same ~4 m as a live one. For a shorter hold — three of the twelve — about **20 m**, which is the honest cost of recovering a press that no rule then in force would have caught.
 
 ### ⚠️ The jump gate mostly declines to judge
 

@@ -175,17 +175,20 @@ export interface RecoveryInputs {
   epochRows: LogRow[];
   waypointRows: LogRow[];
   holdMs: number;
-  /**
-   * The beat the recogniser sampled on, which is part of WHERE the point goes.
-   *
-   * ⚠️ A gesture fires on a BEAT, not at the threshold, so the bike writes its waypoint at
-   * `pressStart + holdMs + (up to) one beat`. Measured against the 28 waypoints the bike
-   * really saved: firing at `pressStart + 1000` reproduces 21 of them exactly, firing at
-   * `+500` reproduces 3 and sits a median 10.6 m away. The offset is the DOMINANT error in
-   * a recovered position — an order above the ~4 m carry-back bound — so it is a parameter
-   * and not a rounding.
-   */
+  /** The beat the recogniser sampled on. Part of WHERE a point goes — see fireInstant(). */
   beatMs: number;
+  /**
+   * The threshold that was in force when these rides happened.
+   *
+   * ⚠️ A hold that CLEARED the old threshold is one the bike should have saved and lost, so
+   * the place it belongs is where the bike would have written it. A hold that did not is one
+   * only the new rule reaches, and it has no such instant. fireInstant() splits on exactly
+   * that. Measured against the 28 waypoints the bike really saved, whose holds all run to
+   * 1141 ms or longer: firing at +1000 reproduces 21 of 28 exactly, firing at +600 reproduces
+   * 3 and sits a median 10.6 m out. The offset is the DOMINANT error in a recovered position,
+   * an order above the ~4.7 m carry-back bound, so it is argued rather than rounded.
+   */
+  legacyHoldMs: number;
   /** How far past the release a live waypoint may land and still belong to that press. */
   liveToleranceMs: number;
 }
@@ -195,9 +198,26 @@ export function judgeHolds(inputs: RecoveryInputs): RecoveryVerdict[] {
   const presses = pairPresses(inputs.cancelRows).filter(press => press.durationMs >= inputs.holdMs);
   const alreadyFired = matchLiveWaypoints(presses, inputs.waypointRows, inputs.liveToleranceMs);
   const fixes = buildFixTimeline(inputs.latitudeRows, inputs.longitudeRows);
-  return presses.map(press =>
-    judgeOneHold(press, press.startedAt + inputs.holdMs + inputs.beatMs, alreadyFired, fixes, inputs)
-  );
+  return presses.map(press => judgeOneHold(press, fireInstant(press, inputs), alreadyFired, fixes, inputs));
+}
+
+/**
+ * Where the point goes: the instant the recogniser that SHOULD have caught this hold would
+ * have fired.
+ *
+ * ⚠️ Two populations, and one rule for both is wrong for one of them. A hold past the old
+ * threshold was already recognisable when it was made — the phone's hidden page or the beat
+ * is what lost it — so the position it deserves is the one the bike would have written, and
+ * the ground truth discriminates: 21 of 28 exact at the old threshold against 3 of 28 at the
+ * new one. A hold SHORTER than the old threshold was never going to be saved by anything
+ * then in force, has no such instant, and belongs where the new rule fires. An earlier
+ * version used the new rule for both and put seven of twelve points 11-19 m adrift.
+ */
+export function fireInstant(press: RecoveredPress, inputs: RecoveryInputs): number {
+  if (press.durationMs >= inputs.legacyHoldMs) {
+    return press.startedAt + inputs.legacyHoldMs;
+  }
+  return press.startedAt + inputs.holdMs + inputs.beatMs;
 }
 
 function judgeOneHold(

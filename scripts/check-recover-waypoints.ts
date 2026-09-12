@@ -8,6 +8,7 @@ import {
   WAYPOINT_REFUSAL,
   buildFixTimeline,
   carryBack,
+  fireInstant,
   judgeHolds,
   matchLiveWaypoints,
   pairPresses,
@@ -148,6 +149,7 @@ function judge(overrides: Partial<Parameters<typeof judgeHolds>[0]> = {}) {
     waypointRows: [],
     holdMs: 500,
     beatMs: 0,
+    legacyHoldMs: 100_000,
     liveToleranceMs: 200,
     ...overrides,
   });
@@ -219,9 +221,36 @@ const shortPress = judgeHolds({
   waypointRows: [],
   holdMs: 500,
   beatMs: 0,
+  legacyHoldMs: 100_000,
   liveToleranceMs: 200,
 });
 check("a 300 ms tap is below the threshold and is not a hold at all", shortPress.length === 0);
+
+console.log("\n4b. where a recovered point goes");
+
+// ⚠️ THE DOMINANT ERROR IN A RECOVERED POSITION, and it is a choice rather than a
+// measurement. A hold past the threshold then in force was already recognisable when it was
+// made, so it belongs where the bike would have written it; a shorter one was never going to
+// be saved by anything then in force and belongs where the NEW rule fires. Measured against
+// the 28 waypoints the bike really saved: 21 of 28 exact the first way, 3 of 28 the second.
+const inputsFor = (durationMs: number) => ({
+  press: { startedAt: BASE, durationMs, sessionId: 1 },
+  inputs: { holdMs: 500, beatMs: 100, legacyHoldMs: 1000 } as Parameters<typeof fireInstant>[1],
+});
+const longHold = inputsFor(1400);
+const shortHold = inputsFor(900);
+check(
+  "⚠️  a hold that cleared the OLD threshold is placed where the bike would have written it",
+  fireInstant(longHold.press, longHold.inputs) === BASE + 1000
+);
+check(
+  "⚠️  …and one that did not is placed where the NEW rule fires, since it has no such instant",
+  fireInstant(shortHold.press, shortHold.inputs) === BASE + 600
+);
+check(
+  "a hold exactly ON the old threshold counts as having cleared it",
+  fireInstant(inputsFor(1000).press, inputsFor(1000).inputs) === BASE + 1000
+);
 
 console.log("\n5. the only code that writes to Daniel's ride log");
 
@@ -303,6 +332,44 @@ const seqRows = (
 ).n;
 after.close();
 check("⚠️  a write that fails part-way leaves NOTHING behind, not half a recovery", threw && seqRows === 2);
+
+// ⚠️ THE CHECKSUM PATH, forced rather than assumed. The rollback above is driven by a throw
+// inside the transaction; this one proves the SUPERSET CHECK itself aborts the write, which
+// is the guard that matters — an earlier version ran it after the commit and after the
+// handle closed, so it could only ever report a bad write, never prevent one. A trigger
+// corrupts an unrelated signal mid-transaction, which is exactly what the check is for.
+const tamper = new Database(scratchDb);
+tamper.exec(
+  "CREATE TRIGGER corrupt AFTER INSERT ON reading BEGIN " +
+    "UPDATE reading SET value = 999 WHERE signal_id = (SELECT id FROM signal WHERE key = 'speed_can_kmh'); END"
+);
+tamper.close();
+let checksumThrew = false;
+try {
+  await commitRecovered(scratchDb, [verdictAt(20_000, 58.1, 12.1)], "test3");
+} catch (error) {
+  checksumThrew = String(error).includes("SUPERSET CHECK FAILED");
+}
+const tampered = new Database(scratchDb, { readonly: true });
+const speedValue = (
+  tampered
+    .prepare("SELECT value FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = 'speed_can_kmh'")
+    .get() as {
+    value: number;
+  }
+).value;
+const seqAfter = (
+  tampered
+    .prepare("SELECT count(*) n FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = 'waypoint_seq'")
+    .get() as {
+    n: number;
+  }
+).n;
+tampered.close();
+check(
+  "⚠️  a signal changing under the write is caught and the whole thing rolls back",
+  checksumThrew && speedValue === 42 && seqAfter === 2
+);
 
 await rm(scratch, { recursive: true, force: true });
 
