@@ -1,0 +1,385 @@
+import Database from "better-sqlite3";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { commitRecovered } from "./recover-waypoints-commit.ts";
+import {
+  RECOVERY_OUTCOME,
+  WAYPOINT_REFUSAL,
+  buildFixTimeline,
+  carryBack,
+  fireInstant,
+  judgeHolds,
+  matchLiveWaypoints,
+  pairPresses,
+  type LogRow,
+  type RecoveryVerdict,
+} from "../src/gps/recover-holds.ts";
+
+// The waypoint recovery, checked with no bike, no Pi and no ride log.
+//
+//   node --experimental-strip-types scripts/check-recover-waypoints.ts
+//
+// ⚠️ SYNTHETIC FIXTURES ON PURPOSE. scripts/run-checks.ts forbids depending on local-only
+// files, and the real logs are not in the repo — so every rule below is planted as rows
+// rather than replayed from Daniel's data. The calibration against the 28 waypoints the
+// bike really saved is the script's own --validate mode, which is evidence in the PR and
+// cannot be a CI check. docs/waypoints.md has both halves.
+//
+// ⚠️ What this is really guarding is that the recovery reproduces what the BIKE would have
+// done. Every rule here was a wrong answer first: the pairing was miscounted twice, a
+// freshness gate was invented for a failure that cannot happen, and a press whose start
+// was never observed was counted as a press.
+
+let failures = 0;
+
+function check(what: string, condition: boolean) {
+  if (condition) {
+    console.log(`  ✓ ${what}`);
+  } else {
+    console.error(`  ✗ ${what}`);
+    failures += 1;
+  }
+}
+
+const SECOND = 1000;
+const BASE = Date.parse("2026-09-07T12:00:00Z");
+
+/** A button edge. `seq` is the write order, which is what pairing must sort on. */
+function edge(atMs: number, value: number, sessionId = 1, seq = atMs): LogRow {
+  return { ts: BASE + atMs, value, sessionId, seq };
+}
+
+/** A fix pair logged at one instant, as gps_lat and gps_lon rows. */
+function fixRows(atMs: number, lat: number, lon: number): { lat: LogRow; lon: LogRow } {
+  return {
+    lat: { ts: BASE + atMs, value: lat, sessionId: 1, seq: atMs },
+    lon: { ts: BASE + atMs, value: lon, sessionId: 1, seq: atMs },
+  };
+}
+
+console.log("\n1. pairing presses out of a log's edges");
+
+const simple = pairPresses([edge(0, 0), edge(1000, 1), edge(1900, 0)]);
+check("a watched 0→1→0 is one press of its real length", simple.length === 1 && simple[0].durationMs === 900);
+
+// ⚠️ THE RULE THAT COST A WRONG COUNT. record() always logs the first value of a key in a
+// process, so a restart-heavy day writes one baseline row per boot — and a session that
+// opens with the button already down never watched the press begin.
+const midPress = pairPresses([edge(0, 1), edge(900, 0), edge(1000, 1), edge(1900, 0)]);
+check(
+  "⚠️  a session whose FIRST row is already 1 contributes no press from it",
+  midPress.length === 1 && midPress[0].durationMs === 900
+);
+
+const unterminated = pairPresses([edge(0, 0), edge(1000, 1)]);
+check("a press still open when the log ends is discarded, not closed", unterminated.length === 0);
+
+// ⚠️ Cross-session pairing would turn two boots into one absurd hold. `ts` is wall clock
+// and the Pi steps it, so the ordering is (session, seq) and the pairing is per session.
+const twoSessions = pairPresses([edge(0, 0, 1), edge(100, 1, 1), edge(200, 0, 2, 5), edge(300, 1, 2, 6)]);
+check("⚠️  a press open at the end of one session is not closed by the next session's row", twoSessions.length === 0);
+
+const outOfOrder = pairPresses([edge(1900, 0, 1, 3), edge(1000, 1, 1, 2), edge(0, 0, 1, 1)]);
+check("rows are ordered by seq, not by arrival", outOfOrder.length === 1 && outOfOrder[0].durationMs === 900);
+
+console.log("\n2. which holds already produced a waypoint");
+
+const presses = pairPresses([edge(0, 0), edge(1000, 1), edge(2400, 0), edge(3000, 1), edge(4400, 0)]);
+const oneLive = matchLiveWaypoints(presses, [{ ts: BASE + 2050, value: 1, sessionId: 1, seq: 1 }], 200);
+check("a waypoint inside a press belongs to that press", oneLive.size === 1 && oneLive.has(presses[0]));
+
+// ⚠️ FORWARD IN TIME, and one waypoint to one press. Matching by nearest instant lets a
+// single waypoint vouch for several holds — the error that miscounted the same four holds
+// twice, first as three losses and then as the wrong fourth. Two waypoints inside two
+// presses must claim one each, so the SECOND press is not excused by the first's waypoint.
+const bothLive = matchLiveWaypoints(
+  presses,
+  [
+    { ts: BASE + 2050, value: 1, sessionId: 1, seq: 1 },
+    { ts: BASE + 4050, value: 2, sessionId: 1, seq: 2 },
+  ],
+  200
+);
+check("⚠️  two waypoints claim one press each, not the same one twice", bothLive.size === 2);
+const onlyOne = matchLiveWaypoints(presses, [{ ts: BASE + 2050, value: 1, sessionId: 1, seq: 1 }], 200);
+check(
+  "⚠️  …and one waypoint excuses ONE press, leaving the other recoverable",
+  onlyOne.size === 1 && onlyOne.has(presses[0]) && !onlyOne.has(presses[1])
+);
+
+const before = matchLiveWaypoints(presses, [{ ts: BASE + 500, value: 1, sessionId: 1, seq: 1 }], 200);
+check("a waypoint BEFORE a press cannot have come from it", before.size === 0);
+
+console.log("\n3. carrying the position back");
+
+const rows: LogRow[] = [
+  { ts: BASE + 1000, value: 57.7, sessionId: 1, seq: 1 },
+  { ts: BASE + 5000, value: 57.8, sessionId: 1, seq: 2 },
+];
+check("the last value at or before the instant is the one", carryBack(rows, BASE + 4000)?.value === 57.7);
+check("…and an instant on a row takes that row", carryBack(rows, BASE + 5000)?.value === 57.8);
+check("…and nothing before the first row", carryBack(rows, BASE - 1) === null);
+
+// ⚠️ A pair at EVERY lat OR lon row, carrying the other axis back — the shape
+// src/gps/waypoint.ts's onFixChanged() produces. Pairing consecutive gps_lat rows instead
+// feeds the jump gate pairs the bike never held, because the two axes are deadbanded apart.
+const timeline = buildFixTimeline(
+  [
+    { ts: BASE + 1000, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 3000, value: 57.71, sessionId: 1, seq: 3 },
+  ],
+  [{ ts: BASE + 2000, value: 11.97, sessionId: 1, seq: 2 }]
+);
+check(
+  "⚠️  a fix pair is formed at every lat OR lon row, with the other axis carried back",
+  timeline.length === 2 && timeline[0].at === BASE + 2000 && timeline[1].latitudeDeg === 57.71
+);
+
+console.log("\n4. the gates, as the bike would have run them");
+
+function judge(overrides: Partial<Parameters<typeof judgeHolds>[0]> = {}) {
+  const hold = [edge(0, 0), edge(1000, 1), edge(2400, 0)];
+  const here = fixRows(900, 57.7, 11.97);
+  return judgeHolds({
+    cancelRows: hold,
+    latitudeRows: [here.lat],
+    longitudeRows: [here.lon],
+    epochRows: [{ ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 }],
+    waypointRows: [],
+    holdMs: 500,
+    beatMs: 0,
+    legacyHoldMs: 100_000,
+    liveToleranceMs: 200,
+    ...overrides,
+  });
+}
+
+check("a clean hold with a fresh fix is recovered", judge()[0].outcome === RECOVERY_OUTCOME.RECOVERED);
+check(
+  "a hold with no position at all is refused as NO_FIX",
+  judge({ latitudeRows: [], longitudeRows: [] })[0].refusal === WAYPOINT_REFUSAL.NO_FIX
+);
+
+// ⚠️ THE ONE GATE THAT SURVIVED. gps_epoch_s is the liveness witness because gps_lat and
+// gps_lon are deadbanded: src/can/signals.ts compares against the LAST LOGGED value, so a
+// carried-back position is within one deadband of the live fix at ANY row age. What that
+// bound cannot see is a receiver that went silent while the bike kept moving, and this is it.
+check(
+  "⚠️  a receiver silent for longer than FIX_MAX_AGE_MS is refused as FIX_STALE",
+  judge({ epochRows: [{ ts: BASE - 60_000, value: 1, sessionId: 1, seq: 1 }] })[0].refusal ===
+    WAYPOINT_REFUSAL.FIX_STALE
+);
+check(
+  "a coordinate off the planet is refused by the range gate",
+  judge({ longitudeRows: [{ ts: BASE + 900, value: 999, sessionId: 1, seq: 1 }] })[0].refusal ===
+    WAYPOINT_REFUSAL.FIX_NOT_ON_EARTH
+);
+
+// ⚠️ The jump gate FAILS OPEN below MIN_FIX_INTERVAL_MS, and this hub's fixes are mostly
+// closer together than that, so it usually declines to judge. The bike ran the same gate in
+// the same regime — reproducing that is correct — but the verdict records whether it looked,
+// because a report saying "cleared the jump gate" about a gate that never ran is a lie.
+const tooClose = judge({
+  latitudeRows: [
+    { ts: BASE + 400, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 57.7, sessionId: 1, seq: 2 },
+  ],
+  longitudeRows: [
+    { ts: BASE + 400, value: 11.97, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 130.3, sessionId: 1, seq: 2 },
+  ],
+});
+check(
+  "⚠️  fixes closer than the gate's floor are NOT judged, and the verdict says so",
+  tooClose[0].outcome === RECOVERY_OUTCOME.RECOVERED && !tooClose[0].jumpGateJudged
+);
+
+const jumped = judge({
+  latitudeRows: [
+    { ts: BASE - 2000, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 57.7, sessionId: 1, seq: 2 },
+  ],
+  longitudeRows: [
+    { ts: BASE - 2000, value: 11.97, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 130.3, sessionId: 1, seq: 2 },
+  ],
+});
+check(
+  "…and a real 8 000 km jump across a judgeable gap IS refused",
+  jumped[0].refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE && jumped[0].jumpGateJudged
+);
+
+const live = judge({ waypointRows: [{ ts: BASE + 1600, value: 1, sessionId: 1, seq: 1 }] });
+check("a hold that already saved a waypoint is not recovered again", live[0].outcome === RECOVERY_OUTCOME.ALREADY_LIVE);
+
+const shortPress = judgeHolds({
+  cancelRows: [edge(0, 0), edge(1000, 1), edge(1300, 0)],
+  latitudeRows: [fixRows(900, 57.7, 11.97).lat],
+  longitudeRows: [fixRows(900, 57.7, 11.97).lon],
+  epochRows: [{ ts: BASE + 900, value: 1, sessionId: 1, seq: 1 }],
+  waypointRows: [],
+  holdMs: 500,
+  beatMs: 0,
+  legacyHoldMs: 100_000,
+  liveToleranceMs: 200,
+});
+check("a 300 ms tap is below the threshold and is not a hold at all", shortPress.length === 0);
+
+console.log("\n4b. where a recovered point goes");
+
+// ⚠️ THE DOMINANT ERROR IN A RECOVERED POSITION, and it is a choice rather than a
+// measurement. A hold past the threshold then in force was already recognisable when it was
+// made, so it belongs where the bike would have written it; a shorter one was never going to
+// be saved by anything then in force and belongs where the NEW rule fires. Measured against
+// the 28 waypoints the bike really saved: 21 of 28 exact the first way, 3 of 28 the second.
+const inputsFor = (durationMs: number) => ({
+  press: { startedAt: BASE, durationMs, sessionId: 1 },
+  inputs: { holdMs: 500, beatMs: 100, legacyHoldMs: 1000 } as Parameters<typeof fireInstant>[1],
+});
+const longHold = inputsFor(1400);
+const shortHold = inputsFor(900);
+check(
+  "⚠️  a hold that cleared the OLD threshold is placed where the bike would have written it",
+  fireInstant(longHold.press, longHold.inputs) === BASE + 1000
+);
+check(
+  "⚠️  …and one that did not is placed where the NEW rule fires, since it has no such instant",
+  fireInstant(shortHold.press, shortHold.inputs) === BASE + 600
+);
+check(
+  "a hold exactly ON the old threshold counts as having cleared it",
+  fireInstant(inputsFor(1000).press, inputsFor(1000).inputs) === BASE + 1000
+);
+
+console.log("\n5. the only code that writes to Daniel's ride log");
+
+// ⚠️ A REAL DATABASE IN A TEMP DIRECTORY, never rides.db. The writing half is the one part
+// of this that cannot be made pure, so it is exercised against a throwaway file with the
+// same schema — because the failure that matters is a bad write, and a mock cannot have one.
+const scratch = await mkdtemp(join(tmpdir(), "cool-eva-recover-"));
+const scratchDb = join(scratch, "rides.db");
+
+function seed(): Database.Database {
+  const db = new Database(scratchDb);
+  db.exec(
+    "CREATE TABLE signal (id INTEGER PRIMARY KEY, key TEXT UNIQUE, unit TEXT, grp TEXT, source TEXT);" +
+      "CREATE TABLE session (id INTEGER PRIMARY KEY, uid TEXT UNIQUE);" +
+      "CREATE TABLE reading (ts INTEGER NOT NULL, signal_id INTEGER NOT NULL, value REAL NOT NULL, " +
+      "session_id INTEGER, seq INTEGER);"
+  );
+  for (const key of ["waypoint_seq", "waypoint_lat", "waypoint_lon", "speed_can_kmh"]) {
+    db.prepare("INSERT INTO signal (key, unit, grp, source) VALUES (?, '', 'x', 'sensor')").run(key);
+  }
+  const speedId = (db.prepare("SELECT id FROM signal WHERE key = 'speed_can_kmh'").get() as { id: number }).id;
+  db.prepare("INSERT INTO reading (ts, signal_id, value, session_id, seq) VALUES (?, ?, ?, 1, 1)").run(
+    BASE,
+    speedId,
+    42
+  );
+  db.close();
+  return db;
+}
+
+function verdictAt(atMs: number, lat: number, lon: number): RecoveryVerdict {
+  return {
+    press: { startedAt: BASE + atMs, durationMs: 1000, sessionId: 1 },
+    fireAt: BASE + atMs + 500,
+    outcome: RECOVERY_OUTCOME.RECOVERED,
+    latitudeDeg: lat,
+    longitudeDeg: lon,
+    jumpGateJudged: false,
+  };
+}
+
+seed();
+const committed = await commitRecovered(scratchDb, [verdictAt(0, 57.7, 11.97), verdictAt(5000, 57.8, 11.98)], "test");
+const written = new Database(scratchDb, { readonly: true });
+const countOf = (key: string): number =>
+  (
+    written
+      .prepare("SELECT count(*) n FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = ?")
+      .get(key) as { n: number }
+  ).n;
+check("two waypoints write three signals each", committed.insertedRows === 6 && countOf("waypoint_seq") === 2);
+check("…and the untouched signal is still untouched", countOf("speed_can_kmh") === 1);
+check(
+  "…under a session whose uid names the issue, so one DELETE undoes the run",
+  committed.sessionUid.startsWith("recovered-192-") &&
+    (written.prepare("SELECT count(*) n FROM session WHERE uid = ?").get(committed.sessionUid) as { n: number }).n === 1
+);
+written.close();
+
+// ⚠️ THE ROLLBACK. A verdict naming a signal the database has never heard of throws INSIDE
+// the transaction, and the point of checking it is that a half-written recovery is worse
+// than none: the earlier version ran its verification after the transaction had already
+// committed and after the handle had closed, so a failure left the bad rows in place and
+// swallowed the undo statement the caller prints only on success.
+const broken = { ...verdictAt(9000, 57.9, 11.99), latitudeDeg: undefined };
+let threw = false;
+try {
+  await commitRecovered(scratchDb, [broken as RecoveryVerdict, verdictAt(10_000, 58.0, 12.0)], "test2");
+} catch {
+  threw = true;
+}
+const after = new Database(scratchDb, { readonly: true });
+const seqRows = (
+  after
+    .prepare("SELECT count(*) n FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = 'waypoint_seq'")
+    .get() as {
+    n: number;
+  }
+).n;
+after.close();
+check("⚠️  a write that fails part-way leaves NOTHING behind, not half a recovery", threw && seqRows === 2);
+
+// ⚠️ THE CHECKSUM PATH, forced rather than assumed. The rollback above is driven by a throw
+// inside the transaction; this one proves the SUPERSET CHECK itself aborts the write, which
+// is the guard that matters — an earlier version ran it after the commit and after the
+// handle closed, so it could only ever report a bad write, never prevent one. A trigger
+// corrupts an unrelated signal mid-transaction, which is exactly what the check is for.
+const tamper = new Database(scratchDb);
+tamper.exec(
+  "CREATE TRIGGER corrupt AFTER INSERT ON reading BEGIN " +
+    "UPDATE reading SET value = 999 WHERE signal_id = (SELECT id FROM signal WHERE key = 'speed_can_kmh'); END"
+);
+tamper.close();
+let checksumThrew = false;
+try {
+  await commitRecovered(scratchDb, [verdictAt(20_000, 58.1, 12.1)], "test3");
+} catch (error) {
+  checksumThrew = String(error).includes("SUPERSET CHECK FAILED");
+}
+const tampered = new Database(scratchDb, { readonly: true });
+const speedValue = (
+  tampered
+    .prepare("SELECT value FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = 'speed_can_kmh'")
+    .get() as {
+    value: number;
+  }
+).value;
+const seqAfter = (
+  tampered
+    .prepare("SELECT count(*) n FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = 'waypoint_seq'")
+    .get() as {
+    n: number;
+  }
+).n;
+tampered.close();
+check(
+  "⚠️  a signal changing under the write is caught and the whole thing rolls back",
+  checksumThrew && speedValue === 42 && seqAfter === 2
+);
+
+await rm(scratch, { recursive: true, force: true });
+
+console.log("");
+if (failures > 0) {
+  console.error(`FAILED — ${failures} assertion${failures === 1 ? "" : "s"}`);
+  process.exitCode = 1;
+} else {
+  console.log("✓ presses pair per session on a watched 0→1 and are discarded when a session ends mid-press; a live");
+  console.log("  waypoint vouches for one press and only forward in time; the position is carried back from the last");
+  console.log("  row at or before the fire; and every gate the bike would have run is reproduced, including the jump");
+  console.log("  gate declining to judge fixes closer together than its own floor");
+}

@@ -851,8 +851,11 @@ export const SIGNALS: SignalDef[] = [
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only
   // when asked for, which is why they carry no deadband. The position is copied
   // into its own pair of signals rather than inferred from the nearest gps_lat/lon
-  // row, whose ~3 m deadband means the last logged fix can be minutes stale at a
-  // standstill — exactly when you stop to save a waypoint.
+  // row, whose ~3 m deadband means the last logged fix can be minutes old at a standstill.
+  // ⚠️ "…which is exactly when you stop to save a waypoint" stood here until #192 and is
+  // wrong twice: the handlebar hold inverted it — 13 of 14 holds on 2026-09-07 and 4 of 4
+  // on 09-09 were made at 30-119 km/h — and an old row is not an ERROR anyway, since
+  // signals.ts compares against the last LOGGED value. docs/waypoints.md has the numbers.
   // onDemand: silence here is the resting state, not a fault — see SignalDef.
   { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true },
   { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor", onDemand: true },

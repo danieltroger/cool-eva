@@ -206,3 +206,14 @@ preview-shots/
 # scripts/decrypt-log.ts. The small text extracts beside them ARE tracked: docs/charge-auto.md and
 # docs/can-0x121-charge-command.md cite them as the provenance for #186's measurements.
 evidence/*.celog
+
+# Recovered waypoints carry coordinates; this is a PUBLIC repo and docs/route-map.md
+# forbids them in committed files. scripts/recover-waypoints.ts writes outside the repo
+# by default, and this is the second line of defence for a --gpx that points inside it.
+*.gpx
+
+# Rendered route-map screenshots show exactly where the bike went — the same thing the
+# coordinate rule forbids in text, in a form that is harder to notice. Keep them local and
+# hand them over out of band; a map PNG in a public repo is a published GPS trace.
+evidence/*.png
+evidence/*.jpg
