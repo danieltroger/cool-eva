@@ -643,6 +643,25 @@ const CHECKS: SelfCheck[] = [
       "arriving with a product name still attached to it",
   },
   {
+    script: "scripts/check-recover-waypoints.ts",
+    covers:
+      "reconstructing, from a decoded ride log, the waypoints a handlebar hold asked for and never got — the " +
+      "phone dropped six of them on 2026-09-07 because a hidden page recognises nothing, and the beat dropped " +
+      "four more on 2026-09-09 from holds that cleared 1000 ms but ended before the beat that would have fired " +
+      "them. Above all that the recovery reproduces what the BIKE would have done rather than deciding afresh: " +
+      "presses pair WITHIN one session and ordered by seq, since ts is wall clock and the Pi steps it; a press " +
+      "opens only on a watched 0\u21921, so a session whose first row is already 1 contributes nothing \u2014 the " +
+      "rule src/gestures/long-press.ts enforces, and the one that miscounted these holds twice; a press still " +
+      "open when a session ends is discarded rather than closed by the next boot's first row; a live waypoint " +
+      "vouches for ONE press and only forward in time, because matching by nearest instant lets one waypoint " +
+      "excuse several holds; the position is the last gps_lat/gps_lon row at or before the fire, which is exact " +
+      "to within one deadband at ANY row age because src/can/signals.ts compares against the last LOGGED value; " +
+      "freshness is witnessed by gps_epoch_s and never by the position rows, since that bound cannot see a " +
+      "receiver that went silent while the bike kept moving; and the jump gate DECLINES to judge fixes closer " +
+      "together than MIN_FIX_INTERVAL_MS, which is most of them at this hub's ~1.8 Hz, so the verdict records " +
+      "whether it looked rather than claiming a test that never ran",
+  },
+  {
     script: "scripts/check-waypoint-endpoint.ts",
     covers:
       "GET /waypoint, which had no check at all until it saved a position 7 000 km from the bike (#157): three " +

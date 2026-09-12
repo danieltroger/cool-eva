@@ -14,7 +14,7 @@ Three ordinary signals written together with one timestamp, so nothing about the
 | `waypoint_lat` | latitude, copied from the live fix                        |
 | `waypoint_lon` | longitude, copied from the live fix                       |
 
-The position is **copied** rather than left implicit in whatever `gps_lat`/`gps_lon` row happens to sit nearby, because those carry a ~3 m deadband: at a standstill the last logged fix can be minutes old while the live one is current. That copying is also what makes the gate below subtle, so it is worth holding on to.
+The position is **copied** rather than left implicit in whatever `gps_lat`/`gps_lon` row happens to sit nearby, because those carry a ~3 m deadband and the last logged fix can therefore be older than the save. That copying is also what makes the gate below subtle, so it is worth holding on to. ⚠️ This used to read "minutes old at a standstill — exactly when you stop to save a waypoint"; the handlebar hold inverted that premise and the staleness implies no position error anyway. Both, measured: §"Recovering the holds the phone dropped" below.
 
 **`waypoint_seq` restarts at 1 with the service.** `lastLogged` in `src/can/signals.ts` is per key _and_ per process, so the counter starts over on every restart and the log contains repeats — three rows carry `1` in the 2026-08-09 → 2026-09-07 archive, from three different boots. It is a marker, not a key. The sheet's tile shows it as `#N` next to the time, and the route map's table repeats it without apology.
 
@@ -100,6 +100,66 @@ There is still no GPX export.
 | the clock has never synced, or is contested      | two sentences, worded apart: one is waited out, one is not   |
 
 `scripts/check-waypoint-endpoint.ts` asserts three of the five sentences. The 30-second one is out because its age comes from a monotonic mark taken inside `record()`, so reaching it means waiting 31 real seconds against a suite that runs in ten; "the clock disagrees" is out because it needs the gate to reach `contested`, which takes a corroborated time contradicting one already trusted — `scripts/check-gps-clock.ts` drives that gate directly and is the place for it.
+
+## Recovering the holds the phone dropped
+
+`scripts/recover-waypoints.ts` reconstructs, from a decoded ride log on the laptop, the waypoints a handlebar hold asked for and never got. It never runs on the Pi, never opens a socket, and is `--dry-run` by default with a read-only handle until `--commit`. The rules are pure and live in `src/gps/recover-holds.ts`; `scripts/check-recover-waypoints.ts` drives every one of them from synthetic rows.
+
+**It reproduces what the bike would have done, gate for gate** — the gates are imported from `src/gps/waypoint.ts` and `src/gps/fix-plausibility.ts` rather than restated. A recovery stricter than the bike invents refusals the rider never had; one that is looser invents waypoints.
+
+### Two different losses, and they are not the same bug
+
+| day | holds ≥ 500 ms | already live | refused | recoverable | why they were lost |
+| --- | --- | --- | --- | --- | --- |
+| 2026-09-07 | 14 | 5 | 1 (stale fix) | **8** | the phone recognised the hold and a hidden page dropped it (#166) |
+| 2026-09-08 | 0 | — | — | **0** | one 0.250 s tap all day; nothing to recover |
+| 2026-09-09 | 32 | 28 | — | **4** | the Pi recognised it, and the **beat** dropped it |
+
+⚠️ **The 09-09 losses are #197's defect, caught in the field before it was diagnosed on the bench.** Recognition had already moved to the Pi, so these are not the phone's fault. All 28 waypoints the bike did save that day pair to a hold with a fire delay in **1000–1145 ms**, bimodal at 17 × 1000–1024 and 11 × 1100–1145 — the two beats of the 100 ms cadence then in force. The four that fired nothing are **1.030, 1.019, 0.930 and 0.714 s**: every one a press that ended _before_ the beat that would have fired it. The band is the finding. There are **zero** `waypoint_refused_seq` and `waypoint_refusal` rows in the whole day, so these never fired rather than firing and being refused.
+
+⚠️ **That pairing was got wrong twice before it was got right**, both times by matching a waypoint to the _nearest_ hold rather than forward in time — which lets one waypoint excuse several holds. It first reported 3 losses, then 4 with the wrong fourth. The fire delays are their own proof: a wrong pairing does not produce a tight bimodal band at the beat.
+
+### The five rules, each of which was a wrong answer first
+
+1. **Pair presses within one `session_id`, ordered by `(session_id, seq)`** — not by `ts`, which is wall clock the Pi steps (`src/db.ts`).
+2. **A press opens only on a watched 0→1.** `record()` always logs a key's first value in a process, so a restart-heavy day writes one baseline row per boot; a session whose first row is already `1` never watched the press begin. This is `src/gestures/long-press.ts`'s own `state.previous === 0`, and enforcing it moved 2026-09-07 from 15 holds to 14.
+3. **A press still open when a session ends is discarded**, not closed by the next boot's first row.
+4. **Freshness is witnessed by `gps_epoch_s`, never by the position rows** — see below.
+5. **The position is the last `gps_lat`/`gps_lon` row at or before the fire instant.**
+
+### Why carry-back is exact, and why the obvious gate was wrong
+
+`src/can/signals.ts` logs a sample when `Math.abs(value - prev) > deadband` where `prev` is the **last logged** value. So the live fix can never differ from the carried-back row by more than one deadband — **at any row age at all**. At this bike's latitudes that is ≤ 3.34 m in latitude, ≤ 1.92 m in longitude at 55°N, **≤ 3.85 m in 2-D**.
+
+Measured against the 28 waypoints the bike really saved on 2026-09-09 — the only ground truth there is, since each was written from the live fix — carry-back reproduces **22 of 28 exactly and the worst residual is 3.5 m**, inside the structural bound. `scripts/recover-waypoints.ts --validate` is that measurement.
+
+🚨 **An earlier draft gated on `rowAge × speedAtThatTime` above 50 m. That was wrong in kind and is deleted.** The two axes are deadbanded independently, so an old `gps_lat` row means latitude is not changing — it multiplies a speed in one axis by an age in the other. Worse, at a 3 m deadband a bike at 100 km/h forces a row every ~0.11 s, so **a large row age is evidence of low speed**, and the gate fired hardest exactly where it was most wrong. It refused two of the bike's own 28 waypoints (estimating 97.1 m and 57.2 m against true errors of 3.5 m and 1.5 m) and one real candidate at an estimated 73.8 m. It was invented for a failure that cannot happen.
+
+What the deadband bound **cannot** see is a receiver that went silent while the bike kept moving — and that is the one gate kept: `gps_epoch_s` age ≤ `FIX_MAX_AGE_MS`. It is what refuses the 2026-09-07 09:02:20 hold, which sits inside an 85-minute GPS silence.
+
+⚠️ **The premise this corrects, which had been in `src/can/registry.ts` since the phone era.** That file argued the position is copied into its own signals because the last logged fix "can be minutes stale at a standstill — exactly when you stop to save a waypoint". The handlebar hold **inverted** that: **13 of 14** holds on 09-07 and **4 of 4** recoverable on 09-09 were made at **30–119 km/h**, because the whole point of a bar button is that your hands stay on the bars. `docs/handlebar-gestures.md` already recorded the same fact from the other side — 749 of 779 cancel presses above 3 km/h. The copying is still right; the reason was not. And "stale" implied an error that does not exist: the one waypoint of the 28 saved at a standstill had a `gps_lat` row **21.8 s** old and a carry-back **3.5 m** from what the bike wrote.
+
+### ⚠️ The jump gate mostly declines to judge
+
+`implausibleJumpKmh()` returns `null` below `MIN_FIX_INTERVAL_MS` = 1 s, and this hub delivers fixes at ~1.8 Hz: **32 576 of 33 833 fix pairs on 2026-09-09 (96.3 %) are closer together than the gate's own floor**, and all four candidates sit in gaps of 546–915 ms. The gate fails open on every one of them.
+
+That is faithful — the bike ran the same gate against the same cadence — but a report that printed "cleared the jump gate" would be claiming a test that never ran. So the verdict carries `jumpGateJudged` and the report prints **not judged** rather than _passed_. Fix pairs are also formed the way `onFixChanged()` forms them — a pair at every `gps_lat` **or** `gps_lon` row with the other axis carried back — because pairing consecutive rows of one axis feeds the gate pairs the bike never held.
+
+The gate that does cover this class is downstream and already exists: the route map's corroboration verdict, which is why inserting and then _looking at the map_ is part of the check rather than a nicety.
+
+### Provenance: the session, not a new key
+
+Recovered rows are ordinary `waypoint_seq`/`_lat`/`_lon` written under a session uid of `recovered-192-<runId>`, and the route map's two panels gained a `LEFT JOIN session` and a `Source` column that reads `live` or `recovered`.
+
+Distinct `waypoint_recovered_*` keys were the first design and were dropped: both panels select the literal `'waypoint_seq'`, so new keys would have been invisible to the map without a second copy of a sixty-line query — for eleven points. The session is per-reading, already joinable, and makes a whole run reversible with one `DELETE`.
+
+⚠️ **The cost, stated rather than discovered:** a reader that ignores sessions sees a recovered waypoint as a live one.
+
+### Not losing the ride log
+
+`rides.db` is backed up and the copy verified by **size and md5** before a writable handle is opened at all; every pre-existing signal is checksummed before and after and any change aborts the run. A count would not do — it catches an added or deleted row and **misses a modified one**. SQLite has no `md5()`, so the checksum streams the rows and hashes them in JS.
+
+⚠️ Two things worth knowing before running this: `rides.db.bak-20260816-155629` and `rides.db.bak-20260908` are **both 269 234 176 bytes and both dated 16 August**, against a live file of 755 228 672 — the second is misnamed and neither is current. And there is **no 2026-09-07 `.celog` on the laptop**, so `rides.db` is the only copy of the day being recovered: rows inserted into it do not survive a rebuild from logs, because the logs for that day are not here.
 
 ## An open question worth not losing
 
