@@ -5,7 +5,10 @@ import {
   RECOVERY_OUTCOME,
   distanceKm,
   judgeHolds,
+  pairPresses,
+  type Fix,
   type LogRow,
+  type RecoveredPress,
   type RecoveryVerdict,
 } from "../src/gps/recover-holds.ts";
 import { WAYPOINT_HOLD_MS } from "../src/gps/waypoint.ts";
@@ -31,8 +34,7 @@ const LIVE_MATCH_TOLERANCE_MS = 200;
  *
  * ⚠️ NOT imported from src/gestures/runner.ts. That constant is 50 ms today because #197
  * halved it; it was 100 ms while these rides happened, and importing it would silently
- * re-date this recovery the next time it moves. Used for reporting the expected fire-delay
- * band and never for placing a point.
+ * re-place every recovered point the next time it moves.
  */
 const BEAT_MS_ON_THE_RECOVERY_DAYS = 100;
 
@@ -56,6 +58,7 @@ async function main(): Promise<void> {
     epochRows: readSignal(db, "gps_epoch_s", options),
     waypointRows: readSignal(db, "waypoint_seq", options),
     holdMs: options.holdMs,
+    beatMs: BEAT_MS_ON_THE_RECOVERY_DAYS,
     liveToleranceMs: LIVE_MATCH_TOLERANCE_MS,
   };
 
@@ -123,41 +126,90 @@ function report(verdicts: RecoveryVerdict[], options: Options): void {
 }
 
 /**
- * Replays the rules against waypoints the bike DID save, which is the only ground truth
- * there is: each one was written from the live fix, so carry-back at its own fire instant
- * must reproduce it. Reports the residual in metres per waypoint.
+ * Replays the rules against waypoints the bike DID save — the only ground truth there is,
+ * since each was written from the live fix.
+ *
+ * ⚠️ TWO DIFFERENT ERRORS, and an earlier version reported only the flattering one.
+ * CARRY-BACK fidelity asks "at the instant the bike wrote this, does the last logged row
+ * reproduce what it wrote?" — bounded by one deadband and measured at 22 of 28 exact.
+ * PLACEMENT asks "does the instant this script would have chosen land in the same place?"
+ * — and that one is an order of magnitude larger, because a gesture fires on a beat and
+ * the bike's threshold was twice this recovery's. Only the second is the error a recovered
+ * point actually carries, so both are printed and the larger one is named as the real bound.
  */
 function validateAgainstLiveWaypoints(
   db: Database.Database,
   inputs: Parameters<typeof judgeHolds>[0],
   options: Options
 ): void {
-  const latitudes = readSignal(db, "waypoint_lat", options);
-  const longitudes = readSignal(db, "waypoint_lon", options);
-  console.log(`calibrating carry-back against ${inputs.waypointRows.length} waypoints the bike saved\n`);
-  let exact = 0;
-  let worst = 0;
+  const savedLatitudes = readSignal(db, "waypoint_lat", options);
+  const savedLongitudes = readSignal(db, "waypoint_lon", options);
+  const presses = pairPresses(inputs.cancelRows);
+  console.log(`calibrating against ${inputs.waypointRows.length} waypoints the bike saved\n`);
+  const carryBackErrors: number[] = [];
+  const placementErrors: number[] = [];
   for (const waypoint of inputs.waypointRows) {
-    const savedLat = lastAtOrBefore(latitudes, waypoint.ts);
-    const savedLon = lastAtOrBefore(longitudes, waypoint.ts);
-    const carriedLat = lastAtOrBefore(inputs.latitudeRows, waypoint.ts);
-    const carriedLon = lastAtOrBefore(inputs.longitudeRows, waypoint.ts);
-    if (savedLat === null || savedLon === null || carriedLat === null || carriedLon === null) {
-      console.log(`  #${waypoint.value}  no position logged`);
+    const saved = positionAt(savedLatitudes, savedLongitudes, waypoint.ts);
+    const carried = positionAt(inputs.latitudeRows, inputs.longitudeRows, waypoint.ts);
+    if (saved === null || carried === null) {
       continue;
     }
-    const metres =
-      distanceKm(
-        { latitudeDeg: savedLat.value, longitudeDeg: savedLon.value, at: 0 },
-        { latitudeDeg: carriedLat.value, longitudeDeg: carriedLon.value, at: 0 }
-      ) * 1000;
-    if (metres < 0.05) {
-      exact += 1;
+    carryBackErrors.push(metresBetween(saved, carried));
+    const press = firingPress(presses, waypoint.ts, inputs.liveToleranceMs);
+    if (press === null) {
+      continue;
     }
-    worst = Math.max(worst, metres);
-    console.log(`  #${waypoint.value}  residual ${metres.toFixed(1)} m`);
+    const placed = positionAt(
+      inputs.latitudeRows,
+      inputs.longitudeRows,
+      press.startedAt + inputs.holdMs + inputs.beatMs
+    );
+    if (placed !== null) {
+      placementErrors.push(metresBetween(saved, placed));
+    }
   }
-  console.log(`\n${exact} of ${inputs.waypointRows.length} exact; worst ${worst.toFixed(1)} m`);
+  describe("carry-back fidelity, at the instant the bike wrote the waypoint", carryBackErrors);
+  describe(`placement, at this recovery's own fire instant (+${inputs.holdMs + inputs.beatMs} ms)`, placementErrors);
+  console.log("\nThe second is the error a recovered point carries. The first only says carry-back is exact.");
+}
+
+function describe(what: string, metres: number[]): void {
+  if (metres.length === 0) {
+    console.log(`${what}: nothing to measure`);
+    return;
+  }
+  const sorted = [...metres].sort((left, right) => left - right);
+  const exact = sorted.filter(value => value < 0.05).length;
+  console.log(
+    `${what}:\n  n=${sorted.length}  exact ${exact}  median ${sorted[sorted.length >> 1].toFixed(1)} m  ` +
+      `worst ${sorted[sorted.length - 1].toFixed(1)} m`
+  );
+}
+
+/** The press a waypoint fired from: it began before the waypoint and was still down. */
+function firingPress(presses: RecoveredPress[], at: number, toleranceMs: number): RecoveredPress | null {
+  let best: RecoveredPress | null = null;
+  let bestDelay = Number.POSITIVE_INFINITY;
+  for (const press of presses) {
+    const delay = at - press.startedAt;
+    if (delay > 0 && delay <= press.durationMs + toleranceMs && delay < bestDelay) {
+      bestDelay = delay;
+      best = press;
+    }
+  }
+  return best;
+}
+
+function positionAt(latitudes: LogRow[], longitudes: LogRow[], at: number): Fix | null {
+  const latitude = lastAtOrBefore(latitudes, at);
+  const longitude = lastAtOrBefore(longitudes, at);
+  return latitude === null || longitude === null
+    ? null
+    : { latitudeDeg: latitude.value, longitudeDeg: longitude.value, at };
+}
+
+function metresBetween(from: Fix, to: Fix): number {
+  return distanceKm(from, to) * 1000;
 }
 
 function lastAtOrBefore(rows: LogRow[], at: number): LogRow | null {

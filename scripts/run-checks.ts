@@ -646,9 +646,9 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-recover-waypoints.ts",
     covers:
       "reconstructing, from a decoded ride log, the waypoints a handlebar hold asked for and never got — the " +
-      "phone dropped six of them on 2026-09-07 because a hidden page recognises nothing, and the beat dropped " +
-      "four more on 2026-09-09 from holds that cleared 1000 ms but ended before the beat that would have fired " +
-      "them. Above all that the recovery reproduces what the BIKE would have done rather than deciding afresh: " +
+      "phone dropped eight of them on 2026-09-07 because a hidden page recognises nothing, and the beat dropped " +
+      "four more on 2026-09-09 from holds that ended before the beat that would have fired them \u2014 two of the " +
+      "four had not even cleared the 1000 ms threshold then in force. Above all that the recovery reproduces what the BIKE would have done rather than deciding afresh: " +
       "presses pair WITHIN one session and ordered by seq, since ts is wall clock and the Pi steps it; a press " +
       "opens only on a watched 0\u21921, so a session whose first row is already 1 contributes nothing \u2014 the " +
       "rule src/gestures/long-press.ts enforces, and the one that miscounted these holds twice; a press still " +

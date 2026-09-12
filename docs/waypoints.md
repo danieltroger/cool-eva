@@ -129,9 +129,22 @@ There is still no GPX export.
 
 ### Why carry-back is exact, and why the obvious gate was wrong
 
-`src/can/signals.ts` logs a sample when `Math.abs(value - prev) > deadband` where `prev` is the **last logged** value. So the live fix can never differ from the carried-back row by more than one deadband — **at any row age at all**. At this bike's latitudes that is ≤ 3.34 m in latitude, ≤ 1.92 m in longitude at 55°N, **≤ 3.85 m in 2-D**.
+`src/can/signals.ts` logs a sample when `Math.abs(value - prev) > deadband` where `prev` is the **last logged** value. So the live fix can never differ from the carried-back row by more than one deadband — **at any row age at all**. That is ≤ 3.34 m in latitude everywhere; in longitude it grows towards the equator, so the latitude-free 2-D ceiling is **≤ 4.72 m**, and **4.14 m** across the 41–44°N the calibration ride spans. (An earlier draft quoted 3.85 m, which is the figure at 55°N — a latitude this ride never reached, and wrong in the unsafe direction.)
 
-Measured against the 28 waypoints the bike really saved on 2026-09-09 — the only ground truth there is, since each was written from the live fix — carry-back reproduces **22 of 28 exactly and the worst residual is 3.5 m**, inside the structural bound. `scripts/recover-waypoints.ts --validate` is that measurement.
+Measured against the 28 waypoints the bike really saved on 2026-09-09 — the only ground truth there is, since each was written from the live fix — carry-back reproduces **22 of 28 exactly, worst 3.5 m**, inside that bound.
+
+### ⚠️ But carry-back is not the error a recovered point carries
+
+🚨 **The number above flatters the result and an earlier draft quoted it alone.** Carry-back fidelity asks _"at the instant the bike wrote this, does the last logged row reproduce it?"_ A recovered waypoint has no such instant — the script has to **choose** one, and that choice is the dominant error:
+
+| fire instant                                                      | exact    | median     | worst      |
+| ----------------------------------------------------------------- | -------- | ---------- | ---------- |
+| `pressStart + 1000` (what the bike's own 1000 ms rule did)        | 21 of 28 | 0.0 m      | 15.0 m     |
+| `pressStart + holdMs + beat` = **+600** (what this recovery does) | 3 of 28  | **10.6 m** | **19.6 m** |
+
+At 100 km/h a 400 ms difference in the chosen instant is 11 m, which is **an order above the 4.72 m carry-back bound**. So a recovered point is good to about **20 m**, not to 3.5 m, and `--validate` now prints both numbers with the larger one named as the real bound.
+
+That offset is not a bug to be tuned away: the bike fires on a **beat** at **threshold + up to one beat**, and this recovery deliberately applies the _new_ 500 ms threshold to holds the old 1000 ms one missed. Under the new rule the bike itself would place these points at +600 too. The 10.6 m is the honest cost of recovering holds that were never long enough for the old rule.
 
 🚨 **An earlier draft gated on `rowAge × speedAtThatTime` above 50 m. That was wrong in kind and is deleted.** The two axes are deadbanded independently, so an old `gps_lat` row means latitude is not changing — it multiplies a speed in one axis by an age in the other. Worse, at a 3 m deadband a bike at 100 km/h forces a row every ~0.11 s, so **a large row age is evidence of low speed**, and the gate fired hardest exactly where it was most wrong. It refused two of the bike's own 28 waypoints (estimating 97.1 m and 57.2 m against true errors of 3.5 m and 1.5 m) and one real candidate at an estimated 73.8 m. It was invented for a failure that cannot happen.
 
@@ -157,7 +170,7 @@ Distinct `waypoint_recovered_*` keys were the first design and were dropped: bot
 
 ### Not losing the ride log
 
-`rides.db` is backed up and the copy verified by **size and md5** before a writable handle is opened at all; every pre-existing signal is checksummed before and after and any change aborts the run. A count would not do — it catches an added or deleted row and **misses a modified one**. SQLite has no `md5()`, so the checksum streams the rows and hashes them in JS.
+`rides.db` is backed up and the copy verified by **size and md5** before a writable handle is opened at all; every pre-existing signal is checksummed before and after, **inside the transaction**, so a mismatch rolls the write back rather than reporting it once it is too late. ⚠️ It did not always: the first version checked after the transaction had committed _and_ after the handle had closed, which left a bad write in place and swallowed the undo statement the caller prints only on success. The three signals the recovery writes are checked too — they must have grown by **exactly** the number of waypoints claimed — where the first version skipped them entirely and echoed the caller's own count back as if it had verified it. A count would not do — it catches an added or deleted row and **misses a modified one**. SQLite has no `md5()`, so the checksum streams the rows and hashes them in JS.
 
 ⚠️ Two things worth knowing before running this: `rides.db.bak-20260816-155629` and `rides.db.bak-20260908` are **both 269 234 176 bytes and both dated 16 August**, against a live file of 755 228 672 — the second is misnamed and neither is current. And there is **no 2026-09-07 `.celog` on the laptop**, so `rides.db` is the only copy of the day being recovered: rows inserted into it do not survive a rebuild from logs, because the logs for that day are not here.
 

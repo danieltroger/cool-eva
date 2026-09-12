@@ -1,3 +1,8 @@
+import Database from "better-sqlite3";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { commitRecovered } from "./recover-waypoints-commit.ts";
 import {
   RECOVERY_OUTCOME,
   WAYPOINT_REFUSAL,
@@ -7,6 +12,7 @@ import {
   matchLiveWaypoints,
   pairPresses,
   type LogRow,
+  type RecoveryVerdict,
 } from "../src/gps/recover-holds.ts";
 
 // The waypoint recovery, checked with no bike, no Pi and no ride log.
@@ -84,9 +90,22 @@ check("a waypoint inside a press belongs to that press", oneLive.size === 1 && o
 
 // ⚠️ FORWARD IN TIME, and one waypoint to one press. Matching by nearest instant lets a
 // single waypoint vouch for several holds — the error that miscounted the same four holds
-// twice, first as three losses and then as the wrong fourth.
-const twoLive = matchLiveWaypoints(presses, [{ ts: BASE + 2050, value: 1, sessionId: 1, seq: 1 }], 200);
-check("⚠️  …and it vouches for ONE press, not for every press near it", twoLive.size === 1);
+// twice, first as three losses and then as the wrong fourth. Two waypoints inside two
+// presses must claim one each, so the SECOND press is not excused by the first's waypoint.
+const bothLive = matchLiveWaypoints(
+  presses,
+  [
+    { ts: BASE + 2050, value: 1, sessionId: 1, seq: 1 },
+    { ts: BASE + 4050, value: 2, sessionId: 1, seq: 2 },
+  ],
+  200
+);
+check("⚠️  two waypoints claim one press each, not the same one twice", bothLive.size === 2);
+const onlyOne = matchLiveWaypoints(presses, [{ ts: BASE + 2050, value: 1, sessionId: 1, seq: 1 }], 200);
+check(
+  "⚠️  …and one waypoint excuses ONE press, leaving the other recoverable",
+  onlyOne.size === 1 && onlyOne.has(presses[0]) && !onlyOne.has(presses[1])
+);
 
 const before = matchLiveWaypoints(presses, [{ ts: BASE + 500, value: 1, sessionId: 1, seq: 1 }], 200);
 check("a waypoint BEFORE a press cannot have come from it", before.size === 0);
@@ -128,6 +147,7 @@ function judge(overrides: Partial<Parameters<typeof judgeHolds>[0]> = {}) {
     epochRows: [{ ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 }],
     waypointRows: [],
     holdMs: 500,
+    beatMs: 0,
     liveToleranceMs: 200,
     ...overrides,
   });
@@ -198,9 +218,93 @@ const shortPress = judgeHolds({
   epochRows: [{ ts: BASE + 900, value: 1, sessionId: 1, seq: 1 }],
   waypointRows: [],
   holdMs: 500,
+  beatMs: 0,
   liveToleranceMs: 200,
 });
 check("a 300 ms tap is below the threshold and is not a hold at all", shortPress.length === 0);
+
+console.log("\n5. the only code that writes to Daniel's ride log");
+
+// ⚠️ A REAL DATABASE IN A TEMP DIRECTORY, never rides.db. The writing half is the one part
+// of this that cannot be made pure, so it is exercised against a throwaway file with the
+// same schema — because the failure that matters is a bad write, and a mock cannot have one.
+const scratch = await mkdtemp(join(tmpdir(), "cool-eva-recover-"));
+const scratchDb = join(scratch, "rides.db");
+
+function seed(): Database.Database {
+  const db = new Database(scratchDb);
+  db.exec(
+    "CREATE TABLE signal (id INTEGER PRIMARY KEY, key TEXT UNIQUE, unit TEXT, grp TEXT, source TEXT);" +
+      "CREATE TABLE session (id INTEGER PRIMARY KEY, uid TEXT UNIQUE);" +
+      "CREATE TABLE reading (ts INTEGER NOT NULL, signal_id INTEGER NOT NULL, value REAL NOT NULL, " +
+      "session_id INTEGER, seq INTEGER);"
+  );
+  for (const key of ["waypoint_seq", "waypoint_lat", "waypoint_lon", "speed_can_kmh"]) {
+    db.prepare("INSERT INTO signal (key, unit, grp, source) VALUES (?, '', 'x', 'sensor')").run(key);
+  }
+  const speedId = (db.prepare("SELECT id FROM signal WHERE key = 'speed_can_kmh'").get() as { id: number }).id;
+  db.prepare("INSERT INTO reading (ts, signal_id, value, session_id, seq) VALUES (?, ?, ?, 1, 1)").run(
+    BASE,
+    speedId,
+    42
+  );
+  db.close();
+  return db;
+}
+
+function verdictAt(atMs: number, lat: number, lon: number): RecoveryVerdict {
+  return {
+    press: { startedAt: BASE + atMs, durationMs: 1000, sessionId: 1 },
+    fireAt: BASE + atMs + 500,
+    outcome: RECOVERY_OUTCOME.RECOVERED,
+    latitudeDeg: lat,
+    longitudeDeg: lon,
+    jumpGateJudged: false,
+  };
+}
+
+seed();
+const committed = await commitRecovered(scratchDb, [verdictAt(0, 57.7, 11.97), verdictAt(5000, 57.8, 11.98)], "test");
+const written = new Database(scratchDb, { readonly: true });
+const countOf = (key: string): number =>
+  (
+    written
+      .prepare("SELECT count(*) n FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = ?")
+      .get(key) as { n: number }
+  ).n;
+check("two waypoints write three signals each", committed.insertedRows === 6 && countOf("waypoint_seq") === 2);
+check("…and the untouched signal is still untouched", countOf("speed_can_kmh") === 1);
+check(
+  "…under a session whose uid names the issue, so one DELETE undoes the run",
+  committed.sessionUid.startsWith("recovered-192-") &&
+    (written.prepare("SELECT count(*) n FROM session WHERE uid = ?").get(committed.sessionUid) as { n: number }).n === 1
+);
+written.close();
+
+// ⚠️ THE ROLLBACK. A verdict naming a signal the database has never heard of throws INSIDE
+// the transaction, and the point of checking it is that a half-written recovery is worse
+// than none: the earlier version ran its verification after the transaction had already
+// committed and after the handle had closed, so a failure left the bad rows in place and
+// swallowed the undo statement the caller prints only on success.
+const broken = { ...verdictAt(9000, 57.9, 11.99), latitudeDeg: undefined };
+let threw = false;
+try {
+  await commitRecovered(scratchDb, [broken as RecoveryVerdict, verdictAt(10_000, 58.0, 12.0)], "test2");
+} catch {
+  threw = true;
+}
+const after = new Database(scratchDb, { readonly: true });
+const seqRows = (
+  after
+    .prepare("SELECT count(*) n FROM reading r JOIN signal s ON s.id = r.signal_id WHERE s.key = 'waypoint_seq'")
+    .get() as {
+    n: number;
+  }
+).n;
+after.close();
+check("⚠️  a write that fails part-way leaves NOTHING behind, not half a recovery", threw && seqRows === 2);
+
+await rm(scratch, { recursive: true, force: true });
 
 console.log("");
 if (failures > 0) {

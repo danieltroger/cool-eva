@@ -1,5 +1,11 @@
 import { FIX_MAX_AGE_MS, WAYPOINT_REFUSAL, type WaypointRefusal } from "./waypoint.ts";
-import { distanceKm, implausibleJumpKmh, isPositionOnEarth, type Fix } from "./fix-plausibility.ts";
+import {
+  MIN_FIX_INTERVAL_MS,
+  distanceKm,
+  implausibleJumpKmh,
+  isPositionOnEarth,
+  type Fix,
+} from "./fix-plausibility.ts";
 
 // Reconstructing, from a decoded ride log, the waypoints a handlebar hold asked for and
 // never got. Pure: rows in, verdicts out, no clock read, no I/O, no database — so
@@ -169,6 +175,17 @@ export interface RecoveryInputs {
   epochRows: LogRow[];
   waypointRows: LogRow[];
   holdMs: number;
+  /**
+   * The beat the recogniser sampled on, which is part of WHERE the point goes.
+   *
+   * ⚠️ A gesture fires on a BEAT, not at the threshold, so the bike writes its waypoint at
+   * `pressStart + holdMs + (up to) one beat`. Measured against the 28 waypoints the bike
+   * really saved: firing at `pressStart + 1000` reproduces 21 of them exactly, firing at
+   * `+500` reproduces 3 and sits a median 10.6 m away. The offset is the DOMINANT error in
+   * a recovered position — an order above the ~4 m carry-back bound — so it is a parameter
+   * and not a rounding.
+   */
+  beatMs: number;
   /** How far past the release a live waypoint may land and still belong to that press. */
   liveToleranceMs: number;
 }
@@ -178,7 +195,9 @@ export function judgeHolds(inputs: RecoveryInputs): RecoveryVerdict[] {
   const presses = pairPresses(inputs.cancelRows).filter(press => press.durationMs >= inputs.holdMs);
   const alreadyFired = matchLiveWaypoints(presses, inputs.waypointRows, inputs.liveToleranceMs);
   const fixes = buildFixTimeline(inputs.latitudeRows, inputs.longitudeRows);
-  return presses.map(press => judgeOneHold(press, press.startedAt + inputs.holdMs, alreadyFired, fixes, inputs));
+  return presses.map(press =>
+    judgeOneHold(press, press.startedAt + inputs.holdMs + inputs.beatMs, alreadyFired, fixes, inputs)
+  );
 }
 
 function judgeOneHold(
@@ -205,8 +224,11 @@ function judgeOneHold(
   // against the last LOGGED value, so the live fix is always within one deadband of the
   // carry-back, at any row age — but a receiver that went silent while the bike kept moving
   // is a real hole, and this is the gate that catches it.
-  const epoch = nearestRow(inputs.epochRows, fireAt);
-  if (epoch === null || Math.abs(epoch.ts - fireAt) > FIX_MAX_AGE_MS) {
+  // ⚠️ The witness must be a row at or BEFORE the fire. Taking the nearest in either
+  // direction would let a fix that only arrived afterwards certify a hold made during a
+  // silence — looser than the bike, which can only ever have seen the past.
+  const epoch = carryBack(inputs.epochRows, fireAt);
+  if (epoch === null || fireAt - epoch.ts > FIX_MAX_AGE_MS) {
     return refused(press, fireAt, WAYPOINT_REFUSAL.FIX_STALE);
   }
   const { jump, judged } = judgeJump(fixes, fireAt);
@@ -271,23 +293,13 @@ function judgeJump(fixes: Fix[], fireAt: number): { jump: number | null; judged:
   if (previous === null || current === null) {
     return { jump: null, judged: false };
   }
-  const judged = current.at - previous.at >= 1000;
+  const judged = current.at - previous.at >= MIN_FIX_INTERVAL_MS;
   return { jump: implausibleJumpKmh(previous, current), judged };
-}
-
-function nearestRow(rows: LogRow[], at: number): LogRow | null {
-  let best: LogRow | null = null;
-  for (const row of rows) {
-    if (best === null || Math.abs(row.ts - at) < Math.abs(best.ts - at)) {
-      best = row;
-    }
-  }
-  return best;
 }
 
 function refused(press: RecoveredPress, fireAt: number, refusal: WaypointRefusal): RecoveryVerdict {
   return { press, fireAt, outcome: RECOVERY_OUTCOME.REFUSED, refusal, jumpGateJudged: false };
 }
 
-export { FIX_MAX_AGE_MS, WAYPOINT_REFUSAL, distanceKm, implausibleJumpKmh, isPositionOnEarth };
+export { FIX_MAX_AGE_MS, MIN_FIX_INTERVAL_MS, WAYPOINT_REFUSAL, distanceKm, implausibleJumpKmh, isPositionOnEarth };
 export type { Fix, WaypointRefusal };
