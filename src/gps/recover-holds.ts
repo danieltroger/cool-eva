@@ -214,10 +214,14 @@ export function judgeHolds(inputs: RecoveryInputs): RecoveryVerdict[] {
  * version used the new rule for both and put seven of twelve points 11-19 m adrift.
  */
 export function fireInstant(press: RecoveredPress, inputs: RecoveryInputs): number {
-  if (press.durationMs >= inputs.legacyHoldMs) {
-    return press.startedAt + inputs.legacyHoldMs;
-  }
-  return press.startedAt + inputs.holdMs + inputs.beatMs;
+  const chosen =
+    press.durationMs >= inputs.legacyHoldMs
+      ? press.startedAt + inputs.legacyHoldMs
+      : press.startedAt + inputs.holdMs + inputs.beatMs;
+  // ⚠️ Never past the release. A 500-599 ms hold would otherwise be placed after the thumb
+  // came off, which is a position the rider was never at while asking for it. Nothing in the
+  // recovered set reaches that today — the shortest is 714 ms — so this is a rail, not a fix.
+  return Math.min(chosen, press.startedAt + press.durationMs);
 }
 
 function judgeOneHold(

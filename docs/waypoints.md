@@ -155,6 +155,14 @@ Measured against the 28 waypoints the bike really saved on 2026-09-09 — the on
 
 **What a recovered point is actually worth:** for a hold past the old threshold, the same ~4 m as a live one. For a shorter hold — three of the twelve — about **20 m**, which is the honest cost of recovering a press that no rule then in force would have caught.
 
+🚨 **An earlier draft gated on `rowAge × speedAtThatTime` above 50 m. That was wrong in kind and is deleted.** The two axes are deadbanded independently, so an old `gps_lat` row means latitude is not changing — it multiplies a speed in one axis by an age in the other. Worse, at a 3 m deadband a bike at 100 km/h forces a row every ~0.11 s, so **a large row age is evidence of low speed**, and the gate fired hardest exactly where it was most wrong. It refused two of the bike's own 28 waypoints (estimating 97.1 m and 57.2 m against true errors of 3.5 m and 1.5 m) and one real candidate at an estimated 73.8 m. It was invented for a failure that cannot happen.
+
+What the deadband bound **cannot** see is a receiver that went silent while the bike kept moving — and that is the one gate kept: `gps_epoch_s` age ≤ `FIX_MAX_AGE_MS`. It is what refuses the 2026-09-07 09:02:20 hold, which sits inside an 85-minute GPS silence.
+
+⚠️ **The premise this corrects, which had been in `src/can/registry.ts` since the phone era.** That file argued the position is copied into its own signals because the last logged fix "can be minutes stale at a standstill — exactly when you stop to save a waypoint". The handlebar hold **inverted** that: **13 of 14** holds on 09-07 and **4 of 4** recoverable on 09-09 were made at **30–119 km/h**, because the whole point of a bar button is that your hands stay on the bars. `docs/handlebar-gestures.md` already recorded the same fact from the other side — 749 of 779 cancel presses above 3 km/h. The copying is still right; the reason was not. And "stale" implied an error that does not exist: the one waypoint of the 28 saved at a standstill had a `gps_lat` row **21.8 s** old and a carry-back **3.5 m** from what the bike wrote.
+
+**Three reporting additions are outstanding**, tracked in #212: each recovered point's corroboration verdict in the report, a "both axes stale while the speedo says moving" line, and a per-waypoint fixture for the 28-row calibration. None changes a written coordinate.
+
 ### ⚠️ The jump gate mostly declines to judge
 
 `implausibleJumpKmh()` returns `null` below `MIN_FIX_INTERVAL_MS` = 1 s, and this hub delivers fixes at ~1.8 Hz: **32 576 of 33 833 fix pairs on 2026-09-09 (96.3 %) are closer together than the gate's own floor**, and all four candidates sit in gaps of 546–915 ms. The gate fails open on every one of them.

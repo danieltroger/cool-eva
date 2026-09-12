@@ -42,8 +42,12 @@ const BEAT_MS_ON_THE_RECOVERY_DAYS = 100;
 /**
  * The waypoint threshold in force on the days being recovered, before #197 trimmed it.
  *
- * ⚠️ Also NOT imported. WAYPOINT_HOLD_MS is 500 today; these holds were made under 1000, and
- * which of the two a hold cleared is what decides where its point goes (fireInstant()).
+ * ⚠️ Also NOT imported, and the asymmetry with holdMs is deliberate. WAYPOINT_HOLD_MS is
+ * live POLICY — what should be recovered today — and is imported. This is a historical FACT
+ * about days already ridden, and the two shared a number once by coincidence. Importing it
+ * would do more than shift points: `durationMs >= legacyHoldMs` decides WHICH COUNTERFACTUAL
+ * applies, so a future trim to 400 ms would silently reclassify holds between the two
+ * populations and change the argument rather than the arithmetic.
  */
 const LEGACY_HOLD_MS = 1000;
 
