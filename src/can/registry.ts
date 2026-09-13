@@ -584,22 +584,11 @@ export const SIGNALS: SignalDef[] = [
   // gradient. They answer "which way is down, as far as the bike can tell". Measured
   // over 373 steady corners on 2026-09-13: hard right and hard left turns separate by
   // 1.20°, where a true lean angle would separate them by 60-90°.
-  //
 
-  // Both are named in public/lib/bounds.js at ±180°, which is the range attitude.ts's
-  // MAX_DECIDEGREES already enforces on every frame. That gate is therefore decorative
-  // and is kept anyway, for the reason the cell-voltage band there is: the unit "°" has
-  // no BY_UNIT rule (seven signals carry it across four natural ranges) and "imu" is not
-  // a BOOLEAN_GROUP, so without those two lines the pair renders entirely ungated —
-  // which is what it did from 2026-08-15 until the fall of 2026-09-13 was analysed.
-
-  // 1.0° replaces the old 100 counts, which under the wrong scale was believed to be
-  // ~0.5 g and is really 10° — coarse enough to quantise a lean trace into three or four
-  // levels, which is what made the Grafana panel unreadable. The old objection was row
-  // rate; the measured answer is a floor of ≥161 000 rows for pitch and ≥6 600 for roll
-  // over the seven days of log that exist, against 1 038 747 for throttle_pct in the same
-  // window — an order of magnitude of headroom, with the 100 Hz frame rate still the
-  // ceiling. Count a real ride's rows before tightening further.
+  // Both are named in public/lib/bounds.js at ±180° — a decorative gate that agrees with
+  // the decoder rather than second-guessing it, and the reason it exists at all is that
+  // the unit "°" reaches no rule in that file, so the pair rendered entirely ungated from
+  // 2026-08-15 until the fall of 2026-09-13 was analysed. The argument is in bounds.js.
   { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
   { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
 

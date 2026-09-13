@@ -1,4 +1,5 @@
 import { decodeFrame } from "../src/can/decode.ts";
+import { parseHexBytes } from "./captured-vcu-records.ts";
 import { MAX_DECIDEGREES, decodeAttitudeFrame, resetAttitudeDecoder } from "../src/can/attitude.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor, isPlausible } from "../public/lib/bounds.js";
@@ -47,55 +48,91 @@ function attitudeFrame(rollDecidegrees: number, pitchDecidegrees: number): Buffe
   return frame;
 }
 
-function valueOf(values: { key: string; value: number }[], key: string): number | undefined {
+function decodedValue(values: { key: string; value: number }[], key: string): number | undefined {
   return values.find(entry => entry.key === key)?.value;
+}
+
+/**
+ * A captured frame's bytes. ⚠️ `parseHexBytes` rather than `Buffer.from(hex, "hex")`, which
+ * stops at the first bad pair and returns a SHORT buffer with no error — a typo in bytes 5-7
+ * of a b3 fixture would still decode `lie_down_detected` and pass every §4 assertion on a
+ * frame nobody ever captured. This one throws, naming the string.
+ */
+function frameBytes(hex: string): Buffer {
+  return Buffer.from(parseHexBytes(hex));
+}
+
+/** Drives `count` identical frames through the decoder. */
+function feed(count: number, rollDecidegrees: number, pitchDecidegrees: number): void {
+  for (let index = 0; index < count; index += 1) {
+    decodeAttitudeFrame(attitudeFrame(rollDecidegrees, pitchDecidegrees));
+  }
+}
+
+/**
+ * Runs `body` with console.warn captured and the decoder reset, and hands back the lines.
+ * Each scenario gets its own array, so one cannot leak into the next — the previous shape
+ * shared one array across six scenarios and reset it by hand four times, which made the
+ * first assertion depend on nothing above it having warned.
+ */
+function captureWarnings(body: (warnings: string[]) => void): string[] {
+  const captured: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]): void => {
+    captured.push(args.map(String).join(" "));
+  };
+  try {
+    resetAttitudeDecoder();
+    body(captured);
+  } finally {
+    console.warn = realWarn;
+  }
+  return captured;
 }
 
 // ---------------------------------------------------------------------------------------
 // 1. Real frames off the bike's own bus, replayed through the real decoder.
 // ---------------------------------------------------------------------------------------
 
-interface AngleCase {
-  /** What the bike was doing. All times UTC; the capture renders them at UTC+2. */
-  what: string;
-  /** The frame as candump wrote it, or null where only the decoded counts survive. */
-  frame: string | null;
-  rollDecidegrees: number;
-  pitchDecidegrees: number;
-  roll: number;
-  pitch: number;
-}
+/** 16:21:58.130Z — the roll peak, and the file's most-reused frame. */
+const ROLL_PEAK_FRAME = "80 3E A2 04 07 04 78 FE";
+
+/**
+ * What the bike was doing, and the expected degrees. All times UTC; the capture renders
+ * them at UTC+2.
+ *
+ * ⚠️ A case carries EITHER the captured frame OR the raw counts, never both. Carrying both
+ * looked like a cross-check and was not one: for a captured case the counts were read by
+ * nothing, so changing 75 to 750 left the suite green — an assertion that cannot fail, which
+ * is the shape §4 below has its own warning about. The union is what stops one coming back.
+ */
+type AngleCase = { what: string; roll: number; pitch: number } & (
+  | { frame: string }
+  | { rollDecidegrees: number; pitchDecidegrees: number }
+);
 
 const ANGLES: AngleCase[] = [
   {
     what: "16:21:57.051, creeping at 3.2 km/h up a ~34 % gravel climb on the front brake, 0.9 s before it went over",
     frame: "80 3E A2 44 4B 00 34 FF",
-    rollDecidegrees: 75,
-    pitchDecidegrees: -204,
     roll: 7.5,
     pitch: -20.4,
   },
   {
     what: "16:21:57.911, the first frame past +45° — 89 ms into a 350 °/s roll rate",
     frame: "80 3E A2 04 C5 01 0B FE",
-    rollDecidegrees: 453,
-    pitchDecidegrees: -501,
     roll: 45.3,
     pitch: -50.1,
   },
   {
     what: "16:21:58.130, the highest roll OF THE FALL that the ride log holds — not of the log, which reaches +174.2° on a wrap transient. Not the true peak of the fall either: the next frame reads +104.1° and the 1.0° deadband hid it, which is why a check on 'the maximum' would be asserting a property of the log rather than of the bike",
-    frame: "80 3E A2 04 07 04 78 FE",
-    rollDecidegrees: 1031,
-    pitchDecidegrees: -392,
+    frame: ROLL_PEAK_FRAME,
     roll: 103.1,
     pitch: -39.2,
   },
   {
     what: "16:21:58.671, at rest on its right side on the panniers. +71.6° rather than 90° because the luggage held it off the ground — a property of the bike's load, not of the sensor",
     frame: "80 3E 02 44 CC 02 53 FF",
-    rollDecidegrees: 716,
-    pitchDecidegrees: -173,
     roll: 71.6,
     pitch: -17.3,
   },
@@ -104,7 +141,6 @@ const ANGLES: AngleCase[] = [
   // cannot: the sign against the side stand, and that the ±180° band is really reached.
   {
     what: "16:15:20.950, parked, side stand DOWN — the sign reference. b4-5 is 83 FF, byte-identical to the frame the 2026-09-08 KWP read proved against bank 2 id 138",
-    frame: null,
     rollDecidegrees: -125,
     pitchDecidegrees: -17,
     roll: -12.5,
@@ -112,7 +148,6 @@ const ANGLES: AngleCase[] = [
   },
   {
     what: "15:02:18.753 at 63.9 km/h, the archive's most negative roll — an atan2 wrap after a hard hit, NOT an attitude. Both axes swing and recover inside 60 ms; it is here to prove the ±180° band is reachable and must not be gated away",
-    frame: null,
     rollDecidegrees: -1703,
     pitchDecidegrees: -46,
     roll: -170.3,
@@ -125,17 +160,27 @@ resetAttitudeDecoder();
 for (const angleCase of ANGLES) {
   // Where the real frame survives, decode THAT — all eight bytes, as the bike sent them.
   // Where it does not, synthesise a payload carrying only the two counts.
-  const payload =
-    angleCase.frame === null
-      ? attitudeFrame(angleCase.rollDecidegrees, angleCase.pitchDecidegrees)
-      : Buffer.from(angleCase.frame.replace(/ /g, ""), "hex");
+  const captured = "frame" in angleCase;
+  const payload = captured
+    ? frameBytes(angleCase.frame)
+    : attitudeFrame(angleCase.rollDecidegrees, angleCase.pitchDecidegrees);
   const decoded = decodeAttitudeFrame(payload);
-  const roll = valueOf(decoded, "attitude_roll_deg");
-  const pitch = valueOf(decoded, "attitude_pitch_deg");
-  const origin = angleCase.frame === null ? "counts only" : "captured frame";
+  const roll = decodedValue(decoded, "attitude_roll_deg");
+  const pitch = decodedValue(decoded, "attitude_pitch_deg");
+  const origin = captured ? "captured frame" : "counts only";
   check(`[${origin}] ${angleCase.what} → roll ${angleCase.roll}°`, roll === angleCase.roll);
   check(`  … and pitch ${angleCase.pitch}°`, pitch === angleCase.pitch);
 }
+
+// The same counts through the whole-frame path. ⚠️ RESTORED: an earlier rewrite of §1
+// dropped this, and with it gone `...decodeAttitudeFrame(data)` → `...[]` in decode.ts's
+// 0x102 case passes the whole suite — 0x102 can stop emitting both angles with nothing red.
+const throughDecodeFrame = decodeFrame(0x102, frameBytes(ROLL_PEAK_FRAME));
+check(
+  "decodeFrame(0x102, …) still ROUTES b4-7 to the attitude decoder — not just decodeAttitudeFrame directly",
+  decodedValue(throughDecodeFrame, "attitude_roll_deg") === 103.1 &&
+    decodedValue(throughDecodeFrame, "attitude_pitch_deg") === -39.2
+);
 
 // ---------------------------------------------------------------------------------------
 // 2. The ±1800 guard: EXERCISED TODAY, ASSERTED NOWHERE. That distinction is the point.
@@ -147,7 +192,6 @@ for (const angleCase of ANGLES) {
 // was dropped, that the threshold is five rather than one, that the ration is per process,
 // or that a good frame restarts the run. A guard whose output nobody reads is a guard that
 // can be deleted by accident, which is what this section stops.
-//
 
 // (An earlier draft of this file claimed the path was never exercised at all. It was
 // measured against check-can-decoders.ts alone, where it is true — that file's all-zero
@@ -155,34 +199,24 @@ for (const angleCase of ANGLES) {
 // do not and never passes 2. Wrong file, right mechanism, false conclusion.)
 // ---------------------------------------------------------------------------------------
 
-// The same counts through the whole-frame path. ⚠️ RESTORED: an earlier rewrite of §1
-// dropped this, and with it gone `...decodeAttitudeFrame(data)` → `...[]` in decode.ts's
-// 0x102 case passes the whole suite — 0x102 can stop emitting both angles with nothing red.
-const throughDecodeFrame = decodeFrame(0x102, Buffer.from("803EA2040704 78FE".replace(/ /g, ""), "hex"));
-check(
-  "decodeFrame(0x102, …) still ROUTES b4-7 to the attitude decoder — not just decodeAttitudeFrame directly",
-  valueOf(throughDecodeFrame, "attitude_roll_deg") === 103.1 &&
-    valueOf(throughDecodeFrame, "attitude_pitch_deg") === -39.2
-);
-
 console.log("\n2. the out-of-range guard");
 resetAttitudeDecoder();
 
 const atLimit = decodeAttitudeFrame(attitudeFrame(MAX_DECIDEGREES, -MAX_DECIDEGREES));
 check(
   `±${MAX_DECIDEGREES / 10}° is INSIDE the band and is kept — the wrap transients live here and gating them away would delete the evidence`,
-  valueOf(atLimit, "attitude_roll_deg") === 180 && valueOf(atLimit, "attitude_pitch_deg") === -180
+  decodedValue(atLimit, "attitude_roll_deg") === 180 && decodedValue(atLimit, "attitude_pitch_deg") === -180
 );
 
 resetAttitudeDecoder();
 const pastLimit = decodeAttitudeFrame(attitudeFrame(MAX_DECIDEGREES + 1, 0));
 check(
   `a roll count of ${MAX_DECIDEGREES + 1} is dropped rather than logged as an angle`,
-  valueOf(pastLimit, "attitude_roll_deg") === undefined
+  decodedValue(pastLimit, "attitude_roll_deg") === undefined
 );
 check(
   "…and the pitch in the SAME frame is still emitted, so one bad axis cannot mute the other",
-  valueOf(pastLimit, "attitude_pitch_deg") === 0
+  decodedValue(pastLimit, "attitude_pitch_deg") === 0
 );
 
 // ⚠️ BOTH SIGNS, deliberately. The guard is `Math.abs(decidegrees) > MAX_DECIDEGREES`, and
@@ -193,98 +227,73 @@ resetAttitudeDecoder();
 const pastNegativeLimit = decodeAttitudeFrame(attitudeFrame(-(MAX_DECIDEGREES + 1), -(MAX_DECIDEGREES + 1)));
 check(
   `a roll count of −${MAX_DECIDEGREES + 1} is dropped too — the band is symmetric and the wrap transients are on the negative side`,
-  valueOf(pastNegativeLimit, "attitude_roll_deg") === undefined
+  decodedValue(pastNegativeLimit, "attitude_roll_deg") === undefined
 );
-check(`…and −${MAX_DECIDEGREES + 1} on pitch likewise`, valueOf(pastNegativeLimit, "attitude_pitch_deg") === undefined);
+check(
+  `…and −${MAX_DECIDEGREES + 1} on pitch likewise`,
+  decodedValue(pastNegativeLimit, "attitude_pitch_deg") === undefined
+);
 
 // The warning is rationed to once per axis per process, after five CONSECUTIVE frames.
 // Captured rather than trusted: at 100 Hz an unrationed warning fills the journal at 200
 // lines a second and pushes out whatever else went wrong at the same moment.
-const warnings: string[] = [];
-const realWarn = console.warn;
-console.warn = (...args: unknown[]): void => {
-  warnings.push(args.map(String).join(" "));
-};
-try {
-  resetAttitudeDecoder();
-  for (let frame = 0; frame < 4; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  const beforeThreshold = warnings.length;
-  decodeAttitudeFrame(attitudeFrame(3000, 0));
-  const atThreshold = warnings.length;
-  for (let frame = 0; frame < 50; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  const afterThreshold = warnings.length;
+const OUT_OF_RANGE = 3000;
 
+const threshold = captureWarnings(warnings => {
+  feed(4, OUT_OF_RANGE, 0);
   check(
     "four consecutive out-of-range frames warn about nothing — a single junk sample must not spend the diagnostic",
-    beforeThreshold === 0
+    warnings.length === 0
   );
-  check("the fifth consecutive frame warns exactly once", atThreshold === 1);
-  check("fifty more frames add no further lines — rationed once per axis per process", afterThreshold === 1);
-  check(
-    "the line names the axis and the offending count",
-    warnings[0]?.includes("attitude_roll_deg") === true && warnings[0]?.includes("3000") === true
-  );
+  feed(1, OUT_OF_RANGE, 0);
+  check("the fifth consecutive frame warns exactly once", warnings.length === 1);
+  feed(50, OUT_OF_RANGE, 0);
+  check("fifty more frames add no further lines — rationed once per axis per process", warnings.length === 1);
+});
+check(
+  "the line names the axis and the offending count",
+  threshold[0]?.includes("attitude_roll_deg") === true && threshold[0]?.includes(String(OUT_OF_RANGE)) === true
+);
 
-  // A run broken by one good frame must start again, or a flapping signal would warn on
-  // an accumulation that never actually happened.
-  resetAttitudeDecoder();
-  warnings.length = 0;
-  for (let frame = 0; frame < 4; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  decodeAttitudeFrame(attitudeFrame(0, 0));
-  for (let frame = 0; frame < 4; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  check("a good frame resets the run, so 4 + 1 + 4 stays silent", warnings.length === 0);
+// A run broken by one good frame must start again, or a flapping signal would warn on
+// an accumulation that never actually happened.
+const brokenRun = captureWarnings(() => {
+  feed(4, OUT_OF_RANGE, 0);
+  feed(1, 0, 0);
+  feed(4, OUT_OF_RANGE, 0);
+});
+check("a good frame resets the run, so 4 + 1 + 4 stays silent", brokenRun.length === 0);
 
-  // Per-axis independence: a stuck roll must not consume pitch's one warning.
-  resetAttitudeDecoder();
-  warnings.length = 0;
-  for (let frame = 0; frame < 20; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  const afterRoll = warnings.length;
-  for (let frame = 0; frame < 20; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(0, 3000));
-  }
-  check("pitch still gets its own warning after roll has spent hers", afterRoll === 1 && warnings.length === 2);
-  check("…and the second line names pitch, not roll", warnings[1]?.includes("attitude_pitch_deg") === true);
+// ⚠️ THE RATION IS PER PROCESS, NOT PER RUN, and only this case says so. Moving
+// `watch.warned = false` next to the run reset in addAngle() turns one journal line per
+// boot into one per burst — at 100 Hz a flapping field would then warn forever, which is
+// the exact failure the ration exists to prevent. Every other case here still passes
+// under that mutation; this one does not.
+const secondBurst = captureWarnings(() => {
+  feed(5, OUT_OF_RANGE, 0);
+  feed(1, 0, 0);
+  feed(5, OUT_OF_RANGE, 0);
+});
+check(
+  "a SECOND burst after a good frame stays silent — the ration is per process, not per run",
+  secondBurst.length === 1
+);
 
-  // resetAttitudeDecoder() exists so replaying a second capture in one process can still
-  // see its own out-of-range frames. If it stopped clearing `warned`, that would be silent.
-  resetAttitudeDecoder();
-  warnings.length = 0;
-  for (let frame = 0; frame < 5; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  check("resetAttitudeDecoder() lets a second replay warn again", warnings.length === 1);
+// Per-axis independence: a stuck roll must not consume pitch's one warning.
+const bothAxes = captureWarnings(warnings => {
+  feed(20, OUT_OF_RANGE, 0);
+  check("pitch still gets its own warning after roll has spent hers", warnings.length === 1);
+  feed(20, 0, OUT_OF_RANGE);
+});
+check(
+  "…and the second line names pitch, not roll",
+  bothAxes.length === 2 && bothAxes[1]?.includes("attitude_pitch_deg") === true
+);
 
-  // ⚠️ THE RATION IS PER PROCESS, NOT PER RUN, and only this case says so. Moving
-  // `watch.warned = false` next to the run reset in addAngle() turns one journal line per
-  // boot into one per burst — at 100 Hz a flapping field would then warn forever, which is
-  // the exact failure the ration exists to prevent. Every other case here still passes
-  // under that mutation; this one does not.
-  resetAttitudeDecoder();
-  warnings.length = 0;
-  for (let frame = 0; frame < 5; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  decodeAttitudeFrame(attitudeFrame(0, 0));
-  for (let frame = 0; frame < 5; frame += 1) {
-    decodeAttitudeFrame(attitudeFrame(3000, 0));
-  }
-  check(
-    "a SECOND burst after a good frame stays silent — the ration is per process, not per run",
-    warnings.length === 1
-  );
-} finally {
-  console.warn = realWarn;
-}
+// resetAttitudeDecoder() exists so replaying a second capture in one process can still
+// see its own out-of-range frames. If it stopped clearing `warned`, that would be silent.
+const afterReset = captureWarnings(() => feed(5, OUT_OF_RANGE, 0));
+check("resetAttitudeDecoder() lets a second replay warn again", afterReset.length === 1);
 
 const shortFrame = decodeAttitudeFrame(Buffer.alloc(7));
 check("a 7-byte frame yields no angles rather than reading past the end", shortFrame.length === 0);
@@ -313,11 +322,11 @@ for (const key of attitudeKeys) {
 // the server emits can fail it. It is defence in depth, agreeing with the decoder rather
 // than second-guessing it — the same argument the cell-voltage band in bounds.js makes
 // about itself. What it really buys is that the two numbers are stated in one place.
+const rollSignal = SIGNALS.find(entry => entry.key === "attitude_roll_deg");
 for (const angleCase of ANGLES) {
-  const signal = SIGNALS.find(entry => entry.key === "attitude_roll_deg");
   check(
     `the gate accepts ${angleCase.roll}° — a real reading it rejected would be drawn as a dead sensor`,
-    signal !== undefined && isPlausible("attitude_roll_deg", angleCase.roll, signal.unit, signal.group)
+    rollSignal !== undefined && isPlausible("attitude_roll_deg", angleCase.roll, rollSignal.unit, rollSignal.group)
   );
 }
 
@@ -338,11 +347,6 @@ if (course) {
 
 // ---------------------------------------------------------------------------------------
 // 4. V_LIEDOWN_DETECTED — 0x102 b3 bit 5, the VCU's own fall flag.
-//
-// 🟡 UNVERIFIED against this bike. It is decoded on the vendor frame table alone, because
-// the one event that would confirm it — 2026-09-13 16:21:58 — is the one whose raw bytes
-// are not on this laptop. The Pi's own candump capture of that boot has them; the PR
-// carries the pending step. Until then this section checks the WIRING, not the meaning.
 // ---------------------------------------------------------------------------------------
 
 console.log("\n4. the lie-down flag");
@@ -353,13 +357,15 @@ console.log("\n4. the lie-down flag");
 // go_request and go all drop together at 16:21:59.362Z. A flag that fires once, when the
 // bike goes down, and before the VCU cuts the drive, is a lie-down detector.
 const LIE_DOWN_SET = "80 3E 02 64 C7 02 43 FF"; // 16:21:58.811Z, the rising edge
-const LIE_DOWN_CLEAR = "80 3E A2 04 07 04 78 FE"; // 16:21:58.130Z, the roll peak — still clear
-const liedownSet = decodeFrame(0x102, Buffer.from(LIE_DOWN_SET.replace(/ /g, ""), "hex"));
-const liedownClear = decodeFrame(0x102, Buffer.from(LIE_DOWN_CLEAR.replace(/ /g, ""), "hex"));
-check("the captured rising-edge frame decodes lie_down_detected = 1", valueOf(liedownSet, "lie_down_detected") === 1);
+const liedownSet = decodeFrame(0x102, frameBytes(LIE_DOWN_SET));
+const liedownClear = decodeFrame(0x102, frameBytes(ROLL_PEAK_FRAME));
+check(
+  "the captured rising-edge frame decodes lie_down_detected = 1",
+  decodedValue(liedownSet, "lie_down_detected") === 1
+);
 check(
   "…and the captured frame from the roll PEAK, 681 ms earlier, still reads 0 — the flag is not merely a copy of a steep angle",
-  valueOf(liedownClear, "lie_down_detected") === 0
+  decodedValue(liedownClear, "lie_down_detected") === 0
 );
 
 // ⚠️ The neighbour test only means something if the neighbour MOVES. An earlier draft
@@ -369,15 +375,15 @@ check(
 const liedownWithNeighbours = decodeFrame(0x102, Buffer.from([0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00]));
 check(
   "b3 = 0x03 — lie-down clear while BOTH neighbours are set — keeps the three apart",
-  valueOf(liedownWithNeighbours, "lie_down_detected") === 0 &&
-    valueOf(liedownWithNeighbours, "fast_dc_contactor") === 1 &&
-    valueOf(liedownWithNeighbours, "cruise_active") === 1
+  decodedValue(liedownWithNeighbours, "lie_down_detected") === 0 &&
+    decodedValue(liedownWithNeighbours, "fast_dc_contactor") === 1 &&
+    decodedValue(liedownWithNeighbours, "cruise_active") === 1
 );
 check(
   "…and the captured 0x64 — lie-down set while both neighbours are clear — is the other diagonal",
-  valueOf(liedownSet, "lie_down_detected") === 1 &&
-    valueOf(liedownSet, "fast_dc_contactor") === 0 &&
-    valueOf(liedownSet, "cruise_active") === 0
+  decodedValue(liedownSet, "lie_down_detected") === 1 &&
+    decodedValue(liedownSet, "fast_dc_contactor") === 0 &&
+    decodedValue(liedownSet, "cruise_active") === 0
 );
 
 const liedown = SIGNALS.find(entry => entry.key === "lie_down_detected");
@@ -397,7 +403,7 @@ if (liedown) {
 const withoutByte3 = decodeFrame(0x102, Buffer.from([0x00, 0x00, 0x00]));
 check(
   "a 3-byte 0x102 emits no lie_down_detected at all rather than 0",
-  valueOf(withoutByte3, "lie_down_detected") === undefined
+  decodedValue(withoutByte3, "lie_down_detected") === undefined
 );
 
 console.log("");

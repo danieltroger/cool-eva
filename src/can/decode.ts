@@ -529,7 +529,6 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
 // once clear in 1 103 000 frames, so it is left undecoded rather than logged as a
 // constant 1. Bit 6 is `V_MAG_GOOD`, moves constantly, and having a name has not made it
 // mean anything yet.
-//
 
 // 🚨 "bits 3, 4, 5 and 7 are never set" USED TO BE THE WHOLE OF THIS SENTENCE AND IT WAS
 // MISLEADING. It is a measurement over the 2026-08 capture archive, a corpus in which the
@@ -561,27 +560,17 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     // the owner can press cruise ON/OFF and watch the state follow, which is the check
     // that would otherwise need a laptop and candump.
     { key: "cruise_active", value: bit(byte3, 1) },
-    // bit 5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ CONFIRMED against this
-    // bike 2026-09-14, from the Pi's own candump of the boot it happened on.
+    // bit 5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ CONFIRMED against this bike
+    // 2026-09-14, from the Pi's own candump of the boot it happened on: exactly one
+    // transition in the 60 s around the fall, 0.669 s after the roll peak and 0.551 s
+    // BEFORE the VCU cut the drive.
     //
-    // In the 60 s around the fall (5 998 frames of 0x102) the bit has EXACTLY ONE
-    // transition: 0 → 1 at 16:21:58.811Z, and it never clears again. The timing is what
-    // identifies it rather than the name:
-    //
-    //   16:21:57.911Z  roll crosses +45°
-    //   16:21:58.142Z  roll peaks at +104.1°        (bit still 0)
-    //   16:21:58.811Z  V_LIEDOWN_DETECTED 0 → 1     (+0.669 s after the peak)
-    //   16:21:59.362Z  energized, go_request and go all 1 → 0   (+0.551 s later)
-    //
-
-    // ⚠️ It LEADS the drive shutdown, which is the part that makes it a detector rather
-    // than a consequence — the same argument `fast_dc_contactor` rests on. And it is not
-    // a restatement of the attitude pair: at the roll peak, 681 ms earlier and 104° over,
-    // the bit is still clear.
-    // ⚠️ WHAT A 0 MEANS: the VCU has not flagged a lie-down. It does NOT mean "upright" —
-    // the bit is a debounced decision and was still 0 at 104° of roll — and it is not a
-    // fall sensor for anything safety-bearing. One event identifies it; a second fall, or
-    // a firmware change, could still show it means something narrower.
+    // ⚠️ It LEADS the shutdown, which is what makes it a detector rather than a
+    // consequence — the argument `fast_dc_contactor` above rests on — and it is not a
+    // threshold on the attitude pair, since at the peak 681 ms earlier and 104° over it
+    // still read 0. ⚠️ A 0 therefore means "the VCU has not flagged a lie-down", NOT
+    // "upright", and this is not a fall sensor for anything safety-bearing: one event
+    // identifies it. Timings and counts: docs/can-decode-findings.md §5.
     { key: "lie_down_detected", value: bit(byte3, 5) },
   ];
 }

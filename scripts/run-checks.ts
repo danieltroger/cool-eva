@@ -75,17 +75,20 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-attitude.ts",
     covers:
       "the attitude pair on 0x102 b4-7, which had no assertion anywhere in this suite until the bike fell onto " +
-      "its right side on 2026-09-13: that five counts from that day's ride log still decode to the degrees they " +
-      "were logged as — a guard on the LAYOUT (offsets, endianness, axis order, ÷10) rather than on the " +
-      "values, which came out of the decoder being tested and are circular against a wrong scale; that the " +
+      "its right side on 2026-09-13: that six fixtures still decode to the degrees they were logged as — four " +
+      "of them frames captured off the bike's own bus, two only counts from the ride log and labelled as such, " +
+      "since a fixture the decoder itself produced is circular against a wrong scale but still guards the " +
+      "LAYOUT (offsets, endianness, axis order, ÷10); that decodeFrame still ROUTES 0x102 b4-7 to that decoder " +
+      "rather than only the decoder working when called directly; that the " +
       "±1800 band is inclusive at the limit and drops counts past it on BOTH signs, since a bare `>` would " +
       "let −180.1° through; that one bad axis never mutes the other; that the warning needs five " +
       "CONSECUTIVE frames, is rationed to one per axis per process, restarts after a good frame, and comes back " +
       "after resetAttitudeDecoder(); that bounds.js gates both keys to exactly attitude.ts's own MAX_DECIDEGREES " +
       "÷ 10, asked of bounds.js rather than copied, and that gps_course_deg is gated at all — 3 of " +
-      "105 118 rows read past 360°; and the wiring of lie_down_detected (0x102 b3 bit 5), which is decoded " +
-      "on the vendor frame table alone and is 🟡 unverified until someone reads that bit out of the " +
-      "Pi's own capture of the fall. ⚠ The guard is EXERCISED today by check-derived-signals.ts, whose byte " +
+      "105 118 archived rows read past 360°, two of them on 2026-08-08; and lie_down_detected (0x102 b3 bit 5), " +
+      "CONFIRMED against the Pi's own capture of the fall — one transition in 60 s, 0.669 s after the roll peak " +
+      "and 0.551 s before the VCU cut the drive, and still clear AT that peak, so it is not a threshold on the " +
+      "angle. ⚠ The guard is EXERCISED today by check-derived-signals.ts, whose byte " +
       "sweep makes both warnings print on every run — it was never ASSERTED, which is the gap this closes",
   },
   {
