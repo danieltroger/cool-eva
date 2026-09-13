@@ -5,6 +5,8 @@ import {
   type ChargeAutoReason,
 } from "../src/charge/auto-curve.ts";
 import type { TemperatureSample } from "../src/charge/rate.ts";
+import { RATE_WINDOW_MS } from "../src/charge/rate.ts";
+import { taperEnvelopeAmpsAt, type SocSample } from "../src/charge/soc.ts";
 
 // A simulated pack, so the controller can be driven through a whole DC stop in a check. Data and
 // arithmetic only — nothing here talks to a bus.
@@ -51,6 +53,23 @@ export interface PlantOptions {
   control?: boolean;
   /** A deliberately broken controller, for the assertion that a stuck one fails. */
   stuckAt?: number;
+  /**
+   * Hides the SOC from the rule, which is exactly the shipped controller: src/charge/soc.ts answers
+   * null without one, so the session-ahead veto can never fire. The reference trajectory for §18,
+   * and it is the SAME function rather than a second copy of the law kept alive to diff against.
+   */
+  socBlind?: boolean;
+  /**
+   * Whether the pack's own high-SOC taper limits the current, as the real one does.
+   *
+   * ⚠️ OFF BY DEFAULT, and that is deliberate rather than lazy. Every number pinned in
+   * check-charge-auto.ts §3, §4, §6 and §11 was measured on a plant with NO taper, and adding one
+   * would move all of them at once — so the frozen grid keeps the plant it was frozen with, and
+   * §18 runs the tapered one under its own name. An untapered plant is also the HARSHER test of
+   * the session-ahead veto: it holds full current into a band the real bike never reaches at full
+   * current, so a veto that adds no crossing there certainly adds none on the real taper.
+   */
+  taper?: boolean;
 }
 
 /**
@@ -69,8 +88,10 @@ export function replayCharge(options: PlantOptions): PlantRun {
   let lastTick = -Infinity;
   let lastWholeDegree: number | null = null;
   const samples: TemperatureSample[] = [];
+  const socSamples: SocSample[] = [];
   const reasons = new Map<ChargeAutoReason, number>();
   const commands: number[] = [];
+  let lastWholeSoc: number | null = null;
 
   while (soc < options.toSoc && elapsed < 200 * 60) {
     // The sensor: whole degrees, and a sample only when that integer moves — which is what makes
@@ -80,6 +101,20 @@ export function replayCharge(options: PlantOptions): PlantRun {
       lastWholeDegree = whole;
       samples.push({ atMs: elapsed * 1000, celsius: whole });
     }
+    // SOC arrives the same way: whole percent, a sample only when the integer moves, trimmed to the
+    // window because src/charge/soc.ts keeps no anchor outside it.
+    const wholeSoc = Math.floor(soc);
+    if (wholeSoc !== lastWholeSoc) {
+      lastWholeSoc = wholeSoc;
+      socSamples.push({ atMs: elapsed * 1000, percent: wholeSoc });
+      while (socSamples.length > 0 && socSamples[0].atMs < elapsed * 1000 - RATE_WINDOW_MS) {
+        socSamples.shift();
+      }
+    }
+    // What the vehicle would be asking for: the ceiling, or the taper once it binds.
+    const requestedAmps = options.taper
+      ? Math.min(FULL_CURRENT_A, taperEnvelopeAmpsAt(wholeSoc), commanded ?? FULL_CURRENT_A)
+      : Math.min(FULL_CURRENT_A, commanded ?? FULL_CURRENT_A);
     if (options.control !== false && elapsed - lastTick >= tickSeconds) {
       lastTick = elapsed;
       const decision = decideChargeCurrent({
@@ -93,6 +128,10 @@ export function replayCharge(options: PlantOptions): PlantRun {
         commandedAmps: commanded,
         riderOverride: false,
         samples,
+        socPercent: options.socBlind ? null : wholeSoc,
+        socAgeMs: 100,
+        socSamples,
+        requestedAmps,
         nowMs: elapsed * 1000,
       });
       reasons.set(decision.reason, (reasons.get(decision.reason) ?? 0) + 1);
@@ -103,7 +142,12 @@ export function replayCharge(options: PlantOptions): PlantRun {
     }
     const cap = options.stuckAt ?? commanded ?? FULL_CURRENT_A;
     // Above the cliff the BMS clamp releases and the bike saw-tooths, whatever anyone commanded.
-    const flowing = temperature >= CLIFF_C ? SAWTOOTH_CURRENT_A : Math.min(cap, FULL_CURRENT_A);
+    // Below it the pack takes the smallest of what was commanded, what the bike can take, and —
+    // when the taper is on — what the pack itself will accept at this SOC.
+    const flowing =
+      temperature >= CLIFF_C
+        ? SAWTOOTH_CURRENT_A
+        : Math.min(cap, FULL_CURRENT_A, options.taper ? taperEnvelopeAmpsAt(wholeSoc) : FULL_CURRENT_A);
     const minutesPerPoint =
       temperature >= CLIFF_C ? SAWTOOTH_MIN_PER_POINT : (MIN_PER_POINT_AT_FULL * FULL_CURRENT_A) / flowing;
     soc += stepSeconds / 60 / minutesPerPoint;
@@ -178,6 +222,27 @@ export const CROSSING_GRID = {
   coolings: [0.5, 1.0, 1.5, 2.0, 3.0].map(multiple => COOLING_NOMINAL * multiple),
   fromSoc: 25,
   toSoc: 85,
+};
+
+/**
+ * A grid for the session-ahead veto, run to FULL rather than to 85 %.
+ *
+ * ⚠️ UNTAPERED on purpose, and that is what makes it able to go red. The veto exists because the
+ * real pack's taper takes the current away; a plant that models the taper would hand it the answer.
+ * This one holds full current all the way to 100 %, so the veto suppresses steps down in a band
+ * where the heat really does keep coming — the harshest arrangement there is. The arrivals and
+ * ambients are chosen so the pack passes 80 % SOC at a reading of 50-53 °C, which is the exact
+ * state the reviewer of #201 pointed out the 2026-09-07…13 corpus never visits unthrottled.
+ *
+ * ⚠️ Its numbers are its own. CROSSING_GRID keeps the plant it was frozen with; nothing here may be
+ * quoted against §11's golden set.
+ */
+export const TAPER_GRID = {
+  arrivals: [44, 47, 50, 53],
+  ambients: [18, 25, 30, 35, 39],
+  coolings: [0.5, 1.0, 1.5, 2.0, 3.0].map(multiple => COOLING_NOMINAL * multiple),
+  fromSoc: 60,
+  toSoc: 100,
 };
 
 /** Minutes per SOC point at a steady cap — the measured relation, for the floor sweep. */

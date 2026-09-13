@@ -20,6 +20,13 @@ import {
   type TemperatureSample,
 } from "../src/charge/rate.ts";
 import {
+  estimateSocRate,
+  sessionAheadMinutes,
+  SOC_MAX_AGE_MS,
+  TAPER_KNEE_SOC,
+  type SocSample,
+} from "../src/charge/soc.ts";
+import {
   COLD_PLANTS,
   CROSSING_GRID,
   FULL_CURRENT_A,
@@ -27,6 +34,7 @@ import {
   RECOVERY_PLANT,
   REPLAY_SESSIONS,
   SAWTOOTH_MIN_PER_POINT,
+  TAPER_GRID,
   minutesPerPointAt,
   replayCharge,
 } from "./charge-auto-plant.ts";
@@ -39,6 +47,10 @@ import {
   SEPTEMBER_9_AT_45A_MS,
   SEPTEMBER_9_EPISODE,
   SEPTEMBER_9_RATCHET_MS,
+  SEPTEMBER_13_EPISODE,
+  SEPTEMBER_13_REQUEST_A,
+  SEPTEMBER_13_SOC,
+  SEPTEMBER_13_TICKS,
 } from "./charge-auto-episode.ts";
 import { REASON_RIDER, toggleAction } from "../public/views/charge-auto.js";
 import { CHARGE_AUTO_REASON_TEXT } from "../src/http/charge-auto.ts";
@@ -80,6 +92,14 @@ const HEALTHY: ChargeAutoInput = {
   // ⚠️ The ring ENDS on the reading. Both come from `batt_temp_hi`, so a base fixture whose ring
   // says 54 while it claims 51 is the shape `decideOnRing` below exists to forbid, one spread away.
   samples: climbing(45, 51),
+  // ⚠️ NO SOC, deliberately, and every section before §15 inherits it. src/charge/soc.ts answers
+  // null without one, which leaves the shipped reaction horizon in place — so the fourteen sections
+  // this fixture already served are byte-identical to what they asserted before the veto existed,
+  // and that is itself the demonstration that an absent SOC changes nothing.
+  socPercent: null,
+  socAgeMs: null,
+  socSamples: [],
+  requestedAmps: null,
   nowMs: 700_000,
 };
 
@@ -852,6 +872,359 @@ if (blindNoSamples.kind !== "command" || 70 - blindNoSamples.amps !== MAX_STEP_A
   );
 }
 
+// ── §15 ⚠️ THE PROPERTY THE SESSION-AHEAD VETO LIVES OR DIES BY ───────────
+//
+// The veto may do exactly one thing: turn a step DOWN into a hold. Not raise, not size a step, and
+// nothing at all at or above the setpoint — which is what keeps 2026-09-11's 34 minutes at the
+// floor, and every 2026-09-07 stop that reached the cliff, deciding exactly as they do today.
+//
+// ⚠️ The reference implementation is THIS function with the SOC knocked out. `sessionAheadMinutes`
+// answers null without a SOC, so `decideChargeCurrent` with `socPercent: null` IS the shipped rule,
+// byte for byte — there is no second copy of the law to drift. ⚠️ And that makes §15 alone
+// satisfiable by a rule that vetoes EVERYTHING, which is why §18 pins the count.
+/** HEALTHY's ceiling, named so the "was it lowering" test reads the same number the rule stepped from. */
+const PROPERTY_CEILING_A = 75;
+const PROPERTY_TEMPERATURES = [44, 47, 49, 50, 51, 52, 53, 54, 55, 56];
+const PROPERTY_SOCS = [30, 55, 70, 79, 80, 84, 87, 88, 92, 99];
+let propertyCases = 0;
+let propertyVetoes = 0;
+for (const temperature of PROPERTY_TEMPERATURES) {
+  for (const socPercent of PROPERTY_SOCS) {
+    // ⚠️ 35 is MIN_COMMAND_A: stepping down from the floor makes `stepTo` return a HOLD, and a
+    // veto that fired there would relabel AT_FLOOR as TAPERING — claiming the taper did what the
+    // floor did. Without this value in the grid that guard survives every mutation.
+    for (const commandedAmps of [null, MIN_COMMAND_A, 40, 55, 70]) {
+      for (const samples of [
+        climbing(44, temperature),
+        rampTo(temperature + 3, temperature),
+        steady(temperature, 700_000),
+      ]) {
+        const base: ChargeAutoInput = {
+          ...HEALTHY,
+          packTemperatureC: temperature,
+          commandedAmps,
+          samples,
+          socSamples: socRamp(socPercent),
+          socAgeMs: 100,
+          requestedAmps: 73,
+          nowMs: 700_000,
+        };
+        const shipped = decideChargeCurrent({ ...base, socPercent: null });
+        const withVeto = decideChargeCurrent({ ...base, socPercent });
+        propertyCases += 1;
+        if (JSON.stringify(shipped) === JSON.stringify(withVeto)) {
+          continue;
+        }
+        propertyVetoes += 1;
+        if (temperature >= TARGET_C) {
+          failures.push(
+            `§15 at a reading of ${temperature} — at or above the setpoint — the veto changed the decision from ` +
+              `${JSON.stringify(shipped)} to ${JSON.stringify(withVeto)}. Nothing it does may reach here.`
+          );
+        }
+        if (withVeto.kind !== "hold") {
+          failures.push(
+            `§15 the veto produced ${JSON.stringify(withVeto)} where the shipped rule said ` +
+              `${JSON.stringify(shipped)} — it may only ever HOLD, never command`
+          );
+        }
+        if (shipped.kind !== "command" || shipped.amps >= Math.floor(commandedAmps ?? PROPERTY_CEILING_A)) {
+          failures.push(
+            `§15 the veto fired where the shipped rule was not lowering (${JSON.stringify(shipped)} at ` +
+              `${temperature} °C, ${socPercent} %) — it may only suppress a step DOWN`
+          );
+        }
+      }
+    }
+  }
+}
+if (propertyVetoes === 0) {
+  failures.push(
+    `§15 the veto never fired across ${propertyCases} generated inputs, so the property holds vacuously and this ` +
+      `section is asserting nothing`
+  );
+}
+
+// ── §16 the 2026-09-13 stop, tick by tick, on its own logged rings ─────────
+//
+// ⚠️ OPEN-LOOP, and with the commanded current the controller actually held. Replayed with null
+// instead, every raise clamps at the ceiling and `stepTo` returns a hold — which makes a rule that
+// RAISES look like one that holds, and is how #201's first two plans reported the wrong thing.
+for (const tick of SEPTEMBER_13_TICKS) {
+  const input: ChargeAutoInput = {
+    ...HEALTHY,
+    packTemperatureC: tick.reading,
+    ceilingAmps: 80,
+    commandedAmps: tick.commandedAmps,
+    samples: SEPTEMBER_13_EPISODE,
+    socPercent: tick.soc,
+    socAgeMs: 100,
+    socSamples: SEPTEMBER_13_SOC,
+    requestedAmps: requestedAmpsAt(tick.atMs),
+    nowMs: tick.atMs,
+  };
+  const shipped = decideChargeCurrent({ ...input, socPercent: null });
+  const withVeto = decideChargeCurrent(input);
+  if (shipped.kind !== "command") {
+    failures.push(
+      `§16 at ${tick.clock} the shipped rule should be stepping the current DOWN — that is the over-throttle #201 ` +
+        `is about. Got ${JSON.stringify(shipped)}`
+    );
+  }
+  if (withVeto.kind !== "hold" || withVeto.reason !== CHARGE_AUTO_REASON.TAPERING) {
+    failures.push(
+      `§16 at ${tick.clock} (reading ${tick.reading}, ${tick.soc} % SOC, asking ${requestedAmpsAt(tick.atMs)} A) the ` +
+        `pack's own taper takes the current away before ${TARGET_C} °C, so the step down must be suppressed. ` +
+        `Got ${JSON.stringify(withVeto)}`
+    );
+  }
+}
+// ⚠️ And the tick BEFORE the over-throttle: at 12:09:44 the rule is not lowering at all, so the
+// veto must be invisible. A veto that fires here would be suppressing nothing and saying so.
+const beforeTheThrottle: ChargeAutoInput = {
+  ...HEALTHY,
+  packTemperatureC: 47,
+  ceilingAmps: 80,
+  commandedAmps: null,
+  samples: SEPTEMBER_13_EPISODE,
+  socPercent: 70,
+  socAgeMs: 100,
+  socSamples: SEPTEMBER_13_SOC,
+  requestedAmps: 73,
+  nowMs: 360_203,
+};
+if (
+  JSON.stringify(decideChargeCurrent(beforeTheThrottle)) !==
+  JSON.stringify(decideChargeCurrent({ ...beforeTheThrottle, socPercent: null }))
+) {
+  failures.push("§16 at 12:09:44 the shipped rule is not lowering, so the veto must change nothing and does not");
+}
+
+// ── §17 the SOC rate is a LOWER bound, and the unknowns all fail safe ──────
+//
+// ⚠️ Direction is the whole point. Under-stating the rate over-states the time left, which
+// LENGTHENS the horizon, which suppresses FEWER steps down. A rate that could over-state would
+// shorten it and suppress more, which is the unsafe direction and the one #201's re-review caught.
+const SOC_RATE_CASES = [
+  { name: "two whole points over ten minutes", samples: socAt([60, 61, 62], 300_000), nowMs: 600_000, atMost: 0.2 },
+  { name: "a pack that has not moved a point", samples: socAt([80, 80, 80], 300_000), nowMs: 600_000, atMost: 0 },
+  { name: "SOC going backwards", samples: socAt([80, 79, 78], 300_000), nowMs: 600_000, atMost: 0 },
+];
+for (const probe of SOC_RATE_CASES) {
+  const measured = estimateSocRate(probe.samples, probe.nowMs) ?? 0;
+  const truth =
+    (probe.samples.at(-1)!.percent - probe.samples[0].percent) / ((probe.nowMs - probe.samples[0].atMs) / 60_000);
+  if (measured > Math.max(truth, 0) + 1e-9) {
+    failures.push(
+      `§17 ${probe.name}: the estimator returned ${measured.toFixed(3)} %/min against a true ${truth.toFixed(3)} — ` +
+        `it must never over-state, because over-stating shortens the horizon and suppresses more steps down`
+    );
+  }
+  if (measured > probe.atMost + 1e-9) {
+    failures.push(`§17 ${probe.name}: expected at most ${probe.atMost} %/min, got ${measured.toFixed(3)}`);
+  }
+}
+if (estimateSocRate(socAt([60, 61, 62], 60_000), 200_000) !== null) {
+  failures.push(`§17 under ${RATE_MIN_SPAN_MS / 1000} s of span the SOC rate must be unknown, not a number`);
+}
+if (estimateSocRate(socAt([60, 61], 300_000), 600_000) !== null) {
+  failures.push("§17 two distinct SOC readings is not enough to fit a rate on a whole-percent signal");
+}
+// ⚠️ The knee guard, and it is not decorative: above it the SOC rate is a trailing measurement of a
+// DECELERATING quantity, so any estimate over-states the next ten minutes. src/charge/soc.ts.
+for (const socPercent of [TAPER_KNEE_SOC, TAPER_KNEE_SOC + 5, 99]) {
+  const ahead = sessionAheadMinutes({
+    socPercent,
+    socAgeMs: 100,
+    socSamples: socRamp(socPercent),
+    requestedAmps: 73,
+    floorAmps: MIN_COMMAND_A,
+    nowMs: 700_000,
+  });
+  if (ahead !== null) {
+    failures.push(
+      `§17 at ${socPercent} % SOC — at or above the ${TAPER_KNEE_SOC} % knee — the session-ahead estimate must ` +
+        `decline, because a trailing rate over-states a decelerating one. Got ${JSON.stringify(ahead)}`
+    );
+  }
+}
+// ⚠️ A vehicle already asking for no more than the floor leaves NOTHING to suppress: the controller
+// cannot command lower than MIN_COMMAND_A, so the ceiling is not what limits that charge and a veto
+// there would relabel the floor's own hold. It is also what keeps the estimate away from the very
+// top of the envelope, where a trailing SOC rate is least trustworthy.
+for (const requestedAmps of [MIN_COMMAND_A, MIN_COMMAND_A - 5, 0]) {
+  const ahead = sessionAheadMinutes({
+    socPercent: 80,
+    socAgeMs: 100,
+    socSamples: socRamp(80),
+    requestedAmps,
+    floorAmps: MIN_COMMAND_A,
+    nowMs: 700_000,
+  });
+  if (ahead !== null) {
+    failures.push(
+      `§17 the vehicle asking for ${requestedAmps} A — no more than the ${MIN_COMMAND_A} A floor — leaves no step ` +
+        `down to suppress, so the session-ahead estimate must decline. Got ${JSON.stringify(ahead)}`
+    );
+  }
+}
+
+// A stale SOC is an unknown like any other, and an unknown leaves the shipped horizon alone.
+for (const broken of [
+  { name: "no SOC", socPercent: null, socAgeMs: 100 },
+  { name: "a stale SOC", socPercent: 80, socAgeMs: SOC_MAX_AGE_MS + 1 },
+  { name: "an impossible SOC", socPercent: 140, socAgeMs: 100 },
+]) {
+  const ahead = sessionAheadMinutes({
+    socPercent: broken.socPercent,
+    socAgeMs: broken.socAgeMs,
+    socSamples: socRamp(80),
+    requestedAmps: 73,
+    floorAmps: MIN_COMMAND_A,
+    nowMs: 700_000,
+  });
+  if (ahead !== null) {
+    failures.push(`§17 ${broken.name} must leave the shipped horizon alone, got ${JSON.stringify(ahead)}`);
+  }
+}
+
+// ── §18 ⚠️ THE COUNT, because §15 cannot tell a veto from a veto-everything ─
+//
+// A rule that suppressed EVERY step down below the setpoint satisfies §15 perfectly and would be a
+// catastrophe. So the veto is pinned to a measured number of ticks over a fixed grid, the way
+// CROSSING_GRID pins the crossings.
+//
+// ⚠️ TAPER_GRID is UNTAPERED on purpose and that is the point of it: it holds full current all the
+// way to 100 % SOC, so the veto suppresses steps on the strength of a taper that never arrives.
+// Whatever it costs there is the cost of being wrong, and the bound below is that cost.
+let untaperedVetoes = 0;
+let untaperedTicks = 0;
+let worstVetoCostMin = 0;
+let bestVetoSavingMin = 0;
+let worstVetoReversals = 0;
+let shippedGridReversals = 0;
+const vetoAddedCrossings: string[] = [];
+for (const taper of [false, true]) {
+  for (const arrivalC of TAPER_GRID.arrivals) {
+    for (const ambientC of TAPER_GRID.ambients) {
+      for (const cooling of TAPER_GRID.coolings) {
+        const options = { arrivalC, ambientC, cooling, fromSoc: TAPER_GRID.fromSoc, toSoc: TAPER_GRID.toSoc, taper };
+        const shipped = replayCharge({ ...options, socBlind: true });
+        const withVeto = replayCharge(options);
+        if (withVeto.peakC >= CLIFF_C && shipped.peakC < CLIFF_C) {
+          vetoAddedCrossings.push(`${taper ? "tapered" : "untapered"} ${arrivalC}/${ambientC}/${cooling.toFixed(4)}`);
+        }
+        worstVetoCostMin = Math.max(worstVetoCostMin, withVeto.minutes - shipped.minutes);
+        bestVetoSavingMin = Math.min(bestVetoSavingMin, withVeto.minutes - shipped.minutes);
+        worstVetoReversals = Math.max(worstVetoReversals, reversalCount(withVeto.commands));
+        shippedGridReversals = Math.max(shippedGridReversals, reversalCount(shipped.commands));
+        if (taper) {
+          continue;
+        }
+        untaperedTicks += [...withVeto.reasons.values()].reduce((total, count) => total + count, 0);
+        untaperedVetoes += withVeto.reasons.get(CHARGE_AUTO_REASON.TAPERING) ?? 0;
+      }
+    }
+  }
+}
+
+/** Measured over TAPER_GRID with no taper. Pinned, so "veto everything" cannot pass §15 quietly. */
+const EXPECTED_UNTAPERED_VETOES = 152;
+/** ⚠️ The cost of suppressing a step for a taper that never comes. Measured 1.6 min, bounded here. */
+const VETO_TIME_BOUND_MIN = 2;
+
+if (vetoAddedCrossings.length > 0) {
+  failures.push(
+    `§18 the veto crosses ${CLIFF_C} °C on ${vetoAddedCrossings.length} plant(s) the shipped rule did not ` +
+      `(${vetoAddedCrossings.join(", ")}) — and on the untapered grid it has no excuse at all`
+  );
+}
+if (untaperedVetoes !== EXPECTED_UNTAPERED_VETOES) {
+  failures.push(
+    `§18 the veto fired on ${untaperedVetoes} of ${untaperedTicks} untapered ticks, not the pinned ` +
+      `${EXPECTED_UNTAPERED_VETOES}. Zero would make §15 hold vacuously and a much larger number would make this a ` +
+      `second rule rather than a veto — re-derive it and say why in the commit, as CROSSING_GRID requires`
+  );
+}
+if (worstVetoCostMin > VETO_TIME_BOUND_MIN) {
+  failures.push(
+    `§18 suppressing a step down cost ${worstVetoCostMin.toFixed(1)} min at worst, over the ${VETO_TIME_BOUND_MIN} min ` +
+      `bound. That is what being wrong about the taper costs, and it is supposed to stay small`
+  );
+}
+if (bestVetoSavingMin > -VETO_TIME_BOUND_MIN) {
+  failures.push(
+    `§18 the veto never saved more than ${(-bestVetoSavingMin).toFixed(1)} min on any plant, so it is paying its ` +
+      `${worstVetoCostMin.toFixed(1)} min worst case for nothing — the whole point is that it is faster where the ` +
+      `taper is real`
+  );
+}
+if (worstVetoReversals > shippedGridReversals) {
+  failures.push(
+    `§18 the veto reverses ${worstVetoReversals} times against the shipped rule's ${shippedGridReversals}. Turning a ` +
+      `step down into a hold can only ever REMOVE a reversal, so this means it is doing something else`
+  );
+}
+
+// ⚠️ THE REPLAYS §3, §4 AND §6 PIN THEIR NUMBERS OVER: the veto must not fire on them at all, and
+// there it really is zero — those plants stop at 85-91 % SOC with the current already at the floor.
+//
+// ⚠️ §11'S FROZEN GRID IS A DIFFERENT STORY, and an earlier version of this comment got it wrong by
+// lumping the two together. The veto DOES fire there — 33 ticks on 15 of the 150 plants — and the
+// golden 16 survives DESPITE that rather than because the veto never arrives. Both counts are
+// pinned, because "16 crossings" means something quite different if the veto stops reaching the
+// grid: the number would then be measuring the shipped rule again and nobody would notice.
+let vetoesOnPinnedReplays = 0;
+for (const session of REPLAY_SESSIONS) {
+  for (const plant of PLANTS) {
+    const run = replayCharge({
+      arrivalC: session.arrivalC,
+      ambientC: session.ambientC + plant.ambientOffset,
+      fromSoc: session.fromSoc,
+      toSoc: session.toSoc,
+      cooling: plant.cooling,
+    });
+    vetoesOnPinnedReplays += run.reasons.get(CHARGE_AUTO_REASON.TAPERING) ?? 0;
+  }
+}
+if (vetoesOnPinnedReplays !== 0) {
+  failures.push(
+    `§18 the veto fired ${vetoesOnPinnedReplays} time(s) on the replays §3, §4 and §6 pin their numbers over. Those ` +
+      `numbers were measured without it, so they must be re-derived before this is allowed`
+  );
+}
+
+/** Measured over CROSSING_GRID. Pinned so §11's golden 16 cannot quietly stop being about this rule. */
+const EXPECTED_FROZEN_GRID_VETOES = 33;
+const EXPECTED_FROZEN_GRID_PLANTS = 15;
+let frozenGridVetoes = 0;
+let frozenGridPlants = 0;
+for (const arrivalC of CROSSING_GRID.arrivals) {
+  for (const ambientC of CROSSING_GRID.ambients) {
+    for (const cooling of CROSSING_GRID.coolings) {
+      const run = replayCharge({
+        arrivalC,
+        ambientC,
+        cooling,
+        fromSoc: CROSSING_GRID.fromSoc,
+        toSoc: CROSSING_GRID.toSoc,
+      });
+      const count = run.reasons.get(CHARGE_AUTO_REASON.TAPERING) ?? 0;
+      frozenGridVetoes += count;
+      if (count > 0) {
+        frozenGridPlants += 1;
+      }
+    }
+  }
+}
+if (frozenGridVetoes !== EXPECTED_FROZEN_GRID_VETOES || frozenGridPlants !== EXPECTED_FROZEN_GRID_PLANTS) {
+  failures.push(
+    `§18 the veto fires ${frozenGridVetoes} time(s) on ${frozenGridPlants} of §11's frozen plants, not the pinned ` +
+      `${EXPECTED_FROZEN_GRID_VETOES} on ${EXPECTED_FROZEN_GRID_PLANTS}. §11's golden 16 is measured WITH the veto ` +
+      `reaching the grid, so a change to this count changes what that 16 means`
+  );
+}
+
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);
   for (const failure of failures) {
@@ -873,7 +1246,13 @@ console.log(
     `holds when it is not heating and is reduced when it is, and one at 53 °C is given current back; the ` +
     `controller does not stand down on the echo of its own command through the real write runner, and does on a ` +
     `setpoint that is not ours; on 2026-09-09's own readings it neither throttles at 50-51 °C nor refuses to ` +
-    `climb from 45 A; and ${crossings} of ` +
+    `climb from 45 A; the session-ahead veto turns a step down into a hold and does nothing else across ` +
+    `${propertyCases} generated inputs — never at or above ${TARGET_C} °C, never a raise, never a step — suppresses ` +
+    `the 2026-09-13 over-throttle on its own logged rings, reads the SOC rate as a lower bound and declines above ` +
+    `the ${TAPER_KNEE_SOC} % knee, fires on ${untaperedVetoes} of ${untaperedTicks} untapered grid ticks for at ` +
+    `worst ${worstVetoCostMin.toFixed(1)} min and at best ${(-bestVetoSavingMin).toFixed(1)} saved with no new ` +
+    `crossing, never once on the replays §3, §4 and §6 pin their numbers over and ${frozenGridVetoes} times on ` +
+    `${frozenGridPlants} of §11's frozen plants, which its golden count is measured with; and ${crossings} of ` +
     `${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} frozen-grid ` +
     `plants cross the cliff, a strict subset of the 24 the rule this replaces crossed`
 );
@@ -969,6 +1348,44 @@ function rampTo(fromC: number, toC: number): TemperatureSample[] {
     samples.push({ atMs: step * 150_000, celsius: fromC + step * direction });
   }
   return samples;
+}
+
+/** How many times a command series changes direction — §6 scores the same thing inline. */
+function reversalCount(commands: number[]): number {
+  let count = 0;
+  let direction = 0;
+  for (let index = 1; index < commands.length; index += 1) {
+    const step = Math.sign(commands[index] - commands[index - 1]);
+    if (step !== 0 && direction !== 0 && step !== direction) {
+      count += 1;
+    }
+    if (step !== 0) {
+      direction = step;
+    }
+  }
+  return count;
+}
+
+/**
+ * A SOC ring ending on `percent`, climbing at the ~1.9 %/min every DC session in the log shows at
+ * full current. Eleven points 32 s apart, so the span clears RATE_MIN_SPAN_MS with room.
+ */
+function socRamp(percent: number): SocSample[] {
+  const samples: SocSample[] = [];
+  for (let back = 10; back >= 0; back -= 1) {
+    samples.push({ atMs: 700_000 - back * 32_000, percent: percent - back });
+  }
+  return samples;
+}
+
+/** Whole-percent SOC readings `stepMs` apart, for the estimator's own probes. */
+function socAt(percents: number[], stepMs: number): SocSample[] {
+  return percents.map((percent, index) => ({ atMs: index * stepMs, percent }));
+}
+
+/** What `fast_dc_target_a` read at a given point in the 2026-09-13 stop. */
+function requestedAmpsAt(atMs: number): number {
+  return SEPTEMBER_13_REQUEST_A.filter(step => step.atMs <= atMs).at(-1)?.amps ?? 0;
 }
 
 /** A pack sitting still: the reading never moves, which is what bounds rather than blinds the rate. */

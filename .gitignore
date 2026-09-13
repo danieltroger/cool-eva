@@ -217,3 +217,11 @@ evidence/*.celog
 # hand them over out of band; a map PNG in a public repo is a published GPS trace.
 evidence/*.png
 evidence/*.jpg
+
+# A .celog decrypted for one investigation, written by scripts/decrypt-log.ts --out evidence/… .
+# Large, and full of VIN/GPS — the same reason rides.db above is ignored. Trailing glob so the
+# WAL and shm files beside it are covered too. The throwaway scripts that read one go here as
+# well: tsconfig's include list reaches `*.ts` at the root but not this directory, so a scratch
+# replay parked here cannot break `npm run typecheck` the way one in the root does.
+evidence/*.db*
+evidence/*.ts
