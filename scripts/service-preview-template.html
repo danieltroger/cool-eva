@@ -778,11 +778,16 @@
           // screenshotted disagreeing with each other, which is the one thing this card is for.
           // `?clear=nothing` shows the OTHER real ending — the 2026-08-08 / 2026-09-11 shape,
           // where the bike answers 44 and PID 31 does not move.
-          const erasedNothing = new URLSearchParams(window.location.search).get("clear") === "nothing";
+          // `?clear=nothing` is the 2026-08-08 / 2026-09-11 shape — a positive 44 with PID 31
+          // unmoved. `?clear=retry` is the commonest third case: pressing again a minute later,
+          // when PID 31 already reads 0 and so cannot prove anything either way.
+          const ending = new URLSearchParams(window.location.search).get("clear");
+          const erasedNothing = ending === "nothing";
+          const retry = ending === "retry";
           const clear = {
-            storedBefore: 46,
+            storedBefore: retry ? 5 : 46,
             storedAfter: erasedNothing ? 46 : 5,
-            distSinceClearBeforeKm: 19671,
+            distSinceClearBeforeKm: retry ? 0 : 19671,
             distSinceClearAfterKm: erasedNothing ? 19671 : 0,
             listedAfter: erasedNothing ? null : 5,
           };
@@ -796,8 +801,10 @@
             action: "clear-dtcs",
             status: "cleared",
             message: erasedNothing
-              ? "⚠️ Mode 04 was accepted AND THE BIKE ERASED NOTHING: distance since codes cleared still reads 19671 km, which a real clear resets to zero within half a second. This has happened twice before, both times with a cable or a charge involved — unplug and try again."
-              : "Cleared: 46 stored → 5 stored, 41 cleared. Distance since codes cleared went 19671 km → 0 km, which is the proof the bike really erased its fault memory. The list now holds 5. Codes whose faults are still active come straight back.",
+              ? "⚠️ Mode 04 was accepted AND THE BIKE ERASED NOTHING: distance since codes cleared still reads 19671 km, which a real clear resets to zero within half a second. This has happened twice before, both times with a cable or a charge involved."
+              : retry
+                ? "Mode 04 accepted, but nothing here proves the bike acted on it — a positive answer alone has twice meant nothing on this bike. The list now holds 5. Distance since codes cleared already read 0 km before the press, so it cannot show a reset. Ride, then read the Faults tab."
+                : "Cleared: 46 stored → 5 stored, 41 cleared. Distance since codes cleared went 19671 km → 0 km, which is the proof the bike really erased its fault memory. The list now holds 5. Codes whose faults are still active come straight back.",
             succeeded: !erasedNothing,
             clear,
           };

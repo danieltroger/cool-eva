@@ -3,7 +3,7 @@ import type { DecodedValue } from "./frame.ts";
 import { record } from "./signals.ts";
 import { monotonicNow, since } from "../monotonic.ts";
 import { handleTroubleCodeFrame, requestTroubleCodeList } from "./obd-dtc.ts";
-import { parkedForHold } from "./obd-hold.ts";
+import { obdPollerHeldBy, parkedForHold } from "./obd-hold.ts";
 import { MODE_PENDING_DTCS, MODE_PERMANENT_DTCS, MODE_STORED_DTCS } from "../diagnostics/obd-dtc.ts";
 import { FREEZE_FRAME_DTC_KEY, recordFreezeFrameDtc, recordTroubleCodeRead } from "../diagnostics/stored-codes.ts";
 
@@ -17,6 +17,9 @@ import { FREEZE_FRAME_DTC_KEY, recordFreezeFrameDtc, recordTroubleCodeRead } fro
 // of their own, on purpose: pollOnce is strictly sequential, so nothing of ours is
 // on 0x7DF while a multiframe transfer is running — and a request arriving
 // mid-transfer is what makes the VCU abandon it.
+
+/** How long one mode-01 PID may take to answer. Exported so the clear's hold budget can be pinned to it. */
+export const PID_TIMEOUT_MS = 200;
 
 const OBD_REQ_ID = 0x7df;
 const OBD_RESP_LO = 0x7e0;
@@ -143,31 +146,33 @@ export function handleResponse(id: number, data: Buffer): void {
 }
 
 /**
- * Polls ONE mode-01 PID right now, on a channel the caller names, and files it exactly
- * as the loop would — decode, `record`, and the freeze-frame hook.
+ * Polls ONE mode-01 PID right now, on a channel the caller names, and files it exactly as the
+ * loop would — decode, `record`, and the freeze-frame hook.
  *
- * For the service-mode clear (src/vcu/write-runner.ts), which parks this poller and then
- * needs `dtc_count`, `dist_since_clear_km` and the freeze-frame code read on both sides of
- * an OBD Mode 04 rather than whenever the loop next gets to them — two of the three sit on
- * DIAGNOSTIC_ROUND_DIVISOR, so "before" and "after" would otherwise be up to 10 s apart and
- * describe two different bikes.
+ * For the service-mode clear (src/vcu/clear-dtcs.ts), which parks this poller and then needs
+ * `dtc_count`, `dist_since_clear_km` and the freeze-frame code read on both sides of an OBD
+ * Mode 04 rather than whenever the loop next gets to them — two of the three sit on
+ * DIAGNOSTIC_ROUND_DIVISOR, so "before" and "after" would otherwise be up to 10 s apart.
  *
- * ⚠️ Returns the DECODE, not the bytes. An earlier version of this export handed back the
- * raw frame and let the caller pick the value out, which silently dropped PID 0x01's second
- * signal (it decodes to `mil_on` AND `dtc_count`) and skipped `recordFreezeFrameDtc` for
- * PID 0x02 — so the one thing the freeze-frame read exists to answer would not have been
- * recorded. Everything that files a PID files it through here or through pollOnce, and both
- * go through decodedValues().
+ * ⚠️ Returns the DECODE, not the bytes, and why that matters: docs/clear-dtcs.md §6.
  *
- * ⚠️ Takes the channel explicitly rather than using this module's. In the service the two
- * are the same object, but nothing enforces that, and a null module channel would make this
- * answer "the bike said nothing" when the truth is that we never asked.
+ * ⚠️ Takes the channel explicitly rather than using this module's. In the service the two are
+ * the same object, but nothing enforces it, and a null module channel would make this answer
+ * "the bike said nothing" when the truth is that we never asked.
  */
 export async function pollPidNow(target: RawChannel, pid: number): Promise<boolean> {
   const def = PIDS.find(candidate => candidate.pid === pid);
   if (!def) {
     console.warn(`obd: asked to poll PID 0x${pid.toString(16)}, which is not in the table — ignored`);
     return false;
+  }
+  // ⚠️ Loud rather than enforced. This shares the module-level `pending` map with pollOnce, so a
+  // running loop asking for the same PID collides: the first timer deletes the second's entry and
+  // both sides time out. Warned instead of refused because the hold is capped BY THE LOOP — a
+  // read-back that overruns 15 s finds the poller back underneath it, and a silent refusal there
+  // would look like a bike that said nothing. Same shape as troubleCodeTransferInFlight().
+  if (obdPollerHeldBy() === null) {
+    console.warn(`obd: pollPidNow(0x${pid.toString(16)}) with the poller UNPARKED — replies may be crossed`);
   }
   const response = await requestPid(target, pid);
   if (!response) {
@@ -191,7 +196,7 @@ function fileResponse(def: PidDef, response: Buffer): void {
   }
 }
 
-function requestPid(target: RawChannel | undefined, pid: number, timeoutMs = 200): Promise<Buffer | null> {
+function requestPid(target: RawChannel | undefined, pid: number, timeoutMs = PID_TIMEOUT_MS): Promise<Buffer | null> {
   if (!target) return Promise.resolve(null);
   return new Promise(resolve => {
     const timer = setTimeout(() => {

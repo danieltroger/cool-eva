@@ -76,6 +76,14 @@ const warningsOpen = van.state(false);
  */
 const dangerOpen = van.state(false);
 /**
+ * The counters either side of the last clear made from this page, or null.
+ *
+ * Its own state rather than read off `state.val.result` for the reason StampOutcome has one: a
+ * request that never comes back leaves the PREVIOUS answer in `state`, and a stale green proof
+ * under a button whose press just vanished is the worst thing this card could say.
+ */
+const clearOutcome = van.state(/** @type {ClearDtcsCounts | null} */ (null));
+/**
  * The last write attempt made from this page, so the outcome and the verification hint
  * can be shown against the parameter they belong to rather than to whatever is selected
  * when the answer lands.
@@ -1352,6 +1360,14 @@ function IrreversibleActions() {
         onclick: () => {
           dangerOpen.val = !dangerOpen.val;
           armed.val = "";
+          // ⚠️ The only re-poll of /vcu-write while the sheet is open, and the Clear card's cable
+          // caution is why it exists: the gate the browser holds is otherwise the one fetched when
+          // the sheet was opened, so plugging the bike in after opening it produced no warning at
+          // all. Opening this fold is the last deliberate act before an irreversible tap, which
+          // makes it the right moment — and it is one request that touches nothing on the bike.
+          if (dangerOpen.val) {
+            void fetchStatus();
+          }
         },
       },
       // ⚠️ The SENTENCE does not change between states — only the caret turns, so the
@@ -1476,16 +1492,35 @@ function clearCodesCaution() {
  * ⚠️ A positive `44` is not the verdict — twice this bike sent one and erased nothing. The
  * verdict is PID 31: a real clear resets distance-since-codes-cleared to zero within half a
  * second, and nothing else a parked bike does moves it.
+ *
+ * ⚠️ Reads `clearOutcome`, not `state.val.result`. A second press that never comes back leaves
+ * the previous answer sitting in `state` — `send()`'s catch deliberately does not touch it — so
+ * reading the result directly left a green "erased" proof under a button whose request had just
+ * vanished. Same reason StampOutcome has its own state.
  */
 function ClearOutcome() {
   return div(() => {
-    const result = state.val?.result;
-    if (!result || result.action !== "clear-dtcs" || !result.clear) {
+    const counts = clearOutcome.val;
+    if (counts === null) {
       return div();
     }
-    const read = describeClearCounts(result.clear);
-    const colour = read.erased === true ? GOOD : read.erased === false ? BAD : WATCH;
-    return div({ class: "action-note", style: `color:${colour}` }, div(read.sweep), div(read.proof));
+    const read = describeClearCounts(counts);
+    if (read.erased === false) {
+      // ⚠️ WEIGHT, not hue. --bad and --warn are 16.0 apart in a*b* — the tightest adjacent pair
+      // in the ramp — so in light theme this line sat between two amber cautions as the third
+      // near-identical dark-red paragraph, and the one sentence that matters did not read as an
+      // outcome. Same argument, and the same badge treatment, as NoUndoLine.
+      return div(
+        { class: "action-note clear-verdict-bad" },
+        div(span({ class: "no-undo-badge" }, "ERASED NOTHING"), ` ${read.proof}`),
+        div({ class: "clear-verdict-sweep" }, read.sweep)
+      );
+    }
+    return div(
+      { class: "action-note", style: `color:${read.erased === true ? GOOD : WATCH}` },
+      div(read.sweep),
+      div(read.proof)
+    );
   });
 }
 
@@ -1493,30 +1528,55 @@ function ClearOutcome() {
  * The two lines, as plain data so scripts/check-clear-dtcs.ts can assert on them without a
  * browser — the same reason `confirmationFor` is a function and not an inline template.
  *
- * `erased`: true when PID 31 proves it, false when PID 31 proves it did NOT, null when the
- * counter could not be read. Three states and not a boolean, because "we could not check" and
- * "we checked and it did nothing" were the same thing on this screen until 2026-09-13.
+ * `erased`: true when PID 31 proves it, false when PID 31 proves the opposite, null when it
+ * cannot say. Three states and not a boolean, because "we could not check" and "we checked and
+ * it did nothing" were the same pixel until 2026-09-13.
+ *
+ * ⚠️ The server decides the same thing in `judgeErasure` (src/vcu/clear-dtcs.ts) and this must
+ * agree with it. `public/` has no build step and cannot import a `.ts` at runtime, so the two
+ * are written twice on purpose and check-clear-dtcs.ts §7 asserts they never disagree.
  *
  * @param {ClearDtcsCounts} counts
  * @returns {{ sweep: string, proof: string, erased: boolean | null }}
  */
 export function describeClearCounts(counts) {
-  const sweep =
-    counts.storedBefore === null || counts.storedAfter === null
-      ? "stored count could not be read"
-      : `${counts.storedBefore} stored → ${counts.storedAfter} stored, ${counts.storedBefore - counts.storedAfter} cleared`;
-  if (counts.distSinceClearAfterKm === null) {
-    return { sweep, proof: "distance since clear could not be read — erasure unconfirmed", erased: null };
+  const sweep = describeSweep(counts);
+  if (counts.distSinceClearAfterKm === null || counts.distSinceClearBeforeKm === null) {
+    return { sweep, proof: "distance since clear could not be read — this press cannot be judged", erased: null };
   }
   if (counts.distSinceClearAfterKm !== 0) {
     return {
       sweep,
-      proof: `⚠️ distance since clear still reads ${counts.distSinceClearAfterKm} km — the bike erased nothing`,
+      proof: `distance since clear still reads ${counts.distSinceClearAfterKm} km — the bike erased nothing`,
       erased: false,
     };
   }
-  const from = counts.distSinceClearBeforeKm === null ? "?" : String(counts.distSinceClearBeforeKm);
-  return { sweep, proof: `distance since clear ${from} km → 0 km — erased`, erased: true };
+  if (counts.distSinceClearBeforeKm === 0) {
+    // ⚠️ Zero before AND after proves nothing, and it is the COMMON retry: five codes came back
+    // within a second on 2026-09-13, so pressing again a minute later lands here — on exactly the
+    // shape the two failures had, with the screen previously calling it proven.
+    return {
+      sweep,
+      proof: "distance since clear already read 0 km — nothing here can prove this press did anything",
+      erased: null,
+    };
+  }
+  return { sweep, proof: `distance since clear ${counts.distSinceClearBeforeKm} km → 0 km — erased`, erased: true };
+}
+
+/**
+ * `46 stored → 5 stored, 41 cleared`. Never a negative count: a code can re-latch between the
+ * two PID 01 reads, which this bike does within a second.
+ *
+ * @param {ClearDtcsCounts} counts
+ */
+function describeSweep(counts) {
+  if (counts.storedBefore === null || counts.storedAfter === null) {
+    return "stored count could not be read";
+  }
+  const swept = counts.storedBefore - counts.storedAfter;
+  const tail = swept < 0 ? `${-swept} MORE than before` : `${swept} cleared`;
+  return `${counts.storedBefore} stored → ${counts.storedAfter} stored, ${tail}`;
 }
 
 const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
@@ -1701,13 +1761,14 @@ function ActionButton(action, caption, notes) {
       // since #81 for the same reason (see describeChange): the caption is the one
       // place a person commits, and a thumb that landed on the wrong control is
       // exactly the case it exists to catch.
-      // ⚠️ Three captions, not two. A clear now parks the OBD poller and reads the bike back
-      // on both sides of the frame, so the POST takes up to ~11 s where it used to take 0.6 —
-      // and a 55 px control that looks identical for eleven seconds in a garage gets pressed
-      // again. `disabled` already refuses the second press; this is what says why.
+      // ⚠️ Three captions, not two. A clear now parks the OBD poller and reads the bike back on
+      // both sides of the frame, so its POST takes up to ~11 s where it used to take 0.6 — and a
+      // 55 px control that looks identical for eleven seconds in a garage gets pressed again.
+      // `disabled` already refuses the second press; this is what says why. Deliberately generic:
+      // all four ActionButtons share it and two of them read nothing back.
       () => {
         if (busy.val && working.val === key) {
-          return `⏳  Working — reading the bike back…`;
+          return "⏳  Working…";
         }
         return armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption();
       }
@@ -1765,10 +1826,7 @@ function NoteBlock(notes) {
     // binds on the function, not on the string it returned when this node was built.
     caution === undefined
       ? div()
-      : // A thunk, so a caution that reads the gate re-renders when the gate moves. VanJS binds
-        // on the function, not on the string it returned when this node was built.
-        //
-        // ⚠️ Split on blank lines into separate paragraphs. The cable warning is a second
+      : // ⚠️ Split on blank lines into separate paragraphs. The cable warning is a second
         // argument against pressing, not a continuation of the first, and run together as one
         // block it read as "…come straight back. ⚠️ The charge manager reports…" — two warnings
         // sharing a sentence, which is how the more urgent one gets skipped.
@@ -2218,6 +2276,12 @@ async function performAction(action, confirmation) {
     }
     return;
   }
+  if (action === "clear-dtcs") {
+    // Null on a transport failure too: `send()` leaves `state` alone there, and the previous
+    // press's proof must not stand under a request that never came back.
+    clearOutcome.val = payload?.result?.clear ?? null;
+    return;
+  }
   if (action === "set-service-point") {
     // ⚠️ `31 FC` overwrote the block the read reports, and it is two taps away in the same
     // fold. What was on screen is now false. Cleared rather than refilled with the routine's
@@ -2302,6 +2366,7 @@ export async function refreshVcuWrite() {
   lightsProgress.val = "";
   // An answer read through a previous sheet-opening must not be read as this one's.
   stampOutcome.val = null;
+  clearOutcome.val = null;
   forgetSelection();
   await fetchStatus();
 }

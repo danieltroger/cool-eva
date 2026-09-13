@@ -78,7 +78,7 @@ const FLOW_CONTROL_FRAME = [0x30, 0x00, 0x00];
  * Keeping it well below the transfer budget is what stops modes 07 and 0A costing
  * the mode-01 poller a second of blind time every read.
  */
-const FIRST_REPLY_TIMEOUT_MS = 300;
+export const FIRST_REPLY_TIMEOUT_MS = 300;
 
 /**
  * How long to wait for the rest, once a First Frame has arrived. Every completed
@@ -86,7 +86,7 @@ const FIRST_REPLY_TIMEOUT_MS = 300;
  * ~4× the observed worst case — and a stalled one has never later recovered, so
  * spending longer here only lengthens the retry cycle.
  */
-const TRANSFER_TIMEOUT_MS = 400;
+export const TRANSFER_TIMEOUT_MS = 400;
 
 /**
  * Extra tries when a transfer starts and then stalls. Five attempts at the pessimistic
@@ -99,14 +99,14 @@ const TRANSFER_TIMEOUT_MS = 400;
  * modes 07 and 0A answer nothing, and hammering a bus shared with the ABS and the
  * BMS to establish it a seventh time is not a trade worth making.
  */
-const RETRY_ATTEMPTS = 4;
+export const RETRY_ATTEMPTS = 4;
 
 /**
  * Breather between attempts. The VCU has just abandoned an ISO-TP transfer it
  * thinks is still open, and firing the next request into that is both impolite to
  * a bus we share with the brakes and the likeliest way to keep it stuck.
  */
-const RETRY_GAP_MS = 120;
+export const RETRY_GAP_MS = 120;
 
 export type DtcReadOutcome =
   /** A reply arrived and decoded. `response` may still be a refusal. */

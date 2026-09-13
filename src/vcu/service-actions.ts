@@ -359,10 +359,14 @@ export function buildClearDtcsFrame(): Uint8Array {
 /**
  * Could this frame be an answer to OUR Mode 04, rather than somebody else's traffic?
  *
- * ⚠️ This exists because the always-on OBD poller never stops: it keeps sending mode-01 PID
- * requests, and every 120th round a multi-frame mode-03 transfer, throughout the 300 ms
- * window a Mode 04 reply is awaited in — and the bus lease does not cover it. So "the first
- * frame in 0x7E0-0x7EF" is not our answer. The KWP legs of a write need no equivalent,
+ * ⚠️ This exists because the OBD poller holds no bus lease and service mode does not otherwise
+ * stop it: it keeps sending mode-01 PID requests, and every 120th round a multi-frame mode-03
+ * transfer. So "the first frame in 0x7E0-0x7EF" is not our answer.
+ *
+ * ⚠️ Since src/vcu/clear-dtcs.ts, the only Mode 04 caller PARKS the poller for the exchange, so
+ * the bus is quiet for the 300 ms window this guards. It stays as defence in depth — the hold is
+ * capped by the loop at 15 s, so a read-back that overruns finds the poller back underneath it —
+ * but the poller's traffic is no longer the ordinary case, and this comment used to say it was. The KWP legs of a write need no equivalent,
  * because `parseResponseFrame` requires byte 0 to be the tester's address 0xF1 and no
  * ISO-TP PCI byte can be 0xF1; Mode 04 has no such discriminator built in.
  *

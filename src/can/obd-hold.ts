@@ -26,7 +26,7 @@ export interface ObdPollerHold {
  * opens — comfortably inside ten seconds. Past that, something is wrong with the read
  * and telemetry matters more.
  */
-const MAX_HOLD_MS = 15_000;
+export const MAX_HOLD_MS = 15_000;
 
 /**
  * How long to WAIT for the loop to park before giving up.
@@ -38,7 +38,7 @@ const MAX_HOLD_MS = 15_000;
  * of those calls is awaited, so the implication above holds at all three. The common
  * case is one `requestPid` timeout, 200 ms, since 119 rounds in 120 are PIDs only.
  */
-const HOLD_WAIT_MS = 6000;
+export const HOLD_WAIT_MS = 6000;
 
 let hold: {
   name: string;

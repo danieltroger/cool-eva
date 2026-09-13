@@ -64,7 +64,7 @@ Partly the bike, and partly us. `/stored-dtcs` serves whatever the mode-03 polle
 - `/stored-dtcs` at 21:54:50.4Z answered **46 codes**, its own `readAt` = 21:53:47.2Z, `ageMs` = 63 493 — a list read **44.7 s before the press**
 - next mode-03 read **21:55:51.2Z**; fetched at 21:56:29.2Z it answered **5**, `ageMs` 38.4 s
 
-**79 seconds of showing the pre-press list under a button that had just said the list was gone.** That is the window a human presses in. It did not cause the two failures — `dtc_count` is a 10-second poll with no such cache and it did not move on either occasion — but it is why the screen could not have told anyone the difference. The clear path now invalidates the stored list and asks the poller for an immediate re-read; `/stored-dtcs` still never touches the bus.
+**79 seconds of showing the pre-press list under a button that had just said the list was gone.** That is the window a human presses in. It did not cause the two failures — `dtc_count` is a 10-second poll with no such cache and it did not move on either occasion — but it is why the screen could not have told anyone the difference. The clear path now re-reads the list itself, on the parked bus, before it answers — see §5. `/stored-dtcs` still never touches the bus.
 
 ## 5. What the button does now
 
@@ -85,3 +85,9 @@ The whole parked window is ≈5.3 s against `obd-hold.ts`'s 15 s cap. The margin
 ⚠️ **The gate watchdog stops watching when the frame lands, not when the action returns.** `context.running` is cleared as soon as the Mode 04 outcome settles, and the watchdog only warns and aborts while it is set. What remains after that point is four OBD reads — byte for byte what the always-on poller emits at 2 Hz on a moving bike with no gate over it at all — so there is nothing there for the gate to protect, and the actuating half is already done and irreversible. Leaving `running` set through the read-back made the watchdog announce aborts it never performed, into the only witness this bike has. `src/vcu/read-runner.ts`'s equivalent watchdog is deliberately NOT changed: its `onUnsafe` has teeth for its whole window, because `client.stop()` refuses every subsequent transmit, so it is not making a claim it cannot keep.
 
 Covered by `scripts/check-clear-dtcs.ts`, whose §5 pays 150 ms per PID reply for a reason: with an instant fake bus the whole action finishes inside one 200 ms watchdog tick and the section passes whatever the code does. It asserts the tick count so that a future edit cannot quietly make it vacuous again.
+
+## 6. Why `pollPidNow` returns the decode and not the bytes
+
+An earlier draft of that export handed back the raw frame and let the caller pick the value out of it. That silently dropped PID 01's second signal — it decodes to `mil_on` **and** `dtc_count`, and a caller reading byte A gets only one of them — and skipped `recordFreezeFrameDtc` for PID 02 entirely, which is the hook the freeze-frame question in §1 depends on. Everything that files a PID now files it through `fileResponse`, shared with the poll loop, so the two cannot diverge.
+
+⚠️ It also warns when the poller is not parked. It shares the module-level `pending` map with `pollOnce`, and PID 31 is polled every round, so an unparked loop asking for the same PID collides: the first timer deletes the second's entry and both sides time out. Warned rather than refused because the hold is capped **by the loop** — a read-back that overruns 15 s finds the poller back underneath it, and a silent refusal there would look like a bike that said nothing.

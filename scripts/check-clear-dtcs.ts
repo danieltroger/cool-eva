@@ -1,9 +1,14 @@
 import type { CanMessage, RawChannel, RxFilter } from "socketcan";
 import { handleResponse, pollPidNow } from "../src/can/obd.ts";
 import { troubleCodeSnapshot } from "../src/diagnostics/stored-codes.ts";
-import { createVcuWriteRunner, type ClearDtcsCounts, type VcuWriteRunner } from "../src/vcu/write-runner.ts";
+import { createVcuWriteRunner, type VcuWriteRunner } from "../src/vcu/write-runner.ts";
+import type { ClearDtcsCounts } from "../src/vcu/clear-dtcs.ts";
 import type { ServiceGateCheckState, ServiceGateVerdict } from "../src/vcu/service-gate.ts";
 import { chargerIsAttached, describeClearCounts } from "../public/views/vcu-write.js";
+import { judgeErasure, type ErasureVerdict } from "../src/vcu/clear-dtcs.ts";
+import { FIRST_REPLY_TIMEOUT_MS, RETRY_ATTEMPTS, RETRY_GAP_MS, TRANSFER_TIMEOUT_MS } from "../src/can/obd-dtc.ts";
+import { MAX_HOLD_MS } from "../src/can/obd-hold.ts";
+import { PID_TIMEOUT_MS } from "../src/can/obd.ts";
 import {
   CAPTURED_MODE_03_FRAMES_2026_08_04,
   CAPTURED_STORED_CODE_COUNT,
@@ -60,6 +65,14 @@ interface FakeBusOptions {
    * per-frame delay there fails the transfer instead of pacing it.
    */
   pidDelayMs?: number;
+  /** How long the Mode 04 reply takes. Default 0; used to hold `context.running` across a tick. */
+  modeFourDelayMs?: number;
+  /** Called the instant the Mode 04 REQUEST is seen on the bus, before any reply. */
+  onModeFour?: () => void;
+  /** Called the instant the mode-03 list request is seen — i.e. the read-back has begun. */
+  onListRequest?: () => void;
+  /** Called for each mode-01 request, with how many have been sent so far (1-based). */
+  onPidRequest?: (sent: number) => void;
 }
 
 interface FakeBus {
@@ -81,6 +94,7 @@ function fakeBus(options: FakeBusOptions): FakeBus {
   let cleared = false;
   let runner: VcuWriteRunner | null = null;
   let listCursor = 0;
+  let pidRequests = 0;
 
   const deliver = (data: Buffer, delayMs = 0): void => {
     setTimeout(() => {
@@ -104,14 +118,18 @@ function fakeBus(options: FakeBusOptions): FakeBus {
         return;
       }
       if (bytes[1] === 0x04) {
+        options.onModeFour?.();
         answerModeFour();
         return;
       }
       if (bytes[1] === 0x03) {
+        options.onListRequest?.();
         answerListFirstFrame();
         return;
       }
       if (bytes[1] === 0x01) {
+        pidRequests += 1;
+        options.onPidRequest?.(pidRequests);
         answerPid(bytes[2]);
       }
     },
@@ -130,7 +148,8 @@ function fakeBus(options: FakeBusOptions): FakeBus {
       options.clearReply === "positive"
         ? Buffer.from([0x01, 0x44, 0, 0, 0, 0, 0, 0])
         : // 7F 04 22 — conditionsNotCorrect, the refusal an ECU gives while a fault is live.
-          Buffer.from([0x03, 0x7f, 0x04, 0x22, 0, 0, 0, 0])
+          Buffer.from([0x03, 0x7f, 0x04, 0x22, 0, 0, 0, 0]),
+      options.modeFourDelayMs ?? 0
     );
   }
 
@@ -183,6 +202,8 @@ function gateVerdict(inlet: ServiceGateCheckState | null, chargingEvidence: stri
 
 interface HarnessOptions extends FakeBusOptions {
   grantHold?: boolean;
+  /** Called the moment the hold is granted, so a section can turn the bike unsafe during the park. */
+  onHoldGranted?: () => void;
   /** Called each time the gate is sampled, so a section can turn the bike unsafe mid-action. */
   gateAt?: (sample: number) => ServiceGateVerdict;
 }
@@ -219,6 +240,7 @@ async function harness(options: HarnessOptions): Promise<Harness> {
       }
       holdLog.push(`held:${what}`);
       sentAtHold = bus.sent.length;
+      options.onHoldGranted?.();
       return Promise.resolve({ release: () => holdLog.push("released") });
     },
   });
@@ -372,6 +394,64 @@ console.log("\n3. the endings that are not a clear");
   );
 }
 
+// ⚠️ H1: the gate is sampled once in checkPreconditions, and parking the poller can take up to
+// HOLD_WAIT_MS. Nothing is in flight through any of it, so the watchdog cannot cover it — the
+// re-checks inside performClearDtcs are the only thing standing between that one reading and an
+// irreversible frame. A bike rolled while the poller parks must not get its memory erased.
+
+{
+  let rolling = false;
+  const kit = await harness({
+    clearReply: "positive",
+    listFrames: null,
+    before: BEFORE,
+    after: AFTER_ERASED,
+    onHoldGranted: () => {
+      rolling = true;
+    },
+    gateAt: () =>
+      rolling
+        ? { safe: false, blockers: ["road speed is zero — it reads 12"], checks: [], chargingEvidence: null }
+        : gateVerdict(null, null),
+  });
+  const answer = await kit.runner.perform({ kind: "clear-dtcs" });
+  check("a bike that rolls while the poller parks refuses the clear", !answer.ok);
+  check("and NOT ONE FRAME reaches the bus", kit.bus.sent.length === 0);
+  check("the refusal names the blocker", !answer.ok && answer.reason.includes("road speed is zero — it reads 12"));
+  check("the hold taken for it is still released", kit.holdLog.includes("released"));
+}
+
+// ⚠️ And again one step later. The two before-PIDs take 400 ms of their own, so a re-check that
+// only runs when the hold is granted still leaves that window between the last gate reading and
+// the frame. This case flips the bike unsafe after the counters are read and before the transmit.
+
+{
+  let rolling = false;
+  const kit = await harness({
+    clearReply: "positive",
+    listFrames: null,
+    before: BEFORE,
+    after: AFTER_ERASED,
+    onPidRequest: sent => {
+      if (sent >= 2) {
+        rolling = true;
+      }
+    },
+    gateAt: () =>
+      rolling
+        ? { safe: false, blockers: ["road speed is zero — it reads 9"], checks: [], chargingEvidence: null }
+        : gateVerdict(null, null),
+  });
+  const answer = await kit.runner.perform({ kind: "clear-dtcs" });
+  check("a bike that rolls while the counters are read refuses the clear", !answer.ok);
+  check(
+    "the two harmless PID reads went out, and NO Mode 04 did",
+    kit.bus.sent.every(frame => !frame.startsWith("7df 01 04"))
+  );
+  check("the refusal names that window", !answer.ok && answer.reason.includes("while the counters were read"));
+  check("the hold is released", kit.holdLog.includes("released"));
+}
+
 // --- 4. A clear whose read-back cannot answer ----------------------------------
 
 console.log("\n4. a clear that lands and cannot be confirmed");
@@ -388,52 +468,128 @@ console.log("\n4. a clear that lands and cannot be confirmed");
   check("the counters come back null rather than zero", result?.clear?.distSinceClearAfterKm === null);
   check("`0 cleared` is never invented", result?.clear?.storedAfter === null);
   check(
-    "the message says it could not be confirmed",
-    (result?.message ?? "").includes("could not be read back to confirm")
+    "the message says nothing proves the bike acted",
+    (result?.message ?? "").includes("nothing here proves the bike acted on it")
   );
+  check("and names the reason", (result?.message ?? "").includes("counters could not be read back"));
   check("an unread counter is not reported as a failure", result?.succeeded === true);
 }
 
-// --- 5. The gate watchdog must not announce an abort it did not perform --------
+// --- 5. The gate watchdog: teeth while the frame is in flight, silence afterwards ----
 //
-// ⚠️ `context.running` used to mean "an action is running" and be cleared only in `perform`'s
-// finally, while the watchdog read it as "an exchange is in flight". Those coincided until the
-// read-back was appended after the frame. A bike that stops being safe DURING the read-back now
-// finds nothing to abort — the actuating half is over and what remains is four OBD reads, which
-// is byte for byte what the always-on poller emits with no gate over it at all.
+// ⚠️ TWO SECTIONS, AND THE FIRST IS THE POSITIVE CONTROL. `context.running` is cleared as soon as
+// the Mode 04 outcome settles, and the watchdog returns early when it is null — so "no ABORTING
+// was logged" is worthless on its own: with an instant bus `running` is non-null for about a
+// millisecond and no 200 ms tick ever lands inside it, and the whole warn/abort body could be
+// deleted with both assertions still green. §5a holds the exchange open across a tick and asserts
+// the watchdog DOES cut it short; §5b then asserts it stays quiet once the frame has landed.
 
-console.log("\n5. the gate turning unsafe after the frame has landed");
+console.log("\n5a. a bike that rolls WHILE the Mode 04 is in flight");
 
 {
   const warnings: string[] = [];
-  let gateSamples = 0;
   const realWarn = console.warn;
   console.warn = (...args: unknown[]) => {
     warnings.push(args.map(String).join(" "));
   };
   try {
+    let rolling = false;
+    let ticksWhileInFlight = 0;
+    let inFlight = false;
+    const kit = await harness({
+      clearReply: "positive",
+      listFrames: null,
+      before: BEFORE,
+      after: AFTER_ERASED,
+      // The reply is held for 500 ms — longer than the 200 ms watchdog interval — so the tick
+      // lands while `context.running` is genuinely set. This is the only window in which the
+      // watchdog has anything to abort, and before this section nothing exercised it.
+      modeFourDelayMs: 500,
+      onModeFour: () => {
+        rolling = true;
+        inFlight = true;
+      },
+      gateAt: () => {
+        if (inFlight) {
+          ticksWhileInFlight += 1;
+        }
+        return rolling
+          ? { safe: false, blockers: ["road speed is zero — it reads 7"], checks: [], chargingEvidence: null }
+          : gateVerdict(null, null);
+      },
+    });
+    const answer = await kit.runner.perform({ kind: "clear-dtcs" });
+    const result = answer.ok ? answer.result : null;
+
+    // Exactly one: `fired` short-circuits every later tick before it reads the gate again. One is
+    // all that is needed, and it is one more than the previous version of this section ever got.
+    check("the watchdog sampled the gate while the frame was in flight", ticksWhileInFlight >= 1);
+    check(
+      "it announces the abort",
+      warnings.some(line => line.includes("ABORTING"))
+    );
+    check(
+      "it names the blocker",
+      warnings.some(line => line.includes("road speed is zero — it reads 7"))
+    );
+    check("the exchange is cut short rather than reported as cleared", result?.status !== "cleared");
+    // ⚠️ Not `status !== "cleared"` alone — a plain 300 ms timeout gives that too, so the previous
+    // version of this assertion passed with the watchdog's teeth removed. An abort settles the
+    // pending request as an EMPTY payload (write-session.ts's stop()), which decodes as
+    // "unrecognised" with this reason; a timeout says "no reply within the 300 ms window".
+    check(
+      "and it is the ABORT that cut it, not the reply window expiring",
+      (result?.message ?? "").includes("frame shorter than a PCI byte")
+    );
+    check("nothing is claimed about the counters", result?.clear === undefined);
+    check("the hold is released even when the watchdog fires", kit.holdLog.includes("released"));
+  } finally {
+    console.warn = realWarn;
+  }
+}
+
+// ⚠️ The mirror. A bike that rolls AFTER the frame has landed finds nothing to abort — the
+// actuating half is over and what remains is four OBD reads, byte for byte what the always-on
+// poller emits at 2 Hz with no gate over it at all. What must NOT happen is the journal recording
+// an abort that never occurred, which is what it did before `context.running` was cleared early.
+
+console.log("\n5b. a bike that rolls once the frame has landed");
+
+{
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    let readingBack = false;
+    let ticksDuringReadBack = 0;
     const kit = await harness({
       clearReply: "positive",
       listFrames: CAPTURED_MODE_03_FRAMES_2026_08_04,
       before: BEFORE,
       after: AFTER_ERASED,
-      // ⚠️ 150 ms per PID reply so the read-back OUTLASTS the 200 ms watchdog interval. Without
-      // it the whole action finishes inside a single tick, the watchdog never samples the unsafe
-      // gate, and both assertions below pass whatever the code does — which is what this section
-      // did on its first run, and is the trap docs/diagnostics-and-checks.md §11.3 warns about.
-      // The tick count is asserted for exactly that reason: a vacuous section must go red.
+      // ⚠️ 150 ms per PID reply so the read-back OUTLASTS the 200 ms watchdog interval, and the
+      // tick count below is asserted so this section cannot go vacuous the way it first did.
+      // 150 and not more: obd.ts gives a PID 200 ms, and the mode-03 frames must not be paced at
+      // all — the transport gives a whole transfer 400 ms.
       pidDelayMs: 150,
-      // Sample 1 is `checkPreconditions`; everything after it is the watchdog.
-      gateAt: sample => {
-        gateSamples = sample;
-        return sample <= 1
-          ? gateVerdict(null, null)
-          : { safe: false, blockers: ["road speed is zero — it reads 4"], checks: [], chargingEvidence: null };
+      // Flipped on the LIST REQUEST, not on a sample index: that frame is only ever sent by the
+      // read-back, so the phase is read off the bus rather than counted.
+      onListRequest: () => {
+        readingBack = true;
+      },
+      gateAt: () => {
+        if (readingBack) {
+          ticksDuringReadBack += 1;
+          return { safe: false, blockers: ["road speed is zero — it reads 4"], checks: [], chargingEvidence: null };
+        }
+        return gateVerdict(null, null);
       },
     });
     const answer = await kit.runner.perform({ kind: "clear-dtcs" });
     const result = answer.ok ? answer.result : null;
-    check("the watchdog really ran while the bike was unsafe — else the two below are vacuous", gateSamples >= 3);
+    check("the watchdog sampled the gate during the read-back", ticksDuringReadBack >= 2);
     check("the read-back still completes", result?.clear?.distSinceClearAfterKm === 0);
     check("no abort is announced against a settled exchange", !warnings.some(line => line.includes("ABORTING")));
   } finally {
@@ -459,6 +615,33 @@ console.log("\n6. the PIDs the clear depends on are in the poll table");
   }
   const bus = fakeBus({ clearReply: "silent", listFrames: null, before: BEFORE, after: BEFORE });
   check("a PID outside the table answers false rather than pretending", !(await pollPidNow(bus.channel, 0xfe)));
+  // ⚠️ `false` is also what a silent bus returns, so the verdict alone says nothing. What
+  // distinguishes "not in the table" is that the request never went out at all.
+  check("and it never reaches the bus, which is what makes it a different answer from silence", bus.sent.length === 0);
+}
+
+// ⚠️ pollPidNow shares the module-level `pending` map with the always-on loop, and PID 31 is
+// polled every round, so an unparked loop asking for the same PID crosses the two replies. It is
+// warned rather than refused — the hold is capped BY THE LOOP, so a read-back that overruns finds
+// the poller back underneath it, and a silent refusal there would look like a bike that said
+// nothing. Asserted so the implication is checkable rather than merely argued, the way
+// troubleCodeTransferInFlight() is for the sibling case.
+{
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    const bus = fakeBus({ clearReply: "silent", listFrames: null, before: BEFORE, after: BEFORE });
+    await pollPidNow(bus.channel, 0x31);
+    check(
+      "polling with the poller UNPARKED says so out loud",
+      warnings.some(line => line.includes("UNPARKED"))
+    );
+  } finally {
+    console.warn = realWarn;
+  }
 }
 
 // --- 7. The sentences under the button ------------------------------------------
@@ -491,7 +674,45 @@ const erased: ClearDtcsCounts = {
   const read = describeClearCounts({ ...erased, storedAfter: null, distSinceClearAfterKm: null });
   check("an unread counter is neither proof nor disproof", read.erased === null);
   check("the sweep says so rather than showing a number", read.sweep === "stored count could not be read");
-  check("the proof line says unconfirmed", read.proof.includes("erasure unconfirmed"));
+  check("the proof line says it cannot be judged", read.proof.includes("cannot be judged"));
+}
+
+// ⚠️ THE RETRY. Five codes came back within a second on 2026-09-13, so pressing again a minute
+// later is the expected gesture — and on that press PID 31 reads 0 on BOTH sides. Keying only on
+// the after-value called that "erased" in green, which is the exact claim the two failed presses
+// make, on the one press that most needs the verdict to be honest.
+{
+  const read = describeClearCounts({ ...erased, distSinceClearBeforeKm: 0, distSinceClearAfterKm: 0 });
+  check("0 km → 0 km is NOT reported as proof", read.erased !== true);
+  check("it is unproven rather than disproven", read.erased === null);
+  check("the line says why", read.proof.includes("already read 0 km"));
+}
+
+// A code re-latching between the two PID 01 reads must not render as a negative sweep.
+{
+  const read = describeClearCounts({ ...erased, storedBefore: 46, storedAfter: 48 });
+  check("a count that went UP never renders as a negative", !read.sweep.includes("-"));
+  check("it says so in words", read.sweep === "46 stored → 48 stored, 2 MORE than before");
+}
+
+// ⚠️ THE SAME DECISION IS WRITTEN TWICE — `judgeErasure` on the Pi and `describeClearCounts` in
+// the browser — because public/ has no build step and cannot import a .ts at runtime. This is the
+// assertion that stops them drifting; without it the page could call "erased" what the server
+// calls "erased nothing", and the green line and the red message would appear together.
+{
+  const cases: [ClearDtcsCounts, ErasureVerdict][] = [
+    [erased, "erased"],
+    [{ ...erased, distSinceClearAfterKm: 19671, storedAfter: 46 }, "erased-nothing"],
+    [{ ...erased, distSinceClearAfterKm: null }, "unproven"],
+    [{ ...erased, distSinceClearBeforeKm: null }, "unproven"],
+    [{ ...erased, distSinceClearBeforeKm: 0, distSinceClearAfterKm: 0 }, "unproven"],
+  ];
+  const asVerdict = (read: { erased: boolean | null }): ErasureVerdict =>
+    read.erased === true ? "erased" : read.erased === false ? "erased-nothing" : "unproven";
+  for (const [counts, expected] of cases) {
+    check(`the Pi judges ${expected}`, judgeErasure(counts) === expected);
+    check(`and the page agrees for ${expected}`, asVerdict(describeClearCounts(counts)) === expected);
+  }
 }
 
 // --- 8. When the cable warning appears -------------------------------------------
@@ -512,9 +733,28 @@ check("a charge manager never seen does not warn", !chargerIsAttached(gateVerdic
 check("2026-09-13's gate — no charge manager at all — does not warn", !chargerIsAttached(gateVerdict(null, null)));
 check("no gate at all does not warn", !chargerIsAttached(undefined));
 
+// --- 9. The hold budget is arithmetic, not a sentence in a comment ---------------
+//
+// ⚠️ write-runner's prose calls the margin load-bearing and then states it as a number nothing
+// verifies. Past obd-hold.ts's cap the poller resumes UNDERNEATH the read-back and its own 0x7DF
+// traffic makes the VCU abandon the transfer, so adding a PID or raising RETRY_ATTEMPTS has to go
+// red here rather than in a garage.
+
+console.log("\n9. the parked window still fits inside the cap");
+
+{
+  const modeFour = FIRST_REPLY_TIMEOUT_MS;
+  const listTransfer =
+    (RETRY_ATTEMPTS + 1) * (FIRST_REPLY_TIMEOUT_MS + TRANSFER_TIMEOUT_MS) + RETRY_ATTEMPTS * RETRY_GAP_MS;
+  const pids = 5 * PID_TIMEOUT_MS;
+  const worstCase = modeFour + listTransfer + pids;
+  check(`the worst case (${worstCase} ms) fits inside MAX_HOLD_MS (${MAX_HOLD_MS} ms)`, worstCase < MAX_HOLD_MS);
+  check("with at least a 2x margin, since the cap is enforced by the loop and not by us", worstCase * 2 < MAX_HOLD_MS);
+}
+
 console.log(
   failures === 0
-    ? "\n✓ Mode 04 is parked, read back on both sides, and judged on PID 31 rather than on the reply byte\n"
+    ? "\n✓ Mode 04 is parked, gated either side, read back on both sides, and judged on PID 31 rather than on the reply byte\n"
     : `\n✗ ${failures} check(s) failed\n`
 );
 process.exit(failures === 0 ? 0 : 1);
