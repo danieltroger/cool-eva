@@ -84,6 +84,7 @@ import {
 } from "../src/vcu/service-actions.ts";
 import { acquireBus, busHeldBy } from "../src/vcu/bus-lease.ts";
 import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
+import { ExtendedIsoTpReassembler } from "../src/diagnostics/extended-iso-tp.ts";
 import { segmentRequestPayload } from "../src/vcu/multiframe-codec.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
 import { BANK2_IDENTIFIER_0001_FRAMES, BANK2_IDENTIFIER_0001_RECORD } from "./kwp-multiframe-fixtures.ts";
@@ -936,6 +937,13 @@ expect(
 // asserted as LITERALS rather than as `2 ** (recordLengthFor(type) * 8)`: a budget
 // derived from the thing under test cannot fail. Curated targets are excluded because
 // their ranges are policy (258 is bounded 0…80 A), not the datatype's.
+//
+// ⚠️ WHAT THIS DOES NOT REACH, so nobody reads it as more than it is: five of the eight
+// rows below are exercised (BYTE S, BYTE U, BOOL U, WORD S, WORD U). `BOOL S` is not,
+// and costs nothing — `datatypeBounds` returns before it looks at the sign. Neither
+// DWORD row is, because no catalogued table carries a DWORD parameter, so **reverting
+// `datatypeBounds` to the `type === "BYTE" ? 8 : 16` it replaced would leave this green**.
+// What it does catch is a width derivation that is wrong for the types that DO exist.
 const DATATYPE_BOUNDS: Record<string, { min: number; max: number }> = {
   "BOOL U": { min: 0, max: 1 },
   "BOOL S": { min: 0, max: 1 },
@@ -1544,6 +1552,7 @@ const refused = describeProbe({
   status: "refused",
   negativeResponseCode: 0x31,
   description: "requestOutOfRange",
+  flowControlLatency: null,
 });
 expect(refused.status === "refused" && refused.rawHex === null, "a refusal carries no bytes");
 expect(
@@ -1558,6 +1567,7 @@ expect(
     identifier: 0x1001,
     status: "no-session",
     reason: "A8 did not answer 10 81",
+    flowControlLatency: null,
   }).note?.includes("nothing is at this address") === true,
   "silence at an address should read as “nothing there or asleep”, not as a refusal"
 );
@@ -2930,12 +2940,47 @@ async function checkTransport(): Promise<void> {
     brokenBus.sentFrames.includes("A8 30 FF 00 00 00 00 00"),
     "…and we must have asked for the rest before calling it stalled"
   );
+  // ⚠️ THE MEASUREMENT RIDES OUT ON THE FAILURE, which is the case it exists for: a flow
+  // control answered late and then stalling is the failure it would diagnose, and
+  // dropping it here would lose the only reading worth having. Non-null because a First
+  // Frame WAS answered; `known: false` because this harness feeds no kernel stamp, which
+  // is itself the honest answer rather than a fabricated 0.0 ms.
+  expect(
+    stalled.flowControlLatency !== null && !stalled.flowControlLatency.known,
+    `a stalled read must carry the flow-control measurement, got ${JSON.stringify(stalled.flowControlLatency)}`
+  );
+  // …and a reply that fitted one frame needs no flow control, so it measures nothing.
+  expect(
+    wide.flowControlLatency !== null && onA8.flowControlLatency === null,
+    "a multi-frame read should measure its flow control and a single-frame read should not"
+  );
   // ⚠️ Not retried. A stall means the micro answered, so the stale-session premise the
   // read's one retry rests on is absent — and asking again would put a second request on
   // a micro that is still transmitting the first reply.
   expect(
     brokenBus.sentRequests.filter(request => request.startsWith("A8 22")).length === 1,
     `a stalled read must not be retried, saw ${brokenBus.sentRequests.filter(request => request.startsWith("A8 22")).length} reads`
+  );
+
+  // ── A malformed First Frame is abandoned, and NOT re-asked ──────────────────
+  // ⚠️ The reassembler used to call these `ignored` — "not ours, hand it back" — which
+  // left the caller's window running out and, since reads share this transport, made a
+  // parameter read time out as `first-reply` and RETRY. A second `22` to a micro
+  // mid-ISO-TP-abort is the one thing routing reads here was chosen to avoid.
+  const malformed = new ExtendedIsoTpReassembler(32);
+  expect(
+    malformed.push(parseHexBytes("F1 10 04 62 11 16 00 00")).status === "abandoned",
+    "a First Frame declaring fewer bytes than a Single Frame holds should be abandoned, not ignored"
+  );
+  expect(
+    new ExtendedIsoTpReassembler(32).push(parseHexBytes("F1 10 07 62 11")).status === "abandoned",
+    "a First Frame short of 8 bytes should be abandoned, not ignored"
+  );
+  // …and a frame addressed to somebody else is still handed back, which is what
+  // `ignored` is for and must keep being: this socket is shared with the OBD poller.
+  expect(
+    new ExtendedIsoTpReassembler(32).push(parseHexBytes("F2 10 07 62 11 16 00 00")).status === "ignored",
+    "a frame addressed to another tester must still be handed back, not abandoned"
   );
 
   const flowControlsBefore = brokenBus.sentFrames.filter(frame => frame === "A8 30 FF 00 00 00 00 00").length;
@@ -2951,6 +2996,36 @@ async function checkTransport(): Promise<void> {
     brokenBus.sentFrames.filter(frame => frame === "A8 30 FF 00 00 00 00 00").length === flowControlsBefore,
     "a reply refused on its declared length must draw no flow control"
   );
+  // ── Our own withdrawal is not the bike going quiet ──────────────────────────
+  // A gate shutting mid-read makes the retry's `10 81` never reach the bus. Reporting
+  // that as `no-session` would put "either nothing is at this address, or it is asleep"
+  // on the phone for something we did.
+  // ⚠️ Stopped from the frame handler on the RETRY's session reply, not from a timer:
+  // the branch under test is the one where the re-open fails because we withdrew, and
+  // racing a `setTimeout` against it lands in the cancel path instead — which passes for
+  // a different reason and would leave this assertion green with the fix reverted.
+  const stoppedBus = simulateVcuMicros([{ target: "A8", records: new Map(), silentIndices: [231] }]);
+  const stoppedClient = createVcuKwpClient(stoppedBus.channel, { paceMs: 1, responseTimeoutMs: 30 });
+  let sessionRepliesSeen = 0;
+  stoppedBus.channel.addListener("onMessage", message => {
+    // `50 81` — the positive answer to `10 81`. The first opens the session, the second
+    // is the one the retry asks for after the read times out.
+    if (message.data[2] === 0x50) {
+      sessionRepliesSeen += 1;
+      if (sessionRepliesSeen === 2) {
+        stoppedClient.stop();
+      }
+    }
+    stoppedClient.handleFrame(message.id, message.data);
+  });
+  const withdrawn = await stoppedClient.readParameter("A8", 231);
+  expect(
+    withdrawn.status === "not-sent",
+    `a read whose re-open failed because WE stopped should be not-sent, not a claim about the micro, got ` +
+      `${withdrawn.status}${withdrawn.status === "no-session" ? ` — “${withdrawn.reason}”` : ""}`
+  );
+  expect(sessionRepliesSeen === 2, `the retry should have re-opened the session, saw ${sessionRepliesSeen} of them`);
+
   brokenClient.stop();
 
   // And the standing guarantee, checked against every byte that reached the bus.
@@ -3088,6 +3163,7 @@ function probeOutcome(target: "A9" | "A8", bank: number, index: number, rawHex: 
     identifier: identifierFor(bank, index),
     status: "read",
     record: parseHexBytes(rawHex),
+    flowControlLatency: null,
   };
 }
 
@@ -3100,6 +3176,7 @@ function reading(index: number, rawHex: string): VcuReadOutcome {
     identifier: identifierForIndex(index),
     status: "read",
     record: parseHexBytes(rawHex),
+    flowControlLatency: null,
   };
 }
 
@@ -3113,12 +3190,19 @@ function refusedRead(index: number): VcuReadOutcome {
     status: "refused",
     negativeResponseCode: 0x22,
     description: "NRC 0x22 conditionsNotCorrect",
+    flowControlLatency: null,
   };
 }
 
 function silent(index: number): VcuReadOutcome {
   const parameter = parameterAtIndex(index);
-  return { micro: parameter?.micro ?? "A9", index, identifier: identifierForIndex(index), status: "no-response" };
+  return {
+    micro: parameter?.micro ?? "A9",
+    index,
+    identifier: identifierForIndex(index),
+    status: "no-response",
+    flowControlLatency: null,
+  };
 }
 
 /** A parameter on a micro that never opened a session — the shape "the bike was asleep" takes. */
@@ -3131,6 +3215,7 @@ function noSession(index: number): VcuReadOutcome {
     identifier: identifierForIndex(index),
     status: "no-session",
     reason: `${micro} did not answer 10 81`,
+    flowControlLatency: null,
   };
 }
 

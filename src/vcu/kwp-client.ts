@@ -119,8 +119,22 @@ export type VcuReadResult =
    */
   | { status: "not-sent"; reason: string };
 
+/**
+ * What a read observed about THIS PROCESS, as against about the bike.
+ *
+ * ⚠️ Carried on every read since #223, because a read can now answer a First Frame and
+ * this is the number that says whether it did so in time. ../can/obd-dtc.ts measured
+ * 4/12 transfers completing at 0 ms of added delay and 1/12 at 40 ms, so a late flow
+ * control is the first thing to suspect when a wide record comes back `stalled` — and
+ * without this it would be measured by the transport and then thrown away.
+ */
+export interface VcuReadMeasurement {
+  /** Kernel arrival of the First Frame → our flow control. Null when the reply needed none. */
+  flowControlLatency: ArrivalLatency | null;
+}
+
 /** How one parameter read came out. Resolves; nothing here rejects. */
-export type VcuReadOutcome = VcuReadTarget & VcuReadResult;
+export type VcuReadOutcome = VcuReadTarget & VcuReadResult & VcuReadMeasurement;
 
 /** What was asked in a one-off probe: any target, any bank, any index. */
 export interface VcuProbeTarget {
@@ -132,7 +146,7 @@ export interface VcuProbeTarget {
 }
 
 /** How one probe came out. Same outcomes as a sweep read — only the identity differs. */
-export type VcuProbeOutcome = VcuProbeTarget & VcuReadResult;
+export type VcuProbeOutcome = VcuProbeTarget & VcuReadResult & VcuReadMeasurement;
 
 /**
  * How one multi-frame exchange came out.
@@ -586,14 +600,18 @@ async function performRead(
   micro: VcuTarget,
   bank: number,
   index: number
-): Promise<VcuReadResult> {
+): Promise<VcuReadResult & VcuReadMeasurement> {
   const identifier = identifierFor(bank, index);
   const busy = busyReason(context);
   if (busy !== null) {
-    return { status: "not-sent", reason: busy };
+    return { status: "not-sent", reason: busy, flowControlLatency: null };
   }
   if (!(await ensureSession(context, micro))) {
-    return { status: "no-session", reason: `${micro} did not answer 10 81` };
+    // Same distinction as the retry's below: a session that failed because we stopped
+    // is our withdrawal, not a silent micro.
+    return context.stopped
+      ? { status: "not-sent", reason: "client stopped", flowControlLatency: null }
+      : { status: "no-session", reason: `${micro} did not answer 10 81`, flowControlLatency: null };
   }
 
   const requestPayload = buildRequestPayload({ kind: "read-parameter", bank, index });
@@ -610,24 +628,38 @@ async function performRead(
     // asking again would put a second request on a micro that is still transmitting
     // the first reply.
     if (!(await openSession(context, micro))) {
-      return { status: "no-session", reason: `${micro} stopped answering 10 81 mid-read` };
+      // ⚠️ OURS OR THE BIKE'S. `stop()` — the gate shutting, a shutdown, an abort —
+      // makes `exchange` refuse to transmit, so the re-open "fails" without a frame
+      // ever going out. Reporting that as `no-session` puts our own withdrawal on the
+      // phone as “either nothing is at this address, or it is asleep” (./probe.ts),
+      // which is a claim about the motorcycle for something the motorcycle did not do.
+      // The sweep is insulated by ./sweep.ts discarding an in-flight outcome on abort;
+      // a probe keeps its one.
+      return context.stopped
+        ? { status: "not-sent", reason: "client stopped", flowControlLatency: null }
+        : { status: "no-session", reason: `${micro} stopped answering 10 81 mid-read`, flowControlLatency: null };
     }
     result = await runTransfer(context, micro, requestPayload, readTransferOptions(context));
   }
+  // ⚠️ The measurement rides out on EVERY outcome, attached in one place. A stalled
+  // read is exactly the case where it is worth having, so it must not be dropped on
+  // the failure branches — the mistake ./multiframe-transfer.ts's `settle` exists to
+  // stop being made six times over.
+  const measured = { flowControlLatency: result.flowControlLatency };
   switch (result.kind) {
     case "payload":
-      return describeReadPayload(result.payload, identifier);
+      return { ...describeReadPayload(result.payload, identifier), ...measured };
     case "timeout":
-      return describeReadTimeout(result.stage);
+      return { ...describeReadTimeout(result.stage), ...measured };
     case "abandoned":
-      return { status: "abandoned", reason: result.reason };
+      return { status: "abandoned", reason: result.reason, ...measured };
     case "cancelled":
       // "We stopped", not "the bike went quiet" — the same claim `stop()` made before
       // this path assembled anything, and ./sweep.ts discards an in-flight outcome on
       // abort on the strength of it.
-      return { status: "not-sent", reason: result.reason };
+      return { status: "not-sent", reason: result.reason, ...measured };
     case "not-sent":
-      return { status: "not-sent", reason: result.reason };
+      return { status: "not-sent", reason: result.reason, ...measured };
   }
 }
 

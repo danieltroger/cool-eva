@@ -207,14 +207,27 @@ export class ExtendedIsoTpReassembler {
   }
 
   #pushFirstFrame(frame: Uint8Array): ExtendedIsoTpResult {
+    // ⚠️ ABANDONED, NOT IGNORED, for both malformed shapes below — changed 2026-09-14.
+    // `ignored` means "not ours, hand it back", and this frame is addressed to the
+    // TESTER (checked above): nobody else on the socket wants it. Reporting it as
+    // ambient traffic left the caller's window running out instead, which since #223
+    // means a parameter read timing out as `first-reply` and RE-ASKING — putting a
+    // second `22` on a micro that is mid-ISO-TP-abort, the one thing routing reads
+    // through this transport was chosen to avoid. Abandoning says what was wrong and
+    // ends the exchange, which is also strictly more than the old single-frame path
+    // could say.
     if (frame.length < 8) {
-      return { status: "ignored", reason: "first frame shorter than 8 bytes" };
+      const reason = "first frame shorter than 8 bytes";
+      this.reset();
+      return { status: "abandoned", reason };
     }
     const totalLength = ((frame[1] & 0x0f) << 8) | frame[2];
     if (totalLength <= MAX_SINGLE_FRAME_PAYLOAD) {
       // Would have fitted in a single frame. Honouring it would leave us waiting
       // for a Consecutive Frame that is never coming.
-      return { status: "ignored", reason: `first frame declares only ${totalLength} bytes` };
+      const reason = `first frame declares only ${totalLength} bytes`;
+      this.reset();
+      return { status: "abandoned", reason };
     }
     if (totalLength > this.#maxPayloadBytes) {
       const reason = `first frame declares ${totalLength} bytes, over the ${this.#maxPayloadBytes} cap`;

@@ -183,9 +183,25 @@ export const MALFORMED_TRANSFERS: readonly {
     because: "declares 4095 bytes, far over any cap this transport allows",
   },
   {
+    /**
+     * ⚠️ THIS WAS `not-consumed` UNTIL 2026-09-14, and the change is the point of the
+     * case rather than a relaxation.
+     *
+     * The frame is addressed to `F1` — the TESTER — so "hand it back, it belongs to
+     * someone else on this socket" was never true of it: the OBD poller reads the same
+     * id range under NORMAL addressing, where `F1` is an unknown PCI it discards anyway.
+     * Meanwhile handing it back left the caller's window running out, and since #223 a
+     * parameter read shares this transport: the timeout came back as `first-reply`, which
+     * is the stage that RETRIES, so a malformed First Frame put a second `22` on a micro
+     * mid-ISO-TP-abort. Abandoning says what was wrong and ends the exchange.
+     *
+     * ⚠️ The sibling below stays `not-consumed` and must: a Consecutive Frame with no
+     * First Frame really can be a straggler from a transfer somebody else is following,
+     * and abandoning on one would let a late frame kill a healthy exchange.
+     */
     name: "first frame that would have fitted one frame",
     frames: ["F1 10 04 62 20 01 00 09"],
-    refusal: "not-consumed",
+    refusal: "abandoned",
     because: "a 4-byte payload is a single frame; honouring it would wait forever for a consecutive frame",
   },
   {

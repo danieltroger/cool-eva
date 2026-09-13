@@ -1,5 +1,5 @@
 import type { RawChannel } from "socketcan";
-import type { FrameArrival } from "../can/frame-arrival.ts";
+import type { ArrivalLatency, FrameArrival } from "../can/frame-arrival.ts";
 import { createVcuKwpClient, type VcuProbeOutcome } from "./kwp-client.ts";
 import { identifierFor, interpretRecord, type VcuTarget } from "./param-codec.ts";
 import { CALIBRATION_BANK, parameterAtIndex } from "./param-table.ts";
@@ -63,6 +63,17 @@ export interface VcuProbeReading extends VcuProbeRequest {
   value: number | null;
   /** Why a non-`read` outcome is not a value, or what is unusual about one that is. */
   note: string | null;
+  /**
+   * How late our flow control was, in ms, or null when the reply needed none.
+   *
+   * ⚠️ Null is the ORDINARY case and means "no First Frame arrived", not "not measured":
+   * a reply that fits one frame is never answered. It is non-null exactly for the wide
+   * records this probe exists to reach, and it is the first number to look at when one
+   * comes back `stalled` — ../can/obd-dtc.ts measured 4/12 transfers completing at 0 ms
+   * of added delay and 1/12 at 40 ms. `known: false` means the kernel gave no stamp or
+   * the clock stepped.
+   */
+  flowControlLatency: ArrivalLatency | null;
 }
 
 export interface VcuProbeOptions extends VcuProbeRequest {
@@ -77,7 +88,8 @@ export interface RunningProbe {
    *
    * ⚠️ `arrival` is the KERNEL's stamp (../can/frame-arrival.ts). It was dropped here
    * until a read could answer a First Frame; now that one can, dropping it would leave
-   * the flow-control latency unmeasured on the path most likely to need the number.
+   * `flowControlLatency` on the reading below permanently `known: false` — measured by
+   * the transport and thrown away one call short of the page that wants it.
    */
   handleFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
   /** Stops it. The in-flight request settles as `not-sent` — our doing, never the bike's. */
@@ -137,6 +149,7 @@ export function describeProbe(outcome: VcuProbeOutcome): VcuProbeReading {
     status: outcome.status,
     name: parameter?.name ?? null,
     section: parameter?.section ?? null,
+    flowControlLatency: outcome.flowControlLatency,
   };
   if (outcome.status !== "read") {
     return { ...base, rawHex: null, unsigned: null, signed: null, value: null, note: describeFailure(outcome) };

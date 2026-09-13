@@ -276,7 +276,8 @@ async function pingMicros(options: ParameterSweepOptions, state: SweepState): Pr
  *
  * ⚠️ This is HALF of the auto-exit, and which half matters: "no frame after unsafe" is the
  * sentence someone will quote when deciding whether the other half can be dropped. This
- * call runs once per PARAMETER, and one parameter can put up to three frames on the bus, so
+ * call runs once per PARAMETER, and one parameter can put up to FOUR frames on the bus since
+ * #223 — the read, a `10 81`, the retry, and a flow control if the reply is a First Frame — so
  * a gate transition landing just after a check here can be followed by another frame up to
  * a reply window later.
  *

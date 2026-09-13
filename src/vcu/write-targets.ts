@@ -476,6 +476,12 @@ export function planBitWrite(name: string, bitKey: string, on: boolean, currentV
     // The current word is the base every bit of the new one is copied from, so a
     // nonsense one would be written straight back into the EEPROM with one bit
     // changed. Refused rather than masked into range.
+    //
+    // ⚠️ `0xffff` is a BIT-FIELD bound and deliberately not `datatypeBounds`. Every
+    // `control.kind === "bits"` target is curated, and the only one is VSM_CONFIG_1
+    // (index 16, WORD U), so 16 bits is right by the list rather than by the type. It
+    // stays literal for that reason — a bit field on a wider record would need a bit
+    // map, not a wider mask.
     return { ok: false, reason: `the current ${target.name} reads ${currentValue}, which is not a 16-bit word` };
   }
   const next = on ? (currentValue | bit.mask) >>> 0 : (currentValue & ~bit.mask) >>> 0;
@@ -505,6 +511,7 @@ function rebuildBitPlan(target: WriteTarget, value: number, previousValue: numbe
   if (target.control.kind !== "bits") {
     return { ok: false, reason: `${target.name} is not a bit field` };
   }
+  // ⚠️ Bit-field bound, curated targets only — see the note in `planBitWrite`.
   if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
     return { ok: false, reason: `${value} is not a 16-bit word` };
   }

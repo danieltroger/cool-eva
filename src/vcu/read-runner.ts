@@ -22,8 +22,10 @@ import type { VcuParameterRow } from "./snapshot.ts";
 //     check precedes the socket rather than racing it.
 //  2. A watchdog here re-checks the gate every GATE_WATCH_INTERVAL_MS and calls `abort`
 //     from outside the loop. That is what bounds the worst case: one `readParameter` can
-//     spend ~1.2 s inside itself, and without the watchdog a bike that started moving
-//     during one would keep four more frames on the bus until the loop came back round.
+//     spend ~1.33 s inside itself, and without the watchdog a bike that started moving
+//     during one would keep five more frames on the bus until the loop came back round.
+//     (Both numbers grew with #223: a reply that starts and stalls costs a transfer
+//     window on top of the reply window, and a First Frame draws a flow control.)
 //
 // `abort` calls `client.stop()`, which refuses every subsequent transmit, so the sweep
 // cannot emit one more frame on its way out. The session it opened is left to expire by
@@ -84,9 +86,10 @@ export interface VcuReadRunner {
    * Reads the bike's lifetime battery statistics — components 51 and 52 — in this
    * process, behind the same gate and the same single-flight as a sweep or a probe.
    *
-   * ⚠️ It also PARKS THE 2 Hz OBD POLLER for the duration, which nothing else here
-   * does: this is the only read whose reply is multi-frame, and the poller is the
-   * documented cause of that channel's failures (src/can/obd.ts). The result carries
+   * ⚠️ It PARKS THE 2 Hz OBD POLLER for the duration, and so does a probe since #223:
+   * a parameter read's reply can be multi-frame too, and the poller is the documented
+   * cause of that channel's failures (src/can/obd.ts). A SWEEP still does not park —
+   * see `runParameterSweep`. The result carries
    * how late our flow control was, which is the number this whole path exists to
    * produce. Resolves with a refusal rather than throwing.
    */
@@ -244,6 +247,18 @@ function readGate(): ServiceGateVerdict {
  * Single-flight WITHIN this process, which is now the whole story: the sweep runs
  * here, so there is no longer a second copy of it anyone can start over ssh, and no
  * lockfile to go stale on a Pi that loses power.
+ *
+ * ⚠️ A SWEEP DOES NOT PARK THE OBD POLLER, where a probe and a lifetime read do. Two
+ * reasons, and the second is the one that would change: a sweep can run for a minute and
+ * `MAX_HOLD_MS` in ../can/obd-hold.ts caps a hold at 15 s, so parking it is not on offer
+ * without dropping telemetry for longer than the hold allows; and none of the 277 indices
+ * `params.ecf` describes can produce a multi-frame reply at all — every record there is 1
+ * or 2 bytes, so no transfer window ever opens for the poller to land in.
+ *
+ * ⚠️ **Extending the sweep past those 277 — #219's A8 block, say — changes that**, and
+ * whoever does it inherits this decision: indices 278, 279 and 626 are 4-byte records, and
+ * a mode-01 request arriving mid-transfer is what ../can/obd.ts records as making the VCU
+ * abandon it. Park per read, or sweep the wide ones through the probe path.
  */
 function start(context: RunnerContext): { started: boolean; reason: string | null } {
   const ready = checkPreconditions(context, "a parameter read");
@@ -366,7 +381,7 @@ function checkBusFreeRefusals(
  * to resume.
  *
  * The gate watchdog runs for it too. A single read is short, but "short" here means
- * up to ~1.2 s of a bike that might have started moving, and the rule this feature
+ * up to ~1.33 s of a bike that might have started moving, and the rule this feature
  * rests on is that nothing transmits once the gate shuts — not that nothing
  * transmits for long.
  */
@@ -376,7 +391,27 @@ async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promi
   // about, and a probe that hangs or is aborted by the gate watchdog would otherwise
   // never say which one it was — on a bike you cannot attach a debugger to.
   console.log(`vcu-probe: reading bank ${request.bank} index ${request.index} off ${request.target}`);
-  const outcome = await runOneShotBusModule(context, "a probe", channel => startProbe({ ...request, channel }));
+  // ⚠️ THE POLLER IS PARKED, as it is for a lifetime read and for the same reason: since
+  // #223 a probe's reply can be multi-frame, and ../can/obd.ts records that "a request
+  // arriving mid-transfer is what makes the VCU abandon it". A probe is the read most
+  // likely to be pointed at a wide record — that is what it is for — so racing the 2 Hz
+  // poller would produce intermittent `stalled` outcomes indistinguishable from a micro
+  // that went quiet. A sweep does NOT park; see the note on `runParameterSweep`.
+  const what = "a probe";
+  const outcome = await runOneShotBusModule(
+    context,
+    what,
+    channel => startProbe({ ...request, channel }),
+    async () => {
+      const hold = await holdObdPoller(what);
+      return hold
+        ? { ok: true, release: hold.release }
+        : {
+            ok: false,
+            reason: "the OBD poller would not go quiet — a reply that needs assembling needs the bus to itself",
+          };
+    }
+  );
   if (!outcome.ok) {
     console.log(`vcu-probe: ${request.target} bank ${request.bank} index ${request.index} — ${outcome.reason}`);
     return outcome;
@@ -515,8 +550,10 @@ function cancel(context: RunnerContext): boolean {
 async function stop(context: RunnerContext): Promise<void> {
   const sweep = context.sweep;
   stopGateWatchdog(context);
-  // A one-shot module is aborted and not waited for. A probe is at most two reply
-  // windows and holds nothing; a lifetime read holds a durable store write, but that
+  // A one-shot module is aborted and not waited for. A probe holds nothing and is
+  // bounded by two reply windows plus, on a reply that starts and stalls, one transfer
+  // window each — ~1.33 s worst case since #223, not the ~600 ms this used to imply;
+  // a lifetime read holds a durable store write, but that
   // write happens AFTER the lease is released and outside the module's own promise, so
   // awaiting the module here would not protect it either — ./lifetime-read.ts and the
   // caller in ../http/lifetime-read.ts own that ordering. A sweep is the exception,
@@ -545,8 +582,9 @@ async function stop(context: RunnerContext): Promise<void> {
  * loop.
  *
  * This is the half of auto-exit that bounds the worst case. The sweep's own check
- * runs between parameters, which is every ~310 ms in the good case but up to ~1.2 s
- * when a read times out and the session is re-opened; a bike that starts moving
+ * runs between parameters, which is every ~310 ms in the good case but up to ~1.33 s
+ * when a read times out and the session is re-opened, or when a reply starts and stalls;
+ * a bike that starts moving
  * during one of those would otherwise keep several more frames on the bus. Calling
  * `abort` from here settles the request in flight immediately and blocks every
  * transmit after it.
