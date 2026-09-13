@@ -130,7 +130,26 @@ The owner raised `REVERSE_TORQUE_LIMIT` to **750** through the dashboard's `/vcu
 
 So: **raising index 67 does reach the torque law.** The demand is scaled by `REVERSE_TORQUE_LIMIT` and then rate-limited by a step computed from `REVERSE_TORQUE_SLEWRATE_LIMIT`, all inside A9, in the micro that stores them.
 
-🟡 **Open, and deliberately not over-claimed: whether `REVERSE_TORQUE_LIMIT` acts as a gain or as a ceiling.** The multiply at `0x2A7FA` reads as a gain — a demand between 0 and 1000 scaled by the limit — rather than a `min` against a ceiling, and the 75 non-rate-limited park-assist samples in the log cannot separate the two (residual sd 3.17 Nm). It matters little for the recommendation, because at full throttle both readings put the ceiling at the parameter's value, which is what §3 measured. It matters for _partial_ throttle, where a gain would scale the whole range and a ceiling would only clip the top. **The experiment that settles it:** a slow, deliberate throttle ramp in park assist against a fixed resistance, logged — a gain bends the whole curve, a ceiling only flattens its top.
+✅ **`REVERSE_TORQUE_LIMIT` is a GAIN, not a ceiling — settled by the bike's own log, not by the firmware.** The multiply at `0x2A7FA` reads as a gain (a demand between 0 and 1000 scaled by the limit) rather than a `min` against a ceiling, and the firmware alone cannot distinguish the two. The owner's own write settled it: he raised 600 → 750 at **16:09:15.935 Z on 2026-09-13**, two minutes after the stall (§8), which makes the same day a controlled before/after on one bike.
+
+Park-assist samples below 3 km/h, binned by throttle in 5 % steps so the two periods are compared at like throttle — a gain scales **every** bin by 750/600 = 1.25, a ceiling would move only the saturated top:
+
+| throttle % | median Nm before | median Nm after | ratio    |
+| ---------- | ---------------- | --------------- | -------- |
+| 5-10       | 6.8              | 7.3             | 1.07     |
+| 10-15      | 11.8             | 12.0            | 1.02     |
+| 15-20      | 5.7              | 6.0             | 1.05     |
+| 30-35      | 13.1             | 16.6            | **1.27** |
+| 35-40      | 16.0             | 20.7            | **1.29** |
+| 40-45      | 18.6             | 24.3            | **1.31** |
+| 45-50      | 21.6             | 27.7            | **1.29** |
+| 50-55      | 25.8             | 32.0            | **1.24** |
+| 55-60      | 29.4             | 37.6            | **1.28** |
+| 60-65      | 33.8             | 39.9            | 1.18     |
+
+Across all 12 bins with at least 8 samples each side the median ratio is **1.233** against a predicted 1.250. The whole partial-throttle curve moved; a ceiling would have left 30-65 % untouched. ⚠️ The bottom three bins do **not** scale, which is what a dead zone below the gain looks like (`DEAD_ZONE` = 30 sits in the same `[DRIVE_BY_WIRE]` block) — so "gain" describes the working range, not the first few percent of throttle.
+
+⚠️ The write and the reboot that followed it are not separable in time, and do not need to be: a calibration value takes effect at boot, so the reboot is the mechanism rather than a rival explanation. The only known change to the bike between the two periods is this parameter.
 
 🟡 Also not established: that this block is what executes in the reverse path. It exists, it reads those parameters, and the behaviour it implements is the behaviour §2.2 and §3 measured on the wire — but no reachability proof was attempted.
 
@@ -187,17 +206,17 @@ CID        0x1043          (bank 1, 0x1000 | 67)
 micro      A9
 storage    WORD S          (two bytes, two's complement)
 table      16407
-from       600   (60.0 Nm)
+from       750   (75.0 Nm)     — already written 2026-09-13, see §8
 to         900   (90.0 Nm)      — see the reasoning below
 ```
 
-**900, not 1100.** 900 is +50 % on today's value, the same step `REGEN_TORQUE_LIMIT` already took on this bike, and it is the smallest number with a plausible chance of clearing a real lip. 1100 clears more and is an 83 % increase on a limit whose entire job is to stop the bike climbing out of a walking rider's hands. Start at 900, confirm it takes and that the plateau moves, and only then consider more.
+**900, not 1100.** From today's 750 that is +20 %, a smaller step than the +25 % already taken and lived with. 1100 clears the 3 cm case the arithmetic points at, but it is +47 % on a limit whose entire job is to stop the bike climbing out of a walking rider's hands, and nobody has yet ridden 900. Take 900, use it, then decide — and note that §4's matched-bin method can confirm the next change from ordinary riding, with no test needed.
 
-**This is expected to work.** §4 finds the torque law inside A9, reading this parameter — so a write to index 67 reaches the arithmetic that produced the 59.9 Nm plateau. That is a change from an earlier draft, which had it enforced somewhere unreachable; the correction is in §4.
+**This works, and it is measured rather than expected.** §4 finds the torque law inside A9 reading this parameter, and the owner's own 600 → 750 write on 2026-09-13 scaled the whole partial-throttle park-assist curve by 1.233 against a predicted 1.25. So index 67 is operative, it is a gain rather than a ceiling, and the bike is running **750 right now** (§8).
 
-⚠️ **Then why did 750 not help?** On the arithmetic above, 750 buys about 1.6 cm of step against 600's 1.0 cm — a real improvement and still short of an asphalt lip that stops a motorcycle. The log cannot say whether the bike was even running 750 at the time, because the ceiling was never approached again at full throttle (§8). Both explanations are live, and one read-back separates them.
+⚠️ **Which means the question is no longer "did it work" but "how much is enough".** 750 buys about 1.6 cm of step against 600's 1.0 cm — real, and still short of the 2-3 cm an asphalt lip usually is. The table above is the guide: **900 from today's 750** is a further +20 %, and 1100 is what the arithmetic says a 3 cm lip actually needs.
 
-**No write is made by this repo.**
+**No write is made by this repo.** The 750 already in the bike is the owner's own, recorded in §8.
 
 ### The risks, which are not theoretical
 
@@ -218,19 +237,39 @@ So the list it would join is **`CURATED_WRITE_TARGETS`** — today `MAX_DC_CHG_C
 
 ## 8. What is open, and the one test that closes most of it
 
-**The state of the 750 write: UNVERIFIED.** The owner wrote it through `/vcu-write` and rebooted. The ride log cannot confirm it, and it now says exactly why rather than leaving it open: across all 47 low-speed torque windows in every session after the stall, **the throttle never exceeded 61.8 %**. The 60 Nm clamp was never approached again, so a raised ceiling had nothing to show itself against. This is "never retested at full throttle", not "the write failed".
+✅ **The state of the 750 write: WRITTEN AND READ BACK.** The Pi's own audit journal settles it. `evidence/service-writes.jsonl` line 89, quoted whole:
 
-⚠️ Session boundaries here are read off `session_id` and `bms_uptime_min` (which resets to 0 at each power-up), **never off timestamps**: the Pi boots with a stale clock and `gps/clock.ts` steps it afterwards, so session 143's first row is stamped _before_ session 142's last.
+```json
+{
+  "at": 1789315755935,
+  "clockTrustworthy": true,
+  "action": "parameter-write",
+  "status": "written",
+  "name": "REVERSE_TORQUE_LIMIT",
+  "identifier": 4163,
+  "micro": "A9",
+  "before": 600,
+  "after": 750,
+  "requested": 750,
+  "rawHex": "02 EE",
+  "note": "REVERSE_TORQUE_LIMIT: 600 → 750 — written and read back as 750 (02 EE).",
+  "runningVersion": "8306426"
+}
+```
 
-**What settles it, in order of cost:**
+`identifier` 4163 is `0x1043`, `rawHex` `02 EE` is 750 big-endian on the wire, and `at` is **2026-09-13 16:09:15.935 Z** — two minutes after the stall and before the reboot, with the clock marked trustworthy. The VCU took the value and read it back. §4 then shows, from the ride log, that it also _acted_: the whole partial-throttle torque curve scaled by 1.25.
 
-1. **The Pi's own journal.** `src/vcu/write-audit.ts` appends every attempt — including refusals — to `service-writes.jsonl`, with the name, the value asked for, the value read before and the value after. If the 750 went through `/vcu-write` it is in there with a timestamp.
-2. **One bank-1 read of `CID 0x1043`.** Read-only, no SecurityAccess, the same service the sweep already uses. Says whether the VCU currently holds 600 or 750.
-3. 🔥 **The test that closes it**, and it needs no Pi: with the VCU confirmed reading 750, go to **full throttle in reverse** against something solid and watch the plateau. Plateau at ~75 Nm ⇒ the parameter is operative and is simply worth raising further. Plateau still ~60 ⇒ the copy the bike obeys is not the one being written, and §4's firmware reading needs re-opening — most likely because the bike is not running the build that was disassembled.
+**So the 750 was live, and it was simply not enough.** That is the answer to "would more have helped": yes, more is exactly what was needed — §6's arithmetic puts 75.0 Nm at about a 1.6 cm step against the 2-3 cm an asphalt lip usually is.
 
-⚠️ **A debt, stated rather than hidden.** The audit journal in (1) was not read, because the Pi was out of reach on the night this was written and the owner answered from memory instead. Memory supplies the route (`/vcu-write`, then a reboot) but not the timestamp, the value read before the write, or the post-write read-back — all three of which `AuditRecord` carries (`src/vcu/write-audit.ts`, written from `write-runner.ts:755`). Read it before treating §8 as settled.
+**Why the log alone could not show it**, which is worth keeping because it is a trap: after the reboot the throttle never exceeded **61.8 %** in any of the 47 low-speed torque windows on record, so the _ceiling_ was never demanded again. Only the matched-bin comparison at partial throttle in §4 could see the change, and only because the parameter turned out to be a gain.
 
-Also open, and smaller: whether `REVERSE_TORQUE_LIMIT` is a gain or a ceiling (§4, with the experiment that settles it); whether park-assist _slow forward_ uses the same limits (one set of parameters, and the speed's absolute value is taken, so probably yes — 🟡 inference); whether the fade in §2.3 is `REVERSE_MAX_SPD` acting; and which sensor's −1 sentinel arms backup mode.
+**What would still be worth reading, and what is now closed:**
+
+1. ~~The Pi's own journal~~ — **read, and quoted above.** `src/vcu/write-audit.ts` appends every attempt including refusals; line 89 is the record.
+2. **One bank-1 read of `CID 0x1043`** would confirm 750 is still resident today, which the journal cannot say for a bike that has been ridden since. Read-only, no SecurityAccess.
+3. ~~The full-throttle plateau test~~ — **no longer needed to prove the parameter works.** §4 proves it from data already logged. It would still be the cleanest single confirmation that a _new_ value took, and costs nothing next time the bike is in reverse.
+
+Also open, and smaller: whether park-assist _slow forward_ uses the same limits (one set of parameters, and the speed's absolute value is taken, so probably yes — 🟡 inference); whether the fade in §2.3 is `REVERSE_MAX_SPD` acting; and which sensor's −1 sentinel arms backup mode.
 
 ## 9. What was read
 
