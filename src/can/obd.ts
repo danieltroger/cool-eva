@@ -142,8 +142,57 @@ export function handleResponse(id: number, data: Buffer): void {
   }
 }
 
-function requestPid(pid: number, timeoutMs = 200): Promise<Buffer | null> {
-  if (!channel) return Promise.resolve(null);
+/**
+ * Polls ONE mode-01 PID right now, on a channel the caller names, and files it exactly
+ * as the loop would — decode, `record`, and the freeze-frame hook.
+ *
+ * For the service-mode clear (src/vcu/write-runner.ts), which parks this poller and then
+ * needs `dtc_count`, `dist_since_clear_km` and the freeze-frame code read on both sides of
+ * an OBD Mode 04 rather than whenever the loop next gets to them — two of the three sit on
+ * DIAGNOSTIC_ROUND_DIVISOR, so "before" and "after" would otherwise be up to 10 s apart and
+ * describe two different bikes.
+ *
+ * ⚠️ Returns the DECODE, not the bytes. An earlier version of this export handed back the
+ * raw frame and let the caller pick the value out, which silently dropped PID 0x01's second
+ * signal (it decodes to `mil_on` AND `dtc_count`) and skipped `recordFreezeFrameDtc` for
+ * PID 0x02 — so the one thing the freeze-frame read exists to answer would not have been
+ * recorded. Everything that files a PID files it through here or through pollOnce, and both
+ * go through decodedValues().
+ *
+ * ⚠️ Takes the channel explicitly rather than using this module's. In the service the two
+ * are the same object, but nothing enforces that, and a null module channel would make this
+ * answer "the bike said nothing" when the truth is that we never asked.
+ */
+export async function pollPidNow(target: RawChannel, pid: number): Promise<boolean> {
+  const def = PIDS.find(candidate => candidate.pid === pid);
+  if (!def) {
+    console.warn(`obd: asked to poll PID 0x${pid.toString(16)}, which is not in the table — ignored`);
+    return false;
+  }
+  const response = await requestPid(target, pid);
+  if (!response) {
+    return false;
+  }
+  fileResponse(def, response);
+  return true;
+}
+
+/** The decode-and-record half, shared by pollOnce and pollPidNow so they cannot diverge. */
+function fileResponse(def: PidDef, response: Buffer): void {
+  const a = response[3] ?? 0;
+  const b = response[4] ?? 0;
+  for (const { key, value } of decodedValues(def, a, b)) {
+    record(key, value);
+    // Same shape as index.ts's gps_epoch_s hook: one signal that a second module
+    // also needs, taken off the recording path rather than decoded twice.
+    if (key === FREEZE_FRAME_DTC_KEY) {
+      recordFreezeFrameDtc(value);
+    }
+  }
+}
+
+function requestPid(target: RawChannel | undefined, pid: number, timeoutMs = 200): Promise<Buffer | null> {
+  if (!target) return Promise.resolve(null);
   return new Promise(resolve => {
     const timer = setTimeout(() => {
       pending.delete(pid);
@@ -152,7 +201,7 @@ function requestPid(pid: number, timeoutMs = 200): Promise<Buffer | null> {
     pending.set(pid, { resolve, timer });
     const frame = Buffer.from([0x02, 0x01, pid, 0x55, 0x55, 0x55, 0x55, 0x55]);
     try {
-      channel!.send({ id: OBD_REQ_ID, ext: false, rtr: false, data: frame });
+      target.send({ id: OBD_REQ_ID, ext: false, rtr: false, data: frame });
     } catch (err) {
       clearTimeout(timer);
       pending.delete(pid);
@@ -177,18 +226,9 @@ async function pollOnce(): Promise<void> {
     if (parkedForHold()) {
       return;
     }
-    const resp = await requestPid(def.pid);
+    const resp = await requestPid(channel, def.pid);
     if (!resp) continue;
-    const a = resp[3] ?? 0;
-    const b = resp[4] ?? 0;
-    for (const { key, value } of decodedValues(def, a, b)) {
-      record(key, value);
-      // Same shape as index.ts's gps_epoch_s hook: one signal that a second module
-      // also needs, taken off the recording path rather than decoded twice.
-      if (key === FREEZE_FRAME_DTC_KEY) {
-        recordFreezeFrameDtc(value);
-      }
-    }
+    fileResponse(def, resp);
   }
   await readTroubleCodeLists();
 }

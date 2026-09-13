@@ -1,5 +1,10 @@
 import type { RawChannel } from "socketcan";
 import { ageMs, latestValue } from "../can/signals.ts";
+import { pollPidNow } from "../can/obd.ts";
+import type { ObdPollerHold } from "../can/obd-hold.ts";
+import { requestTroubleCodeList } from "../can/obd-dtc.ts";
+import { MODE_STORED_DTCS } from "../diagnostics/obd-dtc.ts";
+import { recordTroubleCodeRead, troubleCodeSnapshot } from "../diagnostics/stored-codes.ts";
 import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
 import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
@@ -155,6 +160,32 @@ export interface ServiceWriteResult {
    * The top-level `status`/`message`/`succeeded` summarise the whole run.
    */
   writes?: PerWriteResult[];
+  /** What the counters read on either side of an OBD Mode 04. Only for `clear-dtcs`. */
+  clear?: ClearDtcsCounts;
+}
+
+/**
+ * The before-and-after of a clear, all four numbers read on the SAME parked bus within a
+ * few seconds of each other.
+ *
+ * ⚠️ `distSinceClearAfterKm === 0` is the only one of these that PROVES the bike erased
+ * anything. On 2026-08-08 and 2026-09-11 this bike answered Mode 04 with a positive `44`
+ * and erased nothing — the stored count did not move and PID 31 kept counting from 19 173 km
+ * — and nothing on the screen could tell the difference, because the list came from a cache
+ * up to a minute old and the counters were polled on a 10 s divisor. All four are now read
+ * either side of the frame instead. docs/clear-dtcs.md.
+ */
+export interface ClearDtcsCounts {
+  /** PID 01's stored-code count, read immediately before the Mode 04. Null if it did not answer. */
+  storedBefore: number | null;
+  /** The same PID, read immediately after. */
+  storedAfter: number | null;
+  /** PID 31, distance since codes were last cleared. */
+  distSinceClearBeforeKm: number | null;
+  /** The same, after. **Zero is the proof of erasure**; unchanged is the proof it did nothing. */
+  distSinceClearAfterKm: number | null;
+  /** How many codes the fresh mode-03 transfer listed, or null when it did not complete. */
+  listedAfter: number | null;
 }
 
 /** One parameter's outcome inside a batch, in the shape the page renders per row. */
@@ -307,6 +338,20 @@ export interface VcuWriteRunnerOptions {
    * gate, and fills in the values, without a restart.
    */
   latestSweep: () => Promise<LatestSweep | null>;
+  /**
+   * Parks the always-on OBD poller, resolving only once it has actually stopped — or null
+   * when it would not park in time.
+   *
+   * ⚠️ Injected rather than imported so a check can drive an action with a fake hold and
+   * assert both that nothing reaches the bus before the park is acknowledged and that the
+   * hold is released on every path out. Same reason `gate` and `latestSweep` are injected.
+   *
+   * ⚠️ It is NOT the bus lease. The lease (./bus-lease.ts) only excludes the two
+   * service-mode runners from each other; the OBD poller holds no lease and is never
+   * paused by service mode — src/vcu/service-actions.ts says so above `isClearDtcsReply`.
+   * Only `clear-dtcs` takes this, because only it reads the bike back on the same bus.
+   */
+  holdPoller: (what: string) => Promise<ObdPollerHold | null>;
 }
 
 /**
@@ -1091,38 +1136,206 @@ async function performClockSync(context: WriteContext, channel: RawChannel): Pro
   };
 }
 
+/** PID 01 — MIL lamp and the stored-code count. */
+const PID_MONITOR_STATUS = 0x01;
+
+/** PID 02 — the code the freeze frame was captured against. */
+const PID_FREEZE_FRAME_DTC = 0x02;
+
+/** PID 31 — kilometres since the codes were last cleared. The erasure proof. */
+const PID_DISTANCE_SINCE_CLEAR = 0x31;
+
+/**
+ * OBD Mode 04, with the bike read back on both sides of it.
+ *
+ * ⚠️ THE POLLER IS PARKED FIRST, and nothing is sent if it will not park. Two reasons, and
+ * the second is the one that bites: a mode-03 transfer already in flight when the Mode 04
+ * goes out would resolve AFTER it and file a pre-clear list as the "after" — reporting
+ * "erased nothing" for a clear that worked. The poller is not otherwise stopped by service
+ * mode (the bus lease does not cover it), so this is the only thing that makes the two reads
+ * describe the same moment.
+ *
+ * The whole parked window is Mode 04 (310 ms) + mode 03 (3.98 s worst case) + five PIDs
+ * (200 ms each) ≈ 5.3 s, against obd-hold.ts's 15 s cap. Past that cap the poller resumes
+ * underneath us and its 0x7DF traffic makes the VCU abandon our transfer, so the margin is
+ * load-bearing rather than decorative.
+ */
 async function performClearDtcs(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
+  const hold = await context.holdPoller("clearing the stored trouble codes");
+  if (!hold) {
+    return {
+      ok: false,
+      reason:
+        "the OBD poller would not stop in time, so the bike could not be read back on either side of the clear — nothing was sent. Try again in a few seconds.",
+    };
+  }
+  try {
+    return await clearOnParkedBus(context, channel);
+  } finally {
+    // Released on every path, including a throw: a leaked hold takes speed, rpm and the
+    // temperatures off the dashboard AND out of the ride log, on a bike with no reception.
+    hold.release();
+  }
+}
+
+async function clearOnParkedBus(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
+  const before = await readClearCounters(channel);
   console.warn("vcu-write: about to send OBD Mode 04 — the stored trouble codes and the freeze frame will be erased");
   const session = clearStoredDtcs(channel);
   context.running = session.session;
   const outcome = await session.finished;
+  // ⚠️ Cleared HERE, not in `perform`'s finally, because the actuating exchange is over and
+  // everything below is reads. `context.running` is what the gate watchdog and `runner.stop()`
+  // both read as "an exchange is in flight"; leaving it set through the read-back made the
+  // watchdog announce aborts it never performed. Clearing it early cannot fail quietly — the
+  // frame router (`handleCanFrame`) goes through it too, so an early clear would time the
+  // exchange out and report `failed` on the first run.
+  context.running = null;
+
+  const after = outcome.status === "cleared" ? await readAfterClear(channel) : null;
+  const counts: ClearDtcsCounts | undefined =
+    after === null
+      ? undefined
+      : {
+          storedBefore: before.storedCount,
+          storedAfter: after.counters.storedCount,
+          distSinceClearBeforeKm: before.distSinceClearKm,
+          distSinceClearAfterKm: after.counters.distSinceClearKm,
+          listedAfter: after.listedAfter,
+        };
+  const message = describeClear(outcome, counts);
+
   await appendAuditRecord(context.directory, {
     at: Date.now(),
     clockTrustworthy: readPiClock().trustworthy,
     action: "clear-dtcs",
     status: outcome.status,
-    note: describeClear(outcome),
+    // Recorded as read off the bus, so the journal is a witness rather than a transcript of
+    // what the ECU claimed. The 2026-08-08 and 2026-09-11 lines say "cleared" and carry
+    // nothing that could have contradicted them.
+    before: describeCounters(before.storedCount, before.distSinceClearKm),
+    after: after === null ? null : describeCounters(after.counters.storedCount, after.counters.distSinceClearKm),
+    note: message,
   });
+
   return {
     ok: true,
     result: {
       action: "clear-dtcs",
       status: outcome.status,
-      message: describeClear(outcome),
-      succeeded: outcome.status === "cleared",
+      message,
+      // ⚠️ NOT simply `status === "cleared"`. That is the ECU's word for it, and twice this bike
+      // said it while erasing nothing. False only when PID 31 DISPROVES the erasure; a counter
+      // we could not read leaves this true, because turning a missed 200 ms poll into "the bike
+      // refused" would be the same invention in the other direction — the message says which.
+      succeeded: outcome.status === "cleared" && erasureNotDisproven(counts),
+      clear: counts,
     },
   };
 }
 
-function describeClear(outcome: ClearDtcsOutcome): string {
+/** PID 01 and PID 31, read now on the parked bus. Null for either that does not answer. */
+async function readClearCounters(channel: RawChannel): Promise<{
+  storedCount: number | null;
+  distSinceClearKm: number | null;
+}> {
+  const answeredStatus = await pollPidNow(channel, PID_MONITOR_STATUS);
+  const answeredDistance = await pollPidNow(channel, PID_DISTANCE_SINCE_CLEAR);
+  // ⚠️ `latestValue` only after the poll ANSWERED. Reading it regardless would hand back the
+  // always-on poller's last value — up to 10 s old for PID 01 — and present it as a reading
+  // taken beside the frame.
+  return {
+    storedCount: answeredStatus ? latestValue("dtc_count") : null,
+    distSinceClearKm: answeredDistance ? latestValue("dist_since_clear_km") : null,
+  };
+}
+
+/**
+ * The re-read after a positive Mode 04: the stored list, the freeze frame, and the counters.
+ *
+ * The mode-03 transfer is here for two jobs at once — it is the number the page shows, and
+ * it is what stops /stored-dtcs serving the pre-clear list for the next minute. PID 02 is
+ * read because the freeze frame is the one thing a clear is documented to take that nobody
+ * has ever watched it take: it sits on the 10 s divisor, which is precisely why the
+ * 2026-09-13 clear could not settle whether it survived or was instantly re-captured.
+ */
+async function readAfterClear(channel: RawChannel): Promise<{
+  counters: { storedCount: number | null; distSinceClearKm: number | null };
+  listedAfter: number | null;
+}> {
+  const list = await requestTroubleCodeList(channel, MODE_STORED_DTCS);
+  recordTroubleCodeRead(list, "stored");
+  await pollPidNow(channel, PID_FREEZE_FRAME_DTC);
+  const stored = troubleCodeSnapshot().stored;
+  return {
+    counters: await readClearCounters(channel),
+    listedAfter: stored.state === "codes" ? stored.codes.length : null,
+  };
+}
+
+/** `46 stored, 19671 km since clear` — for the audit journal, where a shape is worth more than a number. */
+function describeCounters(storedCount: number | null, distSinceClearKm: number | null): string {
+  const stored = storedCount === null ? "stored count unread" : `${storedCount} stored`;
+  const distance = distSinceClearKm === null ? "distance unread" : `${distSinceClearKm} km since clear`;
+  return `${stored}, ${distance}`;
+}
+
+/**
+ * What happened, in the words the page shows.
+ *
+ * ⚠️ A positive `44` is NOT success here, and this is the sentence that says so. Twice this
+ * bike answered `44` and erased nothing; the audit journal recorded "Mode 04 accepted" both
+ * times and there was no way to know. PID 31 going to zero is what makes the difference, so
+ * it is what the verdict is built from — not the reply byte.
+ */
+function describeClear(outcome: ClearDtcsOutcome, counts: ClearDtcsCounts | undefined): string {
   switch (outcome.status) {
     case "cleared":
-      return "Mode 04 accepted. The stored list is gone; codes whose faults are still active will come back on the next drive cycle. Read the list again to see what remains.";
+      return counts === undefined ? "Mode 04 accepted." : describeAcceptedClear(counts);
     case "refused":
       return `Refused: ${outcome.description}.`;
     case "failed":
       return `Nothing confirmed: ${outcome.reason}`;
   }
+}
+
+function describeAcceptedClear(counts: ClearDtcsCounts): string {
+  const listed = counts.listedAfter === null ? "" : ` The list now holds ${counts.listedAfter}.`;
+  if (counts.distSinceClearAfterKm === null) {
+    return (
+      "Mode 04 accepted, but the bike could not be read back to confirm it — a positive answer alone has " +
+      `twice meant nothing on this bike.${listed} Check the Faults tab in a minute.`
+    );
+  }
+  if (counts.distSinceClearAfterKm !== 0) {
+    return (
+      `⚠️ Mode 04 was accepted AND THE BIKE ERASED NOTHING: distance since codes cleared still reads ` +
+      `${counts.distSinceClearAfterKm} km, which a real clear resets to zero within half a second. ` +
+      "This has happened twice before, both times with a cable or a charge involved — unplug and try again."
+    );
+  }
+  const swept = countsSwept(counts);
+  return (
+    `Cleared${swept}. Distance since codes cleared went ` +
+    `${counts.distSinceClearBeforeKm === null ? "?" : counts.distSinceClearBeforeKm} km → 0 km, which is the proof ` +
+    `the bike really erased its fault memory.${listed} Codes whose faults are still active come straight back.`
+  );
+}
+
+/** False only when PID 31 was read and did NOT reset. Unread is not disproof. */
+function erasureNotDisproven(counts: ClearDtcsCounts | undefined): boolean {
+  if (counts === undefined || counts.distSinceClearAfterKm === null) {
+    return true;
+  }
+  return counts.distSinceClearAfterKm === 0;
+}
+
+/** ` — 46 stored → 5 stored, 41 cleared`, or nothing when a count is missing. */
+function countsSwept(counts: ClearDtcsCounts): string {
+  if (counts.storedBefore === null || counts.storedAfter === null) {
+    return "";
+  }
+  return `: ${counts.storedBefore} stored → ${counts.storedAfter} stored, ${counts.storedBefore - counts.storedAfter} cleared`;
 }
 
 /**
@@ -1383,9 +1596,23 @@ function startGateWatchdog(context: WriteContext): ReturnType<typeof setInterval
     if (verdict.safe) {
       return;
     }
+    const running = context.running;
+    if (running === null) {
+      // ⚠️ Nothing is in flight, so there is nothing to cut short — and saying "ABORTING"
+      // anyway would put an abort that never happened into the only witness this bike has.
+      // The warn used to be unconditional and the abort reached a settled session, which is
+      // exactly the failure recorded above in `perform` for the charge commands.
+      //
+      // This is reachable because `clear-dtcs` keeps reading the bike back AFTER its one
+      // frame has landed. Those reads are a mode-03 transfer and three mode-01 PIDs — byte
+      // for byte what the always-on poller emits at 2 Hz on a moving bike with no gate over
+      // it at all — so there is nothing here for the gate to protect, and the actuating half
+      // is already done and irreversible by the time `running` goes null.
+      return;
+    }
     fired = true;
     console.warn(`vcu-write: ABORTING — the bike stopped being safe to service: ${verdict.blockers.join("; ")}`);
-    context.running?.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
+    running.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
   }, GATE_WATCH_INTERVAL_MS);
   // This timer must never be the reason a `systemctl stop` hangs.
   timer.unref?.();

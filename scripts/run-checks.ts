@@ -126,6 +126,19 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-clear-dtcs.ts",
+    covers:
+      'OBD Mode 04 and the read-back that is the only thing separating "the bike said 44" from "the bike erased ' +
+      'its fault memory": that the OBD poller is parked BEFORE any frame goes out and released on every path out ' +
+      "including a refusal and a silence, that a poller which will not park sends nothing at all, that PID 01 and " +
+      "PID 31 are read on both sides of the frame and the stored list and freeze frame after it, that a positive " +
+      "44 with PID 31 unmoved is reported as ERASED NOTHING rather than as success (the 2026-08-08 and 2026-09-11 " +
+      "shape), that a counter which could not be read becomes null rather than zero, that the fresh list reaches " +
+      "the snapshot /stored-dtcs serves so the pre-clear list cannot be shown after the button, that a bike going " +
+      "unsafe during the read-back no longer makes the gate watchdog announce an abort it did not perform, and " +
+      "which gate states do and do not raise the cable caution",
+  },
+  {
     script: "scripts/check-charge-write-visibility.ts",
     covers:
       "why the charge tab's write controls used to flicker: that the browser's staleness window for " +

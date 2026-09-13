@@ -1599,6 +1599,8 @@ if (bike4102) {
 // check refuses BEFORE the bus is acquired, so this never touches a channel.
 {
   const runner = createVcuWriteRunner({
+    // Nothing here drives clear-dtcs, so the hold is granted and never used.
+    holdPoller: () => Promise.resolve({ release: () => {} }),
     enabled: true,
     busIsActive: true,
     directory: "/tmp",

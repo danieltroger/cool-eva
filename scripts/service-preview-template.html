@@ -773,13 +773,33 @@
           };
         }
         if (action === "clear-dtcs") {
-          record({ action: "clear-dtcs", status: "cleared" });
+          // ⚠️ The 2026-09-13 press, verbatim: 46 stored before, 5 after, PID 31 19 671 km → 0.
+          // A made-up pair of round numbers would let the sweep line and the proof line be
+          // screenshotted disagreeing with each other, which is the one thing this card is for.
+          // `?clear=nothing` shows the OTHER real ending — the 2026-08-08 / 2026-09-11 shape,
+          // where the bike answers 44 and PID 31 does not move.
+          const erasedNothing = new URLSearchParams(window.location.search).get("clear") === "nothing";
+          const clear = {
+            storedBefore: 46,
+            storedAfter: erasedNothing ? 46 : 5,
+            distSinceClearBeforeKm: 19671,
+            distSinceClearAfterKm: erasedNothing ? 19671 : 0,
+            listedAfter: erasedNothing ? null : 5,
+          };
+          record({
+            action: "clear-dtcs",
+            status: "cleared",
+            before: "46 stored, 19671 km since clear",
+            after: `${clear.storedAfter} stored, ${clear.distSinceClearAfterKm} km since clear`,
+          });
           return {
             action: "clear-dtcs",
             status: "cleared",
-            message:
-              "Mode 04 accepted. The stored list is gone; codes whose faults are still active will come back on the next drive cycle. Read the list again to see what remains.",
-            succeeded: true,
+            message: erasedNothing
+              ? "⚠️ Mode 04 was accepted AND THE BIKE ERASED NOTHING: distance since codes cleared still reads 19671 km, which a real clear resets to zero within half a second. This has happened twice before, both times with a cable or a charge involved — unplug and try again."
+              : "Cleared: 46 stored → 5 stored, 41 cleared. Distance since codes cleared went 19671 km → 0 km, which is the proof the bike really erased its fault memory. The list now holds 5. Codes whose faults are still active come straight back.",
+            succeeded: !erasedNothing,
+            clear,
           };
         }
         if (action === "sync-clock") {

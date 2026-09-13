@@ -731,6 +731,8 @@ const crossings = crossed.length;
   const auditDirectory = await mkdtemp(join(tmpdir(), "charge-auto-check-"));
   const automatic = startChargeAutomatic({ commandChargeCurrent: async () => ({ succeeded: true, message: "" }) });
   const runner = createVcuWriteRunner({
+    // Nothing here drives clear-dtcs, so the hold is granted and never used.
+    holdPoller: () => Promise.resolve({ release: () => {} }),
     enabled: true,
     busIsActive: true,
     directory: auditDirectory,
