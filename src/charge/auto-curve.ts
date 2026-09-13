@@ -259,7 +259,7 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   }
   const lowering = temperature >= TARGET_C ? CHARGE_AUTO_REASON.HARD_CEILING : CHARGE_AUTO_REASON.CLOSING;
   const stepped = stepTo(current - step, current, ceiling, lowering);
-  return sessionEndsFirst(input, stepped, temperature, rate) ?? stepped;
+  return sessionEndsFirst(input, stepped, current, temperature, rate) ?? stepped;
 }
 
 /**
@@ -279,6 +279,7 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
 function sessionEndsFirst(
   input: ChargeAutoInput,
   stepped: ChargeAutoDecision,
+  current: number,
   temperature: number,
   rate: HeatingRate
 ): ChargeAutoDecision | null {
@@ -292,11 +293,15 @@ function sessionEndsFirst(
   if (input.requestedAmps !== null && input.requestedAmps <= MIN_COMMAND_A) {
     return null;
   }
-  // Not a lowering: a hold (the deadband, or the floor clamp) is already the shipped answer, and
-  // replacing its reason would claim the taper did something the floor did. A `command` here is
-  // always a step DOWN — `stepTo` holds rather than commanding when the step lands on `current`,
-  // and it can only round UP against a `current` already under the floor, which cannot happen.
-  if (stepped.kind !== "command") {
+  // ⚠️ Not a lowering, and BOTH halves are load-bearing. A hold — the deadband, or the floor clamp
+  // — is already the shipped answer, and replacing its reason would claim the taper did what the
+  // floor did. And `stepTo` clamps with `max(MIN_COMMAND_A, …)`, so from a `current` below the
+  // floor a "step down" comes back as a command to RAISE: 20 A → 35 A. Without the second half the
+  // veto turns that recovery into a hold, which is the third outcome this function may not have.
+  // Unreachable through ./auto.ts, where `commandedAmps` is only ever a previous clamped command —
+  // but this is a pure function and check-charge-auto.ts §15 calls it directly, so the guarantee
+  // belongs here rather than in an unstated invariant two modules away.
+  if (stepped.kind !== "command" || stepped.amps >= current) {
     return null;
   }
   const ahead = sessionAheadMinutes({

@@ -883,10 +883,12 @@ let propertyCases = 0;
 let propertyVetoes = 0;
 for (const temperature of PROPERTY_TEMPERATURES) {
   for (const socPercent of PROPERTY_SOCS) {
-    // ⚠️ 35 is MIN_COMMAND_A: stepping down from the floor makes `stepTo` return a HOLD, and a
-    // veto that fired there would relabel AT_FLOOR as TAPERING — claiming the taper did what the
-    // floor did. Without this value in the grid that guard survives every mutation.
-    for (const commandedAmps of [null, MIN_COMMAND_A, 40, 55, 70]) {
+    // ⚠️ TWO of these exist to reach a guard rather than to vary the input. 35 is MIN_COMMAND_A:
+    // stepping down from the floor makes `stepTo` return a HOLD, and a veto firing there would
+    // relabel AT_FLOOR as TAPERING. 20 is BELOW the floor, where `stepTo`'s own
+    // `max(MIN_COMMAND_A, …)` turns a step down into a command to RAISE — the one way this rule can
+    // produce a third outcome, and it went unnoticed until a guard was deleted as dead.
+    for (const commandedAmps of [null, 20, MIN_COMMAND_A, 40, 55, 70]) {
       for (const samples of [
         climbing(44, temperature),
         rampTo(temperature + 3, temperature),
@@ -1106,6 +1108,7 @@ let untaperedVetoes = 0;
 let untaperedTicks = 0;
 let worstVetoCostMin = 0;
 let bestVetoSavingMin = 0;
+let taperedPlantsSaved = 0;
 let worstVetoReversals = 0;
 let shippedGridReversals = 0;
 const vetoAddedCrossings: string[] = [];
@@ -1121,6 +1124,9 @@ for (const taper of [false, true]) {
         }
         worstVetoCostMin = Math.max(worstVetoCostMin, withVeto.minutes - shipped.minutes);
         bestVetoSavingMin = Math.min(bestVetoSavingMin, withVeto.minutes - shipped.minutes);
+        if (taper && shipped.minutes - withVeto.minutes > 0.1) {
+          taperedPlantsSaved += 1;
+        }
         worstVetoReversals = Math.max(worstVetoReversals, reversalCount(withVeto.commands));
         shippedGridReversals = Math.max(shippedGridReversals, reversalCount(shipped.commands));
         if (taper) {
@@ -1138,11 +1144,16 @@ const EXPECTED_UNTAPERED_VETOES = 152;
 /** ⚠️ The cost of suppressing a step for a taper that never comes. Measured 1.6 min, bounded here. */
 const VETO_TIME_COST_BOUND_MIN = 2;
 /**
- * And the least it must SAVE somewhere, or it is paying that cost for nothing. A separate number
- * from the bound above on purpose: they point in opposite directions and one constant pinning both
- * reads as a symmetry that is not there. Measured 2.4 min, on the tapered half of the grid.
+ * How many of the 100 tapered plants must come out FASTER, or the veto is paying its cost for
+ * nothing.
+ *
+ * ⚠️ A population, not the best single plant, and the difference matters. The deepest saving is
+ * 2.4 min and the runner-up is 1.75, so a bound on the maximum rests on ONE plant of a hundred —
+ * a 16 % shift anywhere would turn it red with a message blaming the wrong thing. Counting how
+ * many plants improve is the same claim made on 25 measurements instead of one. Measured 25 save,
+ * 2 cost, 73 unchanged; pinned below that with room for the grid to breathe.
  */
-const VETO_TIME_SAVING_MIN = 2;
+const VETO_PLANTS_SAVED_MIN = 15;
 
 if (vetoAddedCrossings.length > 0) {
   failures.push(
@@ -1163,11 +1174,11 @@ if (worstVetoCostMin > VETO_TIME_COST_BOUND_MIN) {
       `bound. That is what being wrong about the taper costs, and it is supposed to stay small`
   );
 }
-if (bestVetoSavingMin > -VETO_TIME_SAVING_MIN) {
+if (taperedPlantsSaved < VETO_PLANTS_SAVED_MIN) {
   failures.push(
-    `§18 the veto never saved more than ${(-bestVetoSavingMin).toFixed(1)} min on any plant, so it is paying its ` +
-      `${worstVetoCostMin.toFixed(1)} min worst case for nothing — the whole point is that it is faster where the ` +
-      `taper is real`
+    `§18 only ${taperedPlantsSaved} of the tapered plants came out faster, under the ${VETO_PLANTS_SAVED_MIN} ` +
+      `pinned — so the veto is paying its ${worstVetoCostMin.toFixed(1)} min worst case for nothing. The whole ` +
+      `point is that it is faster where the taper is real (best single saving ${(-bestVetoSavingMin).toFixed(1)} min)`
   );
 }
 if (worstVetoReversals > shippedGridReversals) {
@@ -1261,8 +1272,8 @@ console.log(
     `${propertyCases} generated inputs — never at or above ${TARGET_C} °C, never a raise, never a step — suppresses ` +
     `the 2026-09-13 over-throttle on its own logged rings, reads the SOC rate as a lower bound and declines above ` +
     `the ${TAPER_KNEE_SOC} % knee, fires on ${untaperedVetoes} of ${untaperedTicks} untapered grid ticks for at ` +
-    `worst ${worstVetoCostMin.toFixed(1)} min and at best ${(-bestVetoSavingMin).toFixed(1)} saved with no new ` +
-    `crossing, never once on the replays §3, §4 and §6 pin their numbers over and ${frozenGridVetoes} times on ` +
+    `worst ${worstVetoCostMin.toFixed(1)} min, brings ${taperedPlantsSaved} of the tapered plants home faster with ` +
+    `no new crossing, never once on the replays §3, §4 and §6 pin their numbers over and ${frozenGridVetoes} times on ` +
     `${frozenGridPlants} of §11's frozen plants, which its golden count is measured with; and ${crossings} of ` +
     `${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} frozen-grid ` +
     `plants cross the cliff, a strict subset of the 24 the rule this replaces crossed`
