@@ -205,6 +205,31 @@ export const MALFORMED_TRANSFERS: readonly {
     because: "a 4-byte payload is a single frame; honouring it would wait forever for a consecutive frame",
   },
   {
+    /**
+     * No fixture carried this until 2026-09-14, and it is the shape a truncated DLC
+     * takes. Same rule as the entry above: addressed to the tester, malformed, so
+     * abandoned rather than handed back — otherwise the caller's window runs out and a
+     * parameter read re-asks.
+     */
+    name: "first frame short of 8 bytes",
+    frames: ["F1 10 07 62 20"],
+    refusal: "abandoned",
+    because: "a first frame that does not carry its five payload bytes is a truncated DLC",
+  },
+  {
+    /**
+     * ⚠️ A SINGLE frame, and the likelier shape: a parameter read's ordinary reply is
+     * one. The First Frame entries above were reclassified first and this was left as
+     * `ignored`, which meant the exact failure that change was made to stop — window
+     * runs out, `first-reply`, retry — survived on the commoner path. Six bytes is all
+     * a single frame holds once the address and the PCI are paid for.
+     */
+    name: "single frame claiming more than one frame holds",
+    frames: ["F1 07 62 20 01 00 09 3C"],
+    refusal: "abandoned",
+    because: "seven payload bytes do not fit an extended-addressed single frame",
+  },
+  {
     name: "consecutive frame with no first frame",
     frames: ["F1 20 3C B6 00 00 00 00"],
     refusal: "not-consumed",

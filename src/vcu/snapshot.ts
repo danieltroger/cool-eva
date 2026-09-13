@@ -584,7 +584,7 @@ function describeFailure(outcome: VcuReadOutcome): string {
     case "no-session":
       return outcome.reason;
     case "stalled":
-      return `${outcome.reason} — the micro began answering and stopped`;
+      return outcome.reason;
     case "abandoned":
       return `the reply was discarded rather than decoded: ${outcome.reason}`;
     case "unrecognised":

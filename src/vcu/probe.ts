@@ -186,7 +186,7 @@ function describeFailure(outcome: VcuProbeOutcome): string {
     case "no-session":
       return `${outcome.reason} — either nothing is at this address, or it is asleep`;
     case "stalled":
-      return `${outcome.reason} — the ECU began answering and stopped, which is not the same claim as silence`;
+      return `${outcome.reason} — not the same claim as silence`;
     case "abandoned":
       return `the reply was discarded rather than decoded: ${outcome.reason}`;
     case "unrecognised":

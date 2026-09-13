@@ -173,6 +173,27 @@ export class ExtendedIsoTpReassembler {
     }
   }
 
+  /**
+   * A frame addressed to US that this framing does not define.
+   *
+   * ⚠️ ABANDONED, NOT IGNORED — changed 2026-09-14, and the distinction is the whole
+   * point of the two words. `ignored` means "not ours, hand it back so whoever it
+   * belongs to still sees it"; every branch routed here has already passed the
+   * `frame[0] !== TESTER_ADDRESS` check, so it IS ours, and the OBD poller that shares
+   * this id range reads it under NORMAL addressing where `0xF1` is an undefined PCI it
+   * discards anyway. Calling it ambient traffic left the caller's window running out
+   * instead — which since #223 means a parameter read timing out as `first-reply`, the
+   * stage that RETRIES, putting a second `22` on a micro mid-ISO-TP-abort.
+   *
+   * ⚠️ A Consecutive Frame with no First Frame is deliberately NOT routed here: that
+   * one really can be a straggler from a transfer somebody else is following, and
+   * abandoning on it would let a late frame kill a healthy exchange.
+   */
+  #malformed(reason: string): ExtendedIsoTpResult {
+    this.reset();
+    return { status: "abandoned", reason };
+  }
+
   reset(): void {
     this.#payload = new Uint8Array(0);
     this.#filled = 0;
@@ -184,18 +205,15 @@ export class ExtendedIsoTpReassembler {
   #pushSingleFrame(frame: Uint8Array): ExtendedIsoTpResult {
     const length = frame[1] & 0x0f;
     if (length === 0) {
-      return { status: "ignored", reason: "single frame declaring zero payload bytes" };
+      return this.#malformed("single frame declaring zero payload bytes");
     }
     if (length > MAX_SINGLE_FRAME_PAYLOAD) {
       // Six is all that fits once the address and the PCI are paid for. A larger
       // claim is a frame from a different addressing mode, not a long single frame.
-      return {
-        status: "ignored",
-        reason: `single frame claims ${length} bytes, over the ${MAX_SINGLE_FRAME_PAYLOAD}-byte limit`,
-      };
+      return this.#malformed(`single frame claims ${length} bytes, over the ${MAX_SINGLE_FRAME_PAYLOAD}-byte limit`);
     }
     if (frame.length < 2 + length) {
-      return { status: "ignored", reason: `single frame claims ${length} bytes but carries ${frame.length - 2}` };
+      return this.#malformed(`single frame claims ${length} bytes but carries ${frame.length - 2}`);
     }
     // A single frame is a whole transfer, so anything half-received is stale.
     this.reset();
@@ -207,27 +225,14 @@ export class ExtendedIsoTpReassembler {
   }
 
   #pushFirstFrame(frame: Uint8Array): ExtendedIsoTpResult {
-    // ⚠️ ABANDONED, NOT IGNORED, for both malformed shapes below — changed 2026-09-14.
-    // `ignored` means "not ours, hand it back", and this frame is addressed to the
-    // TESTER (checked above): nobody else on the socket wants it. Reporting it as
-    // ambient traffic left the caller's window running out instead, which since #223
-    // means a parameter read timing out as `first-reply` and RE-ASKING — putting a
-    // second `22` on a micro that is mid-ISO-TP-abort, the one thing routing reads
-    // through this transport was chosen to avoid. Abandoning says what was wrong and
-    // ends the exchange, which is also strictly more than the old single-frame path
-    // could say.
     if (frame.length < 8) {
-      const reason = "first frame shorter than 8 bytes";
-      this.reset();
-      return { status: "abandoned", reason };
+      return this.#malformed("first frame shorter than 8 bytes");
     }
     const totalLength = ((frame[1] & 0x0f) << 8) | frame[2];
     if (totalLength <= MAX_SINGLE_FRAME_PAYLOAD) {
       // Would have fitted in a single frame. Honouring it would leave us waiting
       // for a Consecutive Frame that is never coming.
-      const reason = `first frame declares only ${totalLength} bytes`;
-      this.reset();
-      return { status: "abandoned", reason };
+      return this.#malformed(`first frame declares only ${totalLength} bytes`);
     }
     if (totalLength > this.#maxPayloadBytes) {
       const reason = `first frame declares ${totalLength} bytes, over the ${this.#maxPayloadBytes} cap`;

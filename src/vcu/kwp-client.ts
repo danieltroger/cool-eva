@@ -392,7 +392,10 @@ export function createVcuKwpClient(channel: RawChannel, options: VcuKwpClientOpt
   };
   return {
     handleFrame: (id, data, arrival) => handleFrame(context, id, data, arrival),
-    openSession: target => openSession(context, target),
+    // The public contract stays a boolean: no caller outside this file needs to tell
+    // our own refusal from the micro's silence, and `performRead` — which does — reads
+    // `SessionAttempt` directly.
+    openSession: async target => (await openSession(context, target)).opened,
     ping: target => ping(context, target),
     readParameter: (micro, index) => readParameter(context, micro, index),
     probe: (target, bank, index) => probe(context, target, bank, index),
@@ -454,8 +457,11 @@ async function multiFrameExchange(
   if (busy !== null) {
     return { status: "not-sent", reason: busy };
   }
-  if (!(await ensureSession(context, micro))) {
-    return { status: "no-session", reason: `${micro} did not answer 10 81` };
+  const session = await ensureSession(context, micro);
+  if (!session.opened) {
+    return session.notSent === null
+      ? { status: "no-session", reason: `${micro} did not answer 10 81` }
+      : { status: "not-sent", reason: session.notSent };
   }
 
   const expectedService = expectedResponseService(request);
@@ -606,16 +612,16 @@ async function performRead(
   if (busy !== null) {
     return { status: "not-sent", reason: busy, flowControlLatency: null };
   }
-  if (!(await ensureSession(context, micro))) {
-    // Same distinction as the retry's below: a session that failed because we stopped
-    // is our withdrawal, not a silent micro.
-    return context.stopped
-      ? { status: "not-sent", reason: "client stopped", flowControlLatency: null }
-      : { status: "no-session", reason: `${micro} did not answer 10 81`, flowControlLatency: null };
+  const session = await ensureSession(context, micro);
+  if (!session.opened) {
+    return { ...sessionFailure(session, micro, "did not answer 10 81"), flowControlLatency: null };
   }
 
+  // Both hoisted: the retry must run under the same bytes and the same settings as the
+  // first attempt, and a reader should not have to prove that from two call sites.
   const requestPayload = buildRequestPayload({ kind: "read-parameter", bank, index });
-  let result = await runTransfer(context, micro, requestPayload, readTransferOptions(context));
+  const transferOptions = readTransferOptions(context);
+  let result = await runTransfer(context, micro, requestPayload, transferOptions);
   if (result.kind === "timeout" && result.stage === "first-reply") {
     // Far and away the likeliest cause of silence is the session having expired
     // while we were doing something else, so re-open and ask once more before
@@ -627,39 +633,33 @@ async function performRead(
     // the micro demonstrably answered — so the retry's whole premise is absent, and
     // asking again would put a second request on a micro that is still transmitting
     // the first reply.
-    if (!(await openSession(context, micro))) {
-      // ⚠️ OURS OR THE BIKE'S. `stop()` — the gate shutting, a shutdown, an abort —
-      // makes `exchange` refuse to transmit, so the re-open "fails" without a frame
-      // ever going out. Reporting that as `no-session` puts our own withdrawal on the
-      // phone as “either nothing is at this address, or it is asleep” (./probe.ts),
-      // which is a claim about the motorcycle for something the motorcycle did not do.
-      // The sweep is insulated by ./sweep.ts discarding an in-flight outcome on abort;
-      // a probe keeps its one.
-      return context.stopped
-        ? { status: "not-sent", reason: "client stopped", flowControlLatency: null }
-        : { status: "no-session", reason: `${micro} stopped answering 10 81 mid-read`, flowControlLatency: null };
+    const reopened = await openSession(context, micro);
+    if (!reopened.opened) {
+      return { ...sessionFailure(reopened, micro, "stopped answering 10 81 mid-read"), flowControlLatency: null };
     }
-    result = await runTransfer(context, micro, requestPayload, readTransferOptions(context));
+    result = await runTransfer(context, micro, requestPayload, transferOptions);
   }
-  // ⚠️ The measurement rides out on EVERY outcome, attached in one place. A stalled
-  // read is exactly the case where it is worth having, so it must not be dropped on
-  // the failure branches — the mistake ./multiframe-transfer.ts's `settle` exists to
-  // stop being made six times over.
-  const measured = { flowControlLatency: result.flowControlLatency };
+  // ⚠️ ONE attachment point, which is what ./multiframe-transfer.ts's `settle` earned
+  // its comment for: a stalled read is exactly the case the measurement exists for, so
+  // it must not be droppable by a branch someone adds later and forgets to spread it on.
+  return { ...describeReadResult(result, identifier), flowControlLatency: result.flowControlLatency };
+}
+
+/** What one finished transfer means for a parameter read. Pure. */
+function describeReadResult(result: MultiFrameResult, identifier: number): VcuReadResult {
   switch (result.kind) {
     case "payload":
-      return { ...describeReadPayload(result.payload, identifier), ...measured };
+      return describeReadPayload(result.payload, identifier);
     case "timeout":
-      return { ...describeReadTimeout(result.stage), ...measured };
+      return describeReadTimeout(result.stage);
     case "abandoned":
-      return { status: "abandoned", reason: result.reason, ...measured };
+      return { status: "abandoned", reason: result.reason };
+    // "We stopped", not "the bike went quiet" — the same claim `stop()` made before this
+    // path assembled anything, and ./sweep.ts discards an in-flight outcome on abort on
+    // the strength of it. A cancel and a dead socket are one answer to a caller here.
     case "cancelled":
-      // "We stopped", not "the bike went quiet" — the same claim `stop()` made before
-      // this path assembled anything, and ./sweep.ts discards an in-flight outcome on
-      // abort on the strength of it.
-      return { status: "not-sent", reason: result.reason, ...measured };
     case "not-sent":
-      return { status: "not-sent", reason: result.reason, ...measured };
+      return { status: "not-sent", reason: result.reason };
   }
 }
 
@@ -699,10 +699,11 @@ function describeReadPayload(payload: Uint8Array, identifier: number): VcuReadRe
 /**
  * A timeout, by the window it happened in.
  *
- * ⚠️ A switch over all three stages rather than a test for `first-reply` and an else: the
- * third is unreachable from a read — a 3-byte request is one frame, so nothing is ever
- * outstanding for a micro to be asked about — and a default would file it as a stall,
- * which would be a confident wrong answer about which end went quiet.
+ * ⚠️ A switch over all three stages with NO `default`, so a fourth `TransferStage` is a
+ * compile error here rather than silently inheriting whatever the last branch said. That
+ * is the whole payment: the `request-flow-control` branch is unreachable from a read — a
+ * 3-byte request is one frame, so nothing is ever outstanding for a micro to be asked
+ * about — and it says so in its own reason rather than being folded into a neighbour.
  */
 function describeReadTimeout(stage: TransferStage): VcuReadResult {
   switch (stage) {
@@ -718,17 +719,30 @@ function describeReadTimeout(stage: TransferStage): VcuReadResult {
   }
 }
 
-async function openSession(context: ClientContext, micro: VcuTarget): Promise<boolean> {
+/**
+ * Why a session was not opened — OURS or the micro's.
+ *
+ * ⚠️ A boolean here was one layer too high. `exchange` knows it never transmitted, and
+ * for two reasons (we stopped, or another exchange holds the slot); collapsing that to
+ * false made the caller guess the cause back from `context.stopped`, which covered one
+ * of the two and reported the other as the bike being asleep. The reason travels now.
+ */
+type SessionAttempt = { opened: true } | { opened: false; notSent: string | null };
+
+async function openSession(context: ClientContext, micro: VcuTarget): Promise<SessionAttempt> {
   const result = await exchange(context, micro, { kind: "start-session" });
   const opened = result.kind === "reply" && result.frame.kind === "payload" && isSessionOpened(result.frame.payload);
   // Cleared rather than left stale on failure: believing a session is open when it
   // is not turns every subsequent read into a silent one.
   context.lastExchangeAt[micro] = opened ? monotonicNow() : null;
-  return opened;
+  if (opened) {
+    return { opened: true };
+  }
+  return { opened: false, notSent: result.kind === "not-sent" ? result.reason : null };
 }
 
 async function ping(context: ClientContext, micro: VcuTarget): Promise<boolean> {
-  if (!(await ensureSession(context, micro))) {
+  if (!(await ensureSession(context, micro)).opened) {
     return false;
   }
   const result = await exchange(context, micro, { kind: "tester-present" });
@@ -736,12 +750,26 @@ async function ping(context: ClientContext, micro: VcuTarget): Promise<boolean> 
 }
 
 /** Opens a session only when the last one is believed to have expired. */
-async function ensureSession(context: ClientContext, micro: VcuTarget): Promise<boolean> {
+async function ensureSession(context: ClientContext, micro: VcuTarget): Promise<SessionAttempt> {
   const lastExchangeAt = context.lastExchangeAt[micro] ?? null;
   if (lastExchangeAt !== null && since(lastExchangeAt) < SESSION_IDLE_LIMIT_MS) {
-    return true;
+    return { opened: true };
   }
   return openSession(context, micro);
+}
+
+/**
+ * A failed session open, as an outcome — ours or the micro's, never a guess.
+ *
+ * `notSent` is set only when nothing reached the bus, which is the one case where
+ * blaming the micro would be a claim about the motorcycle for a fault of ours.
+ * ./probe.ts renders `no-session` as "either nothing is at this address, or it is
+ * asleep", so this is the difference between a diagnosis and a wild goose chase.
+ */
+function sessionFailure(attempt: { notSent: string | null }, micro: VcuTarget, when: string): VcuReadResult {
+  return attempt.notSent === null
+    ? { status: "no-session", reason: `${micro} ${when}` }
+    : { status: "not-sent", reason: attempt.notSent };
 }
 
 /**
@@ -775,10 +803,9 @@ function exchange(context: ClientContext, micro: VcuTarget, request: VcuRequest)
     // the guarantee belongs for all three callers.
     return Promise.resolve({ kind: "not-sent", reason: "client stopped" });
   }
-  if (context.pending) {
-    const reason = "a request was already in flight";
-    console.warn(`vcu: ${reason} — refusing to interleave a second one`);
-    return Promise.resolve({ kind: "not-sent", reason });
+  const busy = busyReason(context);
+  if (busy !== null) {
+    return Promise.resolve({ kind: "not-sent", reason: busy });
   }
   const frame = Buffer.from(buildRequestFrame(micro, request));
   const canIds = canIdsFor(micro);

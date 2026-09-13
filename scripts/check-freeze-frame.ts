@@ -406,10 +406,13 @@ check(
 // Six bytes is all a single frame holds once the address and PCI are paid for.
 // A larger claim is a frame from the OTHER addressing mode, and reading it would
 // run off the end of an 8-byte frame.
+// ⚠️ `abandoned`, not `ignored`, since 2026-09-14: the frame is addressed to the
+// tester, so "hand it back to whoever it belongs to" was never true of it, and leaving
+// the caller's window to run out makes a parameter read retry — see `#malformed`.
 const tooLongSingle = new ExtendedIsoTpReassembler().push(parseHexFrame("F1 07 57 01 00 2C 2D 03"));
 check(
-  tooLongSingle.status === "ignored",
-  `a single frame claiming 7 bytes should be ignored, got ${tooLongSingle.status}`
+  tooLongSingle.status === "abandoned",
+  `a single frame claiming 7 bytes should be abandoned, got ${tooLongSingle.status}`
 );
 
 // A truncated body must stop at the first field that does not fit, not skip it —

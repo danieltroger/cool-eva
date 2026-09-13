@@ -148,24 +148,26 @@ export interface VcuReadRunnerOptions {
 const GATE_WATCH_INTERVAL_MS = 200;
 
 /**
- * Every status a row can carry, so a tally always has all the keys and the page never sees
- * `undefined`.
+ * Every status a row can carry, at zero, so a tally always has all the keys and the page
+ * never sees `undefined`.
  *
- * ⚠️ Typed off the union, so RETIRING a status is a compile error here — but ADDING one is
- * not, and a missing entry silently drops that failure out of the page's breakdown
- * (`public/views/service-mode.js` renders whatever keys the tally has). Keep it exhaustive
- * by hand.
+ * ⚠️ A RECORD, not an array — so adding a status to the union is a missing-property error
+ * here and retiring one an excess-property error. As a `VcuParameterRow["status"][]` only
+ * the retirement was caught, and an added status simply vanished from the phone's
+ * breakdown (`public/views/service-mode.js` renders whatever keys the tally has) — the
+ * failure you would only notice by the thing you added it to see not being there. Same
+ * reasoning as `RECORD_LENGTH_BYTES` in ../vcu/param-file.ts.
  */
-const ROW_STATUSES: VcuParameterRow["status"][] = [
-  "read",
-  "refused",
-  "no-response",
-  "no-session",
-  "stalled",
-  "abandoned",
-  "unrecognised",
-  "not-sent",
-];
+const ZERO_BY_STATUS: VcuReadTally["byStatus"] = {
+  "read": 0,
+  "refused": 0,
+  "no-response": 0,
+  "no-session": 0,
+  "stalled": 0,
+  "abandoned": 0,
+  "unrecognised": 0,
+  "not-sent": 0,
+};
 
 interface RunnerContext extends VcuReadRunnerOptions {
   sweep: RunningParameterSweep | null;
@@ -397,21 +399,14 @@ async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promi
   // likely to be pointed at a wide record — that is what it is for — so racing the 2 Hz
   // poller would produce intermittent `stalled` outcomes indistinguishable from a micro
   // that went quiet. A sweep does NOT park; see the note on `runParameterSweep`.
+  //
+  // ⚠️ Unconditionally, including for the 1- and 2-byte reads that cannot need it, which
+  // costs ~0.2-1 s of telemetry (the poller's park wait) on a manual button press. The
+  // cheaper form — park only when the name table says the record is wide — was weighed
+  // and rejected: it skips the park exactly where the table is WRONG about a parameter,
+  // which is the entire finding of #219 and the reason this path exists.
   const what = "a probe";
-  const outcome = await runOneShotBusModule(
-    context,
-    what,
-    channel => startProbe({ ...request, channel }),
-    async () => {
-      const hold = await holdObdPoller(what);
-      return hold
-        ? { ok: true, release: hold.release }
-        : {
-            ok: false,
-            reason: "the OBD poller would not go quiet — a reply that needs assembling needs the bus to itself",
-          };
-    }
-  );
+  const outcome = await runOneShotBusModule(context, what, channel => startProbe({ ...request, channel }));
   if (!outcome.ok) {
     console.log(`vcu-probe: ${request.target} bank ${request.bank} index ${request.index} — ${outcome.reason}`);
     return outcome;
@@ -431,17 +426,7 @@ async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promi
  */
 async function runLifetimeRead(context: RunnerContext): Promise<LifetimeReadOutcomeOrRefusal> {
   const what = "a lifetime-statistics read";
-  const outcome = await runOneShotBusModule(
-    context,
-    what,
-    channel => startLifetimeRead({ channel }),
-    async () => {
-      const hold = await holdObdPoller(what);
-      return hold
-        ? { ok: true, release: hold.release }
-        : { ok: false, reason: "the OBD poller would not go quiet — a multi-frame read needs the bus to itself" };
-    }
-  );
+  const outcome = await runOneShotBusModule(context, what, channel => startLifetimeRead({ channel }));
   if (outcome.ok) {
     console.log(`vcu-read: lifetime statistics — ${describeMeasurement(outcome.result)}`);
   }
@@ -477,24 +462,43 @@ export interface OneShotBusModule<T = unknown> {
  * `runOneShotBusModule`, `PreparedResource`, `startWatchdog` and `startGateWatchdog`
  * are ~130 self-contained lines that already take the context as a parameter.
  */
+/**
+ * Parks the 2 Hz OBD poller for one one-shot read, as a `PreparedResource`.
+ *
+ * One sentence for one condition, so a journal can be grepped on it: the two call sites
+ * had written it twice with different tails, which is the divergence `runOneShotBusModule`
+ * was factored to prevent.
+ */
+async function parkObdPoller(what: string): Promise<PreparedResource> {
+  const hold = await holdObdPoller(what);
+  return hold
+    ? { ok: true, release: hold.release }
+    : { ok: false, reason: `the OBD poller would not go quiet — ${what} needs the bus to itself` };
+}
+
 async function runOneShotBusModule<T>(
   context: RunnerContext,
   what: string,
-  start: (channel: RawChannel) => OneShotBusModule<T>,
-  prepare?: () => Promise<PreparedResource>
+  start: (channel: RawChannel) => OneShotBusModule<T>
 ): Promise<{ ok: true; result: T } | { ok: false; reason: string }> {
-  // ⚠️ FIRST, and before `prepare` — every refusal that costs nothing to find out. A
-  // read refused for a switched-off bus must say so, not park the OBD poller for six
-  // seconds and then blame the poller.
+  // ⚠️ FIRST, and before the poller hold — every refusal that costs nothing to find
+  // out. A read refused for a switched-off bus must say so, not park the OBD poller for
+  // six seconds and then blame the poller.
   const free = checkBusFreeRefusals(context);
   if (!free.ok) {
     return free;
   }
-  const prepared = prepare ? await prepare() : { ok: true as const, release: () => {} };
+  // ⚠️ UNCONDITIONAL, and not a per-caller closure any more. Both one-shot reads want
+  // the poller quiet and for one reason — a reply that spans frames is abandoned by the
+  // VCU if a request lands mid-transfer (../can/obd.ts) — so the hold belongs to the
+  // function that already owns "hold before lease, both released in a `finally`" rather
+  // than being restated at each call site with its own wording. A SWEEP does not come
+  // through here at all; why it does not park is argued at `start`.
+  const prepared = await parkObdPoller(what);
   if (!prepared.ok) {
     return { ok: false, reason: prepared.reason };
   }
-  // The lease comes after `prepare`, so the poller is already quiet before a session is
+  // The lease comes after the hold, so the poller is already quiet before a session is
   // opened — the ordering the lifetime read's own header argues for.
   const ready = checkPreconditions(context, what);
   if (!ready.ok) {
@@ -673,10 +677,10 @@ function readState(context: RunnerContext): VcuReadState {
 
 /** Counts rows the two ways the page needs them. Pure. */
 export function tallyOf(rows: VcuParameterRow[]): VcuReadTally {
-  const byStatus = Object.fromEntries(ROW_STATUSES.map(status => [status, 0])) as VcuReadTally["byStatus"];
+  const byStatus = { ...ZERO_BY_STATUS };
   const perMicro = new Map<VcuMicro, { micro: VcuMicro; read: number; failed: number }>();
   for (const row of rows) {
-    byStatus[row.status] = (byStatus[row.status] ?? 0) + 1;
+    byStatus[row.status] += 1;
     const entry = perMicro.get(row.micro) ?? { micro: row.micro, read: 0, failed: 0 };
     if (row.status === "read") {
       entry.read += 1;
