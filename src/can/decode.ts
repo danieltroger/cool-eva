@@ -530,6 +530,7 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
 // constant 1. Bit 6 is `V_MAG_GOOD`, moves constantly, and having a name has not made it
 // mean anything yet.
 //
+
 // 🚨 "bits 3, 4, 5 and 7 are never set" USED TO BE THE WHOLE OF THIS SENTENCE AND IT WAS
 // MISLEADING. It is a measurement over the 2026-08 capture archive, a corpus in which the
 // bike never fell over, never went into winter storage and never had ABS switched off —
@@ -572,10 +573,15 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     //   16:21:58.811Z  V_LIEDOWN_DETECTED 0 → 1     (+0.669 s after the peak)
     //   16:21:59.362Z  energized, go_request and go all 1 → 0   (+0.551 s later)
     //
+
     // ⚠️ It LEADS the drive shutdown, which is the part that makes it a detector rather
     // than a consequence — the same argument `fast_dc_contactor` rests on. And it is not
     // a restatement of the attitude pair: at the roll peak, 681 ms earlier and 104° over,
     // the bit is still clear.
+    // ⚠️ WHAT A 0 MEANS: the VCU has not flagged a lie-down. It does NOT mean "upright" —
+    // the bit is a debounced decision and was still 0 at 104° of roll — and it is not a
+    // fall sensor for anything safety-bearing. One event identifies it; a second fall, or
+    // a firmware change, could still show it means something narrower.
     { key: "lie_down_detected", value: bit(byte3, 5) },
   ];
 }

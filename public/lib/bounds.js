@@ -104,10 +104,11 @@ const BY_KEY = {
   // import it. ±180 is the whole range an atan2 can reach and the real data uses it: the
   // archive holds roll from −170.3° to +174.2°, and the bike on its side read +103.1°.
   //
+
   // `gps_course_deg` is the opposite case and the one that earns its line: the field is
-  // 9 bits, so it can carry 0…511, and 3 of 105 118 rows in the 2026-09-13 dump read past
-  // 360 — the highest 442.0. This gate FIRES, on real data, on a signal a rider reads as
-  // a heading.
+  // 9 bits, so it can carry 0…511, and 3 of the 105 118 rows across the whole decrypted
+  // archive read past 360 — two at 442.0 on 2026-08-08, one at 366.0 on 2026-09-13. This
+  // gate FIRES, on real data, on a signal a rider reads as a heading.
   "attitude_roll_deg": [-180, 180],
   "attitude_pitch_deg": [-180, 180],
   "gps_course_deg": [0, 360],

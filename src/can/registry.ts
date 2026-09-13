@@ -585,6 +585,7 @@ export const SIGNALS: SignalDef[] = [
   // over 373 steady corners on 2026-09-13: hard right and hard left turns separate by
   // 1.20°, where a true lean angle would separate them by 60-90°.
   //
+
   // Both are named in public/lib/bounds.js at ±180°, which is the range attitude.ts's
   // MAX_DECIDEGREES already enforces on every frame. That gate is therefore decorative
   // and is kept anyway, for the reason the cell-voltage band there is: the unit "°" has

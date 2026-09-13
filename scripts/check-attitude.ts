@@ -84,7 +84,7 @@ const ANGLES: AngleCase[] = [
     pitch: -50.1,
   },
   {
-    what: "16:21:58.130, the highest roll the ride log ever recorded. ⚠️ NOT the true peak: the next frame reads +104.1° and the 1.0° deadband hid it, which is why a check on 'the maximum' would be asserting a property of the log rather than of the bike",
+    what: "16:21:58.130, the highest roll OF THE FALL that the ride log holds — not of the log, which reaches +174.2° on a wrap transient. Not the true peak of the fall either: the next frame reads +104.1° and the 1.0° deadband hid it, which is why a check on 'the maximum' would be asserting a property of the log rather than of the bike",
     frame: "80 3E A2 04 07 04 78 FE",
     rollDecidegrees: 1031,
     pitchDecidegrees: -392,
@@ -148,11 +148,22 @@ for (const angleCase of ANGLES) {
 // or that a good frame restarts the run. A guard whose output nobody reads is a guard that
 // can be deleted by accident, which is what this section stops.
 //
+
 // (An earlier draft of this file claimed the path was never exercised at all. It was
 // measured against check-can-decoders.ts alone, where it is true — that file's all-zero
 // and all-ones payloads both decode IN range, so the counter resets between the two that
 // do not and never passes 2. Wrong file, right mechanism, false conclusion.)
 // ---------------------------------------------------------------------------------------
+
+// The same counts through the whole-frame path. ⚠️ RESTORED: an earlier rewrite of §1
+// dropped this, and with it gone `...decodeAttitudeFrame(data)` → `...[]` in decode.ts's
+// 0x102 case passes the whole suite — 0x102 can stop emitting both angles with nothing red.
+const throughDecodeFrame = decodeFrame(0x102, Buffer.from("803EA2040704 78FE".replace(/ /g, ""), "hex"));
+check(
+  "decodeFrame(0x102, …) still ROUTES b4-7 to the attitude decoder — not just decodeAttitudeFrame directly",
+  valueOf(throughDecodeFrame, "attitude_roll_deg") === 103.1 &&
+    valueOf(throughDecodeFrame, "attitude_pitch_deg") === -39.2
+);
 
 console.log("\n2. the out-of-range guard");
 resetAttitudeDecoder();
@@ -252,6 +263,25 @@ try {
     decodeAttitudeFrame(attitudeFrame(3000, 0));
   }
   check("resetAttitudeDecoder() lets a second replay warn again", warnings.length === 1);
+
+  // ⚠️ THE RATION IS PER PROCESS, NOT PER RUN, and only this case says so. Moving
+  // `watch.warned = false` next to the run reset in addAngle() turns one journal line per
+  // boot into one per burst — at 100 Hz a flapping field would then warn forever, which is
+  // the exact failure the ration exists to prevent. Every other case here still passes
+  // under that mutation; this one does not.
+  resetAttitudeDecoder();
+  warnings.length = 0;
+  for (let frame = 0; frame < 5; frame += 1) {
+    decodeAttitudeFrame(attitudeFrame(3000, 0));
+  }
+  decodeAttitudeFrame(attitudeFrame(0, 0));
+  for (let frame = 0; frame < 5; frame += 1) {
+    decodeAttitudeFrame(attitudeFrame(3000, 0));
+  }
+  check(
+    "a SECOND burst after a good frame stays silent — the ration is per process, not per run",
+    warnings.length === 1
+  );
 } finally {
   console.warn = realWarn;
 }
@@ -291,9 +321,10 @@ for (const angleCase of ANGLES) {
   );
 }
 
-// gps_course_deg fell through the same hole and, unlike the attitude pair, its gate FIRES:
-// the field is 9 bits, and 3 of 105 118 rows in the 2026-09-13 dump read past 360, the
-// highest 442.0. Without a bound a decode failure renders as a heading.
+// gps_course_deg fell through the same hole and, unlike the attitude pair, its gate FIRES.
+// The field is 9 bits. Across the whole /dl dump — every day it holds, not just 2026-09-13 —
+// 3 of 105 118 rows read past 360: two at 442.0 on 2026-08-08 and one at 366.0 on 2026-09-13,
+// which is 1 of that day's 12 771. Without a bound a decode failure renders as a heading.
 const course = SIGNALS.find(entry => entry.key === "gps_course_deg");
 check("gps_course_deg is in the registry", course !== undefined);
 if (course) {
@@ -301,7 +332,7 @@ if (course) {
     "gps_course_deg is gated to 0…360",
     JSON.stringify(boundsFor("gps_course_deg", course.unit, course.group)) === "[0,360]"
   );
-  check("…so the observed 442.0 is rejected", !isPlausible("gps_course_deg", 442, course.unit, course.group));
+  check("…so the 442.0 seen on 2026-08-08 is rejected", !isPlausible("gps_course_deg", 442, course.unit, course.group));
   check("…and a real heading of 359.9 is kept", isPlausible("gps_course_deg", 359.9, course.unit, course.group));
 }
 
