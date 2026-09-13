@@ -5,8 +5,7 @@ import {
   type ChargeAutoReason,
 } from "../src/charge/auto-curve.ts";
 import type { TemperatureSample } from "../src/charge/rate.ts";
-import { RATE_WINDOW_MS } from "../src/charge/rate.ts";
-import { taperEnvelopeAmpsAt, type SocSample } from "../src/charge/soc.ts";
+import type { SocSample } from "../src/charge/soc.ts";
 
 // A simulated pack, so the controller can be driven through a whole DC stop in a check. Data and
 // arithmetic only — nothing here talks to a bus.
@@ -29,6 +28,37 @@ export const COOLING_NOMINAL = 0.0089;
 /** Measured: minutes per SOC point at the 72.6 A the bike pulls when nothing is in the way. */
 const MIN_PER_POINT_AT_FULL = 0.53;
 export const FULL_CURRENT_A = 72.6;
+
+/**
+ * What the simulated pack will accept at each SOC — the taper, as the plant models it.
+ *
+ * ⚠️ NOT `taperEnvelopeAmpsAt`, and that is the whole point. The controller's table is its BELIEF
+ * about the pack; if the plant tapered on the same numbers, "the veto saves time where the taper is
+ * real" would be a statement about arithmetic — a prediction that defines its own subject must come
+ * true. So the plant uses the STRICT row from docs/dc-taper.md instead: the same pack, measured
+ * under the narrower "nothing else was binding" filter, which runs 1-5 A lower at 91-97 %. The
+ * controller is then optimistic about this plant by a measured margin rather than exactly right.
+ */
+const PLANT_ACCEPTS_A: Readonly<Record<number, number>> = {
+  88: 70,
+  89: 65,
+  90: 62,
+  91: 56,
+  92: 55,
+  93: 51,
+  94: 47,
+  95: 43,
+  96: 41,
+  97: 36,
+  98: 32,
+  99: 29,
+  100: 5,
+};
+
+/** What that pack accepts at this SOC, read as a step function. Full current below the knee. */
+function plantAcceptsAt(socPercent: number): number {
+  return socPercent < 88 ? FULL_CURRENT_A : (PLANT_ACCEPTS_A[Math.min(100, Math.ceil(socPercent))] ?? 0);
+}
 
 /** Measured: what the saw-tooth actually averages once the clamp releases at 55 °C. */
 export const SAWTOOTH_MIN_PER_POINT = 1.3;
@@ -101,22 +131,20 @@ export function replayCharge(options: PlantOptions): PlantRun {
       lastWholeDegree = whole;
       samples.push({ atMs: elapsed * 1000, celsius: whole });
     }
-    // SOC arrives the same way: whole percent, a sample only when the integer moves, trimmed to the
-    // window because src/charge/soc.ts keeps no anchor outside it.
+    // SOC arrives the same way, and is not trimmed for the same reason the temperature ring is not:
+    // `estimateSocRate` windows its own input.
     const wholeSoc = Math.floor(soc);
     if (wholeSoc !== lastWholeSoc) {
       lastWholeSoc = wholeSoc;
       socSamples.push({ atMs: elapsed * 1000, percent: wholeSoc });
-      while (socSamples.length > 0 && socSamples[0].atMs < elapsed * 1000 - RATE_WINDOW_MS) {
-        socSamples.shift();
-      }
     }
-    // What the vehicle would be asking for: the ceiling, or the taper once it binds.
-    const requestedAmps = options.taper
-      ? Math.min(FULL_CURRENT_A, taperEnvelopeAmpsAt(wholeSoc), commanded ?? FULL_CURRENT_A)
-      : Math.min(FULL_CURRENT_A, commanded ?? FULL_CURRENT_A);
+    // The most the pack itself will take at this SOC. One lookup per step, read twice below.
+    const accepts = options.taper ? plantAcceptsAt(wholeSoc) : FULL_CURRENT_A;
     if (options.control !== false && elapsed - lastTick >= tickSeconds) {
       lastTick = elapsed;
+      // What the vehicle would be asking for: the ceiling, or the taper once it binds. Built here
+      // rather than every step, because only the tick reads it.
+      const requestedAmps = Math.min(FULL_CURRENT_A, accepts, commanded ?? FULL_CURRENT_A);
       const decision = decideChargeCurrent({
         enabled: true,
         packTemperatureC: whole,
@@ -144,10 +172,7 @@ export function replayCharge(options: PlantOptions): PlantRun {
     // Above the cliff the BMS clamp releases and the bike saw-tooths, whatever anyone commanded.
     // Below it the pack takes the smallest of what was commanded, what the bike can take, and —
     // when the taper is on — what the pack itself will accept at this SOC.
-    const flowing =
-      temperature >= CLIFF_C
-        ? SAWTOOTH_CURRENT_A
-        : Math.min(cap, FULL_CURRENT_A, options.taper ? taperEnvelopeAmpsAt(wholeSoc) : FULL_CURRENT_A);
+    const flowing = temperature >= CLIFF_C ? SAWTOOTH_CURRENT_A : Math.min(cap, FULL_CURRENT_A, accepts);
     const minutesPerPoint =
       temperature >= CLIFF_C ? SAWTOOTH_MIN_PER_POINT : (MIN_PER_POINT_AT_FULL * FULL_CURRENT_A) / flowing;
     soc += stepSeconds / 60 / minutesPerPoint;

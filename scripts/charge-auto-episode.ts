@@ -176,10 +176,9 @@ export const SEPTEMBER_13_REQUEST_A: RequestStep[] = [
  * The controller's own 60 s ticks across that stop, as `charge_auto_reason` timestamps them, with
  * the commanded current it was holding when each one ran.
  *
- * ⚠️ `commandedAmps` is what the shipped rule stepped FROM, and it is load-bearing: replayed with
- * null instead, every raise clamps at the ceiling and `stepTo` returns a hold, which makes a rule
- * that raises look like one that holds. That mistake is why #201's first two plans reported the
- * wrong thing. The first two ticks are null because no command had landed yet.
+ * ⚠️ `commandedAmps` is what the shipped rule stepped FROM, and it is load-bearing — replayed with
+ * null every raise clamps at the ceiling and looks like a hold. check-charge-auto.ts §16 says what
+ * that cost. The first two ticks are null because no command had landed yet.
  */
 export const SEPTEMBER_13_TICKS = [
   { clock: "12:11:44", atMs: 480_203, reading: 48, soc: 75, commandedAmps: null },

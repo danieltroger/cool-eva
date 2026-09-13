@@ -423,14 +423,7 @@ const SHIPPED_WORST_REVERSALS = 14;
 let worstReversals = 0;
 let worstReversalsOn = "";
 for (const run of everyReplay()) {
-  let reversals = 0;
-  for (let at = 2; at < run.commands.length; at += 1) {
-    const before = Math.sign(run.commands[at - 1] - run.commands[at - 2]);
-    const after = Math.sign(run.commands[at] - run.commands[at - 1]);
-    if (before !== 0 && after !== 0 && before !== after) {
-      reversals += 1;
-    }
-  }
+  const reversals = reversalCount(run.commands);
   if (reversals > worstReversals) {
     worstReversals = reversals;
     worstReversalsOn = run.name;
@@ -965,7 +958,7 @@ for (const tick of SEPTEMBER_13_TICKS) {
   };
   const shipped = decideChargeCurrent({ ...input, socPercent: null });
   const withVeto = decideChargeCurrent(input);
-  if (shipped.kind !== "command") {
+  if (shipped.kind !== "command" || shipped.amps >= (tick.commandedAmps ?? 80)) {
     failures.push(
       `§16 at ${tick.clock} the shipped rule should be stepping the current DOWN — that is the over-throttle #201 ` +
         `is about. Got ${JSON.stringify(shipped)}`
@@ -1037,8 +1030,11 @@ for (const socPercent of [TAPER_KNEE_SOC, TAPER_KNEE_SOC + 5, 99]) {
     socPercent,
     socAgeMs: 100,
     socSamples: socRamp(socPercent),
-    requestedAmps: 73,
-    floorAmps: MIN_COMMAND_A,
+    // ⚠️ 55 A, not 73: the envelope falls below 73 at the knee itself, so `bitesAt <= socPercent`
+    // declines for every probe value whether or not the guard exists and the assertion passes
+    // vacuously. At 55 the envelope does not fall below until 93, so the 88 probe reaches the guard
+    // and nothing else stops it. Mutation-checked: removing the guard now goes red HERE.
+    requestedAmps: 55,
     nowMs: 700_000,
   });
   if (ahead !== null) {
@@ -1048,23 +1044,33 @@ for (const socPercent of [TAPER_KNEE_SOC, TAPER_KNEE_SOC + 5, 99]) {
     );
   }
 }
-// ⚠️ A vehicle already asking for no more than the floor leaves NOTHING to suppress: the controller
-// cannot command lower than MIN_COMMAND_A, so the ceiling is not what limits that charge and a veto
-// there would relabel the floor's own hold. It is also what keeps the estimate away from the very
-// top of the envelope, where a trailing SOC rate is least trustworthy.
-for (const requestedAmps of [MIN_COMMAND_A, MIN_COMMAND_A - 5, 0]) {
-  const ahead = sessionAheadMinutes({
-    socPercent: 80,
+// ⚠️ A VEHICLE ALREADY ASKING FOR NO MORE THAN THE FLOOR leaves nothing to suppress: the rule
+// cannot command less than MIN_COMMAND_A, so the ceiling is not what limits that charge and a veto
+// there would relabel the floor's own hold. Asserted on the RULE rather than on
+// `sessionAheadMinutes`, because that is where the floor is policy — src/charge/soc.ts answers how
+// much charge is ahead and has no opinion about what this controller can command.
+for (const requestedAmps of [MIN_COMMAND_A, MIN_COMMAND_A - 5]) {
+  const atTheFloor: ChargeAutoInput = {
+    ...HEALTHY,
+    packTemperatureC: 50,
+    commandedAmps: 70,
+    samples: climbing(44, 50),
+    // ⚠️ 87, one point under the knee, and not 80: with the vehicle asking at the floor the envelope
+    // does not fall below it until 98, so from 80 the horizon is long enough that the headroom test
+    // declines on its own and the floor guard is invisible. Here the horizon is short, the test
+    // would pass, and the guard is the only thing standing between a floor-bound charge and a veto.
+    socPercent: 87,
     socAgeMs: 100,
-    socSamples: socRamp(80),
+    socSamples: socRamp(87),
     requestedAmps,
-    floorAmps: MIN_COMMAND_A,
     nowMs: 700_000,
-  });
-  if (ahead !== null) {
+  };
+  const shipped = decideChargeCurrent({ ...atTheFloor, socPercent: null });
+  if (JSON.stringify(decideChargeCurrent(atTheFloor)) !== JSON.stringify(shipped)) {
     failures.push(
-      `§17 the vehicle asking for ${requestedAmps} A — no more than the ${MIN_COMMAND_A} A floor — leaves no step ` +
-        `down to suppress, so the session-ahead estimate must decline. Got ${JSON.stringify(ahead)}`
+      `§17 with the vehicle asking for ${requestedAmps} A — no more than the ${MIN_COMMAND_A} A floor — the veto ` +
+        `must change nothing, because there is no step down left for it to suppress. Got ` +
+        `${JSON.stringify(decideChargeCurrent(atTheFloor))} against ${JSON.stringify(shipped)}`
     );
   }
 }
@@ -1080,7 +1086,6 @@ for (const broken of [
     socAgeMs: broken.socAgeMs,
     socSamples: socRamp(80),
     requestedAmps: 73,
-    floorAmps: MIN_COMMAND_A,
     nowMs: 700_000,
   });
   if (ahead !== null) {
@@ -1131,7 +1136,13 @@ for (const taper of [false, true]) {
 /** Measured over TAPER_GRID with no taper. Pinned, so "veto everything" cannot pass §15 quietly. */
 const EXPECTED_UNTAPERED_VETOES = 152;
 /** ⚠️ The cost of suppressing a step for a taper that never comes. Measured 1.6 min, bounded here. */
-const VETO_TIME_BOUND_MIN = 2;
+const VETO_TIME_COST_BOUND_MIN = 2;
+/**
+ * And the least it must SAVE somewhere, or it is paying that cost for nothing. A separate number
+ * from the bound above on purpose: they point in opposite directions and one constant pinning both
+ * reads as a symmetry that is not there. Measured 2.4 min, on the tapered half of the grid.
+ */
+const VETO_TIME_SAVING_MIN = 2;
 
 if (vetoAddedCrossings.length > 0) {
   failures.push(
@@ -1146,13 +1157,13 @@ if (untaperedVetoes !== EXPECTED_UNTAPERED_VETOES) {
       `second rule rather than a veto — re-derive it and say why in the commit, as CROSSING_GRID requires`
   );
 }
-if (worstVetoCostMin > VETO_TIME_BOUND_MIN) {
+if (worstVetoCostMin > VETO_TIME_COST_BOUND_MIN) {
   failures.push(
-    `§18 suppressing a step down cost ${worstVetoCostMin.toFixed(1)} min at worst, over the ${VETO_TIME_BOUND_MIN} min ` +
+    `§18 suppressing a step down cost ${worstVetoCostMin.toFixed(1)} min at worst, over the ${VETO_TIME_COST_BOUND_MIN} min ` +
       `bound. That is what being wrong about the taper costs, and it is supposed to stay small`
   );
 }
-if (bestVetoSavingMin > -VETO_TIME_BOUND_MIN) {
+if (bestVetoSavingMin > -VETO_TIME_SAVING_MIN) {
   failures.push(
     `§18 the veto never saved more than ${(-bestVetoSavingMin).toFixed(1)} min on any plant, so it is paying its ` +
       `${worstVetoCostMin.toFixed(1)} min worst case for nothing — the whole point is that it is faster where the ` +
@@ -1350,7 +1361,16 @@ function rampTo(fromC: number, toC: number): TemperatureSample[] {
   return samples;
 }
 
-/** How many times a command series changes direction — §6 scores the same thing inline. */
+/**
+ * How many times a command series changes direction. The one definition, used by §6 and §18.
+ *
+ * ⚠️ It carries the direction ACROSS a zero step, where the pair-at-a-time version §6 used to spell
+ * out inline did not. On this data the two agree and `SHIPPED_WORST_REVERSALS` did not move when
+ * they were merged — `stepTo` returns a HOLD rather than a command when the step lands on the
+ * current value, so two consecutive entries of `commands` can never be equal and no zero step
+ * exists to disagree about. Merged anyway: one word with two laws in one file is an invitation to
+ * "deduplicate" them later and move a pinned number without noticing.
+ */
 function reversalCount(commands: number[]): number {
   let count = 0;
   let direction = 0;

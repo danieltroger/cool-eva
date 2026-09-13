@@ -242,7 +242,7 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   // now. Positive is room to give, negative is a move to take back. ⚠️ `headroomKelvin < 0` is
   // algebraically the shipped time-to-cliff test aimed at 54 instead of 55, which is why the steep
   // -heating guard needs no branch of its own — it IS this line.
-  const headroomKelvin = TARGET_C - temperature - rate.perMinute * REACTION_MIN;
+  const headroomKelvin = predictedHeadroomKelvin(temperature, rate.perMinute, REACTION_MIN);
   // ⚠️ Never raise at or above the setpoint. A reading of 54 can be a true 54.99, and this is the
   // surviving half of the quantisation argument the 53/54 tiers were built on. Expressed as a hold
   // rather than by clamping the headroom to 0 and testing for it: that test was a float equality
@@ -259,7 +259,7 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   }
   const lowering = temperature >= TARGET_C ? CHARGE_AUTO_REASON.HARD_CEILING : CHARGE_AUTO_REASON.CLOSING;
   const stepped = stepTo(current - step, current, ceiling, lowering);
-  return sessionEndsFirst(input, stepped, current, rate) ?? stepped;
+  return sessionEndsFirst(input, stepped, temperature, rate) ?? stepped;
 }
 
 /**
@@ -272,30 +272,31 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
  * slope. At every tick this rule therefore either decides exactly what the shipped one decides, or
  * holds where that one lowered — there is no third outcome. docs/charge-auto.md.
  *
- * ⚠️ And on a `bounded` rate it declines, for the reason NEAR_CEILING declines: a bound says only
- * "the reading did not move", and spending it here would suppress steps on no evidence at all.
- *
- * ⚠️ THE SETPOINT GUARD IS REDUNDANT BY CONSTRUCTION AND IS KEPT ANYWAY. Measured: with it removed,
- * 67 200 inputs at or above the setpoint still produce an identical decision, because `CLIFF_C`
- * takes every reading of 55 or more before this runs and a reading of exactly 54 only reaches the
- * lowering path when `rate > 0`, which makes the test below `0 − rate × minutes` and so always
- * negative. It stays because "never at or above the setpoint" is the headline claim and resting it
- * on two other branches makes it a three-place invariant that a future edit could open silently.
- * A mutation that deletes it therefore SURVIVES the check, and that is expected rather than a gap:
- * §15 asserts the property itself, and nothing can reach the guard to violate it.
+ * ⚠️ A `bounded` rate is declined for the reason NEAR_CEILING declines it — it says only "the
+ * reading did not move". The setpoint guard is redundant by construction and kept anyway, so a
+ * mutation deleting it survives: docs/charge-auto.md § "The taper" has both.
  */
 function sessionEndsFirst(
   input: ChargeAutoInput,
   stepped: ChargeAutoDecision,
-  current: number,
+  temperature: number,
   rate: HeatingRate
 ): ChargeAutoDecision | null {
-  if (input.packTemperatureC === null || input.packTemperatureC >= TARGET_C || rate.kind !== "rate") {
+  if (temperature >= TARGET_C || rate.kind !== "rate") {
+    return null;
+  }
+  // ⚠️ Nothing to suppress at or below the floor, and this is THIS module's policy rather than a
+  // fact about how much charge is ahead: the rule cannot command less than MIN_COMMAND_A, so once
+  // the vehicle is asking for that or less the ceiling is not what limits the charge. Asked here
+  // rather than inside ./soc.ts, which would have to be handed the floor to answer it.
+  if (input.requestedAmps !== null && input.requestedAmps <= MIN_COMMAND_A) {
     return null;
   }
   // Not a lowering: a hold (the deadband, or the floor clamp) is already the shipped answer, and
-  // replacing its reason would claim the taper did something the floor did.
-  if (stepped.kind !== "command" || stepped.amps >= current) {
+  // replacing its reason would claim the taper did something the floor did. A `command` here is
+  // always a step DOWN — `stepTo` holds rather than commanding when the step lands on `current`,
+  // and it can only round UP against a `current` already under the floor, which cannot happen.
+  if (stepped.kind !== "command") {
     return null;
   }
   const ahead = sessionAheadMinutes({
@@ -303,7 +304,6 @@ function sessionEndsFirst(
     socAgeMs: input.socAgeMs,
     socSamples: input.socSamples,
     requestedAmps: input.requestedAmps,
-    floorAmps: MIN_COMMAND_A,
     nowMs: input.nowMs,
   });
   if (ahead === null) {
@@ -317,10 +317,22 @@ function sessionEndsFirst(
   // was negative with T below the setpoint, which forces `rate.perMinute > 0`. A horizon at or past
   // REACTION_MIN therefore makes this quantity no larger than the one that was already negative,
   // and the veto cannot fire. A `Math.min` here would be arithmetic that never changes an outcome.
-  if (TARGET_C - input.packTemperatureC - rate.perMinute * ahead.minutes < 0) {
+  if (predictedHeadroomKelvin(temperature, rate.perMinute, ahead) < 0) {
     return null;
   }
   return { kind: "hold", reason: CHARGE_AUTO_REASON.TAPERING };
+}
+
+/**
+ * How far below the setpoint the pack is predicted to be `horizonMinutes` from now.
+ *
+ * ⚠️ ONE definition, called twice: once with REACTION_MIN, which is the shipped rule, and once with
+ * the session's own clock in `sessionEndsFirst`. Written out twice it was a claim in a comment that
+ * the two were the same line; here the horizon is the only thing that differs, which is exactly
+ * what the veto's safety argument rests on.
+ */
+function predictedHeadroomKelvin(temperatureC: number, ratePerMinute: number, horizonMinutes: number): number {
+  return TARGET_C - temperatureC - ratePerMinute * horizonMinutes;
 }
 
 /**

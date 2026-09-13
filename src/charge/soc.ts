@@ -1,4 +1,4 @@
-import { RATE_MIN_SPAN_MS, RATE_WINDOW_MS } from "./rate.ts";
+import { RATE_MIN_DISTINCT, RATE_MIN_SPAN_MS, RATE_WINDOW_MS } from "./rate.ts";
 
 // How much of a DC charge is still ahead — in minutes, from the SOC ring. Pure: samples in, an
 // answer out, no I/O and no clock read. ./auto-curve.ts uses it for one thing only, and the shape
@@ -21,11 +21,6 @@ export interface SocSample {
   percent: number;
 }
 
-export interface SessionAhead {
-  /** Minutes until the present current stops being what limits the charge. */
-  minutes: number;
-}
-
 export interface SessionAheadInput {
   /** `soc`, and its age. From `0x200` b1 at 20 Hz, so a stale one means the BMS went quiet. */
   socPercent: number | null;
@@ -33,11 +28,6 @@ export interface SessionAheadInput {
   socSamples: SocSample[];
   /** `fast_dc_target_a` — what the vehicle is asking the station for. Never a fabricated number. */
   requestedAmps: number | null;
-  /**
-   * The lowest current the controller may command. Passed in rather than imported: ./auto-curve.ts
-   * imports this module, and reaching back for its floor would close that into a cycle.
-   */
-  floorAmps: number;
   nowMs: number;
 }
 
@@ -47,8 +37,20 @@ export interface SessionAheadInput {
  */
 export const SOC_MAX_AGE_MS = 5_000;
 
-/** Whole percent, so three distinct readings is the same evidence bar the heating rate uses. */
-export const SOC_MIN_DISTINCT = 3;
+/**
+ * The window a SOC rate is measured over, the least span that may carry one, and the distinct
+ * readings it needs.
+ *
+ * All three are the heating rate's own numbers, taken FROM it rather than re-typed — but named
+ * here, because the arguments behind them are thermal (the window is three periods of
+ * `batt_temp_hi`'s 1-3 min saw-tooth) and say nothing about SOC. They suit SOC for a different
+ * reason: even at the 35 A floor the pack moves about a point a minute, so ten minutes still
+ * carries the three distinct readings this needs. ⚠️ If a thermal argument ever shortens
+ * RATE_WINDOW_MS, these do not have to follow — that is what the indirection is for.
+ */
+export const SOC_WINDOW_MS = RATE_WINDOW_MS;
+export const SOC_MIN_SPAN_MS = RATE_MIN_SPAN_MS;
+export const SOC_MIN_DISTINCT = RATE_MIN_DISTINCT;
 
 /**
  * The current the vehicle asks for below the knee. ⚠️ 73 is what it asks for in almost every frame,
@@ -57,7 +59,7 @@ export const SOC_MIN_DISTINCT = 3;
  * 941 765 frames" is superseded by that, so nothing here treats 73 as a law; 75 is the conservative
  * pad, and padding UP is safe because it makes the taper look further away.
  */
-export const FULL_REQUEST_A = 75;
+const FULL_REQUEST_A = 75;
 
 /**
  * Where the envelope stops being flat. Below it the vehicle asks for everything it can get, so
@@ -71,6 +73,18 @@ export const FULL_REQUEST_A = 75;
  * it. So neither term below runs at or above the knee, and there the controller is unchanged.
  */
 export const TAPER_KNEE_SOC = 88;
+
+/**
+ * The SOC below which a trailing rate estimate may be trusted.
+ *
+ * ⚠️ The same number as the knee by MEASUREMENT rather than by identity, and the two were measured
+ * in different places: the knee is where `fast_dc_target_a` starts falling, across 8 sessions; this
+ * is where SOC stops being predictable from its own past, seen at 99 → 100 on 2026-09-11. Separated
+ * because the safe directions differ — widening this band (a lower number) is always safe, narrowing
+ * it is not, and an envelope measured on a pack that tapers LATER would move the knee up and
+ * silently narrow this if they were one constant.
+ */
+export const SOC_RATE_TRUSTED_BELOW = 88;
 
 /**
  * The largest current the vehicle has ever asked for at each SOC, over every DC tick in the
@@ -106,26 +120,23 @@ export const TAPER_ENVELOPE_A: Readonly<Record<number, number>> = {
  * floor, an envelope that never falls below it: all of them mean "no truncation", which is the
  * shipped rule unchanged.
  */
-export function sessionAheadMinutes(input: SessionAheadInput): SessionAhead | null {
-  if (
-    input.socPercent === null ||
-    !isSocPlausible(input.socPercent) ||
-    input.socAgeMs === null ||
-    input.socAgeMs > SOC_MAX_AGE_MS
-  ) {
+export function sessionAheadMinutes(input: SessionAheadInput): number | null {
+  if (!isSocPlausible(input.socPercent) || input.socAgeMs === null || input.socAgeMs > SOC_MAX_AGE_MS) {
     return null;
   }
   // ⚠️ See TAPER_KNEE_SOC: a trailing rate over-states a decelerating one, so past the knee this
   // declines to answer at all rather than answering with a number it cannot stand behind.
-  if (input.socPercent >= TAPER_KNEE_SOC) {
+  if (input.socPercent >= SOC_RATE_TRUSTED_BELOW) {
     return null;
   }
   const percentPerMinute = estimateSocRate(input.socSamples, input.nowMs);
   if (percentPerMinute === null) {
     return null;
   }
-  const untilTaper = minutesUntilTaperBites(input, percentPerMinute);
-  return untilTaper === null ? null : { minutes: untilTaper };
+  if (input.requestedAmps === null) {
+    return null;
+  }
+  return minutesUntilTaperBites(input.socPercent, input.requestedAmps, percentPerMinute);
 }
 
 /** Whether a SOC reading is inside the only range a percentage can occupy. */
@@ -147,13 +158,13 @@ export function isSocPlausible(percent: number | null): percent is number {
  * window would stretch the span past what the samples justify and turn the bound into a guess.
  */
 export function estimateSocRate(samples: SocSample[], nowMs: number): number | null {
-  const from = nowMs - RATE_WINDOW_MS;
+  const from = nowMs - SOC_WINDOW_MS;
   const window = samples.filter(sample => sample.atMs >= from && sample.atMs <= nowMs);
   if (window.length < 2) {
     return null;
   }
   const spanMs = nowMs - window[0].atMs;
-  if (spanMs < RATE_MIN_SPAN_MS) {
+  if (spanMs < SOC_MIN_SPAN_MS) {
     return null;
   }
   if (new Set(window.map(sample => sample.percent)).size < SOC_MIN_DISTINCT) {
@@ -166,16 +177,27 @@ export function estimateSocRate(samples: SocSample[], nowMs: number): number | n
   return advanced / (spanMs / 60_000);
 }
 
-/** What the vehicle can ask for at this SOC — the envelope, read as a step function. */
-export function taperEnvelopeAmpsAt(socPercent: number): number {
+/**
+ * What the vehicle can ask for at this SOC — the envelope, read as a step function.
+ *
+ * Called only by `socWhereTaperFallsBelow` below, which walks whole percents from the knee to 100,
+ * so nothing here has to coerce a fraction or clamp an out-of-range SOC.
+ */
+function taperEnvelopeAmpsAt(socPercent: number): number {
   if (socPercent < TAPER_KNEE_SOC) {
     return FULL_REQUEST_A;
   }
-  return TAPER_ENVELOPE_A[Math.min(100, Math.ceil(socPercent))] ?? 0;
+  // ⚠️ A missing row answers FULL_REQUEST_A, not 0, and the direction is the point. Understating
+  // the envelope makes the taper look as if it bites earlier, which shortens the horizon and
+  // suppresses MORE steps down — the unsafe direction this file names twice above. Answering the
+  // full request instead means "no taper known here", so socWhereTaperFallsBelow walks past it.
+  // Unreachable while the table covers 88-100, which is exactly why it must not be the one unknown
+  // in this subsystem that fails unsafe.
+  return TAPER_ENVELOPE_A[socPercent] ?? FULL_REQUEST_A;
 }
 
 /** The first SOC at which the envelope sits below `amps`, or null if it never does before full. */
-export function socWhereTaperFallsBelow(amps: number): number | null {
+function socWhereTaperFallsBelow(amps: number): number | null {
   for (let soc = TAPER_KNEE_SOC; soc <= 100; soc += 1) {
     if (taperEnvelopeAmpsAt(soc) < amps) {
       return soc;
@@ -184,21 +206,11 @@ export function socWhereTaperFallsBelow(amps: number): number | null {
   return null;
 }
 
-/**
- * Minutes until the pack's own taper takes the current below what is flowing now.
- *
- * ⚠️ Nothing to suppress at or below the floor: the controller cannot command less than the floor,
- * so once the vehicle is asking for that or less the ceiling is not what limits the charge and
- * there is no step down for this to veto. Declining there also keeps the estimate away from the
- * very top of the envelope, where it is least trustworthy.
- */
-function minutesUntilTaperBites(input: SessionAheadInput, percentPerMinute: number): number | null {
-  if (input.requestedAmps === null || input.requestedAmps <= input.floorAmps) {
+/** Minutes until the pack's own taper takes the current below what is flowing now. */
+function minutesUntilTaperBites(socPercent: number, requestedAmps: number, percentPerMinute: number): number | null {
+  const bitesAt = socWhereTaperFallsBelow(requestedAmps);
+  if (bitesAt === null || bitesAt <= socPercent) {
     return null;
   }
-  const bitesAt = socWhereTaperFallsBelow(input.requestedAmps);
-  if (bitesAt === null || input.socPercent === null || bitesAt <= input.socPercent) {
-    return null;
-  }
-  return (bitesAt - input.socPercent) / percentPerMinute;
+  return (bitesAt - socPercent) / percentPerMinute;
 }

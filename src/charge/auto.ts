@@ -92,11 +92,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     record("charge_auto_mode", CHARGE_AUTO_MODE_CODE.off);
     record("charge_auto_reason", CHARGE_AUTO_REASON.DISABLED);
     return {
-      state: () => ({
-        mode: "off",
-        reason: CHARGE_AUTO_REASON.DISABLED,
-        commandedAmps: null,
-      }),
+      state: () => ({ mode: "off", reason: CHARGE_AUTO_REASON.DISABLED, commandedAmps: null }),
       setMode: () => console.warn("charge-auto: ignoring a mode change — CHARGE_AUTO_ENABLED is 0"),
       noteChargeCurrentOutgoing: () => {},
       stop: () => {},
@@ -273,10 +269,7 @@ function remember(context: AutoContext, celsius: number): void {
 /**
  * The SOC ring, trimmed the same way the temperature ring is.
  *
- * ⚠️ NO ANCHOR kept here, and src/charge/soc.ts says why: a pack holding one whole degree emits no
- * temperature at all, which is what that ring's anchor exists for, but SOC on a live DC charge
- * moves every thirty seconds or so. An anchor older than the window would stretch the span past
- * what the samples justify and turn the estimator's lower bound into a guess.
+ * ⚠️ NO ANCHOR kept here, unlike `remember` above. src/charge/soc.ts § estimateSocRate says why.
  */
 function rememberSoc(context: AutoContext, percent: number): void {
   if (!isSocPlausible(percent)) {
