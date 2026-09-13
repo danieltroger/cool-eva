@@ -29,7 +29,7 @@ All four are `WORD S` (signed 16-bit) served by the **A9** micro, addressed `CID
 
 ### 2.1 Torque: 0.1 Nm per count ✅
 
-Energica states the scale for the torque _telemetry_, in `EMsuite/2021-version/files/em_telemetry_scaling.csv`, header `id,name,unit,equation,datatype`:
+Energica states the scale for the torque _telemetry_ in **the manufacturer's telemetry-scaling table**, header `id,name,unit,equation,datatype`:
 
 ```
 93,V_TRQ_CMD,Nm,f(x)=x*0.1,int16_t
@@ -197,7 +197,7 @@ So backup mode caps a torque demand at **min(demand, 25.0 Nm)**, gated by a flag
 
 **What it caps.** `DBW_CONFIG_2` bit 0 selects between two torque sources at `0x26F80` and the chosen one is what gets capped.
 
-⚠️ Energica's own material says **nothing** about backup mode. "backup" appears in none of `em_fault_codes.csv`, `em_parameter_dictionary.csv`, the Ribelle owner manual, the Ribelle workshop manual, or any file in the `VCU/firmware` folder. Everything in this section comes from the binary.
+⚠️ Energica's own material says **nothing** about backup mode. "backup" appears in none of **the manufacturer's fault-code table**, **the manufacturer's parameter dictionary**, the Ribelle owner manual, the Ribelle workshop manual, or any file in the `VCU/firmware` folder. Everything in this section comes from the binary.
 
 It did not act on 2026-09-13 — the bike made 59.9 Nm, not 25.0. It is in this document because it is the one mechanism able to make a raised `REVERSE_TORQUE_LIMIT` irrelevant: if backup mode ever engages, **every value above 250 is moot**.
 
@@ -310,9 +310,9 @@ Also open, and smaller: whether the fade in §2.3 is `REVERSE_MAX_SPD` acting; a
 
 ## 9. What was read
 
-Opened and used: `obd-garage/kwp_scan_raw.txt` · `obd-garage/EMSUITE_2024.md` (§3.3, §6.0, §6.4, Appendix A) · `obd-garage/VCU_PARAM_CHANGES.md` · `obd-garage/DIAG_ADDRESSES.md` §9 · `src/vcu/param-file.ts`, `write-targets.ts`, `write-runner.ts` · `src/can/decode.ts`, `registry.ts`, `drive.ts` · `docs/vcu-parameters.md` §5, §9 · `docs/can-decode-findings.md:150, :347, :755` · `evidence/probes-20260914.txt` (five live read-only probes, 2026-09-14) · `evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt` (985 098 frames) · `evidence/service-writes.jsonl` line 89 · `EMsuite/2021-version/files/em_telemetry_scaling.csv` · `Energica_Manuals/VCU/firmware/FILE VCU/VCU_Control_CRP.mot` and `VCU_Safety_CRP (5).mot` and both `ULTIMI` builds, disassembled · the whole of `PRE-EMCE Configuration_Inverter_FW6701_rev3`, folder and `.zip` both, unzipped to scratch with the originals untouched — `Inverter Upgrade Instructions_REV3.pdf`, `3. Parameters_6701_Energica/*.txt`, and the file listing of the programming tool and the RMS firmware `.hex` (a different inverter; cited for the Nm×10 convention only, see §4).
+Opened and used: `obd-garage/kwp_scan_raw.txt` · the 2024 service-tool analysis in `obd-garage/` (§3.3, §6.0, §6.4, Appendix A) · `obd-garage/VCU_PARAM_CHANGES.md` · `obd-garage/DIAG_ADDRESSES.md` §9 · `src/vcu/param-file.ts`, `write-targets.ts`, `write-runner.ts` · `src/can/decode.ts`, `registry.ts`, `drive.ts` · `docs/vcu-parameters.md` §5, §9 · `docs/can-decode-findings.md:150, :347, :755` · `evidence/probes-20260914.txt` (five live read-only probes, 2026-09-14) · `evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt` (985 098 frames) · `evidence/service-writes.jsonl` line 89 · the manufacturer's telemetry-scaling table · `Energica_Manuals/VCU/firmware/FILE VCU/VCU_Control_CRP.mot` and `VCU_Safety_CRP (5).mot` and both `ULTIMI` builds, disassembled · the whole of `PRE-EMCE Configuration_Inverter_FW6701_rev3`, folder and `.zip` both, unzipped to scratch with the originals untouched — `Inverter Upgrade Instructions_REV3.pdf`, `3. Parameters_6701_Energica/*.txt`, and the file listing of the programming tool and the RMS firmware `.hex` (a different inverter; cited for the Nm×10 convention only, see §4).
 
-Opened and **empty on this question**, recorded so nobody repeats the search: `em_fault_codes.csv` (0 hits for "backup") · `em_parameter_dictionary.csv` (only `156,Reverse_Switch,uint16_t,,,-1,` with an empty description column; no `BACKUP_*` row) · the three `.ecuparams.ems` files in `FILE VCU` (600-byte JSON arrays carrying only lighting-current parameters) · `EVA Ribelle Owner Manual (END006918 rev01).pdf` (describes PARK ASSISTANCE mode and its slow-forward/reverse toggle, states no speed or torque) · `Workshop Manual - Eva Ribelle EMCE.pdf` (one mention: "Green light flashing: the motorcycle is in Park Assistance mode") · a grep of all three firmware folders for `BACKUP_MODE|REVERSE_TORQUE|REVERSE_MAX`: zero hits.
+Opened and **empty on this question**, recorded so nobody repeats the search: the manufacturer's fault-code table (0 hits for "backup") · the manufacturer's parameter dictionary (only `156,Reverse_Switch,uint16_t,,,-1,` with an empty description column; no `BACKUP_*` row) · the three `.ecuparams.ems` files in `FILE VCU` (600-byte JSON arrays carrying only lighting-current parameters) · `EVA Ribelle Owner Manual (END006918 rev01).pdf` (describes PARK ASSISTANCE mode and its slow-forward/reverse toggle, states no speed or torque) · `Workshop Manual - Eva Ribelle EMCE.pdf` (one mention: "Green light flashing: the motorcycle is in Park Assistance mode") · a grep of all three firmware folders for `BACKUP_MODE|REVERSE_TORQUE|REVERSE_MAX`: zero hits.
 
 ## 10. Method and data-quality notes
 
