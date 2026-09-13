@@ -555,8 +555,10 @@ export const SIGNALS: SignalDef[] = [
   // bounds.js's BY_UNIT fallback and there is no sensible range for a flag, while
   // anything numeric-looking invites a Grafana panel to plot it against real amps.
   { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
-  // 0x102 b3 bit5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. 🟡 Unverified on this
-  // bike; src/can/decode.ts carries why it is decoded anyway and what would close it.
+  // 0x102 b3 bit5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ Confirmed against
+  // this bike on 2026-09-14: one transition in the 60 s around the fall, 0.669 s after
+  // the roll peak and 0.551 s BEFORE the VCU cut the drive. src/can/decode.ts has the
+  // timing.
   //
   // Group "controls" rather than "drive" or a new group of its own, and that is the
   // load-bearing part of this line: `controls` is a BOOLEAN_GROUP in public/lib/bounds.js,

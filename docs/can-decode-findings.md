@@ -688,7 +688,8 @@ Everything above rests on angles under 20°. A fall at walking pace is the one e
 16:21:50-57   roll ±5…20° at ~1 Hz, pitch −17…−45°   creeping at 1.5-4 km/h up a ~34 % gravel
                                                       climb, front brake on, throttle 0
 16:21:57.911  roll  +45.3°   pitch −50.1°            first row past 45°
-16:21:58.130  roll +103.1°   pitch −39.2°            the peak — the highest roll ever logged here
+16:21:58.130  roll +103.1°   pitch −39.2°            the highest roll the LOG holds
+16:21:58.142  roll +104.1°                              the true peak, one frame later (raw capture)
 16:21:58.4 →  roll  +70…72°  pitch −17…−20°          settled, and it stays there
 16:21:59.362  energized 1→0, go_request 1→0, go 1→0   the bike's own response kills the drive
 16:21:59.391  roll  +70.1°                            the last 0x102 frame of the session
@@ -698,7 +699,7 @@ The clock is trustworthy here: across the 50 s around the fall `gps_epoch_s` tra
 
 ⚠️ **Two things a reader would reasonably assume, both false.** It was **not** at a standstill — `speed_can_kmh` read 4.0 km/h at the onset and 0.9 km/h by the time roll passed 57°. And the bike did **not** end up flat on its side: it rests at **+70.1°, not 90°**, because it landed on its panniers and the luggage held it off the ground. The settle angle is a property of what was strapped to the bike, not of the sensor, and a future fall compared against this one needs to know that.
 
-⚠️ **How long it lay there is NOT recoverable and is not claimed.** After 16:21:59.391 no 0x102-derived signal logs again in that session — the VCU stopped transmitting — while BMS rows keep arriving until 16:22:19, when the Pi lost power. The next boot's first rows are stamped 16:20:27, _before_ the fall, because the Pi has no RTC and boots on a stale clock; GPS steps it at **seq 289 @ 16:20:32.090 → seq 290 @ 16:30:52.000**, a jump of 619 910 ms. Anything derived from those pre-step timestamps is fiction. What the next boot does say is that the bike was **upright again** by its first frame: roll +3.5°, pitch −1.2°, key on.
+⚠️ **How long it lay there is NOT recoverable and is not claimed.** After 16:21:59.391 no 0x102-derived signal logs again in that session, and BMS rows keep arriving until 16:22:19, when the Pi lost power. 🚨 **An earlier version of this paragraph explained that silence as "the VCU stopped transmitting". The recovered capture falsifies it:** 0x102 keeps arriving at 100 Hz for the whole remaining 31 s of the capture, 5 998 frames in 60 s with no gap. The signals stopped being LOGGED because they stopped CHANGING by more than their deadband — the bike was lying still. Log-on-change silence is not bus silence, and reading it as bus silence is the same error `docs/vcu-parameters.md` §12 records under a different name. The next boot's first rows are stamped 16:20:27, _before_ the fall, because the Pi has no RTC and boots on a stale clock; GPS steps it at **seq 289 @ 16:20:32.090 → seq 290 @ 16:30:52.000**, a jump of 619 910 ms. Anything derived from those pre-step timestamps is fiction. What the next boot does say is that the bike was **upright again** by its first frame: roll +3.5°, pitch −1.2°, key on.
 
 #### 1. The axis assignment — and it does not need the fall
 
@@ -756,7 +757,38 @@ window   n       slope    r       intercept
 
 🔎 **The band is genuinely reachable, which is why it must not be tightened.** The cleanest wrap in the corpus is 2026-09-13 15:02:18.723-.784 at 63.9 km/h: roll −7.5 → −165.9 → **−170.3** → −135.3 while pitch simultaneously swings −70.6 → +70.1, and both are back inside ±3° / ±30° within 60 ms. The rider chopped the throttle from 9.8 % to 0 across it. That co-witnessed double swing is what an `atan2` does when an impact drives the measured vertical through the horizontal plane, and it is only expressible at all because the field is an angle scaled at 0.1°.
 
-#### 5. What this changed in the code
+#### 5. ✅ `V_LIEDOWN_DETECTED` — the VCU knew it had fallen, 551 ms before it cut the drive
+
+The Pi's own `candump` of that boot was recovered on 2026-09-14 (`capture-20260913-180503-2b9d0f5b.log`, session 143's boot, 18:05:10-18:22:38 in the Pi's local rendering; the 60 s around the fall are kept in `evidence/`, gitignored — **80 357 frames, 5 998 of them 0x102**). ⚠️ `candump -tA` formats with `localtime()`, so the file renders UTC+2; the underlying epoch is the same, and every time below is UTC.
+
+`0x102` b3 bit 5 has **exactly one transition in the whole 60 s window**, and never clears again:
+
+```
+16:21:57.911Z   roll crosses +45°                      b3 = 0x04   bit5 = 0
+16:21:58.142Z   roll peaks at +104.1°                  b3 = 0x04   bit5 = 0
+16:21:58.811Z   V_LIEDOWN_DETECTED  0 → 1              b3 = 0x64   bit5 = 1   ← +0.669 s after the peak
+16:21:59.362Z   energized, go_request, go  all 1 → 0               ← +0.551 s after that
+```
+
+Set in **3 118 of 5 998** frames, all of them after that single edge. ✅ **Two things make this an identification rather than a name.** It **leads the drive shutdown by 551 ms** — the same argument `fast_dc_contactor` rests on, that a monitor has to precede what it monitors. And it is **not a restatement of the attitude pair**: at the roll peak, 681 ms earlier and 104° over, the bit is still clear, so it is a debounced decision rather than a threshold on `V_PHI`.
+
+🔎 **The other three "never set" bits in that byte really are never set, even here.** Across all 5 998 frames: bit 3 `V_IMD_DISABLE` 0, bit 4 `V_WINTER_STORAGE` 0, bit 7 `V_ABSOFF` 0. Bit 2 `V_DSB_CTRL` is set in all 5 998 (as in the 1 103 000 archived frames), and bit 6 `V_MAG_GOOD` in 4 718 — "moves constantly", confirmed. So the old comment was right about three bits and wrong about the one the corpus had no occasion for.
+
+#### 6. What the raw capture settles about `reverse_gear`, from the wire
+
+The same window carries 5 998 frames of `0x104`, so `V_SPD_DIR` can be read directly instead of through log-on-change. Across the slide it is set in **517 of 529 frames**, and the sustained run is on the wire:
+
+```
+16:21:52.879Z → 16:21:52.899Z   0.020 s
+16:21:53.289Z → 16:21:58.440Z   5.151 s   ← the slide
+16:21:58.471Z → 16:21:58.491Z   0.020 s
+16:21:58.531Z → 16:21:58.551Z   0.020 s
+16:21:58.581Z → 16:21:58.611Z   0.030 s
+```
+
+The decoded ride log put that sustained run at 5.158 s; the raw frames put it at **5.151 s** — agreement to 7 ms, the difference being the log's last-frame-before-change against the capture's exact edge. **A 5.151-second continuous assertion is not a ~10 ms pulse**, and this is now established from the bus rather than inferred from a log. The 20-30 ms runs either side are the comparator chatter the same window shows.
+
+#### 7. What this changed in the code
 
 `public/lib/bounds.js` gained `attitude_roll_deg` and `attitude_pitch_deg` at ±180 and `gps_course_deg` at 0…360. All three had been **completely ungated**: the unit `"°"` has no `BY_UNIT` rule (seven signals carry it across four natural ranges, so a union would gate nothing), `imu` and `gps` are not `BOOLEAN_GROUPS`, and neither was named in `BY_KEY`. The two attitude bands are decorative — the decoder drops out-of-range counts first — and `scripts/check-attitude.ts` asserts they equal `attitude.ts`'s own `MAX_DECIDEGREES ÷ 10` so the two cannot drift. `gps_course_deg` is the one that fires: the field is 9 bits, and **3 of 105 118 rows read past 360, the highest 442.0**.
 

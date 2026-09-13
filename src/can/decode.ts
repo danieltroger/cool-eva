@@ -560,21 +560,22 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     // the owner can press cruise ON/OFF and watch the state follow, which is the check
     // that would otherwise need a laptop and candump.
     { key: "cruise_active", value: bit(byte3, 1) },
-    // bit 5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. 🟡 UNVERIFIED ON THIS BIKE,
-    // and decoded anyway, which is a departure from this file's habit of measuring first.
+    // bit 5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ CONFIRMED against this
+    // bike 2026-09-14, from the Pi's own candump of the boot it happened on.
     //
-    // The reason is that the occasion is rare and we have already missed one. The bike
-    // went onto its right side on 2026-09-13 at 16:21:58Z and the VCU dropped `energized`,
-    // `go_request` and `go` together 1.5 s later — behaviour consistent with a fall
-    // detector, though `stand_up` and the attitude pair would also explain it. The ride
-    // log stores decoded signals only, so this bit is not in it, and no raw capture of
-    // that day reached the laptop. Adding the key now is what makes the NEXT fall
-    // self-documenting instead of another reconstruction.
+    // In the 60 s around the fall (5 998 frames of 0x102) the bit has EXACTLY ONE
+    // transition: 0 → 1 at 16:21:58.811Z, and it never clears again. The timing is what
+    // identifies it rather than the name:
     //
-    // What would close the 🟡: the Pi has written a per-boot candump to
-    // /home/pi/ride-captures/ since 2026-09-08, so the fall's own boot very likely holds
-    // the bytes. Read b3 bit 5 across 16:21:57-59Z in that file — the peak frame is
-    // findable by content, b4-7 = `07 04 78 FE`, whatever the capture's clock said.
+    //   16:21:57.911Z  roll crosses +45°
+    //   16:21:58.142Z  roll peaks at +104.1°        (bit still 0)
+    //   16:21:58.811Z  V_LIEDOWN_DETECTED 0 → 1     (+0.669 s after the peak)
+    //   16:21:59.362Z  energized, go_request and go all 1 → 0   (+0.551 s later)
+    //
+    // ⚠️ It LEADS the drive shutdown, which is the part that makes it a detector rather
+    // than a consequence — the same argument `fast_dc_contactor` rests on. And it is not
+    // a restatement of the attitude pair: at the roll peak, 681 ms earlier and 104° over,
+    // the bit is still clear.
     { key: "lie_down_detected", value: bit(byte3, 5) },
   ];
 }

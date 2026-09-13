@@ -8,28 +8,23 @@ import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 //
 //   node --experimental-strip-types scripts/check-attitude.ts
 //
-// ⚠️ WHAT §1 CAN AND CANNOT PROVE, stated because the honest version is narrower than it
-// looks. There is no raw CAN capture for 2026-09-13 on this laptop — the archive's newest
-// is 2026-08-19 — so the counts below come from the DECODED ride log, which means the
-// VALUES were produced by the very decoder they are replayed through. Against a wrong
-// scale they are circular and prove nothing.
+// ✅ §1 REPLAYS REAL FRAMES. The Pi's own candump of the fall was recovered on 2026-09-14
+// (`capture-20260913-180503-2b9d0f5b.log`, session 143's boot; the 60 s around the fall are
+// kept in `evidence/`, gitignored, 80 357 frames of which 5 998 are 0x102). Four of the six
+// cases below are those frames byte for byte, which is what scripts/check-button-decode.ts
+// requires ("None is hand-written, because a hand-written frame only proves the decoder
+// agrees with whoever wrote the fixture").
 //
-// What they are NOT circular about is the LAYOUT: which two bytes each angle occupies,
-// their endianness, which axis comes first, and the ÷10. Any edit that moves a field,
-// flips an endianness or swaps the pair fails §1 even though the fixture came out of the
-// decoder, because the stored degrees no longer reproduce from the same bytes. That is
-// the regression this section really guards, and it is worth having.
+// ⚠️ The remaining TWO — the side-stand reference and the wrap minimum — fall outside that
+// window, so only the decoded counts survive for them. Those two are circular against a
+// wrong scale: the values came out of the decoder they are replayed through. They are kept
+// because each pins something the captured four cannot, and they are labelled
+// "counts only" in the output so nobody mistakes one for the other.
 //
-// scripts/check-button-decode.ts states the rule this still falls short of ("a
-// hand-written frame only proves the decoder agrees with whoever wrote the fixture").
-// Satisfying it needs the bike's own bytes. The Pi has kept a per-boot candump under
-// /home/pi/ride-captures/ since 2026-09-08, so the fall's boot very likely has them —
-// nobody has looked yet, and the PR carries that as a pending step rather than an
-// assumption. §2-§4 below are what carry weight meanwhile: none is derived from the log.
-//
-// Only b4-7 are set. b0-b3 are zero and NOTHING is asserted about them — reconstructing
-// them from the decoded bit signals produced a frame that never existed on the wire, and
-// that mistake is why this file does not do it.
+// ⚠️ An earlier draft of this file RECONSTRUCTED the full frames from the decoded bit
+// signals. The capture shows why that was dropped: at the peak the real frame is
+// `80 3E A2 04 07 04 78 FE` and the reconstruction had `00 3E A2 44 07 04 78 FE` — b4-7
+// exactly right, b0 and b3 both wrong, because the undecoded bits were guessed.
 //
 // Evidence: docs/can-decode-findings.md §"Bytes 4-7 — the attitude sensor's two angles".
 
@@ -57,37 +52,40 @@ function valueOf(values: { key: string; value: number }[], key: string): number 
 }
 
 // ---------------------------------------------------------------------------------------
-// 1. The counts the bike logged on 2026-09-13, replayed through the real decoder.
+// 1. Real frames off the bike's own bus, replayed through the real decoder.
 // ---------------------------------------------------------------------------------------
 
 interface AngleCase {
-  /** What the bike was doing, with the timestamp the row carries. All times UTC. */
+  /** What the bike was doing. All times UTC; the capture renders them at UTC+2. */
   what: string;
+  /** The frame as candump wrote it, or null where only the decoded counts survive. */
+  frame: string | null;
   rollDecidegrees: number;
   pitchDecidegrees: number;
   roll: number;
   pitch: number;
 }
 
-// Each pair is one 0x102 frame: roll and pitch share a timestamp and carry adjacent `seq`,
-// which is what makes them the same frame rather than two instants spliced together.
 const ANGLES: AngleCase[] = [
   {
-    what: "16:15:20.950, parked, side stand DOWN — the sign reference. b4-5 here is 83 FF, byte-identical to the frame the 2026-09-08 KWP read proved against bank 2 id 138, six days apart on the same bike",
-    rollDecidegrees: -125,
-    pitchDecidegrees: -17,
-    roll: -12.5,
-    pitch: -1.7,
-  },
-  {
-    what: "16:21:57.051, creeping at 3.2 km/h up a ~34 % gravel climb with the front brake on, 0.9 s before it went over",
+    what: "16:21:57.051, creeping at 3.2 km/h up a ~34 % gravel climb on the front brake, 0.9 s before it went over",
+    frame: "80 3E A2 44 4B 00 34 FF",
     rollDecidegrees: 75,
     pitchDecidegrees: -204,
     roll: 7.5,
     pitch: -20.4,
   },
   {
-    what: "16:21:58.130, THE PEAK of the fall — the highest roll ever logged on this bike. Daniel confirms it landed on its RIGHT side, so this frame is a measurement of the sign convention against a known event",
+    what: "16:21:57.911, the first frame past +45° — 89 ms into a 350 °/s roll rate",
+    frame: "80 3E A2 04 C5 01 0B FE",
+    rollDecidegrees: 453,
+    pitchDecidegrees: -501,
+    roll: 45.3,
+    pitch: -50.1,
+  },
+  {
+    what: "16:21:58.130, the highest roll the ride log ever recorded. ⚠️ NOT the true peak: the next frame reads +104.1° and the 1.0° deadband hid it, which is why a check on 'the maximum' would be asserting a property of the log rather than of the bike",
+    frame: "80 3E A2 04 07 04 78 FE",
     rollDecidegrees: 1031,
     pitchDecidegrees: -392,
     roll: 103.1,
@@ -95,13 +93,26 @@ const ANGLES: AngleCase[] = [
   },
   {
     what: "16:21:58.671, at rest on its right side on the panniers. +71.6° rather than 90° because the luggage held it off the ground — a property of the bike's load, not of the sensor",
+    frame: "80 3E 02 44 CC 02 53 FF",
     rollDecidegrees: 716,
     pitchDecidegrees: -173,
     roll: 71.6,
     pitch: -17.3,
   },
+  // The remaining two fall outside the recovered 60-second window, so only the decoded
+  // counts survive for them. They are kept because each pins something the four above
+  // cannot: the sign against the side stand, and that the ±180° band is really reached.
   {
-    what: "15:02:18.753 at 63.9 km/h, the archive's most negative roll — an atan2 wrap after a hard hit, NOT an attitude. Both axes swing and recover inside 60 ms; it is in this file to prove the ±180° band is reachable and must not be gated away",
+    what: "16:15:20.950, parked, side stand DOWN — the sign reference. b4-5 is 83 FF, byte-identical to the frame the 2026-09-08 KWP read proved against bank 2 id 138",
+    frame: null,
+    rollDecidegrees: -125,
+    pitchDecidegrees: -17,
+    roll: -12.5,
+    pitch: -1.7,
+  },
+  {
+    what: "15:02:18.753 at 63.9 km/h, the archive's most negative roll — an atan2 wrap after a hard hit, NOT an attitude. Both axes swing and recover inside 60 ms; it is here to prove the ±180° band is reachable and must not be gated away",
+    frame: null,
     rollDecidegrees: -1703,
     pitchDecidegrees: -46,
     roll: -170.3,
@@ -109,24 +120,22 @@ const ANGLES: AngleCase[] = [
   },
 ];
 
-console.log("1. angle counts from the 2026-09-13 ride log, replayed through decodeAttitudeFrame");
+console.log("1. frames from the fall of 2026-09-13, replayed through decodeAttitudeFrame");
 resetAttitudeDecoder();
 for (const angleCase of ANGLES) {
-  const decoded = decodeAttitudeFrame(attitudeFrame(angleCase.rollDecidegrees, angleCase.pitchDecidegrees));
+  // Where the real frame survives, decode THAT — all eight bytes, as the bike sent them.
+  // Where it does not, synthesise a payload carrying only the two counts.
+  const payload =
+    angleCase.frame === null
+      ? attitudeFrame(angleCase.rollDecidegrees, angleCase.pitchDecidegrees)
+      : Buffer.from(angleCase.frame.replace(/ /g, ""), "hex");
+  const decoded = decodeAttitudeFrame(payload);
   const roll = valueOf(decoded, "attitude_roll_deg");
   const pitch = valueOf(decoded, "attitude_pitch_deg");
-  check(`${angleCase.what} → roll ${angleCase.roll}°`, roll === angleCase.roll);
+  const origin = angleCase.frame === null ? "counts only" : "captured frame";
+  check(`[${origin}] ${angleCase.what} → roll ${angleCase.roll}°`, roll === angleCase.roll);
   check(`  … and pitch ${angleCase.pitch}°`, pitch === angleCase.pitch);
 }
-
-// The same counts through the whole-frame path, so a change to decode.ts's 0x102 case that
-// stopped calling decodeAttitudeFrame would fail here rather than silently drop both keys.
-const throughDecodeFrame = decodeFrame(0x102, attitudeFrame(1031, -392));
-check(
-  "decodeFrame(0x102, …) still routes b4-7 to the attitude decoder",
-  valueOf(throughDecodeFrame, "attitude_roll_deg") === 103.1 &&
-    valueOf(throughDecodeFrame, "attitude_pitch_deg") === -39.2
-);
 
 // ---------------------------------------------------------------------------------------
 // 2. The ±1800 guard: EXERCISED TODAY, ASSERTED NOWHERE. That distinction is the point.
@@ -306,16 +315,24 @@ if (course) {
 // ---------------------------------------------------------------------------------------
 
 console.log("\n4. the lie-down flag");
-const liedownSet = decodeFrame(0x102, Buffer.from([0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00]));
-const liedownClear = decodeFrame(0x102, Buffer.from([0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00, 0x00]));
-check("b3 bit 5 set decodes lie_down_detected = 1", valueOf(liedownSet, "lie_down_detected") === 1);
+// ✅ CONFIRMED 2026-09-14 against the bike's own bytes, so this is no longer 🟡. In the
+// recovered capture b3 bit 5 has EXACTLY ONE transition in 60 s — 0 → 1 at 16:21:58.811Z,
+// 0.900 s after the roll crossed +45° and 0.669 s after the peak — and it never clears
+// again in the remaining 3 118 frames. It LEADS the drive shutdown by 551 ms: energized,
+// go_request and go all drop together at 16:21:59.362Z. A flag that fires once, when the
+// bike goes down, and before the VCU cuts the drive, is a lie-down detector.
+const LIE_DOWN_SET = "80 3E 02 64 C7 02 43 FF"; // 16:21:58.811Z, the rising edge
+const LIE_DOWN_CLEAR = "80 3E A2 04 07 04 78 FE"; // 16:21:58.130Z, the roll peak — still clear
+const liedownSet = decodeFrame(0x102, Buffer.from(LIE_DOWN_SET.replace(/ /g, ""), "hex"));
+const liedownClear = decodeFrame(0x102, Buffer.from(LIE_DOWN_CLEAR.replace(/ /g, ""), "hex"));
+check("the captured rising-edge frame decodes lie_down_detected = 1", valueOf(liedownSet, "lie_down_detected") === 1);
 check(
-  "b3 = 0x44, the value 88.4 % of archived frames carry, decodes it = 0",
+  "…and the captured frame from the roll PEAK, 681 ms earlier, still reads 0 — the flag is not merely a copy of a steep angle",
   valueOf(liedownClear, "lie_down_detected") === 0
 );
 
 // ⚠️ The neighbour test only means something if the neighbour MOVES. An earlier draft
-// asserted fast_dc_contactor === 0 on two payloads that both have bit 0 clear, which is an
+// asserted fast_dc_contactor === 0 on two payloads that both had bit 0 clear, which is an
 // assertion no mutation of the lie-down mask could ever fail. These two differ in bit 0
 // and bit 1 as well as bit 5, so a mask that reached across the byte fails here.
 const liedownWithNeighbours = decodeFrame(0x102, Buffer.from([0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00]));
@@ -326,7 +343,7 @@ check(
     valueOf(liedownWithNeighbours, "cruise_active") === 1
 );
 check(
-  "…and b3 = 0x20 — lie-down set while both neighbours are clear — is the other diagonal",
+  "…and the captured 0x64 — lie-down set while both neighbours are clear — is the other diagonal",
   valueOf(liedownSet, "lie_down_detected") === 1 &&
     valueOf(liedownSet, "fast_dc_contactor") === 0 &&
     valueOf(liedownSet, "cruise_active") === 0
