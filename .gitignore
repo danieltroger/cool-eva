@@ -206,6 +206,9 @@ preview-shots/
 # scripts/decrypt-log.ts. The small text extracts beside them ARE tracked: docs/charge-auto.md and
 # docs/can-0x121-charge-command.md cite them as the provenance for #186's measurements.
 evidence/*.celog
+# Trailing glob, for the reason `temperatures.db*` above records: a scratch DB opened
+# read-write leaves `-shm` and `-wal` siblings next to a file that can be 2 GB.
+evidence/*.db*
 
 # Recovered waypoints carry coordinates; this is a PUBLIC repo and docs/route-map.md
 # forbids them in committed files. scripts/recover-waypoints.ts writes outside the repo
