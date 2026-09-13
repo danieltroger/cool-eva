@@ -205,15 +205,17 @@ check(
   dutyAt({ ...hot, speedKmh: 4000 }) === 84 && dutyAt({ ...hot, speedKmh: -5 }) === 84
 );
 // ⚠️ 4000 km/h is far past anything the bus can hand this, so the line above holds the
-// ceiling nowhere near where it matters: `speed_can_kmh` is a 13-bit field ÷ 10, topping
-// out at 819.1 km/h, and every value in (300, 819] left the whole file green. A ceiling
-// anywhere in that band turns a garbage reading into a VALID road speed, closes the gate
-// and holds the fan off over a hot pack — the dangerous direction the docstring on the
-// constant names. So: the constant as a literal, and a probe at the top of the field.
+// ceiling nowhere near where it matters: `speed_can_kmh` is a 15-bit field ÷ 10, topping
+// out at 3276.7 km/h, and every value in (300, 3276.7] left the whole file green. A
+// ceiling anywhere in that band turns a garbage reading into a VALID road speed, closes
+// the gate and holds the fan off over a hot pack — the dangerous direction the docstring
+// on the constant names. So: the constant as a literal, and a probe at the top of the
+// field. ⚠️ The field was read as u13 until #216 re-cut it; the band the probe has to
+// cover got four times wider, which is why the probe moved with it.
 check("the road-speed ceiling is the 300 km/h the doc says", ROAD_SPEED_MAX_KMH === 300);
 check(
-  "⚠️  819 km/h — the top of the 13-bit field — is read as NO speed, not as a road speed",
-  dutyAt({ ...hot, speedKmh: 819 }) === 84
+  "⚠️  3276 km/h — the top of the 15-bit field — is read as NO speed, not as a road speed",
+  dutyAt({ ...hot, speedKmh: 3276 }) === 84
 );
 
 // --- 4. The temperature hysteresis -------------------------------------------

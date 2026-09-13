@@ -820,14 +820,14 @@ The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · 
 
 ### ✅ Bit 62 is a distance pulse, not a flag
 
-`V_TACHO_OUT` fires **one pulse per 0.1 km of indicated travel**: the gap between rising edges holds at 89-92 m at every speed from 49 to 155 km/h (6.6 s down to 2.1 s), and **1371 of 1373 gaps are exactly one odometer count**. That is the classic vehicle-speed-output line a tachograph or an aftermarket accessory would tap. Logged as `odometer_pulse` with no deadband, because a 0/1 flag with a deadband ≥ 1 logs once at boot and then silently never again.
+`V_TACHO_OUT` fires **one pulse per 0.1 km of indicated travel**: **1371 of 1373 gaps between rising edges are exactly one odometer count**, i.e. 100 m, across 1373 gaps from 49 to 152 km/h. That is the classic vehicle-speed-output line a tachograph or an aftermarket accessory would tap. Logged as `odometer_pulse` with no deadband, because a 0/1 flag with a deadband ≥ 1 logs once at boot and then silently never again.
 
 ### ✅ Why bit 63 chatters — the mechanism, from the A8 firmware
 
 The bit is written at **A8 `0x0000C924`**, in the packer for the frame A8 itself transmits (`0x104` is a TX entry in A8's message-object table at `0x00028828`; neither of A9's two tables carries it at all):
 
 ```
-ldrsh.w r0, [0x20000174]   ; the signed speed, copied verbatim from 0x025 D_MOTOR_SPD
+ldrsh.w r0, [0x20000174]   ; the signed speed; 0x025's D_MOTOR_SPD scaled, only the SIGN is direct
 cmp     r0, #0
 bge     clear              ; not negative -> clear bit 63
 ldrb    r0, [0x20001240+0x1e]
@@ -836,7 +836,7 @@ bne     clear              ; inside the deadband -> clear bit 63
 ...                        ; else set bit 7 of payload byte 7
 ```
 
-So **bit 63 = (signed motor speed < 0) AND (|speed| past a ±500-count deadband)**, the deadband computed at `0x00012F1C`-`0x00012FFC` (`cmp #0x1F4` / `cmn #0x1F4`). ⚠️ **The comparator has no hysteresis.** That is the whole explanation for the chatter: at 0.3-0.7 km/h the speed crosses the 0.5 km/h threshold at bus rate, and the bit follows it at 100 Hz while the direction never changes at all.
+So **bit 63 = (signed motor speed < 0) AND (|speed| past a ±500-count deadband)** — ⚠️ those counts are the VCU's internal speed unit of **0.001 km/h**, so the threshold is **±0.5 km/h**, not 500 of anything on the wire; the measured flip sits at 4-5 counts of the frame's own 0.1 km/h speed field, the deadband computed at `0x00012F1C`-`0x00012FFC` (`cmp #0x1F4` / `cmn #0x1F4`). ⚠️ **The comparator has no hysteresis.** That is the whole explanation for the chatter: at 0.3-0.7 km/h the speed crosses the 0.5 km/h threshold at bus rate, and the bit follows it at 100 Hz while the direction never changes at all.
 
 Verified against the capture: of **4024** frames with bit 63 set, **4024** have a negative `D_MOTOR_SPD`; of 474 193 frames with it clear while moving, **none** do. The 2840 remaining negative-speed frames are exactly the ones inside the deadband. The threshold is a step at speed field 5 with zero exceptions in 6864 reverse-moving frames — and that 0.5 km/h floor is the same one the archive sweep below measured without knowing why.
 
@@ -868,7 +868,7 @@ A 1 Hz sampler would have seen that longest one set on seventeen consecutive sam
 
 ✅ **And it now has a name and a mechanism.** The 2024 service-tool analysis in `obd-garage/`, §`0x104` `VCU_SPEEDODO`, gives the field verbatim as `V_SPD_DIR | byte | byte 7 mask 0x80 >>7` — which is bit 63 exactly, the bit `src/can/decode.ts` emits as `reverse_gear`. **Energica calls it speed direction.** The key name is therefore wrong: it is not a gear. It is left alone here rather than renamed, because a rename is a history migration (the `accel_*_raw` and `charging` precedents) and belongs in its own change.
 
-🟡 **Reported by #216 and NOT verified here:** a firmware read of the A8, over 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not read that firmware, and CLAUDE.md's rule is to cite source you have read.
+✅ **Reported by #216 and since verified against the A8 image and a second reviewer (2026-09-14):** a firmware read of the A8, over 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not read that firmware, and CLAUDE.md's rule is to cite source you have read.
 
 ✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from the firmware; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
 
@@ -918,7 +918,7 @@ The 2026-09-08 pulses fit that reading exactly rather than contradicting it. Bot
 
 ⚠️ **This experiment cannot separate the two readings, by construction.** Engaging reverse is what turns the wheel backwards, so "reverse was selected" and "the wheel rotated backwards" happened at the same instant both times. A test that discriminates has to produce one without the other — roll the bike backwards in neutral (rollback, no reverse selected), or select reverse with the wheel held still.
 
-**What this leaves open:** whether a consumer should latch the pulse is a design decision, not a decode one, and is deliberately not made here. `reverse_gear` has three consumers — `EXCLUDED_FROM_GATE` in `src/vcu/service-gate.ts`, `grafana/dashboards/ride-summary.json`, and §12 — and §12 already excludes it from the safety gate _because_ it is a short pulse, so nothing safety-bearing depends on the wrong name. The **doc** needed fixing, not the code.
+**What this leaves open:** whether a consumer should latch the pulse is a design decision, not a decode one, and is deliberately not made here. ⚠️ Written before the rename; the key is `rolling_backwards` now and the Grafana lane reads both. It has three consumers — `EXCLUDED_FROM_GATE` in `src/vcu/service-gate.ts`, `grafana/dashboards/ride-summary.json`, and §12 — and §12 already excludes it from the safety gate _because_ it is a short pulse, so nothing safety-bearing depends on the wrong name. The **doc** needed fixing, not the code.
 
 **The odometer is the solid part:** `8D 99 02 00 …` → 170381 × 0.1 = 17038.1 km. ✅ It gets its own key rather than overwriting the BLE hub's `odometer_km`, because the bike publishes three odometer-ish numbers and they do not all agree. Read within the same minute on 2026-08-02, parked: CAN 17038.1 km · BLE `odometer_km` 17038 km · OBD PID 31 `dist_since_clear_km` 17042 km. So CAN and BLE agree to within their resolution and PID 31 sits 4 km above both — which is what you'd expect, since PID 31 counts distance since the last DTC clear rather than lifetime distance, and evidently started from a non-zero odometer. Keeping them as separate signals means a ride can settle it; merging them would just make one value flap between writers.
 
@@ -929,9 +929,9 @@ The 2026-09-08 pulses fit that reading exactly rather than contradicting it. Bot
 67 00 36 00 → speed 103 → 10.3 km/h (OBD PID 0D: 10)   rpm 432 (PID 0C: 427)
 ```
 
-Both track their PIDs to within ~1-2 % across the lap, which fixes speed as a **u13 at bit 32** and rpm as a **u15 at bit 45**. rpm's start bit in particular is pinned to the bit: 44 would decode 800/864 and 46 would decode 200/216 against a PID reading 411/427, so only 45 reproduces it. The reverse bit is real as well: b7 = 0x80 on 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits 60-62. So the `.xdbc`'s own C fragment (`data[4] | (data[5] << 7)` — a shift of 7, not 8) is the thing that doesn't reconcile, not the normalised layout used here.
+Both track their PIDs to within ~1-2 % across the lap, which fixed speed as a **u13 at bit 32** and rpm as a **u15 at bit 45**. ⚠️ **Both were re-cut by #216** to a u15 at bit 32 and a u15 at bit 47 × 4 — the numbers below are unaffected, because the two cuts agree on every frame the bike can produce, but the widths and the rpm start bit stated in this subsection are the old ones. The current layout is at the top of this section. rpm's start bit in particular is pinned to the bit: 44 would decode 800/864 and 46 would decode 200/216 against a PID reading 411/427, so only 45 reproduces it. The reverse bit is real as well: b7 = 0x80 on 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits 60-62. So the `.xdbc`'s own C fragment (`data[4] | (data[5] << 7)` — a shift of 7, not 8) is the thing that doesn't reconcile, not the normalised layout used here.
 
-**The lap only reached ~10 km/h / ~430 rpm**, so the top of both fields was never exercised — but that residual announces itself instead of hiding. 200 km/h needs 11 of speed's 13 bits and 11 000 rpm needs 14 of rpm's 15, so bits 43/44 and 59 can never be set by the quantity itself. If something else lives there the value is impossible rather than plausible: speed jumps by 204.8 or 409.6 km/h, rpm by 16 384. Seeing either is the signal that the field is narrower than assumed.
+**The lap only reached ~10 km/h / ~430 rpm**, so the top of both fields was never exercised — but that residual announces itself instead of hiding. 200 km/h needs 11 of speed's bits and 11 000 rpm needs 12 of the re-cut rpm field's 15, so bits 43/44 and 59 can never be set by the quantity itself. If something else lives there the value is impossible rather than plausible: speed jumps by 204.8 or 409.6 km/h, rpm by 16 384. Seeing either is the signal that the field is narrower than assumed.
 
 ⚠️ **The bit layout is right; the NUMBER is the bike's, and the bike's is optimistic.** Against GPS over two 2026-08-04 road captures, `speed_can_kmh` reads +3.5 % and the odometer accumulates +3.4 % — about +3.4 km/h at an indicated 100. `speed_can_kmh` is exactly `motor_rpm_can` / 42.0, so it is geared driveline speed and not a wheel measurement, whatever the dashboard labels it. Full working in [the dash over-read](#the-dash-over-reads-and-by-how-much); **do not re-derive it against 0x104 itself, which is how the ABS scale went wrong.**
 

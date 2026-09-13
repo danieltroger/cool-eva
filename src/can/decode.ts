@@ -176,14 +176,14 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // ⚠️ The field boundaries here were re-cut on 2026-09-14 and the VALUES DID NOT MOVE.
     // The old cut read speed as u13 at bit 32 and rpm as u15 at bit 45 ×1; the real layout
     // is u15 at bit 32 and u15 at bit 47 ×4. Those agree on every frame while speed stays
-    // under 819.1 km/h and rpm under 32 768, because the bits between them are always zero —
+    // under 819.2 km/h and rpm under 32 768, because the bits between them are always zero —
     // verified on all 681 458 frames of one capture, zero disagreements. So `motor_rpm_can`
     // has no discontinuity and its history stays comparable. Working: #216 and
     // docs/can-decode-findings.md § "0x104".
-    //
+
     // The odometer gets its own key rather than overwriting the BLE hub's `odometer_km`,
     // because the bike publishes three odometer-ish numbers and they do not all agree.
-    //
+
     // ⚠️ The bit layout is right; the NUMBER is the bike's, and the bike's is optimistic —
     // +3.5 % against GPS, and it is geared driveline speed (`motor_rpm_can` / 42.0 exactly),
     // not a wheel measurement. Do NOT re-derive anything against 0x104 itself; that is how

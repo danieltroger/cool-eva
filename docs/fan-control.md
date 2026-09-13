@@ -429,7 +429,7 @@ Since #147 automatic **is** 100 % for the whole of every DC session. So at a DC 
 
 #### Under the ceiling, and what happens when that cannot be established
 
-`speed_can_kmh` (`0x104`, bit 32, u13 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ under the ceiling. At or below **15 km/h** the fan may be silenced — see §"Why the ceiling is 15 and not the bike's own 3" below.
+`speed_can_kmh` (`0x104`, bit 32, u15 ÷ 10, 100 Hz), through `latestValue()` + `ageMs()` with a **500 ms** window — the same `SAMPLE_MAX_AGE_MS` the button sample uses — and **fail-closed**: absent, stale, NaN or negative all mean _not_ under the ceiling. At or below **15 km/h** the fan may be silenced — see §"Why the ceiling is 15 and not the bike's own 3" below.
 
 Failing closed costs nothing measurable. `0x102`, `0x104` and `0x109` arrive and stop **together** — 317 785 / 317 780 frames with identical per-second coverage over a whole AC session, 106 100 / 106 098 at 99.98 Hz over a whole DC one, both above — so a bus that can deliver the button press can always deliver the speed. And the two ways of being wrong are not symmetric: an unknown speed skips _off_ and hands the fan to the curve, which is the state that watches the pack, rather than silencing it on a bike that might be moving.
 

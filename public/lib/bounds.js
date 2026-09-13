@@ -288,6 +288,21 @@ const BY_KEY = {
   // reject the wild value a wrong offset or width would produce.
   "speed_redundant_a_raw": [0, 40_000],
   "speed_redundant_b_raw": [0, 40_000],
+  // 0x104 bits 62 and 63 are 1/0 flags that live in `drive` with a blank unit — the
+  // combination this file warns about four times, because `drive` holds speed, rpm and
+  // the odometer and must never become a BOOLEAN_GROUP. Named here instead, which is
+  // what BY_KEY is for. `rolling_backwards` carried the miss under its old name
+  // `reverse_gear` since June; `odometer_pulse` is new in #216 and would have inherited it.
+  "rolling_backwards": [0, 1],
+  "odometer_pulse": [0, 1],
+  // 0x104's two numbers were ungated too, which mattered more after #216 widened their
+  // fields: a stray bit at 45/46 now lands in the speed rather than the rpm, and nothing
+  // rejected either. Both bounds are far above anything this motorcycle can produce —
+  // the fastest frame in the capture archive reads 209.1 km/h, and `MOTOR_MAX_SPD` is
+  // 11 750 rpm — so neither can reject a real reading, and both reject the wild value a
+  // wrong width or offset gives (a u15 speed can hold 3276.7 km/h, the rpm field 131 068).
+  "speed_can_kmh": [0, 400],
+  "motor_rpm_can": [0, 20_000],
 };
 
 /**

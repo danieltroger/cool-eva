@@ -25,7 +25,7 @@ export const bit = (word: number, index: number): number => (word >>> index) & 1
 
 // Reads a field that does not start or end on a byte boundary, in the bit numbering the
 // vehicle (non-BMS) frames use: bit N is byte N>>3, bit N&7, least-significant bit
-// first. 0x104 packs a 13-bit speed and a 15-bit rpm back to back, so neither can be
+// first. 0x104 packs a 15-bit speed and a 15-bit rpm back to back, so neither can be
 // read as a byte pair. Callers stay under 31 bits, which keeps every shift inside JS's
 // signed 32-bit bitwise domain.
 export function bitFieldLe(data: Buffer, startBit: number, bitCount: number): number {

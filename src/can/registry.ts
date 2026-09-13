@@ -491,7 +491,8 @@ export const SIGNALS: SignalDef[] = [
   //
   // 🚨 It shipped as `reverse_gear` from the .xdbc's word, and it is not a gear. The A8
   // firmware writes it at 0x0000C924 as `signed motor speed < 0 AND |speed| past a
-  // ±500-count deadband` — Energica's own name for the field is `V_SPD_DIR`. The old rows
+  // deadband of ±500 counts of the VCU's internal 0.001 km/h speed unit, i.e. ±0.5 km/h`.
+  // Energica's own name for the field is `V_SPD_DIR`. The old rows
   // are not garbage: they are correct readings of this bit under a wrong name, so
   // grafana/dashboards/ride-summary.json UNIONs the old key into the new lane and the
   // history stays continuous, the same way the beam-lamp and attitude renames did.
@@ -502,8 +503,8 @@ export const SIGNALS: SignalDef[] = [
   { key: "rolling_backwards", unit: "", group: "drive", source: "stream" },
 
   // 0x104 bit 62 — Energica's `V_TACHO_OUT`, one pulse per 0.1 km of indicated travel
-  // (measured: 1371 of 1373 gaps between rising edges are exactly one odometer count, and
-  // the distance between edges holds at 89-92 m from 49 to 155 km/h). No deadband: it is a
+  // (measured: 1371 of 1373 gaps between rising edges are exactly one odometer count, i.e.
+  // 100 m, over 1373 gaps from 49 to 152 km/h). No deadband: it is a
   // 0/1 flag and a deadband ≥ 1 would log it once at boot and then never again.
   { key: "odometer_pulse", unit: "", group: "drive", source: "stream" },
 
