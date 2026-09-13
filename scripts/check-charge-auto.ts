@@ -1150,8 +1150,10 @@ const VETO_TIME_COST_BOUND_MIN = 2;
  * ⚠️ A population, not the best single plant, and the difference matters. The deepest saving is
  * 2.4 min and the runner-up is 1.75, so a bound on the maximum rests on ONE plant of a hundred —
  * a 16 % shift anywhere would turn it red with a message blaming the wrong thing. Counting how
- * many plants improve is the same claim made on 25 measurements instead of one. Measured 25 save,
- * 2 cost, 73 unchanged; pinned below that with room for the grid to breathe.
+ * many plants improve is the same claim made on twenty-odd measurements instead of one. Measured
+ * 22 of the 100 faster at the 0.1 min threshold the loop below uses; pinned well under it, so the
+ * grid can breathe. ⚠️ The split moves with that threshold — at 0.05 min it reads 25 — so quote it
+ * with the threshold or not at all.
  */
 const VETO_PLANTS_SAVED_MIN = 15;
 
