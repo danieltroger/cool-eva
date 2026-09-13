@@ -1765,8 +1765,26 @@ function NoteBlock(notes) {
     // binds on the function, not on the string it returned when this node was built.
     caution === undefined
       ? div()
-      : div({ class: "action-note caution" }, () => (typeof caution === "function" ? caution() : caution))
+      : // A thunk, so a caution that reads the gate re-renders when the gate moves. VanJS binds
+        // on the function, not on the string it returned when this node was built.
+        //
+        // ⚠️ Split on blank lines into separate paragraphs. The cable warning is a second
+        // argument against pressing, not a continuation of the first, and run together as one
+        // block it read as "…come straight back. ⚠️ The charge manager reports…" — two warnings
+        // sharing a sentence, which is how the more urgent one gets skipped.
+        div({ class: "action-note caution" }, () =>
+          div(...cautionParagraphs(typeof caution === "function" ? caution() : caution))
+        )
   );
+}
+
+/**
+ * One `<div>` per paragraph, so a multi-part caution reads as multiple warnings.
+ *
+ * @param {string} text
+ */
+function cautionParagraphs(text) {
+  return text.split(/\n{2,}/).map(paragraph => div({ class: "caution-paragraph" }, paragraph));
 }
 
 /**
