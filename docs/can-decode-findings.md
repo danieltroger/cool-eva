@@ -410,86 +410,17 @@ after    01 00 A0 80 00 00 10 01
 
 ⚠️ **This sentence used to say "the last transmit", full stop, and that is false.** The Pi transmits `0x7DF` OBD requests continuously — tens of thousands of frames in an ordinary capture on this bike (42 748 and 122 934 in two archive captures picked at random, against zero `0x7C0` in the same files). So the Pi **was** transmitting on the bus when the fault appeared; what it was not doing was KWP. The narrower claim is the true one and it is the one that should have been written, because this is an exculpatory statement about a fault on someone's motorcycle and the difference between "we were silent" and "we were doing the routine thing we always do" is exactly the difference that matters. Routine mode-01 polling has run for months across every capture in the archive without a blocking fault, which is the actual argument.
 
-### ⚠️ `0x101` is `VCU_VEHICLE_STS`, and the name was in this repo the whole time
+### `0x101` `VCU_VEHICLE_STS` — moved to its own document
 
-**Everything under this heading replaces a decode that was merged into `main` on 2026-09-08 and was wrong.** Two independent reviews plus an archive sweep of **15 006 844 `0x101` frames** — every capture in `~/Documents/cool-eva-archive` — took it apart. The correction is recorded in full rather than quietly rewritten, because how it went wrong is more useful than the answer.
+This frame's findings lived here from 2026-09-08 until 2026-09-14, when it was decoded and the section outgrew a subsection of this file. **They are now in [`docs/can-0x101.md`](can-0x101.md)**, in full and unpruned — including the refuted `floor(b0/20)*20` formula and the two refutations of mine that did not survive, which are the most useful prose in it.
 
-**It was never a decode problem.** The 2024 service-tool analysis in `obd-garage/`, §`0x101` `VCU_VEHICLE_STS`, names the frame and all eight of its signals:
-
-```
-0x101  VCU_VEHICLE_STS
-  b0        V_VEHICLE_SUBSTATE
-  b1        V_VEHICLE_STATE
-  b2        V_DRIVE_VSM
-  b3 &0x03  V_DRIVE_VSM       &0x04 V_LIMP_MODE_STATUS   &0x08 V_LIMP_RES_VALID
-  b4-5 LE   V_LIMP_PACK_RES   (short)
-  b6-7 LE   V_LIMP_MODULE_STS (short)
-```
-
-That file is in this repository. It was not consulted, and days of statistics went into re-deriving a worse version of a table already on disk. ⚠️ **Before analysing an unknown frame, grep `obd-garage/` for its id.** The inventory of "unmapped frames" is a list of frames nobody looked up, not a list of frames without names.
-
-#### ❌ The merged formula is false
-
-```
-b1 == floor(b0 / 20) * 20     claimed: 344 957 of 344 957 frames, zero exceptions
-                              actual:  1 992 exception frames archive-wide
-```
-
-Seven b0 values break it — `2, 3, 6, 9` (b1 = 1, predicted 0) and `143, 144, 150` (b1 = 40, 100, 40, predicted 140). It was measured over six captures that happened to contain none of them. ⚠️ **A counterexample was named two paragraphs above the claim**: the inventory line quoted b0 spanning `29-96`, and `0x96` is 150.
-
-A first correction offered in review — _"it holds wherever b0 < 128"_ — **is also false**: b0 = 2, 3, 6, 9 are all below 128 and all break it. Recorded because the near-miss fix is the tempting one.
-
-#### ✅ What actually holds
-
-b1 is a **state** and b0 its **substate**, so the arithmetic was a numbering convention misread as a computation. b1 takes exactly **six values in 15 million frames — `1, 20, 40, 60, 80, 100`** — and each owns a band of substates:
-
-| b1 (`V_VEHICLE_STATE`) | b0 seen in that band (`V_VEHICLE_SUBSTATE`)      |
-| ---------------------- | ------------------------------------------------ |
-| 1                      | 2, 3, 6, 9                                       |
-| 20                     | 20, 22, 23, 26, 28, 31, 32, 33, 34               |
-| 40                     | 41, 42, 43, 46, 47, 51, 52, 53, 59               |
-| 60                     | 62, 63                                           |
-| 80                     | 83                                               |
-| 100                    | 101, 102, 104, 105, 106, 107, 109, 110, 112, 113 |
-
-`floor(b0/20)*20` fits the middle of that table by coincidence of numbering and fails at both ends — at the bottom because state 1 is not state 0, at the top because **b1 is capped at 100 and b0 is not**.
-
-✅ **The out-of-band case has a clean rule of its own.** Whenever b0 has bit 7 set (143, 144, 150), b1 **holds its previous value** instead of following:
-
-```
-b0 >= 128:  b1 unchanged from the preceding frame     1 748 / 1 748 frames, zero exceptions
-```
-
-143 → 40 and 150 → 40 in a capture sitting in state 40; 144 → 100 in one sitting in state 100. A substate with bit 7 set does not belong to a state band at all — the state latches while it is present.
-
-#### ✅ Substate 83 is the blocking fault
-
-Aligned against `0x100` byte 3 bit 7 (`vcu_err_system_blocking_fault`) across the whole archive, last-seen alignment:
-
-```
-b0 = 83 while the blocking fault is set     194 947 frames
-b0 = 83 while it is clear                        40 frames  (0.02%)
-any other b0 while the fault is set               1 frame
-```
-
-**194 947 of 194 948 fault frames are substate 83**, and state 80 exists for essentially nothing else in 15 million frames. ⚠️ This section previously called that "three observations of it is not a decode" — a statement about the sample that had been looked at, which is the same error as the formula above, made twice in one section.
-
-#### ❌ Two of my own refutations did not survive
-
-- ❌ _"b0 is not SOC — `b0 == soc` in 0 of 230 620 samples, ranges disjoint."_ **Scoped far too widely from one capture.** In `capture-20260808-211445` the two are equal in 32 341 of 230 020 samples, r = +0.493. b0 is not SOC — it is a named substate — but the numbers offered as proof were an artefact of the capture chosen. The vendor name is the evidence; the statistics never were.
-- ⚠️ _"b0 correlates −0.57 with speed and rpm."_ The warning attached to it was right and is kept, but the figure is capture-specific: archive-wide it ranges **−0.387 to −0.87**. It is now explained rather than merely distrusted — substates encode drive states, and drive states co-occur with speed. A correlation between a state enumeration and a physical quantity measures the schedule of the states, not a relationship between them.
-
-#### ❌ b4 is not SOC either — it is `V_LIMP_PACK_RES`
-
-Checked because b4 moved 100 → 75 between two captures and looked like a percentage. It is not: across eight captures b4 sits **dead constant while SOC sweeps** — 75 through SOC 25→60 (1 775 661 frames), 85 through 63→89, 146 through 29→39 — and it exceeds 100, which SOC cannot. ⚠️ **And the "two exact-equality hits" figure that first appeared here was itself a subset claim** — the same error this section is about. Archive-wide `b4 == soc` in **231 691 of 15 006 589 aligned frames**, 155 391 of them in one capture (`capture-20260809-080235-cd40b535`) where b4 sweeps 75-129. Coincidental equality is _common_ for a byte that lives near the SOC range, which is exactly why equality counts are weak evidence in either direction and the constancy-while-SOC-sweeps test is the one that settles it. b4 takes 53 distinct values from 75 to 154 across the archive. 🟡 b5-7 are 0 in all 2 105 072 frames of the widest capture, so the `b4-5` short equals b4, and its 75-146 range sits in the plausible band for pack resistance (`docs/pack-resistance.md`). The b3 `4 → 0` on the fresh boot is `V_LIMP_MODE_STATUS` clearing — a flag, not a number.
-
-#### What is actually left open
-
-The **meanings** of the six states and their substates. The names give the structure, not the vocabulary: nothing yet says which state is "ready", which is "charging", or what separates substate 43 from 62. That wants a capture with deliberate, logged mode changes — key-on, drive, reverse, charge, fault — not more correlation against the archive.
+What is there now and was not here: the frame is decoded (`src/can/vehicle-status.ts`), `V_DRIVE_VSM` has a measured meaning, the drive-enable substate chain is enumerated, and the state words turn out to have been logged over BLE all along under `vehicle_state`/`vehicle_substate`.
 
 ## 0x102 — body, lights, vehicle state and attitude
 
 `src/can/decode.ts` (bytes 0-3) and `src/can/attitude.ts` (bytes 4-7). 100 Hz.
+
+> 🚨 **Read this before quoting a number from this section.** Much of what is below was measured over **1 103 000 frames in 14 captures**, and the archive is now **15 006 856 frames in 97 files** — 13.6× more. In three days of 2026-09 that difference falsified three claims that had shipped as settled: `V_DSB_CTRL` "never once clear" (it is clear in 279), `fast_dc_contactor` "set in exactly one interval in the whole corpus" (11 rising edges), and `cruise_active` "never moved otherwise" (35 rising edges). None of them was wrong when written. **A count here without its corpus beside it is not a measurement**, and the habit that keeps catching these is re-running the sweep rather than re-reading the sentence.
 
 ### Bytes 0 and 2: switches vs outputs
 
@@ -553,7 +484,7 @@ Everything in b1 comes from the `.xdbc` and matched a parked bike on 2026-08-02 
 
 Added 2026-08-16. These four are the ones Energica's free-frame table names `Left/Right/Enter Mode Switch` and `RST Switch`.
 
-Of the other two: **bit 6 is `high_beam`** (set in 137 of the 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture counts). **Bit 7 is the LOW BEAM SWITCH**, set in 50.64 % of frames — settled on 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000 frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. It gets no key of its own: `low_beam_lamp` already carries the same information and a third beam key earns nothing. Named here so the next person does not re-derive it.
+Of the other two: **bit 6 is `high_beam`** (set in 137 of the 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture counts). **Bit 7 is the LOW BEAM SWITCH**, set in 50.64 % of frames — settled on 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000 frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. ⚠️ **It got no key of its own until 2026-09-14**, on the argument that `low_beam_lamp` already carries the same information and a third beam key earns nothing. It has one now — `low_beam` — and the reversal is argued in §"Byte 0's switches" above rather than here, because the decision recorded in this sentence was sound on what it knew.
 
 Evidence is 1 103 000 frames of 0x102 across the same 14 captures as 0x400. What makes these more than "the bit moves" is that the six low bits split cleanly into two behaviours, and the split is the one the owner's manual predicts:
 
@@ -637,12 +568,71 @@ Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was 
 
 **bit 0 — `V_FASTDC_MON_SW`**, the DC fast-charge contactor state monitor, and the analog wire `A020_FCHG_MON` it corresponds to. ✅ CONFIRMED, and it is the best-evidenced bit in that change:
 
-- Set in **EXACTLY ONE interval in the whole corpus** — 2026-08-04 19:58:45.489 → 20:16:03.587, 1038.1 s, which is 103 790 of the 1 103 000 frames. Zero everywhere else: all riding, all parking, all key-off.
+- Set in exactly one interval of the **14-capture** corpus — 2026-08-04 19:58:45.489 → 20:16:03.587, 1038.1 s, which is 103 790 of those 1 103 000 frames. ⚠️ "In the whole corpus" is what this line said until 2026-09-14 and it is a statement about that sample: archive-wide the bit is set in **1 512 726 frames with 11 rising edges**. The identification is unaffected — one DC session against zero AC ones is still the argument — but the count is not one.
 - That interval is a DC fast charge, from the pack's own frames: 0x200 shows current going from −0.1 A to +63.2 A within 4.6 s of the rise, and SOC climbing 30 % → 42 % over the window. No 0x305/0x306 appear at all, which is right — a DC charger bypasses the onboard AC charger that sends them.
 - **It leads the charge:** it rises 190 ms before `charger_enabled` (0x300 byte 0) and ~470 ms before the first positive pack amp. A contactor monitor should lead, because the contactor closes before anything can flow through it.
 - It reads 0 through **every AC charge in the corpus** — four separate sessions, one of them 48 minutes at 14 A mains. So it discriminates DC from AC rather than just meaning "plugged in", which is the whole reason to want it.
 
-**bit 1 — cruise control armed.** 🟡 Not in any vendor table; inferred here, and inferred from exactly two events, which is why it keeps the 🟡. Both are clean: it came up 0.525 s and 0.546 s after the only two presses of `btn_cruise_enable` on 0x400, held for 51.4 s and 82.3 s, and never moved otherwise. It is logged because it is the evidence for those two buttons — with this on the dashboard the owner can press cruise ON/OFF and watch the state follow, which is the check that would otherwise need a laptop and candump.
+**bit 1 — cruise control armed.** ✅ **CONFIRMED 2026-09-14 over the whole archive.** It was 🟡 until then, on two events.
+
+Every rising edge of this bit in 15 006 856 frames was paired against every rising edge of `btn_cruise_enable` (0x400 b2 bit 1):
+
+```
+btn_cruise_enable presses, archive-wide                              36
+0x102 b3 bit 1 rising edges                                          35
+…edges with a cruise press in the preceding 5 s                 35 of 35     100 %
+lag, every one of the 35                             0.513 – 0.574 s     median 0.538, spread 61 ms
+```
+
+35 of 35, a 61 ms spread on a half-second latency, and no unexplained onset anywhere. The two events this used to rest on reproduce inside it to the millisecond — `18:04:42.270496 → 0.525 s` and `19:45:47.924130 → 0.546 s`, against the 0.525 and 0.546 recorded here from a different pass months earlier. ⚠️ The **converse** is 35 of 36: one press is unaccounted for, and the pass cannot say which, because it counts presses without timestamping them.
+
+⚠️ **These 35 are distinct physical events, unlike most edge counts in this file.** The archive's overlapping captures inflate an edge count — 85 of 92 files carrying 0x102 overlap another — but these 35 edges sit behind **35 distinct press timestamps with no collisions**, and the pairing resets per file, so a duplicated capture would have shown as two edges sharing one press.
+
+🚨 **"Not in any vendor table" was FALSE.** The table names b3 bit 1 **`V_CHGSW_CTRL`** — and the name disagrees with the measurement. **The key keeps our name.** A charge-switch control does not wait half a second for a handlebar button 35 times running, and this repo's standing rule is that where a table contradicts something measured on this bike, ours wins — the rule that was learned when `charging` turned out to be the high beam. 🟡 Corroborating only: the bit is set in 0 of 275 879 frames where `fast_dc_contactor` is also set. ⚠️ That covers **DC only** — `fast_dc_contactor` reads 0 through every AC charge in the corpus — so it rules out a DC charge switch and says nothing about AC. **AC charging was not tested against this bit.**
+
+### The rest of byte 3, decoded 2026-09-14
+
+Every bit of the byte now has a key. `V_LIEDOWN_DETECTED` (bit 5) arrived with #221 and is above.
+
+| bit | vendor name        | key              | what the archive shows                              |
+| --- | ------------------ | ---------------- | --------------------------------------------------- |
+| 2   | `V_DSB_CTRL`       | `dsb_control`    | 🟡 clear in **279 of 15 006 856**, in two windows   |
+| 3   | `V_IMD_DISABLE`    | `imd_disable`    | 🟡 **never set**                                    |
+| 4   | `V_WINTER_STORAGE` | `winter_storage` | 🟡 **never set**                                    |
+| 6   | `V_MAG_GOOD`       | `mag_good`       | 🟡 set in 14 607 648 (97.34 %), 47 020 rising edges |
+| 7   | `V_ABSOFF`         | `vcu_abs_off`    | 🟡 **never set**                                    |
+
+⚠️ **"Never set" is an absence of the OCCASION, not evidence a bit is dead.** This bike has not been in winter storage, has had no insulation-monitor event and has never had ABS switched off while a capture ran. They are decoded ahead of the occasion, the way `src/can/vcu-flags.ts` decodes eleven never-fired VCU error bits, and their positions are the vendor's word and nothing more. `scripts/check-button-decode.ts` covers them with two ⚠️ SYNTHETIC frames — an all-bits one that pins they do not collide and that each emits `1` rather than the vendor's mask, and a one-bit-at-a-time one so `imd_disable` and `winter_storage` cannot be swapped. Those frames prove the decoder self-consistent and nothing about the bike.
+
+**🟡 `V_DSB_CTRL` is not the constant it was taken for.** Clear in exactly two contiguous windows:
+
+```
+2026-08-02 20:40:17.611 → 20:40:19.130   153 frames, 1.52 s   capture-20260802-203750-7ce067a7.log
+2026-08-09 21:25:27.908 → 21:25:29.158   126 frames, 1.25 s   capture-20260809-211759-1956320f.log
+```
+
+In both, 0x102 bytes 0-2 are all `00` — every lamp, switch and state bit dark. The second is a **DC charge start**: `fast_dc_contactor` rises **0.919 s** after the bit clears and the bit returns **0.330 s** later (`…44` → `40` → `41` → `45` → `44`). In the first, 0x101 reads state 1 / substate 3, the lowest state. A transient at a vehicle transition, characterised but not understood.
+
+**🟡 `V_MAG_GOOD` drops briefly, and almost only at speed.** The name is the table's; "MAG" is not obviously magnet, magnitude or magneto and nothing is guessed here. What is measured:
+
+|           | mean `speed_can_kmh` at the frame | frames                                  |
+| --------- | --------------------------------- | --------------------------------------- |
+| bit clear | **87.7 km/h**                     | 399 208 — of which 398 202 above 5 km/h |
+| bit set   | **18.1 km/h**                     | 14 607 623                              |
+
+Against 0x102's own `moving` bit: clear in **172 of 11 237 945** stopped frames (0.0015 %) and **399 036 of 3 768 911** moving ones (10.6 %). Clear runs are short — 9 719 of one frame, 6 942 of two, 704 of fifty or more. ⚠️ It is the most expensive key in this batch by two orders of magnitude: **94 137 rows, ~2 258 rows/h** of bike-on time, against ~60 rows/h for the other eight 0x102 bits together. A deadband cannot reduce it — `|1 − 0| > 1` is false, so any deadband on a flag stops it logging after the first sample — so the choice was include or exclude, and 47 020 edges are the whole reason to want it.
+
+### Byte 0's switches and byte 1 bit 0, decoded 2026-09-14
+
+**✅ `V_LOW_BEAM_SW` (b0 bit 7) → `low_beam`.** Agrees with `low_beam_lamp` in **15 006 856 of 15 006 856 frames, zero disagreements** — the 1 103 000-frame claim below, extended 13.6×.
+
+⚠️ **This reverses a decision recorded below** (_"a third beam key earns nothing"_), which was taken with the vendor pairing already cited and is not overturned by new evidence about the split. Two things changed. This is not the case `scripts/check-derived-signals.ts` and the `brake` removal are about — that rule is for a key **our decoder computes** from another on the same frame, and nothing computes this one: b0 bit 7 and b2 bit 1 are two wires, read independently, and their perfect agreement is the **baseline a failed bulb shows against** rather than a reason to drop one. And the standing rule for the work that decoded the rest of this frame is that every signal that can be decoded should be.
+
+**✅ `V_R_TURN_SW` / `V_L_TURN_SW` (b0 bits 3/4) → `blinker_switch_right` / `blinker_switch_left`.** 10 039 and 6 673 frames, 464 and 361 rising edges archive-wide (an upper bound — overlapping captures inflate an edge count). 🚨 The side assignment is unchanged and now has a second witness: Energica's table names **bit 3** `V_R_TURN_SW`, agreeing with the 2026-08-19 rising-edge measurement and against the third-party file. They log in `controls`, not the `buttons` group, so the BUTTONS section keeps two tiles for two indicators.
+
+**🟡 `V_HORN_SW` (b1 bit 0) → `horn_switch`. Never set in 15 006 856 frames.**
+
+⚠️ **And the OUTPUT has never been seen set either.** `horn` (b2 bit 4) reads 0 in all 15 006 856 archive frames and in **all 213 rows** it has ever logged, across 128 sessions — one row per boot, which is what a signal nobody exercised looks like. So this is not a working half beside an unknown one; both are unexercised on record. The ✅ that b2 bit 4 carries comes from a 2026-06 bench session, and **nothing on disk predates 2026-08-02** — neither the candump archive nor `rides.db` — so an August-onward corpus cannot reproduce it and does not falsify it. The position is confirmed twice over (that session, and the table naming b2 bit 4 `V_HORN`); what is missing is any recent exercise of the circuit.
 
 ### Bytes 4-7 — the attitude sensor's two angles. NOT accelerations.
 

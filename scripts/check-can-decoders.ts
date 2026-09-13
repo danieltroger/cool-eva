@@ -103,6 +103,7 @@ const REQUIRED_IN_FILTER: [number, string][] = [
   [0x0a0, "ABS wheel speeds / brake pressure"],
   [0x02c, "drive torque command and feedback"],
   [0x100, "VCU error/status flags, incl. the charge manager's error summary bit"],
+  [0x101, "VCU vehicle state/substate, the drive state machine and the limp-mode fields"],
   [0x10b, "VCU consumption"],
   [0x125, "redundant road speed"],
   [0x127, "dual throttle position sensor"],

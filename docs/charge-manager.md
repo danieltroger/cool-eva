@@ -74,7 +74,7 @@ The DBC also places `V_IMD_DISABLE` at bit 27 of `0x102 VCU_DIGITALS`, which wou
 
 The bit that _does_ track it is **b3 bit 0, frame bit 24 — `fast_dc_contactor`, already decoded** (`V_FASTDC_MON_SW` in `src/can/decode.ts`), which agrees with `0x605` b7 in 99.39 % of 9 890 746 aligned frames. That is the same fact arriving by the physical route rather than the command route, and it is the one to use if you want the DC state without the charge group awake.
 
-🟡 Incidental correction to `src/can/decode.ts`: its note that `0x102` b3 bit 2 "is never once clear in 1 103 000 frames" is true of its 14-capture sample and not of the archive — b3 reads `0x40`/`0x41` in 278 frames, so bit 2 is set in 99.998 %, not 100 %.
+🟡 Incidental correction to `src/can/decode.ts`: its note that `0x102` b3 bit 2 "is never once clear in 1 103 000 frames" is true of its 14-capture sample and not of the archive — b3 reads `0x40`/`0x41` in **279** frames, so bit 2 is set in 99.998 %, not 100 %. ⚠️ This line said **278** until 2026-09-14; the pass behind it predated seven of the archive's candump logs, and `0x41` contributes 34 of the 279. The bit is decoded as `dsb_control` since that date and the two windows are characterised in `docs/can-decode-findings.md` §"0x102 byte 3".
 
 ### Why this frame has no invariant gate
 

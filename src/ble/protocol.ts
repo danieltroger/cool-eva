@@ -141,8 +141,13 @@ export class BleTelemetryDecoder {
     switch (frame[1]) {
       case 0x00:
         // SOC (frame[2]) and battery temp (frame[7]) duplicate CAN 0x200 at 20 Hz,
-        // so they're skipped. The range estimate and the vehicle state machine are
-        // not on CAN at all — 0x201 only carries *charge* state, not this.
+        // so they're skipped. The range estimate is not on CAN at all.
+        //
+        // 🚨 "…and the vehicle state machine [is] not on CAN at all" stood here until
+        // 2026-09-14 and was FALSE. It is CAN 0x101 `VCU_VEHICLE_STS` at 100 Hz, decoded
+        // since (src/can/vehicle-status.ts). The CAN keys carry `_can` so these two keep
+        // their history and the two transports can be compared rather than merged: every
+        // value this path has logged is one the CAN byte also produces.
         return [
           { key: "vehicle_state", value: frame[3] },
           { key: "vehicle_substate", value: frame[4] },

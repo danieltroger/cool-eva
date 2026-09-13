@@ -108,6 +108,37 @@ const BY_KEY = {
   // decrypted archive read past 360 — two at 442.0 on 2026-08-08, one at 366.0 on
   // 2026-09-13. Real data, on a signal a rider reads as a heading.
   "gps_course_deg": [0, 360],
+  // 0x101 `VCU_VEHICLE_STS` (src/can/vehicle-status.ts), added 2026-09-14. Every one of
+  // these has a blank unit in a group that is not a BOOLEAN_GROUP — `drive` and `vcu` —
+  // which is the combination this file's header says reaches no rule and renders whatever
+  // arrives. They are bounded to the FIELD, not to the values seen: the state byte has
+  // produced six values in 15 006 844 frames and the substate 38, and a bound drawn round
+  // today's set would draw a state this bike has not reached yet as a dead sensor. That is
+  // `charge_manager_state`'s reasoning, and it applies harder here — the whole point of
+  // logging a state machine raw is to catch a state nobody has seen.
+  //
+  // ⚠️ `drive_vsm_b3` is [0, 3] and NOT [0, 1]: Energica's mask is `byte 3 mask 0x03`, two
+  // bits, so the field's range is 0…3 however few values the bus has shown. Same call, same
+  // reason, as `abs_warning_lamp` below. `limp_pack_res` gets no unit and a full-field
+  // bound: the database carries no scaling factors, so 75…154 is plausible for this pack's
+  // milliohms and nothing more. docs/can-0x101.md.
+  "vehicle_state_can": [0, 255],
+  "vehicle_substate_can": [0, 255],
+  "drive_vsm": [0, 255],
+  "drive_vsm_b3": [0, 3],
+  "vehicle_status_flags": [0, 255],
+  "limp_pack_res": [0, 65_535],
+  "limp_module_sts": [0, 65_535],
+  // 🚨 `moving` and `reverse_gear` are 0/1 flags that rendered COMPLETELY UNGATED until
+  // 2026-09-14 — blank unit, group `drive`, in neither table, so boundsFor() ran off the end
+  // and returned null. Exactly the combination the header above warns about, on the tab a
+  // rider reads, and the shape of `high_beam` once reading 193. scripts/check-can-decoders.ts
+  // could not catch it: it only walks signals that ARE gated. Both are 0/1 by construction —
+  // `bit(lampsAndState, 7)` and `bitFieldLe(data, 63, 1)` — so this cannot reject a real
+  // reading. Found while reviewing the 0x101 plan; the group is frozen by db.ts's
+  // ON CONFLICT, so naming them here is the fix that does not spend the history.
+  "moving": [0, 1],
+  "reverse_gear": [0, 1],
   "speed_kmh": [0, 300],
   "motor_rpm": [-12_000, 12_000],
   "aux_12v": [0, 20],

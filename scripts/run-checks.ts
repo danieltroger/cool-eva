@@ -655,6 +655,17 @@ const CHECKS: SelfCheck[] = [
       "delay, a self-rearming zero-delay timer, and two advance() calls in flight at once",
   },
   {
+    script: "scripts/check-vehicle-status.ts",
+    covers:
+      "0x101 VCU_VEHICLE_STS, replayed from fourteen real frames: the parked 60/62 the engineering menu shows, " +
+      "the blocking-fault substate 83, a bit-7 substate whose state band latches, park assist at 52, and the two " +
+      "frames where b2 and b3's low bits disagree — which is what stops Energica's own double assignment of " +
+      "V_DRIVE_VSM (its parser loses byte 2) being reproduced here. Plus the filter entry, short-frame silence, " +
+      "and the two guards a rename could quietly undo: that the CAN keys never collide with the BLE transport's " +
+      "vehicle_state/vehicle_substate, and that every state and substate the archive has produced — 150 included " +
+      "— still passes the dashboard's plausibility gate",
+  },
+  {
     script: "scripts/check-vendor-names.ts",
     covers:
       "that no tracked file names the manufacturer's service-tool product, its executable, its libraries or the " +

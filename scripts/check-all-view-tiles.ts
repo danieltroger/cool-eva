@@ -27,6 +27,12 @@ import { BUTTON_GROUP, LATCHED_KEYS, getsLatchedTile } from "../public/lib/latch
 const MUST_LATCH: Record<string, string> = {
   horn: "0x102 b2 0x10 — a horn blast is as brief as a button press",
   ignition_button: "0x102 b1 bit6 — the red button on the right bar",
+  // The three switches added 2026-09-14. `horn_switch` is the thumb behind `horn` above;
+  // the two indicator switches are 0.2 s presses (median 0.210 s and 0.180 s over 464 and
+  // 361 archive presses), which is two frames of a 60 Hz display.
+  horn_switch: "0x102 b1 bit0 V_HORN_SW — the thumb behind the horn output above",
+  blinker_switch_left: "0x102 b0 bit4 V_L_TURN_SW — a 0.18 s median press",
+  blinker_switch_right: "0x102 b0 bit3 V_R_TURN_SW — a 0.21 s median press",
 };
 
 /**
@@ -41,6 +47,11 @@ const MUST_LATCH: Record<string, string> = {
 const MUST_NOT_LATCH: Record<string, string> = {
   high_beam_lamp: "a lamp OUTPUT (b2 bit0); the switch that drives it is `high_beam`, which is in the group",
   low_beam_lamp: "a lamp OUTPUT (b2 bit1)",
+  // ⚠️ The SWITCH, and the one member of this pair that could plausibly have gone the other
+  // way — `high_beam` is a switch and IS latched. The difference is use, not kind: a
+  // flash-to-pass is momentary, and a low beam is on for the whole ride, so "PRESSED",
+  // "3 presses" and "held for 4 h" would all be wrong about it. Same argument as `key_on`.
+  low_beam: "a switch that is HELD for an entire ride (b0 bit7), not pressed — set in 38.8 % of archive frames",
   cruise_active: "a vehicle STATE — cruise armed — which the registry argues at its entry",
   key_on: "a vehicle state that holds for a whole ride",
   moving: "a vehicle state",

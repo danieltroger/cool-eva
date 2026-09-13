@@ -205,6 +205,13 @@ preview-shots/
 # Ride logs are large encrypted blobs and are never committed — decrypt them on the Mac with
 # scripts/decrypt-log.ts. The small text extracts beside them ARE tracked: docs/charge-auto.md and
 # docs/can-0x121-charge-command.md cite them as the provenance for #186's measurements.
+# The coordinator's per-id frame extracts: 70 MB for one boot of 0x101 alone. The small
+# excerpts docs/can-0x101.md points at are committed under evidence/x101/ instead — a
+# document's headline claim should be reproducible from the repo, and 70 MB of it is not.
+evidence/captures/
+# (The committed excerpts are `.txt`, like every other tracked file in evidence/ — the
+# global `*.log` rule above would otherwise swallow them.)
+
 evidence/*.celog
 # Trailing glob rather than `evidence/*.db`: a scratch DB opened read-write leaves `-shm`
 # and `-wal` siblings next to a file that was 1.98 GB here. `rides.db-shm`/`-wal` below are

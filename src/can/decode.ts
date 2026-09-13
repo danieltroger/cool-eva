@@ -37,6 +37,7 @@ import { type DecodedValue, bit, bitFieldLe, i16le, u16le } from "./frame.ts";
 import { decodeGpsCanFrame, GPS_CAN_ID } from "./gps.ts";
 import { PSU_CAN_ID, decodePsuFrame } from "./psu.ts";
 import { VCU_FLAGS_CAN_ID, decodeVcuFlagsFrame } from "./vcu-flags.ts";
+import { VEHICLE_STATUS_CAN_ID, decodeVehicleStatusFrame } from "./vehicle-status.ts";
 
 export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
   // The charge manager, added 2026-08-19. Five ids, one module: they are one ECU's state
@@ -109,6 +110,14 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 
     case VCU_FLAGS_CAN_ID:
       return decodeVcuFlagsFrame(data);
+
+    // 0x101 — the VCU's own state machine: vehicle state/substate, the drive state
+    // machine's transition marker and the limp-mode fields. Named by Energica's database
+    // and decoded nowhere until 2026-09-14, because the id was not in STREAM_IDS below and
+    // so never reached this switch. ⚠️ Its two state words are also logged over BLE under
+    // `vehicle_state`/`vehicle_substate`; these carry `_can`. See vehicle-status.ts.
+    case VEHICLE_STATUS_CAN_ID:
+      return decodeVehicleStatusFrame(data);
 
     // 0x305 — charger DC (charging only, 5 Hz). 🟡
     case 0x305: {
@@ -249,6 +258,14 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // L blinker, 0x08 R blinker, 0x10 horn, 0x20 front brake, 0x40 rear brake. Those
     // five were found by working the switches on this bike and diffing the log. ✅
     //
+    // ⚠️ `horn` (b2 bit 4) is the exception to that ✅ and it is worth stating: the bench
+    // session was 2026-06, and NOTHING ON DISK PREDATES 2026-08-02 — neither the candump
+    // archive nor rides.db. The bit reads 0 in all 15 006 856 archive frames and in all 213
+    // logged rows across 128 sessions, which is one row per boot. So the position is
+    // confirmed twice (that session, and Energica's table naming b2 bit 4 `V_HORN`), and
+    // nothing on disk today reproduces the observation. `horn_switch` below is the same
+    // bit's switch and has never had a bench session at all.
+    //
     // ⚠️ The blinkers are a known conflict with the .xdbc, which puts L/R at b0 bits 3/4
     // and calls b2 bits 2/3 unknown. Both can be true — b0 the handlebar SWITCH, b2 the
     // lamp OUTPUT — but only ours was measured, so ours stands. Do not "fix" this from
@@ -306,6 +323,12 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "blinker_left", value: lampsAndState & 0x04 ? 1 : 0 },
         { key: "blinker_right", value: lampsAndState & 0x08 ? 1 : 0 },
         { key: "horn", value: lampsAndState & 0x10 ? 1 : 0 },
+        // b1 bit 0 — `V_HORN_SW`, the horn SWITCH, against `horn` below which is b2 bit 4
+        // `V_HORN`, the output. 🟡 Never set in 15 006 856 archive frames, so the position
+        // is the vendor table's word and nothing more. ⚠️ And the OUTPUT has never been
+        // seen set either — 0 of the same 15 006 856, and 0 of 213 logged rows — so this is
+        // not a working half next to an unknown one. Both are unexercised on record.
+        { key: "horn_switch", value: bit(vehicleState, 0) },
         { key: "energized", value: bit(vehicleState, 1) },
         { key: "go_request", value: bit(vehicleState, 2) },
         { key: "go", value: bit(vehicleState, 3) },
@@ -442,10 +465,18 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 // which of the two is which, settled 2026-08-19.
 //
 // Of the other two: bit 6 is `high_beam`, read in the case above (a flash-to-pass, which
-// is what the dashboard's own gesture counts). Bit 7 is the LOW BEAM SWITCH, settled
-// 2026-08-16 by the byte-2 work above — it agrees with b2 bit 1 in all 1 103 000 frames.
-// It gets no key of its own, since `low_beam_lamp` already carries the same information;
-// named here so the next person does not re-derive it.
+// is what the dashboard's own gesture counts). Bit 7 is `V_LOW_BEAM_SW`, the LOW BEAM
+// SWITCH, and it is decoded below.
+//
+// ⚠️ It carried no key until 2026-09-14, on the argument that `low_beam_lamp` already
+// carries the same information — which is still true of the data (the two agree in all
+// 15 006 856 archive frames, zero disagreements, extending the 1 103 000 that decision was
+// taken on). It is decoded anyway for the reason `high_beam`/`high_beam_lamp` are both
+// kept: a switch and its lamp are two wires, and the day they disagree is the day a bulb
+// has failed. That perfect agreement is the BASELINE that makes the disagreement visible,
+// not a reason to drop one of them. ⚠️ This is not the derived-key case
+// scripts/check-derived-signals.ts exists for — nothing in this decoder computes one from
+// the other, unlike the `brake` key it removed.
 
 // What makes these more than "the bit moves" is that the six low bits split cleanly into
 // two behaviours, and the split is the one the owner's manual predicts — bits 0-2 are
@@ -499,21 +530,24 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
     // made at 47-118 km/h. Corrected 2026-09-08; docs/can-decode-findings.md § "bit 2"
     // has the frames, and docs/handlebar-gestures.md what it does and does not change.
     { key: "btn_mode_enter", value: bit(handlebar, 2) },
-    // bits 3 and 4 are the turn-indicator SWITCHES, and are still not decoded here —
-    // but which side is which is no longer an open question, so it is written down.
+    // bits 3 and 4 — the turn-indicator SWITCHES, `V_R_TURN_SW` and `V_L_TURN_SW`.
     //
     // 🚨 BIT 3 IS RIGHT AND BIT 4 IS LEFT, the OPPOSITE of the .xdbc's order. Measured
-    // 2026-08-19 over all 14 650 573 frames of 0x102 in the archive, by asking which
-    // blinker lamp each rising edge started: bit 3 started the right lamp 437× against
-    // the left 5×, bit 4 the left 328× against the right 2×. Do not "fix" this from the
-    // third-party file — it was already caught calling the high beam `charging`.
+    // 2026-08-19 over the whole archive by asking which blinker lamp each rising edge
+    // started: bit 3 started the right lamp 437× against the left 5×, bit 4 the left 328×
+    // against the right 2×. ✅ Energica's own table now agrees, naming bit 3 `V_R_TURN_SW`
+    // — a second witness against the third-party file, which was already caught calling
+    // the high beam `charging`. Do not "fix" the order from it.
     //
-    // They stay undecoded because nothing reads them: the dashboard's buttons section was
-    // given the LAMPS on 2026-08-19, since what a rider means by "is my indicator on" is
-    // the lamp and not the thumb, and two more keys would put four tiles on screen for two
-    // indicators. If something ever wants the switches — telling a failed bulb from a
-    // missed press is the obvious one — they are `bit(handlebar, 3)` for right and
-    // `bit(handlebar, 4)` for left. Evidence: docs/can-decode-findings.md § "bits 3 and 4".
+    // They are in `controls` and not `buttons`, so the BUTTONS section keeps two tiles for
+    // two indicators rather than four; what a rider means by "is my indicator on" is still
+    // the lamp. The switches answer the other question — a failed bulb against a missed
+    // press. 10 039 / 6 673 frames and 464 / 361 rising edges archive-wide.
+    { key: "blinker_switch_right", value: bit(handlebar, 3) },
+    { key: "blinker_switch_left", value: bit(handlebar, 4) },
+    // bit 7 — `V_LOW_BEAM_SW`, argued in this function's header. Here rather than with the
+    // beam lamps because this byte is the SWITCH byte; `low_beam_lamp` is b2's output.
+    { key: "low_beam", value: bit(handlebar, 7) },
 
     // bit 5 — the indicator-cancel press (push the turn switch in). ✅ CONFIRMED, and
     // this is the strongest identification of the seven: all 63 presses happened with
@@ -531,10 +565,13 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
 // Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was
 // first decoded, which is true of a parked bike and false of a charging one: across
 // the 14 captures it takes five values — 0x44 (88.4 %), 0x45 (9.4 %), 0x46 (1.2 %),
-// 0x04 (1.0 %) and 0x06 (0.02 %). Bit 2 is `V_DSB_CTRL`; it is set in all five and never
-// once clear in 1 103 000 frames, so it is left undecoded rather than logged as a
-// constant 1. Bit 6 is `V_MAG_GOOD`, moves constantly, and having a name has not made it
-// mean anything yet.
+// 0x04 (1.0 %) and 0x06 (0.02 %).
+//
+// 🚨 "Bit 2 is set in all five and never once clear in 1 103 000 frames" was true of that
+// sample and is FALSE of the archive: `V_DSB_CTRL` is clear in 279 of 15 006 856 frames.
+// Corrected 2026-09-14; docs/charge-manager.md caught the same thing first and said 278,
+// which this supersedes (that pass predates seven of the archive's candump logs). Every
+// bit of this byte is now decoded, each with what the corpus does and does not show.
 
 // 🚨 "bits 3, 4, 5 and 7 are never set" USED TO BE THE WHOLE OF THIS SENTENCE AND IT WAS
 // MISLEADING. It is a measurement over the 2026-08 capture archive, a corpus in which the
@@ -549,8 +586,9 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     // analog wire `A020_FCHG_MON` it corresponds to. ✅ CONFIRMED, and it is the
     // best-evidenced bit in this change:
     //
-    //   • Set in EXACTLY ONE interval in the whole corpus — 1038.1 s on 2026-08-04, which
-    //     is 103 790 of the 1 103 000 frames. Zero everywhere else: riding, parking, key-off.
+    //   • Set in exactly one interval of the 14-CAPTURE corpus — 1038.1 s on 2026-08-04,
+    //     103 790 of those 1 103 000 frames. ⚠️ Archive-wide it is 1 512 726 frames with 11
+    //     rising edges, so "exactly one" is that sample and not the bike's history.
     //   • That interval is a DC fast charge, from the pack's own frames: −0.1 A to +63.2 A
     //     within 4.6 s of the rise, SOC 30 % → 42 %, and no 0x305/0x306 at all.
     //   • It LEADS the charge — 190 ms before `charger_enabled`, ~470 ms before the first
@@ -558,14 +596,36 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     //   • It reads 0 through every AC charge in the corpus, so it discriminates DC from AC
     //     rather than just meaning "plugged in", which is the whole reason to want it.
     { key: "fast_dc_contactor", value: bit(byte3, 0) },
-    // bit 1 — cruise control armed. 🟡 Not in any vendor table; inferred here, and
-    // inferred from exactly two events, which is why it keeps the 🟡. Both are clean:
-    // it came up 0.525 s and 0.546 s after the only two presses of `btn_cruise_enable`
-    // on 0x400, held for 51.4 s and 82.3 s, and never moved otherwise. It is logged
-    // because it is the evidence for those two buttons — with this on the dashboard
-    // the owner can press cruise ON/OFF and watch the state follow, which is the check
-    // that would otherwise need a laptop and candump.
+    // bit 1 — cruise control armed. ✅ CONFIRMED 2026-09-14 over the whole archive: all 35
+    // rising edges of this bit fall 0.513-0.574 s after a `btn_cruise_enable` press on
+    // 0x400, 35 of 35, median 0.538 s, and there is no unexplained onset in 15 006 856
+    // frames. The two events this rested on before reproduce inside that to the
+    // millisecond. It was 🟡 "inferred from exactly two events" until then.
+    //
+    // 🚨 The table DOES name it, and the name disagrees with the measurement:
+    // `V_CHGSW_CTRL`. "Not in any vendor table" was false. The key keeps our name — a
+    // controller does not wait half a second for a handlebar button 35 times running, and
+    // where a table contradicts something measured on this bike, ours wins. 🟡 Corroborating
+    // only: it is set in 0 of 275 879 frames where `fast_dc_contactor` is also set, which
+    // rules out a DC charge switch and says nothing about AC. docs/can-decode-findings.md.
     { key: "cruise_active", value: bit(byte3, 1) },
+    // bit 2 — `V_DSB_CTRL`. 🟡 Named, and characterised rather than understood: clear in
+    // 279 of 15 006 856 frames, in exactly two contiguous windows (2026-08-02, 153 frames /
+    // 1.52 s and 2026-08-09, 126 / 1.25 s). In both, bytes 0-2 are all `00` — every lamp,
+    // switch and state bit dark — and in the second `fast_dc_contactor` rises 0.919 s after
+    // it clears, the bit returning 0.330 s later. A transient at a vehicle transition.
+    { key: "dsb_control", value: bit(byte3, 2) },
+    // bits 3, 4 and 7 — `V_IMD_DISABLE`, `V_WINTER_STORAGE`, `V_ABSOFF`. 🟡 All three read 0
+    // in every one of the 15 006 856 archive frames. ⚠️ That is an absence of the OCCASION,
+    // not evidence the bits are dead: this bike has not been in winter storage, has had no
+    // insulation-monitor event and has never had ABS switched off in the corpus. Decoded
+    // ahead of the occasion, the way vcu-flags.ts decodes eleven never-fired VCU errors.
+    //
+    // `vcu_abs_off` carries the prefix the other two do not because every other `abs_*` key
+    // comes from 0x0A0, the ABS module; this is the VCU's bit.
+    { key: "imd_disable", value: bit(byte3, 3) },
+    { key: "winter_storage", value: bit(byte3, 4) },
+    { key: "vcu_abs_off", value: bit(byte3, 7) },
     // bit 5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ CONFIRMED against this bike
     // 2026-09-14, from the Pi's own candump of the boot it happened on: exactly one
     // transition in the 60 s around the fall, 0.669 s after the roll peak and 0.551 s
@@ -578,6 +638,19 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     // "upright", and this is not a fall sensor for anything safety-bearing: one event
     // identifies it. Timings and counts: docs/can-decode-findings.md §5.
     { key: "lie_down_detected", value: bit(byte3, 5) },
+    // bit 6 — `V_MAG_GOOD`. 🟡 The name is the table's and "MAG" is not obviously magnet,
+    // magnitude or magneto, so nothing is guessed here. What is MEASURED is that it drops
+    // briefly and almost only at speed: set in 14 607 648 of 15 006 856 frames with 47 020
+    // rising edges, mean speed 87.7 km/h while clear against 18.1 km/h while set, and
+    // 398 202 of the 399 208 clear frames above 5 km/h. Against 0x102's own `moving` bit it
+    // is clear in 172 of 11 237 945 stopped frames and 399 036 of 3 768 911 moving ones.
+    // Clear runs are short — 9 719 of one frame, 6 942 of two.
+    //
+    // ⚠️ It is the most expensive key in this change by two orders of magnitude: 94 137 rows
+    // over 41.7 h of frame-time, ~2 258 rows/h, against ~60 rows/h for the other eight 0x102
+    // bits together. A deadband cannot reduce it (see below); the 47 020 edges are the whole
+    // reason to want it. docs/can-decode-findings.md §"0x102 byte 3".
+    { key: "mag_good", value: bit(byte3, 6) },
   ];
 }
 
@@ -620,6 +693,7 @@ const VEHICLE_STREAM_IDS = [
   DRIVE_TORQUE_CAN_ID,
   ABS_CAN_ID,
   VCU_FLAGS_CAN_ID,
+  VEHICLE_STATUS_CAN_ID,
   0x102,
   0x104,
   0x109,

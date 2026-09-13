@@ -677,12 +677,39 @@ export const SIGNALS: SignalDef[] = [
   { key: "high_beam", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit6
   { key: "blinker_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x04
   { key: "blinker_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x08
+
+  // The SWITCHES for three of the outputs above, added 2026-09-14 (0x102 b0 bits 3/4/7 and
+  // b1 bit 0). Group "controls", not "buttons": the BUTTONS section keeps two tiles for two
+  // indicators rather than four, and what a rider means by "is my indicator on" is still the
+  // lamp. ../../public/lib/latched.js names the two indicator switches and `horn_switch` so
+  // they still get the latched tile — a 0.2 s press is two frames of a 60 Hz display.
+  //
+  // ⚠️ `low_beam` is deliberately NOT latched: it is held for an entire ride, which is the
+  // reason `key_on` sits in check-all-view-tiles.ts's MUST_NOT_LATCH. `high_beam` stays in
+  // "buttons" because a flash-to-pass is momentary. Same byte, different tile, different use.
+  { key: "horn_switch", unit: "", group: "controls", source: "stream" }, // 0x102 b1 bit0 V_HORN_SW
+  { key: "blinker_switch_right", unit: "", group: "controls", source: "stream" }, // b0 bit3 V_R_TURN_SW
+  { key: "blinker_switch_left", unit: "", group: "controls", source: "stream" }, // b0 bit4 V_L_TURN_SW
+  { key: "low_beam", unit: "", group: "controls", source: "stream" }, // b0 bit7 V_LOW_BEAM_SW
   { key: "front_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x20
   { key: "rear_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x40
   // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
   // other 0x102 state bits above rather than in `buttons`; `controls` is already a
   // BOOLEAN_GROUP so it gets the same 0/1 gate.
   { key: "cruise_active", unit: "", group: "controls", source: "stream" },
+
+  // The rest of 0x102 byte 3, added 2026-09-14 — every bit of the byte is now decoded. All
+  // five go in "diag" for the free 0/1 gate, and none may carry a deadband: |1 − 0| > 1 is
+  // false, so a flag with one logs its first sample after boot and then never again.
+  //
+  // ⚠️ `mag_good` costs ~2 258 rows/h on its own, 97 % of this batch, because it has 47 020
+  // rising edges. The other four are ~1 row per boot each: they are 0 (or, for dsb_control,
+  // 1) in all but a handful of the archive's 15 006 856 frames. See src/can/decode.ts.
+  { key: "dsb_control", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_DSB_CTRL
+  { key: "imd_disable", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_IMD_DISABLE
+  { key: "winter_storage", unit: "", group: "diag", source: "stream" }, // b3 bit4 V_WINTER_STORAGE
+  { key: "mag_good", unit: "", group: "diag", source: "stream" }, // b3 bit6 V_MAG_GOOD
+  { key: "vcu_abs_off", unit: "", group: "diag", source: "stream" }, // b3 bit7 V_ABSOFF
   // 0x400 b5 bit7 — the dashboard's own day/night flag, and what the phone dashboard's
   // light theme follows. `controls` for the same reason as the row above: it is a
   // vehicle state rather than a thing a thumb presses, and the group is already a
@@ -878,6 +905,36 @@ export const SIGNALS: SignalDef[] = [
   { key: "vcu_err_system_blocking_fault", unit: "", group: "diag", source: "stream" }, // b3 bit7
   { key: "vcu_err_drive_ot", unit: "", group: "diag", source: "stream" }, // b4 bit1
   { key: "vcu_err_leak_detect", unit: "", group: "diag", source: "stream" }, // b6 bit0
+
+  // 0x101 `VCU_VEHICLE_STS` — the VCU's own state machine, 100 Hz (src/can/vehicle-status.ts).
+  // Named by Energica's database and logged nowhere until 2026-09-14. Costs ~86 rows/h of
+  // bike-on time for all nine, measured by replaying the archive through the log-on-change
+  // rule in file sequence. Every one of them is unitless: the database gives types and no
+  // scaling factors at all, so a unit here would be an assertion nobody has measured — and
+  // db.ts writes `signal` with ON CONFLICT(key) DO NOTHING, which freezes unit and group for
+  // the life of the ride log. Evidence and the substate vocabulary: docs/can-0x101.md.
+  //
+  // ⚠️ The `_can` suffix is not decoration. `vehicle_state` and `vehicle_substate` already
+  // exist above, written by the BLE hub (src/ble/protocol.ts); one key with two writers
+  // flaps between them. Same split, same reason, as `odometer_can_km` beside `odometer_km`.
+  // Group `drive` so the two land in one section of the All tab, which is the comparison
+  // the split exists to make possible.
+  { key: "vehicle_state_can", unit: "", group: "drive", source: "stream" }, // b1 V_VEHICLE_STATE
+  { key: "vehicle_substate_can", unit: "", group: "drive", source: "stream" }, // b0 V_VEHICLE_SUBSTATE
+  // b2 and b3&0x03, which Energica's parser assigns one name and loses the first of (§A.3).
+  // Two distinct quantities here. b2 is the drive state machine's transition marker.
+  { key: "drive_vsm", unit: "", group: "drive", source: "stream" }, // b2 V_DRIVE_VSM
+  { key: "drive_vsm_b3", unit: "", group: "drive", source: "stream" }, // b3 mask 0x03, the duplicate
+  // The 0x100 arrangement, one frame over: the raw word goes in "vcu" because a byte gated
+  // to 0/1 would be rejected as a dead sensor on every frame where anything is set, and the
+  // broken-out booleans go in "diag" precisely because it IS a BOOLEAN_GROUP and they
+  // inherit the 0/1 gate with no per-key bounds entry. The two numbers join the raw word:
+  // they need a BY_KEY bound either way, and "diag" would reject them outright.
+  { key: "limp_pack_res", unit: "", group: "vcu", source: "stream" }, // b4-5 LE V_LIMP_PACK_RES
+  { key: "limp_module_sts", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
+  { key: "vehicle_status_flags", unit: "", group: "vcu", source: "stream" }, // b3 raw; bits 4 and 6 are unnamed and move
+  { key: "limp_mode_status", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_LIMP_MODE_STATUS
+  { key: "limp_res_valid", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_LIMP_RES_VALID
 
   // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only
