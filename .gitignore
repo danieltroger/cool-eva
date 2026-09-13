@@ -212,6 +212,15 @@ evidence/*.celog
 # by default, and this is the second line of defence for a --gpx that points inside it.
 *.gpx
 
+# Scratch databases decrypted from a .celog for one investigation — `scripts/decrypt-log.ts
+# --out evidence/scratch-<date>.db`. A full /dl dump rebuilds to ~2 GB of VIN, GPS and ride
+# history, and `evidence/` is a TRACKED directory, so without this the file sits one
+# `git add -A` away from a public repo. The -shm/-wal siblings are matched by the same glob
+# because SQLite in WAL mode leaves them behind whenever a reader exits uncleanly.
+evidence/*.db
+evidence/*.db-shm
+evidence/*.db-wal
+
 # Rendered route-map screenshots show exactly where the bike went — the same thing the
 # coordinate rule forbids in text, in a form that is harder to notice. Keep them local and
 # hand them over out of band; a map PNG in a public repo is a published GPS trace.

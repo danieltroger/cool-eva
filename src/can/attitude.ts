@@ -1,34 +1,29 @@
 // The attitude sensor's two angles, on CAN 0x102 b4-7. Not accelerations.
 //
-// Until 2026-08-15 these two int16s were logged as `accel_lateral_raw` and
-// `accel_frontal_raw` — raw counts, blank unit — on the .xdbc's word that 0x102 carries
-// accelerations "in g". That reading is wrong. They are the VCU attitude block's two
-// DERIVED angles, in units of 0.1°:
+//   b4-5 LE int16 = roll,  Energica's `V_PHI` / `AttitudeSensor_Phi`.     Positive = leaning RIGHT.
+//   b6-7 LE int16 = pitch, Energica's `V_THETA` / `AttitudeSensor_Thete`. Positive = nose-down,
+//                                                                        i.e. decelerating.
 //
-//   b4-5 LE int16 = roll,  Energica's `AttitudeSensor_Phi`.   Positive = leaning RIGHT.
-//   b6-7 LE int16 = pitch, Energica's `AttitudeSensor_Thete`. Positive = nose-down,
-//                                                             i.e. decelerating.
+// Units of 0.1°, and ±1800 is the whole range an atan2 can reach — the bound this module
+// checks on every frame. Until 2026-08-15 the pair was logged as `accel_lateral_raw` /
+// `accel_frontal_raw` on the .xdbc's word that 0x102 carries accelerations "in g", which
+// is wrong; those rows are the same angles under a wrong name and Grafana reads them ÷10.
 //
-// ✅ Four independent things establish that, all from stored data: the side-stand bytes are
-// bit-identical to the KWP dump's `AttitudeSensor_Phi` and agree with that block's own gravity
-// vector at −10.33°; the values lie on an arctangent lattice (spacing SHRINKS with magnitude,
-// which no constant scale can do) fitting 576.9 units/radian against 572.958 for 0.1°/radian;
-// roll tracks the side stand and nothing else; and pitch tracks braking and throttle, which is
-// what gives the sign convention. ±1800 is the whole range an atan2 can reach, and that bound
-// is what this module checks on every frame.
+// ⚠️ THIS IS APPARENT ATTITUDE, NOT LEAN ANGLE. Three accelerometers and what is derived
+// from them — no gyro — so both angles give the direction of the measured vertical: they
+// answer "which way is down as far as the bike can tell", not "how far over is the bike".
+// Cornering hides itself almost completely, measured over 373 steady corners as 1.20° of
+// separation between hard left and hard right turns where a true lean would give 60-90°.
+// Anything wanting real lean needs a gyro this bike does not publish.
 //
-// ⚠️ THIS IS APPARENT ATTITUDE, NOT LEAN ANGLE. Three accelerometers and what is derived from
-// them — no gyro. Both angles are the direction of the measured vertical, so they answer "which
-// way is down as far as the bike can tell", not "how far over is the bike": cornering hides
-// itself almost completely (roll stayed inside ±17.9° on rides that reached 186 km/h), while
-// braking shows up as pitch. Anything wanting real lean needs a gyro the bike does not publish.
+// ⚠️ Pitch carries a constant −4.4° mounting offset, so a level bike does not read 0.0°.
+// Deliberately NOT corrected here: this log stores what the bike said, and a calibration
+// fitted to one day's regression belongs in a document rather than inside a pure decoder.
 //
-// ✅ Proven 2026-09-08: the broadcast pair IS the bank-2 block. A9 bank 2 ids 138/139 read
-// -125/-58 over KWP while 0x102 b4-7 carried -125/-58 on the broadcast, seconds apart, and the
-// two track together across a 7.4 deg roll change. 🟡 Still inferred: the pitch sign convention,
-// which is measured off this bike's own brake and throttle bits rather than read out of a document.
-//
-// Evidence in full: docs/can-decode-findings.md § "Bytes 4-7 — the attitude sensor's two angles".
+// The evidence, including the bike falling onto its right side on 2026-09-13 — the one
+// event with a large, unambiguous true roll, which is what pins the sign and the axis
+// assignment at a gross attitude instead of below 20°:
+// docs/can-decode-findings.md § "Bytes 4-7 — the attitude sensor's two angles".
 
 import { type DecodedValue, i16le } from "./frame.ts";
 
@@ -39,8 +34,13 @@ const DECIDEGREES_PER_DEGREE = 10;
  * Both angles come out of an atan2, so ±180.0° is the whole reachable range and ±1800
  * is the whole reachable raw value. A count outside it is not a steep bike, it is a
  * frame that no longer means what this file says it means.
+ *
+ * Exported so `public/lib/bounds.js`'s band for these two keys can be ASSERTED equal to
+ * it (scripts/check-attitude.ts §3) rather than hand-copied. The dashboard cannot import
+ * a .ts constant — it has no build step — so the two numbers are written twice on
+ * purpose, and the check is what stops them drifting apart.
  */
-const MAX_DECIDEGREES = 1800;
+export const MAX_DECIDEGREES = 1800;
 
 /** b4-7 carry the angles; a shorter frame carries none of them. */
 const MIN_FRAME_LENGTH = 8;

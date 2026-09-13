@@ -91,6 +91,26 @@ const BY_KEY = {
   "gps_lon": [-180, 180],
   "waypoint_lat": [-90, 90],
   "waypoint_lon": [-180, 180],
+  // The other three "°" signals, added 2026-09-14. The comment above explains why there is
+  // no BY_UNIT rule for the unit; what it did not do is name the signals left over, and
+  // all three rendered completely ungated until the fall of 2026-09-13 was analysed.
+  //
+  // ⚠️ The two attitude bands are DECORATIVE and that is stated rather than left for a
+  // reader to discover: src/can/attitude.ts drops any count outside ±1800 before it is
+  // ever logged, so nothing the server emits can fail these. They are here for the reason
+  // the cell-voltage band below is — defence in depth that AGREES with the decoder instead
+  // of second-guessing it — and scripts/check-attitude.ts §3 asserts the number equals
+  // that module's MAX_DECIDEGREES ÷ 10, since the dashboard has no build step and cannot
+  // import it. ±180 is the whole range an atan2 can reach and the real data uses it: the
+  // archive holds roll from −170.3° to +174.2°, and the bike on its side read +103.1°.
+  //
+  // `gps_course_deg` is the opposite case and the one that earns its line: the field is
+  // 9 bits, so it can carry 0…511, and 3 of 105 118 rows in the 2026-09-13 dump read past
+  // 360 — the highest 442.0. This gate FIRES, on real data, on a signal a rider reads as
+  // a heading.
+  "attitude_roll_deg": [-180, 180],
+  "attitude_pitch_deg": [-180, 180],
+  "gps_course_deg": [0, 360],
   "speed_kmh": [0, 300],
   "motor_rpm": [-12_000, 12_000],
   "aux_12v": [0, 20],

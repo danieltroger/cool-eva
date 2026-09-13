@@ -519,14 +519,24 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
   ];
 }
 
-// 0x102 byte 3 — the fast-charge contactor monitor and the cruise-control state.
+// 0x102 byte 3 — the fast-charge contactor monitor, the cruise-control state and the
+// VCU's own lie-down flag.
 //
 // Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was
 // first decoded, which is true of a parked bike and false of a charging one: across
 // the 14 captures it takes five values — 0x44 (88.4 %), 0x45 (9.4 %), 0x46 (1.2 %),
-// 0x04 (1.0 %) and 0x06 (0.02 %). Bit 2 is set in all five and is never once clear in
-// 1 103 000 frames, so it is left undecoded rather than logged as a constant 1. Bit 6
-// moves constantly and is not understood; bits 3, 4, 5 and 7 are never set.
+// 0x04 (1.0 %) and 0x06 (0.02 %). Bit 2 is `V_DSB_CTRL`; it is set in all five and never
+// once clear in 1 103 000 frames, so it is left undecoded rather than logged as a
+// constant 1. Bit 6 is `V_MAG_GOOD`, moves constantly, and having a name has not made it
+// mean anything yet.
+//
+// 🚨 "bits 3, 4, 5 and 7 are never set" USED TO BE THE WHOLE OF THIS SENTENCE AND IT WAS
+// MISLEADING. It is a measurement over the 2026-08 capture archive, a corpus in which the
+// bike never fell over, never went into winter storage and never had ABS switched off —
+// so for bits 4, 5 and 7 it is an absence of the occasion rather than evidence the bits
+// are dead. Energica's own table names all four: bit 3 `V_IMD_DISABLE`, bit 4
+// `V_WINTER_STORAGE`, bit 5 `V_LIEDOWN_DETECTED`, bit 7 `V_ABSOFF` (the 2024 service-tool
+// analysis in `obd-garage/`, §`0x102` `VCU_DIGITALS`). Bit 5 is decoded below.
 function contactorAndCruise(byte3: number): DecodedValue[] {
   return [
     // bit 0 — `V_FASTDC_MON_SW`, the DC fast-charge contactor state monitor, and the
@@ -550,6 +560,22 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     // the owner can press cruise ON/OFF and watch the state follow, which is the check
     // that would otherwise need a laptop and candump.
     { key: "cruise_active", value: bit(byte3, 1) },
+    // bit 5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. 🟡 UNVERIFIED ON THIS BIKE,
+    // and decoded anyway, which is a departure from this file's habit of measuring first.
+    //
+    // The reason is that the occasion is rare and we have already missed one. The bike
+    // went onto its right side on 2026-09-13 at 16:21:58Z and the VCU dropped `energized`,
+    // `go_request` and `go` together 1.5 s later — behaviour consistent with a fall
+    // detector, though `stand_up` and the attitude pair would also explain it. The ride
+    // log stores decoded signals only, so this bit is not in it, and no raw capture of
+    // that day reached the laptop. Adding the key now is what makes the NEXT fall
+    // self-documenting instead of another reconstruction.
+    //
+    // What would close the 🟡: the Pi has written a per-boot candump to
+    // /home/pi/ride-captures/ since 2026-09-08, so the fall's own boot very likely holds
+    // the bytes. Read b3 bit 5 across 16:21:57-59Z in that file — the peak frame is
+    // findable by content, b4-7 = `07 04 78 FE`, whatever the capture's clock said.
+    { key: "lie_down_detected", value: bit(byte3, 5) },
   ];
 }
 

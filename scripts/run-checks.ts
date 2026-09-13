@@ -72,6 +72,23 @@ const CHECKS: SelfCheck[] = [
       "[Service] where systemd ignores it, and that the script parses as POSIX sh",
   },
   {
+    script: "scripts/check-attitude.ts",
+    covers:
+      "the attitude pair on 0x102 b4-7, which had no assertion anywhere in this suite until the bike fell onto " +
+      "its right side on 2026-09-13: that five counts from that day's ride log still decode to the degrees they " +
+      "were logged as — a guard on the LAYOUT (offsets, endianness, axis order, ÷10) rather than on the " +
+      "values, which came out of the decoder being tested and are circular against a wrong scale; that the " +
+      "±1800 band is inclusive at the limit and drops counts past it on BOTH signs, since a bare `>` would " +
+      "let −180.1° through; that one bad axis never mutes the other; that the warning needs five " +
+      "CONSECUTIVE frames, is rationed to one per axis per process, restarts after a good frame, and comes back " +
+      "after resetAttitudeDecoder(); that bounds.js gates both keys to exactly attitude.ts's own MAX_DECIDEGREES " +
+      "÷ 10, asked of bounds.js rather than copied, and that gps_course_deg is gated at all — 3 of " +
+      "105 118 rows read past 360°; and the wiring of lie_down_detected (0x102 b3 bit 5), which is decoded " +
+      "on the vendor frame table alone and is 🟡 unverified until someone reads that bit out of the " +
+      "Pi's own capture of the fall. ⚠ The guard is EXERCISED today by check-derived-signals.ts, whose byte " +
+      "sweep makes both warnings print on every run — it was never ASSERTED, which is the gap this closes",
+  },
+  {
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",

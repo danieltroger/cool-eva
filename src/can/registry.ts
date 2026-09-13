@@ -555,6 +555,17 @@ export const SIGNALS: SignalDef[] = [
   // bounds.js's BY_UNIT fallback and there is no sensible range for a flag, while
   // anything numeric-looking invites a Grafana panel to plot it against real amps.
   { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
+  // 0x102 b3 bit5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. 🟡 Unverified on this
+  // bike; src/can/decode.ts carries why it is decoded anyway and what would close it.
+  //
+  // Group "controls" rather than "drive" or a new group of its own, and that is the
+  // load-bearing part of this line: `controls` is a BOOLEAN_GROUP in public/lib/bounds.js,
+  // so the key gets the 0/1 gate for free. In "drive" it would have a blank unit in a
+  // non-boolean group — the exact combination that reaches no rule in that file and
+  // renders whatever arrives, which is how `fast_dc_contactor` above ended up needing a
+  // hand-written bound. No deadband, ever: |1 − 0| > 1 is false, so a deadband of 1 would
+  // log the first sample after boot and then never again, silently, forever.
+  { key: "lie_down_detected", unit: "", group: "controls", source: "stream" },
   { key: "moving", unit: "", group: "drive", source: "stream" }, // b2 bit7, .xdbc: speed > 1 km/h
 
   // 0x102 b4-7 — the attitude sensor's roll and pitch, in degrees. Logged until
@@ -568,7 +579,16 @@ export const SIGNALS: SignalDef[] = [
   // ⚠️ Gravity-referenced, so neither means what a rider would assume from the name.
   // attitude_roll_deg reads ≈0 in a steady corner, because the bike leans into the
   // resultant; attitude_pitch_deg mostly reports braking and acceleration rather than
-  // gradient. They answer "which way is down, as far as the bike can tell".
+  // gradient. They answer "which way is down, as far as the bike can tell". Measured
+  // over 373 steady corners on 2026-09-13: hard right and hard left turns separate by
+  // 1.20°, where a true lean angle would separate them by 60-90°.
+  //
+  // Both are named in public/lib/bounds.js at ±180°, which is the range attitude.ts's
+  // MAX_DECIDEGREES already enforces on every frame. That gate is therefore decorative
+  // and is kept anyway, for the reason the cell-voltage band there is: the unit "°" has
+  // no BY_UNIT rule (seven signals carry it across four natural ranges) and "imu" is not
+  // a BOOLEAN_GROUP, so without those two lines the pair renders entirely ungated —
+  // which is what it did from 2026-08-15 until the fall of 2026-09-13 was analysed.
 
   // 1.0° replaces the old 100 counts, which under the wrong scale was believed to be
   // ~0.5 g and is really 10° — coarse enough to quantise a lean trace into three or four

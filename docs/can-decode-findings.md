@@ -676,15 +676,101 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 
 **Why the out-of-range warning needs five consecutive frames.** A bare inequality would spend the warning on noise. This bike emits occasional junk samples on plenty of signals — `high_beam` reading 193, 0xFFFF cell voltages, −32767 GPS altitude, the whole reason `public/lib/bounds.js` exists — and one of those landing in b4-7 must not silence the diagnostic for the rest of the boot, because the thing it is there to catch (a frame layout change) arrives later and lasts forever. 0x102 is 100 Hz, so five frames is 50 ms: nothing a real layout change would survive, and far more than a single corrupted sample can fake. `pack-temperature.ts` guards its warnings the same way at 3, against frames that arrive at 1-20 Hz rather than 100. The journal line is rationed to once per axis per process for the same reason: at 100 Hz a layout change would otherwise fill the journal at 200 lines a second and push out whatever else went wrong at the same moment. The sample itself is dropped on every out-of-range frame regardless.
 
+### ✅ 2026-09-13: the bike fell over, which is the experiment nobody would run on purpose
+
+⚠️ **Every time in this subsection is UTC.** The Pi runs UTC; add your own offset.
+
+Everything above rests on angles under 20°. A fall at walking pace is the one event where the true roll is large and unambiguous, so it pins the axis assignment, the sign and the scale at a gross attitude instead of near zero. **Source for every figure below:** `~/Documents/cool-eva-route/data/ride-logs/cool-eva-2026-09-13.celog`, 322 317 980 bytes, a full `/dl` dump, decrypted with `scripts/decrypt-log.ts` to **39 258 150 readings from 21 255 segments** — 63 segments unreadable (one auth failure at byte 81 211 736, 14 bad-magic resyncs, all recovered past). The day itself is **3 709 811 readings across sessions 138-147**.
+
+#### What happened
+
+```
+16:21:50-57   roll ±5…20° at ~1 Hz, pitch −17…−45°   creeping at 1.5-4 km/h up a ~34 % gravel
+                                                      climb, front brake on, throttle 0
+16:21:57.911  roll  +45.3°   pitch −50.1°            first row past 45°
+16:21:58.130  roll +103.1°   pitch −39.2°            the peak — the highest roll ever logged here
+16:21:58.4 →  roll  +70…72°  pitch −17…−20°          settled, and it stays there
+16:21:59.362  energized 1→0, go_request 1→0, go 1→0   the bike's own response kills the drive
+16:21:59.391  roll  +70.1°                            the last 0x102 frame of the session
+```
+
+The clock is trustworthy here: across the 50 s around the fall `gps_epoch_s` tracks the system clock to within 0.17-0.71 s, sawtoothing the way a whole-second fix reported late does.
+
+⚠️ **Two things a reader would reasonably assume, both false.** It was **not** at a standstill — `speed_can_kmh` read 4.0 km/h at the onset and 0.9 km/h by the time roll passed 57°. And the bike did **not** end up flat on its side: it rests at **+70.1°, not 90°**, because it landed on its panniers and the luggage held it off the ground. The settle angle is a property of what was strapped to the bike, not of the sensor, and a future fall compared against this one needs to know that.
+
+⚠️ **How long it lay there is NOT recoverable and is not claimed.** After 16:21:59.391 no 0x102-derived signal logs again in that session — the VCU stopped transmitting — while BMS rows keep arriving until 16:22:19, when the Pi lost power. The next boot's first rows are stamped 16:20:27, _before_ the fall, because the Pi has no RTC and boots on a stale clock; GPS steps it at **seq 289 @ 16:20:32.090 → seq 290 @ 16:30:52.000**, a jump of 619 910 ms. Anything derived from those pre-step timestamps is fiction. What the next boot does say is that the bike was **upright again** by its first frame: roll +3.5°, pitch −1.2°, key on.
+
+#### 1. The axis assignment — and it does not need the fall
+
+Over the window these two keys exist, **2026-08-19 15:50:22 → 2026-09-13 19:24:33**:
+
+```
+attitude_roll_deg    1 120 961 rows   −170.3 … +174.2      22 rows beyond ±90
+attitude_pitch_deg   3 782 692 rows    −86.0 …  +85.4       0 rows beyond ±90
+```
+
+A pitch taken as the angle of one axis against the magnitude of the other two is bounded by ±90 **by construction**; a roll taken as an `atan2` of two is not. That asymmetry is the aerospace convention showing through 4.9 M samples, with no experiment at all. The fall then demonstrates the same thing directly: the axis that reaches 90° when the bike goes over is b4-5, and pitch never leaves ±52° across the whole event. Of the 22 roll rows beyond ±90 in the corpus, **seven are this fall** — and it is the only event in 1 120 961 rows where the angle crosses 45° and stays there. Every other one is a 40-60 ms wrap spike.
+
+✅ **A fifth witness, from the manufacturer's own FRAME database rather than its parameter list.** Everything above was reached through KWP parameter reads (A9 bank 2 ids 138/139). The 2024 service-tool analysis in `obd-garage/`, §`0x102` `VCU_DIGITALS` — 34 signals — ends verbatim with:
+
+```
+| V_PHI   | short | bytes 4..5 LE |
+| V_THETA | short | bytes 6..7 LE |
+```
+
+Two transports, two vendor artefacts, the same two fields at the same offsets, both **signed**. ⚠️ It settles the layout and the signedness and **nothing else**: the table gives no scale and no sign convention, and φ/θ is the aerospace convention for roll/pitch rather than a statement in the document. Which of the two is roll still rests on measurement — which is what the fall supplies.
+
+🔎 **And it probably explains the original error.** `0x105` `VCU_MODULES_STS` carries `X_ACCEL` and `Y_ACCEL` as shorts at **bytes 4..5 and 6..7** — the same offsets, one frame away. A rider-made `.xdbc` calling `0x102` b4-7 "accelerations in g" is exactly the mistake that layout invites.
+
+#### 2. The sign — three witnesses, two of them new
+
+- **The side stand.** Across **18 closed stand-down intervals on 2026-09-13** carrying roll rows, the median roll is negative in **17**. (A stricter rule that merges sessions by wall clock gives 15 of 16; sessions overlap in wall clock whenever one boots with a stale clock, and merging drags a concurrently-logging session's riding rows into the window, so the per-session count is the one published here.) The single exception is a **7-second** interval at 10:06:43 with 40 rows, median +4.0° — the rider still holding the bike. Negative is leaning left, the stand side, which is where the KWP gravity vector put it at −10.33°.
+- **The fall goes positive**, to +103.1°, and **the owner confirms the bike landed on its right side**. That makes the convention a measurement against a known event rather than a chain of inference.
+- **The corners, which need neither.** Over **373 steady corners** on 2026-09-13 (≥ 60° of heading change inside 6 s above 35 km/h) the mean roll is **+0.24 ± 0.92° in the 181 right turns against −0.96 ± 0.92° in the 192 left turns — a 1.20° separation at 12.5 standard errors**, Pearson r(turn, mean roll) = 0.534. The residual leans the same way as the turn. The turn direction is measured rather than assumed: `gps_course_deg` is degrees clockwise from true north, median residual **−0.4°** against the bearing between consecutive fixes over **616 fix pairs**, 95.9 % of them within 20°.
+
+⚠️ **That same measurement is the sharpest statement of how little cornering shows.** 1.20° between hard left and hard right, where a true lean angle would separate them by 60-90°.
+
+#### 3. The scale, against an independent physical quantity
+
+A gravity-referenced pitch under longitudinal acceleration reads `atan(−a/g)`. Differentiating `speed_can_kmh` and regressing the window-mean pitch on it over 2026-09-13:
+
+```
+window   n       slope    r       intercept
+ 500 ms  4 138   0.883   0.799    −4.58°
+1000 ms  4 853   0.988   0.863    −4.43°
+2000 ms  4 880   1.013   0.868    −4.32°
+4000 ms  4 880   1.004   0.828    −4.18°
+```
+
+**The estimator is named on purpose**, because the slope is partly a property of it: window-mean pitch against a two-point speed difference. Other samplers give a wider spread. ⚠️ **And the reference is biased**: `speed_can_kmh` reads **~3.5 % high** and is exactly `motor_rpm_can / 42.0` (see below), which pushes the true slope _up_ by about that much. So this is **0.1°/count confirmed at the few-percent level across the real dynamic range** — corroboration at large angle, not a precision measurement. The arctangent-lattice fit above already pins the scale to 0.7 % and remains the tighter number.
+
+🟡 **The intercept is the new fact.** It sits at **−4.2° to −4.6°** whatever the window, which is a constant offset, not noise — most plausibly the sensor's mounting rake. It is why a level bike does not read 0.0° pitch. It is deliberately **not** corrected in the decoder: this log stores what the bike said, and a calibration fitted to one day's regression belongs in this paragraph rather than inside a pure decoder where every future reader would have to unpick it.
+
+#### 4. What the ±1800 guard is, and is not, evidence of
+
+⚠️ **"No logged row lies outside ±180°" is a tautology and is not offered as evidence** — `src/can/attitude.ts` drops such counts before anything reaches the log, so the statement is about the decoder, not the bike.
+
+✅ **The non-circular version exists, because the old keys were logged with no guard at all.** `accel_lateral_raw` and `accel_frontal_raw` ran from 2026-08-02 with no range check in the path, and their extremes across **689 + 15 039 = 15 728 rows** are **−1703 and +797** — inside ±1800 without anything enforcing it. `accel_lateral_raw`'s −1703 is the same wrap value the new key reaches at −170.3°, six weeks apart under a different name.
+
+⚠️ **15 728 does not match the 15 455 this document and `src/can/registry.ts` both state for the pair**, and no candidate cut reproduces 15 455 (127 of the rows carry the bogus 2060 clock; excluding them, or the pre-rename window, or the 2060 rows only, gives none of them). The figure is recorded as **unexplained** rather than corrected — it may count a different corpus, and asserting which would be a guess.
+
+🔎 **The band is genuinely reachable, which is why it must not be tightened.** The cleanest wrap in the corpus is 2026-09-13 15:02:18.723-.784 at 63.9 km/h: roll −7.5 → −165.9 → **−170.3** → −135.3 while pitch simultaneously swings −70.6 → +70.1, and both are back inside ±3° / ±30° within 60 ms. The rider chopped the throttle from 9.8 % to 0 across it. That co-witnessed double swing is what an `atan2` does when an impact drives the measured vertical through the horizontal plane, and it is only expressible at all because the field is an angle scaled at 0.1°.
+
+#### 5. What this changed in the code
+
+`public/lib/bounds.js` gained `attitude_roll_deg` and `attitude_pitch_deg` at ±180 and `gps_course_deg` at 0…360. All three had been **completely ungated**: the unit `"°"` has no `BY_UNIT` rule (seven signals carry it across four natural ranges, so a union would gate nothing), `imu` and `gps` are not `BOOLEAN_GROUPS`, and neither was named in `BY_KEY`. The two attitude bands are decorative — the decoder drops out-of-range counts first — and `scripts/check-attitude.ts` asserts they equal `attitude.ts`'s own `MAX_DECIDEGREES ÷ 10` so the two cannot drift. `gps_course_deg` is the one that fires: the field is 9 bits, and **3 of 105 118 rows read past 360, the highest 442.0**.
+
 ---
 
 ## 0x104 — odometer / speed / rpm
 
 `src/can/decode.ts`. LE and not byte-aligned, at 100 Hz.
 
-### 🟡 `reverse_gear` (bit 63) — a PULSE not a level, and it is probably not "reverse"
+### 🟡 `reverse_gear` (bit 63) — Energica's `V_SPD_DIR`, a comparator on speed direction
 
-⚠️ **This section was written as ✅ and it should not have been. It also failed to cite `docs/vcu-parameters.md` §12, which had already settled the same question three weeks earlier on a far larger sample — and reached a different conclusion.** §12 stands; this section defers to it. What survives here is the pulse shape, not the meaning.
+⚠️ **This section was written as ✅ and it should not have been. It also failed to cite `docs/vcu-parameters.md` §12, which had already settled the same question three weeks earlier on a far larger sample — and reached a different conclusion.** §12 stands; this section defers to it.
+
+⚠️ **Corrected again 2026-09-14: the pulse shape did NOT survive either.** This heading used to read _"a PULSE not a level, and it is probably not 'reverse'"_. The second half was already right and is now confirmed by the manufacturer's own frame table; the first half is wrong, and the measurement that refutes it is below. What survives from the 2026-09-08 experiment is two frames, not a general shape.
 
 Measured 2026-09-08 with the bike connected, reverse selected deliberately twice:
 
@@ -695,7 +781,28 @@ Measured 2026-09-08 with the bike connected, reverse selected deliberately twice
 14:37:05.174  b7 0xC0 → 0x40   bit63=0    (10 ms)
 ```
 
-✅ **What is solid:** the bit fires as a ~10 ms pulse, twice, on the two occasions reverse was touched. Decoded as a level (`bitFieldLe(data, 63, 1)`), a consumer that samples rather than watches every frame will essentially never see it. That much is real and is why the dashboard cannot render reverse from this signal.
+❌ **"The bit fires as a ~10 ms pulse … a consumer that samples rather than watches every frame will essentially never see it. That much is real."** ⚠️ **It is not, and this sentence stood as a ✅ for six days.** Refuted 2026-09-14 against the decoded ride log of 2026-09-13 (`cool-eva-2026-09-13.celog`, a full `/dl` dump; the day holds 3 709 811 readings over sessions 138-147). The bit is asserted **241** times that day. It is a **comparator output, not a pulse** — the short assertions are chatter, and a third of a minute is also within its range:
+
+```
+240 clock-clean assertions (1 discarded, below)
+  HIGH runs   median  30 ms   p25  20   p75 160   171 of 240 ≤ 100 ms
+  LOW  runs   median  40 ms   p25  20   p75 690   147 of 233 ≤ 100 ms
+  33 of 240 runs last ≥ 1 s; the longest is 17.930 s (14:50:31.885 → 14:50:49.815)
+```
+
+A 1 Hz sampler would have seen that longest one set on seventeen consecutive samples. So the pulse SHAPE is the common case rather than the rule, and the consequence drawn from it — that a sampling consumer cannot see the bit — does not hold.
+
+✅ **And it now has a name and a mechanism.** The 2024 service-tool analysis in `obd-garage/`, §`0x104` `VCU_SPEEDODO`, gives the field verbatim as `V_SPD_DIR | byte | byte 7 mask 0x80 >>7` — which is bit 63 exactly, the bit `src/can/decode.ts` emits as `reverse_gear`. **Energica calls it speed direction.** The key name is therefore wrong: it is not a gear. It is left alone here rather than renamed, because a rename is a history migration (the `accel_*_raw` and `charging` precedents) and belongs in its own change.
+
+🟡 **Reported by #216 and NOT verified here:** a firmware read of the A8, over 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not read that firmware, and CLAUDE.md's rule is to cite source you have read.
+
+✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from the firmware; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
+
+⚠️ **The polarity is still not established from anything in this repo.** The vendor table names the field and gives no sense; `speed_can_kmh` and `motor_rpm_can` are both unsigned, so no witness in the ride log can tell "travelling backwards" from "travelling forwards" directly. #216's firmware condition implies 1 = reverse, and the observed confinement to ≤ 4.9 km/h is consistent with it, but consistency is not a measurement of direction.
+
+🔎 **One genuine sustained assertion is worth recording on its own.** On 2026-09-13 the bike was ridden at ~3 km/h up a ~34 % gravel climb, lost rear traction (13 `tc_event` rises in 8.0 s), stopped, and slid back down with the front brake held at a median 29 bar before going onto its right side. `reverse_gear` was asserted **16:21:53.289 → 16:21:58.447, 5.158 s** — rising 180 ms _before_ the brake went on and clearing as the bike hit the ground, spanning the whole 2.63 m the rear wheel rotated. The owner's account of the event is that he slid backwards. That is one of the 33 long runs, it is clock-clean, and it is the cleanest sustained-reverse sample in the corpus; it is **one event**, and is recorded as such rather than as proof of the polarity.
+
+⚠️⚠️ **A DURATION FROM A RIDE LOG IS NOT A DURATION UNTIL YOU HAVE CHECKED FOR A CLOCK STEP, and this section nearly shipped the opposite conclusion because of it.** The first pass at these numbers found a **4 673.8 s** assertion apparently spanning riding at up to 86.8 km/h, and read it as refuting the rollback interpretation outright. It is an artefact. The Pi has no RTC and `gps/clock.ts` steps the wall clock when satellite time disagrees: in session 147 the Pi booted ~78 minutes slow, `gps_epoch_s` reads 4 671 137 ms _ahead_ of the system clock at seq 1110, the clock steps **+4 671.0 s at seq 1317**, and the rise (seq 822) and fall (seq 1363) sit on opposite sides of it. The true elapsed time is a couple of seconds. The 86.8 km/h was contaminated the same way — the query selected speed rows by `ts` range, which swept in a _concurrently logging_ session's rows from a different part of the ride. **Rule for anyone mining these logs: `reading.ts` is wall clock. Walk a session by `seq`, mark every `ts` discontinuity, and discard any interval that spans one — or compare `gps_epoch_s − ts` and watch it jump.** This is CLAUDE.md's `monotonicNow()` rule appearing in analysis rather than in code, and it costs a conclusion rather than a timeout.
 
 #### ❌ Three things this section claimed that do not hold
 
