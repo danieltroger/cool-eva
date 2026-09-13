@@ -302,7 +302,7 @@ A multi-frame reply does not arrive unless the tester answers the First Frame wi
 
 | endpoint              | what it puts on the bus                                                      |
 | --------------------- | ---------------------------------------------------------------------------- |
-| `POST /vcu-read`      | a parameter sweep — up to 277 single-frame reads                             |
+| `POST /vcu-read`      | a parameter sweep — up to 277 reads, each one request frame                  |
 | `POST /vcu-probe`     | one identifier, any bank, any target                                         |
 | `POST /vcu-write`     | the only one that CHANGES anything — its own switch, `SERVICE_WRITE_ENABLED` |
 | `POST /lifetime-read` | components 51 and 52's freeze frames, and it parks the OBD poller to do it   |
@@ -310,6 +310,8 @@ A multi-frame reply does not arrive unless the tester answers the First Frame wi
 ⚠️ **This list is the one place that count lives.** It used to be stated as "the only path from an HTTP request to a CAN frame" in this file, in `src/http/vcu-read.ts` and in `src/index.ts`, and it had been false in all three since `/vcu-probe` landed. A count repeated in four files rots; a pointer to one table does not. What stands between the two is `src/vcu/service-gate.ts`: a POST is refused unless the bike is PROVED stationary and out of drive, and a sweep already running is put out the moment that stops being true. The gate is on the wire so the page can say why the button is unavailable rather than leaving it to fail.
 
 **⚠️ Still read-only.** A sweep can only ask `10 81`, `3E` and `22`: those three are the whole of `param-codec.ts`'s request union, and its encoder throws on anything else on the way out. There is no parameter on this endpoint that selects a service, an identifier or a value — POST takes no body at all — so there is nothing here for a widened union to leak through either.
+
+⚠️ **The REQUEST is one frame; the REPLY need not be.** Since 2026-09-14 a read whose reply does not fit one frame is assembled rather than reported, which means the sweep can also emit a flow-control frame — `<target> 30 FF 00`, and only in answer to a First Frame. None of the 277 indices `params.ecf` describes produces one (their records are 1 or 2 bytes), so a clean sweep still sends nothing but reads. [`docs/vcu-parameters.md` §9](vcu-parameters.md#9-the-read-path-read-only-by-construction) has the measurement that forced it and why `write-session.ts`'s own `22` path was left alone.
 
 **Why POST returns immediately.** A sweep is ~277 reads at a 300 ms reply window; on a bike whose link drops as routine it can take a minute or stall entirely. Holding the response open would freeze the phone's request, time out on garage wifi, and leave the dashboard unable to say what had been read so far. So POST starts it and returns, and GET is how the page follows along — which also means closing the page, or walking out of wifi range, does not stop the sweep. Riding away does, but that is the gate rather than the HTTP layer.
 

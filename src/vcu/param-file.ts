@@ -20,8 +20,15 @@
 // stored A9 dump, the full A8/A9 split, and the four duplicate names that make
 // parametersNamed() return an array: docs/vcu-parameters.md §2.
 
-/** How the parameter is stored, which is also how many bytes its record is. */
-export type ParameterStorageType = "BYTE" | "WORD" | "BOOL";
+/**
+ * How the parameter is stored, which is also how many bytes its record is.
+ *
+ * ⚠️ `DWORD` describes records `params.ecf` does not: A8's own firmware parameter table
+ * types indices 278, 279 and 626 as 4-byte (#219), and 278 answered with a 7-byte reply
+ * on 2026-09-14. No table in ./table-catalog.ts carries a DWORD row yet, so nothing is
+ * named one today — the type exists so that reading one is not a width mismatch.
+ */
+export type ParameterStorageType = "BYTE" | "WORD" | "BOOL" | "DWORD";
 
 /** Which VCU micro serves the parameter. A7 exists but answers no read at all. */
 export type VcuMicro = "A8" | "A9";
@@ -62,9 +69,24 @@ export interface VcuParameter {
 /** Bank 1 = EEPROM Calibration Parameters. Bank 0 refuses with NRC 0x12; bank 2 is live data. */
 export const CALIBRATION_BANK = 1;
 
-/** Record length in bytes, straight off the TYPE column. A reply of any other length is a mismatch worth shouting about. */
+/**
+ * Record length in bytes, straight off the TYPE column. A reply of any other length is a
+ * mismatch worth shouting about.
+ *
+ * ⚠️ A TABLE rather than a ternary, and that is what the union is for: a storage type
+ * added to it fails to compile here until someone states its width. The ternary this
+ * replaced answered 1 byte for everything that was not WORD, so the first 4-byte record
+ * to arrive would have been filed as a width mismatch rather than read.
+ */
+const RECORD_LENGTH_BYTES: Record<ParameterStorageType, number> = { BOOL: 1, BYTE: 1, WORD: 2, DWORD: 4 };
+
 export function recordLengthFor(type: ParameterStorageType): number {
-  return type === "WORD" ? 2 : 1;
+  return RECORD_LENGTH_BYTES[type];
+}
+
+/** Narrows a TYPE column against that table, so the parser cannot drift from the type. */
+export function isStorageType(value: string): value is ParameterStorageType {
+  return Object.hasOwn(RECORD_LENGTH_BYTES, value);
 }
 
 /**
@@ -116,8 +138,10 @@ function parseParameterLine(line: string, section: string, lineNumber: number): 
   if (!Number.isInteger(index) || index < 1) {
     throw new Error(`param-file: line ${lineNumber} has a non-index in column 1: ${indexText}`);
   }
-  if (type !== "BYTE" && type !== "WORD" && type !== "BOOL") {
-    throw new Error(`param-file: line ${lineNumber} has an unknown type ${type}`);
+  if (!isStorageType(type)) {
+    throw new Error(
+      `param-file: line ${lineNumber} has an unknown type ${type}, not one of ${Object.keys(RECORD_LENGTH_BYTES).join("/")}`
+    );
   }
   if (sign !== "S" && sign !== "U") {
     throw new Error(`param-file: line ${lineNumber} has an unknown sign column ${sign}`);

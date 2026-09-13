@@ -1,6 +1,7 @@
 import {
   CALIBRATION_BANK,
   PARAMETER_FILE_TEXT,
+  isStorageType,
   parseParameterFile,
   type ParameterStorageType,
   type VcuMicro,
@@ -336,11 +337,17 @@ function dropWhereRenamed(parameter: VcuParameter, name: string): VcuParameter {
   return { ...parameter, section: null, otherBikeValue: null };
 }
 
+/**
+ * ⚠️ Narrowed through ./param-file.ts's own guard rather than by repeating the literals
+ * here. The two lists drifting apart would mean a delta row this catalogue accepts and
+ * `params.ecf`'s parser rejects, or the reverse — and the cast below would carry the
+ * disagreement into a table nobody checks again.
+ */
 function assertStorageType(value: string, fail: (why: string) => never): ParameterStorageType {
-  if (value !== "BYTE" && value !== "WORD" && value !== "BOOL") {
+  if (!isStorageType(value)) {
     fail(`has an unknown storage type ${value}`);
   }
-  return value as ParameterStorageType;
+  return value;
 }
 
 function assertSign(value: string, fail: (why: string) => never): boolean {

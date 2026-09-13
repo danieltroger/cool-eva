@@ -62,6 +62,15 @@ export interface SimulatedMicro {
    */
   silentServices?: number[];
   /**
+   * Send the First Frame of a long reply and then nothing, however the tester answers.
+   *
+   * A stalled transfer, which is a different claim from silence: the micro demonstrably
+   * heard the request and began answering. Nothing else here can produce it — the reply
+   * half of this double is otherwise well-behaved — and it is the only way to reach the
+   * `stalled` outcome without a bike.
+   */
+  stallsAfterFirstFrame?: boolean;
+  /**
    * Whether this micro answers OUR multi-frame request's First Frame with a flow
    * control of its own.
    *
@@ -231,6 +240,10 @@ function receiveFrame(context: BusContext, data: Buffer): void {
     }
     case 0x3:
       // The tester's flow control, answering a multi-frame reply of ours. Send the rest.
+      if (context.micro.stallsAfterFirstFrame) {
+        conversation.outgoing = [];
+        return;
+      }
       sendOutgoing(context, conversation);
       return;
     default:

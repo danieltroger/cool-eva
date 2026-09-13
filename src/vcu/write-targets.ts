@@ -326,12 +326,19 @@ export function writeTargets(): WriteTarget[] {
   return [...CURATED_WRITE_TARGETS, ...generated];
 }
 
-/** The widest value the record can physically carry. NOT a safe range — see below. */
+/**
+ * The widest value the record can physically carry. NOT a safe range — see below.
+ *
+ * ⚠️ The width comes from `recordLengthFor`, not from a `type === "BYTE" ? 8 : 16`. That
+ * ternary answered 16 bits for every type that was not BYTE, so the first 4-byte record
+ * named in a table would have been offered a 16-bit range on a 32-bit cell — a bound that
+ * looks researched, is wrong, and nothing downstream could contradict.
+ */
 function datatypeBounds(parameter: VcuParameter): { min: number; max: number } {
   if (parameter.type === "BOOL") {
     return { min: 0, max: 1 };
   }
-  const bits = parameter.type === "BYTE" ? 8 : 16;
+  const bits = recordLengthFor(parameter.type) * 8;
   return parameter.signed ? { min: -(2 ** (bits - 1)), max: 2 ** (bits - 1) - 1 } : { min: 0, max: 2 ** bits - 1 };
 }
 

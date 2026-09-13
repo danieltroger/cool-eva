@@ -228,6 +228,7 @@ let active: VcuParameterTable = loadDefaultTable();
 export {
   CALIBRATION_BANK,
   PARAMETER_FILE_TEXT,
+  isStorageType,
   parseParameterFile,
   recordLengthFor,
   type ParameterStorageType,

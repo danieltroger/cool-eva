@@ -1,6 +1,7 @@
 import { readFile } from "fs/promises";
 import {
   buildRequestFrame,
+  buildRequestPayload,
   decodeParameterReply,
   identifierForIndex,
   interpretRecord,
@@ -83,7 +84,9 @@ import {
 } from "../src/vcu/service-actions.ts";
 import { acquireBus, busHeldBy } from "../src/vcu/bus-lease.ts";
 import { parseWriteRequest, utcMinute } from "../src/http/vcu-write.ts";
+import { segmentRequestPayload } from "../src/vcu/multiframe-codec.ts";
 import { simulateVcuMicros } from "./simulated-vcu-micro.ts";
+import { BANK2_IDENTIFIER_0001_FRAMES, BANK2_IDENTIFIER_0001_RECORD } from "./kwp-multiframe-fixtures.ts";
 import {
   CAPTURED_FRAMES,
   CAPTURED_RTC_FRAMES,
@@ -721,6 +724,35 @@ expect(
 expect(identifierForIndex(6) === 0x1006 && identifierForIndex(260) === 0x1104, "CID should be 0x1000 | index");
 expectThrows(() => identifierForIndex(0x1000), "an index outside bank 1 should be refused");
 
+// ⚠️ THE ASSERTION THAT SAYS THE 277 SWEEP READS DID NOT CHANGE. A read's bytes now
+// reach the bus through the multi-frame transport's segmenter rather than through
+// `buildRequestFrame`, because a reply too wide for one frame has to be assembled
+// (#223). This is what proves the two produce the same frame — zero padding included —
+// so nothing on the wire moved for the parameters that always fitted.
+for (const request of [
+  { kind: "read-parameter", bank: 1, index: 258 },
+  { kind: "read-parameter", bank: 1, index: 278 },
+  { kind: "read-parameter", bank: 2, index: 1 },
+  { kind: "start-session" },
+  { kind: "tester-present" },
+] as VcuRequest[]) {
+  for (const target of ["A8", "A9"] as const) {
+    const segmented = segmentRequestPayload(target, buildRequestPayload(request));
+    expect(
+      segmented.length === 1 && toHex(segmented[0]) === toHex(buildRequestFrame(target, request)),
+      `${target} ${request.kind}: the segmenter should emit exactly the frame buildRequestFrame does, ` +
+        `got ${segmented.map(frame => toHex(frame)).join(" / ")} against ${toHex(buildRequestFrame(target, request))}`
+    );
+  }
+}
+
+// The payload builder carries the allowlist, since it is now the thing both routes to
+// the bus go through. Same argument as the frame builder's below, one layer down.
+expectThrows(
+  () => buildRequestPayload({ kind: "write-parameter", index: 258, value: 60 } as unknown as VcuRequest),
+  "a request kind that is not a read must be refused by the payload builder too"
+);
+
 // The whole read-only argument in one assertion: there is no way to name a service
 // this module will not send, and if the union is ever widened without a matching
 // branch the encoder says so instead of emitting something.
@@ -753,6 +785,19 @@ if (bank2.kind === "payload") {
   expect(
     crossed.kind === "identifier-mismatch",
     "a reply echoing another identifier must NOT be filed under the one we asked for"
+  );
+  // ⚠️ And the same guard over an ASSEMBLED 7-byte payload, which is the shape a wide
+  // record arrives in. The read path hands whatever the transport reassembled to this
+  // same function, so a multi-frame reply answering another question is caught by the
+  // echo exactly as a single-frame one is — the bytes decode perfectly either way.
+  const assembled = parseHexBytes("62 20 01 00 09 3C B6");
+  expect(
+    decodeParameterReply(assembled, 0x2001).kind === "record",
+    "the assembled 0x2001 payload should hand back its 4-byte record"
+  );
+  expect(
+    decodeParameterReply(assembled, 0x1116).kind === "identifier-mismatch",
+    "an assembled reply echoing another identifier must be caught by the same echo check"
   );
 }
 
@@ -850,6 +895,82 @@ expect(
   mismatched.widthMismatch && mismatched.value === null && mismatched.rawHex === "00 4B",
   "a record whose width contradicts the table should keep its bytes and withhold the value"
 );
+
+// ── 5b. DWORD: the 4-byte storage type, and the two widths it must not break ─
+// A8's own firmware table types indices 278, 279 and 626 as DWORD (#219), and 278
+// answered a 7-byte reply on 2026-09-14 (evidence/probes-20260914.txt). Nothing in
+// Energica's 28 tables carries such a row yet, so these exercise the type rather than
+// a parameter: a width table that cannot say "4" makes the record unreadable whatever
+// the transport does.
+expect(recordLengthFor("DWORD") === 4, `a DWORD record should be 4 bytes, got ${recordLengthFor("DWORD")}`);
+expect(
+  recordLengthFor("BYTE") === 1 && recordLengthFor("BOOL") === 1 && recordLengthFor("WORD") === 2,
+  "the three widths that existed before must be untouched"
+);
+
+// The strict parser has to accept the column, or a table carrying one could never be
+// added — and has to keep rejecting everything else, which is what makes it strict.
+const dwordRow = parseParameterFile("[T]\n1 SOME_DWORD DWORD S A8 0\n")[0];
+expect(
+  dwordRow.type === "DWORD" && dwordRow.signed && recordLengthFor(dwordRow.type) === 4,
+  "params.ecf's parser should accept a DWORD row and give it a 4-byte record"
+);
+expectThrows(() => parseParameterFile("[T]\n1 SOME_QWORD QWORD S A8 0\n"), "an unknown storage type is still refused");
+
+// Interpretation is width-generic already — it takes the bit count from the record —
+// so what had to change was only the table's opinion of what length to expect.
+const dwordSigned = interpretRecord(parseHexBytes("FF FF FF 9C"), dwordRow);
+expect(
+  dwordSigned.value === -100 && dwordSigned.unsigned === 0xffffff9c && !dwordSigned.widthMismatch,
+  `a signed 4-byte record should read as two's complement over 32 bits, got ${dwordSigned.value}`
+);
+// …and the same bytes against a 2-byte parameter are still a width mismatch with the
+// raw kept, which is the outcome a DWORD read USED to get.
+const dwordAgainstWord = interpretRecord(parseHexBytes("FF FF FF 9C"), parameterAtIndex(258));
+expect(
+  dwordAgainstWord.widthMismatch && dwordAgainstWord.value === null && dwordAgainstWord.rawHex === "FF FF FF 9C",
+  "a 4-byte record against a table that says otherwise keeps its bytes and withholds the value"
+);
+
+// ⚠️ The generated write targets' bounds come from the same width table, and they are
+// asserted as LITERALS rather than as `2 ** (recordLengthFor(type) * 8)`: a budget
+// derived from the thing under test cannot fail. Curated targets are excluded because
+// their ranges are policy (258 is bounded 0…80 A), not the datatype's.
+const DATATYPE_BOUNDS: Record<string, { min: number; max: number }> = {
+  "BOOL U": { min: 0, max: 1 },
+  "BOOL S": { min: 0, max: 1 },
+  "BYTE U": { min: 0, max: 255 },
+  "BYTE S": { min: -128, max: 127 },
+  "WORD U": { min: 0, max: 65535 },
+  "WORD S": { min: -32768, max: 32767 },
+  "DWORD U": { min: 0, max: 4294967295 },
+  "DWORD S": { min: -2147483648, max: 2147483647 },
+};
+const curatedNames = new Set(CURATED_WRITE_TARGETS.map(target => target.name.toUpperCase()));
+let boundsChecked = 0;
+for (const target of writeTargets()) {
+  if (curatedNames.has(target.name.toUpperCase()) || target.control.kind !== "number") {
+    continue;
+  }
+  const parameter = parameterAtIndex(target.index);
+  if (!parameter) {
+    failures.push(`generated write target ${target.name} has no parameter at index ${target.index}`);
+    continue;
+  }
+  const expected = DATATYPE_BOUNDS[`${parameter.type} ${parameter.signed ? "S" : "U"}`];
+  if (!expected) {
+    failures.push(`no literal bounds written down for a ${parameter.type} ${parameter.signed ? "S" : "U"} record`);
+    continue;
+  }
+  if (target.control.min !== expected.min || target.control.max !== expected.max) {
+    failures.push(
+      `${target.name} is a ${parameter.type} ${parameter.signed ? "signed" : "unsigned"} record offered ` +
+        `${target.control.min}…${target.control.max}, not ${expected.min}…${expected.max}`
+    );
+  }
+  boundsChecked += 1;
+}
+expect(boundsChecked > 200, `the generated targets' bounds should all be checked, only reached ${boundsChecked}`);
 
 // ── 6. The diff, which is how a reconfigured bike gets noticed ──────────────
 const before = snapshotOf([reading(258, "4B"), reading(259, "00 E1"), silent(261)]);
@@ -2638,13 +2759,14 @@ if (failures.length > 0) {
 console.log(
   "✓ the name table, all 29 carried parameter tables against their own fingerprints, table selection " +
     "and the RegenFade/cell-block distinction, request encoding, framing, the live reads, " +
-    "interpretation, diff, the energica_tool.py backup CSV, " +
+    "interpretation, the DWORD storage type and the datatype bounds it feeds, diff, the energica_tool.py backup CSV, " +
     "the read tally, the service-mode safety gate, the identifier probe, the write codec against four captured " +
     "seed/key pairs, the write allowlist and its ranges against every carried table, the table-type gate that " +
     "refuses a write until the bike has named a table we have, the value the last sweep offers the write form " +
     "(and the five ways a row must not become one), the RTC frame against two frames that really " +
     "went out, " +
-    "the service stamp, mode 04, the bus lease and the write request parser all check out"
+    "the service stamp, mode 04, the bus lease, the write request parser, and the multi-frame parameter read — a " +
+    "4-byte bank-1 record, the captured bank-2 0x2001 reply, a stall and an over-cap reply — all check out"
 );
 
 /**
@@ -2669,10 +2791,31 @@ async function checkTransport(): Promise<void> {
       silentIndices: [1],
       sessionIdleMs: 400,
     },
-    { target: "A8", records: new Map([[231, parseHexBytes("01 90")]]) },
+    {
+      target: "A8",
+      records: new Map([
+        [231, parseHexBytes("01 90")],
+        // ⚠️ The reply this whole change exists for. A 4-byte record makes the payload
+        // `62 11 16` + 4 = 7 bytes, which does not fit an extended-addressed Single
+        // Frame — so the double segments it and waits for a flow control, exactly as A8
+        // did on 2026-09-14 when index 278 came back "multi-frame" and nothing else.
+        // #219 types 278 as DWORD from A8's own firmware table.
+        [278, parseHexBytes("00 09 3C B6")],
+      ]),
+      // Bank 2 index 1 is the one multi-frame reply on this channel with real bytes
+      // behind it: the First Frame quoted off this bike 2026-08-08, the record off an
+      // independent bank-2 scan of 2026-07-26. scripts/kwp-multiframe-fixtures.ts §A.
+      liveRecords: new Map([[1, parseHexBytes(BANK2_IDENTIFIER_0001_RECORD)]]),
+    },
   ]);
   const client = createVcuKwpClient(bus.channel, { paceMs: 1, responseTimeoutMs: 60 });
-  bus.channel.addListener("onMessage", message => client.handleFrame(message.id, message.data));
+  // Every frame the micros put on the bus, so a reply can be checked as frames and not
+  // only as the record it assembled to.
+  const received: string[] = [];
+  bus.channel.addListener("onMessage", message => {
+    received.push(toHex(Uint8Array.from(message.data)));
+    client.handleFrame(message.id, message.data);
+  });
 
   expect(await client.ping("A9"), "the A9 should answer a session plus tester present");
   const first = await client.readParameter("A9", 258);
@@ -2681,6 +2824,46 @@ async function checkTransport(): Promise<void> {
   // The A8 holds its own session; reading it must not disturb the A9's.
   const onA8 = await client.readParameter("A8", 231);
   expect(onA8.status === "read" && toHex(onA8.record) === "01 90", "231 should read off the simulated A8");
+
+  // ── The multi-frame reply, which this repo could not assemble until #223 ──
+  // ⚠️ A 1- and 2-byte read must draw NO flow control. It is new traffic on a bus
+  // shared with the ABS and a 20 Hz BMS, and sending one where the reply already
+  // arrived whole would be this change leaking into the 277 reads that were fine.
+  expect(
+    !bus.sentFrames.some(frame => frame.startsWith("A9 30") || frame.startsWith("A8 30")),
+    `no flow control should go out for single-frame replies, saw ${bus.sentFrames.filter(frame => frame.includes(" 30 ")).join(" / ")}`
+  );
+
+  // A8 bank-1 278: the reply that came back as "multi-frame" and nothing else on
+  // 2026-09-14. Four bytes, so `62 11 16 …` is 7 and cannot be one frame.
+  const wide = await client.readParameter("A8", 278);
+  expect(
+    wide.status === "read" && toHex(wide.record) === "00 09 3C B6",
+    `a 4-byte bank-1 record should now assemble, got ${wide.status}${wide.status === "read" ? ` ${toHex(wide.record)}` : ""}`
+  );
+  expect(
+    bus.sentFrames.includes("A8 30 FF 00 00 00 00 00"),
+    `a First Frame must be answered with A8 30 FF 00, saw ${bus.sentFrames.join(" / ")}`
+  );
+
+  // ✅ The captured one. The RECORD is what CAN_MAP.md's 2026-07-26 A8 scan holds for
+  // bank-2 identifier 0x2001, and this is the claim with provenance: the probe path
+  // now returns it instead of a status and a note.
+  const receivedBefore = received.length;
+  const captured = await client.probe("A8", 2, 1);
+  expect(
+    captured.status === "read" && toHex(captured.record) === BANK2_IDENTIFIER_0001_RECORD,
+    `A8 bank 2 index 1 should read ${BANK2_IDENTIFIER_0001_RECORD}, got ${captured.status}`
+  );
+  // ⚠️ A REGRESSION GUARD ON OUR OWN SIMULATOR, not evidence about the bike. The
+  // fixture's §A grades its First Frame as captured and its Consecutive Frame as
+  // inferred, and says in terms that it establishes nothing about the zero padding —
+  // which is exactly what comparing whole 8-byte frames asserts. What it is worth:
+  // simulated-vcu-micro.ts still segments a reply the way this repo believes A8 does.
+  expect(
+    received.slice(receivedBefore).join(" | ") === BANK2_IDENTIFIER_0001_FRAMES.join(" | "),
+    `the double should segment 0x2001 as the fixture does, sent ${received.slice(receivedBefore).join(" | ")}`
+  );
 
   // Silence is not a refusal and must not be reported as one.
   expect(
@@ -2717,6 +2900,58 @@ async function checkTransport(): Promise<void> {
   );
 
   client.stop();
+
+  // ── What a reply that starts and does not finish comes back as ──────────────
+  // Two outcomes, kept apart because they send you to different places: `stalled` is a
+  // claim about the micro or the link, `abandoned` a claim about the framing. Folding
+  // them would have been cheaper and would have thrown that away.
+  const brokenBus = simulateVcuMicros([
+    {
+      target: "A8",
+      records: new Map([
+        [278, parseHexBytes("00 09 3C B6")],
+        // 40 bytes makes the payload 43, past the 32-byte cap a read assembles under —
+        // so the First Frame is abandoned on its own declared length, before any flow
+        // control goes out.
+        [279, new Uint8Array(40).fill(0xa5)],
+      ]),
+      stallsAfterFirstFrame: true,
+    },
+  ]);
+  const brokenClient = createVcuKwpClient(brokenBus.channel, { paceMs: 1, responseTimeoutMs: 60 });
+  brokenBus.channel.addListener("onMessage", message => brokenClient.handleFrame(message.id, message.data));
+
+  const stalled = await brokenClient.readParameter("A8", 278);
+  expect(
+    stalled.status === "stalled",
+    `a First Frame with no rest should be stalled, not silence or a record, got ${stalled.status}`
+  );
+  expect(
+    brokenBus.sentFrames.includes("A8 30 FF 00 00 00 00 00"),
+    "…and we must have asked for the rest before calling it stalled"
+  );
+  // ⚠️ Not retried. A stall means the micro answered, so the stale-session premise the
+  // read's one retry rests on is absent — and asking again would put a second request on
+  // a micro that is still transmitting the first reply.
+  expect(
+    brokenBus.sentRequests.filter(request => request.startsWith("A8 22")).length === 1,
+    `a stalled read must not be retried, saw ${brokenBus.sentRequests.filter(request => request.startsWith("A8 22")).length} reads`
+  );
+
+  const flowControlsBefore = brokenBus.sentFrames.filter(frame => frame === "A8 30 FF 00 00 00 00 00").length;
+  const overCap = await brokenClient.readParameter("A8", 279);
+  expect(
+    overCap.status === "abandoned" && overCap.reason.includes("32"),
+    `a reply over the payload cap should be abandoned and say the cap, got ${overCap.status}${overCap.status === "abandoned" ? ` — ${overCap.reason}` : ""}`
+  );
+  // ⚠️ And abandoned WITHOUT asking for the rest. The declared length is over the cap in
+  // the First Frame itself, so answering it would be requesting bytes onto a shared bus
+  // that we have already decided not to keep.
+  expect(
+    brokenBus.sentFrames.filter(frame => frame === "A8 30 FF 00 00 00 00 00").length === flowControlsBefore,
+    "a reply refused on its declared length must draw no flow control"
+  );
+  brokenClient.stop();
 
   // And the standing guarantee, checked against every byte that reached the bus.
   const services = new Set(bus.sentRequests.map(request => request.split(" ")[1]));

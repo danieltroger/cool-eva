@@ -144,13 +144,22 @@ export interface VcuReadRunnerOptions {
  */
 const GATE_WATCH_INTERVAL_MS = 200;
 
-/** Every status a row can carry, so a tally always has all the keys and the page never sees `undefined`. */
+/**
+ * Every status a row can carry, so a tally always has all the keys and the page never sees
+ * `undefined`.
+ *
+ * ⚠️ Typed off the union, so RETIRING a status is a compile error here — but ADDING one is
+ * not, and a missing entry silently drops that failure out of the page's breakdown
+ * (`public/views/service-mode.js` renders whatever keys the tally has). Keep it exhaustive
+ * by hand.
+ */
 const ROW_STATUSES: VcuParameterRow["status"][] = [
   "read",
   "refused",
   "no-response",
   "no-session",
-  "multi-frame",
+  "stalled",
+  "abandoned",
   "unrecognised",
   "not-sent",
 ];

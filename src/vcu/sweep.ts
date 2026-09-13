@@ -1,4 +1,5 @@
 import type { RawChannel } from "socketcan";
+import type { FrameArrival } from "../can/frame-arrival.ts";
 import { createVcuKwpClient } from "./kwp-client.ts";
 import {
   activeParameterTable,
@@ -68,7 +69,8 @@ export interface RunningParameterSweep {
    * Feed every CAN frame here; returns true when it was consumed. The service shares
    * one socket, so this is how a reply reaches the client without a second listener.
    */
-  handleFrame: (id: number, data: Buffer) => boolean;
+  /** ⚠️ `arrival` is the kernel's stamp — see ../can/frame-arrival.ts and RunningProbe. */
+  handleFrame: (id: number, data: Buffer, arrival?: FrameArrival | null) => boolean;
   /** Stops it. Everything read so far is kept and written. Safe to call more than once. */
   abort: (reason: string) => void;
   /** Rows on record right now, including any carried over from a resumed sweep. */
@@ -92,7 +94,7 @@ export function startParameterSweep(options: ParameterSweepOptions): RunningPara
   const state: SweepState = { rows: new Map(), stoppedBecause: null, client };
   const finished = runSweep(options, state);
   return {
-    handleFrame: (id, data) => client.handleFrame(id, data),
+    handleFrame: (id, data, arrival) => client.handleFrame(id, data, arrival),
     abort: reason => abort(state, reason),
     rows: () => [...state.rows.values()],
     expected: parameterTable().length,

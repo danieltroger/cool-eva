@@ -412,6 +412,8 @@ node --experimental-strip-types scripts/check-freeze-frame.ts
 
 Every freeze frame is multi-frame — the header alone is 5 bytes and an extended-addressed single frame holds 6 — so reading one means **transmitting between the request and the rest of the reply**. `src/vcu/kwp-client.ts` was built never to do that. It now can, and the property that made the old rule worth having is intact: the flow-control frame is addressed to the target the **caller** named, never to an address read off the bus.
 
+> ⚠️ **Ordinary parameter reads go through this transport too, since 2026-09-14.** A bank-1 record was assumed to be 1 or 2 bytes because that is all `params.ecf` describes — but A8 answered index 278 with a 7-byte reply, and #219 types 278, 279 and 626 as 4-byte DWORD from the firmware's own table. Not one request byte changed (a 3-byte `22 <hi> <lo>` segments to exactly the Single Frame that was sent before, padding included); what changed is that a reply too wide for one frame is now assembled instead of reported. [`docs/vcu-parameters.md` §9](docs/vcu-parameters.md#9-the-read-path-read-only-by-construction).
+
 |  |  |
 | --- | --- |
 | **`src/vcu/multiframe-codec.ts`** | Pure. A closed union of the five multi-frame **reads** — `0x17` freeze frame, `0x18` DTC list, `0x35`/`0x36`/`0x37` upload — with a throwing default and an allowlist re-check on the emitted service byte. No raw-bytes entry point, nowhere to put a value. Plus ISO-TP segmentation and flow control for extended addressing. |

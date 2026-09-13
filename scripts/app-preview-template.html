@@ -373,7 +373,7 @@ __MODULES__
             read: 233,
             // ⚠️ All seven, because tallyOf() seeds every status at 0 (src/vcu/read-runner.ts) —
             // the Pi never sends a partial one, and views/service-mode.js reads the record.
-            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
+            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "stalled": 0, "abandoned": 0, "unrecognised": 0, "not-sent": 0 },
             micros: [
               { micro: "A9", read: 201, failed: 22 },
               { micro: "A8", read: 32, failed: 22 },
@@ -1069,7 +1069,7 @@ __MODULES__
               tally: {
                 total: 277,
                 read: 0,
-                byStatus: { "read": 0, "refused": 0, "no-response": 0, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
+                byStatus: { "read": 0, "refused": 0, "no-response": 0, "no-session": 0, "stalled": 0, "abandoned": 0, "unrecognised": 0, "not-sent": 0 },
                 micros: [
                   { micro: "A9", read: 0, failed: 0 },
                   { micro: "A8", read: 0, failed: 0 },

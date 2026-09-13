@@ -619,9 +619,11 @@
           tally: {
             total: 277,
             read: 233,
-            // ⚠️ All seven, because tallyOf() seeds every status at 0 (src/vcu/read-runner.ts) —
+            // ⚠️ All eight, because tallyOf() seeds every status at 0 (src/vcu/read-runner.ts) —
             // the Pi never sends a partial one, and views/service-mode.js reads the record.
-            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "multi-frame": 0, "unrecognised": 0, "not-sent": 0 },
+            // `stalled` and `abandoned` replaced `multi-frame` when a wide record became
+            // readable rather than reportable (#223).
+            byStatus: { "read": 233, "refused": 30, "no-response": 14, "no-session": 0, "stalled": 0, "abandoned": 0, "unrecognised": 0, "not-sent": 0 },
             micros: [
               { micro: "A9", read: 201, failed: 22 },
               { micro: "A8", read: 32, failed: 22 },

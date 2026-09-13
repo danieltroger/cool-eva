@@ -23,14 +23,22 @@ import { CALIBRATION_BANK, recordLengthFor, type VcuMicro, type VcuParameter } f
 // src/can/iso-tp.ts: a First Frame carries five data bytes there, not six, and that
 // reassembler rejects it outright. Reusing it would silently drop every multi-frame reply.
 //
-// ⚠️ No parameter read in this table can produce a multi-frame reply, so none is assembled
-// here and — the property three other modules cite by name — **no transmit address is ever
-// derived from something the bus said**: it only ever addresses a micro the caller named.
+// ⚠️ THIS FILE STILL ASSEMBLES NOTHING, and that is now a division of labour rather than a
+// claim about the bus. It used to say no parameter read could produce a multi-frame reply;
+// A8 answered bank-1 index 278 with a 7-byte First Frame on 2026-09-14. What was true of
+// `params.ecf`'s 277 rows was never true of the read PATH, which has reached any bank and
+// any index since 2026-08-16. ./kwp-client.ts now hands a read's payload to
+// ./multiframe-transfer.ts, which assembles it. docs/vcu-parameters.md §9.
+//
+// ⚠️ The property three other modules cite by name SURVIVES: **no transmit address is ever
+// derived from something the bus said.** Nothing here transmits at all, and the flow control
+// the transport sends addresses the target the CALLER named.
 //
 // ⚠️⚠️ There used to be a third target — the charge manager, as 0xA4 on 0x7C3/0x7E3. **It
 // has been removed and that pair must not come back**; see the note above VcuTarget.
 //
-// Why single frame only is not a gap: docs/vcu-parameters.md §9.
+// Which sentence about single frames was wrong and which was merely narrow:
+// docs/vcu-parameters.md §9.
 
 /** Everything this codebase is permitted to ask a VCU micro. Closed on purpose — see the header. */
 export type VcuRequest =
@@ -144,14 +152,10 @@ const MAX_SINGLE_FRAME_PAYLOAD = 6;
  *
  * Throws rather than returning an error value: every input comes from this repo's
  * own code, so a bad one is a bug to fix now, not a condition to handle. The
- * read-only assertion at the end is the one that must never be removed.
+ * read-only assertion is in `buildRequestPayload` below and must never be removed.
  */
 export function buildRequestFrame(target: VcuTarget, request: VcuRequest): Uint8Array {
-  const payload = encodeRequestPayload(request);
-  if (!READ_ONLY_SERVICES.has(payload[0])) {
-    // Unreachable through the union above, which is exactly why it is here.
-    throw new Error(`vcu: refusing to transmit service 0x${payload[0].toString(16)} — not a read-only service`);
-  }
+  const payload = buildRequestPayload(request);
   if (payload.length > MAX_SINGLE_FRAME_PAYLOAD) {
     throw new Error(`vcu: request payload of ${payload.length} bytes does not fit one frame`);
   }
@@ -160,6 +164,27 @@ export function buildRequestFrame(target: VcuTarget, request: VcuRequest): Uint8
   frame[1] = payload.length;
   frame.set(payload, 2);
   return frame;
+}
+
+/**
+ * The request as payload bytes — no address, no PCI — with the read-only allowlist
+ * applied on the way out.
+ *
+ * ⚠️ THIS IS THE ONLY THING THAT MAKES A READ'S BYTES, and both routes to the bus go
+ * through it: `buildRequestFrame` above wraps it in a Single Frame, and ./kwp-client.ts
+ * hands it to ./multiframe-transfer.ts so a reply that does not fit one frame is
+ * assembled. Splitting it out did NOT open a raw-bytes entry point: the argument is still
+ * a `VcuRequest`, still a closed union of three, and there is still nowhere in it to put a
+ * service byte or a value. What a caller gets back is bytes; what a caller can ASK for is
+ * unchanged.
+ */
+export function buildRequestPayload(request: VcuRequest): Uint8Array {
+  const payload = encodeRequestPayload(request);
+  if (!READ_ONLY_SERVICES.has(payload[0])) {
+    // Unreachable through the union above, which is exactly why it is here.
+    throw new Error(`vcu: refusing to transmit service 0x${payload[0].toString(16)} — not a read-only service`);
+  }
+  return payload;
 }
 
 /**
@@ -210,9 +235,15 @@ export type VcuFrame =
   /** A whole reply. `payload` excludes the address and the PCI byte. */
   | { kind: "payload"; payload: Uint8Array }
   /**
-   * The start of a multi-frame reply, which nothing here assembles. No parameter in
-   * the table can produce one, so seeing it means an assumption is wrong — report
-   * it, do not decode the fragment.
+   * The start of a multi-frame reply. Reported rather than decoded from its first
+   * fragment: a truthful "this did not fit the shape I understand" beats a
+   * plausible-looking value assembled from half a record.
+   *
+   * ⚠️ NOT a dead branch, and not "an assumption is wrong" either, which is what this
+   * said until 2026-09-14. ./kwp-client.ts assembles a parameter read now, so the
+   * remaining live consumer is ./write-session.ts, whose own single-frame transport
+   * turns this into a refusal to write — and which reads A8 indices 1000-1003 (#219).
+   * Why that one is deliberately not routed: docs/vcu-parameters.md §9.
    */
   | { kind: "multi-frame"; totalLength: number }
   /** Not addressed to us, or not a shape this framing defines. Never an error on a shared bus. */

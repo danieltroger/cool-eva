@@ -583,8 +583,10 @@ function describeFailure(outcome: VcuReadOutcome): string {
       return "no reply in an open session — not the same claim as “no such parameter”";
     case "no-session":
       return outcome.reason;
-    case "multi-frame":
-      return `reply was a ${outcome.totalLength}-byte multi-frame transfer, which a bank-1 record cannot be`;
+    case "stalled":
+      return `${outcome.reason} — the micro began answering and stopped`;
+    case "abandoned":
+      return `the reply was discarded rather than decoded: ${outcome.reason}`;
     case "unrecognised":
       return outcome.reason;
     case "not-sent":

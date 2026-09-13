@@ -177,7 +177,13 @@ const CHECKS: SelfCheck[] = [
       "VCU parameter table — including that it is Energica's table 16407, the one the bike itself names at " +
       "parameter 276, and that a bike naming any other one is shouted about rather than silently mislabelled — " +
       "request encoding and the read-only guard, framing against frames captured 2026-08-08, " +
-      "the live bank-1 reads, interpretation, the snapshot diff, the KWP transport against a simulated micro, and — " +
+      "that the multi-frame segmenter emits byte for byte the Single Frame buildRequestFrame did, so routing reads " +
+      "through that transport moved nothing on the wire; the DWORD storage type and the 4-byte record it makes " +
+      "readable, the generated write targets' datatype bounds against literal per-type ranges, " +
+      "the live bank-1 reads, interpretation, the snapshot diff, the KWP transport against a simulated micro — " +
+      "including a 4-byte bank-1 record and the captured bank-2 0x2001 reply assembling through flow control, a " +
+      "stalled transfer and a reply over the payload cap coming back as two different outcomes, and no flow " +
+      "control going out for a reply that already fitted one frame — and — " +
       "since the service-write PR — the write allowlist and its per-parameter ranges, the refusal of every " +
       "non-allowlisted identifier, the table-type gate that refuses a parameter write until the bike has itself " +
       "named a table this software encodes (refused when never read, refused when mismatched, permitted when " +

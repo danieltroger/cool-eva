@@ -82,7 +82,17 @@ export type TransferStage =
 export interface MultiFrameTransferOptions {
   /** Which micro. Decides the address byte on every frame we send, including flow control. */
   target: VcuTarget;
-  /** The request, already built and service-checked by ./multiframe-codec.ts. */
+  /**
+   * The request, already built and service-checked by one of the two read codecs:
+   * `encodeMultiFrameRequestPayload` (./multiframe-codec.ts, the five multi-frame
+   * services) or `buildRequestPayload` (./param-codec.ts, the three single-frame ones,
+   * whose `22` read can still draw a reply too wide for one frame).
+   *
+   * ⚠️ Raw bytes here are not a raw-bytes entry point: both encoders take a closed union
+   * with no service byte and no value in it, and both re-check the emitted byte against
+   * their own allowlist. Neither can express a write, and ./kwp-client.ts is the only
+   * caller.
+   */
   requestPayload: Uint8Array;
   /** Puts one 8-byte frame on the bus. Throws on a dead socket, which becomes `not-sent`. */
   send: (frame: Uint8Array) => void;
