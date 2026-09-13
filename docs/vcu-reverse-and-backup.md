@@ -17,7 +17,9 @@ All four are `WORD S` (signed 16-bit) served by the **A9** micro, addressed `CID
 
 **Where "this bike" comes from, and its date.** `obd-garage/kwp_scan_raw.txt`, the A9 dump of 2026-06-14, reads `A9 B1 0043 2 0258`, `0044 2 00c8`, `0045 2 002d`, `0095 2 00fa` → 600, 200, 45, 250. That dump is three months old. What dates the values to the incident is the log itself: a 599-count ceiling at 16:07 on 2026-09-13 (§3) says index 67 still held 600 at that moment.
 
-**There is no factory default for any of them.** `params.ecf` is not a defaults table — `src/vcu/param-file.ts:10-13` is blunt that its values "are NOT any particular bike's" and "must never be rendered as a reading". It happens to carry the same four values this bike reads, which is worth noting and is not the same as a factory default. Nothing else on disk states one.
+**There is no factory default for any of them, and that statement now has a caveat.** `params.ecf` is not a defaults table — `src/vcu/param-file.ts:10-13` is blunt that its values "are NOT any particular bike's" and "must never be rendered as a reading". It happens to carry the same four values this bike reads, which is not the same as a factory default.
+
+⚠️ **But the firmware's parameter table carries an unidentified 16-bit field at +0x08 that nobody has examined**, and an earlier draft asserted "nothing else on disk states one" without looking at it — in a table §4 was already walking. It reads **300 / 12000 / 125 / 250** for indices 67 / 68 / 69 / 149, and equals the `params.ecf` value on **141 of 232** A9 rows. It is **not** simply a defaults column (it disagrees on the other 91, including three of these four), and it is **not** a maximum either — it is _below_ the live value at index 49 (400 against 600) and index 67 (300 against 600). `TORQUE_LIMIT`'s entry reads 1950, which is this bike's `MAP1_TORQUE`. Unidentified, and worth its own investigation rather than a guess here.
 
 **Table identity.** This bike runs table **16407**, whose only delta from `params.ecf`'s 16406 is index 249 `R_BRAKE_POPUP` (`src/vcu/table-catalog.data.ts`). Indices 67-69 and 149 are untouched by that delta, so the names above are this bike's names.
 
@@ -35,7 +37,7 @@ Energica states the scale for the torque _telemetry_, in `EMsuite/2021-version/f
 
 ⚠️ That file scales telemetry, not EEPROM records. Applying it to the _parameters_ is an inference — a well-supported one, since `docs/vcu-parameters.md` §5 already makes it for `TORQUE_LIMIT` and `REGEN_TORQUE_LIMIT`, Energica's factory options write 2000/2150 into `MAP1_TORQUE` for a platform published at 200/215 Nm, and §3 below measures a 59.9 Nm plateau against a stored 600. Three independent things agreeing is why this is marked ✅ rather than 🟡, but it is agreement, not a statement about parameters.
 
-The firmware is consistent with it and adds nothing: A9 works in raw counts throughout, with no ×0.1 anywhere, so 0.1 Nm is a display convention rather than something the code knows.
+The firmware is consistent with it and adds nothing: A9 works in raw counts throughout, so 0.1 Nm is a display convention rather than something the code knows. ⚠️ Method for that negative, since it is a universal one: the image carries no `0.1f` or double-precision 0.1 constant and no divide-by-10 reciprocal magic; the only reciprocal constant in the reverse block is `0x51EB851F`, which is `/100` and belongs to the slew-rate arithmetic in §2.2.
 
 ### 2.2 Slew rate: 1 count = 1 Nm/s ✅
 
@@ -51,15 +53,15 @@ The falling mode is the clean one on the wire too: 166 of 529 down-steps land on
 
 ### 2.3 `REVERSE_MAX_SPD`: 0.1 km/h per count 🟡
 
-The A9 firmware **clamps this parameter to 20…275 before use** and takes its absolute value, direction being carried in the sign (`0x2A488`, `0x2B58C`). A 20…275 window reads naturally as **2.0…27.5 km/h at 0.1 km/h per count**, making 45 = **4.5 km/h**. Medium confidence: it comes from the clamp bounds, not from a statement or from an observed comparison.
+The A9 firmware **clamps this parameter to 20…275 before use** (`0x2A488`, `0x2B58C`). ⚠️ There is an `rsbs` after the clamp that would take an absolute value, but the clamp's lower bound is 20, so the negative branch can never execute — it is dead code, and an earlier draft of this document read it as evidence that direction is carried in the sign. It is not evidence of anything. A 20…275 window reads naturally as **2.0…27.5 km/h at 0.1 km/h per count**, making 45 = **4.5 km/h**. Medium confidence: it comes from the clamp bounds, not from a statement or from an observed comparison.
 
-⚠️ **Do not conclude that 45 never binds.** Reverse tops out at about **2.9 km/h** every single time in the log, which is what a governor looks like rather than evidence against one — and the command visibly backs off as the bike rolls: at 16:07:09.45, at 2.1 km/h with the throttle still at 98.8 %, the command _falls_ 51.8 → 50.7 → 48.2 → 44.0 Nm over 60 ms. Whether that fade is `REVERSE_MAX_SPD` acting below its limit is **open**. What §3 does establish is narrower and is enough for the incident: at 0.3 km/h nothing speed-shaped can be clipping 599 counts.
+⚠️ **Do not conclude that 45 never binds.** Reverse tops out at about **2.9 km/h** every single time in the log, which is what a governor looks like rather than evidence against one — and the command visibly backs off as the bike rolls: at 16:07:09.45, at 2.1 km/h, the command _falls_ 51.8 → 50.7 → 48.2 → 44.0 Nm over 60 ms — ⚠️ though the throttle was releasing across that same interval, 99.0 → 95.0 %, so this example does not isolate speed from throttle and is offered as something to look at rather than as evidence. Whether that fade is `REVERSE_MAX_SPD` acting below its limit is **open**. What §3 does establish is narrower and is enough for the incident: at 0.3 km/h nothing speed-shaped can be clipping 599 counts.
 
 ## 3. The episode, 2026-09-13 16:07:09-16:07:20 Z
 
 Reconstructed from `cool-eva-2026-09-13.celog` decrypted to a scratch DB: 39 258 150 readings, 21 255 segments, 63 unreadable (62 bad-magic resyncs plus one GCM failure at byte 81 211 736 — a `/dl` blob is cumulative, so these are the same 63 an earlier lane reported).
 
-**The park-assist classifier, stated because the alternative is circular:** episodes are selected as `throttle_pct ≥ 99 % while speed_can_kmh ≤ 3 km/h for ≥ 300 ms`, forward-filled. It never mentions torque, so "the ceiling is 60 Nm" is a result rather than a restatement of the selection. ⚠️ `reverse_gear` is deliberately not used — §5 of `docs/can-decode-findings.md` and issue #216 explain why it cannot carry this weight.
+**The park-assist classifier, stated because the alternative is circular:** episodes are selected as `throttle_pct ≥ 99 % while speed_can_kmh ≤ 3 km/h for ≥ 300 ms`, forward-filled. It never mentions torque, so "the ceiling is 60 Nm" is a result rather than a restatement of the selection. ⚠️ It is also **direction-free** — it cannot tell reverse from slow-forward park assist, and strictly it selects "full throttle while barely moving". It works here only because no forward launch on the ride maps holds ≥ 99 % throttle below 3 km/h; the forward-creep control below is what shows that. ⚠️ `reverse_gear` is deliberately not used — §5 of issue #216 and `docs/can-decode-findings.md:685` explain why it cannot carry this weight.
 
 What happened, at 200 ms resolution:
 
@@ -74,13 +76,13 @@ What happened, at 200 ms resolution:
 | :19.2      | 1.8        | 36.7          | 0.3  | 12  |
 | :19.8-20.4 | **100.0**  | 59.8          | 0.3  | 12  |
 
-Six or seven separate attempts above 54 Nm in nine seconds, each one pinned at the same ceiling, the bike never exceeding 0.3 km/h. **`REVERSE_TORQUE_LIMIT = 600` is what stopped the bike**, measured, not inferred.
+Six or seven separate attempts above 54 Nm in nine seconds, each one pinned at the same ceiling. ⚠️ The bike did move between attempts — speed reaches 2.1, 2.9 and 2.1 km/h elsewhere in the same window; what the table above shows is the stalled part of it, where speed sits at 0.2-0.3 km/h and rpm at 0-12. **`REVERSE_TORQUE_LIMIT = 600` is what stopped the bike**, measured, not inferred.
 
 ⚠️ 59.9 rather than 60.0 because `drive_torque_cmd_nm` carries `deadband: 0.5` (`src/can/registry.ts:767`): the plateau is a logged sample with up to half a Nm of unlogged headroom above it, so this pins the ceiling to 600 counts only to within ±0.5 Nm.
 
 ### Three things that were NOT the constraint
 
-- **Not the motor, not pack current, not traction.** `drive_torque_feedback_nm` tracks the command through the whole plateau — 59.6, 60.6, 59.6, 60.2, 60.3, 60.4, 59.7, 60.3 against a 59.9 command. The drivetrain delivered everything it was asked for. The binding constraint is the **command**.
+- **Not the motor, not pack current, not traction.** `drive_torque_feedback_nm` tracks the command through the whole plateau — sampled across 16:07:18.04-18.97 it reads 59.6, 60.6, 59.6, 60.2, 60.3, 60.4, 59.7, 60.3 against a 59.9 command (an abridged sample of the run, not consecutive frames). The drivetrain delivered everything it was asked for. The binding constraint is the **command**.
 - **Not "low speed" in general.** In ordinary forward riding below 3 km/h the command reaches **175.6 Nm at only 84.4 % throttle** (2026-09-09 07:44:38 Z). Three times the park-assist ceiling at a fifth less throttle, so the ceiling belongs to the _path_, not to the speed.
 - **Not backup mode.** That caps at 25.0 Nm (§5) and the bike was making 59.9.
 
@@ -92,41 +94,57 @@ Screened across the whole decrypted history, every full-throttle park-assist epi
 
 ## 4. What the firmware does with these numbers
 
-The owner raised `REVERSE_TORQUE_LIMIT` to **750** through the dashboard's `/vcu-write` and rebooted the bike, and still could not climb the lip. Two VCU firmware images were disassembled to find out why (ARM Cortex-M, Thumb-2, load base `0x8100`).
+The owner raised `REVERSE_TORQUE_LIMIT` to **750** through the dashboard's `/vcu-write` and rebooted the bike, and still could not climb the lip. The VCU firmware was disassembled to find out why — `VCU_Control_CRP.mot` (the A9 image, referred to below as `vcu_control.bin` once converted) and `VCU_Safety_CRP (5).mot`, plus both `ULTIMI` builds as a cross-check; all ARM Cortex-M, Thumb-2, load base `0x8100`.
 
 **A9's parameter table is at `0x00034A94`** — 20-byte entries, EEPROM offset at +0x02, storage type at +0x04, RAM shadow at +0x0C, parameter index at +0x12. Index 67 → EEPROM `0x023E`, shadow `0x200011F6`, working global `0x2000032A`; index 68 → global `0x2000032C`. Verified independently against eight checkpoint indices. That `vcu_control.bin` is the A9 image and not the A8 one is checkable rather than assumed: its table holds 233 entries, none of them an A8 index, with 233/233 storage-width agreement against `params.ecf`.
 
 ⚠️ **An earlier draft of this document claimed that A9 never uses these parameters and that enforcement must be downstream. That was wrong, and it was wrong because the tool used to find it followed only PC-relative literal loads and stopped at the first store.** The A9 image contains the reverse torque law in one contiguous block at **`0x2A6EC`-`0x2A850`**, and it consumes all of `REVERSE_TORQUE_LIMIT`, `REVERSE_TORQUE_SLEWRATE_LIMIT` and the demand. Disassembled and read:
 
 ```
-0002a6ec  ldr     r0, [pc, …]      ; =0x2000032A   REVERSE_TORQUE_LIMIT
+        ; --- the two parameters are copied into the working struct at 0x20001B30 ---
+0002a6ec  ldr     r0, [pc, #0x288]   ; =0x2000032A  REVERSE_TORQUE_LIMIT (working global)
 0002a6ee  ldrsh.w r1, [r0]
+0002a6f2  ldr     r0, [pc, #0x274]   ; =0x20001B30  struct base
 0002a6f4  str.w   r1, [r0, #0x460]
-0002a6f8  ldr     r0, [pc, …]      ; =0x2000032C   REVERSE_TORQUE_SLEWRATE_LIMIT
+0002a6f8  ldr     r0, [pc, #0x280]   ; =0x2000032C  REVERSE_TORQUE_SLEWRATE_LIMIT
+0002a6fa  ldrsh.w r1, [r0]
+0002a6fe  ldr     r0, [pc, #0x268]   ; =0x20001B30
 0002a700  str.w   r1, [r0, #0x464]
-…
-0002a740  ldr.w   r0, [r0, #0x464] ; the slew rate back out
-0002a744  movw    r1, #0x2710      ; 10000
-0002a748  muls    r0, r1, r0       ; -> 2 000 000 at 200 counts
-0002a774  bl      #0x33cc6         ; (r2 = 7)
-0002a77a  ldr     r1, [pc, …]      ; =0x51EB851F   the /100 reciprocal
-0002a784  str.w   r0, [r1, #0x478] ; -> the per-tick step limit
-…
-0002a78e  ldr.w   r0, [r0, #0x460] ; REVERSE_TORQUE_LIMIT
-0002a796  ldrsh.w r1, [r0, #0x7a6] ; a second copy
+        ;   … 0x2a704-0x2a73e: an unrelated demand term, scaled by 1000 and divided …
+        ; --- the slew rate becomes a per-tick step limit ---
+0002a740  ldr.w   r0, [r0, #0x464]   ; the slew rate back out
+0002a744  movw    r1, #0x2710        ; 10000
+0002a748  muls    r0, r1, r0         ; -> 2 000 000 at 200 counts
+0002a74a  ldr     r1, [pc, #0x21c]   ; =0x20001B30
+0002a74c  str.w   r0, [r1, #0x474]
+        ;   … 0x2a750-0x2a772: fetch the tick term and marshal both into the helper …
+0002a774  bl      #0x33cc6           ; (r2 = 7)
+0002a778  movs    r2, #0x1e
+0002a77a  ldr     r1, [pc, #0x208]   ; =0x51EB851F  the /100 reciprocal
+0002a77e  bl      #0x33c12
+0002a782  ldr     r1, [pc, #0x1e4]   ; =0x20001B30
+0002a784  str.w   r0, [r1, #0x478]   ; -> the per-tick step limit
+        ; --- the torque limit: min against a second copy, then a gain ---
+0002a78e  ldr.w   r0, [r0, #0x460]   ; REVERSE_TORQUE_LIMIT
+0002a796  ldrsh.w r1, [r0, #0x7a6]   ; a second copy, stored at 0x2a314
 0002a7a0  cmp     r0, r1
-0002a7a2  bge     #0x2a7a8         ; -> [+0x47c] = min(the two)
-0002a7bc  mov.w   r1, #0x3e8       ; 1000
-0002a7c6…7ea                       ; -> [+0x480] = clamp(factor, 0, 1000)
-0002a7fa  muls    r0, r1, r0       ; [+0x484] = min(RTL, RTL') x clamp(factor, 0, 1000)
-…
-0002a812  ldr.w   r1, [r0, #0x484] ; target
-0002a816  ldr.w   r0, [r0, #0x488] ; current
-0002a81a  subs    r1, r1, r0       ; error
-0002a826  ldr.w   r0, [r0, #0x478] ; the slew-derived step limit
-0002a82a  cmp     r1, r0           ; the rate limiter measured in §2.2
-0002a844  ldr     r0, [pc, …]      ; =0xFFF0BDC0 = -1 000 000, the DOWN limit
+0002a7a2  bge     #0x2a7a8           ; -> [+0x47c] = min(the two)
+0002a7bc  mov.w   r1, #0x3e8         ; 1000
+        ;   … 0x2a7c6-0x2a7ea: three-way clamp of the demand into [0, 1000] -> [+0x480] …
+0002a7f0  ldr.w   r0, [r0, #0x47c]
+0002a7f6  ldr.w   r1, [r1, #0x480]
+0002a7fa  muls    r0, r1, r0         ; [+0x484] = min(RTL, RTL') x clamp(demand, 0, 1000)
+        ; --- and the two meet in the rate limiter measured in §2.2 ---
+0002a812  ldr.w   r1, [r0, #0x484]   ; target
+0002a816  ldr.w   r0, [r0, #0x488]   ; current
+0002a81a  subs    r1, r1, r0         ; error
+0002a826  ldr.w   r0, [r0, #0x478]   ; the slew-derived step limit
+0002a82a  cmp     r1, r0
+0002a844  ldr     r0, [pc, #0x140]   ; =0xFFF0BDC0 = -1 000 000, the DOWN limit
+0002a846  bl      #0x33cc6           ; same helper, same /100 at 0x2a850
 ```
+
+⚠️ Lines marked `…` are elided for length; everything else is verbatim and contiguous, including the `ldr rN, =0x20001B30` struct-base reloads that an earlier draft dropped. Individual `ldr`/`str` pairs within a group are adjacent in the image.
 
 So: **raising index 67 does reach the torque law.** The demand is scaled by `REVERSE_TORQUE_LIMIT` and then rate-limited by a step computed from `REVERSE_TORQUE_SLEWRATE_LIMIT`, all inside A9, in the micro that stores them.
 
@@ -185,17 +203,24 @@ It did not act on 2026-09-13 — the bike made 59.9 Nm, not 25.0. It is in this 
 
 ### What the numbers buy
 
-Taking the reduction as **4.997** and the rear rolling radius as **0.3156 m** — ⚠️ both from `docs/can-decode-findings.md:347`, which carries an explicit **❓ NOT SETTLED** about where the driveline's 3.5 % over-read lives, and where the 1983 mm circumference is `SPEED_ODO_REARWHEEL_C`, an **A8 `otherBikeValue` that has never been read from this bike** (there is no A8 dump; read index 254 next time it is awake) — and assuming 370 kg of bike, rider and luggage:
+**Thrust does not depend on the wheel circumference.** Writing the measured 42.0 motor rpm per indicated km/h as `N/v = 16.667 G / (2πR)` gives `G/R = 42.0 × 2π / 16.667 = 15.834 per metre`, and the circumference cancels exactly. So `SPEED_ODO_REARWHEEL_C` — the unread A8 `otherBikeValue` an earlier draft carried a warning about — **does not enter this calculation at all**, and reading index 254 would not change a number here. It is still needed for the step geometry below, where the wheel radius does matter.
 
-| index 67            | torque      | thrust    | grade it holds | rigid step it clears |
-| ------------------- | ----------- | --------- | -------------- | -------------------- |
-| 250 (backup mode)   | 25.0 Nm     | 396 N     | 11 %           | ~0.2 cm              |
-| **600 (today)**     | **60.0 Nm** | **950 N** | **26 %**       | **~1.0 cm**          |
-| 750 (already tried) | 75.0 Nm     | 1187 N    | 33 %           | ~1.6 cm              |
-| 900                 | 90.0 Nm     | 1425 N    | 39 %           | ~2.2 cm              |
-| 1100                | 110.0 Nm    | 1742 N    | 48 %           | ~3.1 cm              |
+⚠️ What _does_ move it is the over-read: 42.0 is rpm per **indicated** km/h and `speed_can_kmh` reads ~3.5 % high (`docs/can-decode-findings.md:755`), so the true `G/R` is ~3.5 % larger and every thrust below is the **corrected** figure, 16.388 per metre. ⚠️ `docs/can-decode-findings.md:347` still marks the driveline decomposition **❓ NOT SETTLED**; that ❓ is about _where_ the 3.5 % lives, which does not affect this ratio.
 
-⚠️ The step column is a rigid-step model, `F/W = √(2Rh − h²)/(R − h)`, with all the weight on the driven wheel and no help from rocking the bike or from momentum. It is a guide to the order of magnitude, not a prediction. Thrust ignores rolling resistance and driveline loss, so it is an upper bound. But the shape of the answer survives all of that: **the factory setting is worth about a centimetre, and 750 was worth about a centimetre and a half.** An asphalt lip that stops a motorcycle is usually two to three, which needs 900-1100 counts. That is the honest reason 750 did not help, and it is a different reason from "the write failed".
+⚠️⚠️ **The mass assumption dominates everything in this table, and it is not a measurement.** Park assist is normally used with the rider **walking beside** the bike, which is the ~280 kg column; it can also be used astride, which adds a rider and luggage. The published kerb weight for this model is around 280 kg and no figure for this specific bike has been weighed. Both columns are given because the honest answer changes between them.
+
+| index 67 | torque | thrust | 280 kg — walking beside |  | 370 kg — astride |  |
+| --- | --- | --- | --- | --- | --- | --- |
+|  |  |  | grade | step | grade | step |
+| 250 (backup mode) | 25.0 Nm | 410 N | 15 % | 0.3 cm | 11 % | 0.2 cm |
+| 600 (factory) | 60.0 Nm | 983 N | 38 % | 1.8 cm | 28 % | 1.1 cm |
+| **750 (in the bike now)** | **75.0 Nm** | **1229 N** | **50 %** | **2.8 cm** | **36 %** | **1.7 cm** |
+| 900 | 90.0 Nm | 1475 N | 64 % | 3.8 cm | 44 % | 2.3 cm |
+| 1100 | 110.0 Nm | 1803 N | 87 % | 5.2 cm | 57 % | 3.3 cm |
+
+Grade is `tan θ`, the ordinary road convention, computed from `F/W = sin θ`. The step column is a rigid-step model, `F/W = √(2Rh − h²)/(R − h)` with `R = 0.3156 m`, **all** the weight on the driven wheel, no help from rocking the bike and no momentum. It is a guide to the order of magnitude, not a prediction — a real lip is chamfered, a real rider shoves, and a real tyre deforms into the step, all of which help.
+
+**What that means, stated honestly rather than tidily.** At the walking-beside mass, 750 already clears ~2.8 cm and the lip that stopped him was simply bigger, or the geometry worse than a clean step. At the astride mass, 750 is ~1.7 cm and clearly short. The model cannot tell those apart without knowing the lip and how he was using the bike. What both columns agree on: **600 was never going to do it, 750 is marginal, and 900 is the next step that changes the answer rather than nudging it.**
 
 ### The exact write, if one is made
 
@@ -221,7 +246,7 @@ to         900   (90.0 Nm)      — see the reasoning below
 ### The risks, which are not theoretical
 
 - ⚠️ **Park assist is the mode where a person is walking beside 280 kg of motorcycle, often on a slope, often with one hand on the bars.** This limit exists so the bike cannot climb out of your grip. 90 Nm is 1425 N at the contact patch — around 145 kgf, comfortably more than a person can hold against.
-- ⚠️ **The slew rate is unchanged**, so torque still arrives at ~200 Nm/s; a raised ceiling means it arrives at a higher value in the same time.
+- ⚠️ **The slew rate is unchanged at 200 Nm/s**, so a raised limit takes proportionally _longer_ to reach — 0.45 s to 90 Nm against 0.375 s to 75. The arrival is not more sudden; the destination is higher.
 - ⚠️ **Reverse is used blind, looking over a shoulder, usually with the front wheel pointed somewhere.** More thrust over a lip is also more thrust when the wheel finally frees.
 - A dealer visit reverts it: the service tool reinstalls parameter values from Energica's server, keyed by VIN.
 
@@ -261,7 +286,7 @@ So the list it would join is **`CURATED_WRITE_TARGETS`** — today `MAX_DC_CHG_C
 
 **So the 750 was live, and it was simply not enough.** That is the answer to "would more have helped": yes, more is exactly what was needed — §6's arithmetic puts 75.0 Nm at about a 1.6 cm step against the 2-3 cm an asphalt lip usually is.
 
-**Why the log alone could not show it**, which is worth keeping because it is a trap: after the reboot the throttle never exceeded **61.8 %** in any of the 47 low-speed torque windows on record, so the _ceiling_ was never demanded again. Only the matched-bin comparison at partial throttle in §4 could see the change, and only because the parameter turned out to be a gain.
+**Why the log alone could not show it**, which is worth keeping because it is a trap: after the reboot the throttle never exceeded **61.8 %** in any of the 47 low-speed torque windows on record, so the _ceiling_ was never demanded again **in park assist**. ⚠️ Torque does exceed 60 Nm after the reboot — 109.0 Nm at ≤ 3 km/h in session 143 — but that is a forward launch on the ride maps, not the park-assist path, which is the distinction §3's forward-creep control exists to draw. Only the matched-bin comparison at partial throttle in §4 could see the change, and only because the parameter turned out to be a gain.
 
 **What would still be worth reading, and what is now closed:**
 
@@ -281,5 +306,6 @@ Opened and **empty on this question**, recorded so nobody repeats the search: `e
 
 - The scratch DB is `evidence/scratch-2026-09-13.db`, gitignored, rebuildable with `scripts/decrypt-log.ts`. ⚠️ That script **runs out of memory** on a 322 MB log at Node's default heap — it accumulates every record before writing — and needs `--max-old-space-size=24576`.
 - **49 772 rows (0.127 %) across 254 signals carry impossible timestamps**, a contiguous block dated August 2060. They decoded successfully into rows with a broken epoch, which is a different failure from the 63 unreadable segments. Nothing above 60 Nm hides in them; screens in §3 are unaffected either way.
+- `speed_can_kmh` carries `deadband: 0.5` and `motor_rpm_can` carries **`deadband: 50`** (`src/can/registry.ts:487-488`), so the rpm column in §3 cannot distinguish 0 from 62 and the speed column is quantised to half a km/h. Neither carries any weight in the conclusions; the torque column does.
 - `drive_torque_cmd_nm` and `drive_torque_feedback_nm` carry `deadband: 0.5`, applied against the last logged value. Consequences the analysis relies on: rows 20 ms apart really are adjacent `0x02C` frames, so per-frame deltas are valid; the step histogram in §2.2 is censored below ±0.5; and the ceiling is pinned only to within half a Nm.
 - Counts here and in the review on issue #214 differ where the screens differ (9 episodes against 53, 232 steps against 367). Both screens reach the same conclusion; where a number is method-dependent the method is printed beside it.
