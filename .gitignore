@@ -211,6 +211,15 @@ evidence/*.celog
 # enumerated one by one for that same reason; a glob covers the case without the list.
 evidence/*.db*
 
+# Bulk material pulled off the Pi for one investigation. Same rule as the ride logs
+# above: the raw thing is never committed and the DOC carries the extract — #214's
+# docs/vcu-reverse-and-backup.md quotes the audit record and the probe values it cites.
+# evidence/captures/ reached 115 MB of candump text in one night, which `git add -A`
+# will happily sweep into a public repo if nothing stops it.
+evidence/captures/
+evidence/service-writes.jsonl
+evidence/probes-*.txt
+
 # Recovered waypoints carry coordinates; this is a PUBLIC repo and docs/route-map.md
 # forbids them in committed files. scripts/recover-waypoints.ts writes outside the repo
 # by default, and this is the second line of defence for a --gpx that points inside it.

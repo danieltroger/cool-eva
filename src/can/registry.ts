@@ -486,7 +486,26 @@ export const SIGNALS: SignalDef[] = [
   { key: "odometer_can_km", unit: "km", group: "drive", source: "stream" },
   { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50 },
-  { key: "reverse_gear", unit: "", group: "drive", source: "stream" },
+
+  // 0x104 bit 63 — the bike rolling BACKWARDS, renamed from `reverse_gear` 2026-09-14.
+  //
+  // 🚨 It shipped as `reverse_gear` from the .xdbc's word, and it is not a gear. The A8
+  // firmware writes it at 0x0000C924 as `signed motor speed < 0 AND |speed| past a
+  // ±500-count deadband` — Energica's own name for the field is `V_SPD_DIR`. The old rows
+  // are not garbage: they are correct readings of this bit under a wrong name, so
+  // grafana/dashboards/ride-summary.json UNIONs the old key into the new lane and the
+  // history stays continuous, the same way the beam-lamp and attitude renames did.
+  //
+  // ⚠️ The deadband has NO HYSTERESIS, so at walking pace this chatters at bus rate as the
+  // speed crosses 0.5 km/h — 404 of 597 pulses under 50 ms. It is a sample, not a state.
+  // Anything wanting "is the bike in park assist" should use 0x101's substate instead.
+  { key: "rolling_backwards", unit: "", group: "drive", source: "stream" },
+
+  // 0x104 bit 62 — Energica's `V_TACHO_OUT`, one pulse per 0.1 km of indicated travel
+  // (measured: 1371 of 1373 gaps between rising edges are exactly one odometer count, and
+  // the distance between edges holds at 89-92 m from 49 to 155 km/h). No deadband: it is a
+  // 0/1 flag and a deadband ≥ 1 would log it once at boot and then never again.
+  { key: "odometer_pulse", unit: "", group: "drive", source: "stream" },
 
   // 0x109 b2-7 — the inverter's current limits, alongside the throttle above. Same 1 A
   // deadband as the BMS's allowed_* pair, and for the same reason: derate limits move

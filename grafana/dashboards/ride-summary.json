@@ -3020,7 +3020,7 @@
             "uid": "cool-eva-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Reverse\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key = 'reverse_gear' AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
+          "rawQueryText": "-- `rolling_backwards` is 0x104 bit 63, Energica's V_SPD_DIR: the bike moving\n-- BACKWARDS past a 0.5 km/h deadband, NOT a gear selection. It shipped as\n-- `reverse_gear` until 2026-09-14 and those rows are correct readings under the\n-- wrong name, so both keys are read together and the trace stays continuous.\n-- The comparator behind it has no hysteresis, so expect bus-rate chatter at\n-- walking pace; it is a sample, not a state.\nSELECT r.ts/1000.0 AS time,\n  CASE WHEN r.value <> 0 THEN 'yes' ELSE 'no' END AS \"Rolling back\"\nFROM reading r JOIN signal s ON s.id = r.signal_id\nWHERE s.key IN ('rolling_backwards', 'reverse_gear') AND r.ts BETWEEN $__from AND $__to\nORDER BY r.ts",
           "refId": "D",
           "timeColumns": ["time"]
         },

@@ -169,30 +169,36 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return [{ key: "motor_temp_c", value: i16le(data[4], data[5]) / 10 }];
     }
 
-    // 0x104 — odometer / speed / rpm, LE and not byte-aligned (100 Hz). ✅ Settled against
-    // OBD PIDs 0C/0D over the garage lap: speed is a u13 at bit 32, rpm a u15 at bit 45,
-    // and rpm's start bit is pinned to the bit (44 and 46 both miss the PID by 2×).
+    // 0x104 `VCU_SPEEDODO` — odometer, speed, motor rpm and two flags (100 Hz). Built and
+    // transmitted by the A8 SAFETY micro, not A9: A8's message-object table has it as a TX
+    // entry and A9's two tables do not carry it at all.
+    //
+    // ⚠️ The field boundaries here were re-cut on 2026-09-14 and the VALUES DID NOT MOVE.
+    // The old cut read speed as u13 at bit 32 and rpm as u15 at bit 45 ×1; the real layout
+    // is u15 at bit 32 and u15 at bit 47 ×4. Those agree on every frame while speed stays
+    // under 819.1 km/h and rpm under 32 768, because the bits between them are always zero —
+    // verified on all 681 458 frames of one capture, zero disagreements. So `motor_rpm_can`
+    // has no discontinuity and its history stays comparable. Working: #216 and
+    // docs/can-decode-findings.md § "0x104".
     //
     // The odometer gets its own key rather than overwriting the BLE hub's `odometer_km`,
     // because the bike publishes three odometer-ish numbers and they do not all agree.
-    // Keeping them separate means a ride can settle it; merging would make one value flap
-    // between writers.
     //
-    // The lap never exercised the top of either field, but that residual announces itself:
-    // bits 43/44 and 59 cannot be set by the quantity itself, so anything living there
-    // jumps speed by 204.8 km/h or rpm by 16 384 rather than reading plausibly.
-
     // ⚠️ The bit layout is right; the NUMBER is the bike's, and the bike's is optimistic —
     // +3.5 % against GPS, and it is geared driveline speed (`motor_rpm_can` / 42.0 exactly),
     // not a wheel measurement. Do NOT re-derive anything against 0x104 itself; that is how
-    // the ABS scale went wrong. Working: docs/can-decode-findings.md § "0x104".
+    // the ABS scale went wrong.
     case 0x104: {
       if (data.length < 8) return [];
       return [
         { key: "odometer_can_km", value: data.readUInt32LE(0) / 10 },
-        { key: "speed_can_kmh", value: bitFieldLe(data, 32, 13) / 10 },
-        { key: "motor_rpm_can", value: bitFieldLe(data, 45, 15) },
-        { key: "reverse_gear", value: bitFieldLe(data, 63, 1) },
+        { key: "speed_can_kmh", value: bitFieldLe(data, 32, 15) / 10 },
+        // 4 rpm per count — pinned in a single frame against the inverter's own
+        // `D_MOTOR_SPD` on 0x025: `0C AC 02 00 AD 03 EE 41` gives 988 × 4 = 3952, and
+        // 0x025 read exactly 3952 at that instant.
+        { key: "motor_rpm_can", value: bitFieldLe(data, 47, 15) * 4 },
+        { key: "odometer_pulse", value: bitFieldLe(data, 62, 1) },
+        { key: "rolling_backwards", value: bitFieldLe(data, 63, 1) },
       ];
     }
 

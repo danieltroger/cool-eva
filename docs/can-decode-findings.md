@@ -798,6 +798,48 @@ The decoded ride log put that sustained run at 5.158 s; the raw frames put it at
 
 `src/can/decode.ts`. LE and not byte-aligned, at 100 Hz.
 
+⚠️ **The key `reverse_gear` was renamed `rolling_backwards` on 2026-09-14 (#216).** Everything the section below measures still holds — only the name moved, for the reason the section itself establishes: it is not a gear. Old rows are correct readings under the wrong name and Grafana reads both keys together, the same way the beam-lamp and attitude renames were handled.
+
+### ✅ The field boundaries, re-cut 2026-09-14 — and no logged value moved
+
+The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · a "u3 at bits 60-62" · bit 63`. Three of those are wrong, and the manufacturer's own frame database says so — it gives `0x104 VCU_SPEEDODO` exactly four signals: `V_ODOMETER` (bytes 0-3), `V_REAL_SPEED` (bytes 4-5), `V_TACHO_OUT` (byte 7 mask 0x40) and `V_SPD_DIR` (byte 7 mask 0x80). The corrected cut:
+
+| bits  | field                                 | key                 |
+| ----- | ------------------------------------- | ------------------- |
+| 0-31  | odometer, u32 ÷10                     | `odometer_can_km`   |
+| 32-46 | speed, **u15** ÷10                    | `speed_can_kmh`     |
+| 47-61 | motor rpm, **u15 at 4 rpm per count** | `motor_rpm_can`     |
+| 62    | `V_TACHO_OUT`, a distance pulse       | `odometer_pulse`    |
+| 63    | `V_SPD_DIR`                           | `rolling_backwards` |
+
+🔥 **The values did not change, and that is a measurement rather than an argument.** `bitFieldLe(data, 45, 15)` evaluates to `4 × (the real field truncated to 13 bits)`, which equals the true rpm while speed stays under 819.1 km/h and rpm under 32 768 — the bits between the two fields are always zero. Replayed over all **681 458** frames of `capture-20260809-080235`: **zero disagreements**. So `motor_rpm_can` has no discontinuity and its six weeks of history stay comparable, which is why this is a boundary fix and not a migration.
+
+**What pins the 4-rpm scale, in one frame.** `0C AC 02 00 AD 03 EE 41` at 94.1 km/h: the rpm field reads 988, and the inverter's own `D_MOTOR_SPD` on `0x025` read exactly **3952** at that instant — 988 × 4. That frame is a replay case in `scripts/check-can-decoders.ts`, alongside the two below.
+
+**Why the old "u3 at bits 60-62" looked constant at 4.** Bits 60 and 61 are the rpm field's top two bits and cannot be set by any real rpm — they would need ≥ 32 768 — so only bit 62 ever moves in that window, and a 3-bit read of it lands on 4. Across 681 458 frames byte 7 only ever takes `00 01 02 03 40 41 42 43 80 C0`.
+
+### ✅ Bit 62 is a distance pulse, not a flag
+
+`V_TACHO_OUT` fires **one pulse per 0.1 km of indicated travel**: the gap between rising edges holds at 89-92 m at every speed from 49 to 155 km/h (6.6 s down to 2.1 s), and **1371 of 1373 gaps are exactly one odometer count**. That is the classic vehicle-speed-output line a tachograph or an aftermarket accessory would tap. Logged as `odometer_pulse` with no deadband, because a 0/1 flag with a deadband ≥ 1 logs once at boot and then silently never again.
+
+### ✅ Why bit 63 chatters — the mechanism, from the A8 firmware
+
+The bit is written at **A8 `0x0000C924`**, in the packer for the frame A8 itself transmits (`0x104` is a TX entry in A8's message-object table at `0x00028828`; neither of A9's two tables carries it at all):
+
+```
+ldrsh.w r0, [0x20000174]   ; the signed speed, copied verbatim from 0x025 D_MOTOR_SPD
+cmp     r0, #0
+bge     clear              ; not negative -> clear bit 63
+ldrb    r0, [0x20001240+0x1e]
+cmp     r0, #1
+bne     clear              ; inside the deadband -> clear bit 63
+...                        ; else set bit 7 of payload byte 7
+```
+
+So **bit 63 = (signed motor speed < 0) AND (|speed| past a ±500-count deadband)**, the deadband computed at `0x00012F1C`-`0x00012FFC` (`cmp #0x1F4` / `cmn #0x1F4`). ⚠️ **The comparator has no hysteresis.** That is the whole explanation for the chatter: at 0.3-0.7 km/h the speed crosses the 0.5 km/h threshold at bus rate, and the bit follows it at 100 Hz while the direction never changes at all.
+
+Verified against the capture: of **4024** frames with bit 63 set, **4024** have a negative `D_MOTOR_SPD`; of 474 193 frames with it clear while moving, **none** do. The 2840 remaining negative-speed frames are exactly the ones inside the deadband. The threshold is a step at speed field 5 with zero exceptions in 6864 reverse-moving frames — and that 0.5 km/h floor is the same one the archive sweep below measured without knowing why.
+
 ### 🟡 `reverse_gear` (bit 63) — Energica's `V_SPD_DIR`, a comparator on speed direction
 
 ⚠️ **This section was written as ✅ and it should not have been. It also failed to cite `docs/vcu-parameters.md` §12, which had already settled the same question three weeks earlier on a far larger sample — and reached a different conclusion.** §12 stands; this section defers to it.

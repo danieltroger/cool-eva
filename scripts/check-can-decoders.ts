@@ -222,6 +222,46 @@ interface ReplayCase {
 }
 
 const REPLAY: ReplayCase[] = [
+  // 0x104 VCU_SPEEDODO — the three cases that pin the layout re-cut in #216. All from
+  // capture-20260809-080235-cd40b535.log, paired with the inverter's own signed motor
+  // speed `D_MOTOR_SPD` (0x025 bytes 2-3) at the same instant, which is what makes the
+  // 4-rpm-per-count scale and the direction bit falsifiable rather than asserted.
+  {
+    id: 0x104,
+    frame: "0C AC 02 00 AD 03 EE 41",
+    why: "12:59:29.760 at 94.1 km/h — the case that PINS THE RPM SCALE in a single frame: the field reads 988 and 0x025 read D_MOTOR_SPD = 3952 at that instant, exactly 988 x 4. It also exercises bit 56, the only rpm bit above the byte-6 boundary the archive ever sets, so a boundary off by one fails here",
+    expect: {
+      odometer_can_km: 17511.6,
+      speed_can_kmh: 94.1,
+      motor_rpm_can: 3952,
+      odometer_pulse: 1,
+      rolling_backwards: 0,
+    },
+  },
+  {
+    id: 0x104,
+    frame: "FD AB 02 00 05 80 02 C0",
+    why: "12:56:44.027 rolling backwards at 0.5 km/h with D_MOTOR_SPD = -21 — bit 63 SET. One of the 4024 frames in this capture where the bit is set, all 4024 of which have a negative D_MOTOR_SPD",
+    expect: {
+      odometer_can_km: 17510.1,
+      speed_can_kmh: 0.5,
+      motor_rpm_can: 20,
+      odometer_pulse: 1,
+      rolling_backwards: 1,
+    },
+  },
+  {
+    id: 0x104,
+    frame: "FD AB 02 00 01 80 00 40",
+    why: "12:56:35.146 — THE DEADBAND CASE, and the one that stops anyone reading bit 63 as a sign bit: D_MOTOR_SPD is -5, so the bike IS moving backwards, but at 0.1 km/h it is inside the firmware's +-500-count deadband (A8 0x00012F1C) and the bit reads 0. The comparator has no hysteresis, which is why this bit chatters at walking pace",
+    expect: {
+      odometer_can_km: 17510.1,
+      speed_can_kmh: 0.1,
+      motor_rpm_can: 4,
+      odometer_pulse: 1,
+      rolling_backwards: 0,
+    },
+  },
   {
     id: 0x0a0,
     frame: "CD 00 B3 00 00 00 00 00",

@@ -1004,7 +1004,7 @@ Do not "fix" this back. What keeps it safe is that the excuse is narrow and that
 
 Kept because the next person to look at this will have the same ideas, and most of them are traps. Several are things a brief would reasonably suggest; the reasons they do not work are in the reverse-engineering notes rather than anywhere obvious.
 
-- **`reverse_gear`** (`0x104` bit 63) — the obvious "not in gear" check, and now the best-understood rejection here. Settled against `rides.db` on 2026-08-16, six days of riding:
+- **`rolling_backwards`** (`0x104` bit 63, and it shipped as **`reverse_gear`** until 2026-09-14 — #216 renamed it because it is not a gear; everything below still holds, only the key moved) — the obvious "not in gear" check, and now the best-understood rejection here. Settled against `rides.db` on 2026-08-16, six days of riding:
   - it is NOT a latched gear selection. 597 rising edges in **62 separate bursts across all six days**, and **404 of the 597 pulses are under 50 ms** (median 30 ms) — bus-rate chatter, which no rider-operated selector makes;
   - it IS tied to very low speed. Median `speed_can_kmh` at a rising edge is **0.4 km/h**, p95 0.7, and in clean data (excluding six windows where two contradictory `0x104` streams are interleaved) it **never exceeds 4.1 km/h**.
 
