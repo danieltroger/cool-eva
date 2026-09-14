@@ -13,7 +13,11 @@ import statistics
 import sys
 from datetime import datetime
 
-NAME = re.compile(r"capture-(\d{8})-(\d{6})-([0-9a-f]{8})\.log$")
+# Both name shapes. The trailing `-<uptime>` group arrived with #188; without the optional
+# group every capture written from that deploy on would `continue` out of the boot census
+# silently, shrinking the corpus with no error — this script would be invalidated by the
+# other half of the PR that introduced it.
+NAME = re.compile(r"capture-(\d{8})-(\d{6})-([0-9a-f]{8})(?:-(\d+))?\.log$")
 MINIMUM_FRAMES = 1000
 #: A backward step under this is candump's own sub-second reordering, not a clock move.
 REORDER_TOLERANCE_SECONDS = 0.25
@@ -36,6 +40,8 @@ def main(events_path, tails_path):
     report_fault_state(terminal)
     report_key_off(alive, terminal)
     report_shutdown_walks(terminal)
+    report_name_order(captures)
+    report_corpus_dates(terminal)
 
 
 def report_endings(captures):
@@ -67,9 +73,50 @@ def report_parks(terminal):
     describe("  observed entries", observed)
     describe("  opened already parked (file lengths, NOT park measurements)", opened_parked)
     say(f"  refused for a discontinuity {refused}")
+    leads = sorted(lead for lead, _, _ in observed)
+    say(f"  observed entries under 30 s: {sum(1 for lead in leads if lead < 30)}; under 10 s: "
+        f"{sum(1 for lead in leads if lead < 10)}")
     # The check that makes the lower bound safe: the gap rule is not hiding a short lead.
     smallest = smallest_refused_lead(terminal, {60})
     say(f"  smallest RAW lead among the refused {smallest:.2f} s — so nothing under 10 s is filtered out")
+
+
+def report_name_order(captures):
+    """Does sorting a boot's files by the name's DATE agree with their own first frames?
+
+    This is the whole justification for keeping the date first in the capture filename rather
+    than leading with the boot id, and it was asserted in three places with nothing behind it.
+    """
+    boots = {}
+    for capture in captures:
+        match = NAME.match(capture["path"])
+        if not match or capture["frames"] == 0:
+            continue
+        boots.setdefault(match.group(3), []).append((match.group(1) + match.group(2), capture["first"]))
+    comparable = {boot: files for boot, files in boots.items() if len(files) > 1}
+    disagreeing = []
+    for boot, files in comparable.items():
+        by_name = [first for _, first in sorted(files)]
+        if by_name != sorted(by_name):
+            disagreeing.append(boot)
+    say("Does the name's date order a boot's files the way their own frames do?")
+    say(f"  boots in the archive {len(boots)}, of which more than one frame-carrying file {len(comparable)}")
+    say(f"  boots where the two orders DISAGREE: {len(disagreeing)} {disagreeing}")
+
+
+def report_corpus_dates(terminal):
+    """How narrow the corpus is. A figure the docs quote as a caveat, so it has to be real."""
+    days = {}
+    for capture in terminal:
+        match = NAME.match(capture["path"])
+        if match:
+            days[match.group(1)] = days.get(match.group(1), 0) + 1
+    ordered = sorted(days.items())
+    august = sum(count for day, count in ordered if "20260802" <= day <= "20260810")
+    say("Corpus spread of the terminal captures")
+    say(f"  {august} of {len(terminal)} fall in 2026-08-02..08-10; busiest single day "
+        f"{max(days.values())} captures")
+    say("  " + ", ".join(f"{day}: {count}" for day, count in ordered))
 
 
 def report_coverage(terminal):
@@ -145,9 +192,15 @@ def report_shutdown_walks(terminal):
         if spans_a_gap(capture, when, capture["last"]) or capture["last"] - when > 60:
             continue
         last_when, last_substate, last_state, _ = capture["states"][-1]
+        chain = " -> ".join(
+            f"{state}/{substate}"
+            for moment, substate, state, _ in capture["states"]
+            if moment >= when - 30
+        )
         say(f"  entered {entry[1]}/{entry[2]} at -{capture['last'] - when:.2f} s; "
             f"last 0x101 SUBSTATE change {last_state}/{last_substate} at "
             f"-{capture['last'] - last_when:.3f} s   {capture['path']}")
+        say(f"      chain: {chain}")
 
 
 def describe(label, rows):

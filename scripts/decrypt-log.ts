@@ -364,13 +364,27 @@ function reportClockTrust(suspectByFile: Map<string, Map<string, number>>): void
   if (suspectByFile.size === 0) {
     return;
   }
-  let total = 0;
+  let unrecorded = 0;
+  let untrusted = 0;
   for (const counts of suspectByFile.values()) {
-    for (const count of counts.values()) {
-      total += count;
+    for (const [trust, count] of counts) {
+      if (trust === UNRECORDED) {
+        unrecorded += count;
+      } else {
+        untrusted += count;
+      }
     }
   }
-  console.warn(`\n⚠️  ${total} reading(s) were sealed while the Pi's clock could not be trusted.`);
+  if (untrusted > 0) {
+    console.warn(`\n⚠️  ${untrusted} reading(s) were sealed while the Pi's clock could not be trusted.`);
+  }
+  if (unrecorded > 0) {
+    // ⚠️ Not folded into the line above. Every segment sealed before 2026-09-14 predates the
+    // field, so on the existing archive that count is in the millions — and a warning that
+    // fires on the whole corpus is one nobody reads by the third run. Unknown is not the same
+    // as good, but it is not the same as bad either.
+    console.warn(`\n${unrecorded} further reading(s) predate the clock-trust field — nothing is known either way.`);
+  }
   console.warn("   Their `ts` is whatever the clock said and is NOT corrected here; `seq` still orders them.");
   console.warn("   Recovering the real time: docs/ride-log-clock.md. In rides.db: reading.clock_trust.");
   for (const [file, counts] of suspectByFile) {

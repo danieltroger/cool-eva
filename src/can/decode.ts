@@ -288,7 +288,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // 🟡 key_on MOVES — 20 observed 1→0 edges across 14 archive captures and 89 rows at 0 in
     // rides.db, against a comment here that said it had never been seen to. But it is NOT
     // confirmed to mean "the key is off": 17 of 18 edges in the log are followed by up to
-    // 1 598 739 more readings, and the bus transmits for up to 2 996 s after one. The bit is
+    // 1 633 226 more readings, and the bus transmits for up to 2 996 s after one. The bit is
     // real and its resting value is 1; what it names is still open. docs/power-cuts.md §7.
     //
     // b0's low bits and b3 are decoded below, both added 2026-08-16 — see the

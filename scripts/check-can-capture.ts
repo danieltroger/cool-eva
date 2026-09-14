@@ -107,10 +107,28 @@ if (!/OUTPUT="[^"]*\$UPTIME/.test(script)) {
   failures.push("the capture filename no longer carries $UPTIME — a mid-boot clock step reorders the files");
 }
 
-// ⚠️ The DATE stays first, and this is a decision rather than an accident: over all 98 boots
-// in the archive, sorting by the name's date agrees with sorting by each file's own first
-// frame in every one, 0 exceptions. Putting the boot id first would cost a chronological `ls`
-// over the whole archive forever to fix a hazard that has never fired. docs/ride-log-clock.md.
+// ⚠️ The DATE stays first, and that is a decision rather than an accident — argued from six
+// boots, which is every boot in the archive with more than one capture. docs/ride-log-clock.md §5.
+
+// ⚠️ And the reduction script that reads this archive has to accept the name this script
+// writes. It did not: the filename regex in evidence/keyoff/capture-figures.py predated the
+// uptime field, and a non-match there is a silent `continue`, so every capture written from
+// this change on would have dropped out of every figure in docs/power-cuts.md §7 with no
+// error at all. The two live in different languages and nothing else pairs them.
+const reductionSource = await readFile(new URL("../evidence/keyoff/capture-figures.py", import.meta.url), "utf-8");
+const namePattern2 = /^NAME = re\.compile\(r"(.+)"\)$/m.exec(reductionSource)?.[1];
+if (!namePattern2) {
+  failures.push("evidence/keyoff/capture-figures.py no longer declares a NAME regex to check the filename against");
+} else {
+  const sample = "capture-20260914-120000-7ce067a7-00001234.log";
+  const legacy = "capture-20260808-211445-2b4b0868.log";
+  if (!new RegExp(namePattern2).test(sample)) {
+    failures.push(`evidence/keyoff/capture-figures.py cannot parse the name capture.sh now writes (${sample})`);
+  }
+  if (!new RegExp(namePattern2).test(legacy)) {
+    failures.push(`evidence/keyoff/capture-figures.py can no longer parse the archive's existing names (${legacy})`);
+  }
+}
 const namePattern = /OUTPUT="\$DIRECTORY\/capture-\$\(date [^)]*\)-\$BOOT_ID-\$UPTIME\.log"/;
 if (!namePattern.test(script)) {
   failures.push(

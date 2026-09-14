@@ -359,7 +359,7 @@ Holds up: the readings themselves — routes, coordinates, the key-fob ID, every
 
 Does not:
 
-- **Timing metadata leaks.** Filenames are `rides-YYYY-MM-DD.celog`, and sizes scale with how much was logged. That reveals which days the bike moved and roughly for how long, without revealing where. Since the motivating worry is someone learning your habits, that's worth knowing.
+- **Timing metadata leaks.** Filenames are `rides-YYYY-MM-DD.celog` — plus `rides-boot-<session>.celog` for whatever was sealed before the clock could be believed, which leaks a boot count rather than a date (`docs/ride-log-clock.md`) — and sizes scale with how much was logged. That reveals which days the bike moved and roughly for how long, without revealing where. Since the motivating worry is someone learning your habits, that's worth knowing.
 - **No cross-segment integrity.** Each segment is authenticated on its own, so tampering within one is detected — but segments can be deleted or reordered without the reader noticing. It protects confidentiality, not completeness.
 - **`/dl` is unauthenticated** on port 80, like the rest of the server. The payload is sealed, so the exposure is the metadata above rather than the data — but it's a wider audience than "whoever holds the SD card".
 

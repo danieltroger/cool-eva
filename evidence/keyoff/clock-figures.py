@@ -16,6 +16,12 @@ from datetime import datetime, timezone
 STEP_THRESHOLD_MS = 60_000
 #: The ride log's segment timer. A wrong date only reaches a FILE NAME if a seal fired.
 SEGMENT_INTERVAL_MS = 30_000
+#: How close a GPS-recovered offset must land to count as corroborating the step.
+#: ⚠️ A real bound, compared against: the line used to print "N of N within 1.54 s" with the
+#: same count on both sides, so it would have said that with a 900-second error.
+OFFSET_AGREEMENT_S = 1.54
+#: Readings after a key_on edge past which the bus plainly did not stop.
+STILL_RUNNING_READINGS = 200
 
 
 def main(path):
@@ -28,6 +34,7 @@ def main(path):
     steps = report_steps(db)
     report_redating(db, steps)
     report_unclocked(db)
+    report_boot_file_cost(db)
 
 
 def report_key_off(db):
@@ -46,9 +53,13 @@ def report_key_off(db):
     followed = []
     for sid, seq in edges:
         followed.append(one(db, "SELECT COUNT(*) FROM reading WHERE session_id = ? AND seq > ?", (sid, seq)))
-    survivors = [count for count in followed if count > 200]
+    survivors = [count for count in followed if count > STILL_RUNNING_READINGS]
+    if not survivors:
+        say(f"  1->0 edges {len(edges)}; none followed by more than {STILL_RUNNING_READINGS} readings")
+        return
     say(f"  1->0 edges {len(edges)} across {len({sid for sid, _ in edges})} sessions; "
-        f"{len(survivors)} followed by {min(survivors)}-{max(survivors)} more readings")
+        f"{len(survivors)} of them followed by more than {STILL_RUNNING_READINGS} further readings "
+        f"({min(survivors)}-{max(survivors)}) — i.e. the bus plainly did not stop")
 
 
 def report_rail(db):
@@ -76,13 +87,25 @@ def report_parks(db):
     for sid, seq, ts in rows:
         if sid not in last_per_session or seq > last_per_session[sid][0]:
             last_per_session[sid] = (seq, ts)
+    # ⚠️ A wall-clock window, in the one analysis that exists because wall-clock differences
+    # are not durations here. So a session whose clock JUMPS inside the window is refused
+    # rather than counted: the window would otherwise span the step and count a whole session.
     protected = []
+    refused = 0
     for sid, (_, ts) in last_per_session.items():
+        jumped = one(db,
+                     "SELECT COUNT(*) FROM (SELECT ts - LAG(ts) OVER (ORDER BY seq) dt FROM reading "
+                     "WHERE session_id = ? AND ts BETWEEN ? AND ?) WHERE dt > ? OR dt < ?",
+                     (sid, ts - SEGMENT_INTERVAL_MS, ts, STEP_THRESHOLD_MS, -STEP_THRESHOLD_MS))
+        if jumped:
+            refused += 1
+            continue
         protected.append(one(db, "SELECT COUNT(*) FROM reading WHERE session_id = ? AND ts BETWEEN ? AND ?",
                              (sid, ts - SEGMENT_INTERVAL_MS, ts)))
     say(f"\npark entries (BLE vehicle_state, observed transitions) {len(rows)} across {len(last_per_session)} sessions")
     say(f"  readings in the {SEGMENT_INTERVAL_MS // 1000} s before the LAST park of each session: "
-        f"min {min(protected)} median {statistics.median(protected):g} max {max(protected)}, total {sum(protected)}")
+        f"min {min(protected)} median {statistics.median(protected):g} max {max(protected)}, total {sum(protected)}"
+        f" (over {len(protected)} sessions; {refused} refused for a clock jump inside the window)")
 
 
 def report_steps(db):
@@ -133,8 +156,10 @@ def report_redating(db, first_jumps):
                            "(SELECT MIN(seq) FROM reading WHERE session_id = ?)", (sid, sid))
         windows.append((ts - delta - start_ts) / 1000)
     say(f"\nre-dating from gps_epoch_s: {len(errors)} stepped sessions carry a pre-step GPS row")
+    agreeing = sum(1 for error in errors if error <= OFFSET_AGREEMENT_S)
     say(f"  recovered offset vs the measured step: min {min(errors):.3f} median "
-        f"{statistics.median(errors):.3f} max {max(errors):.3f} s — {len(errors)} of {len(errors)} within 1.54 s")
+        f"{statistics.median(errors):.3f} max {max(errors):.3f} s")
+    say(f"  within {OFFSET_AGREEMENT_S} s: {agreeing} of {len(errors)}")
     say(f"  window over that corroborated subset: median {statistics.median(windows):.1f} s, "
         f"{sum(1 for w in windows if w * 1000 > SEGMENT_INTERVAL_MS)} of {len(windows)} past the seal interval")
 
@@ -149,6 +174,29 @@ def report_unclocked(db):
     say(f"\nsessions that never log a GPS fix: {len(sizes)}, holding {sum(sizes)} readings "
         f"(median {statistics.median(sizes):g}, max {max(sizes)})")
     say("  these never reach satellite-backed, so their WHOLE session is written under a boot name")
+
+
+def report_boot_file_cost(db):
+    """What the boot-named files cost, which docs/ride-log-clock.md §2 quotes as a table."""
+    sessions = db.execute(
+        "SELECT session_id, COUNT(*) FROM reading WHERE session_id IS NOT NULL GROUP BY session_id").fetchall()
+    unclocked = {
+        sid for (sid,) in db.execute(
+            "SELECT b.sid FROM (SELECT session_id sid FROM reading WHERE session_id IS NOT NULL GROUP BY session_id) b "
+            "LEFT JOIN (SELECT r.session_id sid FROM reading r JOIN signal s ON s.id = r.signal_id "
+            "  WHERE s.key = 'gps_epoch_s' AND r.session_id IS NOT NULL GROUP BY r.session_id) g ON g.sid = b.sid "
+            "WHERE g.sid IS NULL")
+    }
+    span_ms = one(db, "SELECT MAX(ts) - MIN(ts) FROM reading WHERE ts < 4000000000000 AND session_id IS NOT NULL")
+    days = span_ms / 86_400_000
+    total = sum(count for _, count in sessions)
+    # A GPS-less session puts its WHOLE content in the boot file; a stepped one puts the rows
+    # before the step there. Everything else contributes only its first few seconds.
+    in_boot_files = sum(count for sid, count in sessions if sid in unclocked)
+    say(f"\nboot-named files: {len(sessions)} boots over {days:.1f} days = {len(sessions) / days:.2f} a day "
+        f"({len(sessions) / days * 365:.0f} a year), one per boot")
+    say(f"  readings landing in them from GPS-less boots alone: {in_boot_files} of {total} "
+        f"({100 * in_boot_files / total:.1f} %), before the pre-step rows of the boots that do sync")
 
 
 def day(milliseconds):

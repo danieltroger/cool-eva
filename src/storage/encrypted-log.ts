@@ -188,8 +188,18 @@ export function appendReading(
   }
 }
 
-/** Seal whatever is buffered right now. Safe to call at any time. */
+/**
+ * Seals everything buffered right now, and does not return until it is on the card.
+ *
+ * ⚠️ TWO passes, and the second is not belt-and-braces. `sealPendingSegment` returns the seal
+ * ALREADY IN FLIGHT rather than starting a new one, so a single call landing mid-seal would
+ * return that promise and leave every reading queued since it began still in the buffer —
+ * at a park, the approach to the parking spot; at `/dl`, the tail of the ride you pulled the
+ * phone out for. Every caller wants "everything", so the contract is here rather than
+ * hand-copied at each site. scripts/check-ride-log-clock.ts §7.
+ */
 export async function flushEncryptedLog(): Promise<void> {
+  await sealPendingSegment();
   await sealPendingSegment();
 }
 
@@ -198,11 +208,10 @@ export async function closeEncryptedLog(): Promise<void> {
     clearInterval(segmentTimer);
     segmentTimer = undefined;
   }
-  // Two passes: the first awaits a periodic seal that may already be running
-  // (returning early there would let process.exit() kill it mid-append), the
+  // The two passes flushEncryptedLog() documents: the first awaits a periodic seal that may
+  // already be running (returning early would let process.exit() kill it mid-append), the
   // second seals whatever was buffered while that one ran.
-  await sealPendingSegment();
-  await sealPendingSegment();
+  await flushEncryptedLog();
 }
 
 function sealPendingSegment(): Promise<void> {

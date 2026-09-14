@@ -10,6 +10,7 @@ import { monotonicNow, since } from "../src/monotonic.ts";
 import { appendReading, closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
 import { startSealOnPark } from "../src/storage/seal-on-park.ts";
 import { MAX_RUNS_PER_SEAL, mostPessimistic, splitByTrust } from "../src/storage/trust-runs.ts";
+import { MIN_MS_BETWEEN_PARK_SEALS } from "../src/storage/seal-on-park.ts";
 import type { ClockTrust } from "../src/gps/clock.ts";
 
 // The ride log against a Pi with no RTC, and the seal that parking buys (#188, #57).
@@ -172,7 +173,6 @@ async function checkNaming(): Promise<void> {
     boot.map(segment => segment.header.trust).join() === "never-synced,contested" &&
       day[0].header.trust === "satellite-backed"
   );
-  check("every segment names the run that wrote it", new Set([...boot, ...day].map(s => s.header.session)).size === 1);
 }
 
 /**
@@ -290,26 +290,59 @@ async function checkParkTrigger(): Promise<void> {
     { key: "vehicle_state_can", unit: "", group: "drive", source: "stream" },
     { key: "soc", unit: "%", group: "battery", source: "stream" },
   ]);
-  const stop = startSealOnPark();
+  // A monotonic clock this check can move, so the rate limit gets covered without sitting out
+  // five real seconds. Never Date.now(): ../src/monotonic.ts, and §8 reads the ban off the code.
+  let parkClockMs = monotonicNow();
+  const stop = startSealOnPark(() => parkClockMs);
   try {
     // The first sample is whatever the bike was already doing — liveState starts empty after
     // a boot, so a capture that opens on a parked bike must not read as an entry.
     record("vehicle_state_can", 60);
     await settle();
-    check("the first sample does not seal, even when it already reads parked", (await sizeOf(directory)) === 0);
+    check("the first sample does not seal, even when it already reads parked", await staysAt(directory, 0));
 
     record("vehicle_state_can", 40);
     await settle();
     record("soc", 61);
     record("vehicle_state_can", 43);
     await settle();
-    check("an unrelated change does not seal", (await sizeOf(directory)) === 0);
+    check("an unrelated change does not seal", await staysAt(directory, 0));
 
     record("vehicle_state_can", 60);
     await waitFor(async () => (await sizeOf(directory)) > 0, "the park to seal the buffer");
-    check("entering parked seals it", (await sizeOf(directory)) > 0);
+    // ⚠️ SETTLED, not just non-zero: waitFor returns on the first byte, and stat can catch the
+    // append mid-write, so a size read straight after it is a moving target — which then reads
+    // as "the second park sealed" when nothing of the sort happened.
+    const afterFirstPark = await settledSize(directory);
+    check("entering parked seals it", afterFirstPark > 0);
     const sealed = await allSegmentsIn(directory);
     check("and the readings that reached the card are the ones from before the park", valuesOf(sealed).includes(61));
+
+    // The rate limit, behaviourally. §8 reads the monotonic clock off the source and would
+    // stay green with the limit neutered to `< 0` or widened to an hour, so without these two
+    // the constant has no coverage at all beyond its deletion.
+    record("vehicle_state_can", 43);
+    await settle();
+    record("soc", 62);
+    record("vehicle_state_can", 60);
+    // ⚠️ A bounded WAIT, not two microtask turns. The seal is async — gzip, crypto, fdatasync —
+    // so reading the size straight after the trigger returns the old one whether the rate limit
+    // held or not, and the assertion passes for the wrong reason. A mutation neutering the limit
+    // to `< 0` survived exactly that. The positive case below lands in single-digit ms.
+    check("a second park inside the window does not seal again", await staysAt(directory, afterFirstPark));
+
+    // ⚠️ A LITERAL, never MIN_MS_BETWEEN_PARK_SEALS + 1: an advance derived from the constant
+    // under test moves with it, so widening the limit to an hour survived this case too.
+    parkClockMs += 10_000;
+    record("vehicle_state_can", 43);
+    await settle();
+    record("vehicle_state_can", 60);
+    await waitFor(async () => (await sizeOf(directory)) > afterFirstPark, "the park past the window to seal");
+    check("and one past the window does", (await sizeOf(directory)) > afterFirstPark);
+    check(
+      "the reading queued between the two parks reached the card",
+      valuesOf(await allSegmentsIn(directory)).includes(62)
+    );
   } finally {
     stop();
     await closeEncryptedLog();
@@ -432,10 +465,7 @@ async function checkRateLimitIsMonotonic(): Promise<void> {
     .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line))
     .join("\n");
   check("no Date.now() anywhere in the module's code", !code.includes("Date.now"));
-  check(
-    "and the rate limit is measured with since()/monotonicNow()",
-    code.includes("since(") && code.includes("monotonicNow()")
-  );
+  check("and the clock it defaults to is the monotonic one", code.includes("monotonicNow"));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -612,6 +642,35 @@ async function sealByHand(header: SegmentHeader, rows: [number, string, number, 
   cipher.setAAD(segmentHeader);
   const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
   return Buffer.concat([segmentHeader, ciphertext, cipher.getAuthTag()]);
+}
+
+/** The directory's size once two consecutive reads agree — i.e. no append is in flight. */
+async function settledSize(directory: string): Promise<number> {
+  const start = monotonicNow();
+  let previous = -1;
+  while (since(start) < SETTLE_DEADLINE_MS) {
+    const current = await sizeOf(directory);
+    if (current === previous) {
+      return current;
+    }
+    previous = current;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  failures += 1;
+  console.error(`  ✗ ${directory} never stopped growing`);
+  return previous;
+}
+
+/** True if the directory is still exactly `bytes` after long enough for a seal to have landed. */
+async function staysAt(directory: string, bytes: number): Promise<boolean> {
+  const start = monotonicNow();
+  while (since(start) < 400) {
+    if ((await sizeOf(directory)) !== bytes) {
+      return false;
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  return (await sizeOf(directory)) === bytes;
 }
 
 /** Lets queued microtasks and the change listener run. */

@@ -1,5 +1,5 @@
 import { onChange } from "../can/signals.ts";
-import { monotonicNow, since } from "../monotonic.ts";
+import { monotonicNow } from "../monotonic.ts";
 import { flushEncryptedLog } from "./encrypted-log.ts";
 
 // Seal the ride log when the bike parks, because parking is the only warning this bus gives.
@@ -21,13 +21,18 @@ const PARKED_STATE = 60;
  * is cheap, so this is not a budget — it is a stop on a signal that chatters if the decode is
  * ever wrong about what 60 means. Monotonic, because this process steps its own wall clock.
  */
-const MIN_MS_BETWEEN_PARK_SEALS = 5_000;
+export const MIN_MS_BETWEEN_PARK_SEALS = 5_000;
 
 /**
  * Starts sealing the ride log whenever the bike enters the parked state. Returns a function
  * that stops it.
+ *
+ * `readMonotonic` is a parameter for the same reason `clockTrust` is one on the log itself:
+ * it lets scripts/check-ride-log-clock.ts drive the rate limit without sitting out five real
+ * seconds per case, which is the difference between the constant having coverage and having
+ * none. It is never anything but monotonicNow() in the service.
  */
-export function startSealOnPark(): () => void {
+export function startSealOnPark(readMonotonic: () => number = monotonicNow): () => void {
   let lastState: number | undefined;
   let lastSealAt: number | undefined;
   return onChange(changed => {
@@ -44,31 +49,17 @@ export function startSealOnPark(): () => void {
     if (previous === undefined || previous === PARKED_STATE || state !== PARKED_STATE) {
       return;
     }
-    if (lastSealAt !== undefined && since(lastSealAt) < MIN_MS_BETWEEN_PARK_SEALS) {
+    if (lastSealAt !== undefined && readMonotonic() - lastSealAt < MIN_MS_BETWEEN_PARK_SEALS) {
       return;
     }
-    lastSealAt = monotonicNow();
+    lastSealAt = readMonotonic();
     // ⚠️ `void` with its own catch, not an async listener. notifyChange's try/catch in
     // ../can/signals.ts is synchronous-only — it runs inside queueMicrotask, and its own
     // comment says an escaped throw there is an uncaughtException that ends the process,
     // taking the CAN logging and the WebSocket with it. A rejected promise walks straight
     // past that guard.
-    void sealNow().catch(error => {
+    void flushEncryptedLog().catch(error => {
       console.warn("ride-log: the park seal failed; the 30 s timer still has the buffer —", error);
     });
   });
-}
-
-/**
- * Seals twice, and the second pass is not belt-and-braces.
- *
- * `sealPendingSegment` returns the seal already in flight rather than starting a new one, so
- * a single call landing while the periodic timer is mid-seal would return THAT promise and
- * leave every reading queued since it began in the buffer — which at a park is precisely the
- * approach to the parking spot. ../storage/encrypted-log.ts's closeEncryptedLog does the same
- * two passes for the same reason.
- */
-async function sealNow(): Promise<void> {
-  await flushEncryptedLog();
-  await flushEncryptedLog();
 }
