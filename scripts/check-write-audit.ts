@@ -217,6 +217,11 @@ const REAL_HOLE = "\0".repeat(215);
   const partial = await journalOf(line({ at: 1 }), `${REAL_HOLE}{"status":"written"}`, line({ at: 3 }));
   const partialRead = await readCapturing(partial, 10);
   check("5d nor one followed by an object with no `at` and no `action`", partialRead.records.length === 2);
+  // All three fields, one at a time: every record has `at`, `action` and `status`, and salvaged
+  // bytes missing any of them are a fragment that happens to parse rather than a record.
+  const noStatus = await journalOf(line({ at: 1 }), `${REAL_HOLE}{"at":2,"action":"clear-dtcs"}`, line({ at: 3 }));
+  const noStatusRead = await readCapturing(noStatus, 10);
+  check("5d nor one with an `at` and an `action` but no `status`", noStatusRead.records.length === 2);
 }
 {
   // 5e — precedence. A hole at the END of the file is still damage: §4 already holds that for an

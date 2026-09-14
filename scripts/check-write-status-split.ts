@@ -131,7 +131,8 @@ globalThis.fetch = (async (input: string) => {
   );
 }) as unknown as typeof fetch;
 
-const { fetchStatus, parameterListing, refreshVcuWrite, selectedTarget } = await import("../public/views/vcu-write.js");
+const { fetchStatus, parameterListing, refreshVcuWrite, selectTarget, selectedTarget } =
+  await import("../public/views/vcu-write.js");
 
 served = { detail: DETAIL, targets: LISTING, tableType: TABLE_TYPE };
 await refreshVcuWrite();
@@ -184,17 +185,64 @@ check(
 
 // ── §4b an answer that arrives out of order is dropped ────────────────────────────────
 //
-// The `<select>` starts a request on every change, so two can be in flight and the older one
-// carries a detail for a parameter the form has left. Applied, it lands a detail selectedTarget()
-// refuses with nothing on its way to replace it — the same stuck sheet by a different route.
+// The `<select>` starts a request on every change, so two can be in flight and the OLDER one
+// carries a detail for a parameter the form has already left. Applied, it lands a detail
+// selectedTarget() refuses with nothing on its way to replace it — the stuck sheet of §4 by a
+// different route. The stub below answers the first request slowly and the second at once, so the
+// replies really do arrive in the wrong order rather than being asserted about in the abstract.
 served = { detail: { ...DETAIL, name: "ONLY_PARAM", index: 9, micro: "A8" }, targets: null, tableType: 20000 };
 await fetchStatus();
 check("§4b a matching detail is adopted", selectedTarget()?.name === "ONLY_PARAM");
-const slow = fetchStatus();
-served = { detail: { ...DETAIL, name: "ONLY_PARAM", index: 9, micro: "A8" }, targets: null, tableType: 20000 };
-const fast = fetchStatus();
-await Promise.all([slow, fast]);
-check("§4b and two overlapping reads leave the newer one's answer in place", selectedTarget()?.name === "ONLY_PARAM");
+
+const SECOND = { ...DETAIL, name: "SECOND_ONLY", index: 10, micro: "A8" };
+// Initialised to a no-op rather than null: assigned only inside a promise executor, TypeScript's
+// control flow narrows a `null` start to `never` at the call below.
+let releaseHeldRequest = () => {};
+globalThis.fetch = (async (input: string) => {
+  asked.push(String(input));
+  const wanted = new URL(String(input), "http://eva.local/").searchParams.get("detail");
+  const body = JSON.stringify({
+    status: {
+      enabled: true,
+      targets: null,
+      detail: wanted === "SECOND_ONLY" ? SECOND : { ...DETAIL, name: "ONLY_PARAM", index: 9, micro: "A8" },
+      tableGate: { tableType: 20000 },
+      clock: { trustworthy: true, iso: "2026-09-14T00:00:00.000Z" },
+      recent: [],
+    },
+    result: null,
+    message: null,
+  });
+  if (wanted === "ONLY_PARAM") {
+    await new Promise<void>(resolve => {
+      releaseHeldRequest = resolve;
+    });
+  }
+  return new Response(body, { headers: { "content-type": "application/json" } });
+}) as unknown as typeof fetch;
+
+const stale = fetchStatus();
+await new Promise(resolve => setTimeout(resolve, 10));
+// The real `<select>` handler, not a copy of it.
+selectTarget("SECOND_ONLY");
+await new Promise(resolve => setTimeout(resolve, 10));
+check("§4b the newer answer lands", selectedTarget()?.name === "SECOND_ONLY");
+releaseHeldRequest();
+await stale;
+check(
+  "§4b ⚠️ and the older one, arriving after it, is DROPPED rather than applied",
+  selectedTarget()?.name === "SECOND_ONLY"
+);
+
+// ── §4c a request that HANGS does not stack another behind it ─────────────────────────
+//
+// Not in this file's scope on the sheet — it is charge-write.js's retry that is paced — but the
+// same fetch has no timeout of its own here either, so a held request must not be joined by a
+// second on the next call. Asserted through the ordering counter: the second read supersedes it.
+check(
+  "§4c a held request is superseded rather than joined",
+  asked.filter(url => url.includes("SECOND_ONLY")).length === 1
+);
 
 // ── §5 the pre-arm refresh still raises busy ──────────────────────────────────────────
 //

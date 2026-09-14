@@ -195,6 +195,47 @@ check(
   STATUS_RETRY_MS >= HEARTBEAT_MS
 );
 
+// ── §5a a request that HANGS is not joined by another every retry window ──────────────
+//
+// ⚠️ The retry is paced from the START of a request, and `fetch` has no timeout of its own — so
+// without an in-flight guard a Pi that accepts the connection and then says nothing collects a
+// new request every STATUS_RETRY_MS for the rest of the charge. Twelve a minute, which is the
+// poll #207 removed, reached through its own fix.
+clock += 20_000;
+phoneNow += 20_000;
+serverTime.val = clock;
+await flush();
+let releaseHung = () => {};
+globalThis.fetch = (async (input: string) => {
+  fetches += 1;
+  requested.push(String(input));
+  await new Promise<void>(resolve => {
+    releaseHung = resolve;
+  });
+  return new Response(JSON.stringify({ status: { enabled: true, chargeAck: null }, result: null, message: null }));
+}) as unknown as typeof fetch;
+
+fetches = 0;
+await deliver({ charge_manager_state: DC_SESSION });
+// Two: the session edge, and the settle guard meeting the number on the bus for the first time
+// since the last session forgot it — the accepted duplicate §4 names. Both are now hanging.
+check("§5a the session's two opening requests are made", fetches === 2);
+for (let window = 0; window < 4; window += 1) {
+  await deliver({ charge_manager_state: DC_SESSION }, STATUS_RETRY_MS);
+}
+check("§5a four retry windows pass with them still hanging, and nothing joins them", fetches === 2);
+releaseHung();
+await flush();
+// Back to a Pi that answers, for the sections below.
+globalThis.fetch = (async (input: string) => {
+  fetches += 1;
+  requested.push(String(input));
+  if (failing) {
+    throw new Error("preview: the Pi did not answer");
+  }
+  return new Response(JSON.stringify({ status: { enabled: true, chargeAck: null }, result: null, message: null }));
+}) as unknown as typeof fetch;
+
 // ── §5b the charge tab never asks for the 269 names ───────────────────────────────────
 //
 // ⚠️ It has no parameter picker, and this is the call armChargeCurrent() makes before every arm —

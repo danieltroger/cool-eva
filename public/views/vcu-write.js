@@ -436,15 +436,7 @@ function ParameterSelect() {
         name: "vcu-write-parameter",
         autocomplete: "off",
         onchange: (/** @type {Event} */ event) => {
-          selected.val = /** @type {HTMLSelectElement} */ (event.target).value;
-          // A different parameter means a different value, a different range and a
-          // different set of warnings. Everything the form holds about the old one goes.
-          forgetSelection();
-          // …including what the Pi said about it, which is now one round trip away. Until it
-          // lands `selectedTarget()` is null, so the form says it is reading and the Read and
-          // Write buttons stay disabled — nothing renders the old parameter's warnings under
-          // the new parameter's name.
-          void fetchStatus();
+          selectTarget(/** @type {HTMLSelectElement} */ (event.target).value);
         },
       },
       ...targets.map(target =>
@@ -2379,6 +2371,24 @@ export async function refreshVcuWrite() {
   forgetSelection();
   // The one fetch that asks for the 269 names. Everything else passes `list=0`.
   await fetchStatus(true);
+}
+
+/**
+ * Moves the form to another parameter — the selection, everything the old one held, and the round
+ * trip for the new one's notes.
+ *
+ * ⚠️ A different parameter means a different value, a different range and a different set of
+ * warnings, so everything the form holds about the old one goes. Until the detail lands
+ * `selectedTarget()` is null, so the form says it is reading and Read and Write stay disabled;
+ * nothing renders the old parameter's warnings under the new parameter's name.
+ *
+ * The `<select>`'s handler is this and nothing else, so a check driving it drives the real path.
+ * @param {string} name
+ */
+export function selectTarget(name) {
+  selected.val = name;
+  forgetSelection();
+  void fetchStatus();
 }
 
 /**
