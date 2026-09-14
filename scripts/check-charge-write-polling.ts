@@ -1,5 +1,5 @@
 import { defineSignals, onChange, record } from "../src/can/signals.ts";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { noteChargeCommandSent } from "../src/charge/ack-watch.ts";
 import { HEARTBEAT_MS } from "../src/ws.ts";
 import { SIGNALS } from "../src/can/registry.ts";
@@ -265,24 +265,35 @@ check(
 // ⚠️ …and the two POSTs, which are reached only from a button press and so are asserted on the
 // source. Without this the message above is true of a run that never touches them, which is
 // exactly the direction the bug went: the GET was fixed and the commands kept shipping the list.
-const chargeSources = ["public/lib/charge-write.js", "public/views/charge-current.js", "public/views/charge-stop.js"];
+// ⚠️ Every module in public/ that names /vcu-write, found rather than listed: a hard-coded three
+// is a list somebody has to remember to extend, and §6 below already replaced that shape.
 const missing: string[] = [];
-for (const file of chargeSources) {
-  const text = await readFile(new URL(`../${file}`, import.meta.url), "utf-8");
-  // A literal URL: the query is right there, so read it.
+for (const entry of await readdir(new URL("../public", import.meta.url), { recursive: true })) {
+  if (typeof entry !== "string" || !entry.endsWith(".js") || entry.startsWith("vendor")) {
+    continue;
+  }
+  const text = await readFile(new URL(`../public/${entry}`, import.meta.url), "utf-8");
+  if (!text.includes("/vcu-write")) {
+    continue;
+  }
+  // The sheet is the one module allowed to ask for the listing — it draws the picker.
+  const drawsThePicker = entry.endsWith("vcu-write.js");
   for (const [, query] of text.matchAll(/["`]\/vcu-write\?([^"`$]*)["`]/g)) {
-    if (!query.includes("list=0")) {
-      missing.push(`${file}: /vcu-write?${query}`);
+    if (!query.includes("list=0") && !drawsThePicker) {
+      missing.push(`${entry}: /vcu-write?${query}`);
     }
   }
   if (/["`]\/vcu-write["`]/.test(text)) {
-    missing.push(`${file}: a bare /vcu-write with no query at all`);
+    missing.push(`${entry}: a bare /vcu-write with no query at all`);
   }
-  // A built URL: every one of them needs its own `list: "0"` in the params it interpolates.
-  const built = [...text.matchAll(/\/vcu-write\?\$\{/g)].length;
-  const declared = [...text.matchAll(/list: "0"/g)].length;
-  if (declared < built) {
-    missing.push(`${file}: ${built} built /vcu-write URL(s), ${declared} of them setting list`);
+  // ⚠️ Per URLSearchParams LITERAL, not a file-wide count: `declared < built` was satisfied by a
+  // stray `list: "0"` anywhere in the file, including inside a comment.
+  if (!drawsThePicker) {
+    for (const [params] of text.matchAll(/new URLSearchParams\(\{[^}]*\}\)/g)) {
+      if (!params.includes("list:")) {
+        missing.push(`${entry}: ${params.replace(/\s+/g, " ").slice(0, 60)} sets no list`);
+      }
+    }
   }
 }
 check(`§5b and no charge-tab source asks without it (${missing.join("; ") || "none"})`, missing.length === 0);

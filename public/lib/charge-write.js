@@ -155,10 +155,17 @@ van.derive(() => {
   if (statusInFlight || (statusAskedAt !== null && since(statusAskedAt) < STATUS_RETRY_MS)) {
     return;
   }
-  statusAskedAt = monotonicNow();
+  const mark = monotonicNow();
+  statusAskedAt = mark;
   statusInFlight = true;
   void fetchChargeWriteStatus().finally(() => {
-    statusInFlight = false;
+    // ⚠️ Only if it is still OURS. A request abandoned by a session that ended, or superseded by a
+    // newer attempt, settles later and would otherwise clear a flag a live request is relying on —
+    // one extra concurrent request to a Pi that is already not answering. Same shape as the
+    // settle guard's `lastSettle === settle`.
+    if (statusAskedAt === mark) {
+      statusInFlight = false;
+    }
   });
 });
 

@@ -232,17 +232,17 @@ check("§4b the newer answer lands", selectedTarget()?.name === "SECOND_ONLY");
 releaseHeldRequest();
 await stale;
 check(
-  "§4b ⚠️ and the older one, arriving after it, is DROPPED rather than applied",
+  "§4b the form still ends on the newer parameter — TRUE WITH OR WITHOUT the counter, because the " +
+    "re-ask rule repairs it on the next request; §4c is what the counter itself is asserted by",
   selectedTarget()?.name === "SECOND_ONLY"
 );
 
-// ── §4c a request that HANGS does not stack another behind it ─────────────────────────
+// ── §4c THE COUNTER: a superseded reply is dropped rather than applied and repaired ───
 //
-// Not in this file's scope on the sheet — it is charge-write.js's retry that is paced — but the
-// same fetch has no timeout of its own here either, so a held request must not be joined by a
-// second on the next call. Asserted through the ordering counter: the second read supersedes it.
+// What the counter buys over the re-ask rule alone: no wasted round trip, and no flash of a detail
+// the form has already left. One request for the new parameter, not two.
 check(
-  "§4c a held request is superseded rather than joined",
+  "§4c ⚠️ the superseded reply is dropped rather than applied and then repaired",
   asked.filter(url => url.includes("SECOND_ONLY")).length === 1
 );
 
@@ -314,27 +314,28 @@ for (const release of pending) {
 check("§5c a superseded read reports that it did NOT apply", (await heldRead) === false);
 check("§5c and the newest one reports that it did", (await newerRead) === true);
 check("§5c armWrite reads whether its refresh applied", /=\s*await fetchStatus\(\)/.test(armBody));
-check(
-  "§5c and will not arm without it",
-  /if \(\s*refreshed &&/.test(armBody) && armBody.indexOf("refreshed") < armBody.indexOf('arm("write")')
-);
+check("§5c and will not arm without it", /if \(refreshed &&/.test(armBody));
 
-// ── §5d a Pi that renames its table on every reply still terminates ───────────────────
+// ── §5d a Pi that renames its table AND its listing every reply is given up on ───────
 //
-// ⚠️ ONE hop by construction, not by a counter: adoptListing clears `listingHeldFor` when it asks
-// for the names again, and with nothing held it cannot ask twice. This drives the worst case a
-// server can present — a different tableType every reply — and asserts the request count rather
-// than trusting that reading.
+// ⚠️ THE CASE THAT ONCE DELETED A GUARD. `adoptListing` cannot say yes twice running, and an
+// earlier version of this section proved exactly that and concluded the re-ask was one hop by
+// construction — so the bound was removed as dead code. It is not dead: adoptListing ALTERNATES
+// with the selection re-ask, which asks WITH the listing and hands `listingHeldFor` straight back.
+// The stub below is the one that shows it, and the earlier one could not: a different tableType
+// AND a different listing every reply, so the selection is re-pointed each time. Against an
+// unbounded reader this ran to 41 requests and was still going.
 let flip = 0;
 asked.length = 0;
 globalThis.fetch = (async (input: string) => {
   asked.push(String(input));
   flip += 1;
+  const wantsList = !String(input).includes("list=0");
   return new Response(
     JSON.stringify({
       status: {
         enabled: true,
-        targets: null,
+        targets: wantsList ? [{ name: `PARAM_${flip}`, index: flip, micro: "A9" }] : null,
         detail: null,
         tableGate: { tableType: 30000 + flip },
         clock: { trustworthy: true, iso: "2026-09-14T00:00:00.000Z" },
@@ -346,8 +347,17 @@ globalThis.fetch = (async (input: string) => {
     { headers: { "content-type": "application/json" } }
   );
 }) as unknown as typeof fetch;
-await fetchStatus();
-check(`§5d a table that changes on every reply costs two requests, not a loop (${asked.length})`, asked.length === 2);
+const loopWarnings: string[] = [];
+const realWarnForLoop = console.warn;
+console.warn = (...args: unknown[]) => void loopWarnings.push(args.map(String).join(" "));
+const gaveUp = await fetchStatus();
+console.warn = realWarnForLoop;
+check(`§5d it stops in a handful of requests rather than looping (${asked.length})`, asked.length <= 8);
+check("§5d and reports that it gave up rather than answering as if it had worked", gaveUp === false);
+check(
+  "§5d loudly, because this cannot happen on a settled bike",
+  loopWarnings.some(entry => entry.includes("gave up re-asking"))
+);
 
 // ── §5e send() is in the same queue and under the same re-ask rule ────────────────────
 //

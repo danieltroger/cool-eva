@@ -80,6 +80,8 @@ let listingHeldFor = /** @type {{ tableType: number | null } | null} */ (null);
  * counter, same reason, as views/charge-auto.js's `latestRead`.
  */
 let latestStatusRead = 0;
+/** How many times one fetchStatus() may re-ask before it is a loop rather than a correction. */
+const MAX_STATUS_REASKS = 4;
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
 /**
@@ -2067,6 +2069,12 @@ async function armWrite() {
   // Opening the red fold or changing the picker during the round trip is enough to cause it.
   if (refreshed && after && before && after.value === before.value && selectedTarget()?.name === name && canWrite()) {
     arm("write");
+    return;
+  }
+  if (!refreshed && message.val === "") {
+    // A refresh that was superseded rather than failed leaves no message of its own, and a tap that
+    // silently does nothing reads as a broken button on a sheet where the next tap writes.
+    message.val = "the sheet refreshed while you were tapping — tap again";
   }
 }
 
@@ -2422,7 +2430,18 @@ export function parameterListing() {
  * `clock.iso` and must not wipe a parameter reading somebody took thirty seconds ago;
  * `refreshVcuWrite` is the sheet-opening reset and deliberately does both.
  */
-export async function fetchStatus(withListing = false) {
+export async function fetchStatus(withListing = false, reAsks = 0) {
+  if (reAsks > MAX_STATUS_REASKS) {
+    // ⚠️ MEASURED, not defensive — and it was deleted once on the strength of a check too weak to
+    // reach it. `adoptListing` cannot say yes twice running, but it does not have to: it ALTERNATES
+    // with the re-ask below, which asks WITH the listing and so hands `listingHeldFor` back. A Pi
+    // answering a different tableType and a different listing every time then loops for ever; that
+    // takes a sweep landing between back-to-back requests, so it is not reachable from a settled
+    // bike — which is exactly why it must be loud rather than silent when it happens.
+    message.val = "the Pi keeps renaming its parameter table — reopen the sheet";
+    console.warn(`vcu-write: gave up re-asking for the status after ${reAsks} rounds`);
+    return false;
+  }
   const query = new URLSearchParams();
   if (selected.val !== "") {
     query.set("detail", selected.val);
@@ -2456,9 +2475,7 @@ export async function fetchStatus(withListing = false) {
     armed.val = "";
     state.val = payload;
     if (adoptListing(payload)) {
-      // ⚠️ One hop, always: adoptListing clears `listingHeldFor` when it says yes, and with nothing
-      // held it cannot say yes again — so a Pi renaming its table on every reply still terminates.
-      return await fetchStatus(true);
+      return await fetchStatus(true, reAsks + 1);
     }
     if (selected.val === "" && listing.val.length > 0) {
       selected.val = listing.val[0].name;
@@ -2469,7 +2486,7 @@ export async function fetchStatus(withListing = false) {
       // it. Either way this reply describes a different parameter, so ask again for the one the
       // form is on. It cannot recur: a re-entry only fires when the selection moves during ITS own
       // request, and nothing below moves it.
-      return await fetchStatus();
+      return await fetchStatus(false, reAsks + 1);
     }
     return true;
   } catch (error) {
