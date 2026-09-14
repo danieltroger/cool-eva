@@ -1,4 +1,4 @@
-import { onChange, record } from "../src/can/signals.ts";
+import { defineSignals, onChange, record } from "../src/can/signals.ts";
 import { noteChargeCommandSent } from "../src/charge/ack-watch.ts";
 import { HEARTBEAT_MS } from "../src/ws.ts";
 import { SIGNALS } from "../src/can/registry.ts";
@@ -200,6 +200,12 @@ check(
 // ⚠️ Through onChange — what the WebSocket actually pushes — and never the module's own counter.
 // A deadband on this key would swallow the edge and leave every page-side assertion above green;
 // check-can-decoders.ts polices deadbands only for 0/1-bounded signals, so nothing else would say.
+//
+// ⚠️ defineSignals FIRST, and it is load-bearing rather than setup: `defs` is populated only by
+// src/index.ts on the real Pi, so without this the whole registry reads as empty here, every
+// signal falls through at deadband 0, and the assertion below cannot see the very mutation it
+// exists for. It survived one, which is how this line came to be here.
+defineSignals(SIGNALS);
 const pushed: number[] = [];
 const stopWatching = onChange(changed => {
   const seq = changed["charge_cmd_ack_seq"];
