@@ -26,9 +26,10 @@ import {
 //
 // What it was written for (#253): at 390x844 the Faults tab reported body.scrollWidth 449
 // against a 390 px client width. The page scrolled sideways, and in the light theme the
-// overflow drew as black bars down the side of the tiles. The cause was three levels above
-// the text: a `1fr` track's automatic minimum is MIN-CONTENT, so one stored-code row that
-// could not wrap sized the column, the group and then the page.
+// overflow drew as black bars down the side of the tiles. The cause was two levels above the
+// text: a grid item's `min-width: auto` is its MIN-CONTENT, so one stored-code row that could
+// not wrap held the tile at 441 px, and the tile then overflowed its 374 px grid area rather
+// than pushing the column out. docs/dashboard-decisions.md has the measured chain.
 //
 // Hence two assertions rather than one. No tab wider than the phone; AND the row that did
 // it still readable in full — because the cheap way to pass the first is an ellipsis, and
@@ -87,10 +88,12 @@ const MEASURE = `(() => {
  * A deliberately synthetic probe, run in the page and undone again.
  *
  * Once the description wraps, nothing the bike can actually store has a min-content wide
- * enough to widen anything — so no fixture can falsify the OTHER half of #253's fix, the
- * `minmax(0, 1fr)` tracks and `.tile { min-width: 0 }`. This puts content in the tile that
- * cannot wrap by construction and asks the one question those three lines answer: is the
- * tile's width still the phone's, or has its content been allowed to set it?
+ * enough to widen anything — so no fixture can falsify the OTHER half of #253's fix,
+ * `.tile { min-width: 0 }`. This puts content in the tile that cannot wrap by construction
+ * and asks the one question that line answers: is the tile's BOX still the phone's width, or
+ * has its content been allowed to set it? ⚠️ The box, not the page: unbreakable content still
+ * paints past the tile either way, and the body reports 3878 px in both. Nothing in CSS stops
+ * that without clipping, which is why the row above is the assertion that guards the phone.
  */
 const PROBE = `(() => {
   const tile = [...document.querySelectorAll(".tile")].find(candidate => candidate.querySelector(".code-line-text"));
@@ -101,8 +104,8 @@ const PROBE = `(() => {
   probe.style.whiteSpace = "nowrap";
   probe.textContent = "unbreakable ".repeat(40).replaceAll(" ", "-");
   tile.append(probe);
-  // Against the VIEWPORT, not against the group: the group is a grid item of the same
-  // blown-out .view, so it grows with the tile and the two agree all the way to 3883 px.
+  // Against the VIEWPORT, not against the group: the group is sized by the tile it holds, so
+  // the two agree all the way to 3883 px and comparing them can never fail.
   const widths = {
     tile: Math.round(tile.getBoundingClientRect().width),
     viewport: document.documentElement.clientWidth,
@@ -166,6 +169,9 @@ console.log(`\n✓ every tab fits a ${PHONE.width} px phone, and the longest sto
  * cheap way to be certain the measurement belongs to the tab it is filed under.
  */
 async function sweepTabs(page: HeadlessPage, previewFile: string) {
+  // An empty bar would sweep nothing and exit 0 — the one shape of this check that could
+  // pass without measuring anything. scripts/check-tab-routing.ts owns the names themselves.
+  check(`there are tabs to sweep (${TABS.length})`, TABS.length > 0);
   for (const tab of TABS) {
     await gotoPage(page, `file://${previewFile}?scene=faults#${tab.name}`);
     await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${tab.name} tab to render`);

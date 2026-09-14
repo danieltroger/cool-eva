@@ -716,43 +716,55 @@ So the tile counts down against the TRUE temperature (`batt_temp_hi`, sourced fr
 
 ## Fitting a 390 px phone — `style.css`
 
-The phone is 390 CSS px wide and the page may never be wider. It was, on the Faults tab, until #253 — measured on `de72711`, and pre-existing rather than anything #252 did — the lane that filed #253 measured the identical number from that PR's parent: `document.body.scrollWidth` read **449** against a `clientWidth` of 390, the page scrolled sideways, and in the light theme the strip past 390 drew as black bars down the side of the tiles, because the body's background stops where the body does.
+The phone is 390 CSS px wide and the page may never be wider. It was, on the Faults tab, until #253 — measured on `de72711`, and pre-existing rather than anything #252 did; the lane that filed #253 measured the identical number from that PR's parent. `document.body.scrollWidth` read **449** against a `clientWidth` of 390, the page scrolled sideways, and in the light theme the strip past 390 drew as black bars down the side of the tiles, because the body's background stops where the body does.
 
-### The chain, which starts three levels above the text
+### The chain — and the level it does NOT pass through
 
-One row did it — `B1000 · Position lights open circuit fault · freeze frame · expected`, the freeze-frame code on this bike with both suffixes at once. Measured in the rendered page by cloning each element at `width: min-content`, re-measured for the fix and agreeing with the numbers #253 was filed with — 326.6, 414.6, 440.6 px, rounded below:
+One row did it: `B1000 · Position lights open circuit fault · freeze frame · expected`, the freeze-frame code on this bike with both suffixes at once. Measured in the rendered page by cloning each element at `width: min-content`:
 
 | element                                                             | min-content |
 | ------------------------------------------------------------------- | ----------- |
-| `.code-line-text`, `white-space: nowrap`                            | 327 px      |
-| `.code-line` (+ the 3.6 rem id column, the gaps, the 0.9 rem caret) | 415 px      |
-| the tile (+ 0.75 rem of side padding)                               | 441 px      |
-| `.tile-group`'s implicit column, then `.view`'s `1fr` tracks        | 441 px      |
-| `.view`'s 0.5 rem padding → what the body reports                   | **449 px**  |
+| `.code-line-text`, `white-space: nowrap`                            | 326.6 px    |
+| `.code-line` (+ the 3.6 rem id column, the gaps, the 0.9 rem caret) | 414.6 px    |
+| the tile (+ 0.75 rem of side padding)                               | 440.6 px    |
+| the `.tile-group` around it, whose implicit column takes that       | 441 px      |
+| + `.view`'s 0.5 rem left padding = what the body reports            | **449 px**  |
 
-**The load-bearing fact is that a `1fr` track's automatic minimum is `min-content`, not zero.** A track is free to grow to its share of the space and free to be squeezed down to it — but never below what its items say they need, and an item that cannot break a line says it needs all of it. So the widest row in the list sized the column, the column sized the group, and the group sized the page. Nothing was overflowing its parent; every box was doing exactly what it was told.
+⚠️ **`.view`'s own tracks are not in that chain, and the first version of this fix said they were.** They compute to `183px 183px` in the broken state and `183px 183px` in the fixed one — 183 + 8 + 183 = 374, the width the group is _given_. A `1fr` track does have an automatic minimum of min-content, but what happened here is one level lower: **a grid item whose `min-width` is `auto` cannot be squeezed below its own min-content, so the tile stayed 441 px wide and OVERFLOWED its 374 px grid area**, dragging the page with it. Pushing the track out and overflowing the area look identical on screen and are not the same bug; only the computed `grid-template-columns` tells them apart. Injecting `minmax(0, 1fr)` on `.view` alone leaves the body at 449.
 
-Two things had to change, and they answer different halves of it:
+### What fixes it, measured one line at a time
 
-- **`minmax(0, 1fr)` on `.view` and `.tile-group`, and `min-width: 0` on `.tile`** — the track may now be narrower than its content, and the item may be narrower than its own content. (`.raw` has carried the same `min-width: 0` since the raw grid was written; this is the same line, three grids later.)
-- **`overflow-wrap: anywhere` on `.code-line-text`** — so the content stops being unbreakable in the first place. `anywhere` rather than `break-word` deliberately: only `anywhere` also shrinks the element's min-content, which is the number every row of the table above is measured in. With `break-word` the row would wrap on screen and still widen the page.
+Each variant injected into the rendered page on its own, at 390×844:
+
+| injected                                                     | `body.scrollWidth` | tile |
+| ------------------------------------------------------------ | ------------------ | ---- |
+| nothing (as shipped before #253)                             | 449                | 441  |
+| `.view { grid-template-columns: repeat(2, minmax(0, 1fr)) }` | **449**            | 441  |
+| `.tile-group { grid-template-columns: minmax(0, 1fr) }`      | 390                | 374  |
+| `.tile { min-width: 0 }`                                     | 390                | 374  |
+
+So `.tile { min-width: 0 }` is the fix, and it is the one that ships — the same line `.raw` has carried since `38f1ec1`, the rebuild that created the raw grid. Naming `.tile-group`'s implicit column does the same job by a different route and was dropped as redundant once the item itself can shrink; the `.view` edit was dropped because it does nothing at all.
 
 ### Wrapping, not an ellipsis
 
-`.code-line-text` was `white-space: nowrap` + `text-overflow: ellipsis`, and with the grid fixed that clipping would have worked — the row would have fitted, truncated, at 374 px. It is the wrong answer for this screen. The Faults tab is the one place on the dashboard meant to be read carefully rather than glanced at, `· freeze frame` and `· expected` are the two suffixes that say why a row matters at all, and they sit at the END of exactly the longest lines. An ellipsis eats the part you needed. Today's list costs one row a second line for that; the rest still fit on one.
+`.code-line-text` was `white-space: nowrap` + `text-overflow: ellipsis`. With the tile free to shrink, that clipping would also have fitted — truncated, at 374 px. It is the wrong answer for this screen: the Faults tab is the one place meant to be read carefully rather than glanced at, `· freeze frame` and `· expected` are the two suffixes that say why a row matters, and they sit at the END of exactly the longest lines. An ellipsis eats the part you needed. One row of today's list takes a second line for that (+19.5 px); the other five still fit on one.
 
-### What was measured, and what it means for the guard
+**What each wrapping option is worth**, min-content of that span, measured:
 
-Every variant below was injected into the rendered page and measured, at 390×844:
+| `.code-line-text`                     | min-content | body |
+| ------------------------------------- | ----------- | ---- |
+| `white-space: nowrap`                 | 326.6 px    | 449  |
+| wrapping, `overflow-wrap: normal`     | 53 px       | 390  |
+| wrapping, `overflow-wrap: break-word` | 53 px       | 390  |
+| wrapping, `overflow-wrap: anywhere`   | 10.6 px     | 390  |
 
-| `.view` / `.tile-group` / `.tile` | `.code-line-text` | `body.scrollWidth` | the long row |
-| --- | --- | --- | --- |
-| as shipped before #253 | `nowrap` + ellipsis | **449** | readable (the tile grew to fit it) |
-| `minmax(0, 1fr)` + `min-width: 0` | `nowrap` + ellipsis | 390 | **clipped** |
-| as shipped before #253 | `overflow-wrap: anywhere` | 390 | readable, two lines |
-| both | both | 390 | readable, two lines |
+⚠️ **Dropping `nowrap` is what fixes the page; `anywhere` is insurance, not the fix** — an earlier version of this section claimed `break-word` "would still widen the page", which is false: it leaves the minimum at the longest word, 53 px, nowhere near the 374 px column. What `anywhere` buys is the case a word is longer than the column, which Energica's names can produce — it is why `.code-field` next door already uses it.
 
-⚠️ **Either half alone takes the page back to 390**, which is worth writing down because it decides what a check can prove. Once the description wraps, no row the bike can store has a min-content wide enough to widen anything — so nothing in the fixture can show the grid minimums doing any work, and reverting them leaves `scripts/check-phone-width.ts` green on every real row. They are not decoration: they are what makes the tile's width come from the phone rather than from its contents, for the next thing that lands in a full-width tile and cannot wrap. That is why the check carries a synthetic probe as well as the fixture — §11.8 of `docs/diagnostics-and-checks.md`.
+### What the grid line protects, and what it does not
+
+⚠️ Worth being exact, because the obvious reading is too generous. With `.tile { min-width: 0 }` in place, appending a `white-space: nowrap` span to the stored-codes tile keeps the **tile** at 374 px — but `body.scrollWidth` still reports **3878**, because the span paints straight past the tile's edge and nothing in this stylesheet clips it. Take the line away and the tile itself becomes 3883.
+
+So the two halves guard different things and neither is decoration: **the wrap keeps the page the phone's width, and `min-width: 0` keeps the tile box the phone's width so that wrapping or clipping inside it can work at all.** That is also what makes each falsifiable on its own — `scripts/check-phone-width.ts` asserts the page width against the real fixture and the tile's box against a synthetic unbreakable probe, and reverting either line turns exactly one of them red. §11.8 of `docs/diagnostics-and-checks.md`.
 
 ## Light and dark — `lib/theme.js`, `style.css`
 

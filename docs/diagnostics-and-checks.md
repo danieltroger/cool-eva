@@ -925,7 +925,7 @@ A `<link rel="icon">` copied from `public/index.html` silences the last console 
 
 ### 11.8 `check-phone-width.ts` — the one check that opens a page
 
-The dashboard has no build step and no VDOM, and until #253 nothing in this repo had ever asked a browser how wide the rendered page came out. Source-reading cannot answer it: the Faults tab overflowed by 59 px with every box in the tree doing exactly what its CSS said, and what made it wrong was an interaction three levels up (`docs/dashboard-decisions.md`, "Fitting a 390 px phone").
+The dashboard has no build step and no VDOM, and until #253 nothing in this repo had ever asked a browser how wide the rendered page came out. Source-reading cannot answer it, and neither can reasoning about the CSS: the Faults tab overflowed by 59 px with every box doing exactly what it was told, the first diagnosis blamed a grid track that turned out to compute identically before and after, and only `getComputedStyle` in the rendered page told the two mechanisms apart (`docs/dashboard-decisions.md`, "Fitting a 390 px phone").
 
 **What it runs.** `scripts/build-service-preview.ts` builds the committed template against the shipped `public/`, i.e. the same file the dashboard gate looks at, into a temp directory. Then one page at 390×844 DPR 3 with mobile emulation, one load per tab of the `faults` scene — a load rather than a hash flip, so no measurement can belong to the tab that was on screen a frame ago.
 
@@ -935,16 +935,17 @@ The dashboard has no build step and no VDOM, and until #253 nothing in this repo
 
 **What it asserts, per tab:** the viewport really is 390 px (a failed emulation, or a scrollbar eating 15 px, would measure a different page and say nothing); `body.scrollWidth ≤ clientWidth`; and `window.innerWidth === 390`, which is a second witness from the other side — the layout viewport EXPANDS to fit a page that overflows, so it read 449 before the fix. On the Faults tab it also asserts that the longest stored-code row is present and not clipped.
 
-**And one synthetic probe**, which exists because of something the fixture cannot show. Either half of #253's fix takes the page back to 390 on its own, so with the description wrapping, nothing the bike can store can widen anything, and reverting the grid minimums leaves every real assertion green. The probe appends a `white-space: nowrap` span to the stored-codes tile, measures the tile against the VIEWPORT — not against its group, which is a grid item of the same blown-out `.view` and grows with it, both reading 3883 px — and removes it again. It asks the one question those three lines answer: is the tile's width still the phone's, or has its content been allowed to set it?
+**And one synthetic probe**, which exists because of something the fixture cannot show. Either half of #253's fix takes the page back to 390 on its own, so with the description wrapping, nothing the bike can store can widen anything, and reverting `.tile { min-width: 0 }` leaves every fixture-based assertion green. The probe appends a `white-space: nowrap` span to the stored-codes tile, measures the tile against the VIEWPORT — not against its group, which is sized by that same tile and agrees with it all the way to 3883 px — and removes it again. It asks the one question that line answers: is the tile's BOX still the phone's width, or has its content been allowed to set it? ⚠️ The box, not the page: with the fix in place and unbreakable content in the tile, `body.scrollWidth` still reports 3878. Nothing clips it, and no line of CSS in this repo claims to.
 
 **The mutation matrix**, run one at a time against the real page:
 
 | mutant | what happened |
 | --- | --- |
 | the whole CSS fix reverted | ✗ `body.scrollWidth 449`, `innerWidth 449` — the issue's own numbers, reproduced by the check |
-| the wrap reverted, grid minimums kept | ✗ the long row clipped to an ellipsis |
-| the grid minimums reverted, wrap kept | ✗ the probe's tile 3883 px against a 390 px viewport — and every non-probe assertion green, which is the point of having it |
+| the wrap reverted, `.tile { min-width: 0 }` kept | ✗ the long row clipped to an ellipsis |
+| `.tile { min-width: 0 }` reverted, wrap kept | ✗ the probe's tile 3883 px against a 390 px viewport — and every fixture assertion green, which is the point of having it |
 | the long row dropped from the `faults` fixture | ✗ the row this check exists for is no longer there |
+| `Emulation.setDeviceMetricsOverride` removed | ✗ `clientWidth === 390` — while the width assertion passed at 756 ≤ 756, which is what that guard is there to stop |
 | `CHROME_PATH` pointing at nothing, and no browser on the machine | exit 1 both ways, with the reason |
 
 **What it does not cover:** the other four scenes (only `faults` has stored-code rows), both themes (nothing here depends on the palette — that is what the gate's screenshots are for), Safari and WebKit, which is where Daniel actually reads this and which has caught a rendering difference before (#191), and anything vertical, which is #183.

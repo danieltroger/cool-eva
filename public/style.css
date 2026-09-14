@@ -217,16 +217,14 @@ body {
 
 /* ---------- layout ---------- */
 
-/* ⚠️ minmax(0, 1fr), never a bare `1fr`, and the same for every grid below that holds
-   tiles: a `1fr` track's automatic minimum is MIN-CONTENT, not zero, so one row the
-   browser cannot break makes the column — and with it the whole page — as wide as that
-   row. #253 was 449 px against a 390 px phone from a single stored-code line. The pair
-   to this is `.tile { min-width: 0 }`; a track free to shrink still cannot shrink an
-   item whose own automatic minimum holds it open. docs/dashboard-decisions.md. */
+/* The two-column grid every tab lays its tiles out in. ⚠️ A tile that cannot be squeezed
+   into its column does not push these tracks out — it OVERFLOWS its grid area and takes
+   the page with it, which is what `.tile { min-width: 0 }` below is for. Measured during
+   #253: these tracks read `183px 183px` while the body reported 449. */
 .view {
   display: grid;
   gap: 0.5rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   padding: 0 0.5rem;
   align-content: start;
 }
@@ -238,9 +236,6 @@ body {
 .tile-group {
   grid-column: 1 / -1;
   display: grid;
-  /* Named rather than left implicit: an implicit column is auto-sized, which is the
-     min-content minimum .view's comment above is about. */
-  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
 }
 
@@ -263,8 +258,11 @@ body {
   flex-direction: column;
   gap: 0.2rem;
   min-height: 88px;
-  /* The grid-item half of the rule above .view — `.raw` has carried the same line since
-     the raw grid was written. */
+  /* ⚠️ A grid item's `min-width: auto` is its MIN-CONTENT, so without this a tile is never
+     narrower than its widest unbreakable row — and it does not push its column out, it
+     overflows its grid area and drags the page with it. #253: one stored-code line took
+     the tile to 441 px and the body to 449 on a 390 px phone. `.raw` has carried this
+     same line since the raw grid was written. docs/dashboard-decisions.md. */
   min-width: 0;
   transition: opacity 0.3s;
 }
@@ -1155,10 +1153,11 @@ body {
 .code-line-text {
   flex: 1 1 auto;
   min-width: 0;
-  /* `anywhere` rather than `break-word`, the same call `.code-field` makes below: only
-     `anywhere` also shrinks the element's MIN-CONTENT, and it is the min-content of this
-     span — 327 px of it — that the grids above resolve their columns against. With
-     `break-word` the row would wrap on screen and still widen the page. */
+  /* Wrapping at all is what fixes #253: `white-space: nowrap` held this span's min-content
+     at 327 px. `anywhere` rather than `break-word` — the call `.code-field` makes below,
+     for the same reason — buys the rest: break-word leaves the minimum at the longest WORD
+     (53 px in today's list, which fits), `anywhere` takes it to one character, and only
+     that survives a name longer than the column. Energica's table is full of candidates. */
   overflow-wrap: anywhere;
 }
 
