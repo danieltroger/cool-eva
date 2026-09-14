@@ -7,7 +7,7 @@ import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
 import { describeMeasurement, startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
 import { withObdPollerHold } from "../can/obd-hold.ts";
-import { parameterTable, type VcuMicro } from "./param-table.ts";
+import type { VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
 
 // Service mode's engine: decide whether the bike may be serviced, run one parameter sweep
@@ -88,8 +88,8 @@ export interface VcuReadRunner {
    *
    * ⚠️ It PARKS THE 2 Hz OBD POLLER for the duration, and so does a probe since #223:
    * a parameter read's reply can be multi-frame too, and the poller is the documented
-   * cause of that channel's failures (src/can/obd.ts). A SWEEP still does not park —
-   * see `runParameterSweep`. The result carries
+   * cause of that channel's failures (src/can/obd.ts). A SWEEP parks for part of its
+   * list only — see `runParameterSweep`. The result carries
    * how late our flow control was, which is the number this whole path exists to
    * produce. Resolves with a refusal rather than throwing.
    */
@@ -250,17 +250,19 @@ function readGate(): ServiceGateVerdict {
  * here, so there is no longer a second copy of it anyone can start over ssh, and no
  * lockfile to go stale on a Pi that loses power.
  *
- * ⚠️ A SWEEP DOES NOT PARK THE OBD POLLER, where a probe and a lifetime read do. Two
- * reasons, and the second is the one that would change: a sweep can run for a minute and
- * `MAX_HOLD_MS` in ../can/obd-hold.ts caps a hold at 15 s, so parking it is not on offer
- * without dropping telemetry for longer than the hold allows; and none of the 277 indices
- * `params.ecf` describes can produce a multi-frame reply at all — every record there is 1
- * or 2 bytes, so no transfer window ever opens for the poller to land in.
+ * ⚠️ A SWEEP DOES NOT PARK THE OBD POLLER FOR THE 277 `params.ecf` DESCRIBES, where a probe
+ * and a lifetime read park for everything. Two reasons: a sweep can run for a minute and
+ * `MAX_HOLD_MS` in ../can/obd-hold.ts caps a hold at 15 s, so parking it across one is not
+ * on offer; and none of those 277 indices can produce a multi-frame reply at all — every
+ * record there is 1 or 2 bytes, checked against 233 live records with zero mismatches, so
+ * no transfer window ever opens for the poller to land in.
  *
- * ⚠️ **Extending the sweep past those 277 — #219's A8 block, say — changes that**, and
- * whoever does it inherits this decision: indices 278, 279 and 626 are 4-byte records, and
- * a mode-01 request arriving mid-transfer is what ../can/obd.ts records as making the VCU
- * abandon it. Park per read, or sweep the wide ones through the probe path.
+ * ⚠️ **It DOES park, per read, for the 25 rows of #219's A8 block** (../vcu/sweep-targets.ts).
+ * Not because three of them are 4-byte records — because all 25 have their width from a
+ * firmware image nobody has matched against what is flashed, and a park chosen off a width
+ * that might be wrong skips the park on the row that needed it. That is the same objection
+ * `runProbe` records below against the cheaper form. One read is bounded well inside the
+ * 15 s cap; a refused hold ends the block rather than costing 25 six-second waits.
  */
 function start(context: RunnerContext): { started: boolean; reason: string | null } {
   const ready = checkPreconditions(context, "a parameter read");
@@ -410,7 +412,8 @@ async function runProbe(context: RunnerContext, request: VcuProbeRequest): Promi
   // arriving mid-transfer is what makes the VCU abandon it". A probe is the read most
   // likely to be pointed at a wide record — that is what it is for — so racing the 2 Hz
   // poller would produce intermittent `stalled` outcomes indistinguishable from a micro
-  // that went quiet. A sweep does NOT park; see the note on `runParameterSweep`.
+  // that went quiet. A sweep parks only for the 25 rows whose width is a firmware claim
+  // rather than a measurement; see the note on `runParameterSweep`.
   //
   // ⚠️ Unconditionally, including for the 1- and 2-byte reads that cannot need it, which
   // costs ~0.2-1 s of telemetry (the poller's park wait) on a manual button press. The
@@ -660,9 +663,11 @@ function readState(context: RunnerContext): VcuReadState {
     return {
       phase: "running",
       startedAt: context.startedAt,
-      // What a full sweep will ask about — the whole table, so this cannot drift
-      // from what the sweep actually does.
-      expected: parameterTable().length,
+      // What a full sweep will ask about, taken from the RUNNING sweep rather than
+      // recomputed here, so it cannot drift from what that sweep actually does. It used
+      // to read `parameterTable().length`, which was the same number until the sweep's
+      // list grew past the name table (#219).
+      expected: context.sweep.expected,
       tally: tallyOf(context.sweep.rows()),
     };
   }

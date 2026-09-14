@@ -17,7 +17,9 @@ Four bank-1 WORDs on the A8 (the Safety micro), decompiled from the manufacturer
 
 The halves are little-endian **across the pair** — `value = (high << 16) | low`, per the decompiled `num = (date2 << 16) | date1`. The date is a 32-bit count of **seconds since 2000-01-01 UTC**; the odometer is a plain 32-bit count whose unit is per market (km on a European bike, miles on a USA one).
 
-⚠️ These sit **outside** `params.ecf`'s 1…277, so nothing in `src/vcu/param-table.ts` describes them and nothing ever will — that file's contents _are_ the name table. They are named in `src/vcu/service-actions.ts` instead, with their provenance, rather than smuggled into a table that claims a different source. The sweep does not reach them and is not supposed to.
+⚠️ These sit **outside** `params.ecf`'s 1…277, so nothing in `src/vcu/param-table.ts` describes them and nothing ever will — that file's contents _are_ the name table. They are named in `src/vcu/service-actions.ts` instead, with their provenance, rather than smuggled into a table that claims a different source.
+
+⚠️ **"The sweep does not reach them and is not supposed to" — changed 2026-09-14 (#219), and the half that changed is the second one.** A sweep now reads them, as four of the 25 A8 bank-1 rows `src/vcu/a8-firmware-rows.ts` describes. The reason they were out of it was cost: _"reading them costs a KWP session, and they move about once a year"_ (README). Inside a sweep the A8 session is **already open** — four more `22`s at 10 ms pacing, no extra session and no extra button — and what it buys is that the stamp lands in the stored snapshot and therefore in the **diff**, so "somebody set a service point on this bike" becomes something a sweep notices rather than something you have to go and ask about. The first half stands unchanged and is load-bearing: they are still not in the name table, they are still unnamed on `/params.html`, and they still cannot be written by name. The read-service-stamp action below is untouched.
 
 ## 2. The first read — 2026-09-08
 

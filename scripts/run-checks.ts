@@ -51,6 +51,20 @@ interface SelfCheck {
 /** In script-name order; they are independent, so nothing depends on which runs first. */
 const CHECKS: SelfCheck[] = [
   {
+    script: "scripts/check-a8-block.ts",
+    covers:
+      "the 25 bank-1 parameters A8's own firmware table serves that params.ecf does not describe (#219): their " +
+      "widths against literals, that they stay OUT of all 29 name tables and out of the 269 write targets — which " +
+      "check-vcu-params.ts cannot catch, since it derives the write-target count from the table itself — that the " +
+      "lookup is keyed on the micro and the bank so A9 or bank 2 at the same index gets none of this provenance, " +
+      "that a reply is checked against the claimed width while the typed value stays withheld because the sign is " +
+      "unknown, that the width survives a re-table and is dropped for a micro naming a table nothing carries, that " +
+      "the block never reaches vcu_backup.csv, the 2026-09-14 probes replayed out of the truncated evidence file, " +
+      "and a whole sweep against the simulated micros: the poller parked for those 25 rows and none of the other " +
+      "277, a refused park ending the block after one attempt with nothing on the wire, and a gate that closes " +
+      "while the poller parks stopping the read",
+  },
+  {
     script: "scripts/check-can-bringup.ts",
     covers:
       "when the service may leave can0 alone at startup and when it must bounce it: that a link already UP at " +

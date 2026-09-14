@@ -78,7 +78,55 @@ A parameter must be requested from the micro that owns it or it simply does not 
 
 ✅ And that holds for EVERY table, not just this one: `id → ecu` and `id → datatype` are byte-identical across all 28 of Energica's bundles (measured, `PARAM_TABLES.md` §2). Names and signedness are what vary. That is exactly why a wrong table is dangerous rather than obvious — see [§4](#4-the-table-gate).
 
-`CAN_MAP.md` logs 45 records for A8 bank 1 against these 44. The 45th is unidentified — this variant's file may simply not name it. A sweep reads the whole table and nothing beyond it, so going looking would mean adding the index to `params.ecf`; an identifier with no table entry reads back as raw bytes rather than failing, which is what makes that safe to try.
+### ⚠️ A8 serves 25 bank-1 parameters this file does not describe
+
+`params.ecf` is not the whole of what A8 answers. Its own KWP parameter table — read out of the A8 firmware image while chasing [#214](https://github.com/danieltroger/cool-eva/issues/214), at `0x00028A50` in `VCU_Safety_CRP (5).mot`, same 20-byte entry shape as A9's at `0x00034A94` — serves **69** bank-1 indices, of which `params.ecf` names 44. The other **25** are indices **278, 279, 613-627 and 1000-1007**, and they live in `src/vcu/a8-firmware-rows.ts` ([#219](https://github.com/danieltroger/cool-eva/issues/219)).
+
+**What makes the firmware read believable:** the table serves exactly the 44 indices 223-277 that `params.ecf` assigns to A8, with no extras and none missing, before you get to the 25. Perfect agreement on the half we can check. Within the 25, the EEPROM offsets and RAM shadows are contiguous — 613-625 advance by exactly 2 bytes per WORD, 1000-1007 form their own block — which is what a real table looks like and what a misparse does not.
+
+| index      | CID                | EEPROM offset  | type      | RAM shadow             |
+| ---------- | ------------------ | -------------- | --------- | ---------------------- |
+| 278        | `0x1116`           | 0x06E0         | **DWORD** | 0x20000C40             |
+| 279        | `0x1117`           | 0x06F0         | **DWORD** | 0x20000C44             |
+| 613-625    | `0x1265`-`0x1271`  | 0x06B0-0x06C8  | WORD      | 0x20000C1E-0x20000C36  |
+| 626        | `0x1272`           | 0x06D0         | **DWORD** | 0x20000C38             |
+| 627        | `0x1273`           | 0x06D4         | BYTE      | 0x20000C3C             |
+| 1000-1005  | `0x13E8`-`0x13ED`  | 0x0624-0x062E  | WORD      | 0x20000C12-0x20000C1C  |
+| 1006, 1007 | `0x13EE`, `0x13EF` | 0x0620, 0x0622 | WORD      | 0x20000C0E, 0x20000C10 |
+
+#### What is KNOWN about them, and what is not
+
+Six of the 25 are not a mystery at all, and none of the six was worked out here — the 2024 service-tool analysis in `obd-garage/` had already named them:
+
+- ✅ **278/279 are the running-odometer master.** The manufacturer's service tool writes them in its odometer-change action, as a 32-bit value, and then resets the ECU (`SERVICE_RESET.md` §2). ⚠️ **Which of the two is the low half is not established.** 🔴 This project reads them and never writes them — another owner's tool does write them, and `OTHER_TOOL_AUDIT.md` is blunt about it.
+- ✅ **1000-1003 are the last-service stamp** — date low/high, odometer low/high, `value = (high << 16) | low`, the date a count of seconds since 2000-01-01 UTC. Decompiled in `SERVICE_RESET.md` §2, carried in `src/vcu/service-actions.ts` as `SERVICE_STAMP_IDENTIFIERS` since the service-stamp work, and **live-confirmed on 2026-09-08**: all four answered two bytes, all zero (`docs/service-stamp.md`).
+- ✅ **1006/1007 are the only two identifiers the factory tool was ever captured WRITING** (2026-08-08, `DIAG_ADDRESSES.md` §9.2/§9.5). It read 1006 back as `0x9380` and wrote the same value; it wrote `0x29C2` to 1007. Purpose unknown — §9.5 reads a read-then-write-back as a handshake rather than a tuning change. 🔴 Read-only from here.
+- 🟡 **622 is used as a scale factor** at A8 `0x10EB4`: `(sensor × PARAM_622) >> 12`, the product range-checked against parameters 223 and 224 (600…2500). ⚠️ That is from the firmware read on #219, **not** from `obd-garage/` — the notes say nothing about it. It is a use, not a meaning.
+- ❌ **Nothing at all is traced for the other 18.** They carry a width and a sentence saying so.
+
+⚠️ **The widths are a CLAIM, not a measurement**, and that difference does real work. `params.ecf`'s TYPE column was checked against 233 live A9 records with zero mismatches; these 25 come from one disassembly of an image **nobody has confirmed the bike is running**. That is why a sweep parks the OBD poller for all 25 and for none of the other 277 ([§9](#9-the-read-path-read-only-by-construction)), and why a reply whose length disagrees says which width it contradicts.
+
+#### ⚠️ They are NOT in the name table, and must never be
+
+`src/vcu/a8-firmware-rows.ts` is a separate registry, keyed on the micro AND the bank — A8 bank 1 index 1000 is the service date's low word; A9 bank 1 and A8 bank 2 at the same index are neither, and a probe can name any of them. Rows carry an index, a width, and one sentence of what is known. They carry **no name**, so they cannot be searched, exported to `vcu_backup.csv` or written by name, and **no sign**, so `interpretRecord` withholds the typed value and reports raw bytes and an unsigned reading. That is the honest state: the firmware entry types the width at +0x04 and says nothing about two's complement.
+
+Two hard reasons they cannot simply be added to `params.ecf` or to a table delta, both of which were tried before being written down here:
+
+1. **The fingerprint.** `buildParameterTable()` fingerprints the rebuilt rows and throws when they disagree with the digest taken from Energica's own bundle, and `param-table.ts` builds the default table at module load. Appending one row to 16407 moves its fingerprint `5757d064` → `8b80f344`, so the service would refuse to start — and since all 29 tables are deltas against the same base, a `params.ecf` edit breaks every one of them.
+2. **The write targets.** `writeTargets()` generates a target for **every row the active table carries** (277 rows → 269 targets, the difference being four names that appear twice). Merging these 25 in would create 25 new write targets, the odometer master among them. `scripts/check-vcu-params.ts` would not catch it either: it asserts the target count _against `parameterTable().length`_, a budget derived from the thing under test. `scripts/check-a8-block.ts` §2 is the assertion that does catch it.
+
+This is the same bargain `service-actions.ts` struck for 1000-1003 before any of this: named where they were found, with their provenance, rather than smuggled into a table that claims a different source.
+
+#### The 45th record: still open, and the arithmetic does not close it
+
+`CAN_MAP.md` logs **45** records for A8 bank 1 against these 44 named, and the 45th is unidentified. Index 278 is a candidate. It is **not** the answer, and cannot be made one from here:
+
+- the 2026-07-26 scan's **index range is unrecoverable** — its script is gone (the corrected version lived in `/tmp`), and `obd-garage/kwp_scan_raw.txt` holds **A9 records only**: 233 bank-1 rows, highest identifier `0x0114` = 276;
+- which of the 44 named indices answered in that run is not recorded either, so even "45 = 44 + 1" is not safe as arithmetic.
+
+⚠️ **The way it closes is enumeration, not inference.** A sweep now asks all 69 A8 bank-1 identifiers this software describes and writes down which answered and with how many bytes. `evidence/probe-plan-a8-block.md` is the plan for that run. If the count is not 45, that is a fact about the old scan's range rather than about the bike.
+
+⚠️ **Correcting what this section used to say.** It read: _"A sweep reads the whole table and nothing beyond it, so going looking would mean adding the index to `params.ecf`."_ Both halves are now wrong. A sweep reads the table **and** the 25 rows above; and adding an index to `params.ecf` is exactly what must never be done, for the two reasons just given. The half that stands is the last clause, and it is still what makes this safe to try: **an identifier with no table entry reads back as raw bytes rather than failing.**
 
 ### ⚠️ Names are not unique
 
@@ -571,7 +619,27 @@ So `VcuFrame`'s `multi-frame` member in `param-codec.ts` is live rather than ves
 
 ⚠️ **A flow-control frame, `<target> 30 FF 00` — BlockSize 255, SeparationTime 0 — is now ARMED on every read.** It is only SENT where a First Frame actually arrives, which on the 277 indices `params.ecf` describes is **never**, by the TYPE column: every one of those replies is 3-5 payload bytes and completes in a Single Frame. So a clean sweep sends none. The new traffic appears only at the wide records this exists to reach — one measured so far (278), three typed DWORD by #219 (278, 279, 626). `FF 00` is not a choice: it is what the factory tool sends and what A8 sent back, captured in both directions.
 
-⚠️ **A probe now PARKS THE 2 Hz OBD POLLER**, through the same `withObdPollerHold` the lifetime read and the trouble-code clear use (#233). `src/can/obd.ts` records that "a request arriving mid-transfer is what makes the VCU abandon it", and a probe is the read most likely to be pointed at a wide record — that is what it is for — so racing the poller would produce intermittent `stalled` outcomes indistinguishable from a micro that went quiet. **A sweep does not park**, for two reasons: `MAX_HOLD_MS` caps a hold at 15 s and a sweep can run for a minute, and none of the 277 indices can open a transfer window in the first place. ⚠️ **Extending the sweep past those 277 inherits that decision** — 278, 279 and 626 are 4-byte records, and whoever sweeps them must park per read or route them through the probe path.
+⚠️ **A probe now PARKS THE 2 Hz OBD POLLER**, through the same `withObdPollerHold` the lifetime read and the trouble-code clear use (#233). `src/can/obd.ts` records that "a request arriving mid-transfer is what makes the VCU abandon it", and a probe is the read most likely to be pointed at a wide record — that is what it is for — so racing the poller would produce intermittent `stalled` outcomes indistinguishable from a micro that went quiet.
+
+### ⚠️ And a SWEEP parks for 25 of its 302 reads. Which 25, and why those
+
+The sweep asks about the 277 `params.ecf` describes **and** the 25 rows of #219's A8 block ([§2](#2-paramsecf-the-text-and-its-provenance)). It parks the poller for the 25, per read, and for none of the 277.
+
+**Not "park for the wide ones".** Three of the 25 are 4-byte records and 22 are not, and parking only for the three was the first plan. It is the same cheaper form `read-runner.ts` records rejecting for the probe — _"it skips the park exactly where the table is WRONG about a parameter"_ — and the population that objection is about is precisely the 22 narrow ones. The rule that survives review is about **where the width comes from**, not how big it is:
+
+- the 277's widths were checked against **233 live records with zero mismatches**, so no transfer window can open there that anybody has reason to expect;
+- the 25's widths come from **one disassembly of an image nobody has matched against what is flashed**. A width that is wrong is wrong in the direction that opens a transfer.
+
+**Why not route the wide rows through the probe path**, which parks unconditionally: it is not reachable from inside a sweep. The probe takes the same bus lease the sweep is holding, so it is refused with _"a parameter read is already running"_ before it gets near the socket — and making it re-entrant would weaken the single-flight that exists because these micros answer on ONE CAN id with no request/response tag. A probe also builds its own client, so the sweep's A8 session would idle out underneath it.
+
+Four consequences worth knowing before reading a journal:
+
+- **A refused park ends the block.** `holdObdPoller` waits up to 6 s before giving up, so asking 25 times would be 150 s of a sweep doing nothing. The first refusal records that row and every remaining block row as `not-sent` with the poller's own sentence — never as a claim about the bike — and the sweep carries on.
+- ⚠️ **Such a sweep is still `complete`**, because every target was asked about, so it replaces `latest.json` under the keep-the-fuller-file rule with 25 rows flipped from `read` to `not-sent`. That is the right trade — the rule exists so a partial-but-honest sweep is not discarded — but it means a poller that would not park costs you the block's last-known values in `latest.json` until the next sweep. The archive keeps them.
+- **The gate is re-checked on the far side of the park.** Parking can take 6 s, which is thirty gate-watchdog intervals. In the service the 200 ms watchdog wins that race anyway (it calls `abort`, and `client.stop()` settles the read as `not-sent`); the re-check is defence in depth, and it is the only guard in a check harness, which has no watchdog.
+- **~50 more journal lines per sweep**, one `obd: parked for …` and one `obd: resumed after …` per block row.
+
+**What it costs in time**: 25 more reads, a typical park wait of ~200 ms each, and — if a block row is silent — ~650-950 ms rather than ~10 ms. ⚠️ Those are estimates derived from `DEFAULT_RESPONSE_TIMEOUT_MS`, `transferTimeoutMs` and the one retry; nobody has ever timed a read on this channel, and `kwp-client.ts` says so in as many words.
 
 ⚠️ **One narrow window this widened, and it is not closed.** A Consecutive Frame from a transfer that already stalled is not fenced off from the NEXT transfer: arriving after the next read's First Frame, with sequence 0 and enough bytes, it is accepted. The identifier echo cannot catch that one, because the echo comes from the new First Frame while the record bytes come from the old reply — unlike the single-frame version of the same race, which the echo does catch. Reachability is very low (the straggler must be ≥ 400 ms late, and only the wide records produce First Frames at all, none of them in the 277-row sweep), and it is inherited rather than introduced — but routing 277 reads through this transport is what changed the exposure, so it is written down rather than left to be re-found.
 
@@ -623,7 +691,7 @@ There is no raw-bytes entry point to either. A caller names an operation and a t
 
 ### `probe.ts` — one identifier, on demand
 
-The sweep reads the 277 parameters `param-table.ts` describes, on the two VCU micros, in bank 1. That is the right default and it was also the whole of what this project could reach until 2026-08-16. What lives outside it: **other banks.** The identifier is `(bank << 12) | index`. Bank 1 is the EEPROM calibration; **bank 2 is live data** — the running values, not the stored settings — and nothing here has ever read one.
+The sweep reads the 277 parameters `param-table.ts` describes plus the 25 `a8-firmware-rows.ts` does — 302 identifiers, on the two VCU micros, in bank 1. It read only the 277 until #219. What lives outside it: **other banks.** The identifier is `(bank << 12) | index`. Bank 1 is the EEPROM calibration; **bank 2 is live data** — the running values, not the stored settings — and nothing here has ever read one.
 
 ⚠️ **What this widens, precisely.** Before the probe, no HTTP input named a service, an identifier or a value. Now an identifier and a target are caller-supplied. That is a real change and it should be read exactly as far as it goes:
 

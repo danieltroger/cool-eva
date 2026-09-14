@@ -1,5 +1,7 @@
+import { describeFirmwareRow, firmwareRowFor } from "./a8-firmware-rows.ts";
 import { interpretRecord } from "./param-codec.ts";
 import {
+  CALIBRATION_BANK,
   TABLE_TYPE_INDICES,
   activeParameterTable,
   checkTableType,
@@ -55,7 +57,7 @@ export interface VcuParameterRow {
   unsigned: number | null;
   /** Typed per the table's S/U column; null when there is no honest typed reading. See VcuParameterValue. */
   value: number | null;
-  /** The reply's length contradicts the table's TYPE column. */
+  /** The reply's length contradicts the width — the table's TYPE column, or A8's own firmware table. */
   widthMismatch: boolean;
   /**
    * The value the OTHER bike's params.ecf carries. NEVER this bike's — see the
@@ -64,7 +66,14 @@ export interface VcuParameterRow {
    * column honestly. Anything rendering it MUST say whose value it is.
    */
   otherBikeValue: number | null;
-  /** Why a non-`read` row is not a value: the refusal, the reason, the NRC. Null on a clean read. */
+  /**
+   * Why a non-`read` row is not a value: the refusal, the reason, the NRC.
+   *
+   * ⚠️ Null on a clean read EXCEPT for the 25 identifiers `params.ecf` does not describe
+   * (./a8-firmware-rows.ts), which carry what is known about them here whatever their
+   * status — there being nowhere else on a flat row to put it. `public/lib/params-page.js`
+   * renders this only when `status !== "read"`, so that costs the page nothing.
+   */
   note: string | null;
 }
 
@@ -86,20 +95,29 @@ export interface VcuParameterSnapshot {
   rows: VcuParameterRow[];
 }
 
-/** Turns one read outcome into a row, folding in whatever the name table knows. */
+/**
+ * Turns one read outcome into a row, folding in whatever the name table knows — or, for
+ * the 25 identifiers it does not describe, whatever A8's own firmware table does.
+ *
+ * ⚠️ The firmware rows stay UNNAMED (`name` null, `value` null): they are not `params.ecf`
+ * names, so they must not be searchable, exportable or writable as if they were. What they
+ * gain is a width to check the reply against and a sentence saying what is known.
+ */
 export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
   const parameter = parameterAtIndex(outcome.index);
+  const firmware = parameter ? null : firmwareRowFor(outcome.micro, CALIBRATION_BANK, outcome.index);
   const base = {
     index: outcome.index,
     identifier: outcome.identifier,
     micro: outcome.micro,
     name: parameter?.name ?? null,
     section: parameter?.section ?? null,
-    type: parameter?.type ?? null,
+    type: parameter?.type ?? firmware?.type ?? null,
     signed: parameter?.signed ?? null,
     status: outcome.status,
     otherBikeValue: parameter?.otherBikeValue ?? null,
   };
+  const known = firmware ? describeFirmwareRow(firmware) : null;
   if (outcome.status !== "read") {
     return {
       ...base,
@@ -107,19 +125,20 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
       unsigned: null,
       value: null,
       widthMismatch: false,
-      note: describeFailure(outcome),
+      note: note(describeFailure(outcome), known),
     };
   }
-  const interpreted = interpretRecord(outcome.record, parameter);
+  const interpreted = interpretRecord(outcome.record, parameter ?? firmware);
   return {
     ...base,
     rawHex: interpreted.rawHex,
     unsigned: interpreted.unsigned,
     value: interpreted.value,
     widthMismatch: interpreted.widthMismatch,
-    note: interpreted.widthMismatch
-      ? `record is ${outcome.record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
-      : null,
+    note: note(
+      widthMismatchNote(interpreted.widthMismatch, outcome.record.length, base.type, firmware !== null),
+      known
+    ),
   };
 }
 
@@ -404,18 +423,26 @@ function retableRow(
     ? `the ${contradictedBy} named a parameter table this software does not carry, so nothing here can say what ` +
       "this index is called — the raw bytes are the bike's, the name is not available"
     : null;
+  // ⚠️ A CONTRADICTED MICRO LOSES THE FIRMWARE WIDTH TOO, deliberately. The rows in
+  // ./a8-firmware-rows.ts are re-derived here like everything else, so a stored A8 block
+  // row keeps its width across the re-table that happens on every serve — but a micro that
+  // names a parameter table this software does not carry is not a micro this software can
+  // assert a firmware build about either, and the code already strips name and type for it.
+  // A width we could not defend is worse than an absent one; `rawHex` and `unsigned` survive.
+  const firmware = parameter || contradictedBy ? null : firmwareRowFor(row.micro, CALIBRATION_BANK, row.index);
+  const known = firmware ? describeFirmwareRow(firmware) : null;
   const renamed = {
     ...row,
     name: parameter?.name ?? null,
     section: parameter?.section ?? null,
-    type: parameter?.type ?? null,
+    type: parameter?.type ?? firmware?.type ?? null,
     signed: parameter?.signed ?? null,
     otherBikeValue: parameter?.otherBikeValue ?? null,
   };
   if (row.rawHex === null) {
     // A row that never carried bytes: the NRC, the timeout or the refusal in `note` is
     // the only thing it has, and it is not this function's to overwrite. Both facts fit.
-    return { ...renamed, note: note(row.note, unnameable) };
+    return { ...renamed, note: note(row.note, unnameable, known) };
   }
   const record = bytesFromHex(row.rawHex);
   if (record === null) {
@@ -430,22 +457,43 @@ function retableRow(
       unsigned: null,
       value: null,
       widthMismatch: false,
-      note: note(row.note, unnameable, `stored record “${row.rawHex}” is not hex, so it could not be re-typed`),
+      note: note(row.note, unnameable, known, `stored record “${row.rawHex}” is not hex, so it could not be re-typed`),
     };
   }
-  const interpreted = interpretRecord(record, parameter);
+  const interpreted = interpretRecord(record, parameter ?? firmware);
   return {
     ...renamed,
     unsigned: interpreted.unsigned,
     value: interpreted.value,
     widthMismatch: interpreted.widthMismatch,
     note: note(
-      interpreted.widthMismatch
-        ? `record is ${record.length} byte(s); the name table says ${parameter?.type} — value withheld, raw kept`
-        : null,
-      unnameable
+      widthMismatchNote(interpreted.widthMismatch, record.length, renamed.type, firmware !== null),
+      unnameable,
+      known
     ),
   };
+}
+
+/**
+ * The one sentence for a reply whose length contradicts the width that was expected.
+ *
+ * ⚠️ It names WHICH width it contradicts, because the two carry different weight: the name
+ * table's TYPE column has 233 live records behind it, so a mismatch against it means the
+ * framing is wrong; A8's firmware table has one disassembly behind it, so a mismatch against
+ * that is at least as likely to mean the firmware image is not what is flashed. Same
+ * withheld value either way, very different thing to go and look at.
+ */
+function widthMismatchNote(
+  mismatched: boolean,
+  recordLength: number,
+  expected: ParameterStorageType | null,
+  fromFirmwareTable: boolean
+): string | null {
+  if (!mismatched) {
+    return null;
+  }
+  const source = fromFirmwareTable ? "A8's firmware table" : "the name table";
+  return `record is ${recordLength} byte(s); ${source} says ${expected} — value withheld, raw kept`;
 }
 
 /**
@@ -563,7 +611,10 @@ export function describeChange(change: VcuParameterChange): string {
 
 /** One row as a log line, in the same vocabulary as the page. */
 export function describeRow(row: VcuParameterRow): string {
-  const name = `${String(row.index).padStart(3)} ${(row.name ?? "?").padEnd(30)}`;
+  // padStart(4), not 3: eight of the rows ./a8-firmware-rows.ts adds are four digits, and
+  // a journal is the artefact you have when the bike is out of wifi range — columns that
+  // shift for eight lines in 302 are read as a different kind of line.
+  const name = `${String(row.index).padStart(4)} ${(row.name ?? "?").padEnd(30)}`;
   if (row.status !== "read") {
     return `${name} ${row.status}${row.note ? ` — ${row.note}` : ""}`;
   }
