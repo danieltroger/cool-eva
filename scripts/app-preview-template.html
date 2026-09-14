@@ -504,11 +504,16 @@ __MODULES__
             // ⚠️ 0x101 too, or this scene inherits PARKED_SIGNALS' 60/62 and the ALL tab renders
             // the word "parked" over a charging bike. The five below are one real frame,
             // `68 64 04 14 4B 00 00 00` at 2026-08-09 18:10:59, capture-20260809-181059-551bae3b.log
-            // — the taper session §"0x610 b7" already cites. A DC-charging bike is state 100 /
-            // substate 104 in 1 510 212 of 1 512 555 frames; docs/can-0x101.md §"What the frame
-            // says while charging".
+            // — the taper session docs/charge-manager.md already cites for fast_dc_limit_max_v.
+            // A DC-charging bike reads state 100 / substate 104 in 1 510 183 of the 1 511 866
+            // frames carrying the bike's own dc_charging bit; docs/can-0x101.md §"What the frame
+            // says while charging". ⚠️ drive_vsm is set explicitly rather than inherited: b2 is 4
+            // outside the three driving substates, which is what PARKED_SIGNALS happens to carry
+            // too, and a scene that is right by inheritance stops being the frame this comment
+            // guarantees the moment the parked fixture changes.
             "vehicle_state_can": [100, "", "drive"],
             "vehicle_substate_can": [104, "", "drive"],
+            "drive_vsm": [4, "", "drive"],
             "vehicle_status_flags": [0x14, "", "vcu"],
             "limp_pack_res": [75, "", "vcu"],
             "dc_charging": [1, "", "charge"],

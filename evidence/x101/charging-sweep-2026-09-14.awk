@@ -24,7 +24,7 @@ function stamp(dateField, timeField,   d, t, days, cum) {
   return days * 86400 + t[1] * 3600 + t[2] * 60 + t[3]
 }
 function live(at, now) { return (at != "" && now >= at && now - at <= 1) }
-FNR == 1 { file = FILENAME; chgAt = ""; ac = 0; dc = 0; }
+FNR == 1 { file = FILENAME; chgAt = ""; ac = 0; dc = 0; cmAt = ""; cmB7 = "" }
 $3 != "can0" { next }
 $5 != "[8]" || NF != 13 { malformed[$4]++; next }
 $4 == "625" {
@@ -38,8 +38,13 @@ $4 == "625" {
     chgAt = stamp($1, $2)
   }
 }
+# 0x610 is tracked ONLY so this script can reproduce the section's two cable-in figures.
+# It is not the charge witness — b7 says a session exists, not that current flows, which is
+# the distinction that made an earlier two-file pass call DC `20/34`.
+$4 == "610" { cmAt = stamp($1, $2); cmB7 = $13 }
 $4 == "101" {
   now = stamp($1, $2)
+  cable[(live(cmAt, now) ? "0x610-live-b7-0x" cmB7 : "no-0x610-within-1s") " " hex($7) "/" hex($6)]++
   witnessed = live(chgAt, now)
   mode = !witnessed ? "no-0x625-within-1s" : (ac ? "ac_charging" : (dc ? "dc_charging" : "plugged-or-idle-neither-bit"))
   key = mode " " hex($7) "/" hex($6)
@@ -49,6 +54,7 @@ $4 == "101" {
 }
 END {
   for (k in n) { printf "%9d  %4d files  %s\n", n[k], files[k], k }
+  for (k in cable) { printf "%9d          CABLE  %s\n", cable[k], k }
   fileCount = 0; for (f in carrying) { fileCount++ }
   bad = 0; for (id in malformed) { bad += malformed[id] }
   printf "TOTALS %d frames of 0x101 across %d files; %d malformed lines skipped (%d of id 101)\n", total, fileCount, bad, malformed["101"]
@@ -58,4 +64,6 @@ END {
 #   awk -f charging-sweep-2026-09-14.awk *.log
 # Output committed beside this as charging-sweep-2026-09-14-output.txt. The archive itself is
 # gitignored and far too large to commit, which is why the script and its output are here:
-# docs/can-0x101.md §"What the frame says while charging" is reproducible from these two files.
+# every figure in docs/can-0x101.md §"What the frame says while charging" is reproducible from
+# these two files — the charging table from the mode rows, and the two cable-in figures
+# (`20/34` beside a live 0x610, `60/62` never beside one) from the CABLE rows.
