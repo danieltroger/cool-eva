@@ -12,7 +12,7 @@ import { getsLatchedTile } from "../lib/latched.js";
 import { isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
 import { formatLifetimeValue, lifetimeError, lifetimeStats, loadLifetimeStats } from "../lib/lifetime.js";
 import { ageInWords, reading } from "../lib/format.js";
-import { pairLabel, stateLabel } from "../lib/state-labels.js";
+import { STATE_KEY, SUBSTATE_KEY, labelFor } from "../lib/state-labels.js";
 
 const { div, input, span } = van.tags;
 
@@ -204,21 +204,24 @@ function RawTile(key) {
  * @param {string} key
  */
 function StateLabelLine(key) {
-  if (key !== "vehicle_state_can" && key !== "vehicle_substate_can") {
+  if (key !== STATE_KEY && key !== SUBSTATE_KEY) {
     return null;
   }
-  const state = signalState("vehicle_state_can");
-  const substate = signalState("vehicle_substate_can");
+  const state = signalState(STATE_KEY);
+  const substate = signalState(SUBSTATE_KEY);
   return () => {
     const stateReading = state.val;
     const substateReading = substate.val;
     if (!stateReading || !substateReading) {
       return span();
     }
-    const label =
-      key === "vehicle_state_can"
-        ? stateLabel(stateReading.value, substateReading.value)
-        : pairLabel(stateReading.value, substateReading.value);
+    // Named fields, and the per-key choice made inside the library: two bare numbers here
+    // could be handed over in the wrong order, and a parked 60/62 read as 62/60 renders in
+    // the fault ink. lib/state-labels.js says so at labelFor().
+    const label = labelFor(key, { state: stateReading.value, substate: substateReading.value });
+    if (!label) {
+      return span();
+    }
     return div({ class: label.documented ? "raw-sub" : "raw-fault" }, label.text);
   };
 }

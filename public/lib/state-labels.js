@@ -17,6 +17,42 @@ export const NEVER_CAPTURED = "never captured";
 
 /** @typedef {{ text: string, documented: boolean }} StateWords */
 
+/** @typedef {{ state: number, substate: number }} StatePair */
+
+/**
+ * What to print under one of the two tiles that has a vocabulary, or `null` for every other
+ * signal on the page.
+ *
+ * ⚠️ Takes the pair as a NAMED pair rather than two numbers, and owns the per-key dispatch
+ * itself, because both of those were seams the view could get wrong silently: swapping the
+ * two arguments turns a parked `60/62` into `62/60`, which is in neither table and renders in
+ * the fault ink, and swapping which tile calls which function reads "charging" under a
+ * substate. Neither is reachable from a caller now, and the check exercises this function
+ * rather than the two below it.
+ * @param {string} key
+ * @param {StatePair} pair
+ * @returns {StateWords | null}
+ */
+export function labelFor(key, pair) {
+  if (key === STATE_KEY) {
+    return stateLabel(pair.state, pair.substate);
+  }
+  if (key === SUBSTATE_KEY) {
+    return pairLabel(pair.state, pair.substate);
+  }
+  return null;
+}
+
+/**
+ * The two signals this vocabulary is about.
+ *
+ * Named as constants so scripts/check-vehicle-state-labels.ts can assert them against
+ * src/can/registry.ts — a rename that missed this file would otherwise just make the label
+ * line quietly disappear, which is ./latched.js's argument for the same shape.
+ */
+export const STATE_KEY = "vehicle_state_can";
+export const SUBSTATE_KEY = "vehicle_substate_can";
+
 /**
  * What to print under `vehicle_substate_can`, given both halves of the pair.
  *
@@ -45,6 +81,11 @@ export function pairLabel(state, substate) {
  * state-level fallback exists for the one state whose own meaning has been measured: a bike
  * in `100/102` is charging even though nobody knows what substate 102 is, and printing
  * "unlabelled" over a state this repo has identified would be false modesty.
+ *
+ * ⚠️ The fallback does NOT cover a pair in neither table. `100/<something new>` reads
+ * "never captured" on both tiles rather than "charging" on this one: a pair nothing has ever
+ * logged is the louder fact, and a state phrase over it would bury exactly what the raw
+ * logging exists to surface.
  * @param {number} state
  * @param {number} substate
  * @returns {StateWords}

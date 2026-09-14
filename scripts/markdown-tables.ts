@@ -18,7 +18,7 @@ export function markdownTables(source: string): MarkdownTable[] {
   let fenced = false;
   let current: string[][] = [];
   for (const line of source.split("\n")) {
-    if (line.startsWith("```")) {
+    if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
       continue;
     }
@@ -67,7 +67,7 @@ export function selectTable(
 function pushTable(into: MarkdownTable[], lines: string[][]): void {
   // Header, `---` separator, rows. Anything shorter is a line that happens to start with a
   // pipe rather than a table.
-  if (lines.length < 3) {
+  if (lines.length < 3 || !/^\|?\s*:?-{3,}/.test(lines[1][0] ?? "")) {
     return;
   }
   into.push({ header: lines[0].map(cell => cell.toLowerCase()), rows: lines.slice(2) });

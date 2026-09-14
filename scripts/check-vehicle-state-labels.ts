@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { SIGNALS } from "../src/can/registry.ts";
 import {
   LATCHING_SUBSTATES,
+  STATE_KEY,
+  SUBSTATE_KEY,
+  labelFor,
   NEVER_CAPTURED,
   PAIR_LABELS,
   STATE_LABELS,
@@ -29,14 +33,23 @@ const DOC = new URL("../docs/can-0x101.md", import.meta.url);
  * 🚨 Hand-written, and deliberately not derived from the mapping.
  *
  * A "which pairs must carry a phrase" list computed from `PAIR_LABELS` would bless an empty
- * one — `scripts/check-all-view-tiles.ts`'s `MUST_LATCH` argument. These four are the pairs
- * docs/can-0x101.md §"What is still open" names as identified.
+ * one — `scripts/check-all-view-tiles.ts`'s `MUST_LATCH` argument. These are the pairs
+ * docs/can-0x101.md §"What is still open" names as identified, and that bullet and this list
+ * have to be edited together: they drifted apart once already, inside the commit that widened
+ * the bullet to name 53 and state 100.
  */
 const MUST_LABEL: Record<string, string> = {
   "60/62": "parked — the pair the engineering menu shows",
   "40/43": "riding",
   "40/52": "park assist",
+  "40/53": "park assist too — measured in docs/vcu-reverse-and-backup.md §8 by the shared ~59 Nm ceiling",
   "80/83": "the blocking fault — 194 947 of 194 948 archive frames carrying 0x100's blocking-fault bit",
+  // ⚠️ The two charging pairs are here for the reason the list exists at all. Without them,
+  // nulling 100/104 and deleting its vocabulary row leaves the suite GREEN — silently undoing
+  // a 15-million-frame result, because A accepts a null in the band table and B only compares
+  // phrases that exist on one side.
+  "100/101": "AC charging — 7 314 307 frames across 41 files carry the bike's own ac_charging bit",
+  "100/104": "DC charging — 1 510 183 of the pair's 1 510 350 frames carry dc_charging",
 };
 
 /**
@@ -82,10 +95,24 @@ const BEHAVIOUR: Probe[] = [
     documented: true,
   },
   {
-    what: "🔥 substate 150, bit 7 set — the branch that proves the latching lookup runs BEFORE the band lookup. 150 is in no band, so a band-first pairLabel() calls a documented start-up step uncaptured",
+    what: "🔥 substate 150, bit 7 set — the branch that proves the latching map is consulted AT ALL. 150 is in no band, so a pairs-only lookup calls a documented start-up step uncaptured. ⚠️ It does not pin the ORDER: a pairs-first version falling through here behaves identically, which the mutation suite established by having that reordering survive",
     hex: "96 28 04 04 64 00 00 00",
     tile: "substate",
     expect: "drive-enable step",
+    documented: true,
+  },
+  {
+    what: '🔥 substate 143, the LOWEST bit-7 value — the boundary. `substate >= 128` widened to `>= 144` leaves every table agreeing and renders this documented drive-enable step as "never captured" in the fault ink; 150 does not catch it. 2026-08-02 21:05:01.386245, capture-20260802-210358-346ecdd5.log',
+    hex: "8F 28 04 04 64 00 00 00",
+    tile: "substate",
+    expect: "drive-enable step",
+    documented: true,
+  },
+  {
+    what: '🔥 the state tile over a pair that HAS a phrase — pins that the pair wins over the state fallback. Drop stateLabel()\'s early return and this reads "charging", which is what the DC screenshot would have stopped saying',
+    hex: "68 64 04 14 4B 00 00 00",
+    tile: "state",
+    expect: "DC charging",
     documented: true,
   },
   {
@@ -164,8 +191,16 @@ for (const row of bandTable?.rows ?? []) {
     continue;
   }
   documentedStates.add(state);
+  if (row.length < 2) {
+    // Indexing row[1] on a short row throws, and under top-level await that kills the run
+    // before any failure already collected is printed.
+    failures.push(`the band table has a row with ${row.length} cells: ${JSON.stringify(row)}`);
+    continue;
+  }
   for (const part of row[1].split(",")) {
-    const substate = Number(part.trim());
+    // /^\d+$/ and not Number.isInteger(Number(x)): `Number("")` is 0, so a trailing comma in
+    // the document used to add a phantom substate 0 and step straight over this guard.
+    const substate = /^\d+$/.test(part.trim()) ? Number(part.trim()) : NaN;
     if (!Number.isInteger(substate)) {
       failures.push(`the band table's state ${state} lists a substate that is not a number: "${part.trim()}"`);
       continue;
@@ -247,7 +282,9 @@ for (const [pair, phrase] of PAIR_LABELS) {
   }
 }
 for (const [key, phrase] of documentedPhrases) {
-  if (key.startsWith("latched/")) continue;
+  // Guarded like assertion A's second arm: a vocabulary table that failed to parse reports
+  // that once, rather than sixteen times as a missing row.
+  if (!vocabulary || key.startsWith("latched/")) continue;
   const mapped = PAIR_LABELS.get(key);
   if (mapped === undefined) {
     failures.push(
@@ -262,6 +299,7 @@ for (const [key, phrase] of documentedPhrases) {
 
 // C. The three bit-7 substates, which belong to no band and so cannot be covered by A.
 for (const [substate, phrase] of LATCHING_SUBSTATES) {
+  if (!vocabulary) break;
   const documented = documentedPhrases.get(`latched/${substate}`);
   if (documented === undefined) {
     failures.push(
@@ -328,7 +366,14 @@ for (const probe of BEHAVIOUR) {
     failures.push(`${probe.what}: the frame did not decode to a state and a substate`);
     continue;
   }
-  const got = probe.tile === "state" ? stateLabel(state, substate) : pairLabel(state, substate);
+  // Through labelFor(), i.e. the entry point public/views/all.js actually calls, so the
+  // per-key dispatch is covered rather than assumed. The two functions under it are exported
+  // for the document's sake, not for the tile's.
+  const got = labelFor(probe.tile === "state" ? STATE_KEY : SUBSTATE_KEY, { state, substate });
+  if (!got) {
+    failures.push(`${probe.what}: labelFor() returned nothing for a key that must have a vocabulary`);
+    continue;
+  }
   if (got.text !== probe.expect) {
     failures.push(`${probe.what}: ${state}/${substate} renders "${got.text}" and should render "${probe.expect}"`);
   }
