@@ -910,15 +910,15 @@ The dropdown needs a name (and a micro) for all 269; everything else is needed o
 
 | call site                                   | before  | after                       |
 | ------------------------------------------- | ------- | --------------------------- |
-| sheet open, no selection yet (two requests) | 256 582 | 21 115 + 8 097 = **29 212** |
-| sheet open, selection held                  | 256 582 | **22 490** (worst 23 166)   |
-| `<select>` change                           | **0**   | **8 097** (worst 8 773)     |
-| pre-arm refresh — the gesture this is about | 256 582 | **8 097**, −96.8 %          |
-| irreversible-fold re-poll                   | 256 582 | **8 097**                   |
-| every POST reply                            | 256 582 | **8 097**                   |
-| charge tab status fetch                     | 256 582 | **6 722**, −97.4 %          |
+| sheet open, no selection yet (two requests) | 256 582 | 21 120 + 8 102 = **29 222** |
+| sheet open, selection held                  | 256 582 | **22 495** (worst 23 171)   |
+| `<select>` change                           | **0**   | **8 102** (worst 8 778)     |
+| pre-arm refresh — the gesture this is about | 256 582 | **8 102**, −96.8 %          |
+| irreversible-fold re-poll                   | 256 582 | **8 102**                   |
+| every POST reply                            | 256 582 | **8 102**                   |
+| charge tab status fetch — `list=0`          | 256 582 | **6 727**, −97.4 %          |
 
-The selection change going from nothing to 8 097 bytes is a real new cost, taken deliberately: the purpose, the warnings and the range are the safety text for the parameter about to be written and must be on screen the moment the selection lands. The alternative is shipping all 269 of them on every request.
+The selection change going from nothing to 8 102 bytes is a real new cost, taken deliberately: the purpose, the warnings and the range are the safety text for the parameter about to be written and must be on screen the moment the selection lands. The alternative is shipping all 269 of them on every request.
 
 ⚠️ **`selectedTarget()` is the dangerous part of this change**, and it is why `scripts/check-write-status-split.ts` exists. It used to `find` in an array whose entries carried their own names; it is now one object the Pi hands over, arriving a round trip after the selection moves. It decides `control.kind` — which chooses `action=bit` over `action=parameter` — and `onBike()`, which becomes the compare-and-swap `expected=`. **A detail whose name is not the current selection's is refused**, or a stale one produces a perfectly coherent write against the wrong parameter.
 

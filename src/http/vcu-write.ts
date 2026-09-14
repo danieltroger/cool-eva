@@ -13,10 +13,9 @@ import type {
 //         last few lines of the audit journal. Touches nothing.
 //   POST  do exactly one thing to the motorcycle.
 //
-// Both answer the same payload, and both honour two read-only query parameters that say how
-// much of it to build: `detail=NAME` for everything about one target, `list=0` when the caller
-// already holds the 269-name listing. Neither reaches parseWriteRequest, so neither can change
-// what a write does. Why the payload is shaped this way: see parseStatusRequest at the bottom.
+// Both answer the same payload, and two read-only query parameters say how much of it to build:
+// `detail=NAME` for one target in full, `list=0` when the caller holds the 269 names already.
+// Neither reaches parseWriteRequest. Why: see parseStatusRequest at the bottom.
 //
 // ⚠️ This is the second endpoint in this repo that causes traffic on the bike's bus,
 // and the FIRST that changes anything. /vcu-read and /vcu-probe are read-only by
@@ -30,19 +29,14 @@ import type {
 // reads cannot reach a write by accident, including a script of the owner's own
 // written before this endpoint existed.
 //
-// ⚠️ Several actions additionally require the caller to say what it thinks it is doing,
-// because `curl` can reach this endpoint and the UI's two taps cannot follow it there:
-//
-//   set-service-point  confirm=set-service-point
-//   clear-dtcs         confirm=clear-dtcs
-//   sync-clock         confirm=<the UTC minute the caller displayed, ISO>
-//   charge-current     amps=<whole amps>  confirm=charge-current-<amps>
-//   charge-stop        confirm=charge-stop
-//   reset-vcu          confirm=reset-vcu
-//
-// The clock one is not ceremony — it is the server-side half of "Is it <date and
-// time>?", so a page left open since this morning cannot sync this morning's time.
-// Why a header at all, and the rest of the argument: docs/diagnostics-and-checks.md §7.2–7.3.
+// ⚠️ Several actions additionally require the caller to say what it thinks it is doing, because
+// `curl` can reach this endpoint and the UI's two taps cannot follow it there: set-service-point,
+// clear-dtcs, charge-stop and reset-vcu each want their own name as `confirm=`, charge-current
+// wants `confirm=charge-current-<amps>`, and sync-clock wants the UTC minute the caller displayed.
+// That last is not ceremony — it is the server-side half of "Is it <date and time>?", so a page
+// left open since this morning cannot sync this morning's time. Every token is spelled out in
+// parseWriteRequest below, which is the only thing that compares them.
+// Why a header at all, and the rest: docs/diagnostics-and-checks.md §7.2–7.3.
 
 /** The header, and the value that is not the read path's. */
 export const SERVICE_WRITE_HEADER = "x-cool-eva";

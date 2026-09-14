@@ -60,16 +60,10 @@ export const ARMED_KEY = "charge-current";
 // whole charge (#207). That payload re-read the parameter sweep and the entire append-only audit
 // journal per request, on the event loop serving the 10 Hz WebSocket and the CAN RX handler.
 //
-// ⚠️ GUARDED ON THE VALUE, per docs/dashboard-decisions.md §"A guarded derive, and the three ways
-// to lose the change": ws.ts heartbeats a FULL snapshot every 5 s and store.js assigns a freshly
-// parsed object, so a signal's identity churns whether or not its number moved.
-//
-// ⚠️ And guarded on `charge_cmd_ack_seq`, NOT on the verdict. The verdict cannot carry this: two
-// commands settling to the same code move it not at all (record() logs on change), and the
-// automatic controller stepping 32 → 30 → 28 A does exactly that three times in a row while the
-// rider is not touching the phone. Guarding on the verdict would freeze the first command's
-// sentence on screen for the rest of the charge — a worse bug than the poll it replaces, and one
-// no page-side timer can see, because the page never sent those commands. src/charge/ack-watch.ts.
+// ⚠️ Guarded on the VALUE (docs/dashboard-decisions.md §"A guarded derive…"), and on
+// `charge_cmd_ack_seq` rather than on the verdict. The verdict cannot carry this: two commands
+// settling to the same code move it not at all, and the automatic controller does exactly that
+// three times in a row while nobody is touching the phone. src/charge/ack-watch.ts says why.
 
 let lastSettle = /** @type {number | null} */ (null);
 van.derive(() => {
@@ -84,7 +78,14 @@ van.derive(() => {
     return;
   }
   lastSettle = settle;
-  void fetchChargeWriteStatus();
+  void fetchChargeWriteStatus().then(landed => {
+    // ⚠️ Trap #2 on the failing path, the same one charge-write.js has: the guard was taken on the
+    // assumption this would land, so a request that did not must give it back or the verdict this
+    // settle exists to phrase is lost until the next command. Only if nothing newer has claimed it.
+    if (!landed && lastSettle === settle) {
+      lastSettle = null;
+    }
+  });
 });
 
 /**

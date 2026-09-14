@@ -23,6 +23,12 @@ import { appendDurably } from "../storage/durable.ts";
 
 const AUDIT_FILE = "service-writes.jsonl";
 
+/** The three ways a line can be unreadable. A closed union so a typo cannot open a fourth key. */
+type JournalInjury = "hole" | "hole-recovered" | "hole-torn" | "damaged";
+
+/** Which damaged lines have already been named. See warnOnceAbout at the bottom. */
+const reportedDamage = new Set<string>();
+
 /** What kind of change was attempted. A closed union so the file cannot grow shapes nothing reads. */
 export type AuditAction =
   | "parameter-write"
@@ -232,8 +238,9 @@ function leadingNulBytes(line: string): number {
 /**
  * Salvaged bytes as a record, or null.
  *
- * ⚠️ A stricter bar than an ordinary line gets: `at` and `action` are what the page renders, so a
- * fragment that happens to parse but carries neither is not a record of anything.
+ * ⚠️ A stricter bar than an ordinary line gets: `at`, `action` and `status` are the three fields
+ * every record has and the page renders, so a fragment that happens to parse without them is not
+ * a record of anything.
  */
 function recordFromSalvagedBytes(text: string): AuditRecord | null {
   let parsed: unknown;
@@ -251,6 +258,9 @@ function recordFromSalvagedBytes(text: string): AuditRecord | null {
   if (typeof candidate.at !== "number" || typeof candidate.action !== "string") {
     return null;
   }
+  if (typeof candidate.status !== "string") {
+    return null;
+  }
   return candidate as AuditRecord;
 }
 
@@ -263,7 +273,13 @@ function recordFromSalvagedBytes(text: string): AuditRecord | null {
  * key, and a different injury still gets its own line. A torn LAST line is deliberately not in
  * here: it is routine rather than damage, and the next append turns it into a mid-file line.
  */
-function warnOnceAbout(directory: string, lineNumber: number, length: number, kind: string, message: string): void {
+function warnOnceAbout(
+  directory: string,
+  lineNumber: number,
+  length: number,
+  kind: JournalInjury,
+  message: string
+): void {
   const key = `${directory}|${lineNumber}|${length}|${kind}`;
   if (reportedDamage.has(key)) {
     return;
@@ -271,6 +287,3 @@ function warnOnceAbout(directory: string, lineNumber: number, length: number, ki
   reportedDamage.add(key);
   console.warn(`${message} — said once per process`);
 }
-
-/** Which damaged lines have already been named. See warnOnceAbout. */
-const reportedDamage = new Set<string>();

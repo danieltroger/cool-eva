@@ -71,6 +71,15 @@ const listing = van.state([]);
  * unknown table" stay different things.
  */
 let listingHeldFor = /** @type {{ tableType: number | null } | null} */ (null);
+/**
+ * Which status read has spoken most recently, so a slow answer cannot overwrite a newer one.
+ *
+ * ⚠️ The selection can move while a read is in flight — the `<select>` starts one on every change
+ * — and the reply carries a `detail` for whatever was selected when it was ASKED. Applied out of
+ * order it lands a detail the form refuses, with nothing left on its way to replace it. Same
+ * counter, same reason, as views/charge-auto.js's `latestRead`.
+ */
+let latestStatusRead = 0;
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
 /**
@@ -2331,6 +2340,9 @@ async function send(query) {
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     state.val = payload;
     message.val = payload.result?.message ?? payload.message ?? "";
+    if (adoptListing(payload)) {
+      await fetchStatus(true);
+    }
     return payload;
   } catch (error) {
     // ⚠️ The worst case on this page, and it is said as such. A write request that
@@ -2394,9 +2406,19 @@ export async function fetchStatus(withListing = false) {
   if (!withListing && listingHeldFor !== null) {
     query.set("list", "0");
   }
+  const askedFor = selected.val;
+  const read = (latestStatusRead += 1);
   try {
     const response = await fetch(`/vcu-write?${query}`, { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
+    if (read !== latestStatusRead) {
+      // A newer read was issued while this one was in flight, so its answer is at least as fresh —
+      // and this one's `detail` may belong to a parameter the form has already left. Dropped rather
+      // than applied: `selectedTarget()` refuses a mismatched detail, so applying it would leave
+      // the form stuck reading its notes forever with nothing on its way. charge-auto.js does the
+      // same for the same reason.
+      return;
+    }
     // ⚠️ Disarmed BEFORE the new status lands, always. A refresh can bring a different
     // value for the selected parameter — a sweep that finished while the sheet was open
     // rewrites `onBike` under it — and a button armed against 75 must not fire against
@@ -2405,21 +2427,19 @@ export async function fetchStatus(withListing = false) {
     // see armClockSync().
     armed.val = "";
     state.val = payload;
-    const tableType = payload.status.tableGate.tableType;
-    if (payload.status.targets) {
-      listing.val = payload.status.targets;
-      listingHeldFor = { tableType };
-    } else if (listingHeldFor !== null && listingHeldFor.tableType !== tableType) {
-      // A sweep finished under the open sheet and named a different table, so the names the
-      // picker is showing are no longer the names the Pi would accept. Ask again, with the list.
-      listingHeldFor = null;
+    if (adoptListing(payload)) {
       await fetchStatus(true);
       return;
     }
     if (selected.val === "" && listing.val.length > 0) {
-      // Nothing was selected, so nothing asked for a detail. One more round trip, and it cannot
-      // recur: the selection is set now, and `forgetSelection()` never clears it.
       selected.val = listing.val[0].name;
+    }
+    if (selected.val !== askedFor) {
+      // The selection MOVED while this request was in flight — either it was empty and the listing
+      // has just named one, or a new listing did not contain the old name and `adoptListing` moved
+      // it. Either way this reply describes a different parameter, so ask again for the one the
+      // form is on. It cannot recur: a re-entry only fires when the selection moves during ITS own
+      // request, and nothing below moves it.
       await fetchStatus();
     }
   } catch (error) {
@@ -2428,4 +2448,38 @@ export async function fetchStatus(withListing = false) {
     message.val = `could not reach /vcu-write — ${error instanceof Error ? error.message : String(error)}`;
     console.warn("vcu-write: status fetch failed", error);
   }
+}
+
+/**
+ * Takes what a reply says about the allowlist. True when the listing must be fetched again.
+ *
+ * ⚠️ Shared by `fetchStatus()` and `send()`, because a POST answers the same payload and a sweep
+ * can finish across one: a reply the page adopted without this check would leave the picker
+ * offering names the Pi has stopped accepting.
+ *
+ * ⚠️ A NEW listing re-points the selection when the old name is not in it. Without that the form
+ * asks for a detail that no longer exists, gets null for ever, and sits on "Reading this
+ * parameter's notes…" with no way back — reopening the sheet does not clear it, because
+ * `forgetSelection()` deliberately keeps `selected`.
+ *
+ * @param {VcuWriteResponse} payload
+ */
+function adoptListing(payload) {
+  const tableType = payload.status.tableGate.tableType;
+  if (payload.status.targets) {
+    listing.val = payload.status.targets;
+    listingHeldFor = { tableType };
+    if (selected.val !== "" && !listing.val.some(target => target.name === selected.val)) {
+      selected.val = listing.val.length > 0 ? listing.val[0].name : "";
+      forgetSelection();
+    }
+    return false;
+  }
+  if (listingHeldFor !== null && listingHeldFor.tableType !== tableType) {
+    // A sweep finished under the open sheet and named a different table, so the names the
+    // picker is showing are no longer the names the Pi would accept. Ask again, with the list.
+    listingHeldFor = null;
+    return true;
+  }
+  return false;
 }

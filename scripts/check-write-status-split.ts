@@ -1,5 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -154,7 +153,7 @@ served = { detail: null, targets: LISTING, tableType: TABLE_TYPE };
 await fetchStatus();
 check(
   "§3 a refresh that already holds the names says so",
-  asked.every(url => url.includes("list=0"))
+  asked.length > 0 && asked.every(url => url.includes("list=0"))
 );
 check("§3 and the picker still has them", parameterListing().length === 2);
 
@@ -174,6 +173,28 @@ check(
   "§4 and the picker is replaced rather than left stale",
   parameterListing().length === 1 && parameterListing()[0].name === "ONLY_PARAM"
 );
+// ⚠️ The sheet must not be left asking for a name the new table has not got. Without the re-point
+// `selectedTarget()` is null for ever, every later request keeps asking `detail=FIRST_PARAM`, and
+// the form sits on "Reading this parameter's notes…" — which reopening the sheet does not clear,
+// because forgetSelection() deliberately keeps the selection.
+check(
+  "§4 the selection is re-pointed at a name the new table HAS",
+  asked.at(-1)?.includes("detail=ONLY_PARAM") === true
+);
+
+// ── §4b an answer that arrives out of order is dropped ────────────────────────────────
+//
+// The `<select>` starts a request on every change, so two can be in flight and the older one
+// carries a detail for a parameter the form has left. Applied, it lands a detail selectedTarget()
+// refuses with nothing on its way to replace it — the same stuck sheet by a different route.
+served = { detail: { ...DETAIL, name: "ONLY_PARAM", index: 9, micro: "A8" }, targets: null, tableType: 20000 };
+await fetchStatus();
+check("§4b a matching detail is adopted", selectedTarget()?.name === "ONLY_PARAM");
+const slow = fetchStatus();
+served = { detail: { ...DETAIL, name: "ONLY_PARAM", index: 9, micro: "A8" }, targets: null, tableType: 20000 };
+const fast = fetchStatus();
+await Promise.all([slow, fast]);
+check("§4b and two overlapping reads leave the newer one's answer in place", selectedTarget()?.name === "ONLY_PARAM");
 
 // ── §5 the pre-arm refresh still raises busy ──────────────────────────────────────────
 //
@@ -192,14 +213,20 @@ check(
 );
 
 // ── §6 the seams stay seams ───────────────────────────────────────────────────────────
-const viewFiles = ["public/views/vcu-write.js", "public/views/charge-current.js", "public/views/charge-stop.js"];
-for (const file of viewFiles) {
-  const text = await readFile(join(ROOT, file), "utf-8");
-  if (file !== "public/views/vcu-write.js" && text.includes("parameterListing")) {
-    failures.push(`§6 ${file} imports parameterListing, which exists only for this check`);
+//
+// ⚠️ The WHOLE of public/, not a list of files somebody has to remember to extend — a hard-coded
+// three would have said nothing about the fourth view that imported it.
+const readers: string[] = [];
+for (const entry of await readdir(join(ROOT, "public"), { recursive: true })) {
+  if (!entry.endsWith(".js") || entry.startsWith("vendor")) {
+    continue;
+  }
+  const text = await readFile(join(ROOT, "public", entry), "utf-8");
+  if (entry !== join("views", "vcu-write.js") && text.includes("parameterListing")) {
+    readers.push(entry);
   }
 }
-check("§6 parameterListing is not read anywhere in public/", !failures.some(entry => entry.startsWith("§6")));
+check(`§6 parameterListing is read nowhere else in public/ (${readers.join(", ") || "none"})`, readers.length === 0);
 
 if (failures.length > 0) {
   console.error(`\nFAILED: ${failures.length} assertion(s)`);

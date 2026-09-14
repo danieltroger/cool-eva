@@ -1,7 +1,10 @@
 import { defineSignals, onChange, record } from "../src/can/signals.ts";
+import { readFile } from "node:fs/promises";
 import { noteChargeCommandSent } from "../src/charge/ack-watch.ts";
 import { HEARTBEAT_MS } from "../src/ws.ts";
 import { SIGNALS } from "../src/can/registry.ts";
+import { boundsFor } from "../public/lib/bounds.js";
+import { latestValue } from "../src/can/signals.ts";
 import { connection, serverTime, signalState } from "../public/lib/store.js";
 
 // What wakes the charge tab, and how often — both halves of #207, on a laptop with no browser.
@@ -34,10 +37,14 @@ let fetches = 0;
 let phoneNow = 0;
 performance.now = () => phoneNow;
 
-globalThis.fetch = (async () => {
+/** Every URL the page asked for, so §5b can say what it did and did not want. */
+const requested: string[] = [];
+
+globalThis.fetch = (async (input: string) => {
   fetches += 1;
+  requested.push(String(input));
   return new Response(JSON.stringify({ status: { enabled: true, chargeAck: null }, result: null, message: null }));
-}) as typeof fetch;
+}) as unknown as typeof fetch;
 
 const { STATUS_RETRY_MS, writesEnabled } = await import("../public/lib/charge-write.js");
 await import("../public/views/charge-current.js");
@@ -153,13 +160,14 @@ phoneNow += 20_000;
 serverTime.val = clock;
 await flush();
 let failing = true;
-globalThis.fetch = (async () => {
+globalThis.fetch = (async (input: string) => {
   fetches += 1;
+  requested.push(String(input));
   if (failing) {
     throw new Error("preview: the Pi did not answer");
   }
   return new Response(JSON.stringify({ status: { enabled: true, chargeAck: null }, result: null, message: null }));
-}) as typeof fetch;
+}) as unknown as typeof fetch;
 
 fetches = 0;
 const realWarn = console.warn;
@@ -186,6 +194,34 @@ check(
   `§5 the retry window (${STATUS_RETRY_MS} ms) clears one heartbeat (${HEARTBEAT_MS} ms)`,
   STATUS_RETRY_MS >= HEARTBEAT_MS
 );
+
+// ── §5b the charge tab never asks for the 269 names ───────────────────────────────────
+//
+// ⚠️ It has no parameter picker, and this is the call armChargeCurrent() makes before every arm —
+// the gesture #107 exists to shrink. Without `list=0` the listing rides along: 21 115 bytes
+// against 6 722, on garage wifi, at the moment the rider is waiting for a button to go live.
+check(
+  "§5b every /vcu-write the charge tab asks for says list=0",
+  requested.length > 0 && requested.every(url => url.includes("list=0"))
+);
+
+// ── §5c a settle whose fetch FAILS is retried on the next heartbeat ───────────────────
+//
+// Trap #2 again, on the settle guard rather than the session one: the guard is taken before a
+// fetch that swallows its error, so without giving it back one dropped request costs the verdict
+// this whole mechanism exists to phrase. Retried at heartbeat rate, not at message rate — this
+// derive reads no serverTime, so it re-runs only when the signal object is reassigned.
+failing = true;
+fetches = 0;
+console.warn = () => {};
+await deliver({ charge_cmd_ack_seq: 42 });
+check("§5c the settle is fetched", fetches === 1);
+failing = false;
+await heartbeat({ charge_manager_state: DC_SESSION, charge_cmd_ack_seq: 42 });
+console.warn = realWarn;
+check("§5c and the failure is retried on the next heartbeat, not abandoned", fetches === 2);
+await heartbeat({ charge_manager_state: DC_SESSION, charge_cmd_ack_seq: 42 });
+check("§5c then it goes quiet again", fetches === 2);
 
 // ── §6 the invariants the assertions above rest on ────────────────────────────────────
 //
@@ -239,6 +275,23 @@ check("§6 and they differ, so each is an edge", pushed[0] !== pushed[1]);
 check(
   "§6 while the identical verdict behind them was pushed at most once — the reason the seq exists",
   acks.length <= 1
+);
+
+// ⚠️ THE WRAP, asserted against the thing it protects rather than against two numbers. bounds.js
+// gates every signal, and public/lib/store.js shows a value outside its range as a FAULT rather
+// than a reading — so an unwrapped counter stops waking the page entirely past 256 settles, on a
+// bike whose automatic controller settles one a minute. Two distinct numbers cannot see that.
+const seqBounds = boundsFor("charge_cmd_ack_seq", "", "charge");
+console.warn = () => {};
+for (let command = 0; command < 300; command += 1) {
+  noteChargeCommandSent("dc", 20);
+}
+console.warn = realWarn;
+const afterMany = latestValue("charge_cmd_ack_seq");
+check("§6 the counter has a bounds rule at all", seqBounds !== null);
+check(
+  `§6 and 299 settles leave it inside that rule (${afterMany} in ${JSON.stringify(seqBounds)})`,
+  seqBounds !== null && afterMany !== null && afterMany >= seqBounds[0] && afterMany <= seqBounds[1]
 );
 
 if (failures.length > 0) {

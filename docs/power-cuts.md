@@ -30,9 +30,9 @@ That is not a hypothesis. It is what the ride log looks like.
 
 ⚠️ **A fixed writer does not repair a file that is already holed.** That 1710-NUL line is still on the Pi, and it is line 11 of a file the dashboard reads on _every_ GET and POST to `/vcu-write`. U+0000 is not JS whitespace, so `trim()` did not catch it and `JSON.parse` threw once per request. `recentAuditRecords` treats a NUL-only line as blank and names it once instead (#154, `scripts/check-write-audit.ts`) — nothing is recovered, because 1710 NUL bytes are not a record.
 
-### ⚠️ The second holed line is not that shape, and reading it as one loses a record (#189, 2026-09-14)
+### ⚠️ The holed line is not the shape it was reported as, and reading it as one loses a record (#189, 2026-09-14)
 
-`service-writes.jsonl` on this Pi has a **second** injury, at line 15, and it is worth stating precisely because both the issue that reported it and the brief that scheduled the fix described it wrongly — as "NULs followed by a torn JSON tail", with the prescribed fix being to skip it. It is not a torn tail. Measured on a copy pulled off the Pi (29 562 bytes, 94 records):
+Both the issue that reported this and the brief that scheduled the fix described the injury as "NULs followed by a torn JSON tail", with the prescribed fix being to skip it. It is not a torn tail. Measured on a copy pulled off the Pi on 2026-09-14 (29 562 bytes, 94 records):
 
 ```
 line 15: 429 characters — bytes 0…214 all NUL (a contiguous prefix), then 214 bytes that parse:
@@ -51,6 +51,8 @@ The tail's stamp sits between its neighbours', so those bytes are the record tha
 ⚠️ **A NUL anywhere but a contiguous leading run is still an ordinary damaged line.** That is the fence, and `scripts/check-write-audit.ts` §5c is red on any reader that switches on `line.includes("\0")` instead: a line with NULs in the _middle_ is not a power-cut prefix, and treating it as one would be the "skip anything that will not parse" widening this whole area exists to prevent.
 
 **Each injury is named once per process, not once per read.** The dashboard polls `/vcu-write`, so "once per read" is dozens of lines a minute about one damaged line — which is what #189 was actually reporting. The key is per file, line number, length and injury kind; an append-only journal cannot change an existing line under that key, and a _different_ injury still gets its own line (asserted, so the dedupe cannot quietly degenerate into "once ever"). A torn **last** line is deliberately excluded: it is routine rather than damage, and the next append turns it into a mid-file line the key then covers. Where a holed line is _also_ the last one, the NUL prefix wins and it is reported as damage — same precedence as the all-NUL trailing line has had since #172.
+
+⚠️ **One line of the table above does not describe this copy.** In it, line 15 is the **only** NUL-bearing line — line 11 is an ordinary `rtc-sync` record — so the 1710-NUL line #154 found is not in the journal as it stands on 2026-09-14. Whether it was compacted, whether that count came from a different copy, or whether the file was replaced is not established here, and this note says only what these bytes say. Both readers handle both shapes either way.
 
 **Known gap, stated rather than left implicit:** the warning goes to the Pi's journal, and the sheet shows its twelve lines with no sign that one is missing. Telling the _page_ a record was lost would change `recentAuditRecords`' signature and ripple into the payload and the sheet, which is a different change from "stop printing a stack trace per request". Not done here.
 

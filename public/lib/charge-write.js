@@ -116,16 +116,16 @@ export function onChargeSessionEnd(listener) {
 // — so no render subscribes to serverTime and no <input> is recreated under it. Cheap per tick (an
 // equality check); the fetch fires only on the session edge.
 //
-// ⚠️ THE FETCH IS RETRIED, and the retry is the fix for trap #2 on this derive's own failing path.
-// `fetchChargeWriteStatus()` swallows its error, so a status fetch that failed at the session edge
-// used to leave `writesOn` false — and the guard already consumed — for the WHOLE charge: the write
-// controls simply never appeared, and it recovered only by accident, through the poll #207 removes.
-// So the guard on "do we hold a status" is `writeStatus` ITSELF rather than a flag that can drift
-// from it. Read with `rawVal`: the derive assigns writeStatus after an await, outside VanJS's
-// dependency capture, so reading `.val` here would subscribe it to what it writes.
+// ⚠️ THE FETCH IS RETRIED: a failure at the session edge used to hide the write controls for the
+// WHOLE charge. The guard on "do we hold a status" is `writeStatus` itself, read with `rawVal`
+// because this derive assigns it after an await, outside VanJS's dependency capture. Why it must
+// also be PACED: docs/dashboard-decisions.md §"The fourth trap".
 let lastLive = false;
 /** When the last session-start fetch was STARTED, so a failing Pi is asked once per heartbeat. */
 let statusAskedAt = /** @type {number | null} */ (null);
+/** ⚠️ Paced from the START of a request, so without this a request that HANGS stacks another every
+ * STATUS_RETRY_MS — twelve a minute at the far end of a garage. `fetch` has no timeout of its own. */
+let statusInFlight = false;
 van.derive(() => {
   const type = liveChargeType();
   const live = type !== null;
@@ -149,11 +149,14 @@ van.derive(() => {
   if (!live || writeStatus.rawVal !== null) {
     return;
   }
-  if (statusAskedAt !== null && since(statusAskedAt) < STATUS_RETRY_MS) {
+  if (statusInFlight || (statusAskedAt !== null && since(statusAskedAt) < STATUS_RETRY_MS)) {
     return;
   }
   statusAskedAt = monotonicNow();
-  void fetchChargeWriteStatus();
+  statusInFlight = true;
+  void fetchChargeWriteStatus().finally(() => {
+    statusInFlight = false;
+  });
 });
 
 /**
@@ -219,18 +222,29 @@ export function applyWriteStatus(payload) {
   chargeAck.val = payload?.status?.chargeAck ?? null;
 }
 
-/** GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike. */
+/**
+ * GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike.
+ *
+ * ⚠️ `list=0`. This tab has no parameter picker, so the 269-name listing is 14 397 bytes of
+ * nothing it can use — and this is the call `armChargeCurrent()` makes before every arm, which is
+ * the gesture #107 exists to shrink. 21 115 bytes against 6 722.
+ *
+ * @returns whether an answer landed. The caller's guard must be forgotten when it did not, or a
+ *   single dropped request costs the verdict this was fetched to phrase.
+ */
 export async function fetchChargeWriteStatus() {
   try {
-    const response = await fetch("/vcu-write", { cache: "no-store" });
+    const response = await fetch("/vcu-write?list=0", { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     // Disarmed before the new status lands: writes switched off across the refresh must not
     // leave a primed button behind.
     armed.val = "";
     applyWriteStatus(payload);
+    return true;
   } catch (error) {
     // Loud, but not fatal to the read-only screen: a failed status fetch simply leaves the
     // controls hidden (their render requires enabled === true), which is the safe direction.
     console.warn("charge-write: status fetch failed", error);
+    return false;
   }
 }
