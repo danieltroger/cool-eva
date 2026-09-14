@@ -78,7 +78,7 @@ const FLOW_CONTROL_FRAME = [0x30, 0x00, 0x00];
  * Keeping it well below the transfer budget is what stops modes 07 and 0A costing
  * the mode-01 poller a second of blind time every read.
  */
-export const FIRST_REPLY_TIMEOUT_MS = 300;
+const FIRST_REPLY_TIMEOUT_MS = 300;
 
 /**
  * How long to wait for the rest, once a First Frame has arrived. Every completed
@@ -86,7 +86,7 @@ export const FIRST_REPLY_TIMEOUT_MS = 300;
  * ~4× the observed worst case — and a stalled one has never later recovered, so
  * spending longer here only lengthens the retry cycle.
  */
-export const TRANSFER_TIMEOUT_MS = 400;
+const TRANSFER_TIMEOUT_MS = 400;
 
 /**
  * Extra tries when a transfer starts and then stalls. Five attempts at the pessimistic
@@ -99,14 +99,26 @@ export const TRANSFER_TIMEOUT_MS = 400;
  * modes 07 and 0A answer nothing, and hammering a bus shared with the ABS and the
  * BMS to establish it a seventh time is not a trade worth making.
  */
-export const RETRY_ATTEMPTS = 4;
+const RETRY_ATTEMPTS = 4;
 
 /**
  * Breather between attempts. The VCU has just abandoned an ISO-TP transfer it
  * thinks is still open, and firing the next request into that is both impolite to
  * a bus we share with the brakes and the likeliest way to keep it stuck.
  */
-export const RETRY_GAP_MS = 120;
+const RETRY_GAP_MS = 120;
+
+/**
+ * The longest one trouble-code transfer can take: every attempt timing out at both stages,
+ * with the gaps between them.
+ *
+ * Exported as the derived figure rather than the four constants behind it, so a caller sizing
+ * a budget around this transfer asserts a relationship instead of restating the arithmetic —
+ * obd-hold.ts's MAX_HOLD_MS prose is this same sum, and scripts/check-clear-dtcs.ts §9 now
+ * checks the clear's parked window against it.
+ */
+export const WORST_CASE_TRANSFER_MS =
+  (RETRY_ATTEMPTS + 1) * (FIRST_REPLY_TIMEOUT_MS + TRANSFER_TIMEOUT_MS) + RETRY_ATTEMPTS * RETRY_GAP_MS;
 
 export type DtcReadOutcome =
   /** A reply arrived and decoded. `response` may still be a refusal. */

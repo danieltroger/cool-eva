@@ -1,14 +1,16 @@
 import type { RawChannel } from "socketcan";
-import { ageMs, latestValue } from "../can/signals.ts";
+import { latestValue } from "../can/signals.ts";
 import { pollPidNow } from "../can/obd.ts";
+import type { DecodedValue } from "../can/frame.ts";
 import { requestTroubleCodeList } from "../can/obd-dtc.ts";
 import { MODE_STORED_DTCS } from "../diagnostics/obd-dtc.ts";
 import { recordTroubleCodeRead, troubleCodeSnapshot } from "../diagnostics/stored-codes.ts";
-import { checkPiClock } from "./service-actions.ts";
+import { readPiClock } from "./service-actions.ts";
 import type { ServiceGateVerdict } from "./service-gate.ts";
+import { verdictSeesACable } from "./charge-session.ts";
 import { clearStoredDtcs, type ClearDtcsOutcome, type RunningWriteSession } from "./write-session.ts";
 import { appendAuditRecord } from "./write-audit.ts";
-import type { ObdPollerHold } from "../can/obd-hold.ts";
+import { withObdPollerHold, type ObdPollerHold } from "../can/obd-hold.ts";
 import type { ServiceWriteAnswer } from "./write-runner.ts";
 
 // OBD Mode 04, and the read-back that is the only thing separating "the bike said 44" from
@@ -49,6 +51,16 @@ export interface ClearDtcsCounts {
   distSinceClearAfterKm: number | null;
   /** How many codes the fresh mode-03 transfer listed, or null when it did not complete. */
   listedAfter: number | null;
+  /**
+   * What PID 31 proves about this press.
+   *
+   * ⚠️ Sent so the browser STYLES the Pi's sentence rather than composing its own from these
+   * numbers. It used to rebuild "46 stored → 5 stored, 41 cleared" and the proof line itself,
+   * which put the same prose in three places — server, browser, preview — with only the verdict
+   * cross-checked, so the wording could drift while every check stayed green. Same rule
+   * StampOutcome states: take the server's words, do not recompute them.
+   */
+  verdict: ErasureVerdict;
 }
 
 /** What PID 31 proves about this press. */
@@ -81,8 +93,19 @@ export function judgeErasure(counts: ClearDtcsCounts): ErasureVerdict {
 export interface ClearDtcsContext {
   directory: string;
   gate: () => ServiceGateVerdict;
-  holdPoller: (what: string) => Promise<ObdPollerHold | null>;
   running: RunningWriteSession | null;
+  /** Parks the always-on OBD poller. Injected so a check can grant a fake one — see the wrapper. */
+  holdPoller: (what: string) => Promise<ObdPollerHold | null>;
+  /**
+   * The runner's own refusal composition for this action, re-asked mid-flight.
+   *
+   * ⚠️ Injected rather than re-derived from `gate()`. `serviceActionPolicy` is the one total
+   * table that decides which gates apply to which action, and an earlier version of this file
+   * tested `gate().safe` directly — so flipping clear-dtcs's `refusedWhileCharging` row would
+   * have made entry refuse while these two re-checks silently did not, reopening the window
+   * they exist to close on the very axis this PR's charger hypothesis argues about.
+   */
+  refuseNow: () => string | null;
 }
 
 /**
@@ -99,37 +122,21 @@ export interface ClearDtcsContext {
  * diagnostic memory erased anyway.
  */
 export async function performClearDtcs(context: ClearDtcsContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
-  const hold = await context.holdPoller("clearing the stored trouble codes");
-  if (!hold) {
-    return {
-      ok: false,
-      reason:
-        "the OBD poller would not stop in time, so the bike could not be read back on either side of the clear — nothing was sent. Try again in a few seconds.",
-    };
-  }
-  try {
-    const parked = refuseIfUnsafe(context, "while the OBD poller parked");
-    if (parked) {
-      return parked;
-    }
-    return await clearOnParkedBus(context, channel);
-  } finally {
-    // Released on every path, including a throw: a leaked hold takes speed, rpm and the
-    // temperatures off the dashboard AND out of the ride log, on a bike with no reception.
-    hold.release();
-  }
+  const held = await withObdPollerHold(
+    "clearing the stored trouble codes",
+    async () => {
+      const parked = refuseIfUnsafe(context, "while the OBD poller parked");
+      return parked ?? (await clearOnParkedBus(context, channel));
+    },
+    context.holdPoller
+  );
+  return held.ok ? held.result : { ok: false, reason: held.reason };
 }
 
-/** A refusal naming the blockers, or null when the bike is still safe to service. */
+/** A refusal in the runner's own words, or null when the action may still go ahead. */
 function refuseIfUnsafe(context: ClearDtcsContext, when: string): ServiceWriteAnswer | null {
-  const verdict = context.gate();
-  if (verdict.safe) {
-    return null;
-  }
-  return {
-    ok: false,
-    reason: `the bike stopped being safe to service ${when} — ${verdict.blockers.join("; ")}. Nothing was sent.`,
-  };
+  const reason = context.refuseNow();
+  return reason === null ? null : { ok: false, reason: `${reason} — ${when}. Nothing was sent.` };
 }
 
 async function clearOnParkedBus(context: ClearDtcsContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
@@ -153,32 +160,40 @@ async function clearOnParkedBus(context: ClearDtcsContext, channel: RawChannel):
   // `failed` on the first run.
   context.running = null;
 
-  const after = outcome.status === "cleared" ? await readAfterClear(channel) : null;
-  const counts: ClearDtcsCounts | undefined =
-    after === null
-      ? undefined
-      : {
-          storedBefore: before.storedCount,
-          storedAfter: after.storedCount,
-          distSinceClearBeforeKm: before.distSinceClearKm,
-          distSinceClearAfterKm: after.distSinceClearKm,
-          listedAfter: after.listedAfter,
-        };
-  const message = describeClear(context, outcome, counts);
+  let counts: ClearDtcsCounts | undefined;
+  let message: string;
+  if (outcome.status === "cleared") {
+    const after = await readAfterClear(channel);
+    counts = {
+      storedBefore: before.storedCount,
+      storedAfter: after.storedCount,
+      distSinceClearBeforeKm: before.distSinceClearKm,
+      distSinceClearAfterKm: after.distSinceClearKm,
+      listedAfter: after.listedAfter,
+      verdict: "unproven",
+    };
+    counts.verdict = judgeErasure(counts);
+    message = describeAcceptedClear(context, counts);
+  } else {
+    // Narrowed rather than cast: `counts` is undefined exactly when the status is not
+    // "cleared", and an `as` here was a type escape propped up by an invariant a hundred
+    // lines away — the same escape CLAUDE.md bans `any` and `object` for.
+    message =
+      outcome.status === "refused" ? `Refused: ${outcome.description}.` : `Nothing confirmed: ${outcome.reason}`;
+  }
 
   await appendAuditRecord(context.directory, {
     at: Date.now(),
-    clockTrustworthy: checkPiClock({
-      systemEpochMs: Date.now(),
-      gpsEpochSeconds: latestValue("gps_epoch_s"),
-      gpsAgeMs: ageMs("gps_epoch_s"),
-    }).trustworthy,
+    clockTrustworthy: readPiClock().trustworthy,
     action: "clear-dtcs",
     status: outcome.status,
     // Recorded as read off the bus, so the journal is a witness rather than a transcript of what
     // the ECU claimed. The 08-08 and 09-11 lines say "cleared" and carry nothing to contradict them.
-    before: describeCounters(before.storedCount, before.distSinceClearKm),
-    after: after === null ? null : describeCounters(after.storedCount, after.distSinceClearKm),
+    before: describeCounters(before),
+    after:
+      counts === undefined
+        ? null
+        : describeCounters({ storedCount: counts.storedAfter, distSinceClearKm: counts.distSinceClearAfterKm }),
     note: message,
   });
 
@@ -198,19 +213,28 @@ async function clearOnParkedBus(context: ClearDtcsContext, channel: RawChannel):
   };
 }
 
-/** PID 01 and PID 31, read now on the parked bus. Null for either that does not answer. */
-async function readClearCounters(channel: RawChannel): Promise<{
+/** One sampling of the two counters that say whether a clear did anything. */
+interface CounterReading {
   storedCount: number | null;
   distSinceClearKm: number | null;
-}> {
-  const answeredStatus = await pollPidNow(channel, PID_MONITOR_STATUS);
-  const answeredDistance = await pollPidNow(channel, PID_DISTANCE_SINCE_CLEAR);
-  // ⚠️ `latestValue` only after the poll ANSWERED. Reading it regardless would hand back the
-  // always-on poller's last value — up to 10 s old for PID 01 — as a reading taken beside the frame.
+}
+
+/** PID 01 and PID 31, read now on the parked bus. Null for either that does not answer. */
+async function readClearCounters(channel: RawChannel): Promise<CounterReading> {
+  // ⚠️ Straight off the decode, never out of the signal store. `latestValue` would answer for a
+  // poll that did NOT come back, with the always-on loop's reading from up to 10 s earlier, and
+  // present it as a number taken beside the frame.
+  const status = await pollPidNow(channel, PID_MONITOR_STATUS);
+  const distance = await pollPidNow(channel, PID_DISTANCE_SINCE_CLEAR);
   return {
-    storedCount: answeredStatus ? latestValue("dtc_count") : null,
-    distSinceClearKm: answeredDistance ? latestValue("dist_since_clear_km") : null,
+    storedCount: valueOf(status, "dtc_count"),
+    distSinceClearKm: valueOf(distance, "dist_since_clear_km"),
   };
+}
+
+/** One signal out of a PID's decode, or null when the PID did not answer. */
+function valueOf(decoded: DecodedValue[] | null, key: string): number | null {
+  return decoded?.find(signal => signal.key === key)?.value ?? null;
 }
 
 /**
@@ -222,46 +246,23 @@ async function readClearCounters(channel: RawChannel): Promise<{
  * sits on the 10 s divisor, which is why the 2026-09-13 clear could not settle whether it
  * survived or was instantly re-captured.
  */
-async function readAfterClear(channel: RawChannel): Promise<{
-  storedCount: number | null;
-  distSinceClearKm: number | null;
-  listedAfter: number | null;
-}> {
-  const list = await requestTroubleCodeList(channel, MODE_STORED_DTCS);
-  recordTroubleCodeRead(list, "stored");
+async function readAfterClear(channel: RawChannel): Promise<CounterReading & { listedAfter: number | null }> {
+  // ⚠️ THE COUNTERS FIRST. The mode-03 transfer takes up to 4 s, and this bike re-latches an
+  // active code within a second — so reading PID 01 after the list would inflate "41 cleared"
+  // by whatever came back during the transfer, and would make the LIST the fresher of the two
+  // "after" numbers, which is the opposite of what anyone reading them would assume.
+  const counters = await readClearCounters(channel);
   await pollPidNow(channel, PID_FREEZE_FRAME_DTC);
+  recordTroubleCodeRead(await requestTroubleCodeList(channel, MODE_STORED_DTCS), "stored");
   const stored = troubleCodeSnapshot().stored;
-  return {
-    ...(await readClearCounters(channel)),
-    listedAfter: stored.state === "codes" ? stored.codes.length : null,
-  };
+  return { ...counters, listedAfter: stored.state === "codes" ? stored.codes.length : null };
 }
 
 /** `46 stored, 19671 km since clear` — for the journal, where a shape is worth more than a number. */
-function describeCounters(storedCount: number | null, distSinceClearKm: number | null): string {
-  const stored = storedCount === null ? "stored count unread" : `${storedCount} stored`;
-  const distance = distSinceClearKm === null ? "distance unread" : `${distSinceClearKm} km since clear`;
+function describeCounters(reading: CounterReading): string {
+  const stored = reading.storedCount === null ? "stored count unread" : `${reading.storedCount} stored`;
+  const distance = reading.distSinceClearKm === null ? "distance unread" : `${reading.distSinceClearKm} km since clear`;
   return `${stored}, ${distance}`;
-}
-
-/**
- * What happened, in the words the page shows.
- *
- * ⚠️ A positive `44` is NOT success here, and this is the sentence that says so.
- */
-function describeClear(
-  context: ClearDtcsContext,
-  outcome: ClearDtcsOutcome,
-  counts: ClearDtcsCounts | undefined
-): string {
-  switch (outcome.status) {
-    case "cleared":
-      return describeAcceptedClear(context, counts as ClearDtcsCounts);
-    case "refused":
-      return `Refused: ${outcome.description}.`;
-    case "failed":
-      return `Nothing confirmed: ${outcome.reason}`;
-  }
 }
 
 function describeAcceptedClear(context: ClearDtcsContext, counts: ClearDtcsCounts): string {

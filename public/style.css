@@ -848,26 +848,14 @@ body {
 /* A caution may carry more than one argument against pressing — the Clear button gains a
    second one when the gate sees a cable in the inlet. Separated rather than run together:
    as one block it read as "…come straight back. ⚠️ The charge manager reports…", two
-   warnings sharing a sentence, which is how the more urgent of the two gets skipped. */
+   warnings sharing a sentence, which is how the more urgent of the two gets skipped.
+
+   The "erased nothing" verdict uses .action-note.failure and the .no-undo badge rather than a
+   fourth set of red numbers: --bad and --warn are the closest adjacent pair in this ramp
+   (check-theme-contrast.ts's SEPARATION_FLOOR is set at 15 and that pair is what holds it
+   there), so a red line among amber ones has to carry its severity in weight, not in hue. */
 .caution-paragraph + .caution-paragraph {
   margin-top: 0.6em;
-}
-
-/* ⚠️ The one verdict that must not be read as prose: the bike accepted Mode 04 and erased
-   nothing. Carried by WEIGHT and a badge, not by hue — --bad and --warn are 16.0 apart in a*b*,
-   the tightest adjacent pair in the ramp (check-theme-contrast.ts's SEPARATION_FLOOR is ratcheted
-   to exactly that pair), so in light theme a red line between two amber cautions is a third
-   near-identical paragraph. Same argument as .no-undo, which is why it borrows the same badge. */
-.clear-verdict-bad {
-  color: var(--bad);
-  font-weight: 650;
-  font-size: 1.05em;
-}
-
-.clear-verdict-sweep {
-  font-weight: 400;
-  font-size: 0.95em;
-  margin-top: 0.25em;
 }
 
 /* Machine output — git's, from the Update button — rather than prose we wrote.

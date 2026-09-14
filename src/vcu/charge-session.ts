@@ -192,6 +192,28 @@ export function inletIsEmpty(readings: ServiceGateReadings): boolean {
   return !CHARGE_INLET_VETO.hasCable(sample.value);
 }
 
+/**
+ * Does the SERVED gate say something is plugged in right now?
+ *
+ * Two clauses because the gate reports two different facts: `chargingEvidence` is a witnessed
+ * charge session, and the veto row reaching `ok` means the charge manager is on the bus, fresh,
+ * and reporting a cable in the inlet (see inletCheck in ./service-gate.ts — `ok` is unreachable
+ * when the sample is stale, absent, or says the inlet is empty).
+ *
+ * ⚠️ Takes the VERDICT, not the readings, so the browser can ask the same question of the same
+ * payload. public/views/vcu-write.js has to re-implement it — no build step, no `.ts` at runtime
+ * — and scripts/check-clear-dtcs.ts §8 covers both.
+ */
+export function verdictSeesACable(verdict: {
+  chargingEvidence: string | null;
+  checks: { key: string; state: string }[];
+}): boolean {
+  if (verdict.chargingEvidence !== null) {
+    return true;
+  }
+  return verdict.checks.find(check => check.key === CHARGE_INLET_VETO.key)?.state === "ok";
+}
+
 /** Every signal this module reads, so the gate's sampler cannot ask for a smaller set. */
 export function chargeEvidenceKeys(): string[] {
   return [...CHARGE_EVIDENCE.map(rule => rule.key), CHARGE_INLET_VETO.key];

@@ -18,6 +18,7 @@
 //    this bike. What that does and does not establish: docs/service-stamp.md.
 //  • ❌ Mode 04 has never been sent by anything in this repo.
 
+import { ageMs, latestValue } from "../can/signals.ts";
 import { toHex } from "./param-codec.ts";
 
 /**
@@ -177,6 +178,23 @@ export type PiClockVerdict =
   | { trustworthy: true; iso: string; offsetFromGpsSeconds: number }
   /** Why not, one sentence per reason, already phrased for the page. */
   | { trustworthy: false; iso: string; reasons: string[] };
+
+/**
+ * The Pi's clock verdict, sampled now.
+ *
+ * ⚠️ `gpsAgeMs` is the MONOTONIC age (../monotonic.ts), never a `Date.now()` difference — this
+ * process steps its own wall clock from GPS, so a subtraction here can come back negative or
+ * hours wide. Lives beside checkPiClock rather than in a caller because every audit-writing
+ * action stamps `clockTrustworthy` from it, and a second copy of the sampling rule is a second
+ * chance to get that wrong.
+ */
+export function readPiClock(): PiClockVerdict {
+  return checkPiClock({
+    systemEpochMs: Date.now(),
+    gpsEpochSeconds: latestValue("gps_epoch_s"),
+    gpsAgeMs: ageMs("gps_epoch_s"),
+  });
+}
 
 /**
  * Decides whether this Pi's wall clock is fit to be written into the bike's RTC.
@@ -366,7 +384,9 @@ export function buildClearDtcsFrame(): Uint8Array {
  * ⚠️ Since src/vcu/clear-dtcs.ts, the only Mode 04 caller PARKS the poller for the exchange, so
  * the bus is quiet for the 300 ms window this guards. It stays as defence in depth — the hold is
  * capped by the loop at 15 s, so a read-back that overruns finds the poller back underneath it —
- * but the poller's traffic is no longer the ordinary case, and this comment used to say it was. The KWP legs of a write need no equivalent,
+ * but the poller's traffic is no longer the ordinary case, and this comment used to say it was.
+ *
+ * The KWP legs of a write need no equivalent,
  * because `parseResponseFrame` requires byte 0 to be the tester's address 0xF1 and no
  * ISO-TP PCI byte can be 0xF1; Mode 04 has no such discriminator built in.
  *

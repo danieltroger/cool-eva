@@ -273,7 +273,7 @@ const vcuWriteRunner = createVcuWriteRunner({
   // a clear with a fake one. Only clear-dtcs uses it: it is the one action that reads the bike
   // back on the same bus, and the always-on poller's own 0x7DF traffic would otherwise make the
   // VCU abandon the mode-03 transfer it does that with.
-  holdPoller: reason => holdObdPoller(reason),
+  holdPoller: holdObdPoller,
   // ⚠️ Every charge current about to reach the bus, hand-set or automatic, and told BEFORE the
   // frames go out — the bike answers our own commit within milliseconds, so a controller told
   // afterwards reads its own command as the rider. A hand-set one still stands it down.

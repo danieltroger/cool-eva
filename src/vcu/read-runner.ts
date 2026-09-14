@@ -562,6 +562,12 @@ function startGateWatchdog(context: RunnerContext, sweep: RunningParameterSweep)
  * log line to reason about. The caller decides what stopping means; this only
  * decides when.
  */
+//
+// ⚠️ DELIBERATELY NOT the same shape as write-runner.ts's startGateWatchdog, which returns early
+// when nothing is in flight. This one is started WITH the in-flight object and stopped when it
+// settles, so it cannot fire against a settled exchange and needs no such guard; that one runs
+// for the whole of `perform` and reads a nullable field. Unifying them would have to keep this
+// property. Why the write side needed the guard: docs/clear-dtcs.md §5.
 function startWatchdog(onUnsafe: (reason: string) => void): ReturnType<typeof setInterval> {
   let fired = false;
   const timer = setInterval(() => {

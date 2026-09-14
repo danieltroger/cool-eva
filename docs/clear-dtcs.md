@@ -1,6 +1,6 @@
 # Clearing trouble codes: OBD Mode 04 on this bike
 
-What is measured, what is inferred, and what was believed and is now refuted. The code is `src/vcu/service-actions.ts` (the frame and the reply decode), `src/vcu/write-session.ts` (`clearStoredDtcs`) and `src/vcu/write-runner.ts` (`performClearDtcs`). `docs/vcu-parameters.md` §13 covers the button's place behind the gate and the fold; this file is about what the bike does.
+What is measured, what is inferred, and what was believed and is now refuted. The code is `src/vcu/service-actions.ts` (the frame and the reply decode), `src/vcu/write-session.ts` (`clearStoredDtcs`) and `src/vcu/clear-dtcs.ts`. `docs/vcu-parameters.md` §13 covers the button's place behind the gate and the fold; this file is about what the bike does.
 
 ## 1. It works — 2026-09-13, parked, nothing plugged in
 
@@ -68,7 +68,7 @@ Partly the bike, and partly us. `/stored-dtcs` serves whatever the mode-03 polle
 
 ## 5. What the button does now
 
-Since this change, `performClearDtcs` (`src/vcu/write-runner.ts`) parks the OBD poller before it sends anything, and reads the bike back on the same quiet bus:
+Since this change, `performClearDtcs` (`src/vcu/clear-dtcs.ts`) parks the OBD poller before it sends anything, and reads the bike back on the same quiet bus:
 
 ```
 holdPoller  →  PID 01, PID 31  →  Mode 04  →  mode 03 list, PID 02, PID 01, PID 31  →  release

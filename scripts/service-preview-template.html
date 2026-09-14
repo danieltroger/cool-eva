@@ -774,13 +774,11 @@
         }
         if (action === "clear-dtcs") {
           // ⚠️ The 2026-09-13 press, verbatim: 46 stored before, 5 after, PID 31 19 671 km → 0.
-          // A made-up pair of round numbers would let the sweep line and the proof line be
-          // screenshotted disagreeing with each other, which is the one thing this card is for.
-          // `?clear=nothing` shows the OTHER real ending — the 2026-08-08 / 2026-09-11 shape,
-          // where the bike answers 44 and PID 31 does not move.
-          // `?clear=nothing` is the 2026-08-08 / 2026-09-11 shape — a positive 44 with PID 31
-          // unmoved. `?clear=retry` is the commonest third case: pressing again a minute later,
-          // when PID 31 already reads 0 and so cannot prove anything either way.
+          // Round invented numbers would let the sentence and the counters be screenshotted
+          // disagreeing, which is the one thing this card exists to prevent. `?clear=nothing` is
+          // the 2026-08-08 / 2026-09-11 shape — a positive 44 with PID 31 unmoved. `?clear=retry`
+          // is the commonest third: pressing again a minute later, when PID 31 already reads 0
+          // and so cannot prove anything either way.
           const ending = new URLSearchParams(window.location.search).get("clear");
           const erasedNothing = ending === "nothing";
           const retry = ending === "retry";
@@ -790,11 +788,14 @@
             distSinceClearBeforeKm: retry ? 0 : 19671,
             distSinceClearAfterKm: erasedNothing ? 19671 : 0,
             listedAfter: erasedNothing ? null : 5,
+            verdict: erasedNothing ? "erased-nothing" : retry ? "unproven" : "erased",
           };
+          // Derived from `clear`, not written out: a hardcoded "46 stored" put a journal line
+          // beside `?clear=retry`'s counters that contradicted them.
           record({
             action: "clear-dtcs",
             status: "cleared",
-            before: "46 stored, 19671 km since clear",
+            before: `${clear.storedBefore} stored, ${clear.distSinceClearBeforeKm} km since clear`,
             after: `${clear.storedAfter} stored, ${clear.distSinceClearAfterKm} km since clear`,
           });
           return {

@@ -76,13 +76,13 @@ const warningsOpen = van.state(false);
  */
 const dangerOpen = van.state(false);
 /**
- * The counters either side of the last clear made from this page, or null.
+ * The last clear made from this page — the Pi's sentence and the Pi's verdict — or null.
  *
  * Its own state rather than read off `state.val.result` for the reason StampOutcome has one: a
  * request that never comes back leaves the PREVIOUS answer in `state`, and a stale green proof
  * under a button whose press just vanished is the worst thing this card could say.
  */
-const clearOutcome = van.state(/** @type {ClearDtcsCounts | null} */ (null));
+const clearOutcome = van.state(/** @type {{ message: string, verdict: ClearDtcsCounts["verdict"] } | null} */ (null));
 /**
  * The last write attempt made from this page, so the outcome and the verification hint
  * can be shown against the parameter they belong to rather than to whatever is selected
@@ -658,7 +658,10 @@ function ReadButton() {
     },
     () => {
       if (busy.val) {
-        return "⏳  Reading…";
+        // ⚠️ Only when the READ is what is running. `busy` is global, so this said "Reading…"
+        // through a clear, a service stamp and a clock sync — claiming an operation that was not
+        // happening, which is the exact thing `working` was added for one screen away.
+        return working.val === "" ? "⏳  Reading…" : "⏳  Busy…";
       }
       // Two captions, because the button is answering two different questions. With
       // nothing read it is the way to get a value at all; with a sweep's value already
@@ -1459,6 +1462,9 @@ export function chargerIsAttached(gate) {
   if (gate.chargingEvidence !== null) {
     return true;
   }
+  // The key is `CHARGE_INLET_VETO.key` on the Pi (src/vcu/charge-session.ts). Spelled out here
+  // because public/ has no build step and cannot import a `.ts` at runtime; the Pi's own copy is
+  // `verdictSeesACable`, and scripts/check-clear-dtcs.ts §8 drives both through the same cases.
   return gate.checks.find(check => check.key === "charge_manager_status")?.state === "ok";
 }
 
@@ -1487,96 +1493,34 @@ function clearCodesCaution() {
 }
 
 /**
- * What the bike answered, in numbers rather than in its own word for it.
+ * What the bike answered — the Pi's own sentence, styled by the Pi's own verdict.
  *
- * ⚠️ A positive `44` is not the verdict — twice this bike sent one and erased nothing. The
- * verdict is PID 31: a real clear resets distance-since-codes-cleared to zero within half a
- * second, and nothing else a parked bike does moves it.
+ * ⚠️ THE WORDS ARE THE SERVER'S. This used to rebuild the sweep and the proof line from
+ * `result.clear`, which put that prose in three places (here, src/vcu/clear-dtcs.ts and the
+ * preview template) with only the VERDICT cross-checked — so the two sentences could drift while
+ * every check stayed green, and a refused clear rendered an empty div because it carries no
+ * counts. StampOutcome states the rule this now follows: take the message, do not recompute it.
  *
  * ⚠️ Reads `clearOutcome`, not `state.val.result`. A second press that never comes back leaves
- * the previous answer sitting in `state` — `send()`'s catch deliberately does not touch it — so
- * reading the result directly left a green "erased" proof under a button whose request had just
- * vanished. Same reason StampOutcome has its own state.
+ * the previous answer in `state` — `send()`'s catch deliberately does not touch it — so reading
+ * the result directly left a green "erased" proof under a button whose request had vanished.
  */
 function ClearOutcome() {
   return div(() => {
-    const counts = clearOutcome.val;
-    if (counts === null) {
+    const answer = clearOutcome.val;
+    if (answer === null) {
       return div();
     }
-    const read = describeClearCounts(counts);
-    if (read.erased === false) {
-      // ⚠️ WEIGHT, not hue. --bad and --warn are 16.0 apart in a*b* — the tightest adjacent pair
-      // in the ramp — so in light theme this line sat between two amber cautions as the third
-      // near-identical dark-red paragraph, and the one sentence that matters did not read as an
-      // outcome. Same argument, and the same badge treatment, as NoUndoLine.
-      return div(
-        { class: "action-note clear-verdict-bad" },
-        div(span({ class: "no-undo-badge" }, "ERASED NOTHING"), ` ${read.proof}`),
-        div({ class: "clear-verdict-sweep" }, read.sweep)
-      );
+    if (answer.verdict === "erased-nothing") {
+      // ⚠️ `.action-note.failure`, which is WEIGHT as well as hue — --bad and --warn are the
+      // closest adjacent pair in the ramp, so in light theme a red line between two amber
+      // cautions read as a third near-identical paragraph. NoUndoLine spells the argument out.
+      // No badge: the Pi's own sentence already opens "AND THE BIKE ERASED NOTHING" in caps, and
+      // a badge above it said the same words twice in a row.
+      return div({ class: "action-note failure" }, answer.message);
     }
-    return div(
-      { class: "action-note", style: `color:${read.erased === true ? GOOD : WATCH}` },
-      div(read.sweep),
-      div(read.proof)
-    );
+    return div({ class: "action-note", style: `color:${answer.verdict === "erased" ? GOOD : WATCH}` }, answer.message);
   });
-}
-
-/**
- * The two lines, as plain data so scripts/check-clear-dtcs.ts can assert on them without a
- * browser — the same reason `confirmationFor` is a function and not an inline template.
- *
- * `erased`: true when PID 31 proves it, false when PID 31 proves the opposite, null when it
- * cannot say. Three states and not a boolean, because "we could not check" and "we checked and
- * it did nothing" were the same pixel until 2026-09-13.
- *
- * ⚠️ The server decides the same thing in `judgeErasure` (src/vcu/clear-dtcs.ts) and this must
- * agree with it. `public/` has no build step and cannot import a `.ts` at runtime, so the two
- * are written twice on purpose and check-clear-dtcs.ts §7 asserts they never disagree.
- *
- * @param {ClearDtcsCounts} counts
- * @returns {{ sweep: string, proof: string, erased: boolean | null }}
- */
-export function describeClearCounts(counts) {
-  const sweep = describeSweep(counts);
-  if (counts.distSinceClearAfterKm === null || counts.distSinceClearBeforeKm === null) {
-    return { sweep, proof: "distance since clear could not be read — this press cannot be judged", erased: null };
-  }
-  if (counts.distSinceClearAfterKm !== 0) {
-    return {
-      sweep,
-      proof: `distance since clear still reads ${counts.distSinceClearAfterKm} km — the bike erased nothing`,
-      erased: false,
-    };
-  }
-  if (counts.distSinceClearBeforeKm === 0) {
-    // ⚠️ Zero before AND after proves nothing, and it is the COMMON retry: five codes came back
-    // within a second on 2026-09-13, so pressing again a minute later lands here — on exactly the
-    // shape the two failures had, with the screen previously calling it proven.
-    return {
-      sweep,
-      proof: "distance since clear already read 0 km — nothing here can prove this press did anything",
-      erased: null,
-    };
-  }
-  return { sweep, proof: `distance since clear ${counts.distSinceClearBeforeKm} km → 0 km — erased`, erased: true };
-}
-
-/**
- * `46 stored → 5 stored, 41 cleared`. Never a negative count: a code can re-latch between the
- * two PID 01 reads, which this bike does within a second.
- *
- * @param {ClearDtcsCounts} counts
- */
-function describeSweep(counts) {
-  if (counts.storedBefore === null || counts.storedAfter === null) {
-    return "stored count could not be read";
-  }
-  const swept = counts.storedBefore - counts.storedAfter;
-  const tail = swept < 0 ? `${-swept} MORE than before` : `${swept} cleared`;
-  return `${counts.storedBefore} stored → ${counts.storedAfter} stored, ${tail}`;
 }
 
 const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
@@ -2279,7 +2223,15 @@ async function performAction(action, confirmation) {
   if (action === "clear-dtcs") {
     // Null on a transport failure too: `send()` leaves `state` alone there, and the previous
     // press's proof must not stand under a request that never came back.
-    clearOutcome.val = payload?.result?.clear ?? null;
+    const counts = payload?.result?.clear;
+    clearOutcome.val = counts ? { message: payload?.result?.message ?? "", verdict: counts.verdict } : null;
+    // ⚠️ Cleared for the same reason read-service-stamp clears it: the sentence is now rendered
+    // AT the button, and leaving it in `message` too showed the same verdict twice, three
+    // sections apart. Only when the card is actually showing it — a refusal has no `clear`, and
+    // for that ending `message` is the only home the answer has.
+    if (clearOutcome.val && hasControls()) {
+      message.val = "";
+    }
     return;
   }
   if (action === "set-service-point") {

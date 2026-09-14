@@ -154,17 +154,20 @@ export function handleResponse(id: number, data: Buffer): void {
  * Mode 04 rather than whenever the loop next gets to them — two of the three sit on
  * DIAGNOSTIC_ROUND_DIVISOR, so "before" and "after" would otherwise be up to 10 s apart.
  *
- * ⚠️ Returns the DECODE, not the bytes, and why that matters: docs/clear-dtcs.md §6.
+ * ⚠️ Returns the DECODED VALUES, not the bytes and not a boolean. Handing back the raw frame
+ * dropped PID 01's second signal and skipped the freeze-frame hook; handing back `true` left the
+ * caller fishing the value out of the global signal store, where an unanswered poll silently
+ * yields the always-on loop's reading from up to 10 s ago. docs/clear-dtcs.md §6.
  *
  * ⚠️ Takes the channel explicitly rather than using this module's. In the service the two are
  * the same object, but nothing enforces it, and a null module channel would make this answer
  * "the bike said nothing" when the truth is that we never asked.
  */
-export async function pollPidNow(target: RawChannel, pid: number): Promise<boolean> {
+export async function pollPidNow(target: RawChannel, pid: number): Promise<DecodedValue[] | null> {
   const def = PIDS.find(candidate => candidate.pid === pid);
   if (!def) {
     console.warn(`obd: asked to poll PID 0x${pid.toString(16)}, which is not in the table — ignored`);
-    return false;
+    return null;
   }
   // ⚠️ Loud rather than enforced. This shares the module-level `pending` map with pollOnce, so a
   // running loop asking for the same PID collides: the first timer deletes the second's entry and
@@ -176,17 +179,17 @@ export async function pollPidNow(target: RawChannel, pid: number): Promise<boole
   }
   const response = await requestPid(target, pid);
   if (!response) {
-    return false;
+    return null;
   }
-  fileResponse(def, response);
-  return true;
+  return fileResponse(def, response);
 }
 
 /** The decode-and-record half, shared by pollOnce and pollPidNow so they cannot diverge. */
-function fileResponse(def: PidDef, response: Buffer): void {
+function fileResponse(def: PidDef, response: Buffer): DecodedValue[] {
   const a = response[3] ?? 0;
   const b = response[4] ?? 0;
-  for (const { key, value } of decodedValues(def, a, b)) {
+  const decoded = decodedValues(def, a, b);
+  for (const { key, value } of decoded) {
     record(key, value);
     // Same shape as index.ts's gps_epoch_s hook: one signal that a second module
     // also needs, taken off the recording path rather than decoded twice.
@@ -194,6 +197,7 @@ function fileResponse(def: PidDef, response: Buffer): void {
       recordFreezeFrameDtc(value);
     }
   }
+  return decoded;
 }
 
 function requestPid(target: RawChannel | undefined, pid: number, timeoutMs = PID_TIMEOUT_MS): Promise<Buffer | null> {

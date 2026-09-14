@@ -4,7 +4,13 @@ import type { ObdPollerHold } from "../can/obd-hold.ts";
 import { performClearDtcs, type ClearDtcsCounts } from "./clear-dtcs.ts";
 import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
-import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
+import {
+  SERVICE_STAMP_IDENTIFIERS,
+  checkPiClock,
+  readPiClock,
+  type PiClockVerdict,
+  type ServiceStamp,
+} from "./service-actions.ts";
 import type { ServiceGateSample, ServiceGateVerdict } from "./service-gate.ts";
 import { chargeManagerIsLive, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
@@ -407,14 +413,6 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
  * would otherwise make a stale GPS reading look fresh, which on this particular
  * decision means vouching for a clock with evidence from an hour ago.
  */
-function readPiClock(): PiClockVerdict {
-  return checkPiClock({
-    systemEpochMs: Date.now(),
-    gpsEpochSeconds: latestValue("gps_epoch_s"),
-    gpsAgeMs: ageMs("gps_epoch_s"),
-  });
-}
-
 function summariseTarget(target: WriteTarget, sweep: VcuParameterSnapshot | null): WriteTargetSummary {
   return {
     name: target.name,
@@ -479,6 +477,24 @@ const NOT_CONSULTED: ServiceGateVerdict = { safe: true, blockers: [], checks: []
  * instead of rebuilding `(!gateApplies || safe) && !(refused && charging)` beside it — the
  * check-writes-its-own-version-of-production failure this whole change exists to close.
  */
+/**
+ * The shipped refusal for one action, sampled the way the gate samples.
+ *
+ * Hoisted out of `checkPreconditions` because `clear-dtcs` re-asks it mid-action — it parks the
+ * OBD poller for up to six seconds between the entry check and an irreversible frame, and the
+ * watchdog cannot cover that window because nothing is in flight to abort. Composed here rather
+ * than at the call site so the entry check and the re-checks cannot answer differently.
+ */
+function refusalFor(context: WriteContext, kind: ServiceWriteRequest["kind"]): string | null {
+  const policy = serviceActionPolicy(kind);
+  return serviceActionRefusal(
+    policy,
+    policy.bikeStateGateApplies ? context.gate() : NOT_CONSULTED,
+    key => ({ value: latestValue(key), ageMs: ageMs(key) }),
+    kind
+  );
+}
+
 export function serviceActionRefusal(
   policy: ServiceActionPolicy,
   gate: ServiceGateVerdict,
@@ -602,12 +618,7 @@ async function checkPreconditions(
   // and keying this on one of them permitted `11 02` into a DC fast charge the contactor was
   // witnessing. Sampled the way the gate samples, so the two cannot disagree.
   const policy = serviceActionPolicy(request.kind);
-  const refusal = serviceActionRefusal(
-    policy,
-    policy.bikeStateGateApplies ? context.gate() : NOT_CONSULTED,
-    key => ({ value: latestValue(key), ageMs: ageMs(key) }),
-    request.kind
-  );
+  const refusal = refusalFor(context, request.kind);
   if (refusal) {
     return { ok: false, reason: refusal };
   }
@@ -721,7 +732,22 @@ async function performOnBus(
     case "sync-clock":
       return await performClockSync(context, channel);
     case "clear-dtcs":
-      return await performClearDtcs(context, channel);
+      return await performClearDtcs(
+        {
+          ...context,
+          // ⚠️ The SHIPPED composition, re-asked. Not `gate().safe`: serviceActionPolicy is the
+          // one total table saying which gates apply to which action, and a private gate read
+          // inside the clear would keep refusing on a row someone had turned off here.
+          refuseNow: () => refusalFor(context, request.kind),
+          set running(session: RunningWriteSession | null) {
+            context.running = session;
+          },
+          get running() {
+            return context.running;
+          },
+        },
+        channel
+      );
     case "charge-current":
       return await performChargeCurrent(context, request, channel);
     case "charge-stop":
@@ -1359,6 +1385,7 @@ function describeResetOutcome(outcome: ResetVcuOutcome): string {
  */
 function startGateWatchdog(context: WriteContext): ReturnType<typeof setInterval> {
   let fired = false;
+  let noticedUnsafe = false;
   const timer = setInterval(() => {
     if (fired) {
       return;
@@ -1371,14 +1398,21 @@ function startGateWatchdog(context: WriteContext): ReturnType<typeof setInterval
     if (running === null) {
       // ⚠️ Nothing is in flight, so there is nothing to cut short — and saying "ABORTING"
       // anyway would put an abort that never happened into the only witness this bike has.
-      // The warn used to be unconditional and the abort reached a settled session, which is
-      // exactly the failure recorded above in `perform` for the charge commands.
       //
-      // This is reachable because `clear-dtcs` keeps reading the bike back AFTER its one
-      // frame has landed. Those reads are a mode-03 transfer and three mode-01 PIDs — byte
-      // for byte what the always-on poller emits at 2 Hz on a moving bike with no gate over
-      // it at all — so there is nothing here for the gate to protect, and the actuating half
-      // is already done and irreversible by the time `running` goes null.
+      // ⚠️ NOT a clear-dtcs special case, though that is what exposed it. Every gated action
+      // has a pre-session window with `running` still null, and `performClockSync` never sets
+      // it at all — so sync-clock has been eligible for a phantom "ABORTING" line since it
+      // shipped, and this guard fixes that too. Take it out with clear-dtcs and sync-clock
+      // silently gets it back. What clear-dtcs added is a window AFTER the frame as well.
+      if (!noticedUnsafe) {
+        noticedUnsafe = true;
+        // Said once, because a refusal is not audited (src/http/vcu-write.ts answers 409 and
+        // writes no journal line), so without this the journal has no record that the bike
+        // went unsafe mid-action at all.
+        console.warn(
+          `vcu-write: the bike stopped being safe to service with nothing in flight — ${verdict.blockers.join("; ")}`
+        );
+      }
       return;
     }
     fired = true;

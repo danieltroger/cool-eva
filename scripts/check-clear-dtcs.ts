@@ -2,11 +2,11 @@ import type { CanMessage, RawChannel, RxFilter } from "socketcan";
 import { handleResponse, pollPidNow } from "../src/can/obd.ts";
 import { troubleCodeSnapshot } from "../src/diagnostics/stored-codes.ts";
 import { createVcuWriteRunner, type VcuWriteRunner } from "../src/vcu/write-runner.ts";
-import type { ClearDtcsCounts } from "../src/vcu/clear-dtcs.ts";
 import type { ServiceGateCheckState, ServiceGateVerdict } from "../src/vcu/service-gate.ts";
-import { chargerIsAttached, describeClearCounts } from "../public/views/vcu-write.js";
-import { judgeErasure, type ErasureVerdict } from "../src/vcu/clear-dtcs.ts";
-import { FIRST_REPLY_TIMEOUT_MS, RETRY_ATTEMPTS, RETRY_GAP_MS, TRANSFER_TIMEOUT_MS } from "../src/can/obd-dtc.ts";
+import { chargerIsAttached } from "../public/views/vcu-write.js";
+import { judgeErasure, type ClearDtcsCounts, type ErasureVerdict } from "../src/vcu/clear-dtcs.ts";
+import { verdictSeesACable } from "../src/vcu/charge-session.ts";
+import { WORST_CASE_TRANSFER_MS } from "../src/can/obd-dtc.ts";
 import { MAX_HOLD_MS } from "../src/can/obd-hold.ts";
 import { PID_TIMEOUT_MS } from "../src/can/obd.ts";
 import {
@@ -14,7 +14,7 @@ import {
   CAPTURED_STORED_CODE_COUNT,
   parseHexFrame,
 } from "./captured-dtc-transfer.ts";
-import { mkdtemp } from "fs/promises";
+import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -36,6 +36,20 @@ import { join } from "path";
 
 let failures = 0;
 
+/** Runs `body` with console.warn captured, restoring it on every path out. */
+async function withCapturedWarnings(body: (warnings: string[]) => Promise<void>): Promise<void> {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    await body(warnings);
+  } finally {
+    console.warn = realWarn;
+  }
+}
+
 function check(what: string, condition: boolean) {
   if (condition) {
     console.log(`  ✓ ${what}`);
@@ -45,6 +59,12 @@ function check(what: string, condition: boolean) {
   }
 }
 
+/** Every audit directory this run made, removed at the end rather than left in /tmp. */
+const temporaryDirectories: string[] = [];
+
+/** write-session.ts's own reply window for the one Mode 04 frame. */
+const FIRST_REPLY_TIMEOUT_MS_FOR_MODE_04 = 300;
+
 const OBD_REQUEST_ID = 0x7df;
 const OBD_REPLY_ID = 0x7ef;
 
@@ -53,10 +73,11 @@ type PidTable = Map<number, [number, number]>;
 
 interface FakeBusOptions {
   clearReply: "positive" | "refused" | "silent";
-  /** Mode-03 frames to replay, or null to answer nothing at all. */
-  listFrames: string[] | null;
-  before: PidTable;
-  after: PidTable;
+  /** Mode-03 frames to replay. Default: none, which is what most sections want. */
+  listFrames?: string[] | null;
+  /** Default BEFORE / AFTER_ERASED — the 2026-09-13 numbers. */
+  before?: PidTable;
+  after?: PidTable;
   /**
    * How long a mode-01 reply takes to arrive. Default 0.
    *
@@ -96,6 +117,9 @@ function fakeBus(options: FakeBusOptions): FakeBus {
   let listCursor = 0;
   let pidRequests = 0;
 
+  const listFrames = options.listFrames ?? null;
+  const before = options.before ?? BEFORE;
+  const after = options.after ?? AFTER_ERASED;
   const deliver = (data: Buffer, delayMs = 0): void => {
     setTimeout(() => {
       // Exactly src/index.ts's order: the in-flight service action gets first refusal, and
@@ -154,24 +178,24 @@ function fakeBus(options: FakeBusOptions): FakeBus {
   }
 
   function answerListFirstFrame(): void {
-    if (options.listFrames === null) {
+    if (listFrames === null) {
       return;
     }
     listCursor = 1;
-    deliver(Buffer.from(parseHexFrame(options.listFrames[0])));
+    deliver(Buffer.from(parseHexFrame(listFrames[0])));
   }
 
   function replayConsecutiveFrames(): void {
-    if (options.listFrames === null) {
+    if (listFrames === null) {
       return;
     }
-    for (; listCursor < options.listFrames.length; listCursor += 1) {
-      deliver(Buffer.from(parseHexFrame(options.listFrames[listCursor])));
+    for (; listCursor < listFrames.length; listCursor += 1) {
+      deliver(Buffer.from(parseHexFrame(listFrames[listCursor])));
     }
   }
 
   function answerPid(pid: number): void {
-    const table = cleared ? options.after : options.before;
+    const table = cleared ? after : before;
     const answer = table.get(pid);
     if (!answer) {
       return;
@@ -180,6 +204,11 @@ function fakeBus(options: FakeBusOptions): FakeBus {
   }
 
   return { channel, sent, attach: next => (runner = next) };
+}
+
+/** A gate that says the bike is ROLLING. One wording, so four sections stop spelling it out. */
+function rollingVerdict(kmh: number): ServiceGateVerdict {
+  return { safe: false, blockers: [`road speed is zero — it reads ${kmh}`], checks: [], chargingEvidence: null };
 }
 
 /** A gate that says the bike is safe, with the charge-manager row in a state we choose. */
@@ -212,7 +241,6 @@ interface Harness {
   runner: VcuWriteRunner;
   bus: FakeBus;
   holdLog: string[];
-  warnings: string[];
   /** How many frames had been sent at the moment the hold was granted. Must be zero. */
   sentAtHold: () => number;
 }
@@ -223,6 +251,7 @@ async function harness(options: HarnessOptions): Promise<Harness> {
   let sentAtHold = -1;
   let gateSamples = 0;
   const directory = await mkdtemp(join(tmpdir(), "clear-dtcs-"));
+  temporaryDirectories.push(directory);
   const runner = createVcuWriteRunner({
     channel: () => bus.channel,
     busIsActive: true,
@@ -233,7 +262,7 @@ async function harness(options: HarnessOptions): Promise<Harness> {
       return options.gateAt ? options.gateAt(gateSamples) : gateVerdict(null, null);
     },
     latestSweep: () => Promise.resolve(null),
-    holdPoller: what => {
+    holdPoller: (what: string) => {
       if (options.grantHold === false) {
         holdLog.push(`refused:${what}`);
         return Promise.resolve(null);
@@ -245,7 +274,7 @@ async function harness(options: HarnessOptions): Promise<Harness> {
     },
   });
   bus.attach(runner);
-  return { runner, bus, holdLog, warnings: [], sentAtHold: () => sentAtHold };
+  return { runner, bus, holdLog, sentAtHold: () => sentAtHold };
 }
 
 /** PID 01 packs the count into the low 7 bits of A; PID 31 is a 16-bit A:B. */
@@ -262,11 +291,8 @@ const AFTER_ERASED = new Map<number, [number, number]>([
   [0x31, pidDistance(0)],
   [0x02, [0, 0]],
 ]);
-const AFTER_UNTOUCHED = new Map<number, [number, number]>([
-  [0x01, pidStatus(46)],
-  [0x31, pidDistance(19671)],
-  [0x02, [0x0a, 0x06]],
-]);
+/** The after-read is the before-read: nothing moved. Aliased so §2 says that rather than repeats it. */
+const AFTER_UNTOUCHED = BEFORE;
 
 // --- 1. The clear that works, read back on the same parked bus ----------------
 
@@ -409,10 +435,7 @@ console.log("\n3. the endings that are not a clear");
     onHoldGranted: () => {
       rolling = true;
     },
-    gateAt: () =>
-      rolling
-        ? { safe: false, blockers: ["road speed is zero — it reads 12"], checks: [], chargingEvidence: null }
-        : gateVerdict(null, null),
+    gateAt: () => (rolling ? rollingVerdict(12) : gateVerdict(null, null)),
   });
   const answer = await kit.runner.perform({ kind: "clear-dtcs" });
   check("a bike that rolls while the poller parks refuses the clear", !answer.ok);
@@ -437,10 +460,7 @@ console.log("\n3. the endings that are not a clear");
         rolling = true;
       }
     },
-    gateAt: () =>
-      rolling
-        ? { safe: false, blockers: ["road speed is zero — it reads 9"], checks: [], chargingEvidence: null }
-        : gateVerdict(null, null),
+    gateAt: () => (rolling ? rollingVerdict(9) : gateVerdict(null, null)),
   });
   const answer = await kit.runner.perform({ kind: "clear-dtcs" });
   check("a bike that rolls while the counters are read refuses the clear", !answer.ok);
@@ -513,9 +533,7 @@ console.log("\n5a. a bike that rolls WHILE the Mode 04 is in flight");
         if (inFlight) {
           ticksWhileInFlight += 1;
         }
-        return rolling
-          ? { safe: false, blockers: ["road speed is zero — it reads 7"], checks: [], chargingEvidence: null }
-          : gateVerdict(null, null);
+        return rolling ? rollingVerdict(7) : gateVerdict(null, null);
       },
     });
     const answer = await kit.runner.perform({ kind: "clear-dtcs" });
@@ -574,15 +592,20 @@ console.log("\n5b. a bike that rolls once the frame has landed");
       // 150 and not more: obd.ts gives a PID 200 ms, and the mode-03 frames must not be paced at
       // all — the transport gives a whole transfer 400 ms.
       pidDelayMs: 150,
-      // Flipped on the LIST REQUEST, not on a sample index: that frame is only ever sent by the
-      // read-back, so the phase is read off the bus rather than counted.
-      onListRequest: () => {
-        readingBack = true;
+      // ⚠️ Flipped on the THIRD PID request — the first of the after-reads — rather than on a
+      // sample index or on the list. The read-back is PID 01, PID 31, PID 02, then the list, so
+      // anchoring on the list would put the flip at the very end and leave almost no read-back
+      // for the watchdog to tick through. The phase is still read off the bus, not counted in
+      // wall-clock, so reordering the read-back again cannot silently make this vacuous.
+      onPidRequest: sent => {
+        if (sent >= 3) {
+          readingBack = true;
+        }
       },
       gateAt: () => {
         if (readingBack) {
           ticksDuringReadBack += 1;
-          return { safe: false, blockers: ["road speed is zero — it reads 4"], checks: [], chargingEvidence: null };
+          return rollingVerdict(4);
         }
         return gateVerdict(null, null);
       },
@@ -610,11 +633,11 @@ console.log("\n6. the PIDs the clear depends on are in the poll table");
     [0x02, "PID 02 freeze-frame code"],
     [0x31, "PID 31 distance since clear"],
   ] as [number, string][]) {
-    const bus = fakeBus({ clearReply: "silent", listFrames: null, before: BEFORE, after: BEFORE });
-    check(`${name} is decodable and answers`, await pollPidNow(bus.channel, pid));
+    const bus = fakeBus({ clearReply: "silent" });
+    check(`${name} is decodable and answers`, (await pollPidNow(bus.channel, pid)) !== null);
   }
-  const bus = fakeBus({ clearReply: "silent", listFrames: null, before: BEFORE, after: BEFORE });
-  check("a PID outside the table answers false rather than pretending", !(await pollPidNow(bus.channel, 0xfe)));
+  const bus = fakeBus({ clearReply: "silent" });
+  check("a PID outside the table answers null rather than pretending", (await pollPidNow(bus.channel, 0xfe)) === null);
   // ⚠️ `false` is also what a silent bus returns, so the verdict alone says nothing. What
   // distinguishes "not in the table" is that the request never went out at all.
   check("and it never reaches the bus, which is what makes it a different answer from silence", bus.sent.length === 0);
@@ -633,7 +656,7 @@ console.log("\n6. the PIDs the clear depends on are in the poll table");
     warnings.push(args.map(String).join(" "));
   };
   try {
-    const bus = fakeBus({ clearReply: "silent", listFrames: null, before: BEFORE, after: BEFORE });
+    const bus = fakeBus({ clearReply: "silent" });
     await pollPidNow(bus.channel, 0x31);
     check(
       "polling with the poller UNPARKED says so out loud",
@@ -644,9 +667,14 @@ console.log("\n6. the PIDs the clear depends on are in the poll table");
   }
 }
 
-// --- 7. The sentences under the button ------------------------------------------
+// --- 7. The verdict the Pi reaches, and the sentence it sends ------------------
+//
+// ⚠️ ONE COMPOSER. The page used to rebuild the sweep and the proof line from these numbers,
+// which put the prose in three places with only the verdict compared — so the wordings could
+// drift while this check stayed green. The browser now styles `result.message` by
+// `result.clear.verdict`, so what is worth asserting here is the verdict and the Pi's words.
 
-console.log("\n7. what the button says afterwards");
+console.log("\n7. the verdict, and the words that go with it");
 
 const erased: ClearDtcsCounts = {
   storedBefore: 46,
@@ -654,64 +682,23 @@ const erased: ClearDtcsCounts = {
   distSinceClearBeforeKm: 19671,
   distSinceClearAfterKm: 0,
   listedAfter: 5,
+  verdict: "erased",
 };
 
 {
-  const read = describeClearCounts(erased);
-  check('the sweep reads "46 stored → 5 stored, 41 cleared"', read.sweep === "46 stored → 5 stored, 41 cleared");
-  check("the proof names both distances", read.proof === "distance since clear 19671 km → 0 km — erased");
-  check("erasure is asserted", read.erased === true);
-}
-
-{
-  const read = describeClearCounts({ ...erased, storedAfter: 46, distSinceClearAfterKm: 19671 });
-  check("an unmoved PID 31 is called out", read.proof.includes("still reads 19671 km — the bike erased nothing"));
-  check("erasure is denied", read.erased === false);
-  check("the sweep still reports 0 cleared honestly", read.sweep === "46 stored → 46 stored, 0 cleared");
-}
-
-{
-  const read = describeClearCounts({ ...erased, storedAfter: null, distSinceClearAfterKm: null });
-  check("an unread counter is neither proof nor disproof", read.erased === null);
-  check("the sweep says so rather than showing a number", read.sweep === "stored count could not be read");
-  check("the proof line says it cannot be judged", read.proof.includes("cannot be judged"));
-}
-
-// ⚠️ THE RETRY. Five codes came back within a second on 2026-09-13, so pressing again a minute
-// later is the expected gesture — and on that press PID 31 reads 0 on BOTH sides. Keying only on
-// the after-value called that "erased" in green, which is the exact claim the two failed presses
-// make, on the one press that most needs the verdict to be honest.
-{
-  const read = describeClearCounts({ ...erased, distSinceClearBeforeKm: 0, distSinceClearAfterKm: 0 });
-  check("0 km → 0 km is NOT reported as proof", read.erased !== true);
-  check("it is unproven rather than disproven", read.erased === null);
-  check("the line says why", read.proof.includes("already read 0 km"));
-}
-
-// A code re-latching between the two PID 01 reads must not render as a negative sweep.
-{
-  const read = describeClearCounts({ ...erased, storedBefore: 46, storedAfter: 48 });
-  check("a count that went UP never renders as a negative", !read.sweep.includes("-"));
-  check("it says so in words", read.sweep === "46 stored → 48 stored, 2 MORE than before");
-}
-
-// ⚠️ THE SAME DECISION IS WRITTEN TWICE — `judgeErasure` on the Pi and `describeClearCounts` in
-// the browser — because public/ has no build step and cannot import a .ts at runtime. This is the
-// assertion that stops them drifting; without it the page could call "erased" what the server
-// calls "erased nothing", and the green line and the red message would appear together.
-{
-  const cases: [ClearDtcsCounts, ErasureVerdict][] = [
-    [erased, "erased"],
-    [{ ...erased, distSinceClearAfterKm: 19671, storedAfter: 46 }, "erased-nothing"],
-    [{ ...erased, distSinceClearAfterKm: null }, "unproven"],
-    [{ ...erased, distSinceClearBeforeKm: null }, "unproven"],
-    [{ ...erased, distSinceClearBeforeKm: 0, distSinceClearAfterKm: 0 }, "unproven"],
+  const cases: [string, ClearDtcsCounts, ErasureVerdict][] = [
+    ["a counter that fell to zero", erased, "erased"],
+    ["a counter that did not move", { ...erased, storedAfter: 46, distSinceClearAfterKm: 19671 }, "erased-nothing"],
+    ["an after-read that failed", { ...erased, distSinceClearAfterKm: null }, "unproven"],
+    ["a before-read that failed", { ...erased, distSinceClearBeforeKm: null }, "unproven"],
+    // ⚠️ THE RETRY. Five codes came back within a second on 2026-09-13, so pressing again a
+    // minute later is the expected gesture — and on that press PID 31 reads 0 on BOTH sides.
+    // Keying on the after-value alone called that "erased" in green, which is the exact claim
+    // the two failed presses make, on the press that most needs an honest verdict.
+    ["0 km → 0 km, the retry", { ...erased, distSinceClearBeforeKm: 0, distSinceClearAfterKm: 0 }, "unproven"],
   ];
-  const asVerdict = (read: { erased: boolean | null }): ErasureVerdict =>
-    read.erased === true ? "erased" : read.erased === false ? "erased-nothing" : "unproven";
-  for (const [counts, expected] of cases) {
-    check(`the Pi judges ${expected}`, judgeErasure(counts) === expected);
-    check(`and the page agrees for ${expected}`, asVerdict(describeClearCounts(counts)) === expected);
+  for (const [what, counts, expected] of cases) {
+    check(`${what} is judged ${expected}`, judgeErasure(counts) === expected);
   }
 }
 
@@ -725,6 +712,21 @@ const erased: ClearDtcsCounts = {
 
 console.log("\n8. the cable caution");
 
+// ⚠️ BOTH copies, every case. The Pi's `verdictSeesACable` decides whether the audit journal
+// advises unplugging; the browser's `chargerIsAttached` decides whether the caution shows. They
+// cannot import each other — no build step in public/ — so this is what stops them drifting.
+for (const [what, verdict, expected] of [
+  ["a fresh cable in the inlet", gateVerdict("ok", null), true],
+  ["a witnessed charge session", gateVerdict("missing", "fast_dc_contactor"), true],
+  ["an empty inlet", gateVerdict("inlet-empty", null), false],
+  ["a STALE charge manager", gateVerdict("stale", null), false],
+  ["a charge manager never seen", gateVerdict("missing", null), false],
+  ["2026-09-13's gate — no charge manager at all", gateVerdict(null, null), false],
+] as [string, ServiceGateVerdict, boolean][]) {
+  check(`${what}: the Pi ${expected ? "warns" : "does not warn"}`, verdictSeesACable(verdict) === expected);
+  check(`${what}: the page agrees`, chargerIsAttached(verdict) === expected);
+}
+
 check("a fresh cable in the inlet warns", chargerIsAttached(gateVerdict("ok", null)));
 check("a witnessed charge session warns", chargerIsAttached(gateVerdict("missing", "fast_dc_contactor")));
 check("an empty inlet does not warn", !chargerIsAttached(gateVerdict("inlet-empty", null)));
@@ -735,7 +737,7 @@ check("no gate at all does not warn", !chargerIsAttached(undefined));
 
 // --- 9. The hold budget is arithmetic, not a sentence in a comment ---------------
 //
-// ⚠️ write-runner's prose calls the margin load-bearing and then states it as a number nothing
+// ⚠️ docs/clear-dtcs.md §5 calls this margin load-bearing and then states it as a number nothing
 // verifies. Past obd-hold.ts's cap the poller resumes UNDERNEATH the read-back and its own 0x7DF
 // traffic makes the VCU abandon the transfer, so adding a PID or raising RETRY_ATTEMPTS has to go
 // red here rather than in a garage.
@@ -743,13 +745,20 @@ check("no gate at all does not warn", !chargerIsAttached(undefined));
 console.log("\n9. the parked window still fits inside the cap");
 
 {
-  const modeFour = FIRST_REPLY_TIMEOUT_MS;
-  const listTransfer =
-    (RETRY_ATTEMPTS + 1) * (FIRST_REPLY_TIMEOUT_MS + TRANSFER_TIMEOUT_MS) + RETRY_ATTEMPTS * RETRY_GAP_MS;
-  const pids = 5 * PID_TIMEOUT_MS;
-  const worstCase = modeFour + listTransfer + pids;
+  // ⚠️ The PID count is COUNTED off a real run, not written down. `5 * PID_TIMEOUT_MS` was a copy
+  // of the action's shape, so adding a sixth read left this green while the budget grew.
+  const kit = await harness({ clearReply: "positive", listFrames: CAPTURED_MODE_03_FRAMES_2026_08_04 });
+  await kit.runner.perform({ kind: "clear-dtcs" });
+  const pidRequests = kit.bus.sent.filter(frame => frame.startsWith("7df 02 01 ")).length;
+  check("the clear reads five PIDs, and the budget below counts them rather than assuming", pidRequests === 5);
+
+  const worstCase = FIRST_REPLY_TIMEOUT_MS_FOR_MODE_04 + WORST_CASE_TRANSFER_MS + pidRequests * PID_TIMEOUT_MS;
   check(`the worst case (${worstCase} ms) fits inside MAX_HOLD_MS (${MAX_HOLD_MS} ms)`, worstCase < MAX_HOLD_MS);
   check("with at least a 2x margin, since the cap is enforced by the loop and not by us", worstCase * 2 < MAX_HOLD_MS);
+}
+
+for (const directory of temporaryDirectories) {
+  await rm(directory, { recursive: true, force: true });
 }
 
 console.log(
