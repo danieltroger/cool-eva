@@ -288,6 +288,29 @@ check(
   })[0].refusal === WAYPOINT_REFUSAL.FIX_UNCORROBORATED
 );
 
+// ⚠️ THE FLAG THAT CARRIES THE WEAKER WITNESS HAS TO BE ASSERTED TOO. It is the whole
+// remedy for the asymmetry in sampleAgreedAfter(): if it silently goes false the report
+// stops warning and nothing anywhere goes red. Both directions, or only one of them is real.
+const weaklyWitnessed = judge()[0];
+check(
+  "a hold recovered off a boot's first fix is flagged as witnessed by gps_epoch_s only",
+  weaklyWitnessed.outcome === RECOVERY_OUTCOME.RECOVERED && weaklyWitnessed.epochWitnessedOnly === true
+);
+const stronglyWitnessed = judge({
+  latitudeRows: [
+    { ts: BASE - 2000, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 57.7001, sessionId: 1, seq: 2 },
+  ],
+  longitudeRows: [
+    { ts: BASE - 2000, value: 11.97, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 11.9701, sessionId: 1, seq: 2 },
+  ],
+})[0];
+check(
+  "…and one with a real predecessor in its own boot is not",
+  stronglyWitnessed.outcome === RECOVERY_OUTCOME.RECOVERED && stronglyWitnessed.epochWitnessedOnly === false
+);
+
 // ⚠️ THE FRANKENSTEIN POSITION, and it is the reason every timeline is sliced per boot
 // rather than only the fix pairs. `carryBack` was session-blind, so a boot that logged a
 // latitude and never a longitude had the LONGITUDE carried in from the run before it — and

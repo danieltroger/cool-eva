@@ -135,7 +135,7 @@ function report(verdicts: RecoveryVerdict[], options: Options): void {
       // nothing before it in its own boot, so the corroboration rests on a gps_epoch_s row
       // rather than on the position sample the bike would have used. src/gps/recover-holds.ts
       // §sampleAgreedAfter has the asymmetry.
-      const witness = verdict.sampleWitnessed ? "  ⚠️ first fix of its boot: witnessed by gps_epoch_s only" : "";
+      const witness = verdict.epochWitnessedOnly ? "  ⚠️ first fix of its boot: witnessed by gps_epoch_s only" : "";
       console.log(
         `  ${new Date(verdict.fireAt).toISOString()}  held ${verdict.press.durationMs} ms  ` +
           `position ${verdict.positionAgeMs} ms old  jump gate: ${judged}${witness}`

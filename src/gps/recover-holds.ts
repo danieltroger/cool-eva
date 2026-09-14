@@ -67,14 +67,13 @@ export interface RecoveryVerdict {
    */
   jumpGateJudged: boolean;
   /**
-   * ⚠️ Whether this hold's fix rests on the WEAKER offline witness — see sampleAgreedAfter().
-   *
-   * True only for a fix with nothing before it in its own boot, which the bike would have
-   * judged on a position sample and this can only judge on a `gps_epoch_s` row. Same reason
-   * `jumpGateJudged` exists: a report must not present a test the log could not really run
-   * as one it passed.
+   * ⚠️ TRUE IS THE WEAK CASE: this hold's fix had nothing before it in its own boot, so the
+   * bike judged it on a position sample and this could only judge it on a `gps_epoch_s` row.
+   * Named for the witness rather than for "witnessed", because a field that reads as
+   * reassurance when it means the opposite is worse than no field. sampleAgreedAfter() has
+   * the asymmetry; same reason `jumpGateJudged` exists.
    */
-  sampleWitnessed?: boolean;
+  epochWitnessedOnly?: boolean;
 }
 
 /**
@@ -137,6 +136,13 @@ export function pairPresses(rows: LogRow[]): RecoveredPress[] {
 
 /**
  * Which presses already produced a waypoint, matched FORWARD IN TIME.
+ *
+ * ⚠️ THE ONE PLACE THAT MUST STAY SESSION-BLIND, and it reads like an oversight next to
+ * judgeHolds() slicing everything else per boot. scripts/recover-waypoints.ts writes
+ * recovered rows at `fireAt` under a SYNTHETIC session (`recovered-192-…`), so a waypoint
+ * that vouches for a press never shares that press's session: 8 of the archive's 92 matches
+ * are cross-session and all 8 are that run. Add a session predicate here and every already
+ * committed recovery becomes invisible — a second `--commit` then duplicates all of them.
  *
  * ⚠️ A waypoint belongs to the press it fired FROM, so the only candidates are presses
  * that began before it and were still down when it landed. Matching by nearest instant
@@ -232,19 +238,21 @@ export function judgeHolds(inputs: RecoveryInputs): RecoveryVerdict[] {
   // is a row that run wrote. Sliced here rather than inside judgeOneHold because a window
   // routinely spans dozens of boots and re-filtering per press is a quadratic sweep.
   const perBoot = new Map<number | null, BootRows>();
-  for (const press of presses) {
-    if (!perBoot.has(press.sessionId)) {
-      perBoot.set(press.sessionId, {
-        latitudeRows: inputs.latitudeRows.filter(row => row.sessionId === press.sessionId),
-        longitudeRows: inputs.longitudeRows.filter(row => row.sessionId === press.sessionId),
-        epochRows: inputs.epochRows.filter(row => row.sessionId === press.sessionId),
-        fixes: fixes.filter(fix => fix.sessionId === press.sessionId),
-      });
+  const rowsFor = (sessionId: number | null): BootRows => {
+    const known = perBoot.get(sessionId);
+    if (known !== undefined) {
+      return known;
     }
-  }
-  return presses.map(press =>
-    judgeOneHold(press, fireInstant(press, inputs), alreadyFired, perBoot.get(press.sessionId) ?? EMPTY_BOOT)
-  );
+    const built = {
+      latitudeRows: inputs.latitudeRows.filter(row => row.sessionId === sessionId),
+      longitudeRows: inputs.longitudeRows.filter(row => row.sessionId === sessionId),
+      epochRows: inputs.epochRows.filter(row => row.sessionId === sessionId),
+      fixes: fixes.filter(fix => fix.sessionId === sessionId),
+    };
+    perBoot.set(sessionId, built);
+    return built;
+  };
+  return presses.map(press => judgeOneHold(press, fireInstant(press, inputs), alreadyFired, rowsFor(press.sessionId)));
 }
 
 /** Everything one run of the service logged, which is everything the bike could have seen. */
@@ -254,8 +262,6 @@ interface BootRows {
   epochRows: LogRow[];
   fixes: TimelineFix[];
 }
-
-const EMPTY_BOOT: BootRows = { latitudeRows: [], longitudeRows: [], epochRows: [], fixes: [] };
 
 /**
  * Where the point goes: the instant the recogniser that SHOULD have caught this hold would
@@ -334,7 +340,7 @@ function judgeOneHold(
     longitudeDeg: longitude.value,
     positionAgeMs: fireAt - Math.max(latitude.ts, longitude.ts),
     jumpGateJudged: judged,
-    sampleWitnessed: previous === null,
+    epochWitnessedOnly: previous === null,
   };
 }
 
@@ -394,9 +400,10 @@ function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
     return { jump: null, judged: false, current: null, previous: null };
   }
   const current = fixes[currentIndex];
-  // ⚠️ Backwards to the nearest fix of the SAME BOOT, not simply the one before it in the
-  // array. Fixes are ordered by `ts`, and across a clock step that order interleaves two
-  // boots — so the array neighbour can belong to a run the bike had already forgotten.
+  // Backwards to the nearest fix of the same boot. ⚠️ Belt and braces since judgeHolds()
+  // began slicing per boot — these fixes are already one run's — and the mutation that
+  // deletes it therefore survives. It stays because the hazard is real whenever anything
+  // calls this with a mixed timeline: `ts` order interleaves two boots across a clock step.
   let previous: TimelineFix | null = null;
   for (let index = currentIndex - 1; index >= 0; index -= 1) {
     if (fixes[index].sessionId === current.sessionId) {
@@ -418,12 +425,13 @@ function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
  * ⚠️ WEAKER THAN THE BIKE'S, and the one place this file is knowingly looser: the Pi reads
  * ageMs("gps_lat"), which moves only when a POSITION was sampled, while an epoch row can
  * mean "time arrived, the position did not". A log holds no stricter witness. Which holds
- * rest on it is carried by `RecoveryVerdict.sampleWitnessed` and printed by the report.
+ * rest on it is carried by `RecoveryVerdict.epochWitnessedOnly` and printed by the report.
  * Why there is no better one, and what it costs: docs/waypoints.md §"The offline mirror".
  *
- * ⚠️ At or before the fire, and in the same boot, for the two reasons the freshness gate
- * gives: the bike can only ever have seen the past, and a row from another run is not
- * evidence about this one.
+ * ⚠️ At or before the fire, because the bike can only ever have seen the past. The same-boot
+ * test beside it is belt and braces since judgeHolds() began slicing — deleting it survives
+ * every check — and stays for the same reason judgeJump()'s does: it is the caller's
+ * guarantee, not this function's.
  */
 function sampleAgreedAfter(epochRows: LogRow[], fix: TimelineFix, fireAt: number): boolean {
   for (const row of epochRows) {

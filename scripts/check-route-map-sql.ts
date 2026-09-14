@@ -26,6 +26,17 @@ const LONGITUDE = 20;
 /** The hub's own cadence, measured over the archive: a fix about every 550 ms. */
 const SAMPLE_MS = 550;
 
+/**
+ * The longest a corrupt fix was ever seen to survive in the archive, to the millisecond.
+ *
+ * ⚠️ The window's LOWER bound is pinned against this and not against SAMPLE_MS. Every
+ * excursion fixture used to correct itself at the median cadence, so a window narrowed to
+ * 600 ms passed them all while missing the worst case the archive actually holds — the
+ * constant was only ever tested against the hub's typical beat. docs/waypoints.md
+ * §"The first fix of a run" derives it: 65 excursions, min 4 ms, median 550, max 661.
+ */
+const WORST_MEASURED_LIFETIME_MS = 661;
+
 /** Epoch ms for the fixtures. Arbitrary, and far from the 2060 rows the queries guard against. */
 const BASE = 1_700_000_000_000;
 
@@ -293,9 +304,12 @@ forwardOnly.push({ key: "gps_lat", ts: quietUntil, value: LATITUDE, sessionId: 1
 forwardOnly.push({ key: "gps_lon", ts: quietUntil, value: LONGITUDE + 100, sessionId: 1 });
 const forwardStart = quietUntil + 100;
 // The correction lands after plug-in, which the clause can see and `r.ts <= sess.start_ts`
-// cannot — the whole point of looking forward.
-forwardOnly.push({ key: "gps_lat", ts: quietUntil + SAMPLE_MS, value: LATITUDE, sessionId: 1 });
-forwardOnly.push({ key: "gps_lon", ts: quietUntil + SAMPLE_MS, value: LONGITUDE, sessionId: 1 });
+// cannot — the whole point of looking forward. ⚠️ And it lands at the archive's measured
+// WORST delay rather than its median one, which is what pins the window's lower bound: with
+// the correction at the usual 550 ms a window narrowed to 600 ms passed this too, so the
+// constant was only ever tested against the hub's typical beat.
+forwardOnly.push({ key: "gps_lat", ts: quietUntil + WORST_MEASURED_LIFETIME_MS, value: LATITUDE, sessionId: 1 });
+forwardOnly.push({ key: "gps_lon", ts: quietUntil + WORST_MEASURED_LIFETIME_MS, value: LONGITUDE, sessionId: 1 });
 forwardOnly.push(...chargeEvidence(forwardStart, 1));
 const forwardOnlyPins = pins(databaseWith(forwardOnly), forwardStart);
 check(
@@ -305,6 +319,41 @@ check(
 check(
   "⚠️  and the forward arm steps back, with no backward witness inside the window at all",
   forwardOnlyPins.gated[0].stop_lon === LONGITUDE
+);
+
+// --- 2c. The window's UPPER side ------------------------------------------------------
+
+console.log("\n2c. ⚠️  a window too WIDE deletes the pin it was meant to protect");
+
+// ⚠️ WITHOUT THIS THE 2 000 ms IS UNPINNED IN THE DIRECTION THAT MATTERS. Narrowing it is
+// caught by any fixture whose correction lands 550 ms later — but that tests the hub's
+// cadence, not the constant. Widening it was caught by nothing: ±12 s passed every case
+// above, while marking 37 % of gps_lat and 53 % of gps_lon rows across the whole archive.
+//
+// The discriminator is the argument docs/route-map.md already makes: the window has to be
+// short enough that the BIKE cannot cross the 0.002° threshold inside it. Here it is moving
+// at ~80 km/h on the way to the charger — 12.2 m per sample, 37 m in 2 s, but 256 m in 12 s
+// against a threshold of 222.6 m in latitude. At ±2 s the last fix before plug-in is clean;
+// at ±12 s it is "contradicted" by its own honest movement, and so is every row behind it,
+// until the sub-select runs out of candidates and the map loses the stop altogether.
+const moving: Row[] = [];
+const metresPerSample = 0.00011;
+for (let index = 0; index < 40; index += 1) {
+  moving.push({
+    key: "gps_lat",
+    ts: BASE + index * SAMPLE_MS,
+    value: LATITUDE + index * metresPerSample,
+    sessionId: 1,
+  });
+  moving.push({ key: "gps_lon", ts: BASE + index * SAMPLE_MS, value: LONGITUDE, sessionId: 1 });
+}
+const movingStart = BASE + 39 * SAMPLE_MS + 100;
+moving.push(...chargeEvidence(movingStart, 1));
+const movingPins = pins(databaseWith(moving), movingStart);
+check("⚠️  a bike still moving when it arrives keeps its charge pin", movingPins.gated.length === 1);
+check(
+  "…at the last fix before plug-in, not at one the ride's own movement contradicted",
+  movingPins.gated.length === 1 && movingPins.gated[0].stop_lat === LATITUDE + 39 * metresPerSample
 );
 
 // --- 3. The same in latitude ----------------------------------------------------------
