@@ -73,7 +73,7 @@ export function chargeMode(read, stale) {
  *
  * `fast_dc_contactor` (0x102 b3 bit0) is unambiguous by a wide margin: across the whole
  * 1.1 M-frame corpus it is set in exactly one interval, that interval is a DC fast
- * charge, and it reads 0 through all four AC sessions. Timestamps in src/can/decode.ts.
+ * charge, and it reads 0 through all four AC sessions. Timestamps in src/can/vcu-digitals.ts.
  *
  * ⚠️ It stopped being the ONLY DC evidence on 2026-08-19, when the charge manager was
  * decoded — but this is deliberately NOT moved onto those signals in the same commit

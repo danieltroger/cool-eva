@@ -81,6 +81,30 @@ const BY_KEY = {
   // A spread of 65535 is 0xFFFF arriving as "no data"; a negative one is that
   // subtracted from something. Two rows of each, but each one is a wrecked chart.
   "cell_spread_mv": [0, 2000],
+  // The BMS's fifteen 1/0 flags. All fifteen are `bit()` or `mask ? 1 : 0` in
+  // src/can/decode-bms.ts, so [0, 1] cannot reject a real reading; what it catches is a
+  // decoder that later returns the masked byte instead of the bit — the failure the
+  // `buttons` note below describes.
+  //
+  // ⚠️ The `bms` group cannot join BOOLEAN_GROUPS instead: `bms_error_flags` is a
+  // readUInt32BE and `bms_warning_flags` a 24-bit word in the same group, and a group-wide
+  // [0, 1] would reject every fault they exist to carry. Hence fifteen lines, which is what
+  // BY_KEY is for. docs/dashboard-decisions.md §"Gating the fifteen BMS flags".
+  "bms_state_discharge": [0, 1],
+  "bms_state_charge": [0, 1],
+  "bms_state_balancing": [0, 1],
+  "bms_state_trickle": [0, 1],
+  "bms_state_idle": [0, 1],
+  "bms_state_charge_complete": [0, 1],
+  "bms_state_maintenance": [0, 1],
+  "bms_err_cell_overvoltage": [0, 1],
+  "bms_err_cell_undervoltage": [0, 1],
+  "bms_err_over_temp": [0, 1],
+  "bms_err_leak_detected": [0, 1],
+  "bms_err_leak_detect_failed": [0, 1],
+  "bms_err_contactor": [0, 1],
+  "bms_warn_low_soc": [0, 1],
+  "bms_warn_balancing_required": [0, 1],
   "pack_v": [0, 450],
   "pack_a": [-600, 600],
   "pack_kw": [-200, 200],
@@ -144,6 +168,18 @@ const BY_KEY = {
   "vehicle_status_flags": FIELD_U8,
   "limp_pack_res": FIELD_U16,
   "limp_module_word": FIELD_U16,
+  // The same two state words off the BLE hub, plus the BMS System State byte. Gated to the
+  // FIELD and not to the values seen, for the reason the block above gives: each is one byte
+  // — `frame[3]` and `frame[4]` in src/ble/protocol.ts, `systemState` in decode-bms.ts — and
+  // the whole byte is legitimate.
+  //
+  // ⚠️ `vehicle_state` and `vehicle_substate` arrive by BOTH transports and the two do NOT
+  // agree: protocol.ts:150 records this path logging 4 and 0, which the CAN byte never
+  // produces. That is an argument for matching the CAN twins' FIELD width above, and
+  // against ever matching one path's observed values to the other's.
+  "vehicle_state": FIELD_U8,
+  "vehicle_substate": FIELD_U8,
+  "charge_state": FIELD_U8,
   // 🚨 `moving` is a 0/1 flag that rendered COMPLETELY UNGATED until 2026-09-14 — blank unit,
   // group `drive`, in neither table, so boundsFor() ran off the end and returned null. The
   // combination this file's header warns about, on the tab a rider reads, and the shape of

@@ -1191,9 +1191,27 @@ Adding a second charge-tab write control was the moment to lift the session/stat
 
 That file's header has warned about the combination since it was written. It did not stop it happening: **`moving` and 0x104's `rolling_backwards` (then called `reverse_gear`) — both 1/0 flags, both in `drive` — were ungated from June until 2026-09-14**, when a diff reviewer on #234 went looking. Nothing was red, and nothing could have been: every other guard in this repo walks the signals that _are_ gated. `check-can-decoders.ts` §2 asks `bounds.js` which keys are 0/1-gated and checks their deadbands — an ungated key is invisible to it from both ends.
 
+### Gating the fifteen BMS flags
+
+Eighteen of the 57 left ungated above are gated as of #227, and they divide by the kind of argument that justifies them rather than by subsystem.
+
+**Fifteen are 1/0 flags** — the seven `bms_state_*`, six `bms_err_*` and two `bms_warn_*`. Every one is `bit()` or `mask ? 1 : 0` in `src/can/decode-bms.ts`, so `[0, 1]` **cannot reject a real reading**; it is not a claim about the bike at all. What it catches is a decoder that later returns the masked byte instead of the bit — `flags & 0x20` is 32, not 1 — which is the same failure `bounds.js` records for the `buttons` group, and the same shape as `high_beam` once reading 193.
+
+⚠️ **The obvious alternative does not work.** Adding `bms` to `BOOLEAN_GROUPS` would gate all fifteen in one line, and it would also gate `bms_error_flags` (a `readUInt32BE`) and `bms_warning_flags` (a 24-bit word) in the same group, rejecting every fault they exist to carry on every frame where anything is set. Fifteen named lines is the cost of that group holding two kinds of thing.
+
+⚠️ **The list said "fourteen" of them and there are fifteen.** The miscount sat in `check-all-view-tiles.ts`'s own comment and was copied forward into the work that fixed them; counted from the list, it is seven plus six plus two.
+
+**Three are single-byte state words** — `vehicle_state`, `vehicle_substate` (`frame[3]` and `frame[4]`, `src/ble/protocol.ts`) and `charge_state` (the System State byte). These get `FIELD_U8`, the **field width and not the values observed**, because the whole point of logging a state machine raw is to catch a state nobody has seen and a bound drawn round today's set would draw exactly that as a dead sensor.
+
+⚠️ **These two arrive by both transports and the two do not agree** — `protocol.ts:150` records the BLE path logging `vehicle_state` 4 and 0, which the CAN byte never produces. That disagreement is an argument **for** matching the CAN twins' field width and **against** ever matching one path's observed values to the other's. It is also why the gate can never fire today: a byte cannot leave `0…255`. It is kept for the reason `bounds.js` gives about `front_brake_pressure_bar` — the gate catches a future widening of the field, and the alternative is that the widening renders as a plausible state.
+
+`scripts/check-flag-bounds.ts` holds all eighteen, and asserts what §5's ratchet structurally cannot: not merely that each reaches a rule, but **which** bound it got.
+
 ### What was done, and what deliberately was not
 
-`moving` is fixed here, and #230 fixed 0x104's two flags the same day and independently. **The other 57 are not**, and `scripts/check-all-view-tiles.ts` §5 now carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when a 58th appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing the 57 means deciding a physical range for each, which belongs with whoever owns each frame.
+`moving` is fixed here, and #230 fixed 0x104's two flags the same day and independently. **The other 57 were not**, and `scripts/check-all-view-tiles.ts` §5 carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when one more appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing them means deciding a physical range for each, which belongs with whoever owns each frame.
+
+⚠️ **The list is 39 now, not 57**: #227 gated the eighteen described in §"Gating the fifteen BMS flags" below. The three kinds that follow are still why the check is an allow-list rather than a ban.
 
 Three kinds are on that list for good reasons, and they are why the check is an allow-list rather than a ban:
 
@@ -1201,6 +1219,6 @@ Three kinds are on that list for good reasons, and they are why the check is an 
 - **Indices and counts into a structure** — `cell_lowest_v_idx`, `gps_satellites`. The structure's size is the real bound.
 - **Monotonic counters and odometers** — `waypoint_seq`, `odometer_km`, `time_since_clear_min`. Any ceiling is arbitrary, and the counter that outgrew it would be drawn as a dead sensor on a working bike. `bounds.js` already says this about `waypoint_seq`.
 
-⚠️ **And some are simply wrong**, marked as such in the list so the next person inherits the judgement rather than the surprise. `vehicle_state` and `vehicle_substate` are the BLE twins of `vehicle_state_can` / `vehicle_substate_can`, which #234 gated — so one transport's copy of a quantity is gated and the other's is not. That is a two-line fix for whoever next touches that frame; it is out of scope for the change that found it, because a bound is a claim about the bike and each one needs its own evidence.
+⚠️ **And some were simply wrong**, marked as such in the list so the next person inherited the judgement rather than the surprise. `vehicle_state` and `vehicle_substate` are the BLE twins of `vehicle_state_can` / `vehicle_substate_can`, which #234 gated — so one transport's copy of a quantity was gated and the other's was not. **#227 took that fix**, which is what this paragraph asked for.
 
-⚠️ **This paragraph named `speed_can_kmh` too, and was wrong by the time it was written**: #230 gated it and `motor_rpm_can` while #234 was in review, and the list went on naming both. The ratchet's own staleness arm could not see it — it asked whether an entry was still a signal, not whether it was still ungated. Both arms are there now, and the second one is why the count is 57 rather than 59.
+⚠️ **This paragraph named `speed_can_kmh` too, and was wrong by the time it was written**: #230 gated it and `motor_rpm_can` while #234 was in review, and the list went on naming both. The ratchet's own staleness arm could not see it — it asked whether an entry was still a signal, not whether it was still ungated. Both arms are there now, and the second one is why the count reached 57 rather than 59 — and why gating eighteen of them in #227 could not leave a stale list behind: the same arm fails on an entry that has since been gated.

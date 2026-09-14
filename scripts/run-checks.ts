@@ -545,6 +545,16 @@ const CHECKS: SelfCheck[] = [
       "and the only assertion that changes colour is the captured console output",
   },
   {
+    script: "scripts/check-flag-bounds.ts",
+    covers:
+      "the eighteen signals #227 took off check-all-view-tiles.ts's KNOWN_UNGATED list, and WHICH bound each got " +
+      "— which §5's ratchet cannot say, since it only asks whether a signal reaches some rule: that the fifteen " +
+      "BMS flags are 0…1 and accept both real readings while rejecting the masked byte a future decoder could " +
+      "return, replayed through four 0x201 frames including one synthetic all-bits one because no captured frame " +
+      "on this healthy pack sets an error bit, and that the three single-byte state words are gated to the WHOLE " +
+      "byte so a state this bike has not reached yet renders as a state rather than as a dead sensor",
+  },
+  {
     script: "scripts/check-freeze-frame.ts",
     covers:
       "the 120 infokey fields and 155 per-fault shortlists against dtc-table.ts, the 0x17 request encoding and its read-only guard, extended-addressed ISO-TP reassembly and the freeze-frame layout against CONSTRUCTED transfers (no 0x17 payload has ever been captured), plus the refused, wrong-component, gapped, short, oversized, truncated, surplus and foreign replies they must reject — and that every rejection still carries the bytes that caused it",

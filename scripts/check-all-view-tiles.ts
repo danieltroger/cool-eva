@@ -195,31 +195,10 @@ const KNOWN_UNGATED = new Set([
   "time_since_clear_min",
   "bms_uptime_min",
   "gps_epoch_s",
-  // ⚠️ These are the ones a future change should FIX rather than inherit.
-  //
-  // The fourteen `bms_state_*` / `bms_err_*` / `bms_warn_*` below are genuine 1/0 flags —
-  // `bit()` or `? 1 : 0` in src/can/decode-bms.ts — so a [0, 1] bound rejects nothing and
-  // they only want a BY_KEY line or a BOOLEAN_GROUP. They sat under "a 0/1 bound would
-  // reject the real value" above until the #234 re-review pointed out that it is false of
-  // them; they are the cheapest fourteen on this list.
-  "bms_state_discharge",
-  "bms_state_charge",
-  "bms_state_balancing",
-  "bms_state_trickle",
-  "bms_state_idle",
-  "bms_state_charge_complete",
-  "bms_state_maintenance",
-  "bms_err_cell_overvoltage",
-  "bms_err_cell_undervoltage",
-  "bms_err_over_temp",
-  "bms_err_leak_detected",
-  "bms_err_leak_detect_failed",
-  "bms_err_contactor",
-  "bms_warn_low_soc",
-  "bms_warn_balancing_required",
-  "vehicle_state",
-  "vehicle_substate",
-  "charge_state",
+  // ⚠️ These are the ones a future change should FIX rather than inherit. The fifteen
+  // `bms_state_*` / `bms_err_*` / `bms_warn_*` flags and the three single-byte state words
+  // that stood here are gone — #227 gated them; scripts/check-flag-bounds.ts is what holds
+  // them. What is left wants a judgement about a physical range rather than a line.
   "charger_enabled",
   "bms_remaining_energy_raw",
   "remaining_ah",
