@@ -47,6 +47,22 @@ export const RECOVERY_OUTCOME = {
 
 export type RecoveryOutcome = (typeof RECOVERY_OUTCOME)[keyof typeof RECOVERY_OUTCOME];
 
+/**
+ * Which of the two plausibility rules judged a pair. They are mutually exclusive by Δt:
+ * at or above MIN_FIX_INTERVAL_MS an implied speed is meaningful, below it only a distance
+ * is. docs/waypoints.md §"The jump gate mostly declines to judge".
+ */
+export const JUMP_RULE = {
+  /** implausibleJumpKmh(), against MAX_PLAUSIBLE_KMH. */
+  SPEED: "speed",
+  /** implausibleStepMetres(), against MAX_STEP_METRES. */
+  STEP: "step",
+  /** Neither rule ran: nothing preceded this fix, or a gate above refused first. */
+  NONE: "none",
+} as const;
+
+export type JumpRule = (typeof JUMP_RULE)[keyof typeof JUMP_RULE];
+
 export interface RecoveryVerdict {
   press: RecoveredPress;
   /** pressStart + holdMs — where the recogniser's threshold falls. */
@@ -66,9 +82,10 @@ export interface RecoveryVerdict {
    * Which rule looked still does — they are exclusive by Δt and they refuse for different
    * reasons.
    *
-   * ⚠️ `none` means NEITHER RULE RAN, which is two cases and not one: nothing preceded this
-   * fix in its own boot, or an earlier gate refused before judgeJump() was reached. Read it
-   * with `outcome`, never on its own — refused() hardcodes it for every gate above.
+   * ⚠️ `none` means NEITHER RULE RAN, which is three cases: nothing preceded this fix in its
+   * own boot, a gate above refused before judgeJump() was reached, or the hold was already
+   * live. Read it WITH `outcome` and the pair is unambiguous — REFUSED + `none` is a gate
+   * above, RECOVERED + `none` is a boot's first fix — but never read it on its own.
    */
   jumpRule: JumpRule;
   /**
@@ -93,25 +110,9 @@ export interface TimelineFix extends Fix {
   sessionId: number | null;
 }
 
-/**
- * Which of the two plausibility rules judged a pair. They are mutually exclusive by Δt:
- * at or above MIN_FIX_INTERVAL_MS an implied speed is meaningful, below it only a distance
- * is. docs/waypoints.md §"The jump gate mostly declines to judge".
- */
-export const JUMP_RULE = {
-  /** implausibleJumpKmh(), against MAX_PLAUSIBLE_KMH. */
-  SPEED: "speed",
-  /** implausibleStepMetres(), against MAX_STEP_METRES. */
-  STEP: "step",
-  /** Neither rule ran: nothing preceded this fix, or a gate above refused first. */
-  NONE: "none",
-} as const;
-
-export type JumpRule = (typeof JUMP_RULE)[keyof typeof JUMP_RULE];
-
 /** What judgeJump() found: whether a rule refused, which one looked, and the pair it saw. */
 interface JumpVerdict {
-  refused: boolean;
+  implausible: boolean;
   rule: JumpRule;
   current: TimelineFix | null;
   previous: TimelineFix | null;
@@ -337,8 +338,8 @@ function judgeOneHold(
   if (epoch === null || fireAt - epoch.ts > FIX_MAX_AGE_MS) {
     return refused(press, fireAt, WAYPOINT_REFUSAL.FIX_STALE);
   }
-  const { refused: jumped, rule, current, previous } = judgeJump(boot.fixes, fireAt);
-  if (jumped) {
+  const { implausible, rule, current, previous } = judgeJump(boot.fixes, fireAt);
+  if (implausible) {
     return { ...refused(press, fireAt, WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE), jumpRule: rule };
   }
   // ⚠️ The bike's #178 rule, mirrored: with nothing before it in this boot, the fix is
@@ -408,6 +409,10 @@ export function buildFixTimeline(latitudeRows: LogRow[], longitudeRows: LogRow[]
  * implausibleJumpKmh() answered null without comparing anything. Since #241 the step rule
  * judges exactly that population, so a pair with a predecessor is always judged by one rule
  * or the other — and the verdict names which, because the two refuse for different reasons.
+ *
+ * ⚠️ It branches on WALL-CLOCK Δt, which the Pi steps; pairPresses() orders on `seq` for
+ * exactly that reason. Harmless until #241 made the branch pick a rule rather than nothing.
+ * docs/waypoints.md §"A candidate follow-up, measured but not taken".
  */
 function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
   let currentIndex = -1;
@@ -418,7 +423,7 @@ function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
     currentIndex = index;
   }
   if (currentIndex < 0) {
-    return { refused: false, rule: JUMP_RULE.NONE, current: null, previous: null };
+    return { implausible: false, rule: JUMP_RULE.NONE, current: null, previous: null };
   }
   const current = fixes[currentIndex];
   // Backwards to the nearest fix of the same boot. ⚠️ Belt and braces since judgeHolds()
@@ -433,12 +438,12 @@ function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
     }
   }
   if (previous === null) {
-    return { refused: false, rule: JUMP_RULE.NONE, current, previous: null };
+    return { implausible: false, rule: JUMP_RULE.NONE, current, previous: null };
   }
   if (current.at - previous.at >= MIN_FIX_INTERVAL_MS) {
-    return { refused: implausibleJumpKmh(previous, current) !== null, rule: JUMP_RULE.SPEED, current, previous };
+    return { implausible: implausibleJumpKmh(previous, current) !== null, rule: JUMP_RULE.SPEED, current, previous };
   }
-  return { refused: implausibleStepMetres(previous, current) !== null, rule: JUMP_RULE.STEP, current, previous };
+  return { implausible: implausibleStepMetres(previous, current) !== null, rule: JUMP_RULE.STEP, current, previous };
 }
 
 /**

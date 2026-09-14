@@ -27,6 +27,16 @@ import { systemClockTrust } from "./clock.ts";
 /** A fix older than this is not where you are any more. */
 export const FIX_MAX_AGE_MS = 30_000;
 
+/**
+ * What a rider is told when either plausibility rule refuses.
+ *
+ * ⚠️ ONE SENTENCE FOR BOTH, because both answer WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE and
+ * public/lib/announce.js maps that one code to one sentence — two literals here could drift
+ * apart and one of them would then disagree with the phone. What separates the two rules
+ * for a human is the journal reason, not this. docs/waypoints.md §"One code, two rules".
+ */
+const FIX_IMPLAUSIBLE_MESSAGE = "GPS fix jumped somewhere the bike cannot have ridden — waypoint not saved.";
+
 /** Held to save a waypoint: the turn-signal cancel switch, pushed in (0x102 b0 bit 5). */
 export const WAYPOINT_GESTURE_BUTTON = "btn_indicator_cancel";
 
@@ -184,7 +194,7 @@ export function saveWaypointNow(): WaypointOutcome {
   if (jump !== null) {
     return refuse(
       WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE,
-      "GPS fix jumped somewhere the bike cannot have ridden — waypoint not saved.",
+      FIX_IMPLAUSIBLE_MESSAGE,
       `fix implies ${Math.round(jump)} km/h since the previous one`
     );
   }
@@ -201,7 +211,7 @@ export function saveWaypointNow(): WaypointOutcome {
     // them for a human. docs/waypoints.md §"One code, two rules".
     return refuse(
       WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE,
-      "GPS fix jumped somewhere the bike cannot have ridden — waypoint not saved.",
+      FIX_IMPLAUSIBLE_MESSAGE,
       `fix moved ${Math.round(step)} m since the previous one, inside the ${MIN_FIX_INTERVAL_MS} ms floor`
     );
   }

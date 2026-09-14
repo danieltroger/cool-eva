@@ -51,7 +51,7 @@ Five gates now exist, and they are not interchangeable.
 | `src/gps/waypoint.ts`, the corroboration test | a bad FIRST fix, which has nothing before it | a corruption that outlives its own successor |
 | the route map's corroboration test | a position the surrounding track contradicts | excursions under 0.5°, and unwitnessed saves |
 
-**The bike can now refuse the 2026-08-09 case itself.** #165's gate landed with the server-side handlebar gestures: the fix is measured against the one before it, and anything implying more than 300 km/h — `bounds.js`'s own ceiling for `gps_speed_kmh`, read from it rather than copied — is refused before the save. Two things bound it, both of them lessons this repo had already paid for: the two fixes must be at least 1 s apart, because `docs/route-map.md` records an implied-speed test with a short denominator reading 7 m in 1 ms as 25 000 km/h; and one spike costs **two** refusals, itself and the good fix after it, which is the right side to fail on. ⚠️ Since #241 the 1 s bound is a **branch point** rather than a place the gate gives up — below it `implausibleStepMetres()` judges a distance — which also means the second of those two refusals is now paid below the floor as well, 75 times over the archive. §"The jump gate mostly declined to judge" has both halves.
+**The bike can now refuse the 2026-08-09 case itself.** #165's gate landed with the server-side handlebar gestures: the fix is measured against the one before it, and anything implying more than 300 km/h — `bounds.js`'s own ceiling for `gps_speed_kmh`, read from it rather than copied — is refused before the save. Two things bound it, both of them lessons this repo had already paid for: the two fixes must be at least 1 s apart, because `docs/route-map.md` records an implied-speed test with a short denominator reading 7 m in 1 ms as 25 000 km/h; and one spike costs **two** refusals, itself and the good fix after it, which is the right side to fail on. ⚠️ Since #241 the 1 s bound is a **branch point** rather than a place the gate gives up — below it `implausibleStepMetres()` judges a distance — which also means the second of those two refusals is now paid below the floor as well, 75 times over the archive. §"The jump gate mostly declines to judge" has both halves.
 
 ⚠️ The range gate moved out of `src/http/waypoint.ts` with it. The endpoint is a shell now: `src/gps/waypoint.ts` owns every gate and both counters, because a handlebar hold saves without going through HTTP at all. `docs/handlebar-gestures.md` has that half.
 
@@ -220,7 +220,7 @@ What the deadband bound **cannot** see is a receiver that went silent while the 
 
 **Three reporting additions are outstanding**, tracked in #212: each recovered point's corroboration verdict in the report, a "both axes stale while the speedo says moving" line, and a per-waypoint fixture for the 28-row calibration. None changes a written coordinate.
 
-### The jump gate mostly declined to judge, and #241 closed that
+### The jump gate mostly declines to judge — and what #241 did about it
 
 `implausibleJumpKmh()` returns `null` below `MIN_FIX_INTERVAL_MS` = 1 s, and this hub delivers fixes at ~1.8 Hz, so the gate spent most of its life declining. Replayed over the whole archive — fixes formed the way `onFixChanged()` forms them, a pair at every `gps_lat` **or** `gps_lon` row with the other axis carried back, sliced per boot:
 

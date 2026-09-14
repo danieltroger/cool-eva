@@ -78,7 +78,7 @@ let landingHops = 0;
 
 /** When the last DIFFERENT position was staged — see the guard in stageFix(). */
 let lastDifferentStageAt = monotonicNow();
-let lastStaged = "";
+let lastStaged: string | null = null;
 
 /**
  * A fix, straight into liveState, exactly as the GPS decoders put one there — then a
@@ -89,15 +89,11 @@ let lastStaged = "";
  * stamped after both, and the second sample corroborates nothing. The check would then be
  * red for a reason that has nothing to do with the endpoint.
  *
- * ⚠️ And the second record() is deliberately the SAME position: equal values are inside the
- * 3 m deadband, so nothing is logged, no change fires, and on the FIRST staging
- * `precedingFix` stays null — precisely the "first fix of a run, seen twice" state.
+ * ⚠️ And the second record() is deliberately the SAME position: equal values sit inside the
+ * deadband, so on the FIRST staging `precedingFix` stays null — the "seen twice" state.
  *
- * ⚠️ A TELEPORT NEEDS A LANDING HOP SINCE #241: a move to a new position arrives as two
- * fixes there, ~11 m apart, because the step rule judges the sub-second pairs these
- * fixtures teleport across. The waypoint still copies the exact staged coordinate — the hop
- * lands first, the exact value last. Why, and what it does not weaken:
- * docs/waypoints.md §"What the checks had to change".
+ * ⚠️ A move to a new position arrives as two fixes there since #241 — the landing hop.
+ * docs/waypoints.md §"What the checks had to change" has why, and what it does not weaken.
  */
 async function stageFix(latitude: number, longitude: number) {
   const staged = `${latitude},${longitude}`;
@@ -113,19 +109,22 @@ async function stageFix(latitude: number, longitude: number) {
       `staged fixes stay inside the jump gate's ${MIN_FIX_INTERVAL_MS} ms floor (${Math.round(gap)} ms)`,
       gap < MIN_FIX_INTERVAL_MS
     );
-    if (lastStaged !== "") {
+    if (lastStaged !== null) {
       // ~11 m north, which clears the 3 m deadband so it logs and moves the tracked pair.
       landingHops += 1;
-      record("gps_lat", latitude + 0.0001);
-      record("gps_lon", longitude);
+      sample(latitude + 0.0001, longitude);
       await Promise.resolve();
     }
     lastDifferentStageAt = monotonicNow();
     lastStaged = staged;
   }
-  record("gps_lat", latitude);
-  record("gps_lon", longitude);
+  sample(latitude, longitude);
   await Promise.resolve();
+  sample(latitude, longitude);
+}
+
+/** One decoded sample, both axes together, the way src/gps/decode.ts emits them. */
+function sample(latitude: number, longitude: number) {
   record("gps_lat", latitude);
   record("gps_lon", longitude);
 }

@@ -190,16 +190,9 @@ check(
 // the ordinary cadence was recovered with nothing looking at it. The step rule judges
 // exactly that population now, so the same 500 ms pair is refused, and the verdict names
 // the rule that did it rather than confessing that none had.
-const tooClose = judge({
-  latitudeRows: [
-    { ts: BASE + 400, value: 57.7, sessionId: 1, seq: 1 },
-    { ts: BASE + 900, value: 57.7, sessionId: 1, seq: 2 },
-  ],
-  longitudeRows: [
-    { ts: BASE + 400, value: 11.97, sessionId: 1, seq: 1 },
-    { ts: BASE + 900, value: 130.3, sessionId: 1, seq: 2 },
-  ],
-});
+const good = fixRows(400, 57.7, 11.97);
+const spike = fixRows(900, 57.7, 130.3);
+const tooClose = judge({ latitudeRows: [good.lat, spike.lat], longitudeRows: [good.lon, spike.lon] });
 check(
   "⚠️  a corrupt fix 500 ms after a good one — under the gate's floor — is refused by the step rule",
   tooClose[0].outcome === RECOVERY_OUTCOME.REFUSED &&
@@ -210,16 +203,8 @@ check(
 // ⚠️ AND THE OTHER HALF, or the assertion above is satisfied by a rule that refuses
 // everything under the floor — which is 93 % of this hub's pairs. ~19 m in 500 ms is the
 // largest step measured under any waypoint the rider really saved.
-const ordinaryCadence = judge({
-  latitudeRows: [
-    { ts: BASE + 400, value: 57.7, sessionId: 1, seq: 1 },
-    { ts: BASE + 900, value: 57.70017, sessionId: 1, seq: 2 },
-  ],
-  longitudeRows: [
-    { ts: BASE + 400, value: 11.97, sessionId: 1, seq: 1 },
-    { ts: BASE + 900, value: 11.97, sessionId: 1, seq: 2 },
-  ],
-});
+const nudged = fixRows(900, 57.70017, 11.97);
+const ordinaryCadence = judge({ latitudeRows: [good.lat, nudged.lat], longitudeRows: [good.lon, nudged.lon] });
 check(
   "…while an ordinary 19 m step at the same 500 ms cadence is recovered, judged by the same rule",
   ordinaryCadence[0].outcome === RECOVERY_OUTCOME.RECOVERED && ordinaryCadence[0].jumpRule === JUMP_RULE.STEP
@@ -244,15 +229,12 @@ check(
 // the boundary belongs to the SPEED rule — the pure function is asserted at that instant in
 // check-hold-gestures.ts, and without this the same `>=`-to-`>` mutation survives here.
 // 1 000 ms apart and ~19 m, so neither rule refuses and only the naming is under test.
+// ⚠️ The SAME pair as ordinaryCadence, one number apart: its first fix is 1 000 ms before
+// the second rather than 500, which is the whole difference between the two rules.
+const secondEarlier = fixRows(-100, 57.7, 11.97);
 const atTheSeam = judge({
-  latitudeRows: [
-    { ts: BASE - 100, value: 57.7, sessionId: 1, seq: 1 },
-    { ts: BASE + 900, value: 57.70017, sessionId: 1, seq: 2 },
-  ],
-  longitudeRows: [
-    { ts: BASE - 100, value: 11.97, sessionId: 1, seq: 1 },
-    { ts: BASE + 900, value: 11.97, sessionId: 1, seq: 2 },
-  ],
+  latitudeRows: [secondEarlier.lat, nudged.lat],
+  longitudeRows: [secondEarlier.lon, nudged.lon],
 });
 check(
   "⚠️  a pair exactly MIN_FIX_INTERVAL_MS apart is the SPEED rule's, in the mirror as on the bike",
@@ -280,12 +262,7 @@ check(
 // `none` is no longer "the gate declined" — it is "nothing preceded this fix in its boot".
 // Without this the mutation that has judgeJump() claim `step` on a first fix survives, and
 // a report would name a rule that never ran.
-const firstOfBoot = judge({
-  epochRows: [
-    { ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 },
-    { ts: BASE + 950, value: 1_788_000_001, sessionId: 1, seq: 2 },
-  ],
-});
+const firstOfBoot = judge({});
 check(
   "⚠️  …and a fix with nothing before it in its boot is judged by NEITHER rule",
   firstOfBoot[0].outcome === RECOVERY_OUTCOME.RECOVERED && firstOfBoot[0].jumpRule === JUMP_RULE.NONE

@@ -156,6 +156,8 @@ first.stop();
 
 // --- 2b. Half a sample is not a sample ----------------------------------------------
 
+// Numbered 2b because it belongs with §2; it RUNS after §3 because its sample would
+// otherwise become §3's precedingFix — see the ⚠️ there.
 console.log("\n2b. one axis refreshed on its own does not corroborate anything");
 
 // ⚠️ A RAIL, NOT A FIX, and said so rather than left to look like a measured case:
@@ -255,8 +257,9 @@ check(
 
 // ⚠️ THE COUNTERWEIGHT. Without it every assertion above is satisfied by a rule that
 // refuses every pair under the floor, which is 93 % of them — the whole population this
-// change newly judges. 0.0002° of latitude is ~22 m, the scale of a real step at this
-// cadence and an order below MAX_STEP_METRES.
+// change newly judges. 0.0002° of latitude is 22.24 m, the scale of a real step at this
+// cadence and an order below MAX_STEP_METRES. TWO samples, because the first still pays the
+// spike's second refusal: only once both tracked fixes are good ones is the pair ordinary.
 sample(45.3752, 14.322);
 await settle();
 sample(45.3754, 14.322);

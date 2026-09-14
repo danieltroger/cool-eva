@@ -717,6 +717,11 @@ waypointGestures.stop();
 // The gate itself, as a table. It is pure (src/gps/fix-plausibility.ts), so both branches
 // are reachable without driving the signal store or waiting out an interval.
 const here: Fix = { latitudeDeg: 57.7, longitudeDeg: 11.97, at: 0 };
+// ⚠️ ONE OBJECT, USED BY BOTH RULES BELOW. The seam assertion claims this is "the exact
+// fixture" the speed test declines and the step test refuses; a second identical literal
+// would make that a promise instead of a fact, and an edit to one of them would break the
+// pairing silently.
+const insideTheFloor: Fix = { latitudeDeg: 57.7, longitudeDeg: 130.3, at: MIN_FIX_INTERVAL_MS - 1 };
 check(
   "one fix on its own is never implausible — there is nothing to compare it against",
   implausibleJumpKmh(null, here) === null
@@ -728,7 +733,7 @@ check(
 check(
   "⚠️  …but not when the two fixes are closer together than the GPS cadence, where a short " +
     "denominator turns metres into thousands of km/h",
-  implausibleJumpKmh(here, { latitudeDeg: 57.7, longitudeDeg: 130.3, at: MIN_FIX_INTERVAL_MS - 1 }) === null
+  implausibleJumpKmh(here, insideTheFloor) === null
 );
 check(
   "a lap of a town at a plausible speed is not refused",
@@ -744,11 +749,12 @@ check(
 // against distanceKm() so each row rests on a measured distance rather than on arithmetic
 // done in this file. The metres are the archive's: docs/waypoints.md has where each came
 // from and what it costs.
+const ceilingMetresInsideFloor = (MAX_PLAUSIBLE_KMH * MIN_FIX_INTERVAL_MS) / 3_600;
 check(
   `⚠️  MAX_STEP_METRES (${MAX_STEP_METRES} m) is at or above the ${Math.round(
-    (MAX_PLAUSIBLE_KMH * MIN_FIX_INTERVAL_MS) / 3_600
+    ceilingMetresInsideFloor
   )} m a bike at the shipped ceiling covers inside the floor, so it cannot refuse real motion`,
-  MAX_STEP_METRES >= (MAX_PLAUSIBLE_KMH * MIN_FIX_INTERVAL_MS) / 3_600
+  MAX_STEP_METRES >= ceilingMetresInsideFloor
 );
 check("one fix on its own is never an implausible step either", implausibleStepMetres(null, here) === null);
 check(
@@ -784,10 +790,8 @@ check(
     "that pair is the speed test's, and two rules judging one pair is two chances to refuse it",
   implausibleStepMetres(here, northOf(here, 10_000, MIN_FIX_INTERVAL_MS)) === null
 );
-// ⚠️ THE SEAM #241 EXISTS FOR, asserted as a pair so neither half can drift alone: the
-// exact fixture two checks above that implausibleJumpKmh() declines to judge is the one
-// implausibleStepMetres() refuses.
-const insideTheFloor: Fix = { latitudeDeg: 57.7, longitudeDeg: 130.3, at: MIN_FIX_INTERVAL_MS - 1 };
+// ⚠️ THE SEAM #241 EXISTS FOR, asserted as a pair so neither half can drift alone — and
+// against the same object, so "the same fixture" is structural rather than claimed.
 check(
   "⚠️  the 2026-08-09 jump arriving inside the floor — declined by the speed test, refused by the step test",
   implausibleJumpKmh(here, insideTheFloor) === null && implausibleStepMetres(here, insideTheFloor) !== null
