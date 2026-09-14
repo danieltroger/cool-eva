@@ -212,6 +212,17 @@ check(
   armBody.slice(0, refreshAt).includes("busy.val = true")
 );
 
+// ── §5b a POST reply is adopted the same way a GET's is ───────────────────────────────
+//
+// ⚠️ A POST answers the same payload, and a sweep can finish across one — so `send()` must take
+// the listing through the same door `fetchStatus()` does, or a reply adopted without the check
+// leaves the picker offering names the Pi has stopped accepting. Asserted on the source because
+// send() is reached only from a button press, and the rule is that BOTH call sites go through it.
+const sendStart = source.indexOf("async function send(query)");
+const sendBody = sendStart < 0 ? "" : source.slice(sendStart, source.indexOf("\n}", sendStart));
+check("§5b send() was found at all", sendStart >= 0 && sendBody.length > 0);
+check("§5b and it adopts the listing the way fetchStatus does", sendBody.includes("adoptListing("));
+
 // ── §6 the seams stay seams ───────────────────────────────────────────────────────────
 //
 // ⚠️ The WHOLE of public/, not a list of files somebody has to remember to extend — a hard-coded
