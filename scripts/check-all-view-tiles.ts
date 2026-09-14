@@ -146,94 +146,13 @@ console.log(
 );
 console.log(`${Object.keys(MUST_NOT_LATCH).length} outputs, states and measurements checked to still get the raw one`);
 
-// 5. 🚨 THE RATCHET. A signal with a blank unit in a group that is not a BOOLEAN_GROUP, and no
-//    BY_KEY entry, reaches no rule in bounds.js at all: boundsFor() returns null and the tile
-//    renders whatever arrives. That is how `moving` and `rolling_backwards` — two 0/1 flags — sat
-//    ungated on this page from June until 2026-09-14, with nothing red, because every other
-//    guard in this repo walks the signals that ARE gated.
-//
-//    ⚠️ The list below is NOT a blessing. It is a ratchet: these are what was ungated the day it
-//    was written, and this fails when the next one appears. The three this paragraph used to name
-//    as obviously wrong are all gated now — `speed_can_kmh` by #230, `vehicle_state` and
-//    `vehicle_substate` by #227 — and what is left wants a judgement about a physical range
-//    rather than a line. docs/dashboard-decisions.md §"The ungated signals" has the list and the why.
-const KNOWN_UNGATED = new Set([
-  // Flag WORDS and raw state bytes, where a 0/1 or numeric bound would reject the real value.
-  "bms_error_flags",
-  "bms_warning_flags",
-  "lmu_comm_warnings",
-  "bms_io_state",
-  "iso_test_1",
-  "iso_test_2",
-  "iso_test_total",
-  "bms_post_processor_1",
-  "clamp_gate",
-  "clamp_amount",
-  "lmu_cell_mux",
-  "vcu_flags_low",
-  "vcu_flags_high",
-  // Indices and counts into a structure whose size is the real bound.
-  "lmu_temp_high_idx",
-  "lmu_temp_low_idx",
-  "cell_lowest_v_idx",
-  "cell_highest_v_idx",
-  "cells_connected",
-  "keys_paired",
-  "gps_satellites",
-  "gps_fix",
-  "key_fob_id",
-  // Monotonic counters and odometers: any ceiling is arbitrary, and the counter that outgrew it
-  // would be drawn as a dead sensor on a working bike — bounds.js says exactly this of waypoint_seq.
-  "waypoint_seq",
-  "waypoint_refused_seq",
-  "odometer_km",
-  "trip_km",
-  "odometer_can_km",
-  "dist_since_clear_km",
-  "dist_with_mil_km",
-  "time_with_mil_min",
-  "time_since_clear_min",
-  "bms_uptime_min",
-  "gps_epoch_s",
-  // ⚠️ These are the ones a future change should FIX rather than inherit. The fifteen
-  // `bms_state_*` / `bms_err_*` / `bms_warn_*` flags and the three single-byte state words
-  // that stood here are gone — #227 gated them; scripts/check-flag-bounds.ts is what holds
-  // them. What is left wants a judgement about a physical range rather than a line.
-  "charger_enabled",
-  "bms_remaining_energy_raw",
-  "remaining_ah",
-  "bms_remaining_energy_wh",
-  "inst_consumption_wh",
-  "avg_consumption_wh_km",
-]);
-const ungated = SIGNALS.filter(signal => boundsFor(signal.key, signal.unit, signal.group) === null);
-for (const signal of ungated) {
-  if (!KNOWN_UNGATED.has(signal.key)) {
-    failures.push(
-      `${signal.key} (group "${signal.group}", unit "${signal.unit}") reaches no rule in public/lib/bounds.js, so ` +
-        `boundsFor() returns null and the ALL page renders whatever arrives — the combination that left moving ` +
-        `and rolling_backwards ungated for three months. Give it a BY_KEY entry, or a group whose rule covers it, or ` +
-        `add it to KNOWN_UNGATED here with the reason`
-    );
-  }
-}
-// 🚨 …and the other direction, which is the arm that matters more. A stale entry means the list
-//    has stopped describing the registry and the next reader trusts it. ⚠️ This asked "is it
-//    still a signal?" when it was written, which CANNOT see the commoner rot: an entry someone
-//    has since FIXED by giving it a bound stays on the list for ever, and the prose beside it
-//    keeps offering a two-line fix for a thing already fixed. It shipped that way — #230 gated
-//    `speed_can_kmh` and `motor_rpm_can` while this branch was in review and the list went on
-//    naming them. Comparing against `ungated` catches both rots and is shorter.
-const ungatedKeys = new Set(ungated.map(signal => signal.key));
-for (const key of KNOWN_UNGATED) {
-  if (ungatedKeys.has(key)) continue;
-  failures.push(
-    defined.has(key)
-      ? `KNOWN_UNGATED still names "${key}", which public/lib/bounds.js now gates — delete the line, and any prose that calls it ungated`
-      : `KNOWN_UNGATED names "${key}", which is no longer a signal in src/can/registry.ts`
-  );
-}
-console.log(`${ungated.length} of ${SIGNALS.length} signals reach no bound in bounds.js; all are on the known list`);
+// 5. The ratchet that used to live here — a hand-maintained list of every signal reaching no
+//    rule in bounds.js — is gone. #227 moved the question to where the answer is: a signal
+//    declares `bounds` or `unbounded` beside itself in src/can/registry.ts, and
+//    scripts/generate-signal-bounds.ts fails the build on one that does neither. That check is
+//    strictly stronger, because this one could only ever ask whether a signal reached SOME
+//    rule and never which bound it got — so a bound narrowed to the wrong range stayed green.
+//    scripts/check-flag-bounds.ts is what asserts the numbers. docs/signal-bounds.md.
 
 if (failures.length > 0) {
   console.error("FAILED:");

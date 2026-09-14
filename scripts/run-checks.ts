@@ -608,8 +608,8 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-flag-bounds.ts",
     covers:
-      "the eighteen signals #227 took off check-all-view-tiles.ts's KNOWN_UNGATED list, and WHICH bound each got " +
-      "— which §5's ratchet cannot say, since it only asks whether a signal reaches some rule: that the fifteen " +
+      "the signals whose bound is a claim about their DECODER rather than about the bike, and WHICH bound each got " +
+      "— which the generator's ratchet cannot say, since it only asks whether a signal reaches a rule: that the fifteen " +
       "BMS flags are 0…1 and accept both real readings while rejecting the masked byte a future decoder could " +
       "return, replayed through four 0x201 frames including one synthetic all-bits one because no captured frame " +
       "on this healthy pack sets an error bit, and that the three single-byte state words are gated to the WHOLE " +
@@ -920,6 +920,18 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/decode-dtc-response.ts",
     covers:
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",
+  },
+  {
+    script: "scripts/generate-signal-bounds.ts",
+    args: ["--check"],
+    covers:
+      "the plausibility bounds the dashboard gates every reading against: that public/lib/generated-bounds.js is " +
+      "byte-identical to what the `bounds` declared beside each signal in src/can/registry.ts would produce — a " +
+      "copy the phone must carry because it has no build step and cannot import a .ts module — and THE RATCHET " +
+      "that replaced check-all-view-tiles.ts's KNOWN_UNGATED list: every one of the registry's signals either " +
+      "reaches a rule in bounds.js, declares its own bounds, or says which kind of unboundable it is, so a new " +
+      "signal cannot be added ungated and render whatever arrives; a stale `unbounded` on a signal that has since " +
+      "gained a rule fails too, which is the rot the old list could not see",
   },
   {
     script: "scripts/generate-grafana-dtc.ts",

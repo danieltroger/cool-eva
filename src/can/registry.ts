@@ -1,4 +1,4 @@
-import type { SignalDef } from "./signals.ts";
+import { FIELD_U8, FIELD_U16, type SignalDef } from "./signals.ts";
 import {
   LMU_COUNT,
   LMUS_WITHOUT_BATTERY_TEMP,
@@ -16,8 +16,8 @@ import { DTC_TABLE, dtcSignalKey } from "../diagnostics/dtc-table.ts";
 // deadband omitted ⇒ 0 ⇒ log on any change (i.e. at sensor resolution).
 export const SIGNALS: SignalDef[] = [
   // External MAX31865 coolant probes (battery loop in/out)
-  { key: "coolant_in", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
-  { key: "coolant_out", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05 },
+  { key: "coolant_in", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05, bounds: [-20, 120] },
+  { key: "coolant_out", unit: "°C", group: "coolant", source: "sensor", deadband: 0.05, bounds: [-20, 120] },
 
   // The loop's fan (src/fan/control.ts, docs/fan-control.md). These are what the Pi
   // COMMANDED, not what it measured — there is no tacho on this fan — so they are
@@ -25,9 +25,9 @@ export const SIGNALS: SignalDef[] = [
   // onDemand for that reason: a fan sitting at 60 % writes nothing for an hour, and a
   // fan on a bike with FAN_ENABLED unset writes nothing ever. Their own group, so those
   // two silences cannot drag a real sensor's liveness down with them — see SignalDef.
-  { key: "fan_duty_pct", unit: "%", group: "fan", source: "sensor", onDemand: true },
-  { key: "fan_target_pct", unit: "%", group: "fan", source: "sensor", onDemand: true },
-  { key: "fan_driver_enabled", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_duty_pct", unit: "%", group: "fan", source: "sensor", onDemand: true, bounds: [0, 100] },
+  { key: "fan_target_pct", unit: "%", group: "fan", source: "sensor", onDemand: true, bounds: [0, 100] },
+  { key: "fan_driver_enabled", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 1] },
   // Phase 2's automatic curve (src/fan/auto.ts, src/fan/curve.ts). `fan_auto_mode` is
   // FAN_MODE_CODE in src/fan/auto.ts — 0 manual, 1 automatic, 2 fun — and the other two
   // are the enums in src/fan/curve.ts: FAN_REASON says which rule set the duty — or, on a
@@ -36,18 +36,18 @@ export const SIGNALS: SignalDef[] = [
   // in-bounds reading, or absent.
   // Codes rather than text because a signal is a number; the words are the dashboard's.
   // ⚠️ All five have a BLANK unit in a group that is not a BOOLEAN_GROUP, which is the
-  // combination bounds.js renders ungated — so each is named in its BY_KEY, and
+  // combination bounds.js renders ungated — so each declares its own bounds, and
   // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
-  { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 2] },
   // Whose *off* the fan is in, and why it ended — FAN_OFF_STATE in src/fan/gesture-runner.ts:
   // 0 nobody's, 1 the handlebar gesture's and still in force, 2 the gesture's and just handed
   // back because the bike went over the ceiling. ⚠️ It is what lets the phone say "off until
   // 15 km/h" over the gesture's 0 and plain "off" over the slider's, which are the same
   // `fan_target_pct` and are not the same promise to the rider (#205).
-  { key: "fan_off_state", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_off_state", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 2] },
 
-  { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true },
-  { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_auto_reason", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 8] },
+  { key: "fan_temp_input", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 2] },
   // Fun mode's gate (src/fan/fun.ts, docs/fan-control.md §"Fun mode"). `fan_fun_available`
   // is what the dashboard shows or hides the control on; `fan_fun_gate` is the FUN_GATE
   // code saying which condition failed, so "why did the button not appear" is answerable
@@ -55,8 +55,8 @@ export const SIGNALS: SignalDef[] = [
   // `fan_duty_pct` above: in fun mode the duty tracks `throttle_pct` at ~100 Hz and
   // logging it at that rate is the POINT — it is how the throttle's movement and the
   // fan's response are compared afterwards, which any deadband on the output would wreck.
-  { key: "fan_fun_available", unit: "", group: "fan", source: "sensor", onDemand: true },
-  { key: "fan_fun_gate", unit: "", group: "fan", source: "sensor", onDemand: true },
+  { key: "fan_fun_available", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 1] },
+  { key: "fan_fun_gate", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 5] },
 
   // The can0 interface's own up/down state, polled from `ip link` rather than decoded
   // off the bus (src/can/link-status.ts). A 1/0 flag in `diag`, which bounds.js gates to
@@ -78,41 +78,41 @@ export const SIGNALS: SignalDef[] = [
   // now) it is 0 below 35 °C, (true − 35) from 35 to 54 °C, and 0 again from 55 °C up, where
   // the truth is reported so the VCU's limp protection can still fire. Only the retired
   // flat-offset config gave a constant 15. See the 0x200 comment in decode-bms.ts.
-  { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream" },
-  { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream" },
+  { key: "batt_temp_lo", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
+  { key: "batt_temp_hi", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
   { key: "batt_temp_lo_vcu", unit: "°C", group: "battery", source: "stream" },
   { key: "batt_temp_hi_vcu", unit: "°C", group: "battery", source: "stream" },
   { key: "soc", unit: "%", group: "battery", source: "stream" },
   { key: "soh", unit: "%", group: "battery", source: "stream" },
-  { key: "pack_v", unit: "V", group: "battery", source: "stream" },
-  { key: "pack_a", unit: "A", group: "battery", source: "stream" },
-  { key: "pack_kw", unit: "kW", group: "battery", source: "stream", deadband: 0.05 },
+  { key: "pack_v", unit: "V", group: "battery", source: "stream", bounds: [0, 450] },
+  { key: "pack_a", unit: "A", group: "battery", source: "stream", bounds: [-600, 600] },
+  { key: "pack_kw", unit: "kW", group: "battery", source: "stream", deadband: 0.05, bounds: [-200, 200] },
 
   // 0x201 — BMS System State bitfield, kept under its historical key. The raw byte
   // is what has always been logged (bit 0 discharge, 1 charge, 2 balancing, 3
   // trickle, 4 idle, 5 charge complete, 6 maintenance), so old rows stay comparable;
   // the bms_state_* booleans below are the decoded version.
-  { key: "charge_state", unit: "", group: "charge", source: "stream" },
-  { key: "bms_state_discharge", unit: "", group: "bms", source: "stream" },
-  { key: "bms_state_charge", unit: "", group: "bms", source: "stream" },
-  { key: "bms_state_balancing", unit: "", group: "bms", source: "stream" },
-  { key: "bms_state_trickle", unit: "", group: "bms", source: "stream" },
-  { key: "bms_state_idle", unit: "", group: "bms", source: "stream" },
-  { key: "bms_state_charge_complete", unit: "", group: "bms", source: "stream" },
-  { key: "bms_state_maintenance", unit: "", group: "bms", source: "stream" },
+  { key: "charge_state", unit: "", group: "charge", source: "stream", bounds: FIELD_U8 },
+  { key: "bms_state_discharge", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_state_charge", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_state_balancing", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_state_trickle", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_state_idle", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_state_charge_complete", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_state_maintenance", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
 
   // 0x201 b1-7 — error/warning bitfields. The raw words are logged so no flag is
   // ever lost; the booleans are the ones worth an alert.
-  { key: "bms_error_flags", unit: "", group: "bms", source: "stream" },
-  { key: "bms_warning_flags", unit: "", group: "bms", source: "stream" },
-  { key: "bms_err_cell_overvoltage", unit: "", group: "bms", source: "stream" },
-  { key: "bms_err_cell_undervoltage", unit: "", group: "bms", source: "stream" },
-  { key: "bms_err_over_temp", unit: "", group: "bms", source: "stream" },
-  { key: "bms_err_leak_detected", unit: "", group: "bms", source: "stream" },
-  { key: "bms_err_leak_detect_failed", unit: "", group: "bms", source: "stream" },
-  { key: "bms_err_contactor", unit: "", group: "bms", source: "stream" },
-  { key: "bms_warn_low_soc", unit: "", group: "bms", source: "stream" },
-  { key: "bms_warn_balancing_required", unit: "", group: "bms", source: "stream" },
+  { key: "bms_error_flags", unit: "", group: "bms", source: "stream", unbounded: "raw-word" },
+  { key: "bms_warning_flags", unit: "", group: "bms", source: "stream", unbounded: "raw-word" },
+  { key: "bms_err_cell_overvoltage", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_err_cell_undervoltage", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_err_over_temp", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_err_leak_detected", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_err_leak_detect_failed", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_err_contactor", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_warn_low_soc", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
+  { key: "bms_warn_balancing_required", unit: "", group: "bms", source: "stream", bounds: [0, 1] },
 
   // 0x202 — how much current the BMS is allowing right now. Both move smoothly with
   // temperature and SOC at 10 Hz, so a 1 A deadband keeps them off the hot path
@@ -127,26 +127,26 @@ export const SIGNALS: SignalDef[] = [
   // They name whichever cell sits at each extreme *at that instant*, which is not the
   // same as naming a weak cell: at the 9 mV pack spread measured 2026-08-02 the ranking
   // is noise, and the low index wandered between two cells while nothing else moved.
-  { key: "cell_min_mv", unit: "mV", group: "cells", source: "stream" },
-  { key: "cell_avg_mv", unit: "mV", group: "cells", source: "stream" },
-  { key: "cell_max_mv", unit: "mV", group: "cells", source: "stream" },
-  { key: "cell_spread_mv", unit: "mV", group: "cells", source: "stream" },
-  { key: "cell_lowest_v_idx", unit: "", group: "cells", source: "stream" },
-  { key: "cell_highest_v_idx", unit: "", group: "cells", source: "stream" },
+  { key: "cell_min_mv", unit: "mV", group: "cells", source: "stream", bounds: [1500, 4500] },
+  { key: "cell_avg_mv", unit: "mV", group: "cells", source: "stream", bounds: [1500, 4500] },
+  { key: "cell_max_mv", unit: "mV", group: "cells", source: "stream", bounds: [1500, 4500] },
+  { key: "cell_spread_mv", unit: "mV", group: "cells", source: "stream", bounds: [0, 2000] },
+  { key: "cell_lowest_v_idx", unit: "", group: "cells", source: "stream", unbounded: "index" },
+  { key: "cell_highest_v_idx", unit: "", group: "cells", source: "stream", unbounded: "index" },
 
   // 0x205 — the BMS's own energy/charge counters. cell_deviation_mv is its own
   // max−min, i.e. an independent check on cell_spread_mv computed from 0x203.
   // The energy field's unit is documented as whole kWh but doesn't match the bus;
   // logged as a raw count until 0x661 can settle it (see decode-bms.ts).
-  { key: "bms_remaining_energy_raw", unit: "", group: "energy", source: "stream" },
+  { key: "bms_remaining_energy_raw", unit: "", group: "energy", source: "stream", unbounded: "unresolved" },
   { key: "cell_deviation_mv", unit: "mV", group: "cells", source: "stream" },
-  { key: "remaining_ah", unit: "Ah", group: "energy", source: "stream" },
-  { key: "cells_connected", unit: "", group: "cells", source: "stream" },
+  { key: "remaining_ah", unit: "Ah", group: "energy", source: "stream", unbounded: "unresolved" },
+  { key: "cells_connected", unit: "", group: "cells", source: "stream", bounds: [0, 81] },
 
   // 0x206 — pack resistance + module comms
-  { key: "pack_resistance_mohm", unit: "mΩ", group: "battery", source: "stream" },
-  { key: "lmu_comm_warnings", unit: "", group: "bms", source: "stream" }, // bit n = LMU n
-  { key: "bms_io_state", unit: "", group: "bms", source: "stream" }, // bit n = IO n+1
+  { key: "pack_resistance_mohm", unit: "mΩ", group: "battery", source: "stream", bounds: [0, 500] },
+  { key: "lmu_comm_warnings", unit: "", group: "bms", source: "stream", unbounded: "raw-word" }, // bit n = LMU n
+  { key: "bms_io_state", unit: "", group: "bms", source: "stream", bounds: FIELD_U8 }, // bit n = IO n+1
 
   // 0x207 — isolation test. 10-bit ADC counts around an ideal of 512, at 10 Hz.
   // These are a slow diagnostic (a leak vs a Y-capacitor), never a transient, so the
@@ -154,9 +154,9 @@ export const SIGNALS: SignalDef[] = [
   // of ADC wobble at 10 Hz across three signals would be ~2.6M rows/day — four times
   // the entire rest of the DB, onto a Pi Zero's SD card. Worth re-checking with
   // `select key, count(*) from … group by key` after the first ride.
-  { key: "iso_test_1", unit: "", group: "bms", source: "stream", deadband: 10 },
-  { key: "iso_test_2", unit: "", group: "bms", source: "stream", deadband: 10 },
-  { key: "iso_test_total", unit: "", group: "bms", source: "stream", deadband: 10 },
+  { key: "iso_test_1", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "unresolved" },
+  { key: "iso_test_2", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "unresolved" },
+  { key: "iso_test_total", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "unresolved" },
   // Sum of the measured cell voltages in 1 V steps — a cross-check on pack_v, which
   // the BMS measures at the terminals instead. Also 10 Hz, and pack voltage swings
   // tens of volts under throttle, so the deadband has to sit well above the 1 V
@@ -165,18 +165,18 @@ export const SIGNALS: SignalDef[] = [
   { key: "cell_voltage_sum_v", unit: "V", group: "cells", source: "stream", deadband: 5 },
 
   // 0x300 — charger enable + the DC limits the BMS grants the charger
-  { key: "charger_enabled", unit: "", group: "charge", source: "stream" },
+  { key: "charger_enabled", unit: "", group: "charge", source: "stream", bounds: FIELD_U8 },
   { key: "charger_max_dc_v", unit: "V", group: "charge", source: "stream" },
   { key: "charger_max_dc_a", unit: "A", group: "charge", source: "stream" },
-  { key: "bms_post_processor_1", unit: "", group: "bms", source: "stream" }, // purpose unknown, logged raw
+  { key: "bms_post_processor_1", unit: "", group: "bms", source: "stream", unbounded: "raw-word" }, // purpose unknown, logged raw
 
   // --- Frames that only exist after the extended BMS config is flashed -----
   // 0x660 — pack thermal summary (the per-module temps ride in 0x664 instead).
   // pack_temp_avg is not touched by the VCU offset, so it stays comparable with
   // batt_temp_*. The frame also carries the true batt_temp_lo/hi in its long form.
-  { key: "lmu_temp_high_idx", unit: "", group: "battery", source: "stream" },
-  { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream" },
-  { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream" },
+  { key: "lmu_temp_high_idx", unit: "", group: "battery", source: "stream", unbounded: "index" },
+  { key: "lmu_temp_low_idx", unit: "", group: "battery", source: "stream", unbounded: "index" },
+  { key: "pack_temp_avg", unit: "°C", group: "battery", source: "stream", bounds: [-30, 90] },
   // Clamp instrumentation, one byte each. No deadband: these are small integers whose
   // whole purpose is to show the clamp's arithmetic, so smoothing would hide it. What the
   // clamp actually subtracts is clamp_amount & clamp_gate.
@@ -194,8 +194,8 @@ export const SIGNALS: SignalDef[] = [
   // nothing — clamp_diff was exactly batt_temp_hi − 35, verified over all 198 same-timestamp
   // pairs — so every old row is reconstructible, and their units live in the sealed log
   // segments rather than here. docs/can-decode-findings.md § "Units and groups".
-  { key: "clamp_gate", unit: "", group: "bms", source: "stream" },
-  { key: "clamp_amount", unit: "", group: "bms", source: "stream" },
+  { key: "clamp_gate", unit: "", group: "bms", source: "stream", bounds: FIELD_U8 },
+  { key: "clamp_amount", unit: "", group: "bms", source: "stream", bounds: FIELD_U8 },
   // Echo of the byte 0x200 b3 carries — genuinely a temperature, so "°C" is right here.
   // It must always equal batt_temp_hi_vcu; pack-temperature.ts warns once per run if it
   // ever doesn't, because that means the .bms config is repointed wrong. Unlike the
@@ -207,8 +207,8 @@ export const SIGNALS: SignalDef[] = [
   // 0x661 — 1 Wh remaining energy (5 Wh deadband: 1 Wh out of a ~21 kWh pack is far
   // below anything we can act on, and the frame arrives every second) + the BMCU's
   // monotonic power-up minutes, which is the pack's hour meter.
-  { key: "bms_remaining_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 5 },
-  { key: "bms_uptime_min", unit: "min", group: "bms", source: "stream" },
+  { key: "bms_remaining_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 5, bounds: [0, 30_000] },
+  { key: "bms_uptime_min", unit: "min", group: "bms", source: "stream", unbounded: "counter" },
 
   // 0x665 — the cell limits the BMS is configured with. Constants stamped into the
   // frame at config-build time, so they only ever change when the pack is reflashed;
@@ -235,14 +235,14 @@ export const SIGNALS: SignalDef[] = [
   // liveState updates on every sample, but notifyChange sits inside the deadband branch,
   // so the patch path never fires for this signal. That heartbeat is load-bearing here —
   // drop it as "redundant" and this becomes invisible.
-  { key: "lmu_cell_mux", unit: "", group: "bms", source: "stream", deadband: 100 },
+  { key: "lmu_cell_mux", unit: "", group: "bms", source: "stream", deadband: 100, unbounded: "raw-word" },
 
   // 0x025 (inst) / 0x10A (residual) — energy
   // Chattiest signal on the bus by far (~291k rows/day at deadband 0.5, ~49% of all
   // rows) and not worth that fidelity — 10 Wh still tracks the curve on a ~200-330 Wh
   // signal while cutting the row count by well over an order of magnitude.
-  { key: "inst_consumption_wh", unit: "Wh", group: "energy", source: "stream", deadband: 10 },
-  { key: "residual_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0 },
+  { key: "inst_consumption_wh", unit: "Wh", group: "energy", source: "stream", deadband: 10, bounds: [0, 6553.5] },
+  { key: "residual_energy_wh", unit: "Wh", group: "energy", source: "stream", deadband: 0, bounds: [0, 30_000] },
 
   // 0x305 / 0x306 — charger (present only while charging)
   { key: "dc_v", unit: "V", group: "charge", source: "stream" },
@@ -276,12 +276,12 @@ export const SIGNALS: SignalDef[] = [
   // absent row means "not touched OR re-picked the same number", not "not touched".
   // waypoint_seq escapes this by being a monotonic counter; a setting cannot. A deadband
   // here would make it strictly worse, which is why there is none.
-  { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream" },
+  { key: "dc_charge_limit_selected_a", unit: "A", group: "charge", source: "stream", bounds: [0, 127] },
   // 0x121 opcode 0x1A b4 — the AC charge ceiling the dash pairs with the AC setpoint. Decoded
   // (charge-setpoint.ts) because it is the ONLY source for the b4 a dashboard-sent AC charge
   // command must echo; an event like its DC sibling, so it too greys out and can be absent.
   // docs/can-0x121-charge-command.md.
-  { key: "ac_charge_ceiling_a", unit: "A", group: "charge", source: "stream" },
+  { key: "ac_charge_ceiling_a", unit: "A", group: "charge", source: "stream", bounds: [0, 80] },
   // 0x605 / 0x610 / 0x615 / 0x620 / 0x625 — the charge manager (src/can/charge-manager.ts),
   // added 2026-08-19 from 29 charge sessions and reconciled against Energica's factory DBC on
   // 2026-08-20. Present only while a cable is live, EXCEPT the four off 0x625 — that frame
@@ -312,52 +312,52 @@ export const SIGNALS: SignalDef[] = [
 
   // No deadbands. Every one of them is either a flag, a 1-unit-quantised integer or a byte
   // that only moves on a state change, so log-on-change already is the right rate.
-  { key: "charge_type", unit: "", group: "charge", source: "stream" }, // 0x605 b2: 1 AC, 2 DC ✅
-  { key: "bms_leak_detect_inhibit", unit: "", group: "bms", source: "stream" }, // 0x605 b7 ✅
-  { key: "charge_manager_status", unit: "", group: "charge", source: "stream" }, // 0x610 b0 ✅
-  { key: "charge_manager_state", unit: "", group: "charge", source: "stream" }, // 0x610 b7 ✅
+  { key: "charge_type", unit: "", group: "charge", source: "stream", bounds: [0, 2] }, // 0x605 b2: 1 AC, 2 DC ✅
+  { key: "bms_leak_detect_inhibit", unit: "", group: "bms", source: "stream", bounds: [0, 1] }, // 0x605 b7 ✅
+  { key: "charge_manager_status", unit: "", group: "charge", source: "stream", bounds: [0, 255] }, // 0x610 b0 ✅
+  { key: "charge_manager_state", unit: "", group: "charge", source: "stream", bounds: [0, 255] }, // 0x610 b7 ✅
   // Whether a charge-current command took, written by src/charge/ack-watch.ts. Recorded rather
   // than merely shown because the failure this answers is UNATTENDED: on 2026-09-07 three commands
   // moved no current and nothing anywhere said so afterwards. `charge_cmd_ack` is the verdict as
   // CHARGE_ACK_CODE spells it. ⚠️ record() logs only on CHANGE, so two identical verdicts in a row
   // write once — the per-command record is the audit journal, which already has a line each.
-  { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
-  { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true },
-  { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true, bounds: [0, 127] },
+  { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 6] },
+  { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true, bounds: [0, 60000] },
   // ⚠️ Which settle a verdict belongs to, wrapped to a byte — the EDGE the two above cannot give.
   // Because record() logs on change, two commands settling to the same verdict write nothing, and
   // the charge tab used to poll /vcu-write every heartbeat for the whole charge to notice (#207).
   // Only inequality is ever asked of it; src/charge/ack-watch.ts says why it is not the send.
-  { key: "charge_cmd_ack_seq", unit: "", group: "charge", source: "sensor", onDemand: true },
+  { key: "charge_cmd_ack_seq", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: FIELD_U8 },
   // The automatic charge-current controller (src/charge/auto.ts, src/charge/auto-curve.ts).
   // `charge_auto_reason` is the CHARGE_AUTO_REASON enum, so a ride log says not just what it
   // commanded but why — a stop that ends at the floor and one that never had a usable rate look
   // identical in the amps alone.
-  { key: "charge_auto_mode", unit: "", group: "charge", source: "sensor", onDemand: true },
-  { key: "charge_auto_reason", unit: "", group: "charge", source: "sensor", onDemand: true },
-  { key: "charge_auto_target_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
-  { key: "charge_manager_error_src", unit: "", group: "charge", source: "stream" }, // 0x610 b1 ✅
-  { key: "charge_manager_error_code", unit: "", group: "charge", source: "stream" }, // 0x610 b2-3 ✅
-  { key: "fast_dc_target_v", unit: "V", group: "charge", source: "stream" }, // 0x615 b0-1 ✅
-  { key: "fast_dc_target_a", unit: "A", group: "charge", source: "stream" }, // 0x615 b2 ✅
+  { key: "charge_auto_mode", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 1] },
+  { key: "charge_auto_reason", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 13] },
+  { key: "charge_auto_target_a", unit: "A", group: "charge", source: "sensor", onDemand: true, bounds: [0, 127] },
+  { key: "charge_manager_error_src", unit: "", group: "charge", source: "stream", bounds: [0, 255] }, // 0x610 b1 ✅
+  { key: "charge_manager_error_code", unit: "", group: "charge", source: "stream", bounds: [-32_768, 32_767] }, // 0x610 b2-3 ✅
+  { key: "fast_dc_target_v", unit: "V", group: "charge", source: "stream", bounds: [0, 450] }, // 0x615 b0-1 ✅
+  { key: "fast_dc_target_a", unit: "A", group: "charge", source: "stream", bounds: [0, 150] }, // 0x615 b2 ✅
   { key: "charge_manager_soc", unit: "%", group: "charge", source: "stream" }, // 0x615 b3 ✅
-  { key: "fast_dc_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x620 b0 ✅
-  { key: "ac_supply_limit_a", unit: "A", group: "charge", source: "stream" }, // 0x620 b1 ✅
-  { key: "fast_dc_limit_max_v", unit: "V", group: "charge", source: "stream" }, // 0x625 b0-1 ✅
-  { key: "fast_dc_limit_max_a", unit: "A", group: "charge", source: "stream" }, // 0x625 b2 ✅
-  { key: "dc_charging", unit: "", group: "charge", source: "stream" }, // 0x625 b4 bit5 clear ✅
-  { key: "ac_charging", unit: "", group: "charge", source: "stream" }, // 0x625 b4 bit2 ✅
+  { key: "fast_dc_limit_a", unit: "A", group: "charge", source: "stream", bounds: [0, 127] }, // 0x620 b0 ✅
+  { key: "ac_supply_limit_a", unit: "A", group: "charge", source: "stream", bounds: [0, 80] }, // 0x620 b1 ✅
+  { key: "fast_dc_limit_max_v", unit: "V", group: "charge", source: "stream", bounds: [0, 450] }, // 0x625 b0-1 ✅
+  { key: "fast_dc_limit_max_a", unit: "A", group: "charge", source: "stream", bounds: [0, 127] }, // 0x625 b2 ✅
+  { key: "dc_charging", unit: "", group: "charge", source: "stream", bounds: [0, 1] }, // 0x625 b4 bit5 clear ✅
+  { key: "ac_charging", unit: "", group: "charge", source: "stream", bounds: [0, 1] }, // 0x625 b4 bit2 ✅
 
   // OBD-II polled @1 Hz
-  { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll" },
-  { key: "motor_rpm", unit: "rpm", group: "obd", source: "poll", deadband: 20 },
+  { key: "speed_kmh", unit: "km/h", group: "obd", source: "poll", bounds: [0, 300] },
+  { key: "motor_rpm", unit: "rpm", group: "obd", source: "poll", deadband: 20, bounds: [-12_000, 12_000] },
   { key: "bike_coolant_temp", unit: "°C", group: "obd", source: "poll" },
   { key: "oil_temp", unit: "°C", group: "obd", source: "poll" },
   { key: "ambient_temp", unit: "°C", group: "obd", source: "poll" },
-  { key: "aux_12v", unit: "V", group: "obd", source: "poll", deadband: 0.02 },
+  { key: "aux_12v", unit: "V", group: "obd", source: "poll", deadband: 0.02, bounds: [0, 20] },
   { key: "soh_pid", unit: "%", group: "obd", source: "poll" },
   { key: "motor_load_pct", unit: "%", group: "drive", source: "poll", deadband: 1 },
-  { key: "dist_since_clear_km", unit: "km", group: "drive", source: "poll" },
+  { key: "dist_since_clear_km", unit: "km", group: "drive", source: "poll", unbounded: "counter" },
 
   // 0x109 — throttle position (broadcast, ~100 Hz) 🟡
   { key: "throttle_pct", unit: "%", group: "drive", source: "stream", deadband: 0 },
@@ -379,9 +379,9 @@ export const SIGNALS: SignalDef[] = [
   // log-on-change keeps them to a handful of rows per ride.
   { key: "mil_on", unit: "", group: "diag", source: "poll" }, // PID 01 A bit7
   { key: "dtc_count", unit: "", group: "diag", source: "poll" }, // PID 01 A & 0x7F
-  { key: "time_since_clear_min", unit: "min", group: "diag", source: "poll" }, // PID 4E — monotonic ⇒ hour meter
-  { key: "dist_with_mil_km", unit: "km", group: "diag", source: "poll" }, // PID 21
-  { key: "time_with_mil_min", unit: "min", group: "diag", source: "poll" }, // PID 4D
+  { key: "time_since_clear_min", unit: "min", group: "diag", source: "poll", unbounded: "counter" }, // PID 4E — monotonic ⇒ hour meter
+  { key: "dist_with_mil_km", unit: "km", group: "diag", source: "poll", unbounded: "counter" }, // PID 21
+  { key: "time_with_mil_min", unit: "min", group: "diag", source: "poll", unbounded: "counter" }, // PID 4D
   { key: "warmups_since_clear", unit: "", group: "diag", source: "poll" }, // PID 30
 
   // The stored codes themselves, out of the Connectivity Hub's diagnostics
@@ -407,12 +407,12 @@ export const SIGNALS: SignalDef[] = [
   { key: "dtc_permanent_count", unit: "", group: "diag", source: "poll" },
   // PID 02, the raw 16-bit freeze-frame code (0x0514 ⇒ P0514). Unitless because it
   // is an identifier, not a measurement — never plot it.
-  { key: "freeze_frame_dtc", unit: "", group: "diag", source: "poll" },
+  { key: "freeze_frame_dtc", unit: "", group: "diag", source: "poll", bounds: [0, 65_535] },
   ...dtcSignals(),
 
   // Keyless / immobilizer
-  { key: "key_fob_id", unit: "", group: "security", source: "stream" }, // 0x480 b2-5 LE uint32
-  { key: "keys_paired", unit: "", group: "security", source: "poll" }, // E-LOCK 0x791 `21 99`, once at startup
+  { key: "key_fob_id", unit: "", group: "security", source: "stream", unbounded: "raw-word" }, // 0x480 b2-5 LE uint32
+  { key: "keys_paired", unit: "", group: "security", source: "poll", unbounded: "index" }, // E-LOCK 0x791 `21 99`, once at startup
 
   // --- Connectivity Hub (CAN 0x410 and/or Bluetooth) -----------------------
   // Pushed by the hub, never polled. GPS arrives on both transports — the hub
@@ -422,13 +422,13 @@ export const SIGNALS: SignalDef[] = [
   //
   // lat/lon deadband ≈ 3 m: parked GPS jitters in the 5th decimal and would
   // otherwise log continuously, while any real movement blows straight past it.
-  { key: "gps_lat", unit: "°", group: "gps", source: "stream", deadband: 0.00003 },
-  { key: "gps_lon", unit: "°", group: "gps", source: "stream", deadband: 0.00003 },
-  { key: "gps_altitude_m", unit: "m", group: "gps", source: "stream", deadband: 1 },
-  { key: "gps_speed_kmh", unit: "km/h", group: "gps", source: "stream" },
-  { key: "gps_course_deg", unit: "°", group: "gps", source: "stream", deadband: 2 },
-  { key: "gps_satellites", unit: "", group: "gps", source: "stream" },
-  { key: "gps_fix", unit: "", group: "gps", source: "stream" },
+  { key: "gps_lat", unit: "°", group: "gps", source: "stream", deadband: 0.00003, bounds: [-90, 90] },
+  { key: "gps_lon", unit: "°", group: "gps", source: "stream", deadband: 0.00003, bounds: [-180, 180] },
+  { key: "gps_altitude_m", unit: "m", group: "gps", source: "stream", deadband: 1, bounds: [-500, 9000] },
+  { key: "gps_speed_kmh", unit: "km/h", group: "gps", source: "stream", bounds: [0, 300] },
+  { key: "gps_course_deg", unit: "°", group: "gps", source: "stream", deadband: 2, bounds: [0, 360] },
+  { key: "gps_satellites", unit: "", group: "gps", source: "stream", bounds: [0, 31] },
+  { key: "gps_fix", unit: "", group: "gps", source: "stream", bounds: [0, 3] },
 
   // Satellite UTC — the Pi has no RTC, so this is the only trustworthy clock on
   // the road. Logged raw: if a ride ever comes back with timestamps from a
@@ -440,22 +440,29 @@ export const SIGNALS: SignalDef[] = [
   // both transports sending at ~1.8 Hz that would be ~3.6 rows/s, the highest of
   // any signal. Half a second is three orders of magnitude below the 60 s drift
   // the clock step acts on, so it costs the repair use case nothing.
-  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream", deadband: 0.5 },
+  { key: "gps_epoch_s", unit: "s", group: "gps", source: "stream", deadband: 0.5, unbounded: "counter" },
 
   { key: "motor_torque_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_power_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
 
-  { key: "odometer_km", unit: "km", group: "drive", source: "stream" },
-  { key: "trip_km", unit: "km", group: "drive", source: "stream" },
+  { key: "odometer_km", unit: "km", group: "drive", source: "stream", unbounded: "counter" },
+  { key: "trip_km", unit: "km", group: "drive", source: "stream", unbounded: "counter" },
 
   // Vehicle state machine — distinct from 0x201, which is *charge* state only.
-  { key: "vehicle_state", unit: "", group: "drive", source: "stream" },
-  { key: "vehicle_substate", unit: "", group: "drive", source: "stream" },
+  { key: "vehicle_state", unit: "", group: "drive", source: "stream", bounds: FIELD_U8 },
+  { key: "vehicle_substate", unit: "", group: "drive", source: "stream", bounds: FIELD_U8 },
 
-  { key: "range_km", unit: "km", group: "energy", source: "stream" },
-  { key: "avg_consumption_wh_km", unit: "Wh/km", group: "energy", source: "stream", deadband: 0.5 },
-  { key: "km_per_kwh", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05 },
-  { key: "kwh_per_100km", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05 },
+  { key: "range_km", unit: "km", group: "energy", source: "stream", bounds: [0, 500] },
+  {
+    key: "avg_consumption_wh_km",
+    unit: "Wh/km",
+    group: "energy",
+    source: "stream",
+    deadband: 0.5,
+    bounds: [-3276.8, 3276.7],
+  },
+  { key: "km_per_kwh", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05, bounds: [0.5, 200] },
+  { key: "kwh_per_100km", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05, bounds: [0, 100] },
 
   // --- Frames named by the rider-supplied .xdbc, replayed against live traffic ------
   // 0x020 / 0x022 — inverter and motor temperatures (10 Hz), both at 0.1 °C. Separate
@@ -488,9 +495,9 @@ export const SIGNALS: SignalDef[] = [
   // road speed should prefer `gps_speed_kmh`, then `wheel_speed_rear_kmh`, which is out by
   // 0.6 %. Both are still logged as-is: they are what the bike believes, and the dashboard
   // showing what the rider's dash shows is the point.
-  { key: "odometer_can_km", unit: "km", group: "drive", source: "stream" },
-  { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5 },
-  { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50 },
+  { key: "odometer_can_km", unit: "km", group: "drive", source: "stream", unbounded: "counter" },
+  { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5, bounds: [0, 400] },
+  { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50, bounds: [0, 20_000] },
 
   // 0x104 bit 63 — the bike rolling BACKWARDS, renamed from `reverse_gear` 2026-09-14.
   //
@@ -505,13 +512,13 @@ export const SIGNALS: SignalDef[] = [
   // ⚠️ The deadband has NO HYSTERESIS, so at walking pace this chatters at bus rate as the
   // speed crosses 0.5 km/h — 404 of 597 pulses under 50 ms. It is a sample, not a state.
   // Anything wanting "is the bike in park assist" should use 0x101's substate instead.
-  { key: "rolling_backwards", unit: "", group: "drive", source: "stream" },
+  { key: "rolling_backwards", unit: "", group: "drive", source: "stream", bounds: [0, 1] },
 
   // 0x104 bit 62 — Energica's `V_TACHO_OUT`, one pulse per 0.1 km of indicated travel
   // (measured: 1371 of 1373 gaps between rising edges are exactly one odometer count, i.e.
   // 100 m, over 1373 gaps from 49 to 152 km/h). No deadband: it is a
   // 0/1 flag and a deadband ≥ 1 would log it once at boot and then never again.
-  { key: "odometer_pulse", unit: "", group: "drive", source: "stream" },
+  { key: "odometer_pulse", unit: "", group: "drive", source: "stream", bounds: [0, 1] },
 
   // 0x109 b2-7 — the inverter's current limits, alongside the throttle above. Same 1 A
   // deadband as the BMS's allowed_* pair, and for the same reason: derate limits move
@@ -579,7 +586,7 @@ export const SIGNALS: SignalDef[] = [
   // Unit "" like its neighbours. It must NOT get a unit: "A" or "V" would opt it into
   // bounds.js's BY_UNIT fallback and there is no sensible range for a flag, while
   // anything numeric-looking invites a Grafana panel to plot it against real amps.
-  { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
+  { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream", bounds: [0, 1] },
   // 0x102 b3 bit5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ Confirmed against
   // this bike on 2026-09-14: one transition in the 60 s around the fall, 0.669 s after
   // the roll peak and 0.551 s BEFORE the VCU cut the drive. src/can/vcu-digitals.ts has
@@ -593,7 +600,7 @@ export const SIGNALS: SignalDef[] = [
   // hand-written bound. No deadband, ever: |1 − 0| > 1 is false, so a deadband of 1 would
   // log the first sample after boot and then never again, silently, forever.
   { key: "lie_down_detected", unit: "", group: "controls", source: "stream" },
-  { key: "moving", unit: "", group: "drive", source: "stream" }, // b2 bit7, .xdbc: speed > 1 km/h
+  { key: "moving", unit: "", group: "drive", source: "stream", bounds: [0, 1] }, // b2 bit7, .xdbc: speed > 1 km/h
 
   // 0x102 b4-7 — the attitude sensor's roll and pitch, in degrees. Logged until
   // 2026-08-15 as `accel_lateral_raw` / `accel_frontal_raw`, unitless counts, on the
@@ -614,8 +621,8 @@ export const SIGNALS: SignalDef[] = [
   // the decoder rather than second-guessing it, and the reason it exists at all is that
   // the unit "°" reaches no rule in that file, so the pair rendered entirely ungated from
   // 2026-08-15 until the fall of 2026-09-13 was analysed. The argument is in bounds.js.
-  { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
-  { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
+  { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1, bounds: [-180, 180] },
+  { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1, bounds: [-180, 180] },
 
   // --- Handlebar buttons (0x102 b0, 0x400 b2), added 2026-08-16 --------------
   // Their own group, so the ALL view lists them together and the owner can press
@@ -743,8 +750,8 @@ export const SIGNALS: SignalDef[] = [
   // the finer measurement (0.05625 km/h per count against 0.1 for 0x104) and the one a video
   // overlay wants next to brake pressure, and 0.25 measured 1348 and 1163 rows/h against 3057
   // and 2802 at log-on-change — so the deadband is already doing most of the work available.
-  { key: "wheel_speed_front_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25 },
-  { key: "wheel_speed_rear_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25 },
+  { key: "wheel_speed_front_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25, bounds: [0, 300] },
+  { key: "wheel_speed_rear_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.25, bounds: [0, 300] },
   // ⚠️ NOT a 1/0 flag, even though it has only ever been seen as 0 or 1: Energica's mask is
   // `byte 4 mask 0x0C >> 2`, two bits, so the field's range is 0…3 and the decoder keeps the
   // vendor's mask rather than narrowing it. public/lib/bounds.js therefore names it explicitly
@@ -753,11 +760,11 @@ export const SIGNALS: SignalDef[] = [
   // logging rule would be inconsistent rather than merely silent (|2 − 0| > 1 passes where
   // |1 − 0| > 1 does not), so a lamp stepping 0 → 1 → 2 would log some transitions and drop
   // others. It moved ONCE in the whole lap, 2 rows, so there is nothing to tame anyway.
-  { key: "abs_warning_lamp", unit: "", group: "diag", source: "stream" },
+  { key: "abs_warning_lamp", unit: "", group: "diag", source: "stream", bounds: [0, 3] },
   // Whole bar, so log-on-change is one row per bar of change: 50 rows for the lap's braking,
   // 441/h. Nothing to smooth, and a deadband of 1 here would swallow every single-bar step,
   // which on a 0-17 signal is most of it.
-  { key: "front_brake_pressure_bar", unit: "bar", group: "controls", source: "stream" },
+  { key: "front_brake_pressure_bar", unit: "bar", group: "controls", source: "stream", bounds: [0, 250] },
   // 0x0A0's six flags, added 2026-08-19 to complete the ten signals Energica's `ParseABS_INFO`
   // names. All six are true 1/0 bits, so none may carry a deadband — |1 − 0| > 1 is false, and
   // a flag with a deadband of 1 logs once after boot and then never again, silently. That is
@@ -818,8 +825,8 @@ export const SIGNALS: SignalDef[] = [
   // 1815 rows/h at log-on-change), and the whole reason to log both is to catch the two
   // channels diverging, which is the P0120/P0121 fault. A deadband is a filter on exactly the
   // small persistent offset that fault looks like.
-  { key: "throttle_sensor_a_raw", unit: "", group: "drive", source: "stream" },
-  { key: "throttle_sensor_b_raw", unit: "", group: "drive", source: "stream" },
+  { key: "throttle_sensor_a_raw", unit: "", group: "drive", source: "stream", bounds: [0, 4095] },
+  { key: "throttle_sensor_b_raw", unit: "", group: "drive", source: "stream", bounds: [0, 4095] },
 
   // 0x02C — the inverter's torque command and feedback, 0.1 Nm at 50 Hz. 0.5 Nm is the same
   // deadband motor_torque_nm carries, deliberately: the BLE hub's torque and the inverter's own
@@ -843,9 +850,9 @@ export const SIGNALS: SignalDef[] = [
   // this bike, the brake light at +693 mA: 400 is 58 % of it, so every switching event still
   // crosses with margin while the 10 Hz measurement dither does not. (250 mA would be 9110
   // rows/h against 2229 — the cliff is between 300 and 400 here too.)
-  { key: "psu_12v_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30 },
-  { key: "psu_12v_lowpower_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30 },
-  { key: "psu_12v_load_ma", unit: "mA", group: "powertrain", source: "stream", deadband: 400 },
+  { key: "psu_12v_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30, bounds: [0, 20_000] },
+  { key: "psu_12v_lowpower_mv", unit: "mV", group: "powertrain", source: "stream", deadband: 30, bounds: [0, 20_000] },
+  { key: "psu_12v_load_ma", unit: "mA", group: "powertrain", source: "stream", deadband: 400, bounds: [0, 60_000] },
 
   // 0x10B — the VCU's own consumption figures, 10 Hz. Separate keys from the Connectivity Hub's
   // km_per_kwh / kwh_per_100km for the same reason odometer_can_km is separate from odometer_km:
@@ -856,13 +863,13 @@ export const SIGNALS: SignalDef[] = [
   // saturated pair (src/can/consumption.ts): 3639 of the lap's 4088 frames carry no measurement
   // at all, so these two wrote 413 and 413 rows for the 449 frames that did. Expect gaps
   // wherever the bike was stopped — that is the intended shape, not a dropout.
-  { key: "km_per_kwh_can", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05 },
-  { key: "kwh_per_100km_can", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05 },
+  { key: "km_per_kwh_can", unit: "km/kWh", group: "energy", source: "stream", deadband: 0.05, bounds: [0, 6500] },
+  { key: "kwh_per_100km_can", unit: "kWh/100km", group: "energy", source: "stream", deadband: 0.05, bounds: [0, 65] },
   // The 100 m averages. 🟡 — only two distinct values in the entire lap, so their scaling is
   // carried over by position from the instantaneous pair rather than confirmed. 2 rows for the
   // whole capture, so log-on-change costs nothing and a real ride is what settles them.
-  { key: "km_per_kwh_100m_can", unit: "km/kWh", group: "energy", source: "stream" },
-  { key: "kwh_per_100km_100m_can", unit: "kWh/100km", group: "energy", source: "stream" },
+  { key: "km_per_kwh_100m_can", unit: "km/kWh", group: "energy", source: "stream", bounds: [0, 6500] },
+  { key: "kwh_per_100km_100m_can", unit: "kWh/100km", group: "energy", source: "stream", bounds: [0, 65] },
 
   // 0x125 — the safety micro's two road-speed channels, 55 Hz, RAW COUNTS with no unit because
   // no scale survived the capture (src/can/drive.ts). 55 counts is ~0.5 km/h at the measured
@@ -871,8 +878,8 @@ export const SIGNALS: SignalDef[] = [
   // anything added here and more than the confirmed speed signal it duplicates; at 55 it is
   // 1357 and 1189. The number is odd because the scale is; if a ride ever pins the constant,
   // this deadband should be restated in km/h at the same time.
-  { key: "speed_redundant_a_raw", unit: "", group: "drive", source: "stream", deadband: 55 },
-  { key: "speed_redundant_b_raw", unit: "", group: "drive", source: "stream", deadband: 55 },
+  { key: "speed_redundant_a_raw", unit: "", group: "drive", source: "stream", deadband: 55, bounds: [0, 40_000] },
+  { key: "speed_redundant_b_raw", unit: "", group: "drive", source: "stream", deadband: 55, bounds: [0, 40_000] },
 
   // 0x100 — the VCU's own 64-bit error/status bitfield, 10 Hz. Free to log: across all
   // 105 736 frames of it on disk the payload takes FOUR distinct values, so the whole block
@@ -887,8 +894,8 @@ export const SIGNALS: SignalDef[] = [
   // rather than a lost event. Group "vcu" and not "diag" ON PURPOSE — "diag" is a
   // BOOLEAN_GROUP in public/lib/bounds.js, and a u32 bitfield gated to 0/1 would be rejected
   // as a dead sensor on every frame where anything is set.
-  { key: "vcu_flags_low", unit: "", group: "vcu", source: "stream" }, // b0-3 LE, all ERR_*
-  { key: "vcu_flags_high", unit: "", group: "vcu", source: "stream" }, // b4-7 LE, mixed ERR_/WARN_/status
+  { key: "vcu_flags_low", unit: "", group: "vcu", source: "stream", unbounded: "raw-word" }, // b0-3 LE, all ERR_*
+  { key: "vcu_flags_high", unit: "", group: "vcu", source: "stream", unbounded: "raw-word" }, // b4-7 LE, mixed ERR_/WARN_/status
   // The booleans go in "diag" precisely because it IS a BOOLEAN_GROUP, so they inherit the
   // 0/1 gate with no per-key bounds entry — the same treatment the 154 generated dtc_* flags
   // get, which is the company these belong in.
@@ -924,19 +931,19 @@ export const SIGNALS: SignalDef[] = [
   // flaps between them. Same split, same reason, as `odometer_can_km` beside `odometer_km`.
   // Group `drive` so the two land in one section of the All tab, which is the comparison
   // the split exists to make possible.
-  { key: "vehicle_state_can", unit: "", group: "drive", source: "stream" }, // b1 V_VEHICLE_STATE
-  { key: "vehicle_substate_can", unit: "", group: "drive", source: "stream" }, // b0 V_VEHICLE_SUBSTATE
+  { key: "vehicle_state_can", unit: "", group: "drive", source: "stream", bounds: FIELD_U8 }, // b1 V_VEHICLE_STATE
+  { key: "vehicle_substate_can", unit: "", group: "drive", source: "stream", bounds: FIELD_U8 }, // b0 V_VEHICLE_SUBSTATE
   // b2 and b3&0x03, which Energica's parser assigns one name and loses the first of (§A.3).
   // Two distinct quantities here. b2 is the drive state machine's transition marker.
-  { key: "drive_vsm", unit: "", group: "drive", source: "stream" }, // b2 V_DRIVE_VSM
-  { key: "drive_vsm_b3", unit: "", group: "drive", source: "stream" }, // b3 mask 0x03, the duplicate
+  { key: "drive_vsm", unit: "", group: "drive", source: "stream", bounds: FIELD_U8 }, // b2 V_DRIVE_VSM
+  { key: "drive_vsm_b3", unit: "", group: "drive", source: "stream", bounds: [0, 3] }, // b3 mask 0x03, the duplicate
   // The 0x100 arrangement, one frame over: the raw word goes in "vcu" because a byte gated
   // to 0/1 would be rejected as a dead sensor on every frame where anything is set, and the
   // broken-out booleans go in "diag" precisely because it IS a BOOLEAN_GROUP and they
   // inherit the 0/1 gate with no per-key bounds entry. The two numbers join the raw word:
-  // they need a BY_KEY bound either way, and "diag" would reject them outright.
-  { key: "limp_pack_res", unit: "", group: "vcu", source: "stream" }, // b4-5 LE V_LIMP_PACK_RES
-  { key: "limp_module_word", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
+  // they need bounds of their own either way, and "diag" would reject them outright.
+  { key: "limp_pack_res", unit: "", group: "vcu", source: "stream", bounds: FIELD_U16 }, // b4-5 LE V_LIMP_PACK_RES
+  { key: "limp_module_word", unit: "", group: "vcu", source: "stream", bounds: FIELD_U16 }, // b6-7 LE V_LIMP_MODULE_STS
   // ⚠️ The raw byte contains three keys above it — `drive_vsm_b3` is `& 3`, `limp_mode_status`
   // bit 2, `limp_res_valid` bit 3 — which is the shape `brake` was REMOVED for ("this log stores
   // measured bits rather than derived combinations"). It is kept for the reason 0x100 keeps
@@ -944,7 +951,7 @@ export const SIGNALS: SignalDef[] = [
   // and 6 MOVE and Energica does not name them, so a key for either would have to invent a name,
   // and this byte is the only lossless record of them. If those two are ever identified, this
   // key is the one to reconsider.
-  { key: "vehicle_status_flags", unit: "", group: "vcu", source: "stream" }, // b3 raw; bits 4 and 6 unnamed and moving
+  { key: "vehicle_status_flags", unit: "", group: "vcu", source: "stream", bounds: FIELD_U8 }, // b3 raw; bits 4 and 6 unnamed and moving
   { key: "limp_mode_status", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_LIMP_MODE_STATUS
   { key: "limp_res_valid", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_LIMP_RES_VALID
 
@@ -958,9 +965,9 @@ export const SIGNALS: SignalDef[] = [
   // on 09-09 were made at 30-119 km/h — and an old row is not an ERROR anyway, since
   // signals.ts compares against the last LOGGED value. docs/waypoints.md has the numbers.
   // onDemand: silence here is the resting state, not a fault — see SignalDef.
-  { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true },
-  { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor", onDemand: true },
-  { key: "waypoint_lon", unit: "°", group: "waypoint", source: "sensor", onDemand: true },
+  { key: "waypoint_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true, unbounded: "counter" },
+  { key: "waypoint_lat", unit: "°", group: "waypoint", source: "sensor", onDemand: true, bounds: [-90, 90] },
+  { key: "waypoint_lon", unit: "°", group: "waypoint", source: "sensor", onDemand: true, bounds: [-180, 180] },
   // A waypoint that was ASKED for and refused, added with the server-side handlebar hold
   // (src/gestures/runner.ts). Until then a refusal only ever existed in the reply to the
   // phone that had asked; a hold on the bars asks nobody, so without these a rider gets
@@ -968,8 +975,8 @@ export const SIGNALS: SignalDef[] = [
   // not a flag for the reason docs/can-decode-findings.md gives about re-selecting a
   // value: two identical refusals in a row would write one row and raise one change.
   // The code is WAYPOINT_REFUSAL in src/gps/waypoint.ts; the words are the dashboard's.
-  { key: "waypoint_refused_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true },
-  { key: "waypoint_refusal", unit: "", group: "waypoint", source: "sensor", onDemand: true },
+  { key: "waypoint_refused_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true, unbounded: "counter" },
+  { key: "waypoint_refusal", unit: "", group: "waypoint", source: "sensor", onDemand: true, bounds: [1, 8] },
 
   ...perLmuSignals(),
 ];

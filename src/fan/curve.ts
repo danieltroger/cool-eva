@@ -50,10 +50,11 @@ export const SPEED_GATE_OFF_KMH = 93;
 /**
  * The fastest `speed_can_kmh` this treats as a road speed.
  *
- * ⚠️ Not decoration. `speed_can_kmh` is the only one of the three inputs that public/lib
- * /bounds.js does NOT gate — it has no BY_KEY entry and "km/h" is not in BY_UNIT — and a
- * garbage high reading is the one that fails DANGEROUSLY here, by holding the fan off
- * over a hot pack. Anything past this is read as no speed at all, which opens the gate.
+ * ⚠️ Not decoration. A garbage high reading on `speed_can_kmh` is the one that fails
+ * DANGEROUSLY here, by holding the fan off over a hot pack, and anything past this is read
+ * as no speed at all, which opens the gate. ⚠️ This used to say the signal was the one input
+ * bounds.js does not gate. That was false from #230 onward — it declares [0, 400] — and the
+ * dashboard's gate would not help anyway: it runs in the browser, and this runs on the Pi.
  */
 export const ROAD_SPEED_MAX_KMH = 300;
 

@@ -113,7 +113,7 @@ async function stageFix(latitude: number, longitude: number) {
 console.log("\n1. the server's limits and the dashboard's are the same limits");
 
 // Unit and group come from the registry rather than from the key's spelling, the way
-// check-all-view-tiles.ts reads them: boundsFor() consults BY_KEY first, so a hand-written
+// check-all-view-tiles.ts reads them: boundsFor() consults the signal's own declared bounds first, so a hand-written
 // "°"/"gps" would keep passing after a signal moved group while the dashboard — which
 // passes the registry's own values — had started down a different path.
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
