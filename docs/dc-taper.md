@@ -4,6 +4,8 @@ Measurements behind `src/charge/soc.ts` and the session-ahead veto in `src/charg
 
 Provenance: `~/Documents/cool-eva-route/data/ride-logs/cool-eva-2026-09-13.celog`, a full dump rather than a day file — 74.4 M readings from 40 563 segments, of which **126 could not be decrypted and are lost** (0.31 %). Decrypt it with `scripts/decrypt-log.ts --out evidence/scratch-2026-09-13.db`; `evidence/*.db*` is gitignored.
 
+⚠️ **That recipe on its own gives you half of it.** Re-run for #235, the 09-13 file alone rebuilds to **39 258 150 readings from 21 255 segments, 63 lost** — the counts above are the 09-12 and 09-13 dumps together, so decrypt both if you want to reproduce them. It also reaches back further than the heading says: rows start 2026-08-02, and `fast_dc_target_a` appears on 08-26, 08-27 and 09-06 as well as on 09-07 → 09-13. And it needs `--max-old-space-size`: `decrypt-log.ts` holds a whole file's readings in one array and dies with a V8 OOM at the default heap.
+
 ## How a session is found, and two ways to get it wrong
 
 Both of these produced published numbers that had to be withdrawn, so they are written down rather than left as method.
@@ -141,6 +143,49 @@ Two corrections about that session, both of which were published wrong before be
 ⚠️ **`allowed_regen_a` — the BMS's own charge-current limit — reads 0 for the entire DC session**, and only comes back (80 A) after the plug is pulled. The DC path bypasses the BMS, so the obvious "ask the pack what it will accept" signal does not exist on this bus. `fast_dc_target_a` is the only witness.
 
 ⚠️ **`bms_remaining_energy_wh` did not arrive in any of these sessions**, so a remaining-energy route to "how long is left" is not available either. The SOC rate is what there is.
+
+## The first SOC sample, and why it is a crossing
+
+`estimateSocRate` returns a **lower** bound because every sample in the ring is a **crossing instant** — the moment the reading _became_ that value — so between the oldest in-window sample and now the pack advanced at least `newest − oldest` points. Break that and the estimate over-states, which shortens the horizon and suppresses more steps down. Two things could break it, and this section is what #235 measured before deciding not to guard either.
+
+### The first-ever reading, which is not a crossing
+
+`record()` notifies when `prev === undefined` (`src/can/signals.ts`), so a process's **first-ever** `soc` reading is delivered as a change even though nothing crossed. If `rememberSoc` kept it, the span measured from it would be shorter than the span the pack actually spent advancing.
+
+What keeps it out is an ordering, not a guard: `src/index.ts` starts the CAN channel at `:386` and constructs the controller at `:581`, with `await loadStaticFiles(…)` at `:434` in between — a serial `await readFile(path)` per file in `public/` (`src/http/static.ts:38-52`). The channel therefore records a `soc` long before the controller subscribes, and the first change the controller sees is a real crossing.
+
+Measured over the whole log, with `charge_auto_mode` as the subscribe instant (`publishMode` runs one statement after `onChange` in the **enabled** branch; the disabled branch records it at `auto.ts:89` with no listener, which is 1 of the 77 lives):
+
+|  |  |
+| --- | --- |
+| named process lives carrying a `soc` row | **146** (147 named sessions exist, one has none) |
+| lives that started the controller | **77** |
+| lives where `soc`'s first record came **before** the subscribe | **77 of 77** |
+| margin | **530-1282 ms, median 672** |
+| lives that began **inside a DC session** | **3** — 09-12 09:45 at 42 %, 09:48 at 47 %, 09:52 at 53 % |
+| …of those, where the listener saw the first `soc` record | **0** (margins 668, 667, 668 ms) |
+
+`soc`'s own first row lands 14-440 ms after its life's first logged row, and `0x200` is 20 Hz, so the bus would have to go silent for over half a second at start-up for this to invert.
+
+⚠️ **The ordering is evidence, the milliseconds are not.** `ts` is `Date.now()` and this Pi steps its own clock, which is why durations elsewhere in this repo use `monotonicNow()`. The **ordering** conclusion rests on `seq`, the per-life write counter, not on the stamps; the 530-1282 ms range is quoted because its tightness across 77 independent boots is itself the evidence that no clock step landed inside one. (`min(seq) = 0` for all 147 named sessions, so none of the 63 unreadable segments removed a life's opening rows.)
+
+⚠️ **So this is "not reached on the shipped start-up ordering", not "unreachable".** Three ordinary changes would remove the margin silently: making `loadStaticFiles` concurrent, a smaller `public/`, or moving the `startChargeAutomatic` call above it. None would fail a check. `src/index.ts` therefore carries a ⚠️ at the call site, and `rememberSoc` says so **in the journal** when it does keep such a sample rather than guarding against it — #222 already carries two guards it had to document as unreachable, and a third would be worse than a line of prose that fires.
+
+### A downward crossing, which sits a point high
+
+Falling through a whole percent puts the sample at `p + 1` rather than at `p`, so a ring that dips and then climbs over-states the same way. It does not happen here: **304 of 304** consecutive `soc` pairs inside a DC session are exactly **+1** — no jump of two, and no step down, at any SOC (237 of them below the 88 % knee; 5 pairs spanning a restart excluded, since a life's first row is logged unconditionally). Gaps between crossings run 25.3 s min, 36.2 s median, 100 s p90, 407 s max, which is 0.60 / 1.50 / 2.13 %/min at p10 / median / p90 — the three constant rates `scripts/soc-trajectory.ts` sweeps.
+
+A DC session is cut here as a run of `fast_dc_target_a > 0` rows no more than 10 min apart, which is coarser than the `pack_a` segmentation at the top of this file. The census is insensitive to that: both rows of every pair counted lie inside one run, and the alternative cut changes which sub-minute handshake blips count as a session, not which crossings are `+1`.
+
+### What either one would cost
+
+At most **one whole count over the claimed span**: the reading can be a point behind the true SOC and no more. With `SOC_MIN_SPAN_MS` at five minutes that is **0.2 %/min**, 12 % of the median rate. `scripts/check-soc-rate.ts` §3 asserts that bound on rings built to break the precondition, and asserts they really do over-state — a probe that stopped constructing the case would otherwise pass quietly.
+
+### Two paths into the ring that are NOT bounded by that, and are not guarded
+
+⚠️ `record()` updates `lastLogged` **before** it notifies, and the plausibility gate is downstream in `rememberSoc`. So an out-of-range reading (`0xFF`) is rejected with a warn — and the _next_ reading, unchanged, is now a change against `lastLogged = 255`, is notified, and enters the ring without a crossing behind it. Bounded by the same one count, and the journal line covers it, because the flag is still armed when nothing has been kept yet.
+
+⚠️ **An in-range glitch is unbounded and nothing catches it.** `isSocPlausible` accepts anything in 0-100 with no rate gate, so a garbled byte of 20 during a 60 % charge enters the ring directly; as the oldest in-window sample it yields `(61 − 20) / 10 min = 4.1 %/min`. Not observed — every `soc` row in this log is an integer in 9-100, and the 304-for-304 census says the signal does not jump — but it is a real hole in the "lower bound, and an exact one" claim and it is not the one #235 was about.
 
 ## What the session-ahead veto changes, tick by tick
 
