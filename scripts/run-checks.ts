@@ -803,6 +803,18 @@ const CHECKS: SelfCheck[] = [
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",
   },
   {
+    script: "scripts/generate-signal-bounds.ts",
+    args: ["--check"],
+    covers:
+      "the plausibility bounds the dashboard gates every reading against: that public/lib/generated-bounds.js is " +
+      "byte-identical to what the `bounds` declared beside each signal in src/can/registry.ts would produce — a " +
+      "copy the phone must carry because it has no build step and cannot import a .ts module — and THE RATCHET " +
+      "that replaced check-all-view-tiles.ts's KNOWN_UNGATED list: every one of the registry's signals either " +
+      "reaches a rule in bounds.js, declares its own bounds, or says which kind of unboundable it is, so a new " +
+      "signal cannot be added ungated and render whatever arrives; a stale `unbounded` on a signal that has since " +
+      "gained a rule fails too, which is the rot the old list could not see",
+  },
+  {
     script: "scripts/generate-grafana-dtc.ts",
     args: ["--check"],
     covers:

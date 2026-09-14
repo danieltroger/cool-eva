@@ -39,8 +39,22 @@ const FLAG_KEYS = [
   "bms_warn_balancing_required",
 ];
 
-/** One byte each, so the whole 0…255 is legitimate. */
-const STATE_WORD_KEYS = ["vehicle_state", "vehicle_substate", "charge_state"];
+/**
+ * One byte each, so the whole 0…255 is legitimate.
+ *
+ * ⚠️ Four joined in #227 on the same sentence this comment already made. `lmu_cell_mux` is
+ * a single byte too and is deliberately NOT here — it is the one selector the decoder logs
+ * valid or not, and docs/signal-bounds.md says why bounding it would be actively harmful.
+ */
+const STATE_WORD_KEYS = [
+  "vehicle_state",
+  "vehicle_substate",
+  "charge_state",
+  "bms_io_state",
+  "clamp_gate",
+  "clamp_amount",
+  "charger_enabled",
+];
 
 // ⚠️ CONSTRUCTED, and check-charge-mode.ts says so where these come from: byte 0 is an
 // OBSERVED value in each — a discharging bike, an AC session, the BMS's Idle — while bytes 1-7
