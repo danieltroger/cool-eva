@@ -1,9 +1,9 @@
-// 0x102 `VCU_DIGITALS` — byte 0's low bits and byte 3, as VCU discretes. Pure: one byte
-// in, values out. Three files decode this frame and the split is NOT on byte boundaries:
-// decode.ts keeps b0 bit 6 (`high_beam`), b1 and b2; this file has b0's other low bits
-// and all of b3; attitude.ts has b4-7. The length guard for b3 stays at decode.ts's call
-// site, where the rest of the frame's guards are. The name is Energica's own for the
-// block (the 2024 service-tool analysis in `obd-garage/`, §`0x102`, 34 signals).
+// 0x102 `VCU_DIGITALS` — byte 0 bits 0-5 and 7, and byte 3, as VCU discretes. Pure: one
+// byte in, values out. Three files decode this frame and the split is NOT on byte
+// boundaries: decode.ts keeps b0 bit 6 (`high_beam`), b1 and b2; this file has the other
+// seven bits of b0 and all of b3; attitude.ts has b4-7. b3's length guard stays at
+// decode.ts's call site, with the comment that argues for it. The name is Energica's own
+// for the block (the 2024 service-tool analysis in `obd-garage/`, §`0x102`, 34 signals).
 
 import { type DecodedValue, bit } from "./frame.ts";
 
