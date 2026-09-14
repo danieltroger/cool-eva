@@ -26,10 +26,10 @@ import {
 //
 // What it was written for (#253): at 390x844 the Faults tab reported body.scrollWidth 449
 // against a 390 px client width. The page scrolled sideways, and in the light theme the
-// overflow drew as black bars down the side of the tiles. The cause was two levels above the
-// text: a grid item's `min-width: auto` is its MIN-CONTENT, so one stored-code row that could
-// not wrap held the tile at 441 px, and the tile then overflowed its 374 px grid area rather
-// than pushing the column out. docs/dashboard-decisions.md has the measured chain.
+// overflow drew as black bars down the side of the tiles. Nothing in the tree was misbehaving
+// — a `min-width: auto` tile floored its column at 440.6 px, the grid that held it could not
+// go below 374, and the difference painted past the phone. docs/dashboard-decisions.md has
+// the measured chain, and two wrong versions of it before this one.
 //
 // Hence two assertions rather than one. No tab wider than the phone; AND the row that did
 // it still readable in full — because the cheap way to pass the first is an ellipsis, and

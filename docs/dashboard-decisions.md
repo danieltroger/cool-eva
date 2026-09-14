@@ -718,19 +718,25 @@ So the tile counts down against the TRUE temperature (`batt_temp_hi`, sourced fr
 
 The phone is 390 CSS px wide and the page may never be wider. It was, on the Faults tab, until #253 — measured on `de72711`, and pre-existing rather than anything #252 did; the lane that filed #253 measured the identical number from that PR's parent. `document.body.scrollWidth` read **449** against a `clientWidth` of 390, the page scrolled sideways, and in the light theme the strip past 390 drew as black bars down the side of the tiles, because the body's background stops where the body does.
 
-### The chain — and the level it does NOT pass through
+### The chain, and the two wrong versions of it
 
-One row did it: `B1000 · Position lights open circuit fault · freeze frame · expected`, the freeze-frame code on this bike with both suffixes at once. Measured in the rendered page by cloning each element at `width: min-content`:
+One row did it: `B1000 · Position lights open circuit fault · freeze frame · expected`, the freeze-frame code on this bike with both suffixes at once. Every box below was measured in the rendered page — `getBoundingClientRect()` for the box, `getComputedStyle().gridTemplateColumns` for the track inside it:
 
-| element                                                             | min-content |
-| ------------------------------------------------------------------- | ----------- |
-| `.code-line-text`, `white-space: nowrap`                            | 326.6 px    |
-| `.code-line` (+ the 3.6 rem id column, the gaps, the 0.9 rem caret) | 414.6 px    |
-| the tile (+ 0.75 rem of side padding)                               | 440.6 px    |
-| the `.tile-group` around it, whose implicit column takes that       | 441 px      |
-| + `.view`'s 0.5 rem left padding = what the body reports            | **449 px**  |
+| element                                                             | its box    | its own column       |
+| ------------------------------------------------------------------- | ---------- | -------------------- |
+| `.code-line-text`, `white-space: nowrap`                            | —          | min-content 326.6 px |
+| `.code-line` (+ the 3.6 rem id column, the gaps, the 0.9 rem caret) | —          | min-content 414.6 px |
+| `.tile.span2` (+ 0.75 rem of side padding)                          | 440.63 px  | min-content 440.6 px |
+| `.tile-group`                                                       | 440.63 px  | `440.633px`          |
+| `.tile-group`                                                       | 440.63 px  | `440.633px`          |
+| **`.tile-group`, the outermost**                                    | **374 px** | **`440.633px`**      |
+| `.view`                                                             | 390 px     | `183px 183px`        |
 
-⚠️ **`.view`'s own tracks are not in that chain, and the first version of this fix said they were.** They compute to `183px 183px` in the broken state and `183px 183px` in the fixed one — 183 + 8 + 183 = 374, the width the group is _given_. A `1fr` track does have an automatic minimum of min-content, but what happened here is one level lower: **a grid item whose `min-width` is `auto` cannot be squeezed below its own min-content, so the tile stayed 441 px wide and OVERFLOWED its 374 px grid area**, dragging the page with it. Pushing the track out and overflowing the area look identical on screen and are not the same bug; only the computed `grid-template-columns` tells them apart. Injecting `minmax(0, 1fr)` on `.view` alone leaves the body at 449.
+**The tile floors its column; the outermost group cannot follow it; the difference paints past the phone.** `.tile` has no `min-width`, so its automatic minimum is its content-based minimum — 440.6 px — and each single-column `.tile-group` above it is an implicit `auto` track that takes exactly that. The outermost group is where the chain breaks: it is a grid item of `.view` spanning `1 / -1`, and **an item spanning more than one track where any of them is flexible gets no content-based automatic minimum at all** (CSS Grid Level 1 §6.6: the content-based minimum applies only "if it spans more than one track in that axis, none of those tracks are flexible"). So it sits at its 374 px area with a 440.633 px column inside it. 8 px of `.view` padding + 440.6 = the 449 the body reports.
+
+⚠️ **Two earlier versions of this paragraph were wrong in opposite directions, which is why it is written out box by box.** The first said `.view`'s `1fr` tracks took the min-content and sized the page — false: they read `183px 183px` throughout, and injecting `minmax(0, 1fr)` there alone leaves the body at 449. The second said the tile overflowed its grid area — also false: the tile is exactly as wide as the column it floored, and the box that is narrower than its contents is the outermost `.tile-group`. Both stories predict the same screenshot and only the computed values tell them apart.
+
+⚠️ **And `1fr` really can be the whole bug — just not this one.** A **direct, non-spanning** tile in `.view` holding one unbreakable token pushes those tracks to `2733px 10.59px`; the spec exemption above is what spared #253, because its item spanned both columns. `.tile { min-width: 0 }` takes both shapes back to `183px 183px`, which is why the fix is on the item rather than on any of the three grids above it.
 
 ### What fixes it, measured one line at a time
 

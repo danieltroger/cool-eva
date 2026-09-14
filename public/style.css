@@ -217,10 +217,12 @@ body {
 
 /* ---------- layout ---------- */
 
-/* The two-column grid every tab lays its tiles out in. ⚠️ A tile that cannot be squeezed
-   into its column does not push these tracks out — it OVERFLOWS its grid area and takes
-   the page with it, which is what `.tile { min-width: 0 }` below is for. Measured during
-   #253: these tracks read `183px 183px` while the body reported 449. */
+/* The two-column grid every tab lays its tiles out in. ⚠️ `1fr` and not `minmax(0, 1fr)`,
+   and that is a measurement rather than a preference: a DIRECT tile holding something
+   unbreakable really does push these tracks out — one long token takes them to
+   `2733px 10.59px`. #253 was not that shape, and these tracks read `183px 183px` all the
+   way through it. `.tile { min-width: 0 }` below covers both shapes, so nothing is left
+   for a track minimum to do here. docs/dashboard-decisions.md. */
 .view {
   display: grid;
   gap: 0.5rem;
@@ -258,11 +260,14 @@ body {
   flex-direction: column;
   gap: 0.2rem;
   min-height: 88px;
-  /* ⚠️ A grid item's `min-width: auto` is its MIN-CONTENT, so without this a tile is never
-     narrower than its widest unbreakable row — and it does not push its column out, it
-     overflows its grid area and drags the page with it. #253: one stored-code line took
-     the tile to 441 px and the body to 449 on a 390 px phone. `.raw` has carried this
-     same line since the raw grid was written. docs/dashboard-decisions.md. */
+  /* ⚠️ Without this a tile's `min-width: auto` is its MIN-CONTENT, and a tile sits at the
+     bottom of a chain of single-column `.tile-group` grids: in #253 one unbreakable
+     stored-code row floored the tile at 440.6 px and every group's implicit `auto` column
+     with it. The outermost group is held at its 374 px grid area — it spans two `1fr`
+     tracks, and an item spanning flexible tracks gets no content-based minimum at all
+     (CSS Grid §6.6) — so its own 440.6 px column spilled out of it and the body reported
+     449 on a 390 px phone. `.raw` has carried this same line since the raw grid was
+     written. docs/dashboard-decisions.md. */
   min-width: 0;
   transition: opacity 0.3s;
 }

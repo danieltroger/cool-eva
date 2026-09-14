@@ -925,7 +925,7 @@ A `<link rel="icon">` copied from `public/index.html` silences the last console 
 
 ### 11.8 `check-phone-width.ts` — the one check that opens a page
 
-The dashboard has no build step and no VDOM, and until #253 nothing in this repo had ever asked a browser how wide the rendered page came out. Source-reading cannot answer it, and neither can reasoning about the CSS: the Faults tab overflowed by 59 px with every box doing exactly what it was told, the first diagnosis blamed a grid track that turned out to compute identically before and after, and only `getComputedStyle` in the rendered page told the two mechanisms apart (`docs/dashboard-decisions.md`, "Fitting a 390 px phone").
+The dashboard has no build step and no VDOM, and until #253 nothing in this repo had ever asked a browser how wide the rendered page came out. Source-reading cannot answer it, and neither can reasoning about the CSS: the Faults tab overflowed by 59 px with every box doing exactly what it was told, and the mechanism was written down wrong **twice** before the computed values were read out box by box — once blaming a grid track that computes identically before and after, once blaming a tile that turned out to be exactly as wide as the column it had floored. Both wrong stories predict the same screenshot (`docs/dashboard-decisions.md`, "Fitting a 390 px phone").
 
 **What it runs.** `scripts/build-service-preview.ts` builds the committed template against the shipped `public/`, i.e. the same file the dashboard gate looks at, into a temp directory. Then one page at 390×844 DPR 3 with mobile emulation, one load per tab of the `faults` scene — a load rather than a hash flip, so no measurement can belong to the tab that was on screen a frame ago.
 
