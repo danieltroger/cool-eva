@@ -82,24 +82,23 @@ for (const signal of SIGNALS) {
   const viaFallback = fallbackBoundsFor(signal.key, signal.unit, signal.group);
   const declared = signal.bounds;
   if (declared !== undefined) {
-    const reason = NEVER_BOUND.get(signal.key);
-    if (reason !== undefined) {
-      failures.push(`${signal.key} must never be bounded and declares ${JSON.stringify(declared)}: ${reason}`);
+    const neverBound = NEVER_BOUND.get(signal.key);
+    if (neverBound !== undefined) {
+      failures.push(`${signal.key} must never be bounded and declares ${JSON.stringify(declared)}: ${neverBound}`);
     }
+    // Both shapes below reject every reading a decoder can produce, so the value never
+    // reaches signalState and the tile shows a fault for ever.
     if (!Number.isFinite(declared[0]) || !Number.isFinite(declared[1])) {
-      failures.push(
-        `${signal.key} declares a non-finite bound ${JSON.stringify(declared)} — isPlausible would reject every reading`
-      );
+      failures.push(`${signal.key} declares a non-finite bound ${JSON.stringify(declared)}, which rejects everything`);
     } else if (declared[0] > declared[1]) {
       failures.push(
-        `${signal.key} declares an INVERTED bound ${JSON.stringify(declared)} — min above max, so isPlausible ` +
-          `rejects every reading and the tile shows a fault forever`
+        `${signal.key} declares an INVERTED bound ${JSON.stringify(declared)} — min above max, which rejects everything`
       );
     }
-  }
-  if (signal.bounds !== undefined && signal.unbounded !== undefined) {
-    failures.push(`${signal.key} declares BOTH bounds and unbounded — say which it is`);
-    continue;
+    if (signal.unbounded !== undefined) {
+      failures.push(`${signal.key} declares BOTH bounds and unbounded — say which it is`);
+      continue;
+    }
   }
   if (signal.bounds === undefined && signal.unbounded === undefined && viaFallback === null) {
     failures.push(
