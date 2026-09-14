@@ -1,5 +1,4 @@
 import type { RawChannel } from "socketcan";
-import { latestValue } from "../can/signals.ts";
 import { pollPidNow } from "../can/obd.ts";
 import type { DecodedValue } from "../can/frame.ts";
 import { requestTroubleCodeList } from "../can/obd-dtc.ts";
@@ -302,10 +301,9 @@ function unprovenReason(counts: ClearDtcsCounts): string {
  */
 function twiceBeforeAdvice(context: ClearDtcsContext): string {
   const observation = "This has happened twice before, both times with a cable or a charge involved.";
-  const gate = context.gate();
-  const cablePresent =
-    gate.chargingEvidence !== null || gate.checks.find(check => check.key === "charge_manager_status")?.state === "ok";
-  return cablePresent ? `${observation} There is a cable in the inlet now — unplug it and try again.` : observation;
+  return verdictSeesACable(context.gate())
+    ? `${observation} There is a cable in the inlet now — unplug it and try again.`
+    : observation;
 }
 
 /** `: 46 stored → 5 stored, 41 cleared`, or nothing when a count is missing or went the wrong way. */

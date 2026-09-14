@@ -16,7 +16,10 @@
 //  • ✅ A8 answered all four on 2026-09-08, the first time anything asked: four 2-byte
 //    WORDs, all zero, so the block is there and no service point has ever been set on
 //    this bike. What that does and does not establish: docs/service-stamp.md.
-//  • ❌ Mode 04 has never been sent by anything in this repo.
+//  • ✅ Mode 04 has been sent. First on 2026-09-13, from src/vcu/clear-dtcs.ts: 41 of 46
+//    codes swept, proven by PID 31 falling 19 671 km → 0. Twice before that it was answered
+//    `44` and erased nothing. What it does on this bike, and what still is not known:
+//    docs/clear-dtcs.md.
 
 import { ageMs, latestValue } from "../can/signals.ts";
 import { toHex } from "./param-codec.ts";

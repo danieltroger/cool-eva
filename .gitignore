@@ -16,6 +16,9 @@ Energica_Manuals
 # (Self-contained: scripts + venv + logs all resolve relative to this folder.)
 obd-garage
 
+# Audit journal copies pulled off a Pi for one investigation: per-bike evidence, not repo content.
+evidence/*.jsonl
+
 # Dashboard-gate screenshots: the chrome-devtools MCP can only write inside the
 # workspace, so the preview shots land here. They are evidence for one PR, not
 # repo content, and this repo has never carried a committed PNG.
