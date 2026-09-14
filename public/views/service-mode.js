@@ -23,12 +23,13 @@ const { a, button, div, h3 } = van.tags;
 // button starts it and returns; progress comes from polling /vcu-read once a second
 // while the sheet is open AND there is something to watch. The sweep runs on the Pi.
 //
-// ⚠️ The button ARMS first: this is the only control in the dashboard that causes
-// traffic on the bike's bus, and those requests compete with the OBD poller for the
-// scarce resource. Since #219 it also PARKS that poller for 25 of them, so speed, rpm
-// and the temperatures stop updating 25 times during a sweep — which is why the arm
-// line says so. Why two taps and no modal, and why this is not a tab:
-// docs/dashboard-decisions.md §"Service mode: reading the VCU".
+// ⚠️ The button ARMS first: ~300 requests compete with the OBD poller for the scarce
+// resource, and since #219 the sweep also PARKS that poller for 25 of them, so speed,
+// rpm and the temperatures stop updating 25 times during one — which is why the arm
+// line says so. It is NOT the only control that reaches the bus (#129) — the list of the
+// others lives in docs/dashboard-decisions.md §"Why the sweep button arms first" rather than
+// here, so there is one copy of it to rot rather than two. It is the longest. Why two taps
+// and no modal, and why this is not a tab: that same file.
 
 /** @typedef {import("../../src/http/vcu-read.ts").VcuReadResponse} VcuReadResponse */
 /** @typedef {import("../../src/vcu/read-runner.ts").VcuReadState} VcuReadState */

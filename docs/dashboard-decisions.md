@@ -786,9 +786,23 @@ The first reading after load is adopted **silently**, and so is the first after 
 
 The levels are relative, and start at 2 because the sheet is a section of a page rather than a document of its own. Both classes set font-size, weight, colour and padding explicitly, and the reset at the top of `style.css` zeroes UA margins, so nothing renders differently — checked by measuring every heading before and after.
 
-Only two sections carry a one-line "what can this do to the bike" subtitle, and they are the two either side of the read/write boundary, where the bit is not obvious. "Actions" has none: three sections carrying that sentence was one sentence too many for a single bit of information, and both controls in it are in the grey tier, which says the same thing without a sentence.
+Only two sections carry a one-line "what can this do to the bike" subtitle, and they are the two either side of the read/write boundary, where the bit is not obvious. "Actions" has none: three sections carrying that sentence was one sentence too many for a single bit of information, and all four controls in it are in the grey tier, which says the same thing without a sentence.
 
 The "Service mode" subtitle used to end "…the section that can change it is further down", which was prose apologising for the layout — if a sentence has to tell you where the other section is, the boundary is not doing its job. The boundary now does it: the write section has a rule in the one colour nothing else on this sheet uses for a rule, and states its own risk under its own heading.
+
+### Why Update and CAN restart arm too — `views/pi-actions.js`
+
+Until #130 these two fired on a **single tap**: `/update` runs `git pull` in the checkout on the Pi and restarts the service, `/can-restart` re-initialises `can0` and kills every other raw socket on it with `OSError 100 Network is down`. Meanwhile the read-only parameter sweep, one section further down, already took two taps and a 400 ms dwell. The least dangerous of the four was the one that armed, and that is the part that did not hold together.
+
+Both now go through `lib/arming.js` with keys of their own, `pi-actions:can-restart` and `pi-actions:update`, so they get the same dwell and the same held-Enter refusal as everything else that takes a second tap. Neither endpoint changed; only the number of taps did.
+
+**They stay grey.** `.action.writes` is amber and means "this touches the motorcycle" — and neither of these does: one reconfigures the Pi's own interface, the other replaces the Pi's own code. Arming and tier are separate channels, and the sweep is the precedent for using one without the other: it arms, and it is grey. Bumping the tier here would have taught the amber edge to mean "two taps", which is not what the other amber controls on this sheet are saying.
+
+**Their own module**, not `views/sheet.js`. Partly CLAUDE.md's ~400 lines — the gate, the captions and the two firing sites would have pushed that file past it — but mostly because "the controls that act on the Pi itself rather than on the bike or on the display" is a real seam, and it is the seam the header guards in `src/http/` are drawn on too.
+
+**⚠️ `openSheet()` disarms, and that is the only disarm tied to these two.** Every other armed control on the dashboard refreshes a status before it arms, so a reply landing under an armed button takes the arming with it (`check-arming.ts` §6). Neither of these fetches a status of its own — there is nothing to ask about `git pull` or `ip link` — so none of those refreshes is theirs. (Other modules' still disarm them: one key, one dashboard, and the paragraph below is that happening.) Re-opening the sheet is what guarantees a half-confirmed Update is never waiting for its second tap. It was already true by accident — `refreshServiceMode()` disarms and `openSheet()` calls it — which is exactly why it is now written down in `sheet.js` and asserted: a safety property that holds because of another module's internals holds until that module is edited.
+
+One consequence worth knowing before reporting it as a bug: `refreshServiceMode()` also fires `void refreshVcuWrite()`, whose reply disarms when it lands. So a tap in the moment between opening the sheet and that reply arriving re-arms rather than fires. That is the shared gate working as designed, and the sweep has always lived with it.
 
 ### There is no "Link" section, deliberately
 
@@ -822,7 +836,9 @@ The elapsed timer counts from a phone-side monotonic mark taken when the page fi
 
 ### Why the sweep button arms first
 
-It is the only control in the dashboard that causes traffic on the bike's bus. It cannot write anything — the read-only argument is in `src/vcu/param-codec.ts` and nothing on the page could widen it — but ~277 requests do compete with the OBD poller for a bus that is already the scarce resource, so it should not be reachable by a thumb landing in the wrong place while the sheet scrolls. Two taps, no modal.
+It cannot write anything — the read-only argument is in `src/vcu/param-codec.ts` and nothing on the page could widen it — but ~277 requests do compete with the OBD poller for a bus that is already the scarce resource, and since #219 the sweep also PARKS that poller for 25 of them, so the live telemetry blinks 25 times. That volume is the argument; it should not be reachable by a thumb landing in the wrong place while the sheet scrolls. Two taps, no modal.
+
+⚠️ This paragraph used to open "It is the only control in the dashboard that causes traffic on the bike's bus", and #129 is where that was finally corrected. It was true when written; the charge tab's two controls, the write fold, the in-service lifetime read and the read-service-stamp button each falsified it later, and nothing made a noise when they did. The replacement is not a narrower superlative — "the only one that reaches the bus without being able to write to it" is false too, since `/lifetime-read` and `/vcu-probe`'s stamp read are both read-only bus traffic. The volume argument carries the two taps without needing one at all.
 
 `confirm()` is deliberately not used anywhere in this dashboard: it is a browser dialog that lands in the wrong place on a phone, and it cannot show a two-line before/after.
 

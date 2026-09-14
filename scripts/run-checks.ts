@@ -339,6 +339,22 @@ const CHECKS: SelfCheck[] = [
       "FAILS still does end it, rather than leaving a live process with nothing listening for systemd to call healthy",
   },
   {
+    script: "scripts/check-endpoint-headers.ts",
+    covers:
+      "the X-Cool-Eva header in front of the menu sheet's two Pi-maintenance actions, which had no guard at all " +
+      "until #150: that /update and /can-restart each refuse a POST carrying no header, the wrong value, an empty " +
+      "one, a DUPLICATED one (Node joins it to `update, update`, and the comparison is exact so it fails closed) " +
+      "or the OTHER endpoint's value — the neighbour on the same sheet being the likeliest wrong constant — and " +
+      "that one carrying the right header gets past the guard, so the door is shown to refuse some requests rather " +
+      "than all of them. Both ends are pinned to the same literal and the page's half is read from INSIDE each " +
+      "perform\u2026() body, because two literals in one file leave a SWAP green while every POST the dashboard " +
+      "makes answers 403. Plus every exported \u2026_HEADER_VALUE in src/http/, discovered rather than listed, " +
+      "asserted distinct over a found-them-at-all floor. \u26a0 A CSRF barrier and NOT authentication: it stops " +
+      "the cross-origin form and cross-origin fetch, and stops nobody with a curl and the wifi password. \u26a0 " +
+      "/update never gets a real server (it arms `sudo systemctl restart cool-eva` on `finish`) and /can-restart " +
+      "gets one aimed at an interface no machine has, so `ip link` runs against nothing and can0 is never touched",
+  },
+  {
     script: "scripts/check-fan-curve.ts",
     covers:
       "the automatic cooling-fan curve, which is pure so that three things nobody can stage in a garage are one " +
@@ -549,7 +565,9 @@ const CHECKS: SelfCheck[] = [
       "dwell that elapsed ten seconds ago, that a clock which jumped backwards hands out no dwell, and that a held " +
       "Enter is cancelled while a held ArrowDown is not. Then the parts no single module holds: that the charge " +
       "tab's two now CO-VISIBLE controls do not share a key, that a status refresh landing under an armed button " +
-      "disarms it (run for real against a stubbed fetch), that all five firing sites still test their own key, then " +
+      "disarms it (run for real against a stubbed fetch), and that re-opening the menu sheet disarms — the only " +
+      "disarm the two Pi actions have, since neither fetches a status to land under one. Then: that all eleven " +
+      "firing sites still test their own key, then " +
       "the dwell, then clear, then act — in that order, with the refused branch doing nothing but return — and " +
       "that no module outside arming.js ever sets `armed` to a non-empty key, which is what makes the dwell " +
       "unskippable. Plus the production defaults nothing else exercises: the same gate on the real performance.now()",

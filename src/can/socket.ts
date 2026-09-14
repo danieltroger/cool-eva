@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import canModule from "socketcan";
 import type { RawChannel } from "socketcan";
-import { CAN_BITRATE_HZ, type BringUpDecision, canConfigureArgs, decideCanBringUp } from "./link-config.ts";
+import { type BringUpDecision, canConfigureArgs, decideCanBringUp } from "./link-config.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,26 +43,6 @@ export async function bringUpCan(iface = "can0", active = true): Promise<void> {
   await execFileAsync("ip", canConfigureArgs(iface, active));
   await execFileAsync("ip", ["link", "set", iface, "up"]);
   console.log(`can: ${iface} up @500k — ${mode}`);
-}
-
-// Re-configure and bring the interface back up after the link has dropped — the
-// recovery the dashboard's "CAN bus restart" button reaches. The pair of commands run
-// by hand when the bus goes down mid-ride:
-//
-//   ip link set can0 type can bitrate 500000
-//   ip link set can0 up
-//
-// No `down` first, unlike bringUpCan(): this is pressed precisely because the link is
-// already down, and reconfiguring an already-down interface is what works. listen-only
-// is left unset on purpose — it is STICKY on this adapter (see bringUpCan), so omitting
-// it keeps whatever mode the service brought the bus up in rather than flipping it. It sets
-// no restart-ms either, so on a netdev recreated by an unplug/replug this leaves it at 0 and
-// the NEXT service start reads a mismatch and bounces. Unchanged from before the skip landed
-// and deliberately not fixed here: what this button puts on the bus is its own change.
-export async function restartCanLink(iface = "can0"): Promise<void> {
-  await execFileAsync("ip", ["link", "set", iface, "type", "can", "bitrate", String(CAN_BITRATE_HZ)]);
-  await execFileAsync("ip", ["link", "set", iface, "up"]);
-  console.log(`can: ${iface} restarted @500k`);
 }
 
 export function openChannel(iface = "can0"): RawChannel {

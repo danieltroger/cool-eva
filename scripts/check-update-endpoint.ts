@@ -1,4 +1,4 @@
-import type { IncomingMessage, ServerResponse } from "http";
+import type { IncomingMessage } from "http";
 import { execFile } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { UpdateReply } from "../src/http/update.ts";
+import { postRequest, recordingResponse, type RecordingResponse } from "./recording-response.ts";
 import {
   PULL_ARGS,
   asOwnerCommand,
@@ -13,6 +14,8 @@ import {
   describePullFailure,
   findForeignOwnedPaths,
   foreignOwner,
+  UPDATE_HEADER,
+  UPDATE_HEADER_VALUE,
   handleUpdateEndpoint,
   pullCommandFor,
 } from "../src/http/update.ts";
@@ -23,7 +26,7 @@ import {
 //
 // ⚠️ THIS CHECK MUST NEVER RESTART THE SERVICE. handleUpdateEndpoint arms the restart on
 // the response's "finish" event, so a real http.ServerResponse here would spawn
-// `sudo systemctl restart cool-eva` on whatever machine ran `npm test`. The fake below
+// `sudo systemctl restart cool-eva` on whatever machine ran `npm test`. ./recording-response.ts
 // RECORDS the listener and never emits it — and §1 asserts one was armed, so "we avoided
 // the restart" is a checked property rather than a hope.
 //
@@ -48,51 +51,17 @@ function check(what: string, condition: boolean) {
   }
 }
 
-interface FakeResponse {
-  res: ServerResponse;
-  statusCode: number | null;
-  headers: Record<string, string>;
-  body: string;
-  finishListeners: number;
-}
-
 /**
- * A response that records instead of writing, and in particular never emits "finish".
- * `as unknown as ServerResponse` rather than an `any`, the same way
- * scripts/check-ride-log-status.ts fakes one.
+ * ⚠️ Carries the guard header, so every section below tests the PULL rather than the door.
+ * That the door itself is shut is scripts/check-endpoint-headers.ts's subject — and a
+ * deleted guard leaves this file green on purpose, because one check per property is what
+ * makes a red line say which property went.
  */
-function fakeResponse(): FakeResponse {
-  const recorded: FakeResponse = {
-    res: null as unknown as ServerResponse,
-    statusCode: null,
-    headers: {},
-    body: "",
-    finishListeners: 0,
-  };
-  recorded.res = {
-    writeHead(statusCode: number, headers?: Record<string, string>) {
-      recorded.statusCode = statusCode;
-      Object.assign(recorded.headers, headers ?? {});
-    },
-    end(chunk?: string | Buffer) {
-      if (chunk) {
-        recorded.body = chunk.toString();
-      }
-    },
-    once(event: string) {
-      if (event === "finish") {
-        recorded.finishListeners += 1;
-      }
-    },
-  } as unknown as ServerResponse;
-  return recorded;
+function guardedPost(): IncomingMessage {
+  return postRequest({ [UPDATE_HEADER]: UPDATE_HEADER_VALUE });
 }
 
-function postRequest(): IncomingMessage {
-  return { method: "POST" } as unknown as IncomingMessage;
-}
-
-function parseReply(recorded: FakeResponse): UpdateReply {
+function parseReply(recorded: RecordingResponse): UpdateReply {
   return JSON.parse(recorded.body) as UpdateReply;
 }
 
@@ -121,8 +90,8 @@ try {
   await run("git", ["-C", upstream, ...GIT_IDENTITY, "add", "-A"]);
   await run("git", ["-C", upstream, ...GIT_IDENTITY, "commit", "-m", "second"]);
 
-  const pulled = fakeResponse();
-  await handleUpdateEndpoint(postRequest(), pulled.res, checkout);
+  const pulled = recordingResponse();
+  await handleUpdateEndpoint(guardedPost(), pulled.res, checkout);
   const pulledReply = parseReply(pulled);
   check("a successful pull answers 200", pulled.statusCode === 200);
   check("and says ok", pulledReply.ok === true);
@@ -137,8 +106,8 @@ try {
   console.log("\n2. a pull that fails, seen from the phone");
 
   await run("git", ["-C", checkout, "remote", "set-url", "origin", join(workDir, "no-repo-here")]);
-  const failed = fakeResponse();
-  await handleUpdateEndpoint(postRequest(), failed.res, checkout);
+  const failed = recordingResponse();
+  await handleUpdateEndpoint(guardedPost(), failed.res, checkout);
   const failedReply = parseReply(failed);
   check("a failed pull answers 500", failed.statusCode === 500);
   check("and says not-ok, which is what paints the note red", failedReply.ok === false);
@@ -150,7 +119,7 @@ try {
 
   console.log("\n3. the method guard");
 
-  const got = fakeResponse();
+  const got = recordingResponse();
   await handleUpdateEndpoint({ method: "GET" } as unknown as IncomingMessage, got.res, checkout);
   check("GET is refused with 405", got.statusCode === 405);
   check("and says what to use instead", got.headers["Allow"] === "POST");
@@ -308,8 +277,8 @@ try {
   await run("git", ["-C", checkout, ...GIT_IDENTITY, "add", "-A"]);
   await run("git", ["-C", checkout, ...GIT_IDENTITY, "commit", "-m", "local divergence"]);
 
-  const diverged = fakeResponse();
-  await handleUpdateEndpoint(postRequest(), diverged.res, checkout);
+  const diverged = recordingResponse();
+  await handleUpdateEndpoint(guardedPost(), diverged.res, checkout);
   const divergedReply = parseReply(diverged);
   check("a diverged checkout is refused rather than merged", diverged.statusCode === 500);
   check("and says so in git's words", /Not possible to fast-forward|diverg/i.test(divergedReply.message));

@@ -6,6 +6,8 @@ import { bytes } from "../lib/format.js";
 import * as units from "../lib/units.js";
 import * as theme from "../lib/theme.js";
 import { saveWaypoint } from "../lib/waypoint.js";
+import { armed } from "../lib/arming.js";
+import { CanRestartButton, UpdateButton } from "./pi-actions.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { FanControl, refreshFanStatus } from "./fan.js";
 import { TripStats } from "./trip-stats.js";
@@ -19,8 +21,6 @@ const { button, div, h2 } = van.tags;
 // looking at at speed, and all of it is worth having when you stop.
 
 /** @typedef {import("../../src/http/status.ts").StatusPayload} StatusPayload */
-/** @typedef {import("../../src/http/can-restart.ts").CanRestartReply} CanRestartReply */
-/** @typedef {import("../../src/http/update.ts").UpdateReply} UpdateReply */
 
 export const sheetOpen = van.state(false);
 
@@ -35,6 +35,11 @@ export const sheetOpen = van.state(false);
  */
 export function openSheet() {
   sheetOpen.val = true;
+  // ⚠️ Re-opening the sheet must never find a half-confirmed Update waiting for its second
+  // tap. Spelled here rather than left to refreshServiceMode()'s disarm: the two controls
+  // in ./pi-actions.js are this file's to reset, not another module's to reset for it.
+  // scripts/check-arming.ts asserts this line, and reads this file only because of it.
+  armed.val = "";
   void refreshStatus();
   void refreshFanStatus();
   refreshServiceMode(() => sheetOpen.val);
@@ -80,10 +85,11 @@ export function Sheet() {
       TripStats(status),
       // No subtitle here, deliberately. Three sections carrying a one-line "what can
       // this do to the bike" was one sentence too many for a single bit of
-      // information: the controls in this one are in the grey tier, which says the
+      // information: all four controls in this one are in the grey tier, which says the
       // same thing without a sentence. The two that keep a subtitle are the two
       // either side of the read/write boundary, where the bit is not obvious. The CAN
-      // restart is grey-tier too: it re-ups the Pi's own interface, not the bike.
+      // restart and Update are grey-tier too — they act on the Pi, not on the bike —
+      // and they arm anyway, which is a separate channel from the tier (./pi-actions.js).
       h2({ class: "sheet-heading" }, "Actions"),
       WaypointButton(),
       DownloadButton(),
@@ -91,13 +97,15 @@ export function Sheet() {
       UpdateButton(),
       // The cooling fan brings its own heading, so it disappears completely on a Pi
       // without FAN_ENABLED rather than leaving a heading over nothing. It sits between
-      // the grey Actions and Service mode because that is what it is: the only control
-      // on this sheet that actuates something, and the only one that actuates something
-      // which is NOT the motorcycle.
+      // the grey Actions and Service mode because that is what it is: the only control on
+      // this sheet that MOVES something physical. (Narrowed in #129's pass: the two Pi
+      // actions above it act on the Pi, but nothing on the bike or in the garage turns.)
       FanControl(),
       // Last of the doing-things sections and first of the reading-things ones,
-      // because it is the only control here that causes traffic on the bike's bus
-      // — worth a heading of its own rather than a third entry under "Actions".
+      // because it is the only SECTION here whose controls reach the bike's bus —
+      // worth a heading of its own rather than a third entry under "Actions". It
+      // said "the only control" until #129; the scope was right and the noun was
+      // not, since the sweep, the lifetime read and the write fold are all inside it.
       h2({ class: "sheet-heading" }, "Service mode"),
       // ⚠️ It used to end "…the section that can change it is further down", which was
       // prose apologising for the layout — if a sentence has to tell you where the
@@ -202,101 +210,6 @@ function DownloadButton() {
     // private key, but /dl authenticates nobody, so the ciphertext is pullable by
     // anyone on that wifi (src/http/download.ts, and README "What this does and
     // doesn't hide").
-  );
-}
-
-const canRestartMessage = van.state("");
-const canRestartFailed = van.state(false);
-const canRestarting = van.state(false);
-
-/**
- * Re-ups can0 when the CAN dot has gone red. POSTs to /can-restart, which runs the two
- * `ip link` commands on the Pi; the result note reports what happened, since the bus
- * coming back is not something this button can see from here — the CAN dot in the header
- * is what confirms it a poll later.
- *
- * Styled from `ok` for the same reason UpdateButton is: /can-restart answers 500 with
- * ok:false, and a failure rendered in the same grey as a success is the bug style.css
- * argues against for .action-note.failure.
- */
-function CanRestartButton() {
-  return div(
-    button(
-      {
-        class: "action",
-        disabled: canRestarting,
-        onclick: async () => {
-          canRestarting.val = true;
-          canRestartFailed.val = false;
-          canRestartMessage.val = "restarting…";
-          try {
-            const response = await fetch("/can-restart", { method: "POST" });
-            const reply = /** @type {CanRestartReply} */ (await response.json());
-            canRestartMessage.val = reply.message;
-            canRestartFailed.val = !reply.ok;
-          } catch (error) {
-            console.warn("can-restart: request failed", error);
-            canRestartMessage.val = "Restart request failed — is the Pi reachable?";
-            canRestartFailed.val = true;
-          } finally {
-            canRestarting.val = false;
-          }
-        },
-      },
-      "🔄  CAN bus restart"
-    ),
-    () =>
-      canRestartMessage.val
-        ? div({ class: `action-note${canRestartFailed.val ? " failure" : ""}` }, canRestartMessage.val)
-        : div()
-  );
-}
-
-const updateMessage = van.state("");
-const updateFailed = van.state(false);
-const updating = van.state(false);
-
-/**
- * Pulls the latest code on the Pi. POSTs to /update, which runs `git pull` and returns
- * git's own output verbatim — that is the useful thing to show, since "Already up to
- * date." and a summary of what changed are both worth reading. It then restarts the
- * service so the new code takes effect, which drops this WebSocket; the store reconnects
- * on its own once the service is back.
- *
- * The note is styled from `ok`, not just filled from `message`: a failed pull used to
- * render in the same grey as a successful one, which is the bug style.css argues against
- * for .action-note.failure.
- */
-function UpdateButton() {
-  return div(
-    button(
-      {
-        class: "action",
-        disabled: updating,
-        onclick: async () => {
-          updating.val = true;
-          updateFailed.val = false;
-          updateMessage.val = "updating…";
-          try {
-            const response = await fetch("/update", { method: "POST" });
-            const reply = /** @type {UpdateReply} */ (await response.json());
-            updateMessage.val = reply.message;
-            updateFailed.val = !reply.ok;
-          } catch (error) {
-            console.warn("update: request failed", error);
-            updateMessage.val = "Update request failed — is the Pi reachable?";
-            updateFailed.val = true;
-          } finally {
-            updating.val = false;
-          }
-        },
-      },
-      "⬆  Update"
-    ),
-    () =>
-      updateMessage.val
-        ? div({ class: `action-note output${updateFailed.val ? " failure" : ""}` }, updateMessage.val)
-        : div()
   );
 }
 
