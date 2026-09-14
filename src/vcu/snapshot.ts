@@ -1,5 +1,5 @@
 import { describeFirmwareRow, firmwareRowFor } from "./a8-firmware-rows.ts";
-import { interpretRecord } from "./param-codec.ts";
+import { describeWidthMismatch, interpretRecord } from "./param-codec.ts";
 import {
   CALIBRATION_BANK,
   TABLE_TYPE_INDICES,
@@ -128,7 +128,8 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
       note: note(describeFailure(outcome), known),
     };
   }
-  const interpreted = interpretRecord(outcome.record, parameter ?? firmware);
+  const encoding = parameter ?? firmware;
+  const interpreted = interpretRecord(outcome.record, encoding);
   return {
     ...base,
     rawHex: interpreted.rawHex,
@@ -136,7 +137,7 @@ export function toParameterRow(outcome: VcuReadOutcome): VcuParameterRow {
     value: interpreted.value,
     widthMismatch: interpreted.widthMismatch,
     note: note(
-      widthMismatchNote(interpreted.widthMismatch, outcome.record.length, base.type, firmware !== null),
+      interpreted.widthMismatch && encoding ? describeWidthMismatch(outcome.record.length, encoding) : null,
       known
     ),
   };
@@ -430,7 +431,6 @@ function retableRow(
   // assert a firmware build about either, and the code already strips name and type for it.
   // A width we could not defend is worse than an absent one; `rawHex` and `unsigned` survive.
   const firmware = parameter || contradictedBy ? null : firmwareRowFor(row.micro, CALIBRATION_BANK, row.index);
-  const known = firmware ? describeFirmwareRow(firmware) : null;
   const renamed = {
     ...row,
     name: parameter?.name ?? null,
@@ -468,14 +468,20 @@ function retableRow(
       note: note(row.note, unnameable, `stored record “${row.rawHex}” is not hex, so it could not be re-typed`),
     };
   }
-  const interpreted = interpretRecord(record, parameter ?? firmware);
+  const encoding = parameter ?? firmware;
+  const interpreted = interpretRecord(record, encoding);
+  // ⚠️ `known` is declared HERE and not beside `firmware` above, and the two branches that
+  // return before this point are why: they preserve `row.note`, which already carries this
+  // sentence, so a copy in scope up there is a copy waiting to be appended a second time.
+  // That shipped once; now it cannot reach them.
+  const known = firmware ? describeFirmwareRow(firmware) : null;
   return {
     ...renamed,
     unsigned: interpreted.unsigned,
     value: interpreted.value,
     widthMismatch: interpreted.widthMismatch,
     note: note(
-      widthMismatchNote(interpreted.widthMismatch, record.length, renamed.type, firmware !== null),
+      interpreted.widthMismatch && encoding ? describeWidthMismatch(record.length, encoding) : null,
       unnameable,
       known
     ),
@@ -483,36 +489,19 @@ function retableRow(
 }
 
 /**
- * The one sentence for a reply whose length contradicts the width that was expected.
- *
- * ⚠️ It names WHICH width it contradicts, because the two carry different weight: the name
- * table's TYPE column has 233 live records behind it, so a mismatch against it means the
- * framing is wrong; A8's firmware table has one disassembly behind it, so a mismatch against
- * that is at least as likely to mean the firmware image is not what is flashed. Same
- * withheld value either way, very different thing to go and look at.
- */
-function widthMismatchNote(
-  mismatched: boolean,
-  recordLength: number,
-  expected: ParameterStorageType | null,
-  fromFirmwareTable: boolean
-): string | null {
-  if (!mismatched) {
-    return null;
-  }
-  const source = fromFirmwareTable ? "A8's firmware table" : "the name table";
-  return `record is ${recordLength} byte(s); ${source} says ${expected} — value withheld, raw kept`;
-}
-
-/**
  * Joins whatever a row has to say about itself, or null when it has nothing.
+ *
+ * ⚠️ Exported for ./probe.ts, which had a byte-identical copy. The `" — "` separator is
+ * load-bearing beyond cosmetics — scripts/check-a8-block.ts splits a stored note on it to
+ * isolate the refusal half — so two of these drifting would change what that assertion
+ * sees.
  *
  * ⚠️ Concatenates rather than picking. `note` is the only place a failed row's NRC lives
  * — `describeRow` and the page both print it and nothing else — so an earlier version of
  * this that wrote the "no name available" sentence OVER it lost the reason a parameter
  * had not been read, on exactly the rows a person would be investigating.
  */
-function note(...parts: (string | null)[]): string | null {
+export function note(...parts: (string | null)[]): string | null {
   const said = parts.filter(part => part !== null && part.length > 0);
   return said.length === 0 ? null : said.join(" — ");
 }

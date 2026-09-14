@@ -2,8 +2,15 @@ import type { RawChannel } from "socketcan";
 import type { ArrivalLatency, FrameArrival } from "../can/frame-arrival.ts";
 import { describeFirmwareRow, firmwareRowFor, type A8FirmwareRow } from "./a8-firmware-rows.ts";
 import { createVcuKwpClient, type VcuProbeOutcome } from "./kwp-client.ts";
-import { identifierFor, interpretRecord, type VcuTarget } from "./param-codec.ts";
-import { CALIBRATION_BANK, parameterAtIndex, type VcuParameter } from "./param-table.ts";
+import {
+  describeWidthMismatch,
+  identifierFor,
+  interpretRecord,
+  type RecordEncoding,
+  type VcuTarget,
+} from "./param-codec.ts";
+import { CALIBRATION_BANK, parameterAtIndex } from "./param-table.ts";
+import { note } from "./snapshot.ts";
 
 // Read ONE identifier off ONE target, on demand, from the dashboard. It exists for what the
 // sweep cannot reach — which since #219 is no longer "everything outside params.ecf": the
@@ -168,38 +175,36 @@ export function describeProbe(outcome: VcuProbeOutcome): VcuProbeReading {
       unsigned: null,
       signed: null,
       value: null,
-      note: joinNote(describeFailure(outcome), firmware && describeFirmwareRow(firmware)),
+      note: note(describeFailure(outcome), firmware && describeFirmwareRow(firmware)),
     };
   }
-  const interpreted = interpretRecord(outcome.record, parameter ?? firmware);
+  const encoding = parameter ?? firmware;
+  const interpreted = interpretRecord(outcome.record, encoding);
   return {
     ...base,
     rawHex: interpreted.rawHex,
     unsigned: interpreted.unsigned,
     signed: interpreted.signed,
     value: interpreted.value,
-    note: probeNote(outcome.record.length, parameter, firmware, interpreted.widthMismatch),
+    note: probeNote(outcome.record.length, parameter !== null, encoding, firmware, interpreted.widthMismatch),
   };
 }
 
 function probeNote(
   recordLength: number,
-  parameter: VcuParameter | null,
+  named: boolean,
+  encoding: RecordEncoding | null,
   firmware: A8FirmwareRow | null,
   widthMismatch: boolean
 ): string | null {
   const known = firmware ? describeFirmwareRow(firmware) : null;
-  if (widthMismatch) {
-    // Names WHICH width the reply contradicts. Against the name table it means the framing
-    // is wrong; against A8's firmware table it is at least as likely to mean the firmware
-    // image is not the one flashed. Same withheld value, different thing to go and look at.
-    const source = firmware ? "A8's firmware table" : "the name table";
-    return joinNote(
-      `the reply is ${recordLength} byte(s), which contradicts ${source} — value withheld, raw kept`,
-      known
-    );
+  if (widthMismatch && encoding) {
+    // ⚠️ The SAME sentence ./snapshot.ts puts on a row, out of ./param-codec.ts, because it
+    // has to name which width the reply contradicts and the two sources carry very
+    // different weight. docs/vcu-parameters.md §2.
+    return note(describeWidthMismatch(recordLength, encoding), known);
   }
-  if (parameter) {
+  if (named) {
     return null;
   }
   if (known) {
@@ -208,12 +213,6 @@ function probeNote(
   // Not an error, and said plainly rather than left as a silent null: the whole
   // point of probing is to reach identifiers nothing here describes.
   return "nothing in the name table describes this identifier — the bytes are real, their width and sign are not known";
-}
-
-/** Two facts about one reading, joined rather than one written over the other. ../vcu/snapshot.ts' `note` does the same. */
-function joinNote(...parts: (string | null)[]): string | null {
-  const said = parts.filter(part => part !== null && part.length > 0);
-  return said.length === 0 ? null : said.join(" — ");
 }
 
 function describeFailure(outcome: VcuProbeOutcome): string {

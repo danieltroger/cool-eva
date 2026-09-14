@@ -126,6 +126,20 @@ export function parkedForHold(): boolean {
 }
 
 /**
+ * The one sentence for "the poller would not go quiet", for the one caller that cannot use
+ * `withObdPollerHold` below.
+ *
+ * ⚠️ Exported because a sweep stamps this on 25 rows at once (src/vcu/sweep.ts), so its
+ * subject cannot be the row the hold was refused for — `what` there names an index, and a
+ * row must not carry a sentence about a different row. That is a different SUBJECT, not a
+ * different wording, and the wording is what this module exists to keep single: the
+ * lifetime read and the trouble-code clear had drifted into two before it existed.
+ */
+export function pollerRefusalFor(what: string): string {
+  return `the OBD poller would not go quiet in time, so ${what} could not have the bus to itself — nothing was sent`;
+}
+
+/**
  * Parks the poller, runs `body`, and releases on every path out — including a throw.
  *
  * ⚠️ ONE refusal sentence for one failure. The lifetime read and the trouble-code clear both
@@ -145,10 +159,7 @@ export async function withObdPollerHold<T>(
 ): Promise<{ ok: true; result: T } | { ok: false; reason: string }> {
   const hold = await acquire(what);
   if (!hold) {
-    return {
-      ok: false,
-      reason: `the OBD poller would not go quiet in time, so ${what} could not have the bus to itself — nothing was sent`,
-    };
+    return { ok: false, reason: pollerRefusalFor(what) };
   }
   try {
     return { ok: true, result: await body() };

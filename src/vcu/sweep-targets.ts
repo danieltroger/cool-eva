@@ -16,13 +16,14 @@ export interface SweepTarget {
   micro: VcuMicro;
   index: number;
   /**
-   * ⚠️ True for the 25 rows whose WIDTH is a firmware claim rather than a measurement
-   * (./a8-firmware-rows.ts), which is exactly the set the OBD poller is parked for. It is
-   * not "the record is wide": a park chosen off a width that might be wrong skips the park
-   * on the row that needed it, which is the objection ../vcu/read-runner.ts records against
-   * the cheaper form. docs/vcu-parameters.md §9.
+   * ⚠️ True where the WIDTH is a claim rather than a measurement — today exactly the 25
+   * rows of ./a8-firmware-rows.ts, and that is the set the OBD poller is parked for.
+   *
+   * Named for the property every consumer branches on rather than for where the row came
+   * from: a second unverified source would leave "from the firmware table" false and the
+   * park still right. Why this rather than "the record is wide": docs/vcu-parameters.md §9.
    */
-  fromFirmwareTable: boolean;
+  widthUnverified: boolean;
 }
 
 /**
@@ -40,12 +41,12 @@ export function sweepTargets(): SweepTarget[] {
   const fromTable = parameterTable().map(parameter => ({
     micro: parameter.micro,
     index: parameter.index,
-    fromFirmwareTable: false,
+    widthUnverified: false,
   }));
   const fromFirmware = a8FirmwareRows().map(row => ({
     micro: row.micro,
     index: row.index,
-    fromFirmwareTable: true,
+    widthUnverified: true,
   }));
   return [...fromTable, ...fromFirmware].sort(
     (left, right) => MICROS.indexOf(left.micro) - MICROS.indexOf(right.micro) || left.index - right.index

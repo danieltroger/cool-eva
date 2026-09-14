@@ -390,6 +390,36 @@ export interface RecordEncoding {
   type: ParameterStorageType;
   /** Null when the width is established and the sign is not — see ./a8-firmware-rows.ts. */
   signed: boolean | null;
+  /**
+   * What claims this width, named the way a message to a person should name it.
+   *
+   * ⚠️ Optional so `VcuParameter` satisfies this unchanged, and it defaults to the name
+   * table because that is where every width came from until #219. It lives HERE rather
+   * than being passed to each message builder because the source is a property of the
+   * width, not of the sentence — a third source becomes a data change rather than an
+   * edit to every place that has to say which one disagreed.
+   */
+  describedBy?: string;
+}
+
+/** What a width is called when nothing says otherwise: `params.ecf` and the 29 tables built from it. */
+export const NAME_TABLE = "the name table";
+
+/**
+ * The one sentence for a reply whose length contradicts the width that was expected.
+ *
+ * ⚠️ It names WHICH width it contradicts, and that is the whole reason it is shared rather
+ * than written at each surface: the name table's TYPE column has 233 live records behind
+ * it, so a mismatch against it means the framing is wrong; A8's firmware table has one
+ * disassembly behind it, so a mismatch against that is at least as likely to mean the
+ * firmware image is not what is flashed. Same withheld value, very different thing to go
+ * and look at. docs/vcu-parameters.md §2.
+ */
+export function describeWidthMismatch(recordLength: number, encoding: RecordEncoding): string {
+  return (
+    `record is ${recordLength} byte(s); ${encoding.describedBy ?? NAME_TABLE} says ${encoding.type} — ` +
+    "value withheld, raw kept"
+  );
 }
 
 /**

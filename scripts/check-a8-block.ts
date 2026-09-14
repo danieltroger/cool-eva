@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -8,7 +8,15 @@ import {
   type A8FirmwareRow,
 } from "../src/vcu/a8-firmware-rows.ts";
 import { interpretRecord } from "../src/vcu/param-codec.ts";
-import { KNOWN_TABLE_TYPES, parameterAtIndex, parameterTable, parameterTableFor } from "../src/vcu/param-table.ts";
+import {
+  KNOWN_TABLE_TYPES,
+  parameterAtIndex,
+  parameterTable,
+  parameterTableFor,
+  recordLengthFor,
+  type VcuMicro,
+} from "../src/vcu/param-table.ts";
+import { openPartialSweepLog } from "../src/vcu/snapshot-store.ts";
 import { SERVICE_STAMP_IDENTIFIERS } from "../src/vcu/service-actions.ts";
 import { describeProbe } from "../src/vcu/probe.ts";
 import { retableSnapshot, reportTableType, toParameterRow, type VcuParameterRow } from "../src/vcu/snapshot.ts";
@@ -79,18 +87,16 @@ expect(
 );
 for (const row of rows) {
   const expected = EXPECTED_WIDTHS.get(row.index);
-  if (row.type !== expected) {
-    failures.push(`index ${row.index} should be typed ${expected}, the module says ${row.type}`);
-  }
-  if (row.identifier !== 0x1000 + row.index) {
-    failures.push(`index ${row.index} should carry identifier 0x${(0x1000 + row.index).toString(16)}`);
-  }
-  if (row.micro !== "A8") {
-    failures.push(`index ${row.index} should be an A8 row; A9 serves none of these`);
-  }
-  if (row.signed !== null) {
-    failures.push(`index ${row.index} must carry no sign — the firmware entry types the width and nothing else`);
-  }
+  expect(row.type === expected, `index ${row.index} should be typed ${expected}, the module says ${row.type}`);
+  expect(
+    row.identifier === 0x1000 + row.index,
+    `index ${row.index} should carry identifier 0x${(0x1000 + row.index).toString(16)}`
+  );
+  expect(row.micro === "A8", `index ${row.index} should be an A8 row; A9 serves none of these`);
+  expect(
+    row.signed === null,
+    `index ${row.index} must carry no sign — the firmware entry types the width and nothing else`
+  );
 }
 expect(
   rows.filter(row => row.type === "DWORD").length === 3,
@@ -215,17 +221,18 @@ expect(
 // /vcu-params re-tables on EVERY serve, so an unhandled block row would lose its width on
 // the first page load. Mutation: drop the firmware fallback in retableRow and the first
 // of these goes red; drop the `contradictedBy` guard and the second does.
+/** One snapshot through the re-table both `writeSnapshot` and every /vcu-params serve perform. */
+function served(rows: VcuParameterRow[]): VcuParameterRow[] {
+  const snapshot = { readAt: 0, complete: true, micros: ["A8", "A9"] as VcuMicro[], rows };
+  return retableSnapshot(snapshot, reportTableType(snapshot)).rows;
+}
+
 const stamped = (tableType: string): VcuParameterRow[] => [
   toParameterRow(readOutcome(277, parseHexBytes(tableType), "A8")),
   toParameterRow(readOutcome(276, parseHexBytes(tableType), "A9")),
   blockRow,
 ];
-const carried = { readAt: 0, complete: true, micros: ["A8", "A9"] as const, rows: stamped("40 17") };
-const retabled = retableSnapshot(
-  { ...carried, micros: ["A8", "A9"] },
-  reportTableType({ ...carried, micros: ["A8", "A9"] })
-);
-const retabledBlock = retabled.rows.find(row => row.index === 1000);
+const retabledBlock = served([...stamped("40 17"), blockRow]).find(row => row.index === 1000);
 expect(retabledBlock?.type === "WORD", "a block row keeps its firmware width across a re-table");
 expect(
   retabledBlock?.note?.includes("last-service date") === true,
@@ -242,15 +249,9 @@ const silentBlockRow = toParameterRow({
   status: "no-response",
   flowControlLatency: null,
 });
-const retabledTwice = [silentBlockRow, ...stamped("40 17")].map(row => row);
-const servedTwice = retableSnapshot(
-  retableSnapshot(
-    { readAt: 0, complete: true, micros: ["A8", "A9"], rows: retabledTwice },
-    reportTableType({ readAt: 0, complete: true, micros: ["A8", "A9"], rows: retabledTwice })
-  ),
-  reportTableType({ readAt: 0, complete: true, micros: ["A8", "A9"], rows: retabledTwice })
-);
-const servedNote = servedTwice.rows.find(row => row.index === 613)?.note ?? "";
+// Twice, because that is what the real path does: once on the way to disk and once per
+// /vcu-params serve.
+const servedNote = served(served([silentBlockRow, ...stamped("40 17")])).find(row => row.index === 613)?.note ?? "";
 expect(
   occurrences(servedNote, "A8's own firmware table types index 613") === 1,
   `a silent block row says what it is ONCE however often it is re-tabled, said ${occurrences(servedNote, "A8's own firmware table types index 613")} times`
@@ -259,12 +260,7 @@ expect(
   servedNote.includes("no reply in an open session") && servedNote.includes("nothing traced"),
   "…and still carries BOTH the reason it did not answer and what is known about it"
 );
-const unknownTable = { readAt: 0, complete: true, micros: ["A8", "A9"] as const, rows: stamped("FF FF") };
-const contradicted = retableSnapshot(
-  { ...unknownTable, micros: ["A8", "A9"] },
-  reportTableType({ ...unknownTable, micros: ["A8", "A9"] })
-);
-const contradictedBlock = contradicted.rows.find(row => row.index === 1000);
+const contradictedBlock = served([...stamped("FF FF"), blockRow]).find(row => row.index === 1000);
 expect(
   contradictedBlock?.type === null,
   "a micro naming a table this software does not carry loses the firmware width too — we cannot assert its build either"
@@ -276,9 +272,10 @@ expect(contradictedBlock?.rawHex === "00 00", "…while the bike's own bytes sur
 // modules naming the same cells must not drift; this is what stops them.
 for (const [half, identity] of Object.entries(SERVICE_STAMP_IDENTIFIERS)) {
   const row = firmwareRowFor("A8", 1, identity.index);
-  if (!row || row.identifier !== identity.identifier) {
-    failures.push(`the block disagrees with SERVICE_STAMP_IDENTIFIERS about ${half} (index ${identity.index})`);
-  }
+  expect(
+    row?.identifier === identity.identifier,
+    `the block disagrees with SERVICE_STAMP_IDENTIFIERS about ${half} (index ${identity.index})`
+  );
 }
 
 // ── 7. Replay of the five live probes, 2026-09-14 ───────────────────────────
@@ -326,11 +323,11 @@ expect(
 const targets = sweepTargets();
 expect(targets.length === 302, `a sweep should ask about 302 identifiers (277 + 25), its list holds ${targets.length}`);
 expect(
-  targets.filter(target => target.fromFirmwareTable).length === 25,
+  targets.filter(target => target.widthUnverified).length === 25,
   "exactly the 25 firmware rows are marked as such — that flag is what decides the park"
 );
 expect(
-  targets.filter(target => target.fromFirmwareTable).every(target => blockIndices.has(target.index)),
+  targets.filter(target => target.widthUnverified).every(target => blockIndices.has(target.index)),
   "…and every marked target is one of the block's"
 );
 expect(
@@ -417,6 +414,37 @@ async function checkTheSweepParks(): Promise<void> {
       !refused.sentRequests.some(request => namesABlockIndex(request)),
       `nothing may reach the bus for a block row when the poller would not park; sent ${refused.sentRequests.join(" | ")}`
     );
+    // ⚠️ Strictly stronger, and it is what proves the resume file was understood: the 277
+    // are on record as read, the 25 were never asked, so this run must put NO parameter
+    // read on the bus at all. Without it a prefill that silently did nothing would leave
+    // every other assertion in this block green while the sweep read all 302.
+    expect(
+      noReadsReached(refused.sentRequests),
+      `a resumed sweep whose park was refused should ask for nothing; sent ${refused.sentRequests.join(" | ")}`
+    );
+
+    // ── the gate closing MID-SWEEP, which is the auto-exit itself ───────────
+    // ⚠️ Pre-existing behaviour with no assertion anywhere until now: I disabled
+    // `sweep.ts`'s per-parameter `mayContinue` and ran the whole suite — **all 56 checks
+    // stayed green** while a sweep would have carried on transmitting to a motorcycle that
+    // had started moving. It is the half of the auto-exit that runs between the loop and
+    // the socket, and this harness is the only thing in scripts/ that drives a real sweep,
+    // so it is closed here rather than left for the next person to rediscover.
+    // ⚠️ NOT prefilled, deliberately. With only the block left to read, every row goes
+    // through the post-park `mayContinue` and that one alone would satisfy this — which it
+    // did, hiding the loop's check from the mutation. A full sweep reads named rows first,
+    // where the loop's check is the only thing between the gate and the socket.
+    await clearResumeFile(directory);
+    const movedOff = await runSweepAgainstDouble(directory, { hold: "granted", gateSafeForChecks: 3 });
+    expect(
+      movedOff.stoppedBecause?.includes("the bike started moving") === true,
+      `a gate that closes mid-sweep should stop it, said ${JSON.stringify(movedOff.stoppedBecause)}`
+    );
+    const readsAfterTheGateShut = movedOff.sentRequests.filter(request => request.split(" ")[1] === "22").length;
+    expect(
+      readsAfterTheGateShut <= 3,
+      `a sweep must not keep reading once the gate shuts; it put ${readsAfterTheGateShut} reads on the bus`
+    );
 
     // ── the gate closing during the park ────────────────────────────────────
     // Mutation: drop the re-check inside `readWithPollerParked` and this goes red — the
@@ -424,7 +452,7 @@ async function checkTheSweepParks(): Promise<void> {
     await prefillResumeFile(directory);
     const closed = await runSweepAgainstDouble(directory, { hold: "granted", closeGateOnPark: true });
     expect(
-      !closed.sentRequests.some(request => namesABlockIndex(request)),
+      !closed.sentRequests.some(request => namesABlockIndex(request)) && noReadsReached(closed.sentRequests),
       `a gate that closes while the poller parks must stop the read; sent ${closed.sentRequests.join(" | ")}`
     );
   } finally {
@@ -443,11 +471,13 @@ interface SweepRun {
   sentFrames: string[];
   /** What the handle promised the page, which is what `read-runner.ts` now renders. */
   expected: number;
+  /** Null when the sweep asked about everything on its list. */
+  stoppedBecause: string | null;
 }
 
 async function runSweepAgainstDouble(
   directory: string,
-  behaviour: { hold: "granted" | "refused"; closeGateOnPark?: boolean }
+  behaviour: { hold: "granted" | "refused"; closeGateOnPark?: boolean; gateSafeForChecks?: number }
 ): Promise<SweepRun> {
   const bus = simulateVcuMicros([
     { target: "A9", records: recordsFor("A9") },
@@ -455,10 +485,20 @@ async function runSweepAgainstDouble(
   ]);
   const holdReasons: string[] = [];
   let safe = true;
+  let gateChecks = 0;
   const sweep = startParameterSweep({
     channel: bus.channel,
     directory,
-    checkGate: () => ({ safe, blockers: safe ? [] : ["the bike started moving"], checks: [], chargingEvidence: null }),
+    checkGate: () => {
+      gateChecks += 1;
+      const stillSafe = safe && gateChecks <= (behaviour.gateSafeForChecks ?? Number.POSITIVE_INFINITY);
+      return {
+        safe: stillSafe,
+        blockers: stillSafe ? [] : ["the bike started moving"],
+        checks: [],
+        chargingEvidence: null,
+      };
+    },
     acquirePollerHold: async (reason: string): Promise<ObdPollerHold | null> => {
       holdReasons.push(reason);
       if (behaviour.closeGateOnPark) {
@@ -477,6 +517,7 @@ async function runSweepAgainstDouble(
     sentRequests: bus.sentRequests,
     sentFrames: bus.sentFrames,
     expected: sweep.expected,
+    stoppedBecause: result.stoppedBecause,
   };
 }
 
@@ -485,7 +526,7 @@ function recordsFor(micro: "A8" | "A9"): Map<number, Uint8Array> {
   const records = new Map<number, Uint8Array>();
   for (const parameter of parameterTable()) {
     if (parameter.micro === micro) {
-      records.set(parameter.index, new Uint8Array(parameter.type === "WORD" ? 2 : 1));
+      records.set(parameter.index, new Uint8Array(recordLengthFor(parameter.type)));
     }
   }
   // 276/277 answer 0x4017 = 16407, this bike's own table, so the sweep's closing report
@@ -496,45 +537,50 @@ function recordsFor(micro: "A8" | "A9"): Map<number, Uint8Array> {
     for (const row of a8FirmwareRows()) {
       // 170384 = 17038.4 km, the shape this bike's odometer really has — so a wrong
       // assembly shows up as a wrong number rather than as an arbitrary one.
-      records.set(row.index, row.index === 278 ? parseHexBytes("00 02 99 90") : new Uint8Array(widthOf(row)));
+      records.set(
+        row.index,
+        row.index === 278 ? parseHexBytes("00 02 99 90") : new Uint8Array(recordLengthFor(row.type))
+      );
     }
   }
   return records;
 }
 
-function widthOf(row: A8FirmwareRow): number {
-  return row.type === "DWORD" ? 4 : row.type === "WORD" ? 2 : 1;
-}
-
 /**
  * Marks the 277 named parameters as already read, so the next sweep asks only about the
- * block. It is the sweep's own resume mechanism, used for what it is: 25 reads instead of
- * 302 for the two runs that are about the park rather than about the list.
+ * block — 25 reads instead of 302 for the two runs that are about the park rather than
+ * about the list.
+ *
+ * ⚠️ Written through `openPartialSweepLog` and `toParameterRow` rather than as a JSON
+ * literal, and that is not tidiness: the filename and the line shape belong to
+ * ../src/vcu/snapshot-store.ts, and a hand-written copy that drifted from either would
+ * leave the sweep reading all 302 while both assertions below STAYED GREEN — the refusal
+ * latch fires on the first block row either way, and 25 block rows are recorded either
+ * way. `noReadsReached` is what actually proves the resume took.
  */
 async function prefillResumeFile(directory: string): Promise<void> {
-  const lines = parameterTable().map(parameter => {
-    // 276/277 carry 0x4017, this bike's own table: a resumed sweep re-reports the table
-    // type from its rows, and zeroes there make it shout about a table nothing carries.
-    const namesTheTable = parameter.index === 276 || parameter.index === 277;
-    return JSON.stringify({
-      at: 0,
-      index: parameter.index,
-      identifier: parameter.identifier,
-      micro: parameter.micro,
-      name: parameter.name,
-      section: parameter.section,
-      type: parameter.type,
-      signed: parameter.signed,
-      status: "read",
-      rawHex: namesTheTable ? "40 17" : parameter.type === "WORD" ? "00 00" : "00",
-      unsigned: namesTheTable ? 0x4017 : 0,
-      value: namesTheTable ? 0x4017 : 0,
-      widthMismatch: false,
-      otherBikeValue: null,
-      note: null,
-    });
-  });
-  await writeFile(join(directory, "sweep.partial.jsonl"), `${lines.join("\n")}\n`);
+  const partial = await openPartialSweepLog(directory);
+  try {
+    for (const parameter of parameterTable()) {
+      // 276/277 carry 0x4017, this bike's own table: a resumed sweep re-reports the table
+      // type from its rows, and zeroes there make it shout about a table nothing carries.
+      const namesTheTable = parameter.index === 276 || parameter.index === 277;
+      const record = namesTheTable ? parseHexBytes("40 17") : new Uint8Array(recordLengthFor(parameter.type));
+      await partial.append(toParameterRow(readOutcome(parameter.index, record, parameter.micro)));
+    }
+  } finally {
+    await partial.close();
+  }
+}
+
+/** Throws the resume file away, so the next run is a full sweep rather than a resumed one. */
+async function clearResumeFile(directory: string): Promise<void> {
+  await rm(join(directory, "sweep.partial.jsonl"), { force: true });
+}
+
+/** True when no parameter read reached the bus at all — which is what a resumed-then-refused sweep must do. */
+function noReadsReached(sentRequests: string[]): boolean {
+  return !sentRequests.some(request => request.split(" ")[1] === "22");
 }
 
 /** `A8 22 13 E8` → true for any of the block's identifiers. */
@@ -558,18 +604,23 @@ async function runQuietly<T>(body: () => Promise<T>): Promise<T> {
   const captured: unknown[][] = [];
   const realLog = console.log;
   const realWarn = console.warn;
+  const failuresBefore = failures.length;
   console.log = (...args: unknown[]) => captured.push(args);
   console.warn = (...args: unknown[]) => captured.push(args);
   try {
     return await body();
-  } catch (err) {
-    for (const line of captured) {
-      realLog(...line);
-    }
-    throw err;
   } finally {
     console.log = realLog;
     console.warn = realWarn;
+    // ⚠️ Replayed when a failure was RECORDED as well as when one was thrown. This file
+    // reports by pushing to `failures` and exiting non-zero — it never throws — so
+    // replaying only on a throw would discard the 300 sweep lines in exactly the run whose
+    // failure they explain. Nothing is swallowed either way; a green run is just quiet.
+    if (failures.length > failuresBefore) {
+      for (const line of captured) {
+        realLog(...line);
+      }
+    }
   }
 }
 

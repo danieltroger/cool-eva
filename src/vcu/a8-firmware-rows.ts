@@ -1,3 +1,4 @@
+import { identifierForIndex } from "./param-codec.ts";
 import { CALIBRATION_BANK, type ParameterStorageType, type VcuMicro } from "./param-table.ts";
 
 // The 25 bank-1 parameters A8 serves that `params.ecf` does not describe — indices 278,
@@ -33,12 +34,12 @@ export function firmwareRowFor(micro: VcuMicro, bank: number, index: number): A8
   if (micro !== FIRMWARE_TABLE_MICRO || bank !== CALIBRATION_BANK) {
     return null;
   }
-  return rowsByIndex().get(index) ?? null;
+  return ROWS_BY_INDEX.get(index) ?? null;
 }
 
 /** Every row, ascending by index. */
 export function a8FirmwareRows(): readonly A8FirmwareRow[] {
-  return builtRows();
+  return ROWS;
 }
 
 /**
@@ -61,6 +62,8 @@ export interface A8FirmwareRow {
   micro: typeof FIRMWARE_TABLE_MICRO;
   /** The storage type at +0x04 of the firmware table entry. A claim, not a measurement — see the header. */
   type: ParameterStorageType;
+  /** Names this table in any message about a width, so a mismatch says which claim it contradicts. */
+  describedBy: typeof FIRMWARE_TABLE_NAME;
   /**
    * ⚠️ Always null, and that is the finding rather than a gap. The firmware entry types
    * the WIDTH; nothing in it says whether the record is two's complement. `interpretRecord`
@@ -71,6 +74,9 @@ export interface A8FirmwareRow {
   /** What is known beyond the row's existence and its width, or null when that is all there is. */
   known: string | null;
 }
+
+/** How a message names this width's source, next to `NAME_TABLE` in ./param-codec.ts. */
+const FIRMWARE_TABLE_NAME = "A8's firmware table";
 
 /**
  * The micro whose firmware table this is. A9 serves none of these.
@@ -162,22 +168,21 @@ function serviceStampKnown(half: string): string {
   );
 }
 
-let rows: A8FirmwareRow[] | null = null;
-let byIndex: Map<number, A8FirmwareRow> | null = null;
+/**
+ * ⚠️ Plain consts rather than lazy builders: 25 rows is not worth two mutable module
+ * globals and a `??=` each. Function declarations hoist, so the main function still reads
+ * first, and nothing calls it at import time. `identifierForIndex` rather than a shift —
+ * it range-checks the 12 bits instead of truncating into them.
+ */
+const ROWS: readonly A8FirmwareRow[] = FIRMWARE_TABLE.map(entry => ({
+  index: entry.index,
+  identifier: identifierForIndex(entry.index),
+  micro: FIRMWARE_TABLE_MICRO,
+  type: entry.type,
+  describedBy: FIRMWARE_TABLE_NAME,
+  signed: null,
+  known: entry.known,
+}));
 
-function builtRows(): A8FirmwareRow[] {
-  rows ??= FIRMWARE_TABLE.map(entry => ({
-    index: entry.index,
-    identifier: (CALIBRATION_BANK << 12) | entry.index,
-    micro: FIRMWARE_TABLE_MICRO,
-    type: entry.type,
-    signed: null,
-    known: entry.known,
-  })).sort((left, right) => left.index - right.index);
-  return rows;
-}
-
-function rowsByIndex(): Map<number, A8FirmwareRow> {
-  byIndex ??= new Map(builtRows().map(row => [row.index, row]));
-  return byIndex;
-}
+/** Ascending because FIRMWARE_TABLE is written ascending — scripts/check-a8-block.ts asserts exactly that. */
+const ROWS_BY_INDEX: ReadonlyMap<number, A8FirmwareRow> = new Map(ROWS.map(row => [row.index, row]));

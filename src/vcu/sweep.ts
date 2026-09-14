@@ -1,6 +1,6 @@
 import type { RawChannel } from "socketcan";
 import type { FrameArrival } from "../can/frame-arrival.ts";
-import { withObdPollerHold, type ObdPollerHold } from "../can/obd-hold.ts";
+import { pollerRefusalFor, withObdPollerHold, type ObdPollerHold } from "../can/obd-hold.ts";
 import { createVcuKwpClient, type VcuReadOutcome } from "./kwp-client.ts";
 import { identifierForIndex } from "./param-codec.ts";
 import { activeParameterTable, contentTwinsOf, describeTableType } from "./param-table.ts";
@@ -332,7 +332,7 @@ async function readOneTarget(
   state: SweepState,
   target: SweepTarget
 ): Promise<VcuReadOutcome> {
-  if (!target.fromFirmwareTable) {
+  if (!target.widthUnverified) {
     return state.client.readParameter(target.micro, target.index);
   }
   if (state.pollerRefusal !== null) {
@@ -372,18 +372,21 @@ async function readWithPollerParked(
   target: SweepTarget
 ): Promise<VcuReadOutcome> {
   if (!mayContinue(options, state)) {
-    return notSent(target, state.stoppedBecause ?? "the sweep stopped while the poller was parking");
+    // ⚠️ What matters here is the `return` — nothing is transmitted. The ROW is thrown
+    // away: `mayContinue` sets `stoppedBecause` whenever it refuses, and the loop discards
+    // every outcome once that is set, because our own exit must never be filed as the bike
+    // failing to answer. The `??` is for the type checker, which cannot see the first half.
+    return notSent(target, state.stoppedBecause ?? POLLER_REFUSAL);
   }
   return state.client.readParameter(target.micro, target.index);
 }
 
 /**
- * What every block row says when the poller would not go quiet. True of all 25, which is
- * the point — it is stamped on the ones that were never even attempted.
+ * What every block row says when the poller would not go quiet — the same sentence
+ * `withObdPollerHold` returns, with a subject that is true of all 25 rather than of the
+ * one the hold was refused for. Built by ../can/obd-hold.ts so there is one wording.
  */
-const POLLER_REFUSAL =
-  "the OBD poller would not go quiet in time, so the A8 rows whose width comes from the firmware table could " +
-  "not have the bus to themselves — nothing was sent for any of them";
+const POLLER_REFUSAL = pollerRefusalFor("the A8 rows whose width comes from the firmware table");
 
 /** A row nothing was asked for. OUR doing, never the bike's — the distinction ./kwp-client.ts draws. */
 function notSent(target: SweepTarget, reason: string): VcuReadOutcome {
