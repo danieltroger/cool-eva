@@ -370,7 +370,7 @@ function ParameterForm() {
       return (
         `These ${count} are the only parameters this can write. ` +
         "Four names appear twice in the bike's table and so have no unambiguous address, which is why eight rows are missing. " +
-        "All 277 stay READABLE — the full table is behind “Open the full parameter table”."
+        "All 277 stay READABLE, and a sweep reads 25 more the bike's table does not name — the full table is behind “Open the full parameter table”."
       );
     }),
     TargetNote(),
@@ -1294,7 +1294,7 @@ function ServiceActions() {
 export const READ_STAMP_NOTES = {
   confirm: "ask the A8 for the service stamp",
   does:
-    "Reads four identifiers on the A8 that no sweep covers. Read-only. The date and " +
+    "Reads four identifiers on the A8 in one go, decoded. Read-only. The date and " +
     "odometer AT THE LAST SERVICE — not the current mileage, which is already live " +
     "as odometer_can_km and needs no read. Read for the first time on 2026-09-08: all " +
     "four answered zero, so no service point has ever been set on this bike " +

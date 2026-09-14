@@ -251,18 +251,14 @@ function readGate(): ServiceGateVerdict {
  * lockfile to go stale on a Pi that loses power.
  *
  * ⚠️ A SWEEP DOES NOT PARK THE OBD POLLER FOR THE 277 `params.ecf` DESCRIBES, where a probe
- * and a lifetime read park for everything. Two reasons: a sweep can run for a minute and
- * `MAX_HOLD_MS` in ../can/obd-hold.ts caps a hold at 15 s, so parking it across one is not
- * on offer; and none of those 277 indices can produce a multi-frame reply at all — every
- * record there is 1 or 2 bytes, checked against 233 live records with zero mismatches, so
+ * and a lifetime read park for everything: a sweep can run for a minute against a 15 s
+ * `MAX_HOLD_MS`, and every record in those 277 is 1 or 2 bytes — measured, not claimed — so
  * no transfer window ever opens for the poller to land in.
  *
- * ⚠️ **It DOES park, per read, for the 25 rows of #219's A8 block** (../vcu/sweep-targets.ts).
- * Not because three of them are 4-byte records — because all 25 have their width from a
- * firmware image nobody has matched against what is flashed, and a park chosen off a width
- * that might be wrong skips the park on the row that needed it. That is the same objection
- * `runProbe` records below against the cheaper form. One read is bounded well inside the
- * 15 s cap; a refused hold ends the block rather than costing 25 six-second waits.
+ * ⚠️ **It DOES park, per read, for the 25 rows of #219's A8 block** (../vcu/sweep-targets.ts),
+ * whose widths come from a firmware image nobody has matched against what is flashed — the
+ * objection `runProbe` records below against parking off a width. Why all 25 and not the
+ * three wide ones, and what a refused park does: docs/vcu-parameters.md §9.
  */
 function start(context: RunnerContext): { started: boolean; reason: string | null } {
   const ready = checkPreconditions(context, "a parameter read");

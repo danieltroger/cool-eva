@@ -124,7 +124,7 @@ const FIRMWARE_TABLE: readonly { index: number; type: ParameterStorageType; know
   {
     index: 627,
     type: "BYTE",
-    known: "the only BYTE in the block, so a 4-byte reply is what confirms the width column",
+    known: "the only BYTE in the block, so a 4-byte REPLY — three of framing plus one of record — confirms the width",
   },
   { index: 1000, type: "WORD", known: serviceStampKnown("the last-service date's low word") },
   { index: 1001, type: "WORD", known: serviceStampKnown("the last-service date's high word") },

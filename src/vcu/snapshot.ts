@@ -442,7 +442,14 @@ function retableRow(
   if (row.rawHex === null) {
     // A row that never carried bytes: the NRC, the timeout or the refusal in `note` is
     // the only thing it has, and it is not this function's to overwrite. Both facts fit.
-    return { ...renamed, note: note(row.note, unnameable, known) };
+    //
+    // ⚠️ `known` is deliberately NOT added on this branch, unlike on the read path below,
+    // where the note is rebuilt from scratch. Here `row.note` is PRESERVED and
+    // toParameterRow already folded the firmware sentence into it — so adding it again
+    // appends a copy on every re-table, which is once on the way to disk and once per
+    // /vcu-params serve. A silent block row rendered that ~140-character sentence three
+    // times.
+    return { ...renamed, note: note(row.note, unnameable) };
   }
   const record = bytesFromHex(row.rawHex);
   if (record === null) {
@@ -457,7 +464,8 @@ function retableRow(
       unsigned: null,
       value: null,
       widthMismatch: false,
-      note: note(row.note, unnameable, known, `stored record “${row.rawHex}” is not hex, so it could not be re-typed`),
+      // `known` omitted for the same reason as the branch above: it is already in `row.note`.
+      note: note(row.note, unnameable, `stored record “${row.rawHex}” is not hex, so it could not be re-typed`),
     };
   }
   const interpreted = interpretRecord(record, parameter ?? firmware);

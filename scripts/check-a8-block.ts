@@ -231,6 +231,34 @@ expect(
   retabledBlock?.note?.includes("last-service date") === true,
   "…and keeps what is known about it, which is the only place a flat row can carry it"
 );
+// ⚠️ A COUNT, not an `includes`. Re-tabling happens on the way to disk and again on every
+// /vcu-params serve, so a note that gains a copy each time is invisible to `includes` and
+// renders three deep in the value cell of a row that never answered. Mutation: put `known`
+// back into retableRow's two preserved-note branches and this goes red at 2.
+const silentBlockRow = toParameterRow({
+  micro: "A8",
+  index: 613,
+  identifier: 0x1265,
+  status: "no-response",
+  flowControlLatency: null,
+});
+const retabledTwice = [silentBlockRow, ...stamped("40 17")].map(row => row);
+const servedTwice = retableSnapshot(
+  retableSnapshot(
+    { readAt: 0, complete: true, micros: ["A8", "A9"], rows: retabledTwice },
+    reportTableType({ readAt: 0, complete: true, micros: ["A8", "A9"], rows: retabledTwice })
+  ),
+  reportTableType({ readAt: 0, complete: true, micros: ["A8", "A9"], rows: retabledTwice })
+);
+const servedNote = servedTwice.rows.find(row => row.index === 613)?.note ?? "";
+expect(
+  occurrences(servedNote, "A8's own firmware table types index 613") === 1,
+  `a silent block row says what it is ONCE however often it is re-tabled, said ${occurrences(servedNote, "A8's own firmware table types index 613")} times`
+);
+expect(
+  servedNote.includes("no reply in an open session") && servedNote.includes("nothing traced"),
+  "…and still carries BOTH the reason it did not answer and what is known about it"
+);
 const unknownTable = { readAt: 0, complete: true, micros: ["A8", "A9"] as const, rows: stamped("FF FF") };
 const contradicted = retableSnapshot(
   { ...unknownTable, micros: ["A8", "A9"] },
@@ -343,6 +371,14 @@ async function checkTheSweepParks(): Promise<void> {
       "…which means a flow control really went out for it"
     );
     expect(full.rows.length === 302, `a full sweep should record 302 rows, recorded ${full.rows.length}`);
+    // ⚠️ The HANDLE's number, not the target list's. `read-runner.ts` renders this one as
+    // "n of N read" and no longer computes its own, so a regression here says "302 of 277"
+    // on the service sheet and nothing else in the suite notices. Mutation: revert
+    // sweep.ts's `expected` to `parameterTable().length` and this goes red at 277.
+    expect(
+      full.expected === 302,
+      `the sweep handle should promise 302 — what the page renders — it promised ${full.expected}`
+    );
 
     // ── a refused park ──────────────────────────────────────────────────────
     // ⚠️ ONE refusal, not 25. `holdObdPoller` waits up to 6 s before giving up, so asking
@@ -362,6 +398,20 @@ async function checkTheSweepParks(): Promise<void> {
     expect(
       blockRows.every(row => row.note?.includes("would not go quiet") === true),
       "…each carrying the poller's own refusal sentence, not a claim about the bike"
+    );
+    // ⚠️ And a sentence that is true of THIS row. The reason the hold reported names the
+    // row it was refused for — always the first of the block — and stamping that verbatim
+    // on the other 24 made index 1007 say the poller would not park for a read of 278.
+    // Mutation: store `held.reason` instead of the generic sentence and this goes red.
+    // The refusal is the half of the note before the firmware sentence, which legitimately
+    // names indices (279's says "see 278"). It must be the SAME sentence on all 25 and must
+    // name no index at all.
+    const refusals = new Set(blockRows.map(row => row.note?.split(" — not in params.ecf")[0] ?? ""));
+    expect(refusals.size === 1, `all 25 refusals should read alike; got ${refusals.size} different sentences`);
+    const refusal = [...refusals][0] ?? "";
+    expect(
+      !/index \d+/.test(refusal),
+      `a refusal is stamped on 25 rows, so it must name no index at all; got ${JSON.stringify(refusal)}`
     );
     expect(
       !refused.sentRequests.some(request => namesABlockIndex(request)),
@@ -391,6 +441,8 @@ interface SweepRun {
   holdReasons: string[];
   sentRequests: string[];
   sentFrames: string[];
+  /** What the handle promised the page, which is what `read-runner.ts` now renders. */
+  expected: number;
 }
 
 async function runSweepAgainstDouble(
@@ -419,7 +471,13 @@ async function runSweepAgainstDouble(
   });
   bus.channel.addListener("onMessage", message => sweep.handleFrame(message.id, message.data));
   const result = await runQuietly(() => sweep.finished);
-  return { rows: result.snapshot.rows, holdReasons, sentRequests: bus.sentRequests, sentFrames: bus.sentFrames };
+  return {
+    rows: result.snapshot.rows,
+    holdReasons,
+    sentRequests: bus.sentRequests,
+    sentFrames: bus.sentFrames,
+    expected: sweep.expected,
+  };
 }
 
 /** Every identifier the sweep will ask this micro about, answered at the width it expects. */
@@ -588,6 +646,11 @@ function balancedObjectAt(text: string, from: number): string | null {
     }
   }
   return null;
+}
+
+/** How many times a sentence appears. `includes` is green at one copy or at five. */
+function occurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
 }
 
 function expect(condition: boolean, message: string): void {

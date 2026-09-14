@@ -6,9 +6,10 @@ import { identifierFor, interpretRecord, type VcuTarget } from "./param-codec.ts
 import { CALIBRATION_BANK, parameterAtIndex, type VcuParameter } from "./param-table.ts";
 
 // Read ONE identifier off ONE target, on demand, from the dashboard. It exists for what the
-// 277-parameter sweep cannot reach: the identifier is `(bank << 12) | index`, and **bank 2
-// is live data** — the running values, not the stored settings — which nothing here has
-// ever read.
+// sweep cannot reach — which since #219 is no longer "everything outside params.ecf": the
+// sweep now reads 302 identifiers, the 25 A8 firmware rows included. What is still only
+// reachable here is the identifier space itself, `(bank << 12) | index`, and **bank 2 is
+// live data** — the running values, not the stored settings.
 //
 // ⚠️ WHAT THIS WIDENS, PRECISELY. Before it, no HTTP input named a service, an identifier
 // or a value; now an identifier and a target are caller-supplied. The request union in

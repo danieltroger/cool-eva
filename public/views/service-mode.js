@@ -18,13 +18,15 @@ const { a, button, div, h3 } = van.tags;
 // because a button disabled with no reason given is indistinguishable from one that is
 // broken. The server is still the authority: this page only reports what the Pi said.
 //
-// Nothing here blocks. A sweep is ~277 reads over a link that drops as routine, so the
+// Nothing here blocks. A sweep is ~300 reads over a link that drops as routine, so the
 // button starts it and returns; progress comes from polling /vcu-read once a second
 // while the sheet is open AND there is something to watch. The sweep runs on the Pi.
 //
 // ⚠️ The button ARMS first: this is the only control in the dashboard that causes
-// traffic on the bike's bus, and ~277 requests compete with the OBD poller for the
-// scarce resource. Why two taps and no modal, and why this is not a tab:
+// traffic on the bike's bus, and those requests compete with the OBD poller for the
+// scarce resource. Since #219 it also PARKS that poller for 25 of them, so speed, rpm
+// and the temperatures stop updating 25 times during a sweep — which is why the arm
+// line says so. Why two taps and no modal, and why this is not a tab:
 // docs/dashboard-decisions.md §"Service mode: reading the VCU".
 
 /** @typedef {import("../../src/http/vcu-read.ts").VcuReadResponse} VcuReadResponse */
@@ -157,7 +159,7 @@ function ReadButton() {
         return refusal;
       }
       if (armed.val === SWEEP_KEY) {
-        return "⚠  Tap again — this puts ~277 requests on the bus";
+        return "⚠  Tap again — ~300 requests on the bus, and live telemetry blinks 25 times";
       }
       // 🔎, not 🔧. The wrench was on this button AND on "say a service was
       // performed NOW", i.e. on the safest control in the sheet and on one of the
@@ -264,7 +266,7 @@ function ExportButton() {
       // The AGE leads, because this button does not export what the progress line
       // above it just said. It exports `latest.json`, and the script deliberately
       // leaves that file alone when a run reads nothing — so a sweep that found the
-      // bike asleep leaves "0 of 277 read" directly above "Export 233 parameters",
+      // bike asleep leaves "0 of 302 read" directly above "Export 233 parameters",
       // both true, and the natural reading of the second one wrong. An age is what
       // makes it obvious the file is from another day, and this is a file people
       // send to other owners as their bike's calibration.
@@ -349,7 +351,7 @@ function startPolling() {
   setTimeout(() => void step(), POLL_INTERVAL_MS);
 }
 
-/** One second: fast enough that a ~277-read sweep visibly moves, slow enough to be nothing on a Pi Zero. */
+/** One second: fast enough that a ~300-read sweep visibly moves, slow enough to be nothing on a Pi Zero. */
 const POLL_INTERVAL_MS = 1000;
 
 /** @type {() => boolean} */
