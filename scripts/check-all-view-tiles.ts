@@ -153,10 +153,10 @@ console.log(`${Object.keys(MUST_NOT_LATCH).length} outputs, states and measureme
 //    guard in this repo walks the signals that ARE gated.
 //
 //    ⚠️ The list below is NOT a blessing. It is a ratchet: these are what was ungated the day it
-//    was written, and this fails when the next one appears. Some of them are wrong and are left
-//    for whoever owns the frame — `vehicle_state`/`vehicle_substate` (the BLE twins of two keys
-//    the same change gated) and `speed_can_kmh` (whose `speed_kmh` sibling IS gated) are the
-//    obvious ones. docs/dashboard-decisions.md §"The ungated signals" has the list and the why.
+//    was written, and this fails when the next one appears. The three this paragraph used to name
+//    as obviously wrong are all gated now — `speed_can_kmh` by #230, `vehicle_state` and
+//    `vehicle_substate` by #227 — and what is left wants a judgement about a physical range
+//    rather than a line. docs/dashboard-decisions.md §"The ungated signals" has the list and the why.
 const KNOWN_UNGATED = new Set([
   // Flag WORDS and raw state bytes, where a 0/1 or numeric bound would reject the real value.
   "bms_error_flags",

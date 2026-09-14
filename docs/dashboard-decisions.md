@@ -1191,7 +1191,7 @@ Adding a second charge-tab write control was the moment to lift the session/stat
 
 That file's header has warned about the combination since it was written. It did not stop it happening: **`moving` and 0x104's `rolling_backwards` (then called `reverse_gear`) — both 1/0 flags, both in `drive` — were ungated from June until 2026-09-14**, when a diff reviewer on #234 went looking. Nothing was red, and nothing could have been: every other guard in this repo walks the signals that _are_ gated. `check-can-decoders.ts` §2 asks `bounds.js` which keys are 0/1-gated and checks their deadbands — an ungated key is invisible to it from both ends.
 
-### Gating the fifteen BMS flags
+### Gating the fifteen BMS flags and three state words
 
 Eighteen of the 57 left ungated above are gated as of #227, and they divide by the kind of argument that justifies them rather than by subsystem.
 
@@ -1211,7 +1211,7 @@ Eighteen of the 57 left ungated above are gated as of #227, and they divide by t
 
 `moving` is fixed here, and #230 fixed 0x104's two flags the same day and independently. **The other 57 were not**, and `scripts/check-all-view-tiles.ts` §5 carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when one more appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing them means deciding a physical range for each, which belongs with whoever owns each frame.
 
-⚠️ **The list is 39 now, not 57**: #227 gated the eighteen described in §"Gating the fifteen BMS flags" below. The three kinds that follow are still why the check is an allow-list rather than a ban.
+⚠️ **The list is 39 now, not 57**: #227 gated the eighteen described in §"Gating the fifteen BMS flags and three state words" above. The three kinds that follow are still why the check is an allow-list rather than a ban.
 
 Three kinds are on that list for good reasons, and they are why the check is an allow-list rather than a ban:
 

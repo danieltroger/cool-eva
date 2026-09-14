@@ -89,7 +89,7 @@ const BY_KEY = {
   // ⚠️ The `bms` group cannot join BOOLEAN_GROUPS instead: `bms_error_flags` is a
   // readUInt32BE and `bms_warning_flags` a 24-bit word in the same group, and a group-wide
   // [0, 1] would reject every fault they exist to carry. Hence fifteen lines, which is what
-  // BY_KEY is for. docs/dashboard-decisions.md §"Gating the fifteen BMS flags".
+  // BY_KEY is for. docs/dashboard-decisions.md §"Gating the fifteen BMS flags and three state words".
   "bms_state_discharge": [0, 1],
   "bms_state_charge": [0, 1],
   "bms_state_balancing": [0, 1],

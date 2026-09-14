@@ -13,9 +13,12 @@ import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 // reject a masked byte, and three are state words where the whole byte is legitimate and a
 // bound drawn round today's values would draw tomorrow's state as a dead sensor.
 //
-// ⚠️ The state-word section asserts that 255 is ACCEPTED and deliberately does not assert
-// that 256 is rejected. A byte cannot produce 256, so that assertion could never fail and
-// would be decoration — see docs/dashboard-decisions.md §"Gating the fifteen BMS flags".
+// The state-word section asserts both that 255 is ACCEPTED — the whole field is legitimate,
+// and a state this bike has not reached must not render as a fault — and that 256 is rejected.
+// ⚠️ The second is NOT decoration, though an earlier draft of this file said it was on the
+// grounds that a byte cannot produce 256. That confuses "the decoder cannot produce this input"
+// with "this assertion cannot fail": widen the bound to a u16 and the rejection stops holding,
+// which is a mutation the exact-bounds assertion also catches but this one catches behaviourally.
 
 /** `bit()` or `mask ? 1 : 0` in src/can/decode-bms.ts, every one of them. */
 const FLAG_KEYS = [
@@ -39,15 +42,18 @@ const FLAG_KEYS = [
 /** One byte each, so the whole 0…255 is legitimate. */
 const STATE_WORD_KEYS = ["vehicle_state", "vehicle_substate", "charge_state"];
 
-// b0 values copied from scripts/check-charge-mode.ts, where they are the observed ones: a
-// discharging bike, an AC session and the BMS's Idle. The error and warning words read
-// all-zero in every capture of this healthy pack, which is why the fourth frame is needed.
-const REAL_201_FRAMES = ["01 00 00 00 00 00 00 00", "02 00 00 00 00 00 00 00", "10 00 00 00 00 00 00 00"];
+// ⚠️ CONSTRUCTED, and check-charge-mode.ts says so where these come from: byte 0 is an
+// OBSERVED value in each — a discharging bike, an AC session, the BMS's Idle — while bytes 1-7
+// are the error and warning words, all-zero in every capture of this healthy pack. So the byte
+// under test is measured and the rest is the quiet background it has always sat in.
+const OBSERVED_B0_FRAMES = ["01 00 00 00 00 00 00 00", "02 00 00 00 00 00 00 00", "10 00 00 00 00 00 00 00"];
 
-// ⚠️ SYNTHETIC, and the only frame here that is. No captured frame sets an error or warning
-// bit on this pack, so nothing real can show that those eleven flags emit 1 rather than the
-// vendor's mask. It proves the decoder self-consistent and nothing about the bike — the same
-// treatment, for the same reason, as check-button-decode.ts's two synthetic frames.
+// ⚠️ SYNTHETIC, and the only frame here that is. The three frames above set one `bms_state_*`
+// bit each, so twelve of the fifteen are never seen at 1 without this one: the six `bms_err_*`
+// and two `bms_warn_*`, whose words are all-zero in every capture of this healthy pack, plus
+// the four `bms_state_*` those three b0 values do not reach. It proves the decoder
+// self-consistent and nothing about the bike — the same treatment, and the same reason, as
+// check-button-decode.ts's two synthetic frames.
 const ALL_BITS_201 = "FF FF FF FF FF FF FF FF";
 
 const failures: string[] = [];
@@ -90,10 +96,11 @@ for (const key of FLAG_KEYS) {
 }
 
 console.log("\n2. replayed 0x201 frames, so the gate is tested against what the bus produces");
-for (const hex of [...REAL_201_FRAMES, ALL_BITS_201]) {
+for (const hex of [...OBSERVED_B0_FRAMES, ALL_BITS_201]) {
   const decoded = decodeFrame(0x201, parseFrame(hex));
   const flags = decoded.filter(value => FLAG_KEYS.includes(value.key));
-  check(`${hex} decodes to all fifteen flags`, flags.length === FLAG_KEYS.length);
+  const provenance = hex === ALL_BITS_201 ? " (⚠️ SYNTHETIC)" : "";
+  check(`${hex}${provenance} decodes to all fifteen flags`, flags.length === FLAG_KEYS.length);
   const rejected = flags.filter(value => !accepts(value.key, value.value));
   check(
     `…and the gate accepts every one of them — a bound that rejected a real frame would be drawn as a dead sensor`,
@@ -105,9 +112,8 @@ console.log("\n3. the three state words are gated to the FIELD, not to the value
 for (const key of STATE_WORD_KEYS) {
   check(`${key} is a registered signal`, signalsByKey.has(key));
   check(`${key} is gated to exactly [0, 255]`, JSON.stringify(boundsOf(key)) === "[0,255]");
-  // 255 rather than 256: the point of a field bound is that the WHOLE field is legitimate,
-  // and a state this bike has not reached yet must not render as a fault.
   check(`…and accepts the whole byte, 0 and 255 included`, accepts(key, 0) && accepts(key, 255));
+  check(`…and rejects 256, so a bound widened past a byte stops holding`, !accepts(key, 256));
 }
 
 if (failures.length > 0) {
