@@ -918,7 +918,11 @@ The dropdown needs a name (and a micro) for all 269; everything else is needed o
 | every POST reply                            | 256 582 | **8 102**                   |
 | charge tab status fetch — `list=0`          | 256 582 | **6 727**, −97.4 %          |
 
+(±5 bytes across measurements is `runningVersion`'s commit label, which changes with the checkout — not the payload.)
+
 The selection change going from nothing to 8 102 bytes is a real new cost, taken deliberately: the purpose, the warnings and the range are the safety text for the parameter about to be written and must be on screen the moment the selection lands. The alternative is shipping all 269 of them on every request.
+
+⚠️ **Two reads are ordered, and the order is load-bearing twice over.** A `latestStatusRead` counter drops a reply a newer read has superseded, the way `views/charge-auto.js` does — the `<select>` starts a request on every change, so two can be in flight and the older carries a detail for a parameter the form has left. The second half is less obvious: **a superseded reply applies nothing**, so `armWrite()`'s before/after comparison would compare the same untouched state, find it unchanged, and arm on the value the tap started with rather than on the Pi's answer now. `fetchStatus()` therefore reports whether it applied, and `armWrite()` refuses to arm when it did not. Opening the red fold or changing the picker during that round trip is enough to reach it, and `busy` disables neither.
 
 ⚠️ **`selectedTarget()` is the dangerous part of this change**, and it is why `scripts/check-write-status-split.ts` exists. It used to `find` in an array whose entries carried their own names; it is now one object the Pi hands over, arriving a round trip after the selection moves. It decides `control.kind` — which chooses `action=bit` over `action=parameter` — and `onBike()`, which becomes the compare-and-swap `expected=`. **A detail whose name is not the current selection's is refused**, or a stale one produces a perfectly coherent write against the wrong parameter.
 

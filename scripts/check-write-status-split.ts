@@ -227,6 +227,8 @@ await new Promise(resolve => setTimeout(resolve, 10));
 selectTarget("SECOND_ONLY");
 await new Promise(resolve => setTimeout(resolve, 10));
 check("§4b the newer answer lands", selectedTarget()?.name === "SECOND_ONLY");
+// ⚠️ Green with the counter removed too — the re-ask rule repairs it on the next request. What the
+// counter buys is below: no wasted round trip, and no flash of a detail the form has left.
 releaseHeldRequest();
 await stale;
 check(
@@ -270,6 +272,19 @@ const sendStart = source.indexOf("async function send(query)");
 const sendBody = sendStart < 0 ? "" : source.slice(sendStart, source.indexOf("\n}", sendStart));
 check("§5b send() was found at all", sendStart >= 0 && sendBody.length > 0);
 check("§5b and it adopts the listing the way fetchStatus does", sendBody.includes("adoptListing("));
+
+// ── §5c armWrite does not arm behind a refresh that did not happen ────────────────────
+//
+// ⚠️ The hole the ordering counter opened, and the reason fetchStatus() reports whether it applied.
+// A superseded reply applies NOTHING, so `armWrite()`'s before/after comparison compares the same
+// untouched state, finds it unchanged, and arms — on the value the tap started with rather than on
+// the Pi's answer now, which is the entire contract of refreshing before arming. Opening the red
+// fold or changing the picker during that round trip is enough, and `busy` disables neither.
+check("§5c armWrite reads whether its refresh applied", /=\s*await fetchStatus\(\)/.test(armBody));
+check(
+  "§5c and will not arm without it",
+  /if \(\s*refreshed &&/.test(armBody) && armBody.indexOf("refreshed") < armBody.indexOf('arm("write")')
+);
 
 // ── §6 the seams stay seams ───────────────────────────────────────────────────────────
 //

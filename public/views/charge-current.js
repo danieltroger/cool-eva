@@ -344,6 +344,9 @@ async function performChargeCurrent() {
     return;
   }
   const query = new URLSearchParams({
+    // No parameter picker on this tab, so the 269-name listing is 14 393 bytes of nothing it can
+    // use — on the reply to a command, over garage wifi. See lib/charge-write.js.
+    list: "0",
     action: "charge-current",
     amps: String(value),
     // The confirm carries the amps, so a page showing one value cannot POST another. Built

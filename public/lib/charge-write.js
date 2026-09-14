@@ -137,6 +137,9 @@ van.derive(() => {
       // A charge that ended tells us nothing about the next one's gate, and a stale "enabled" left
       // on screen would render a control against a session that is over.
       statusAskedAt = null;
+      // A request still in flight belongs to the session that just ended; the next one must not
+      // wait behind it. Its own `finally` is a no-op after this.
+      statusInFlight = false;
       applyWriteStatus(null);
       for (const listener of sessionEndListeners) {
         listener();

@@ -205,12 +205,14 @@ clock += 20_000;
 phoneNow += 20_000;
 serverTime.val = clock;
 await flush();
-let releaseHung = () => {};
+// ⚠️ ALL of them, not the last: two requests hang here (see §5a's count), and releasing one would
+// leave the other pending for the rest of the run.
+const hung: (() => void)[] = [];
 globalThis.fetch = (async (input: string) => {
   fetches += 1;
   requested.push(String(input));
   await new Promise<void>(resolve => {
-    releaseHung = resolve;
+    hung.push(resolve);
   });
   return new Response(JSON.stringify({ status: { enabled: true, chargeAck: null }, result: null, message: null }));
 }) as unknown as typeof fetch;
@@ -224,7 +226,9 @@ for (let window = 0; window < 4; window += 1) {
   await deliver({ charge_manager_state: DC_SESSION }, STATUS_RETRY_MS);
 }
 check("§5a four retry windows pass with them still hanging, and nothing joins them", fetches === 2);
-releaseHung();
+for (const release of hung) {
+  release();
+}
 await flush();
 // Back to a Pi that answers, for the sections below.
 globalThis.fetch = (async (input: string) => {
@@ -242,9 +246,33 @@ globalThis.fetch = (async (input: string) => {
 // the gesture #107 exists to shrink. Without `list=0` the listing rides along: 21 115 bytes
 // against 6 722, on garage wifi, at the moment the rider is waiting for a button to go live.
 check(
-  "§5b every /vcu-write the charge tab asks for says list=0",
+  "§5b every /vcu-write this run asked for says list=0",
   requested.length > 0 && requested.every(url => url.includes("list=0"))
 );
+// ⚠️ …and the two POSTs, which are reached only from a button press and so are asserted on the
+// source. Without this the message above is true of a run that never touches them, which is
+// exactly the direction the bug went: the GET was fixed and the commands kept shipping the list.
+const chargeSources = ["public/lib/charge-write.js", "public/views/charge-current.js", "public/views/charge-stop.js"];
+const missing: string[] = [];
+for (const file of chargeSources) {
+  const text = await readFile(new URL(`../${file}`, import.meta.url), "utf-8");
+  // A literal URL: the query is right there, so read it.
+  for (const [, query] of text.matchAll(/["`]\/vcu-write\?([^"`$]*)["`]/g)) {
+    if (!query.includes("list=0")) {
+      missing.push(`${file}: /vcu-write?${query}`);
+    }
+  }
+  if (/["`]\/vcu-write["`]/.test(text)) {
+    missing.push(`${file}: a bare /vcu-write with no query at all`);
+  }
+  // A built URL: every one of them needs its own `list: "0"` in the params it interpolates.
+  const built = [...text.matchAll(/\/vcu-write\?\$\{/g)].length;
+  const declared = [...text.matchAll(/list: "0"/g)].length;
+  if (declared < built) {
+    missing.push(`${file}: ${built} built /vcu-write URL(s), ${declared} of them setting list`);
+  }
+}
+check(`§5b and no charge-tab source asks without it (${missing.join("; ") || "none"})`, missing.length === 0);
 
 // ── §5c a settle whose fetch FAILS is retried on the next heartbeat ───────────────────
 //
