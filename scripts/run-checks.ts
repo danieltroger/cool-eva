@@ -136,6 +136,21 @@ const CHECKS: SelfCheck[] = [
       "not drifted from the enum",
   },
   {
+    script: "scripts/check-soc-rate.ts",
+    covers:
+      "the SOC rate's LOWER-BOUND invariant, against continuous trajectories rather than against hand-written " +
+      "instances: that across six shapes a DC charge takes — three measured constant rates, a ramp-up, the taper " +
+      "and a stall — the estimate never exceeds the rate the trajectory ITSELF rose at over the span the estimator " +
+      "claims to have measured, which is the direction the session-ahead veto lives by, since over-stating it " +
+      "shortens the horizon and suppresses more steps down; that every trajectory reaches the property rather than " +
+      "answering null through it; that the crossing-instant precondition underneath the bound is real — a ring led " +
+      "by a reading kept mid-plateau, or by a downward crossing, DOES over-state, and by no more than the one whole " +
+      "count a whole-percent reading can hide; that a pack LOSING charge gets no rate at all rather than a negative " +
+      "one, which would come back as a negative horizon and suppress a step down on a pack that is not charging; " +
+      "and that the controller says so in the journal when it keeps a first SOC reading with no crossing behind it, " +
+      "which is the start-up ordering in src/index.ts made audible rather than assumed",
+  },
+  {
     script: "scripts/check-charge-command.ts",
     covers:
       "the charge-current transmitter against the dash's OWN frames, captured off the bus during a real DC fast " +
