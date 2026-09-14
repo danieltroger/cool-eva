@@ -146,8 +146,9 @@ export class BleTelemetryDecoder {
         // 🚨 "…and the vehicle state machine [is] not on CAN at all" stood here until
         // 2026-09-14 and was FALSE. It is CAN 0x101 `VCU_VEHICLE_STS` at 100 Hz, decoded
         // since (src/can/vehicle-status.ts). The CAN keys carry `_can` so these two keep
-        // their history and the two transports can be compared rather than merged: every
-        // value this path has logged is one the CAN byte also produces.
+        // their history and the two transports can be compared rather than merged. ⚠️ They
+        // do NOT agree completely: this path has logged `vehicle_state` 4 and 0, and
+        // `vehicle_substate` 0, which the CAN byte never produces — 4 rows of 816.
         return [
           { key: "vehicle_state", value: frame[3] },
           { key: "vehicle_substate", value: frame[4] },

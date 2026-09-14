@@ -1168,3 +1168,21 @@ Unlike set-current, stop takes no fields and makes no AC/DC decision: the same p
 ### Shared machinery — `lib/charge-write.js`
 
 Adding a second charge-tab write control was the moment to lift the session/status machinery out of `charge-current.js` (which was at the ~400-line split line) into `lib/charge-write.js`: the `writeStatus`/`sessionLive` states, the one lazy `serverTime`-subscribing session derive, `liveChargeType()`/`liveCeiling()`, `fetchChargeWriteStatus()`, and an `onChargeSessionEnd()` hook each control registers to clear its own form. One derive, one status fetch, one definition of "a charge is live" — so the two controls cannot disagree about when a command may be offered.
+
+## The ungated signals — `public/lib/bounds.js`, and the ratchet in `check-all-view-tiles.ts`
+
+`boundsFor()` has four routes: a `BY_KEY` entry, the cell-voltage pattern, `COUNTER_KEYS`, and a `BOOLEAN_GROUPS`-plus-blank-unit rule, falling through to `BY_UNIT[unit] ?? null`. **A signal with a blank unit, in a group that is not a `BOOLEAN_GROUP`, and no `BY_KEY` entry reaches none of them**, so `boundsFor()` returns `null` and `views/all.js` renders whatever arrives.
+
+That file's header has warned about the combination since it was written. It did not stop it happening: **`moving` and `reverse_gear` — both 1/0 flags, both in `drive` — were ungated from June until 2026-09-14**, when a diff reviewer on #234 went looking. Nothing was red, and nothing could have been: every other guard in this repo walks the signals that _are_ gated. `check-can-decoders.ts` §2 asks `bounds.js` which keys are 0/1-gated and checks their deadbands — an ungated key is invisible to it from both ends.
+
+### What was done, and what deliberately was not
+
+`moving` and `reverse_gear` are fixed. **The other 59 are not**, and `scripts/check-all-view-tiles.ts` §5 now carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when a 60th appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing the 59 means deciding a physical range for each, which belongs with whoever owns each frame.
+
+Three kinds are on that list for good reasons, and they are why the check is an allow-list rather than a ban:
+
+- **Flag words and raw state bytes** — `bms_error_flags`, `vcu_flags_low`, `bms_io_state`. A 0/1 gate would reject them on every frame where anything is set; that is exactly why `registry.ts` puts `vcu_flags_low/high` in `vcu` rather than `diag`.
+- **Indices and counts into a structure** — `cell_lowest_v_idx`, `gps_satellites`. The structure's size is the real bound.
+- **Monotonic counters and odometers** — `waypoint_seq`, `odometer_km`, `time_since_clear_min`. Any ceiling is arbitrary, and the counter that outgrew it would be drawn as a dead sensor on a working bike. `bounds.js` already says this about `waypoint_seq`.
+
+⚠️ **And some are simply wrong**, marked as such in the list so the next person inherits the judgement rather than the surprise. `vehicle_state` and `vehicle_substate` are the BLE twins of `vehicle_state_can` / `vehicle_substate_can`, which #234 gated — so one transport's copy of a quantity is gated and the other's is not. `speed_can_kmh` is ungated while `speed_kmh`, the same quantity down a different path, is gated to `[0, 300]`. Those are two-line fixes for whoever next touches those frames; they are out of scope for the change that found them, because a bound is a claim about the bike and each one needs its own evidence.

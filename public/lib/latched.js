@@ -46,7 +46,7 @@ export const LATCHED_KEYS = new Set([
   // They log in `controls` rather than the `buttons` group so the BUTTONS section keeps two
   // tiles for two indicators — see src/can/registry.ts.
   //
-  // ⚠️ `low_beam` (b0 bit 7) is deliberately absent: it is held for an entire ride, so
+  // ⚠️ `low_beam_switch` (b0 bit 7) is deliberately absent: it is held for an entire ride, so
   // "PRESSED" and "3 presses" would both be wrong about it. That is `key_on`'s reason, and
   // scripts/check-all-view-tiles.ts asserts it.
   "horn_switch",

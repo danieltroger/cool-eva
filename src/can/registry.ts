@@ -684,13 +684,13 @@ export const SIGNALS: SignalDef[] = [
   // lamp. ../../public/lib/latched.js names the two indicator switches and `horn_switch` so
   // they still get the latched tile — a 0.2 s press is two frames of a 60 Hz display.
   //
-  // ⚠️ `low_beam` is deliberately NOT latched: it is held for an entire ride, which is the
+  // ⚠️ `low_beam_switch` is deliberately NOT latched: it is held for an entire ride, which is the
   // reason `key_on` sits in check-all-view-tiles.ts's MUST_NOT_LATCH. `high_beam` stays in
   // "buttons" because a flash-to-pass is momentary. Same byte, different tile, different use.
   { key: "horn_switch", unit: "", group: "controls", source: "stream" }, // 0x102 b1 bit0 V_HORN_SW
   { key: "blinker_switch_right", unit: "", group: "controls", source: "stream" }, // b0 bit3 V_R_TURN_SW
   { key: "blinker_switch_left", unit: "", group: "controls", source: "stream" }, // b0 bit4 V_L_TURN_SW
-  { key: "low_beam", unit: "", group: "controls", source: "stream" }, // b0 bit7 V_LOW_BEAM_SW
+  { key: "low_beam_switch", unit: "", group: "controls", source: "stream" }, // b0 bit7 V_LOW_BEAM_SW
   { key: "front_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x20
   { key: "rear_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x40
   // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
@@ -931,8 +931,15 @@ export const SIGNALS: SignalDef[] = [
   // inherit the 0/1 gate with no per-key bounds entry. The two numbers join the raw word:
   // they need a BY_KEY bound either way, and "diag" would reject them outright.
   { key: "limp_pack_res", unit: "", group: "vcu", source: "stream" }, // b4-5 LE V_LIMP_PACK_RES
-  { key: "limp_module_sts", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
-  { key: "vehicle_status_flags", unit: "", group: "vcu", source: "stream" }, // b3 raw; bits 4 and 6 are unnamed and move
+  { key: "limp_module_status", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
+  // ⚠️ The raw byte contains three keys above it — `drive_vsm_b3` is `& 3`, `limp_mode_status`
+  // bit 2, `limp_res_valid` bit 3 — which is the shape `brake` was REMOVED for ("this log stores
+  // measured bits rather than derived combinations"). It is kept for the reason 0x100 keeps
+  // `vcu_flags_low/high` beside its twelve broken-out flags and `brake` had nothing of: bits 4
+  // and 6 MOVE and Energica does not name them, so a key for either would have to invent a name,
+  // and this byte is the only lossless record of them. If those two are ever identified, this
+  // key is the one to reconsider.
+  { key: "vehicle_status_flags", unit: "", group: "vcu", source: "stream" }, // b3 raw; bits 4 and 6 unnamed and moving
   { key: "limp_mode_status", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_LIMP_MODE_STATUS
   { key: "limp_res_valid", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_LIMP_RES_VALID
 

@@ -478,13 +478,13 @@ There was a third brake key. `brake` = `front_brake | rear_brake`, emitted by th
 
 ### Byte 1: vehicle state
 
-Everything in b1 comes from the `.xdbc` and matched a parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): `key_on` 1, `energized` / `go` / `go_request` / `ignition_button` / `throttle_on` 0, `stand_up` 0 (it is on the sidestand), `moving` 0, low beam on. The garage lap that afternoon then caught `energized`, `go_request`, `go`, `stand_up`, `ignition_button`, `throttle_on` and `moving` all toggling with the rider's actions, so those are confirmed against real transitions rather than one parked sample. ✅ `key_on` stayed 1 throughout both, so it rests on the parked sample alone — a key-off capture is what would confirm it.
+⚠️ Everything in b1 came from the `.xdbc` until 2026-09-14, when `horn_switch` (bit 0) was taken off Energica's own table; the rest of what follows is still the `.xdbc`'s and matched a parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): `key_on` 1, `energized` / `go` / `go_request` / `ignition_button` / `throttle_on` 0, `stand_up` 0 (it is on the sidestand), `moving` 0, low beam on. The garage lap that afternoon then caught `energized`, `go_request`, `go`, `stand_up`, `ignition_button`, `throttle_on` and `moving` all toggling with the rider's actions, so those are confirmed against real transitions rather than one parked sample. ✅ `key_on` stayed 1 throughout both, so it rests on the parked sample alone — a key-off capture is what would confirm it.
 
 ### Byte 0's low bits — the left pod's momentary buttons
 
 Added 2026-08-16. These four are the ones Energica's free-frame table names `Left/Right/Enter Mode Switch` and `RST Switch`.
 
-Of the other two: **bit 6 is `high_beam`** (set in 137 of the 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture counts). **Bit 7 is the LOW BEAM SWITCH**, set in 50.64 % of frames — settled on 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000 frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. ⚠️ **It got no key of its own until 2026-09-14**, on the argument that `low_beam_lamp` already carries the same information and a third beam key earns nothing. It has one now — `low_beam` — and the reversal is argued in §"Byte 0's switches" above rather than here, because the decision recorded in this sentence was sound on what it knew.
+Of the other two: **bit 6 is `high_beam`** (set in 137 of the 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture counts). **Bit 7 is the LOW BEAM SWITCH**, set in 50.64 % of frames — settled on 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000 frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. ⚠️ **It got no key of its own until 2026-09-14**, on the argument that `low_beam_lamp` already carries the same information and a third beam key earns nothing. It has one now — `low_beam_switch` — and the reversal is argued in §"Byte 0's switches" above rather than here, because the decision recorded in this sentence was sound on what it knew.
 
 Evidence is 1 103 000 frames of 0x102 across the same 14 captures as 0x400. What makes these more than "the bit moves" is that the six low bits split cleanly into two behaviours, and the split is the one the owner's manual predicts:
 
@@ -536,7 +536,7 @@ Speed decays 87.9 → 83.6 km/h until 18:04:45.4, then climbs back and sits at 8
 
 That does not touch the decode, and it does not touch the 1200 ms threshold, which still clears the longest press by 4.1×. What it kills is the _argument_ that ENTER is inert while riding, which the fan gesture was originally justified with: the button is pressed at speed, so a gesture on it has to be harmless at speed by construction rather than by the rider never touching it. The manual's ">3 km/h exits the menu" is about the dash MENU, and says nothing about what else a press may do. What the rider is doing with it at 118 km/h is not known.
 
-#### bits 3 and 4 — the turn-indicator SWITCHES, left undecoded
+#### bits 3 and 4 — the turn-indicator SWITCHES (decoded 2026-09-14)
 
 Which side is which is no longer an open question, so it is written down.
 
@@ -564,7 +564,7 @@ The remaining 53 started nothing: 47 changed no lamp at all and 6 stopped one, w
 
 ### Byte 3 — the fast-charge contactor monitor and cruise state
 
-Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was first decoded, which is true of a parked bike and false of a charging one: across the 14 captures it takes five values — 0x44 (88.4 %), 0x45 (9.4 %), 0x46 (1.2 %), 0x04 (1.0 %) and 0x06 (0.02 %). **Bit 2 is set in all five and is never once clear in 1 103 000 frames**, so it is left undecoded rather than logged as a constant 1. Bit 6 moves constantly and is not understood; bits 3, 4, 5 and 7 are never set.
+Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was first decoded, which is true of a parked bike and false of a charging one: across the 14 captures it takes five values — 0x44 (88.4 %), 0x45 (9.4 %), 0x46 (1.2 %), 0x04 (1.0 %) and 0x06 (0.02 %). 🚨 **Every clause of the sentence that stood here is now false, and it is replaced rather than patched.** It read: _"Bit 2 is set in all five and is never once clear in 1 103 000 frames, so it is left undecoded rather than logged as a constant 1. Bit 6 moves constantly and is not understood; bits 3, 4, 5 and 7 are never set."_ As of 2026-09-14: bit 2 is clear in **279** frames and **is** decoded (`dsb_control`); bit 6 is decoded (`mag_good`); bits 3, 4 and 7 are decoded (`imd_disable`, `winter_storage`, `vcu_abs_off`); and bit 5 is `lie_down_detected`, which #221 confirmed **set** when the bike fell over. **Every bit of this byte now has a key** — see §"The rest of byte 3" below for what each one's corpus does and does not show.
 
 **bit 0 — `V_FASTDC_MON_SW`**, the DC fast-charge contactor state monitor, and the analog wire `A020_FCHG_MON` it corresponds to. ✅ CONFIRMED, and it is the best-evidenced bit in that change:
 
@@ -624,7 +624,7 @@ Against 0x102's own `moving` bit: clear in **172 of 11 237 945** stopped frames 
 
 ### Byte 0's switches and byte 1 bit 0, decoded 2026-09-14
 
-**✅ `V_LOW_BEAM_SW` (b0 bit 7) → `low_beam`.** Agrees with `low_beam_lamp` in **15 006 856 of 15 006 856 frames, zero disagreements** — the 1 103 000-frame claim below, extended 13.6×.
+**✅ `V_LOW_BEAM_SW` (b0 bit 7) → `low_beam_switch`.** Agrees with `low_beam_lamp` in **15 006 856 of 15 006 856 frames, zero disagreements** — the 1 103 000-frame claim below, extended 13.6×.
 
 ⚠️ **This reverses a decision recorded below** (_"a third beam key earns nothing"_), which was taken with the vendor pairing already cited and is not overturned by new evidence about the split. Two things changed. This is not the case `scripts/check-derived-signals.ts` and the `brake` removal are about — that rule is for a key **our decoder computes** from another on the same frame, and nothing computes this one: b0 bit 7 and b2 bit 1 are two wires, read independently, and their perfect agreement is the **baseline a failed bulb shows against** rather than a reason to drop one. And the standing rule for the work that decoded the rest of this frame is that every signal that can be decoded should be.
 

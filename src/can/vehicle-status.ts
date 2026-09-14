@@ -8,8 +8,9 @@
 // reads them out of the Connectivity Hub's vehicle-status message under `vehicle_state` and
 // `vehicle_substate`. These keys therefore carry `_can`, the way `odometer_can_km` does
 // beside the hub's `odometer_km` — one key with two writers flaps between them, and keeping
-// them apart is what lets a ride say whether the two agree. They do so far: every value the
-// BLE path has ever logged is one the CAN byte also produces.
+// them apart is what lets a ride say whether the two agree. They mostly do: the CAN byte
+// produces every substate the BLE path has logged except 0, and every state except 0 and 4 —
+// 4 rows of 816, which read as that path's partial-frame sentinels. docs/can-0x101.md.
 //
 // What the bytes mean, how the state/substate bands work, and what is still open:
 // docs/can-0x101.md.
@@ -34,11 +35,16 @@ export function decodeVehicleStatusFrame(data: Buffer): DecodedValue[] {
     // two bits. §A.3 lists it among the bugs in Energica's own parser ("assigned twice; byte
     // 2 lost"), so the two are decoded as separate quantities rather than reproducing it.
     //
-    // ✅ b2 is a TRANSITION MARKER for the drive state machine: it reads 6 while state 40 is
-    // settled and drops to 4 for ~0.1 s as the substate changes. Over three boots of
-    // 2026-09-13, 107 of 107 substate changes inside state 40 carry a `b2 == 4` frame within
-    // 15 frames, and 43 of 43 `b2 == 4` runs carry a substate change — against 0.4 and 0.09
-    // expected if they fell at random. Archive-wide, 6 occurs only in state 40.
+    // ✅ b2 says WHICH SUBSTATE THE BIKE IS IN, coarsely: 6 in the three driving substates
+    // (43 riding, 52 park assist, 53) and 4 in every other substate and every other state.
+    // Over three boots that rule holds in 736 095 of 736 574 frames, 99.94 %. Archive-wide,
+    // 6 occurs only in state 40.
+    //
+    // 🟡 It ALSO dips to 4 for ~0.1 s at substate changes WITHIN those three — 26 of 26 such
+    // changes, 479 frames — which a lagged copy of b0 cannot explain, since 43 → 52 is a
+    // change between two substates that both read 6. Weaker than it first looked: the
+    // "107 of 107" this comment used to claim counted 81 enable-chain changes where b2 is 4
+    // throughout anyway. docs/can-0x101.md §"b2" has both readings and the retraction.
     { key: "drive_vsm", value: data[2] },
     { key: "drive_vsm_b3", value: flags & 0x03 },
     // b3 bit 2 — `V_LIMP_MODE_STATUS`. 🟡 Set in ALL 15 006 844 archive frames and all
@@ -58,9 +64,9 @@ export function decodeVehicleStatusFrame(data: Buffer): DecodedValue[] {
     // Read UNSIGNED: b5 is 0 in every frame on record so the two readings are
     // indistinguishable here, and an unsigned read cannot turn a wrong-endian value into a
     // plausible negative. ⚠️ No unit — the database carries no scaling factors (§A.4), and
-    // 75…154 is only PLAUSIBLE for this pack's milliohms. 🟡 `limp_module_sts` is 0 in all
+    // 75…154 is only PLAUSIBLE for this pack's milliohms. 🟡 `limp_module_status` is 0 in all
     // 15 006 844 archive frames and all 1 184 096 September ones.
     { key: "limp_pack_res", value: u16le(data[4], data[5]) },
-    { key: "limp_module_sts", value: u16le(data[6], data[7]) },
+    { key: "limp_module_status", value: u16le(data[6], data[7]) },
   ];
 }

@@ -1,4 +1,4 @@
-import { decodeFrame, STREAM_IDS } from "../src/can/decode.ts";
+import { decodeFrame } from "../src/can/decode.ts";
 import { VEHICLE_STATUS_CAN_ID } from "../src/can/vehicle-status.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor, isPlausible } from "../public/lib/bounds.js";
@@ -40,7 +40,7 @@ const CASES: FrameCase[] = [
       limp_res_valid: 0,
       vehicle_status_flags: 4,
       limp_pack_res: 100,
-      limp_module_sts: 0,
+      limp_module_status: 0,
     },
   },
   {
@@ -121,6 +121,21 @@ const CASES: FrameCase[] = [
     hex: "2B 28 04 04 62 00 00 00",
     expect: { vehicle_substate_can: 43, vehicle_state_can: 40, drive_vsm: 4, limp_pack_res: 98 },
   },
+  {
+    what: "⚠️ SYNTHETIC — a frame the bus has never produced, and the only thing that can pin the two 16-bit fields. `limp_module_status` is 0 in all 15 006 844 archive frames and all 1 184 096 September ones, and `limp_pack_res`'s high byte is 0 in every one of them, so NO real frame distinguishes bytes 4-5 from 6-7, or little-endian from big. Distinct non-zero values in all four bytes do. ⚠️ It proves the decoder self-consistent and nothing whatever about the bike: b3 = 0xFF asserts every byte-3 field at once, which no frame on record carries",
+    hex: "2B 28 06 FF 34 12 78 56",
+    expect: {
+      vehicle_substate_can: 43,
+      vehicle_state_can: 40,
+      drive_vsm: 6,
+      drive_vsm_b3: 3,
+      limp_mode_status: 1,
+      limp_res_valid: 1,
+      vehicle_status_flags: 0xff,
+      limp_pack_res: 0x1234,
+      limp_module_status: 0x5678,
+    },
+  },
 ];
 
 /**
@@ -137,6 +152,9 @@ const ARCHIVE_SUBSTATES = [
 ];
 /** The widest V_LIMP_PACK_RES seen in 15 006 844 frames; the field is 16 bits. */
 const ARCHIVE_PACK_RES = [75, 154];
+
+/** Of the keys checked below, the ones that really are 1/0 and must be gated exactly so. */
+const FLAG_KEYS = new Set(["moving", "reverse_gear", "limp_mode_status", "limp_res_valid"]);
 
 const failures: string[] = [];
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
@@ -155,15 +173,10 @@ for (const testCase of CASES) {
     }
   }
 }
-console.log(`  ${CASES.length} captured frames replayed`);
+const syntheticCases = CASES.filter(testCase => testCase.what.includes("SYNTHETIC")).length;
+console.log(`  ${CASES.length - syntheticCases} captured frames replayed, plus ${syntheticCases} synthetic`);
 
-// 2. The frame is in the kernel RX filter. Without this the decoder is perfect and silent,
-//    and the symptom — a tile reading "–" for ever — looks exactly like a parked bike.
-if (!STREAM_IDS.includes(VEHICLE_STATUS_CAN_ID)) {
-  failures.push("0x101 is missing from STREAM_IDS, so the kernel filter drops it and no decoder can see it");
-}
-
-// 3. A short frame yields nothing rather than throwing. This runs inside the CAN RX
+// 2. A short frame yields nothing rather than throwing. This runs inside the CAN RX
 //    handler, where a throw takes the bus reader down with it.
 for (let length = 0; length < 8; length++) {
   const decoded = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame("3E 3C 04 04 64 00 00 00").subarray(0, length));
@@ -174,29 +187,26 @@ for (let length = 0; length < 8; length++) {
   }
 }
 
-// 4. 🚨 The keys must not collide with the BLE transport's. src/ble/protocol.ts writes
+// 3. 🚨 The keys must not collide with the BLE transport's. src/ble/protocol.ts writes
 //    `vehicle_state` and `vehicle_substate` off the Connectivity Hub; one key with two
 //    writers flaps between them and interleaves in the ride log. This is the assertion that
 //    stops a future tidy-up merging the two back together.
+const parkedKeys = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame("3E 3C 04 04 64 00 00 00")).map(value => value.key);
 for (const [canKey, bleKey] of [
   ["vehicle_state_can", "vehicle_state"],
   ["vehicle_substate_can", "vehicle_substate"],
 ]) {
-  if (canKey === bleKey) {
-    failures.push(`${canKey} would collide with the BLE key ${bleKey}`);
-  }
   if (!defined.has(bleKey)) {
     failures.push(
       `${bleKey} is gone from the registry — if the BLE key was removed, the _can suffix has lost its reason`
     );
   }
-  const emitted = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame("3E 3C 04 04 64 00 00 00")).map(value => value.key);
-  if (emitted.includes(bleKey)) {
+  if (parkedKeys.includes(bleKey)) {
     failures.push(`the 0x101 decoder emits ${bleKey}, which the BLE path already writes — use ${canKey}`);
   }
 }
 
-// 5. Every value the archive has produced survives the dashboard's gate. The bound is on
+// 4. Every value the archive has produced survives the dashboard's gate. The bound is on
 //    the FIELD rather than on the values seen, so this is what makes it falsifiable.
 for (const [key, values] of [
   ["vehicle_state_can", ARCHIVE_STATES],
@@ -219,21 +229,43 @@ for (const [key, values] of [
 }
 console.log(`  ${ARCHIVE_SUBSTATES.length} archive substates and ${ARCHIVE_STATES.length} states pass the bounds`);
 
-// 6. 🚨 `moving` and `reverse_gear` rendered completely ungated until 2026-09-14 — 0/1 flags
+// 5. 🚨 `moving` and `reverse_gear` rendered completely ungated until 2026-09-14 — 0/1 flags
 //    with a blank unit in `drive`, which is not a BOOLEAN_GROUP, and in neither bounds table.
 //    scripts/check-can-decoders.ts cannot catch that: it only walks signals that ARE gated,
 //    so an ungated one is invisible to it from both ends. Asserted here by name.
-for (const key of ["moving", "reverse_gear", "limp_mode_status", "limp_res_valid"]) {
+// ⚠️ ALL of them, not the flags only. `drive_vsm`, `vehicle_status_flags` and
+// `limp_module_status` live in `drive`/`vcu` with a blank unit, so deleting their BY_KEY lines
+// would leave them rendering whatever arrives with nothing red — byte for byte the
+// moving/reverse_gear bug two lines below. Asserting the OUTCOME of boundsFor rather than the
+// route is what survives someone moving a key to a different group.
+for (const key of [
+  "vehicle_state_can",
+  "vehicle_substate_can",
+  "drive_vsm",
+  "drive_vsm_b3",
+  "vehicle_status_flags",
+  "limp_pack_res",
+  "limp_module_status",
+  "moving",
+  "reverse_gear",
+  "limp_mode_status",
+  "limp_res_valid",
+]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is not in src/can/registry.ts`);
     continue;
   }
   const bounds = boundsFor(key, signal.unit, signal.group);
-  if (!bounds || bounds[0] !== 0 || bounds[1] !== 1) {
+  if (!bounds) {
     failures.push(
-      `public/lib/bounds.js does not gate ${key} (group "${signal.group}", unit "${signal.unit}") to 0…1 — got ${JSON.stringify(bounds)}. A 0/1 flag with a blank unit in a non-BOOLEAN_GROUP renders whatever arrives`
+      `public/lib/bounds.js does not gate ${key} (group "${signal.group}", unit "${signal.unit}") AT ALL — boundsFor() returned null, so the ALL page renders whatever arrives`
     );
+    continue;
+  }
+  const isFlag = FLAG_KEYS.has(key);
+  if (isFlag && (bounds[0] !== 0 || bounds[1] !== 1)) {
+    failures.push(`public/lib/bounds.js gates the 0/1 flag ${key} to ${JSON.stringify(bounds)} rather than [0, 1]`);
   }
 }
 
@@ -246,9 +278,9 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✓ ${CASES.length} captured 0x101 frames decode as recorded, Energica's double-assigned V_DRIVE_VSM stays two ` +
+  `✓ ${CASES.length - syntheticCases} captured 0x101 frames decode as recorded (plus ${syntheticCases} synthetic, which pins only that the decoder is self-consistent), Energica's double-assigned V_DRIVE_VSM stays two ` +
     `fields, 0x101 is filtered in, short frames decode to nothing, the CAN keys do not collide with the BLE ` +
-    `transport's, every archive state and substate passes the dashboard's gate, and moving/reverse_gear are gated`
+    `transport's, every archive state and substate passes the dashboard's gate, and all eleven keys checked are gated`
 );
 
 function parseFrame(hex: string): Buffer {

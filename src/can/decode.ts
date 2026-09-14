@@ -258,14 +258,9 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // L blinker, 0x08 R blinker, 0x10 horn, 0x20 front brake, 0x40 rear brake. Those
     // five were found by working the switches on this bike and diffing the log. ✅
     //
-    // ⚠️ `horn` (b2 bit 4) is the exception to that ✅ and it is worth stating: the bench
-    // session was 2026-06, and NOTHING ON DISK PREDATES 2026-08-02 — neither the candump
-    // archive nor rides.db. The bit reads 0 in all 15 006 856 archive frames and in all 213
-    // logged rows across 128 sessions, which is one row per boot. So the position is
-    // confirmed twice (that session, and Energica's table naming b2 bit 4 `V_HORN`), and
-    // nothing on disk today reproduces the observation. `horn_switch` below is the same
-    // bit's switch and has never had a bench session at all.
-    //
+    // ⚠️ `horn` is the exception: its ✅ is a 2026-06 bench session and nothing on disk
+    // predates 2026-08-02, so no corpus here reproduces it. Counts: the doc below.
+
     // ⚠️ The blinkers are a known conflict with the .xdbc, which puts L/R at b0 bits 3/4
     // and calls b2 bits 2/3 unknown. Both can be true — b0 the handlebar SWITCH, b2 the
     // lamp OUTPUT — but only ours was measured, so ours stands. Do not "fix" this from
@@ -333,8 +328,19 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "go_request", value: bit(vehicleState, 2) },
         { key: "go", value: bit(vehicleState, 3) },
         { key: "key_on", value: bit(vehicleState, 4) },
+        // `V_KICK_STAND_SW` in the vendor table, so the bit is confirmed rather than
+        // reverse-engineered. ⚠️ Its POLARITY is not: "0 = stand down" rests on one parked
+        // observation. Set in 3 964 801 of 15 006 856 archive frames, 99.66 % of them with
+        // `go` also set, which is what an interlock before movement looks like.
         { key: "stand_up", value: bit(vehicleState, 5) },
         { key: "ignition_button", value: bit(vehicleState, 6) },
+        // 🚨 The vendor calls b1 bit 7 `V_THROTTLE_CLOSED_SW` — the OPPOSITE sense to the
+        // name we ship, and src/vcu/service-gate.ts refuses a write while it is 1. It is
+        // NOT inverted: against `throttle_pct` on 0x109, aligned by seq within a session,
+        // the bit agrees with OUR name in 99.61 % of 465 468 rows on 2026-09-13 alone and
+        // 99.16-99.21 % over two larger corpora. `_SW` names a CONTACT: the switch is
+        // closed when the throttle is open. Do not "fix" this from the table — the gate
+        // refuses in the safe direction only under the measured polarity. (#218)
         { key: "throttle_on", value: bit(vehicleState, 7) },
         // The beam OUTPUTS, as against `high_beam` above, which is b0's switch. Kept as
         // separate keys rather than folded into one: identical in every frame recorded
@@ -461,22 +467,15 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 //
 // Added 2026-08-16. These four are the ones Energica's free-frame table names
 // `Left/Right/Enter Mode Switch` and `RST Switch`. Bits 3 and 4 are the indicator
-// switches and are still left undecoded on purpose — see below, which now also records
-// which of the two is which, settled 2026-08-19.
+// switches, decoded since 2026-09-14; which of the two is which was settled 2026-08-19.
 //
 // Of the other two: bit 6 is `high_beam`, read in the case above (a flash-to-pass, which
 // is what the dashboard's own gesture counts). Bit 7 is `V_LOW_BEAM_SW`, the LOW BEAM
 // SWITCH, and it is decoded below.
 //
-// ⚠️ It carried no key until 2026-09-14, on the argument that `low_beam_lamp` already
-// carries the same information — which is still true of the data (the two agree in all
-// 15 006 856 archive frames, zero disagreements, extending the 1 103 000 that decision was
-// taken on). It is decoded anyway for the reason `high_beam`/`high_beam_lamp` are both
-// kept: a switch and its lamp are two wires, and the day they disagree is the day a bulb
-// has failed. That perfect agreement is the BASELINE that makes the disagreement visible,
-// not a reason to drop one of them. ⚠️ This is not the derived-key case
-// scripts/check-derived-signals.ts exists for — nothing in this decoder computes one from
-// the other, unlike the `brake` key it removed.
+// ⚠️ It carried no key until 2026-09-14; the reversal, and why a switch agreeing with its
+// lamp in all 15 006 856 frames is the BASELINE rather than a reason to drop one, is in
+// docs/can-decode-findings.md §"Byte 0's switches".
 
 // What makes these more than "the bit moves" is that the six low bits split cleanly into
 // two behaviours, and the split is the one the owner's manual predicts — bits 0-2 are
@@ -547,7 +546,7 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
     { key: "blinker_switch_left", value: bit(handlebar, 4) },
     // bit 7 — `V_LOW_BEAM_SW`, argued in this function's header. Here rather than with the
     // beam lamps because this byte is the SWITCH byte; `low_beam_lamp` is b2's output.
-    { key: "low_beam", value: bit(handlebar, 7) },
+    { key: "low_beam_switch", value: bit(handlebar, 7) },
 
     // bit 5 — the indicator-cancel press (push the turn switch in). ✅ CONFIRMED, and
     // this is the strongest identification of the seven: all 63 presses happened with

@@ -7,9 +7,10 @@
 # claim is reproducible without the 70 MB extract it came from.
 #
 # byte 0 = V_VEHICLE_SUBSTATE, byte 1 = V_VEHICLE_STATE, byte 2 = V_DRIVE_VSM.
-# Watch byte 2 drop 6 -> 4 across each substate change and go back: that is the transition
-# marker, 107 of 107 archive-wide. 150 and 143 are the two bit-7 substates, which belong to
-# no state band -- byte 1 holds its value through them.
+# Byte 2 is 4 for the WHOLE of this chain, and was already 4 while parked: it reads 6 only in
+# the three driving substates (43, 52, 53), so it changes once, three frames after 43 arrives.
+# 150 and 143 are the two bit-7 substates, which belong to no state band -- byte 1 holds its
+# value through them.
  (2026-09-13 18:06:58.903100)  can0  101   [8]  3E 3C 04 04 50 00 00 00
  (2026-09-13 18:06:58.912990)  can0  101   [8]  3E 3C 04 04 50 00 00 00
  (2026-09-13 18:06:58.923097)  can0  101   [8]  3E 3C 04 04 50 00 00 00

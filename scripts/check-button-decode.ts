@@ -12,9 +12,11 @@ import { FLASHER_KEYS } from "../public/lib/flasher.js";
 //   node --experimental-strip-types scripts/check-button-decode.ts
 //
 // Every frame below is REAL — copied byte for byte, with its timestamp, out of the
-// candump captures in ~/Documents/cool-eva-archive (see CAPTURES.md there). None is
-// hand-written, because a hand-written frame only proves the decoder agrees with
-// whoever wrote the fixture. The 0x400 button payloads in particular are the only ones
+// candump captures in ~/Documents/cool-eva-archive (see CAPTURES.md there) — except the
+// two marked ⚠️ SYNTHETIC, added 2026-09-14. A hand-written frame only proves the decoder
+// agrees with whoever wrote the fixture, which is why those two are marked, counted
+// separately in the success line, and used only for the four byte-3 bits that are 0 in
+// every frame this bike has ever produced: nothing real can pin their positions. The 0x400 button payloads in particular are the only ones
 // ever recorded on this bike: across 1 099 357 frames of 0x400, byte 2 held a non-zero
 // value in 362 of them and took exactly two values — until 2026-08-19, when a session of
 // deliberate presses finally produced a third (0x01, `btn_set_back`, 132 frames).
@@ -227,7 +229,7 @@ const CASES: FrameCase[] = [
       winter_storage: 0,
       vcu_abs_off: 0,
       horn_switch: 0,
-      low_beam: 0,
+      low_beam_switch: 0,
       blinker_switch_left: 0,
       blinker_switch_right: 0,
     },
@@ -241,7 +243,7 @@ const CASES: FrameCase[] = [
       dsb_control: 1,
       fast_dc_contactor: 0,
       cruise_active: 0,
-      low_beam: 1,
+      low_beam_switch: 1,
       low_beam_lamp: 1,
       moving: 1,
       horn_switch: 0,
@@ -256,10 +258,22 @@ const CASES: FrameCase[] = [
       blinker_switch_left: 0,
       blinker_right: 1,
       blinker_left: 0,
-      low_beam: 1,
+      low_beam_switch: 1,
       mag_good: 1,
       dsb_control: 1,
     },
+  },
+  {
+    what: "0x102 the low beam on, both halves — 2026-08-04 03:56:31.470, the same frame as the first case above read for the other pair. `low_beam_switch` (b0 bit 7) and `low_beam_lamp` (b2 bit 1) agree in ALL 15 006 856 archive frames, and that agreement is the whole argument for logging both: it is the baseline a failed bulb shows against. Asserted here for the reason the high-beam pair is",
+    id: 0x102,
+    hex: "80 10 02 44 8E FF D8 FF",
+    expect: { low_beam_switch: 1, low_beam_lamp: 1, high_beam: 0, high_beam_lamp: 0 },
+  },
+  {
+    what: "0x102 both beams off, both halves — 2026-08-04 19:58:18.703, parked with the lights off. The other end of the same pairing: switch and lamp clear together",
+    id: 0x102,
+    hex: "00 10 00 44 B0 FF D2 FF",
+    expect: { low_beam_switch: 0, low_beam_lamp: 0, high_beam: 0, high_beam_lamp: 0 },
   },
   {
     what: "⚠️ SYNTHETIC — every bit of byte 3 at once, which the bus has NEVER produced. Four of these eight (horn_switch's b1 bit is separate; imd_disable, winter_storage and vcu_abs_off here) read 0 in all 15 006 856 archive frames, so no real frame can pin their positions and a bit-position mutation would stay green without this. It also asserts each comes out as 1 rather than as the vendor's mask (8, 16, 128), which bounds.js would reject as a dead sensor. ⚠️ It asserts fast_dc_contactor and cruise_active set SIMULTANEOUSLY — a combination occurring in 0 of 275 879 frames — and lie_down_detected with them, so it proves the decoder self-consistent and nothing whatever about the bike",
@@ -520,7 +534,7 @@ for (const key of [
   "horn_switch",
   "blinker_switch_left",
   "blinker_switch_right",
-  "low_beam",
+  "low_beam_switch",
   "dsb_control",
   "imd_disable",
   "winter_storage",
