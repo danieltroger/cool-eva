@@ -270,9 +270,9 @@ if (estimateSocRate(fallingRing.samples, FALLING_PROBE_NOW_MS) !== null) {
 //
 // ⚠️ `record()` notifies when `prev === undefined`, so a process's FIRST-EVER reading is delivered
 // as a change even though it is not a crossing. What saves the ring is that the CAN channel has
-// always recorded one long before the controller subscribes — 530-1282 ms across 77 boots, and the
-// margin is the serial static-file read at src/index.ts:434. Nothing enforces that, so the
-// controller says so when it does keep such a sample. docs/dc-taper.md.
+// always recorded one long before the controller subscribes — 530-1282 ms across 77 boots, the
+// margin being the serial per-file `loadStaticFiles` read between the two. Nothing enforces that,
+// so the controller says so when it does keep such a sample. docs/dc-taper.md.
 //
 // ⚠️ ORDER IS LOAD-BEARING HERE: `liveState` is never cleared, so "no soc recorded" is a one-way
 // door inside one process, and the `0xFF` case below leaves a value behind that the last case needs
