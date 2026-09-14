@@ -2,6 +2,7 @@ import { decodeFrame } from "../src/can/decode.ts";
 import { VEHICLE_STATUS_CAN_ID } from "../src/can/vehicle-status.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor, isPlausible } from "../public/lib/bounds.js";
+import { parseHexBytes } from "./captured-vcu-records.ts";
 
 // Replays real 0x101 frames through the real decoder, on a laptop, with no bike — the
 // trick scripts/check-button-decode.ts plays for 0x102 and for the same reason.
@@ -28,12 +29,21 @@ interface FrameCase {
   hex: string;
   /** Every key/value this frame must produce. */
   expect: Record<string, number>;
+  /**
+   * Hand-written rather than captured. The count goes in the success line, so it is a field
+   * rather than a substring of `what`: prose is written for a person, and a case that said
+   * "synthesised" would have been counted as evidence off the bike.
+   */
+  synthetic?: true;
 }
+
+/** The parked frame, named once: §1, §2 and §3 all read it and must read the SAME one. */
+const PARKED_FRAME = "3E 3C 04 04 64 00 00 00";
 
 const CASES: FrameCase[] = [
   {
     what: "parked — state 60 / substate 62, the pair obd-garage/CAN_MAP.md records off the BLE path. 2026-08-02 18:45:27.001407, capture-20260802-184526-1c8fc1e2.log",
-    hex: "3E 3C 04 04 64 00 00 00",
+    hex: PARKED_FRAME,
     expect: {
       vehicle_substate_can: 62,
       vehicle_state_can: 60,
@@ -125,6 +135,7 @@ const CASES: FrameCase[] = [
     expect: { vehicle_substate_can: 43, vehicle_state_can: 40, drive_vsm: 4, limp_pack_res: 98 },
   },
   {
+    synthetic: true,
     what: "⚠️ SYNTHETIC — a frame the bus has never produced, and the only thing that can pin the two 16-bit fields. `limp_module_word` is 0 in all 15 006 844 archive frames and all 1 184 096 September ones, and `limp_pack_res`'s high byte is 0 in every one of them, so NO real frame distinguishes bytes 4-5 from 6-7, or little-endian from big. Distinct non-zero values in all four bytes do. ⚠️ It proves the decoder self-consistent and nothing whatever about the bike: b3 = 0xFF asserts every byte-3 field at once, which no frame on record carries",
     hex: "2B 28 06 FF 34 12 78 56",
     expect: {
@@ -142,22 +153,16 @@ const CASES: FrameCase[] = [
 ];
 
 /**
- * Values the archive has actually produced, so the bounds are falsifiable.
+ * The widest values the archive has produced, so the bounds are falsifiable.
  *
- * Without these the [0, 255] on the two state bytes is untestable — every real frame above
- * is far inside it, so narrowing it to a byte's worth of the values seen would pass. 150 is
- * the one that matters: it is a bit-7 substate, and any bound stopping at 127 drops it.
+ * The extremes only, the convention `ARCHIVE_PACK_RES` below already uses. 150 is the one that
+ * carries this: it is a bit-7 substate, so any bound stopping at 127 drops it, and the full
+ * 38-value vocabulary lives in docs/can-0x101.md rather than in a second copy here that has to
+ * be kept in step with the archive.
  */
-const ARCHIVE_STATES = [1, 20, 40, 60, 80, 100];
-const ARCHIVE_SUBSTATES = [
-  2, 3, 6, 9, 20, 22, 23, 26, 28, 31, 32, 33, 34, 41, 42, 43, 46, 47, 51, 52, 53, 59, 62, 63, 83, 101, 102, 104, 105,
-  106, 107, 109, 110, 112, 113, 143, 144, 150,
-];
-/** The widest V_LIMP_PACK_RES seen in 15 006 844 frames; the field is 16 bits. */
+const ARCHIVE_STATES = [1, 100];
+const ARCHIVE_SUBSTATES = [2, 150];
 const ARCHIVE_PACK_RES = [75, 154];
-
-/** Of the keys checked below, the ones that really are 1/0 and must be gated exactly so. */
-const FLAG_KEYS = new Set(["moving", "rolling_backwards", "limp_mode_status", "limp_res_valid"]);
 
 const failures: string[] = [];
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
@@ -174,15 +179,40 @@ for (const testCase of CASES) {
     if (actual !== want) {
       failures.push(`${testCase.hex} — ${key} decoded as ${actual ?? "(absent)"}, expected ${want}. ${testCase.what}`);
     }
+    // …and every one of those values must survive the dashboard's gate. A value the decoder is
+    // pinned to produce and the gate rejects would render as a dead sensor, and nothing else
+    // here would notice — scripts/check-can-decoders.ts's own replay loop does the same.
+    // ⚠️ The synthetic frame is exempt: it carries values the bus has never produced, so a
+    // bound rejecting one says nothing about the bike.
+    const signal = defined.get(key);
+    if (!testCase.synthetic && signal && !isPlausible(key, want, signal.unit, signal.group)) {
+      failures.push(
+        `public/lib/bounds.js rejects ${key} = ${want} from a captured frame (${testCase.hex}) — the tile would show a dead sensor for a reading the bike really produces`
+      );
+    }
   }
 }
-const syntheticCases = CASES.filter(testCase => testCase.what.includes("SYNTHETIC")).length;
+// The prose marker and the field must agree. ⚠️ This is what makes two sources of truth safe:
+// `what` is written for a person and `synthetic` is what the success line counts, and the one
+// failure that matters — a hand-written frame counted as evidence off the bike — is exactly a
+// disagreement between them. Asserted rather than chosen, because the marker in the prose is
+// what a reader of the case sees and the field is what the number comes from.
+for (const testCase of CASES) {
+  const saysSynthetic = testCase.what.includes("SYNTHETIC");
+  if (saysSynthetic !== (testCase.synthetic === true)) {
+    failures.push(
+      `${testCase.hex} — the case ${saysSynthetic ? "is marked ⚠️ SYNTHETIC in its prose but has no `synthetic: true`" : "carries `synthetic: true` but its prose does not say ⚠️ SYNTHETIC"}, so the success line would ${saysSynthetic ? "count a hand-written frame as captured" : "understate the captured frames"}`
+    );
+  }
+}
+
+const syntheticCases = CASES.filter(testCase => testCase.synthetic).length;
 console.log(`  ${CASES.length - syntheticCases} captured frames replayed, plus ${syntheticCases} synthetic`);
 
 // 2. A short frame yields nothing rather than throwing. This runs inside the CAN RX
 //    handler, where a throw takes the bus reader down with it.
 for (let length = 0; length < 8; length++) {
-  const decoded = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame("3E 3C 04 04 64 00 00 00").subarray(0, length));
+  const decoded = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame(PARKED_FRAME).subarray(0, length));
   if (decoded.length > 0) {
     failures.push(
       `a ${length}-byte 0x101 frame produced ${decoded.length} values; a short frame must decode to nothing`
@@ -194,7 +224,7 @@ for (let length = 0; length < 8; length++) {
 //    `vehicle_state` and `vehicle_substate` off the Connectivity Hub; one key with two
 //    writers flaps between them and interleaves in the ride log. This is the assertion that
 //    stops a future tidy-up merging the two back together.
-const parkedKeys = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame("3E 3C 04 04 64 00 00 00")).map(value => value.key);
+const parkedKeys = decodeFrame(VEHICLE_STATUS_CAN_ID, parseFrame(PARKED_FRAME)).map(value => value.key);
 for (const [canKey, bleKey] of [
   ["vehicle_state_can", "vehicle_state"],
   ["vehicle_substate_can", "vehicle_substate"],
@@ -230,45 +260,27 @@ for (const [key, values] of [
     }
   }
 }
-console.log(`  ${ARCHIVE_SUBSTATES.length} archive substates and ${ARCHIVE_STATES.length} states pass the bounds`);
+console.log("  the widest archive state, substate and pack resistance pass the bounds");
 
-// 5. 🚨 `moving` and 0x104's `rolling_backwards` rendered completely ungated until 2026-09-14 — flags
-//    with a blank unit in `drive`, which is not a BOOLEAN_GROUP, and in neither bounds table.
-//    scripts/check-can-decoders.ts cannot catch that: it only walks signals that ARE gated,
-//    so an ungated one is invisible to it from both ends. Asserted here by name.
-// ⚠️ ALL of them, not the flags only. `drive_vsm`, `vehicle_status_flags` and
-// `limp_module_word` live in `drive`/`vcu` with a blank unit, so deleting their BY_KEY lines
-// would leave them rendering whatever arrives with nothing red — byte for byte the
-// moving/rolling_backwards bug two lines below. Asserting the OUTCOME of boundsFor rather than the
-// route is what survives someone moving a key to a different group.
-for (const key of [
-  "vehicle_state_can",
-  "vehicle_substate_can",
-  "drive_vsm",
-  "drive_vsm_b3",
-  "vehicle_status_flags",
-  "limp_pack_res",
-  "limp_module_word",
-  "moving",
-  "rolling_backwards",
-  "limp_mode_status",
-  "limp_res_valid",
-]) {
+// 5. The 0/1 flags among the keys above must be gated to exactly [0, 1], not merely gated.
+//    ⚠️ Only that half lives here. "Is it gated at all" is scripts/check-all-view-tiles.ts §5's
+//    job — it walks EVERY registry signal and fails for any with null bounds that is not on its
+//    known-ungated list, so a deleted BY_KEY line goes red there whether or not anyone remembers
+//    to name the key in this file. Keeping a second copy would be the duplication this file's
+//    header says it does not keep. `moving` is here rather than in check-button-decode.ts
+//    because it is the key whose three ungated months prompted the ratchet.
+const MUST_GATE_TO_FLAG = ["moving", "limp_mode_status", "limp_res_valid"];
+for (const key of MUST_GATE_TO_FLAG) {
   const signal = defined.get(key);
   if (!signal) {
-    failures.push(`${key} is not in src/can/registry.ts`);
+    failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
     continue;
   }
   const bounds = boundsFor(key, signal.unit, signal.group);
-  if (!bounds) {
+  if (!bounds || bounds[0] !== 0 || bounds[1] !== 1) {
     failures.push(
-      `public/lib/bounds.js does not gate ${key} (group "${signal.group}", unit "${signal.unit}") AT ALL — boundsFor() returned null, so the ALL page renders whatever arrives`
+      `public/lib/bounds.js gates the 0/1 flag ${key} (group "${signal.group}", unit "${signal.unit}") to ${JSON.stringify(bounds)} rather than [0, 1]`
     );
-    continue;
-  }
-  const isFlag = FLAG_KEYS.has(key);
-  if (isFlag && (bounds[0] !== 0 || bounds[1] !== 1)) {
-    failures.push(`public/lib/bounds.js gates the 0/1 flag ${key} to ${JSON.stringify(bounds)} rather than [0, 1]`);
   }
 }
 
@@ -283,9 +295,15 @@ if (failures.length > 0) {
 console.log(
   `✓ ${CASES.length - syntheticCases} captured 0x101 frames decode as recorded (plus ${syntheticCases} synthetic, which pins only that the decoder is self-consistent), Energica's double-assigned V_DRIVE_VSM stays two ` +
     `fields, 0x101 is filtered in, short frames decode to nothing, the CAN keys do not collide with the BLE ` +
-    `transport's, every archive state and substate passes the dashboard's gate, and all eleven keys checked are gated`
+    `transport's, the widest archive state and substate pass the dashboard's gate, and the three 0/1 flags are gated to exactly [0, 1]`
 );
 
+/**
+ * A fixture's bytes. ⚠️ `parseHexBytes` rather than a `Number.parseInt` map, which yields NaN on
+ * a typo and `Buffer.from` then silently stores 0 — the fixture would assert against a frame
+ * nobody captured. This one throws, naming the string. Same helper, same reason, as
+ * scripts/check-attitude.ts.
+ */
 function parseFrame(hex: string): Buffer {
-  return Buffer.from(hex.split(/\s+/).map(byte => Number.parseInt(byte, 16)));
+  return Buffer.from(parseHexBytes(hex));
 }

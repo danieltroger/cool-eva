@@ -43,6 +43,8 @@ interface FrameCase {
   hex: string;
   /** Every key/value this frame must produce. Other keys may also be produced. */
   expect: Record<string, number>;
+  /** Hand-written rather than captured — see scripts/check-vehicle-status.ts on why it is a field. */
+  synthetic?: true;
 }
 
 const BUTTON_KEYS = [
@@ -276,6 +278,7 @@ const CASES: FrameCase[] = [
     expect: { low_beam_switch: 0, low_beam_lamp: 0, high_beam: 0, high_beam_lamp: 0 },
   },
   {
+    synthetic: true,
     what: "⚠️ SYNTHETIC — every bit of byte 3 at once, which the bus has NEVER produced. Four of these eight (horn_switch's b1 bit is separate; imd_disable, winter_storage and vcu_abs_off here) read 0 in all 15 006 856 archive frames, so no real frame can pin their positions and a bit-position mutation would stay green without this. It also asserts each comes out as 1 rather than as the vendor's mask (8, 16, 128), which bounds.js would reject as a dead sensor. ⚠️ It asserts fast_dc_contactor and cruise_active set SIMULTANEOUSLY — a combination occurring in 0 of 275 879 frames — and lie_down_detected with them, so it proves the decoder self-consistent and nothing whatever about the bike",
     id: 0x102,
     hex: "00 00 00 FF 00 00 00 00",
@@ -291,6 +294,7 @@ const CASES: FrameCase[] = [
     },
   },
   {
+    synthetic: true,
     what: "⚠️ SYNTHETIC — byte 3 bit 3 alone, the asymmetric companion to the all-bits frame above and the reason it is not enough on its own: with every other case setting all of byte 3 or none of it, imd_disable (bit 3) and winter_storage (bit 4) could be SWAPPED and the suite would still pass. Neither bit has ever been set on this bike, so this is the only thing separating them",
     id: 0x102,
     hex: "00 01 00 08 00 00 00 00",
@@ -554,6 +558,20 @@ for (const key of [
   }
 }
 
+// The prose marker and the field must agree. ⚠️ This is what makes two sources of truth safe:
+// `what` is written for a person and `synthetic` is what the success line counts, and the one
+// failure that matters — a hand-written frame counted as evidence off the bike — is exactly a
+// disagreement between them. Asserted rather than chosen, because the marker in the prose is
+// what a reader of the case sees and the field is what the number comes from.
+for (const testCase of CASES) {
+  const saysSynthetic = testCase.what.includes("SYNTHETIC");
+  if (saysSynthetic !== (testCase.synthetic === true)) {
+    failures.push(
+      `${testCase.hex} — the case ${saysSynthetic ? "is marked ⚠️ SYNTHETIC in its prose but has no `synthetic: true`" : "carries `synthetic: true` but its prose does not say ⚠️ SYNTHETIC"}, so the success line would ${saysSynthetic ? "count a hand-written frame as captured" : "understate the captured frames"}`
+    );
+  }
+}
+
 console.log("");
 if (failures.length > 0) {
   console.error("FAILED:");
@@ -562,7 +580,7 @@ if (failures.length > 0) {
   }
   process.exit(1);
 }
-const syntheticCases = CASES.filter(testCase => testCase.what.includes("SYNTHETIC")).length;
+const syntheticCases = CASES.filter(testCase => testCase.synthetic).length;
 console.log(
   `✓ ${CASES.length - syntheticCases} captured frames decode as recorded (plus ${syntheticCases} synthetic, which pin only that the decoder is self-consistent); 0x400 is filtered in, short frames stay honest, ` +
     `the beam lamps did not revert to charging/charge_port_unlocked, the two brake bits stay on 0x20 and 0x40 ` +

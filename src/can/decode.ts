@@ -287,7 +287,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // it rests on the parked sample alone — a key-off capture is what would confirm it.
     //
     // b0's low bits and b3 are decoded below, both added 2026-08-16 — see the
-    // comments on `handlebarButtons` and `contactorAndCruise` further down this case.
+    // comments on `handlebarSwitches` and `vehicleFlagsByte3` further down this case.
     case 0x102: {
       if (data.length < 3) return [];
       const handlebar = data[0];
@@ -349,11 +349,11 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         { key: "low_beam_lamp", value: bit(lampsAndState, 1) },
         { key: "moving", value: bit(lampsAndState, 7) },
       ];
-      values.push(...handlebarButtons(handlebar));
+      values.push(...handlebarSwitches(handlebar));
       // b3 needs its own guard: every b0-2 signal above has been logged since June and
       // a short frame must not be able to silence them on account of the new fields.
       if (data.length >= 4) {
-        values.push(...contactorAndCruise(data[3]));
+        values.push(...vehicleFlagsByte3(data[3]));
       }
       // b4-5 / b6-7 LE s16 — the attitude sensor's roll and pitch, in units of 0.1°.
       // NOT the two accelerations the .xdbc calls them: Energica's own bank-2
@@ -415,7 +415,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         // bit 1, cruise ON/OFF (right pod, front). ✅ CONFIRMED by what it causes: the
         // two presses in the ORIGINAL corpus (2026-08-04 18:04:42.270 for 0.877 s at
         // 88 km/h, and 19:45:47.924 for 0.920 s at 39 km/h) BOTH brought 0x102 b3 bit 1
-        // — the cruise-armed state, see contactorAndCruise() — up 0.53 s later.
+        // — the cruise-armed state, see vehicleFlagsByte3() — up 0.53 s later.
         //
         // ⚠️ "Exactly twice" was the 14-capture corpus. The whole archive has 36 presses,
         // 0.465-1.125 s, every one above 3 km/h; the arming claim rests on the two that
@@ -484,7 +484,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
 // Nothing about "a bit toggles" forces that pattern; it is what a speed-locked menu and a
 // set of turn signals actually look like, from opposite ends of the same byte. Press
 // counts and durations: docs/can-decode-findings.md § "Byte 0's low bits".
-function handlebarButtons(handlebar: number): DecodedValue[] {
+function handlebarSwitches(handlebar: number): DecodedValue[] {
   return [
     // bits 0 and 1 — the MODE pair. ✅ CONFIRMED as menu buttons (76 of 76 presses at
     // a standstill for bit 0, 137 of 141 for bit 1, both transient at ~0.13 s).
@@ -558,8 +558,9 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
   ];
 }
 
-// 0x102 byte 3 — the fast-charge contactor monitor, the cruise-control state and the
-// VCU's own lie-down flag.
+// 0x102 byte 3 — all eight bits. Named `contactorAndCruise` while it decoded two of them;
+// renamed 2026-09-14 when the rest of the byte arrived and the contactor and the cruise state
+// became the two least representative members of it.
 //
 // Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was
 // first decoded, which is true of a parked bike and false of a charging one: across
@@ -579,7 +580,7 @@ function handlebarButtons(handlebar: number): DecodedValue[] {
 // are dead. Energica's own table names all four: bit 3 `V_IMD_DISABLE`, bit 4
 // `V_WINTER_STORAGE`, bit 5 `V_LIEDOWN_DETECTED`, bit 7 `V_ABSOFF` (the 2024 service-tool
 // analysis in `obd-garage/`, §`0x102` `VCU_DIGITALS`). Bit 5 is decoded below.
-function contactorAndCruise(byte3: number): DecodedValue[] {
+function vehicleFlagsByte3(byte3: number): DecodedValue[] {
   return [
     // bit 0 — `V_FASTDC_MON_SW`, the DC fast-charge contactor state monitor, and the
     // analog wire `A020_FCHG_MON` it corresponds to. ✅ CONFIRMED, and it is the
@@ -645,10 +646,12 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
     // is clear in 172 of 11 237 945 stopped frames and 399 036 of 3 768 911 moving ones.
     // Clear runs are short — 9 719 of one frame, 6 942 of two.
     //
-    // ⚠️ It is the most expensive key in this change by two orders of magnitude: 94 137 rows
-    // over 41.7 h of frame-time, ~2 258 rows/h, against ~60 rows/h for the other eight 0x102
-    // bits together. A deadband cannot reduce it (see below); the 47 020 edges are the whole
-    // reason to want it. docs/can-decode-findings.md §"0x102 byte 3".
+    // ⚠️ The most expensive key in this change by two orders of magnitude: 94 137 rows over
+    // 41.7 h of frame-time, ~2 258 rows/h, against ~60 rows/h for the other eight 0x102 bits
+    // together — and, because it is usually the only signal moving in its tick, it rarely
+    // coalesces, so it also costs ~2.5 extra WebSocket patches a second while riding (free with
+    // no phone attached: ws.ts early-returns on zero clients). A deadband cannot reduce either
+    // — |1 − 0| > 1 is false — and the 47 020 edges are the whole reason to want it.
     { key: "mag_good", value: bit(byte3, 6) },
   ];
 }

@@ -219,8 +219,6 @@ const KNOWN_UNGATED = new Set([
   "bms_warn_balancing_required",
   "vehicle_state",
   "vehicle_substate",
-  "speed_can_kmh",
-  "motor_rpm_can",
   "charge_state",
   "charger_enabled",
   "bms_remaining_energy_raw",
@@ -240,12 +238,21 @@ for (const signal of ungated) {
     );
   }
 }
+// 🚨 …and the other direction, which is the arm that matters more. A stale entry means the list
+//    has stopped describing the registry and the next reader trusts it. ⚠️ This asked "is it
+//    still a signal?" when it was written, which CANNOT see the commoner rot: an entry someone
+//    has since FIXED by giving it a bound stays on the list for ever, and the prose beside it
+//    keeps offering a two-line fix for a thing already fixed. It shipped that way — #230 gated
+//    `speed_can_kmh` and `motor_rpm_can` while this branch was in review and the list went on
+//    naming them. Comparing against `ungated` catches both rots and is shorter.
+const ungatedKeys = new Set(ungated.map(signal => signal.key));
 for (const key of KNOWN_UNGATED) {
-  // A stale entry is its own problem: it means the list has stopped describing the registry, and
-  // the next reader trusts it. Caught here so the ratchet cannot rot into decoration.
-  if (!SIGNALS.some(signal => signal.key === key)) {
-    failures.push(`KNOWN_UNGATED names "${key}", which is no longer a signal in src/can/registry.ts`);
-  }
+  if (ungatedKeys.has(key)) continue;
+  failures.push(
+    defined.has(key)
+      ? `KNOWN_UNGATED still names "${key}", which public/lib/bounds.js now gates — delete the line, and any prose that calls it ungated`
+      : `KNOWN_UNGATED names "${key}", which is no longer a signal in src/can/registry.ts`
+  );
 }
 console.log(`${ungated.length} of ${SIGNALS.length} signals reach no bound in bounds.js; all are on the known list`);
 
