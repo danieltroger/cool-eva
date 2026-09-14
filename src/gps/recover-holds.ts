@@ -1,6 +1,5 @@
 import { FIX_MAX_AGE_MS, WAYPOINT_REFUSAL, type WaypointRefusal } from "./waypoint.ts";
 import {
-  MAX_STEP_METRES,
   MIN_FIX_INTERVAL_MS,
   distanceKm,
   implausibleJumpKmh,
@@ -65,7 +64,11 @@ export interface RecoveryVerdict {
    * confess: with both rules in force every pair that HAS a predecessor is judged by one of
    * them, so "did the gate look" became vacuously true and stopped carrying information.
    * Which rule looked still does — they are exclusive by Δt and they refuse for different
-   * reasons — and `none` now means exactly "nothing preceded this fix in its own boot".
+   * reasons.
+   *
+   * ⚠️ `none` means NEITHER RULE RAN, which is two cases and not one: nothing preceded this
+   * fix in its own boot, or an earlier gate refused before judgeJump() was reached. Read it
+   * with `outcome`, never on its own — refused() hardcodes it for every gate above.
    */
   jumpRule: JumpRule;
   /**
@@ -100,7 +103,7 @@ export const JUMP_RULE = {
   SPEED: "speed",
   /** implausibleStepMetres(), against MAX_STEP_METRES. */
   STEP: "step",
-  /** Nothing preceded this fix in its own boot, so neither rule can run. */
+  /** Neither rule ran: nothing preceded this fix, or a gate above refused first. */
   NONE: "none",
 } as const;
 
@@ -471,7 +474,6 @@ function refused(press: RecoveredPress, fireAt: number, refusal: WaypointRefusal
 
 export {
   FIX_MAX_AGE_MS,
-  MAX_STEP_METRES,
   MIN_FIX_INTERVAL_MS,
   WAYPOINT_REFUSAL,
   distanceKm,

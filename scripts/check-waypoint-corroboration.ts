@@ -203,7 +203,8 @@ const afterCorrection = corrupt.waypoint.saveWaypointNow();
 // corrected fix is measured against the spike, so the step rule refuses it exactly as
 // src/gps/fix-plausibility.ts says a spike costs TWO refusals — and below the floor that
 // cost is new, because the gate used to decline there. Measured over the archive: 75 good
-// fixes, 824 s. docs/waypoints.md §"What it costs to judge the other 93 %".
+// fixes, 3 991.6 s — FIX_MAX_AGE_MS does not cap it, since record() marks the age before the
+// deadband test. docs/waypoints.md §"What it costs to judge the other 93 %".
 check(
   `⚠️  …the corrected fix is refused too, measured against the spike (${afterCorrection.message})`,
   !afterCorrection.saved && afterCorrection.refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE
@@ -211,7 +212,9 @@ check(
 check("…and still nothing corrupt in the log", latestValue("waypoint_lon") !== 130.303698);
 
 // The sample after THAT gives the gate a pair of good fixes, which is the recovery the
-// rider sees: hold the button again and it works. ~8 m east, past the 3 m deadband.
+// rider sees: hold the button again and it works. 3.80 m east — the deadband is 0.00003°,
+// which is 1.78 m of LONGITUDE at this latitude rather than the 3 m it is north-south, so
+// this clears it by 2.1× and not by the 4× the round number would suggest.
 sample(57.7, 13.0371);
 await settle();
 const recovered = corrupt.waypoint.saveWaypointNow();

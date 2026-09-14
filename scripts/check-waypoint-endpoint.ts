@@ -64,6 +64,18 @@ async function ask(): Promise<WaypointReply> {
 // second sample, which is what the hub really sends ~550 ms later.
 const fixes = startWaypointFixTracking();
 
+/**
+ * How many landing hops stageFix() has fired — asserted to be 0 before the first save.
+ *
+ * ⚠️ The guard that keeps it 0 there is load-bearing and was WRONG once: written as
+ * `lastStaged !== null` against a variable initialised to `""`, it fired on the first
+ * staging too, which gives §3's save a non-null `precedingFix` and routes it through the
+ * OTHER arm of the corroboration gate — deleting this file's only exercise of it, silently
+ * and with every assertion still green. A diff reviewer put that bug back and the suite
+ * stayed green, which is why this counter exists rather than a comment.
+ */
+let landingHops = 0;
+
 /** When the last DIFFERENT position was staged — see the guard in stageFix(). */
 let lastDifferentStageAt = monotonicNow();
 let lastStaged = "";
@@ -81,25 +93,21 @@ let lastStaged = "";
  * 3 m deadband, so nothing is logged, no change fires, and on the FIRST staging
  * `precedingFix` stays null — precisely the "first fix of a run, seen twice" state.
  *
- * ⚠️ A TELEPORT NEEDS A LANDING HOP SINCE #241. This file's fixtures jump between
- * continents, and the step rule judges exactly the sub-second pairs the old jump gate
- * declined on — so staging Croatia straight after the south pole now reaches the endpoint
- * as an impossible step, and three assertions about the ENDPOINT failed for a reason that
- * has nothing to do with it. So a move to a new position arrives as two fixes at the new
- * position, ~11 m apart: the same shape the hub really produces, and the same recovery a
- * rider gets after a spike. The waypoint still copies the exact staged coordinate, because
- * the hop lands first and the exact value is recorded last.
+ * ⚠️ A TELEPORT NEEDS A LANDING HOP SINCE #241: a move to a new position arrives as two
+ * fixes there, ~11 m apart, because the step rule judges the sub-second pairs these
+ * fixtures teleport across. The waypoint still copies the exact staged coordinate — the hop
+ * lands first, the exact value last. Why, and what it does not weaken:
+ * docs/waypoints.md §"What the checks had to change".
  */
 async function stageFix(latitude: number, longitude: number) {
   const staged = `${latitude},${longitude}`;
   if (staged !== lastStaged) {
     // ⚠️ Starting the tracker put the JUMP gate in a file whose fixtures teleport between
-    // continents. Since #241 a pair under MIN_FIX_INTERVAL_MS is judged on DISTANCE rather
-    // than waved through, so the floor no longer excuses these — the landing hop above is
-    // what does. This guard stays because it pins which of the two rules the fixtures meet:
-    // over the floor they would be judged on an implied speed instead, and the symptom
-    // would again be an unrelated FIX_IMPLAUSIBLE. This is the fixture's problem, never the
-    // endpoint's.
+    // continents, and since #241 a sub-second pair is judged on DISTANCE rather than waved
+    // through — so the landing hop below is what excuses them, not this floor. What this
+    // still pins is the rule the HOP's own pair meets: on a stalled machine the gap grows
+    // past the floor, the speed test judges instead, and the symptom would be an unrelated
+    // FIX_IMPLAUSIBLE. The fixture's problem, never the endpoint's.
     const gap = since(lastDifferentStageAt);
     check(
       `staged fixes stay inside the jump gate's ${MIN_FIX_INTERVAL_MS} ms floor (${Math.round(gap)} ms)`,
@@ -107,6 +115,7 @@ async function stageFix(latitude: number, longitude: number) {
     );
     if (lastStaged !== "") {
       // ~11 m north, which clears the 3 m deadband so it logs and moves the tracked pair.
+      landingHops += 1;
       record("gps_lat", latitude + 0.0001);
       record("gps_lon", longitude);
       await Promise.resolve();
@@ -200,6 +209,7 @@ if (clockClaimedElsewhere) {
   );
 }
 
+check("⚠️  no landing hop has fired yet, so this save is a run's FIRST fix, seen twice", landingHops === 0);
 const saved = await ask();
 check("a fresh, plausible fix under a trusted clock saves", saved.saved);
 check("…and the reply carries the sequence a banner shows", saved.sequence === 1);

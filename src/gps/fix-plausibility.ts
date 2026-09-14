@@ -56,7 +56,7 @@ export function isPositionOnEarth(latitudeDeg: number, longitudeDeg: number): bo
 export const MAX_PLAUSIBLE_KMH = 300;
 
 /**
- * Two fixes closer together than this are not judged on the distance between them.
+ * Below this a fix pair is judged on the DISTANCE between the two, not on the speed.
  *
  * ⚠️ THE LESSON docs/route-map.md ALREADY PAID FOR: an implied-speed test is destroyed by
  * a short denominator — 7 m in 1 ms reads as 25 000 km/h, and a first attempt at despiking
@@ -97,13 +97,15 @@ export function implausibleJumpKmh(previous: Fix | null, next: Fix): number | nu
 /**
  * A step this far between two fixes closer together than MIN_FIX_INTERVAL_MS is not a ride.
  *
- * ⚠️ FLOORED BY THE TWO CONSTANTS ABOVE rather than chosen freely. MAX_PLAUSIBLE_KMH over
+ * ⚠️ FLOORED BY THE TWO CONSTANTS ABOVE rather than chosen freely. MAX_PLAUSIBLE_KMH ×
  * MIN_FIX_INTERVAL_MS is 83.34 m, so anything from there up cannot refuse a bike moving
  * within the shipped ceiling at any interval under the floor — the slowest pair 220 m
  * refuses anywhere in the archive implies 1 635 km/h. Where it sits ABOVE that floor is the
- * archive's to decide, and it is not free: 75 good fixes are refused for a corrupt
- * predecessor. Both halves, and the 220 the cost curve lands on:
- * docs/waypoints.md §"The jump gate mostly declines to judge".
+ * archive's to decide, and it is NOT free: 75 good fixes are refused for a corrupt
+ * predecessor, and FIX_MAX_AGE_MS does not bound that — record() marks the age before the
+ * deadband test, so a parked bike holds a refusing pair while the fix reads fresh. Measured
+ * 3 991.6 s. The cost, and the 220 the curve lands on:
+ * docs/waypoints.md §"What it costs to judge the other 93 %".
  */
 export const MAX_STEP_METRES = 220;
 

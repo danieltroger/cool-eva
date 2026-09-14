@@ -240,6 +240,25 @@ check(
   jumped[0].refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE && jumped[0].jumpRule === JUMP_RULE.SPEED
 );
 
+// ⚠️ THE SEAM, IN THE MIRROR TOO. The two rules meet at exactly MIN_FIX_INTERVAL_MS and
+// the boundary belongs to the SPEED rule — the pure function is asserted at that instant in
+// check-hold-gestures.ts, and without this the same `>=`-to-`>` mutation survives here.
+// 1 000 ms apart and ~19 m, so neither rule refuses and only the naming is under test.
+const atTheSeam = judge({
+  latitudeRows: [
+    { ts: BASE - 100, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 57.70017, sessionId: 1, seq: 2 },
+  ],
+  longitudeRows: [
+    { ts: BASE - 100, value: 11.97, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 11.97, sessionId: 1, seq: 2 },
+  ],
+});
+check(
+  "⚠️  a pair exactly MIN_FIX_INTERVAL_MS apart is the SPEED rule's, in the mirror as on the bike",
+  atTheSeam[0].outcome === RECOVERY_OUTCOME.RECOVERED && atTheSeam[0].jumpRule === JUMP_RULE.SPEED
+);
+
 const live = judge({ waypointRows: [{ ts: BASE + 1600, value: 1, sessionId: 1, seq: 1 }] });
 check("a hold that already saved a waypoint is not recovered again", live[0].outcome === RECOVERY_OUTCOME.ALREADY_LIVE);
 
@@ -269,7 +288,7 @@ const firstOfBoot = judge({
 });
 check(
   "⚠️  …and a fix with nothing before it in its boot is judged by NEITHER rule",
-  firstOfBoot[0].jumpRule === JUMP_RULE.NONE
+  firstOfBoot[0].outcome === RECOVERY_OUTCOME.RECOVERED && firstOfBoot[0].jumpRule === JUMP_RULE.NONE
 );
 
 // ⚠️ TWO BOOTS IN ONE WINDOW, which is the case that makes the session split load-bearing
