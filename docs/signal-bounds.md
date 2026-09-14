@@ -107,4 +107,6 @@ Where 30 000 comes from: this pack is **~21 kWh** — stated at `src/can/registr
 
 **`gps_fix` → `[0, 3]`.** `src/gps/decode.ts:126` is `frame[2] & 3`: a two-bit field, so 0…3 by construction — the same call, for the same reason, as `abs_warning_lamp` and `drive_vsm_b3`. It had been filed as an index; it is a fix-quality enum.
 
+**`gps_satellites` → `[0, 31]`**, for the identical reason one line further down the same decoder: `(frame[7] >> 3) & 31` is a documented five-bit mask. ⚠️ It was filed as an `index` in an earlier draft of this change, which applied the mask argument to one of a neighbouring pair and not the other.
+
 **`remaining_ah` stays `unresolved`.** The field width `[0, 6553.5]` is available and is not taken: `decode-bms.ts:139-142` says what the value _means_ is unconfirmed — remaining capacity or a coulomb counter — and the two have different ceilings. Bounding a quantity the repo says it cannot identify would be writing down a claim it has refused. `bms_remaining_energy_raw` is `unresolved` for the neighbouring reason: _"there is no scale worth committing to"_.

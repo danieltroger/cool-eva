@@ -154,9 +154,9 @@ export const SIGNALS: SignalDef[] = [
   // of ADC wobble at 10 Hz across three signals would be ~2.6M rows/day — four times
   // the entire rest of the DB, onto a Pi Zero's SD card. Worth re-checking with
   // `select key, count(*) from … group by key` after the first ride.
-  { key: "iso_test_1", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "raw-word" },
-  { key: "iso_test_2", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "raw-word" },
-  { key: "iso_test_total", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "raw-word" },
+  { key: "iso_test_1", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "unresolved" },
+  { key: "iso_test_2", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "unresolved" },
+  { key: "iso_test_total", unit: "", group: "bms", source: "stream", deadband: 10, unbounded: "unresolved" },
   // Sum of the measured cell voltages in 1 V steps — a cross-check on pack_v, which
   // the BMS measures at the terminals instead. Also 10 Hz, and pack voltage swings
   // tens of volts under throttle, so the deadband has to sit well above the 1 V
@@ -427,7 +427,7 @@ export const SIGNALS: SignalDef[] = [
   { key: "gps_altitude_m", unit: "m", group: "gps", source: "stream", deadband: 1, bounds: [-500, 9000] },
   { key: "gps_speed_kmh", unit: "km/h", group: "gps", source: "stream", bounds: [0, 300] },
   { key: "gps_course_deg", unit: "°", group: "gps", source: "stream", deadband: 2, bounds: [0, 360] },
-  { key: "gps_satellites", unit: "", group: "gps", source: "stream", unbounded: "index" },
+  { key: "gps_satellites", unit: "", group: "gps", source: "stream", bounds: [0, 31] },
   { key: "gps_fix", unit: "", group: "gps", source: "stream", bounds: [0, 3] },
 
   // Satellite UTC — the Pi has no RTC, so this is the only trustworthy clock on

@@ -1,7 +1,8 @@
 import { readFile, writeFile } from "fs/promises";
+import { fileURLToPath } from "url";
 import { format, resolveConfig } from "prettier";
 import { SIGNALS } from "../src/can/registry.ts";
-import { fallbackBoundsFor } from "../public/lib/bounds.js";
+import { fallbackBoundsFor } from "../public/lib/bounds-rules.js";
 
 // Rewrites public/lib/generated-bounds.js from the `bounds` declared beside each signal
 // in src/can/registry.ts, so one copy of every number is hand-maintained.
@@ -25,6 +26,20 @@ import { fallbackBoundsFor } from "../public/lib/bounds.js";
 // pins one export and would miss a hand-added second export, a mutation after the
 // literal, a stray console.log on a module every page loads, the DO-NOT-EDIT banner, and
 // a duplicate key in the literal (JS keeps the last; the parse sees one).
+
+/**
+ * Signals a bound would actively HARM, so declaring one is a build failure rather than a
+ * judgement call. Prose cannot hold this: the rule for single-byte raw words says these
+ * would take FIELD_U8, and a reader following it gets no warning at the declaration site.
+ */
+const NEVER_BOUND = new Map([
+  [
+    "lmu_cell_mux",
+    "decode-bms.ts logs the selector valid or not so the LMU rotation stays visible. A bound " +
+      "sends an invalid selector to faultState, store.js then holds the last good value, and the " +
+      "rotation goes on looking healthy while byte 0 has stopped being the LMU number",
+  ],
+]);
 
 const GENERATED_PATH = "public/lib/generated-bounds.js";
 const generatedUrl = new URL(`../${GENERATED_PATH}`, import.meta.url);
@@ -51,8 +66,9 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
 ${rows}
 });
 `;
-  const config = await resolveConfig(generatedUrl.pathname);
-  return format(source, { ...config, filepath: generatedUrl.pathname });
+  const generatedPath = fileURLToPath(generatedUrl);
+  const config = await resolveConfig(generatedPath);
+  return format(source, { ...config, filepath: generatedPath });
 }
 
 const failures: string[] = [];
@@ -64,6 +80,23 @@ const rendered = await renderSignalBounds();
 // bound nor a reason fails here, rather than rendering whatever arrives on the ALL page.
 for (const signal of SIGNALS) {
   const viaFallback = fallbackBoundsFor(signal.key, signal.unit, signal.group);
+  const declared = signal.bounds;
+  if (declared !== undefined) {
+    const reason = NEVER_BOUND.get(signal.key);
+    if (reason !== undefined) {
+      failures.push(`${signal.key} must never be bounded and declares ${JSON.stringify(declared)}: ${reason}`);
+    }
+    if (!Number.isFinite(declared[0]) || !Number.isFinite(declared[1])) {
+      failures.push(
+        `${signal.key} declares a non-finite bound ${JSON.stringify(declared)} — isPlausible would reject every reading`
+      );
+    } else if (declared[0] > declared[1]) {
+      failures.push(
+        `${signal.key} declares an INVERTED bound ${JSON.stringify(declared)} — min above max, so isPlausible ` +
+          `rejects every reading and the tile shows a fault forever`
+      );
+    }
+  }
   if (signal.bounds !== undefined && signal.unbounded !== undefined) {
     failures.push(`${signal.key} declares BOTH bounds and unbounded — say which it is`);
     continue;
