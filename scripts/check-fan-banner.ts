@@ -24,9 +24,9 @@ import { foldFanAnnouncement } from "../public/lib/announce.js";
 // The order this file pins is therefore not tidiness: it is the whole property.
 // docs/fan-control.md §"The two fan signals must reach the phone duty-first".
 //
-// ⚠️ The sibling hole is NOT covered here: a /fan?mode=manual tap landing inside a curve
-// command tears the same way and is issue #206, whose remedy is a change to the seam
-// between auto.ts and control.ts rather than a re-ordering.
+// ⚠️ The sibling hole is §9: a /fan?mode=manual tap landing inside a curve command tears the
+// same way (#206), and its remedy was a change to the seam between auto.ts and control.ts —
+// switchMode waits for the controller's queue — rather than a re-ordering.
 //
 // ⚠️ It does NOT press a button. scripts/check-hold-gestures.ts owns the road from a
 // 0x102 bit to a fired gesture; this drives the gesture's own action so that what is on

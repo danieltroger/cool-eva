@@ -123,7 +123,7 @@ await expectQuietHeartbeats("§3 repeating the same values");
 //
 // ⚠️ The assertion the rejected alternative fails. Rendering the amps straight off
 // `charge_auto_target_a` looks equivalent and is not: forgetSession() (src/charge/auto.ts:262)
-// nulls the controller's own `commandedAmps` and records nothing, so the signal outlives the
+// nulls the controller's own `commandedAmps` and records no new target, so the signal outlives the
 // session that produced it and the tile would print a current this charge never commanded. The
 // reason is moved here so the refresh fires either way — this section is about which number wins,
 // not about what wakes the tile.

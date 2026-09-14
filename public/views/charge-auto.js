@@ -180,7 +180,7 @@ export function toggleAction(currentMode, reason, floor_a) {
  *
  * ⚠️ The amps come from the ENDPOINT, never from `charge_auto_target_a` — that signal is only a
  * wake-up. It outlives the session that produced it (forgetSession() nulls the controller's own
- * copy and records nothing), so reading it here would print a current this charge never commanded.
+ * copy and records no new target), so reading it here would print a current this charge never commanded.
  *
  * Exported so scripts/check-charge-auto-live.ts can read the tile's own words without a browser,
  * on the same footing as toggleAction() above.

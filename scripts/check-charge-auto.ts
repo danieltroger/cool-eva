@@ -1280,10 +1280,12 @@ function settleBatches(): Promise<void> {
   // below is a real one.
   record("charge_manager_state", 0);
   await settleBatches();
-  // ⚠️ Pinned UNDER CLIFF_C on purpose. Above it the rule answers BLIND_DESCENT for an emptied
-  // ring rather than NO_HISTORY — a pack arriving at 54 °C after a hot run is exactly the case
-  // this controller exists for — so the entering-edge assertion below would be asserting
-  // something the fixture does not guarantee. 40 °C is a plain warm pack.
+  // ⚠️ Pinned under TARGET_C on purpose — the boundary for an emptied ring is the SETPOINT, not
+  // the cliff. `decideChargeCurrent` returns HARD_CEILING at or above CLIFF_C (55) before the
+  // unknown-rate arm is reached at all, and that arm then answers NO_HISTORY below TARGET_C (54)
+  // and BLIND_DESCENT at or above it. So a pack arriving at 54 after a hot run — exactly the case
+  // this controller exists for — would make the entering-edge assertion below assert something
+  // the fixture does not guarantee. 40 °C is a plain warm pack, well clear of both.
   record("batt_temp_hi", 40);
   record("fast_dc_limit_max_a", 75);
   record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
