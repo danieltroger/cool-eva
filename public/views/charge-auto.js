@@ -69,12 +69,16 @@ van.derive(() => {
 // The cable coming out, alongside the two sibling controls — charge-current.js clears its form here
 // and charge-stop.js its outcome.
 //
-// ⚠️ `loaded` is the whole of it, and it is load-bearing. forgetSession() in src/charge/auto.ts
-// nulls the controller's commanded amps on the `charge_manager_state` edge and RECORDS NOTHING, so
-// until the next 60 s tick /charge-auto answers "commanding nothing" while both signals still hold
-// the last session's values — and clearing this is what stops the tile flashing the last session's
-// "Commanding 35 A" at the next one. The pair above needs nothing here: a session that ended shut
-// the gate, and the derive forgot it on its way out.
+// ⚠️ `loaded` is the whole of it, and it is STILL load-bearing after #204 gave the Pi a true
+// sentence at the edge. The two do different jobs: the Pi's fix makes the ENDPOINT's answer true,
+// this makes the TILE stop claiming to know while it re-reads. On the next plug-in `chargeType`
+// flips to "dc" and the gate's reply flips `writesEnabled()`, which wakes the render and the
+// derive together — but the render is synchronous and the derive's remedy is a `fetch`, so without
+// this the tile paints the PREVIOUS session's "Commanding 35 A" for one round trip on garage wifi.
+// Deleting it has been proposed twice; scripts/check-charge-auto-live.ts §7 is what goes red for
+// the third. ⚠️ And it does not belong in forgetTheAnswerOnScreen(): that also runs on a failed
+// read, where clearing `loaded` would make the tile's own `!loaded` render re-fetch immediately,
+// unpaced, against a Pi that is already not answering.
 onChargeSessionEnd(() => {
   loaded.val = false;
 });
@@ -182,6 +186,15 @@ export function toggleAction(currentMode, reason, floor_a) {
  * on the same footing as toggleAction() above.
  */
 export function controllerSentence() {
+  // ⚠️ Empty while the tile has nothing to show. The render above returns its label and nothing
+  // else until `loaded`, so a sentence here would be text that is not on screen — and this
+  // function's contract, which scripts/charge-auto-live-harness.ts leans its whole no-DOM
+  // argument on, is "the text the binding puts on screen". It is also what lets that harness see
+  // the window `onChargeSessionEnd` exists for: between a plug-in and the answer for the new
+  // session, the primitives below still hold the PREVIOUS session's reason and amps.
+  if (!loaded.val) {
+    return "";
+  }
   const suffix = commandedAmps.val === null ? "" : ` Commanding ${commandedAmps.val} A.`;
   return `${reasonSentence.val}${suffix}`;
 }

@@ -158,8 +158,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
       // for a minute after it has been taken back. src/fan/auto.ts re-evaluates on the same edge and
       // COMMANDS there; this deliberately does not, because a mode change should put nothing on the
       // bus. `decide()` only reads signals and returns a verdict.
-      context.reason = decide(context).reason;
-      record("charge_auto_reason", context.reason);
+      setReason(context, decide(context).reason);
       console.warn(`charge-auto: mode set to ${mode}`);
     },
     noteChargeCurrentOutgoing: (amps, origin) => {
@@ -206,8 +205,7 @@ async function runTick(context: AutoContext): Promise<void> {
     return;
   }
   const decision = decide(context);
-  context.reason = decision.reason;
-  record("charge_auto_reason", decision.reason);
+  setReason(context, decision.reason);
   if (decision.kind !== "command") {
     return;
   }
@@ -318,6 +316,13 @@ function rememberSoc(context: AutoContext, percent: number): void {
  *
  * ⚠️ Including `riderOverride`: standing down is for the rest of THIS charge, not for ever. And
  * including the ring — a rate measured across an unplug is a rate across two different situations.
+ *
+ * ⚠️ The REASON is memory too, and forgetting it was #204: the four fields above were cleared and
+ * the sentence was not, so between the unplug and the next 60 s tick /charge-auto answered with
+ * the last session's reason over `commandedAmps: null`. Re-decided rather than blanked — the enum
+ * has no "unknown" arm — and AFTER the clears, so the verdict sees the emptied rings and the
+ * cleared stand-down rather than the session that just ended. Nothing reaches the bus: `decide()`
+ * only reads, exactly as `setMode` re-decides without commanding. docs/charge-auto.md.
  */
 function forgetSession(context: AutoContext): void {
   context.commandedAmps = null;
@@ -325,6 +330,7 @@ function forgetSession(context: AutoContext): void {
   context.riderOverride = false;
   context.samples.length = 0;
   context.socSamples.length = 0;
+  setReason(context, decide(context).reason);
 }
 
 /**
@@ -368,8 +374,20 @@ function publishMode(context: AutoContext): void {
  */
 function standDown(context: AutoContext): void {
   context.riderOverride = true;
-  context.reason = CHARGE_AUTO_REASON.RIDER;
-  record("charge_auto_reason", context.reason);
+  setReason(context, CHARGE_AUTO_REASON.RIDER);
+}
+
+/**
+ * The reason the controller holds and the reason on the wire, moved together.
+ *
+ * ⚠️ One helper because they are one fact with two readers: /charge-auto answers from `state()`
+ * and the dashboard binds to `charge_auto_reason`. Every place that has ever set one and
+ * forgotten the other left the two disagreeing — which is #204 exactly. `publishMode` below is
+ * the same argument for the mode.
+ */
+function setReason(context: AutoContext, reason: ChargeAutoReason): void {
+  context.reason = reason;
+  record("charge_auto_reason", reason);
 }
 
 function stateOf(context: AutoContext): ChargeAutoState {

@@ -58,7 +58,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CHARGE_MANAGER_STATE_DC } from "../src/fan/curve.ts";
-import { defineSignals, record } from "../src/can/signals.ts";
+import { defineSignals, latestValue, record } from "../src/can/signals.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { startChargeAutomatic } from "../src/charge/auto.ts";
 import { createVcuWriteRunner } from "../src/vcu/write-runner.ts";
@@ -1251,6 +1251,93 @@ if (frozenGridVetoes !== EXPECTED_FROZEN_GRID_VETOES || frozenGridPlants !== EXP
   );
 }
 
+/** One turn of the microtask queue, which is when ../src/can/signals.ts delivers a change batch. */
+function settleBatches(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+// ── §19 ⚠️ THE SESSION EDGE, WHERE THE SENTENCE USED TO SURVIVE THE SESSION ─
+//
+// #204. `forgetSession()` cleared four fields on a `charge_manager_state` edge and left
+// `context.reason` alone, so between the unplug and the next 60 s tick /charge-auto answered with
+// the PREVIOUS session's sentence over `commandedAmps: null` — "At the 35 A floor…" about a charge
+// that had decided nothing. Both edges are covered: leaving a session and entering one.
+//
+// ⚠️ Driven through the real signal plumbing with a sink that RECORDS rather than commands. The
+// point is a reason, not a frame — and the sink also answers the one question a re-decide at an
+// edge has to answer: that it puts nothing on the bus.
+{
+  defineSignals(SIGNALS);
+  const commanded: number[] = [];
+  const automatic = startChargeAutomatic({
+    commandChargeCurrent: async amps => {
+      commanded.push(amps);
+      return { succeeded: true, message: "" };
+    },
+  });
+  // ⚠️ §12 left `charge_manager_state` at DC and record() notifies only when a value MOVES, so a
+  // DC written here would produce no batch and no edge. Off first, then on, and each transition
+  // below is a real one.
+  record("charge_manager_state", 0);
+  await settleBatches();
+  // ⚠️ Pinned UNDER CLIFF_C on purpose. Above it the rule answers BLIND_DESCENT for an emptied
+  // ring rather than NO_HISTORY — a pack arriving at 54 °C after a hot run is exactly the case
+  // this controller exists for — so the entering-edge assertion below would be asserting
+  // something the fixture does not guarantee. 40 °C is a plain warm pack.
+  record("batt_temp_hi", 40);
+  record("fast_dc_limit_max_a", 75);
+  record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
+  await settleBatches();
+
+  // A stand-down, so the reason under test is one that can only have come from THIS session.
+  // ⚠️ 58 and not 62: §12 leaves the setpoint at 62, and record() notifies only on a MOVE, so 62
+  // here would be silent and the stand-down would never fire. The same trap as the session state
+  // above, one signal over.
+  record("dc_charge_limit_selected_a", 58);
+  await settleBatches();
+  if (automatic.state().reason !== CHARGE_AUTO_REASON.RIDER) {
+    failures.push(
+      `§19 (setting up) a setpoint of 58 A should stand the controller down, got ${automatic.state().reason}`
+    );
+  }
+
+  // The cable out.
+  record("charge_manager_state", 0);
+  await settleBatches();
+  if (automatic.state().reason !== CHARGE_AUTO_REASON.NOT_DC) {
+    failures.push(
+      `§19 the unplug must re-decide the reason, not keep the session's: wanted NOT_DC, got ` +
+        `${automatic.state().reason}. That is #204 — the sentence outliving the charge it was about`
+    );
+  }
+  // ⚠️ The WIRE as well as the state, because the bug's shape is two sources of truth disagreeing:
+  // /charge-auto answers from state(), the dashboard binds to the signal.
+  if (latestValue("charge_auto_reason") !== CHARGE_AUTO_REASON.NOT_DC) {
+    failures.push(
+      `§19 the signal must carry the same reason state() does, got ${latestValue("charge_auto_reason")} against ` +
+        `${automatic.state().reason}`
+    );
+  }
+  if (automatic.state().commandedAmps !== null) {
+    failures.push(`§19 the unplug must forget what it commanded, got ${automatic.state().commandedAmps}`);
+  }
+
+  // The cable back in. The rings were emptied on the way out, so there is no history to read.
+  record("charge_manager_state", CHARGE_MANAGER_STATE_DC);
+  await settleBatches();
+  if (automatic.state().reason !== CHARGE_AUTO_REASON.NO_HISTORY) {
+    failures.push(
+      `§19 entering a session with the rings just emptied should answer NO_HISTORY, got ${automatic.state().reason}`
+    );
+  }
+  // ⚠️ Close to tautological while decide() stays pure, and kept anyway: it is the one outcome
+  // nobody could walk back. A session boundary must never become a command.
+  if (commanded.length > 0) {
+    failures.push(`§19 a session edge put ${commanded.length} command(s) on the bus: ${commanded.join(", ")} A`);
+  }
+  automatic.stop();
+}
+
 if (failures.length > 0) {
   console.error(`✗ ${failures.length} charge-auto failure(s):`);
   for (const failure of failures) {
@@ -1280,7 +1367,7 @@ console.log(
     `no new crossing, never once on the replays §3, §4 and §6 pin their numbers over and ${frozenGridVetoes} times on ` +
     `${frozenGridPlants} of §11's frozen plants, which its golden count is measured with; and ${crossings} of ` +
     `${CROSSING_GRID.arrivals.length * CROSSING_GRID.ambients.length * CROSSING_GRID.coolings.length} frozen-grid ` +
-    `plants cross the cliff, a strict subset of the 24 the rule this replaces crossed`
+    `plants cross the cliff, a strict subset of the 24 the rule this replaces crossed; and a session edge re-decides the sentence rather than carrying the last session's over it — NOT_DC on the way out, NO_HISTORY on the way back in, the signal agreeing with state() both times, and nothing commanded`
 );
 
 /** A whole-degree ramp over ten minutes, sampled when the integer changes, as the bike delivers it. */

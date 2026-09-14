@@ -288,10 +288,29 @@ async function switchMode(context: AutoContext, mode: FanMode): Promise<FanComma
   // Back off the watchdog cadence, which only fun mode wants. A no-op unless fun mode is
   // what is being left.
   retick(context, context.tickMs);
-  publishMode(context);
   if (mode === "manual") {
     context.lastDecision = null;
-    publishDecision(null);
+    // ⚠️ NOTHING IS SAID ABOUT THE MODE UNTIL THE CONTROLLER IS IDLE. This branch commands no
+    // duty of its own, so it used to publish immediately — correct against an idle controller
+    // and wrong against a busy one, which is #206. `fan_target_pct` is written at the END of a
+    // command, so a tap landing inside the curve's bring-up published `manual` beside a duty of
+    // 0 while the fan was being given 68 %, and the phone raised "Fan: off" and then, when the
+    // duty caught up, a second banner. Waiting costs a few sysfs writes and is not the kick's
+    // 1500 ms tail, which is queued later. ⚠️ `context.mode` is set ABOVE the await on purpose:
+    // the curve reads it in evaluate() and must not command during the wait.
+    await context.controller.settled();
+    publishMode(context);
+    // Guarded exactly as commandManual()'s is, and for the same reason: a "back to Auto" tap
+    // landing inside the await has already published the curve's real decision, and stamping
+    // MANUAL over it would put "The slider is driving the fan." under Automatic until the next
+    // tick. publishMode re-reads the mode, so it needs no guard.
+    if (context.mode === "manual") {
+      publishDecision(null);
+    }
+    // ⚠️ Read AFTER the await, so the sentence names the duty the fan ended up with rather than
+    // the one it was leaving. It is not guarded the way publishDecision is: a mode change landing
+    // inside the wait leaves this reply saying "Manual." while the wire correctly says automatic.
+    // Last writer wins and the wire is the one the phone reads; docs/fan-control.md says so.
     const state = context.controller.state();
     return {
       ok: true,
@@ -300,6 +319,7 @@ async function switchMode(context: AutoContext, mode: FanMode): Promise<FanComma
         : "Manual. The fan stays stopped until you move the slider.",
     };
   }
+  publishMode(context);
   // Re-evaluated now rather than up to AUTO_TICK_MS later, so the reply that answers the
   // tap already carries what the curve decided.
   context.lastCommandedPercent = null;

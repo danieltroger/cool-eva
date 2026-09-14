@@ -576,6 +576,8 @@ const failingStopController: FanController = {
     return { ok: true, message: `commanded ${percent} %` };
   },
   state: () => stubbornState,
+  // No queue behind this fake, so there is never anything in flight to wait for.
+  settled: async () => {},
   stop: async () => {},
 };
 

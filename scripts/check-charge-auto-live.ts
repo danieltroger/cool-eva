@@ -169,14 +169,20 @@ expect(
   );
 }
 
-// ── §7 ⚠️ THE SESSION BOUNDARY, WHERE NO SIGNAL MOVES AT ALL ───────────────
+// ── §7 ⚠️ THE SESSION BOUNDARY, AND THE ONE LINE THAT HOLDS THE TILE ───────
 //
-// forgetSession() (src/charge/auto.ts:262-267) nulls `commandedAmps` on the `charge_manager_state`
-// edge and RECORDS NOTHING — and it does not reset `context.reason` either. So for up to one 60 s
-// tick /charge-auto answers "commanding nothing" with the previous session's reason, while both
-// signals still hold the previous session's values. Nothing patches, so no guard can notice: the
-// tile keeps saying "Commanding 35 A" about a charge that has commanded nothing. What corrects it
-// is onChargeSessionEnd() clearing `loaded` and the just-commandable wake-up on the next session.
+// Until #204, forgetSession() nulled the controller's commanded amps on the `charge_manager_state`
+// edge and recorded NOTHING — not even the reason — so for up to one 60 s tick /charge-auto
+// answered "commanding nothing" with the previous session's sentence, and this section asserted
+// that stale sentence as what the page must show. It now records a re-decided reason at the edge,
+// so the unplug DOES patch, and the wanted text is the true one.
+//
+// ⚠️ The second half is the assertion that defends `onChargeSessionEnd(() => { loaded.val = false })`
+// in public/views/charge-auto.js, whose deletion has now been proposed twice on the grounds that
+// the Pi's fix makes it redundant. It does not: the Pi's fix makes the ENDPOINT true, while that
+// line is what stops the TILE painting the previous session's sentence during the round trip that
+// fetches the new one. parkNextReply() turns that round trip into a fact of the run rather than a
+// race, so deleting the line goes red here rather than being argued about a third time.
 {
   pi.reason = CHARGE_AUTO_REASON.AT_FLOOR;
   pi.commandedAmps = 35;
@@ -187,22 +193,36 @@ expect(
     `${CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.AT_FLOOR]} Commanding 35 A.`
   );
 
-  // The cable out, and the Pi's forgetSession() with it: no record(), so no patch.
-  patch({ charge_manager_state: NO_SESSION });
-  await settle();
+  // The cable out, and the Pi's forgetSession() with it: the rings, the stand-down and the
+  // commanded amps go, and the re-decided reason is recorded — a bike with no session answers
+  // NOT_DC. That record is the patch this section used to say could not exist.
+  pi.reason = CHARGE_AUTO_REASON.NOT_DC;
   pi.commandedAmps = null;
+  patch({ charge_manager_state: NO_SESSION, charge_auto_reason: CHARGE_AUTO_REASON.NOT_DC });
+  await settle();
 
-  // The cable back in, at the same charger, inside the same tick. Neither signal has moved.
+  // The cable back in, at the same charger, inside the same tick — and the gate's reply PARKED, so
+  // the tile is asked to render while the answer for the new session is still in flight. That is
+  // the exact window `loaded.val = false` exists for.
+  applyWriteStatus(null);
+  await settle();
+  const deliverTheGate = parkNextReply();
   patch({ charge_manager_state: DC_SESSION });
   await settle();
-  // ⚠️ The wanted text is the PREVIOUS session's reason, and that is not this check blessing it:
-  // `forgetSession()` does not clear `context.reason`, so it really is what /charge-auto answers,
-  // and the page's job is to show what the Pi says rather than to guess better. The amps stopped
-  // lying here; the sentence has not, and closing that is Pi-side — issue #204.
+  await fetchChargeWriteStatus();
+  await settle();
   expect(
-    "§7 a re-plug quick enough that no controller tick intervenes — neither signal moved, and the Pi is " +
-      "commanding nothing (the reason is still the last session's, which is issue #204, not this)",
-    CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.AT_FLOOR]
+    "§7 ⚠️ the tile does not paint the PREVIOUS session's sentence while the new session's answer " +
+      "is still in flight — delete `loaded.val = false` in charge-auto.js and this is what goes red",
+    ""
+  );
+
+  deliverTheGate();
+  await settle();
+  expect(
+    "§7 …and once the Pi has answered, the sentence is the one the CONTROLLER decided at the edge, " +
+      "not the one the session before it ended on",
+    CHARGE_AUTO_REASON_TEXT[CHARGE_AUTO_REASON.NOT_DC]
   );
 }
 

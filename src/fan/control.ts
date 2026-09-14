@@ -82,6 +82,15 @@ export interface FanController {
   readonly fault: string | null;
   setDutyPercent: (percent: number) => Promise<FanCommandResult>;
   state: () => FanState;
+  /**
+   * Resolves once every command queued before this call has settled.
+   *
+   * ⚠️ For CALLERS THAT PUBLISH, not for callers that command. `fan_target_pct` is written at the
+   * end of a command, so anything that words a message from the duty while one is in flight words
+   * it from the duty before the tap — #206. It waits for work IN FLIGHT only: a kick-start's
+   * 1500 ms tail is queued later, from a timer, and is not in the chain at call time.
+   */
+  settled: () => Promise<void>;
   /** Enables LOW, PWM disabled. Called from index.ts's shutdown. */
   stop: () => Promise<void>;
 }
@@ -160,6 +169,10 @@ export async function startFanControl(options: FanControlOptions = {}): Promise<
     fault: null,
     setDutyPercent: percent => runExclusively(context, () => commandDuty(context, percent)),
     state: () => snapshotState(context),
+    // A no-op at the tail of the same queue, rather than reaching into `context.inFlight` from
+    // outside: it inherits the ordering runExclusively already guarantees, including against a
+    // command queued between this call and its resolution.
+    settled: () => runExclusively(context, async () => {}),
     stop: () => runExclusively(context, () => forceIdle(context)),
   };
 }
@@ -407,6 +420,8 @@ function inertController(configured: boolean, fault: string | null): FanControll
     fault,
     setDutyPercent: async () => ({ ok: false, message: refusal }),
     state: () => ({ dutyPercent: 0, targetPercent: 0, driverEnabled: false, phase: "idle" }),
+    // Nothing is ever queued here, so there is never anything to wait for.
+    settled: async () => {},
     stop: async () => {
       // Nothing was ever exported or driven, so there is nothing to put back.
     },
