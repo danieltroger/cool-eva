@@ -112,6 +112,14 @@ Both are solvable. Neither is needed by a rule whose witness is the next sample.
 
 **110 654 of the 395 487 `gps_lat`/`gps_lon` rows carry no `session_id`**, spanning 2026-08-02 19:07 → 2026-08-09 21:20; sessioned GPS starts 2026-08-23. A week of many boots is therefore one bucket — **and the 2026-08-09 corrupt longitude, the row this rule exists for, is inside it.** So the honest claim is: _no corrupt first fix among the 84 sessioned boots from 2026-08-23 on_ (72 of them have the three fixes needed to judge; 13 do not). It says nothing about that week.
 
+### ⚠️ The offline mirror is weaker in one place, and it is this one
+
+`src/gps/recover-holds.ts` reproduces the bike gate for gate, and for the corroboration rule it cannot quite. The bike reads `ageMs("gps_lat")`, which moves only when a **position** was sampled. A log has no such witness — a position sample that agreed within the 3 m deadband logs nothing at all — so the recovery uses a `gps_epoch_s` row instead, and `src/gps/decode.ts` emits one on a healthy fix flag and four satellites while **withholding the position** unless both coordinate sub-frames arrived in that cycle (the `suppressedFixes` path `SuppressedFixWatcher` complains about).
+
+So through a suppressed-fix stretch the recovery can recover a hold the bike would have refused. The direction is stated rather than hidden, and `RecoveryVerdict.sampleWitnessed` carries it so `scripts/recover-waypoints.ts` prints which holds rest on it — the same honesty `jumpGateJudged` exists for.
+
+**Every timeline is sliced per boot** for the same reason the fix pairs are. `carryBack` used to be session-blind, so a boot that logged a latitude and never a longitude had the longitude carried in from the run before it, and the pair was recovered as a position the bike never held — at neither place. A press belongs to one run of the service, and the Pi's `liveState` is per process, so the only rows it could have seen are the ones that run wrote.
+
 ### The shipped jump gate, replayed
 
 Two archives, same pipeline — fixes formed at every `gps_lat` **or** `gps_lon` row with the other axis carried back, which is how `onFixChanged()` forms them:

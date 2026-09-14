@@ -275,6 +275,46 @@ check(
     ],
   })[0].outcome === RECOVERY_OUTCOME.RECOVERED
 );
+// ⚠️ A sample that only arrived AFTER the thumb came off is not evidence about the fix the
+// hold fired on — the bike can only ever have seen the past. Without this the guard in
+// sampleAgreedAfter() is untested and deleting it goes green.
+check(
+  "⚠️  a later sample that lands after the fire does not witness the hold",
+  judge({
+    epochRows: [
+      { ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 },
+      { ts: BASE + 1600, value: 1_788_000_000.7, sessionId: 1, seq: 2 },
+    ],
+  })[0].refusal === WAYPOINT_REFUSAL.FIX_UNCORROBORATED
+);
+
+// ⚠️ THE FRANKENSTEIN POSITION, and it is the reason every timeline is sliced per boot
+// rather than only the fix pairs. `carryBack` was session-blind, so a boot that logged a
+// latitude and never a longitude had the LONGITUDE carried in from the run before it — and
+// the pair was recovered as a position the bike never held, at neither place.
+check(
+  "⚠️  a boot that logged one axis only is refused, not paired with the previous boot's other axis",
+  judgeHolds({
+    cancelRows: [edge(0, 0, 2, 1), edge(1000, 1, 2, 2), edge(2400, 0, 2, 3)],
+    latitudeRows: [
+      { ts: BASE - 5000, value: 57.7, sessionId: 1, seq: 1 },
+      { ts: BASE + 900, value: 45.3, sessionId: 2, seq: 1 },
+    ],
+    // Boot 2 never logs one. Session-blind, the fire instant carries boot 1's back.
+    longitudeRows: [{ ts: BASE - 5000, value: 11.97, sessionId: 1, seq: 1 }],
+    epochRows: [
+      { ts: BASE - 5000, value: 1_787_999_994, sessionId: 1, seq: 1 },
+      { ts: BASE + 900, value: 1_788_000_000, sessionId: 2, seq: 1 },
+      { ts: BASE + 1450, value: 1_788_000_000.55, sessionId: 2, seq: 2 },
+    ],
+    waypointRows: [],
+    holdMs: 500,
+    beatMs: 0,
+    legacyHoldMs: 100_000,
+    liveToleranceMs: 200,
+  })[0].refusal === WAYPOINT_REFUSAL.NO_FIX
+);
+
 check(
   "…while a later sample from the OTHER boot does not, however close it lands",
   judgeHolds({

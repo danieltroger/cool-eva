@@ -260,6 +260,42 @@ check(
   Math.abs(forwardPins.gated[0].stop_lon - LONGITUDE) < 1
 );
 
+// --- 2b. An excursion with no BACKWARD witness -----------------------------------------
+
+console.log("\n2b. ⚠️  an excursion whose only witness is the fix after it");
+
+// ⚠️ WITHOUT THIS THE FORWARD ARM HAS NO TEST. Every other excursion fixture puts the spike
+// at the end of an unbroken run of samples, so a backward witness is always there and a
+// backward-only clause passes them all. Here the receiver had been quiet for 10 s, so the
+// row before the excursion is outside the window and the correction after it is the only
+// thing that can contradict it — which is the ordinary shape of a fix taken as the bike
+// arrives at a charger after a stretch of poor reception.
+const forwardOnly: Row[] = [];
+for (let index = 0; index < 10; index += 1) {
+  forwardOnly.push({ key: "gps_lat", ts: BASE + index * SAMPLE_MS, value: LATITUDE, sessionId: 1 });
+  forwardOnly.push({ key: "gps_lon", ts: BASE + index * SAMPLE_MS, value: LONGITUDE, sessionId: 1 });
+}
+const quietUntil = BASE + 9 * SAMPLE_MS + 10_000;
+forwardOnly.push({ key: "gps_lat", ts: quietUntil, value: LATITUDE, sessionId: 1 });
+forwardOnly.push({ key: "gps_lon", ts: quietUntil, value: LONGITUDE + 100, sessionId: 1 });
+const forwardStart = quietUntil + 100;
+// The correction lands after plug-in, which the clause can see and `r.ts <= sess.start_ts`
+// cannot — the whole point of looking forward.
+forwardOnly.push({ key: "gps_lat", ts: quietUntil + SAMPLE_MS, value: LATITUDE, sessionId: 1 });
+forwardOnly.push({ key: "gps_lon", ts: quietUntil + SAMPLE_MS, value: LONGITUDE, sessionId: 1 });
+for (let offset = 0; offset < 600_000; offset += 10_000) {
+  forwardOnly.push({ key: "mains_a", ts: forwardStart + offset, value: 12, sessionId: 1 });
+}
+const forwardOnlyPins = pins(databaseWith(forwardOnly), forwardStart);
+check(
+  "the shipped query inherits it — the row before is 10 s away, so only the one after objects",
+  forwardOnlyPins.ungated[0].stop_lon === LONGITUDE + 100
+);
+check(
+  "⚠️  and the forward arm steps back, with no backward witness inside the window at all",
+  forwardOnlyPins.gated[0].stop_lon === LONGITUDE
+);
+
 // --- 3. The same in latitude ----------------------------------------------------------
 
 console.log("\n3. the other axis, since they are resolved by separate sub-selects");
