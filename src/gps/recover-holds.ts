@@ -415,17 +415,11 @@ function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
  * Whether a SAMPLE arrived after this fix and before the hold fired — ../gps/waypoint.ts's
  * `laterSampleAgreed()`, read out of a log.
  *
- * ⚠️ THIS WITNESS IS WEAKER THAN THE BIKE'S, and that is the one place this file is
- * knowingly looser than what the Pi did. The bike reads ageMs("gps_lat"), which only moves
- * when a POSITION was sampled. ../gps/decode.ts emits `gps_epoch_s` on a healthy fix flag
- * and four satellites, but withholds the position unless BOTH coordinate sub-frames arrived
- * in that cycle — the `suppressedFixes` path — so an epoch row can mean "time arrived, the
- * position did not". A log cannot tell the two apart: a position sample that agreed within
- * the 3 m deadband logs nothing at all, so there is no stricter witness to use.
- *
- * The direction is stated rather than hidden: through a suppressed-fix stretch this
- * recovers a hold the bike would have refused. `RecoveryVerdict.sampleWitnessed` carries it
- * so a report says which holds rest on it. docs/waypoints.md §"The first fix of a run".
+ * ⚠️ WEAKER THAN THE BIKE'S, and the one place this file is knowingly looser: the Pi reads
+ * ageMs("gps_lat"), which moves only when a POSITION was sampled, while an epoch row can
+ * mean "time arrived, the position did not". A log holds no stricter witness. Which holds
+ * rest on it is carried by `RecoveryVerdict.sampleWitnessed` and printed by the report.
+ * Why there is no better one, and what it costs: docs/waypoints.md §"The offline mirror".
  *
  * ⚠️ At or before the fire, and in the same boot, for the two reasons the freshness gate
  * gives: the bike can only ever have seen the past, and a row from another run is not

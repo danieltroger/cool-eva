@@ -110,9 +110,9 @@ Both are solvable. Neither is needed by a rule whose witness is the next sample.
 
 ### ⚠️ What the archive cannot say
 
-**110 654 of the 395 487 `gps_lat`/`gps_lon` rows carry no `session_id`**, spanning 2026-08-02 19:07 → 2026-08-09 21:20; sessioned GPS starts 2026-08-23. A week of many boots is therefore one bucket — **and the 2026-08-09 corrupt longitude, the row this rule exists for, is inside it.** So the honest claim is: _no corrupt first fix among the 84 sessioned boots from 2026-08-23 on_ (72 of them have the three fixes needed to judge; 13 do not). It says nothing about that week.
+**110 654 of the 395 487 `gps_lat`/`gps_lon` rows carry no `session_id`**, spanning 2026-08-02 19:07 → 2026-08-09 21:20; sessioned GPS starts 2026-08-23. A week of many boots is therefore one bucket — **and the 2026-08-09 corrupt longitude, the row this rule exists for, is inside it.** So the honest claim is: _no corrupt first fix among the 84 sessioned boots from 2026-08-23 on_. Across all **85** buckets — those 84 plus the un-sessioned week counted as one — 72 have the three fixes needed to judge and 13 do not. It says nothing about that week.
 
-### ⚠️ The offline mirror is weaker in one place, and it is this one
+### ⚠️ The offline mirror is weaker in one place
 
 `src/gps/recover-holds.ts` reproduces the bike gate for gate, and for the corroboration rule it cannot quite. The bike reads `ageMs("gps_lat")`, which moves only when a **position** was sampled. A log has no such witness — a position sample that agreed within the 3 m deadband logs nothing at all — so the recovery uses a `gps_epoch_s` row instead, and `src/gps/decode.ts` emits one on a healthy fix flag and four satellites while **withholding the position** unless both coordinate sub-frames arrived in that cycle (the `suppressedFixes` path `SuppressedFixWatcher` complains about).
 
