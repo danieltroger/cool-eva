@@ -1,7 +1,13 @@
 import { ageMs, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
 import { monotonicNow, since } from "../monotonic.ts";
-import { implausibleJumpKmh, isPositionOnEarth, type Fix } from "./fix-plausibility.ts";
+import {
+  MIN_FIX_INTERVAL_MS,
+  implausibleJumpKmh,
+  implausibleStepMetres,
+  isPositionOnEarth,
+  type Fix,
+} from "./fix-plausibility.ts";
 import { systemClockTrust } from "./clock.ts";
 
 // Stamping "I am here, now" into the ride log, for both things that ask: GET /waypoint
@@ -183,12 +189,29 @@ export function saveWaypointNow(): WaypointOutcome {
     );
   }
 
+  // ⚠️ THE SAME GATE BELOW ITS OWN FLOOR, where an implied speed means nothing and a
+  // distance still does (#241). It is not a rare branch: 93 % of this hub's fix pairs are
+  // closer together than MIN_FIX_INTERVAL_MS, and so were 91 of the 97 waypoints ever
+  // saved — until now the test above declined on nearly every save.
+  const step = latestFix === null ? null : implausibleStepMetres(precedingFix, latestFix);
+  if (step !== null) {
+    // ⚠️ The same code and the same sentence as the gate above, deliberately. The two rules
+    // are exclusive by Δt and a ride log carries the fix timeline, so which one refused is
+    // recoverable without a code of its own; the journal reason below is what separates
+    // them for a human. docs/waypoints.md §"One code, two rules".
+    return refuse(
+      WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE,
+      "GPS fix jumped somewhere the bike cannot have ridden — waypoint not saved.",
+      `fix moved ${Math.round(step)} m since the previous one, inside the ${MIN_FIX_INTERVAL_MS} ms floor`
+    );
+  }
+
   // ⚠️ THE FIRST FIX OF A RUN HAS NOTHING BEHIND IT, so the gate above answers null and a
   // corrupt one would be saved (#178). A later SAMPLE is the missing witness: record() marks
   // every decoded sample, deadbanded or not, so a mark newer than the fix means another
   // sample arrived and moved the position by less than the 3 m deadband. Measured max life of
   // a corrupt fix: 661 ms over 65 archive excursions. docs/waypoints.md §"The first fix".
-  // ⚠️ NOT covered here: a corrupt fix that is not the first of the run — #241.
+  // A corrupt fix that is NOT the first of the run is the step gate's, just above.
   if (!laterSampleAgreed()) {
     return refuse(
       WAYPOINT_REFUSAL.FIX_UNCORROBORATED,

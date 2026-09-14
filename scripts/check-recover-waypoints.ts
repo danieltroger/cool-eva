@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { commitRecovered } from "./recover-waypoints-commit.ts";
 import {
+  JUMP_RULE,
   RECOVERY_OUTCOME,
   WAYPOINT_REFUSAL,
   buildFixTimeline,
@@ -183,10 +184,12 @@ check(
     WAYPOINT_REFUSAL.FIX_NOT_ON_EARTH
 );
 
-// ⚠️ The jump gate FAILS OPEN below MIN_FIX_INTERVAL_MS, and this hub's fixes are mostly
-// closer together than that, so it usually declines to judge. The bike ran the same gate in
-// the same regime — reproducing that is correct — but the verdict records whether it looked,
-// because a report saying "cleared the jump gate" about a gate that never ran is a lie.
+// ⚠️ THIS FIXTURE USED TO ASSERT THE OPPOSITE, and the inversion is the point of #241.
+// The jump gate failed OPEN below MIN_FIX_INTERVAL_MS, and this hub's fixes are mostly
+// closer together than that — 93 % of the archive's pairs — so a corrupt fix arriving at
+// the ordinary cadence was recovered with nothing looking at it. The step rule judges
+// exactly that population now, so the same 500 ms pair is refused, and the verdict names
+// the rule that did it rather than confessing that none had.
 const tooClose = judge({
   latitudeRows: [
     { ts: BASE + 400, value: 57.7, sessionId: 1, seq: 1 },
@@ -198,8 +201,28 @@ const tooClose = judge({
   ],
 });
 check(
-  "⚠️  fixes closer than the gate's floor are NOT judged, and the verdict says so",
-  tooClose[0].outcome === RECOVERY_OUTCOME.RECOVERED && !tooClose[0].jumpGateJudged
+  "⚠️  a corrupt fix 500 ms after a good one — under the gate's floor — is refused by the step rule",
+  tooClose[0].outcome === RECOVERY_OUTCOME.REFUSED &&
+    tooClose[0].refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE &&
+    tooClose[0].jumpRule === JUMP_RULE.STEP
+);
+
+// ⚠️ AND THE OTHER HALF, or the assertion above is satisfied by a rule that refuses
+// everything under the floor — which is 93 % of this hub's pairs. ~19 m in 500 ms is the
+// largest step measured under any waypoint the rider really saved.
+const ordinaryCadence = judge({
+  latitudeRows: [
+    { ts: BASE + 400, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 57.70017, sessionId: 1, seq: 2 },
+  ],
+  longitudeRows: [
+    { ts: BASE + 400, value: 11.97, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 11.97, sessionId: 1, seq: 2 },
+  ],
+});
+check(
+  "…while an ordinary 19 m step at the same 500 ms cadence is recovered, judged by the same rule",
+  ordinaryCadence[0].outcome === RECOVERY_OUTCOME.RECOVERED && ordinaryCadence[0].jumpRule === JUMP_RULE.STEP
 );
 
 const jumped = judge({
@@ -213,8 +236,8 @@ const jumped = judge({
   ],
 });
 check(
-  "…and a real 8 000 km jump across a judgeable gap IS refused",
-  jumped[0].refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE && jumped[0].jumpGateJudged
+  "…and a real 8 000 km jump across a judgeable gap IS refused, by the SPEED rule this time",
+  jumped[0].refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE && jumped[0].jumpRule === JUMP_RULE.SPEED
 );
 
 const live = judge({ waypointRows: [{ ts: BASE + 1600, value: 1, sessionId: 1, seq: 1 }] });
@@ -231,6 +254,22 @@ check(
   "⚠️  a boot's first fix with no later sample is refused as FIX_UNCORROBORATED",
   judge({ epochRows: [{ ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 }] })[0].refusal ===
     WAYPOINT_REFUSAL.FIX_UNCORROBORATED
+);
+
+// ⚠️ AND THE VERDICT SAYS `none`, which is the whole of what that word means since #241:
+// with both rules in force every pair that HAS a predecessor is judged by one of them, so
+// `none` is no longer "the gate declined" — it is "nothing preceded this fix in its boot".
+// Without this the mutation that has judgeJump() claim `step` on a first fix survives, and
+// a report would name a rule that never ran.
+const firstOfBoot = judge({
+  epochRows: [
+    { ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 },
+    { ts: BASE + 950, value: 1_788_000_001, sessionId: 1, seq: 2 },
+  ],
+});
+check(
+  "⚠️  …and a fix with nothing before it in its boot is judged by NEITHER rule",
+  firstOfBoot[0].jumpRule === JUMP_RULE.NONE
 );
 
 // ⚠️ TWO BOOTS IN ONE WINDOW, which is the case that makes the session split load-bearing
@@ -424,7 +463,7 @@ function verdictAt(atMs: number, lat: number, lon: number): RecoveryVerdict {
     outcome: RECOVERY_OUTCOME.RECOVERED,
     latitudeDeg: lat,
     longitudeDeg: lon,
-    jumpGateJudged: false,
+    jumpRule: JUMP_RULE.NONE,
   };
 }
 

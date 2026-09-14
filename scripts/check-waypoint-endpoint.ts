@@ -78,22 +78,39 @@ let lastStaged = "";
  * red for a reason that has nothing to do with the endpoint.
  *
  * ⚠️ And the second record() is deliberately the SAME position: equal values are inside the
- * 3 m deadband, so nothing is logged, no change fires, and `precedingFix` stays null — which
- * is precisely the "first fix of a run, seen twice" state the gate is about.
+ * 3 m deadband, so nothing is logged, no change fires, and on the FIRST staging
+ * `precedingFix` stays null — precisely the "first fix of a run, seen twice" state.
+ *
+ * ⚠️ A TELEPORT NEEDS A LANDING HOP SINCE #241. This file's fixtures jump between
+ * continents, and the step rule judges exactly the sub-second pairs the old jump gate
+ * declined on — so staging Croatia straight after the south pole now reaches the endpoint
+ * as an impossible step, and three assertions about the ENDPOINT failed for a reason that
+ * has nothing to do with it. So a move to a new position arrives as two fixes at the new
+ * position, ~11 m apart: the same shape the hub really produces, and the same recovery a
+ * rider gets after a spike. The waypoint still copies the exact staged coordinate, because
+ * the hop lands first and the exact value is recorded last.
  */
 async function stageFix(latitude: number, longitude: number) {
   const staged = `${latitude},${longitude}`;
   if (staged !== lastStaged) {
     // ⚠️ Starting the tracker put the JUMP gate in a file whose fixtures teleport between
-    // continents. It only judges pairs at least MIN_FIX_INTERVAL_MS apart, and these are
-    // staged microseconds apart — but on a stalled machine that stops being true, and the
-    // symptom would be an unrelated FIX_IMPLAUSIBLE. Said out loud rather than left to be
-    // debugged: this is the fixture's problem, never the endpoint's.
+    // continents. Since #241 a pair under MIN_FIX_INTERVAL_MS is judged on DISTANCE rather
+    // than waved through, so the floor no longer excuses these — the landing hop above is
+    // what does. This guard stays because it pins which of the two rules the fixtures meet:
+    // over the floor they would be judged on an implied speed instead, and the symptom
+    // would again be an unrelated FIX_IMPLAUSIBLE. This is the fixture's problem, never the
+    // endpoint's.
     const gap = since(lastDifferentStageAt);
     check(
       `staged fixes stay inside the jump gate's ${MIN_FIX_INTERVAL_MS} ms floor (${Math.round(gap)} ms)`,
       gap < MIN_FIX_INTERVAL_MS
     );
+    if (lastStaged !== "") {
+      // ~11 m north, which clears the 3 m deadband so it logs and moves the tracked pair.
+      record("gps_lat", latitude + 0.0001);
+      record("gps_lon", longitude);
+      await Promise.resolve();
+    }
     lastDifferentStageAt = monotonicNow();
     lastStaged = staged;
   }

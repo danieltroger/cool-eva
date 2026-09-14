@@ -40,23 +40,24 @@ Of the six waypoints in the archive, one sits about 7 000 km from where the bike
 
 ## What each gate can see
 
-Four gates now exist, and they are not interchangeable.
+Five gates now exist, and they are not interchangeable.
 
 | gate | catches | cannot see |
 | --- | --- | --- |
 | `src/gps/fix-plausibility.ts`, ±90 / ±180 | a decode that leaves the planet | anything that is still a legal coordinate |
 | `public/lib/bounds.js`, the same four signals | the same, on the dashboard, as a visible fault | the same |
-| `src/gps/fix-plausibility.ts`, the implied-speed test | a legal coordinate the bike cannot have got to | a fix closer to its predecessor than 1 s, which is 93 % of them (#241) |
+| `src/gps/fix-plausibility.ts`, the implied-speed test | a legal coordinate the bike cannot have got to, at least 1 s after its predecessor | a pair closer together than 1 s, which is 93 % of them |
+| `src/gps/fix-plausibility.ts`, the step test (#241) | the same, for the other 93 % — on a distance, since a speed needs a denominator | a corrupt fix measured against an already-corrupt one, and a step under 220 m |
 | `src/gps/waypoint.ts`, the corroboration test | a bad FIRST fix, which has nothing before it | a corruption that outlives its own successor |
 | the route map's corroboration test | a position the surrounding track contradicts | excursions under 0.5°, and unwitnessed saves |
 
-**The bike can now refuse the 2026-08-09 case itself.** #165's gate landed with the server-side handlebar gestures: the fix is measured against the one before it, and anything implying more than 300 km/h — `bounds.js`'s own ceiling for `gps_speed_kmh`, read from it rather than copied — is refused before the save. Two things bound it, both of them lessons this repo had already paid for: the two fixes must be at least 1 s apart, because `docs/route-map.md` records an implied-speed test with a short denominator reading 7 m in 1 ms as 25 000 km/h; and one spike costs **two** refusals, itself and the good fix after it, which is the right side to fail on.
+**The bike can now refuse the 2026-08-09 case itself.** #165's gate landed with the server-side handlebar gestures: the fix is measured against the one before it, and anything implying more than 300 km/h — `bounds.js`'s own ceiling for `gps_speed_kmh`, read from it rather than copied — is refused before the save. Two things bound it, both of them lessons this repo had already paid for: the two fixes must be at least 1 s apart, because `docs/route-map.md` records an implied-speed test with a short denominator reading 7 m in 1 ms as 25 000 km/h; and one spike costs **two** refusals, itself and the good fix after it, which is the right side to fail on. ⚠️ Since #241 the 1 s bound is a **branch point** rather than a place the gate gives up — below it `implausibleStepMetres()` judges a distance — which also means the second of those two refusals is now paid below the floor as well, 75 times over the archive. §"The jump gate mostly declined to judge" has both halves.
 
 ⚠️ The range gate moved out of `src/http/waypoint.ts` with it. The endpoint is a shell now: `src/gps/waypoint.ts` owns every gate and both counters, because a handlebar hold saves without going through HTTP at all. `docs/handlebar-gestures.md` has that half.
 
 ### How a refusal reaches the rider
 
-It used to be the reply to the request the phone had made. A hold on the bars asks nobody, so a refusal now travels as two signals — `waypoint_refused_seq`, a monotonic count, and `waypoint_refusal`, one of the seven `WAYPOINT_REFUSAL` codes — and `public/lib/announce.js` turns the code back into the sentence that used to come off the reply. A **counter**, because `record()` seals a row only when a value moves: two identical refusals in a row would otherwise be one banner, and the second hold at the same spot with the same stale fix would look like it had worked.
+It used to be the reply to the request the phone had made. A hold on the bars asks nobody, so a refusal now travels as two signals — `waypoint_refused_seq`, a monotonic count, and `waypoint_refusal`, one of the eight `WAYPOINT_REFUSAL` codes — and `public/lib/announce.js` turns the code back into the sentence that used to come off the reply. A **counter**, because `record()` seals a row only when a value moves: two identical refusals in a row would otherwise be one banner, and the second hold at the same spot with the same stale fix would look like it had worked.
 
 ### The corroboration test
 
@@ -116,7 +117,7 @@ Both are solvable. Neither is needed by a rule whose witness is the next sample.
 
 `src/gps/recover-holds.ts` reproduces the bike gate for gate, and for the corroboration rule it cannot quite. The bike reads `ageMs("gps_lat")`, which moves only when a **position** was sampled. A log has no such witness — a position sample that agreed within the 3 m deadband logs nothing at all — so the recovery uses a `gps_epoch_s` row instead, and `src/gps/decode.ts` emits one on a healthy fix flag and four satellites while **withholding the position** unless both coordinate sub-frames arrived in that cycle (the `suppressedFixes` path `SuppressedFixWatcher` complains about).
 
-So through a suppressed-fix stretch the recovery can recover a hold the bike would have refused. Measured over the sessioned archive, **none of the 7 recoverable holds rests on it** — every one has a real predecessor in its own boot — so the weaker witness carries no recovered waypoint today. The direction is stated rather than hidden, and `RecoveryVerdict.sampleWitnessed` carries it so `scripts/recover-waypoints.ts` prints which holds rest on it — the same honesty `jumpGateJudged` exists for.
+So through a suppressed-fix stretch the recovery can recover a hold the bike would have refused. Measured over the sessioned archive, **none of the 7 recoverable holds rests on it** — every one has a real predecessor in its own boot — so the weaker witness carries no recovered waypoint today. The direction is stated rather than hidden, and `RecoveryVerdict.epochWitnessedOnly` carries it so `scripts/recover-waypoints.ts` prints which holds rest on it — the same honesty `jumpRule` exists for.
 
 **Every timeline is sliced per boot** for the same reason the fix pairs are — **with one deliberate exception**. `matchLiveWaypoints()` must stay session-blind: `scripts/recover-waypoints.ts` commits recovered rows under a synthetic `recovered-192-…` session, so a waypoint that vouches for a press never shares that press's session. 8 of the archive's 92 matches are cross-session and all 8 are that run. A session predicate there would hide every committed recovery, and the next `--commit` would duplicate all of them.
 
@@ -219,13 +220,93 @@ What the deadband bound **cannot** see is a receiver that went silent while the 
 
 **Three reporting additions are outstanding**, tracked in #212: each recovered point's corroboration verdict in the report, a "both axes stale while the speedo says moving" line, and a per-waypoint fixture for the 28-row calibration. None changes a written coordinate.
 
-### ⚠️ The jump gate mostly declines to judge
+### The jump gate mostly declined to judge, and #241 closed that
 
-`implausibleJumpKmh()` returns `null` below `MIN_FIX_INTERVAL_MS` = 1 s, and this hub delivers fixes at ~1.8 Hz: **32 576 of 33 833 fix pairs on 2026-09-09 (96.3 %) are closer together than the gate's own floor**, and all four candidates sit in gaps of 546–915 ms. The gate fails open on every one of them.
+`implausibleJumpKmh()` returns `null` below `MIN_FIX_INTERVAL_MS` = 1 s, and this hub delivers fixes at ~1.8 Hz, so the gate spent most of its life declining. Replayed over the whole archive — fixes formed the way `onFixChanged()` forms them, a pair at every `gps_lat` **or** `gps_lon` row with the other axis carried back, sliced per boot:
 
-That is faithful — the bike ran the same gate against the same cadence — but a report that printed "cleared the jump gate" would be claiming a test that never ran. So the verdict carries `jumpGateJudged` and the report prints **not judged** rather than _passed_. Fix pairs are also formed the way `onFixChanged()` forms them — a pair at every `gps_lat` **or** `gps_lon` row with the other axis carried back — because pairing consecutive rows of one axis feeds the gate pairs the bike never held.
+|                          | whole archive       | sessioned boots only |
+| ------------------------ | ------------------- | -------------------- |
+| consecutive pairs        | 260 352             | 195 007              |
+| judged (Δt ≥ 1 s)        | 17 044 (**6.55 %**) | 14 517 (7.44 %)      |
+| refused                  | 44 (0.258 %)        | 23 (0.158 %)         |
+| smallest refusal         | 308 km/h            | 339 km/h             |
+| fastest allowed          | 290 km/h            | 290 km/h             |
+| largest **allowed** step | 237 138 m           | 19 264 m             |
 
-The gate that does cover this class is downstream and already exists: the route map's corroboration verdict, which is why inserting and then _looking at the map_ is part of the check rather than a nicety.
+Both columns, because the un-sessioned week (§"What the archive cannot say") is many boots in one bucket, so some of its consecutive pairs are pairs the bike never held.
+
+**The number that frames the change: of the 97 waypoints the rider has ever saved, 91 have a live fix pair sitting under the gate's own floor.** It declined to judge 94 % of the real saves. A corrupt fix that was not the first of a boot, arriving at the ordinary cadence, reached `saveWaypointNow()` with `precedingFix` set, the jump gate declining and the corrupt value copied into `waypoint_lat`/`waypoint_lon`. The range gate cannot see it — a leading-digit longitude is a legal longitude — and #178's rule does not apply, because that one is about a fix with no predecessor at all.
+
+So `implausibleStepMetres()` now judges exactly that population, on a **distance** instead of a speed. The two rules are mutually exclusive by Δt and neither is weakened: above the floor the speed test is the stricter of the pair (300 km/h over one second is 83 m, against this 220).
+
+#### Where `MAX_STEP_METRES` comes from
+
+**Its floor is not measured at all, and that is the strongest thing about it.** `MAX_PLAUSIBLE_KMH × MIN_FIX_INTERVAL_MS` is **83.34 m** — the furthest a bike at the shipped ceiling travels inside the interval where the rule applies — so any threshold from there up is _incapable_ of refusing genuine motion, from two constants already in the file. Measured confirmation rather than derivation: the slowest implied speed among all 118 pairs a 220 m rule refuses anywhere in the archive is **1 635 km/h**, 5.4× the ceiling. **Nothing this gate refuses can be a ride.** Both populations below are artefacts; what differs is whether the artefact leaves the newer _position_ right (a loss) or wrong (a catch), and that is the only thing the archive decides.
+
+The ground truth is the **displaced run** — `docs/route-map.md`'s shape test (5× ratio, 0.002° floor, squared degrees) generalised from a lone excursion to a maximal run, because the archive holds the same corruption on consecutive samples: **93 displaced fixes in 82 runs — 75 of one, 5 of two, 1 of three, 1 of five**. The runs of ≥2 are load-bearing, not tidy-mindedness: the largest step a step rule refuses (**7 765 m at Δt = 1 ms**, the pair #241 quotes) sits _inside_ a run of two, so the lone-excursion test scores it as good data. **51 of the 93 arrive under the floor** — 37 on the first fix of their run, 14 on an interior fix.
+
+The sweep. "**lost**" = refused with no displaced fix at either end; "**exposure**" = how long such a fix stays the one a save would take, summed, which is the time in the archive during which a rider would really have lost a waypoint:
+
+| threshold | refused | on a displaced fix | lost  | exposure  | displaced fixes caught |
+| --------- | ------- | ------------------ | ----- | --------- | ---------------------- |
+| 100 m     | 167     | 118                | 49    | 95.5 s    | 41 / 51                |
+| 150 m     | 141     | 115                | 26    | 15.2 s    | 39 / 51                |
+| 200 m     | 123     | 112                | 11    | 2.5 s     | 37 / 51                |
+| **220 m** | **118** | **112**            | **6** | **1.4 s** | **37 / 51**            |
+| 300 m     | 106     | 104                | 2     | 0.4 s     | 34 / 51                |
+| 500 m     | 96      | 96                 | 0     | 0.0 s     | 31 / 51                |
+
+The entry-step ladder onto a displaced run under the floor is **132 m, then 227 m, 279 m** — nothing between — so **entry catch is flat at 36 across the whole interval (132, 227)**, and the 2–3 extra catches at 150–175 m are _interior_ fixes of runs whose entry is refused anyway. 220 m is the top of that interval with a margin, which is where loss is lowest for the same catch. ⚠️ An earlier draft of this derivation said "catch is flat at 37 across 150–220 m", which the table above contradicts and which, applied literally, selects a threshold under 150.
+
+It is the same number `docs/route-map.md` derives for its despiker floor (0.002° ≈ 222 m). That was noticed after the ladder fell out, not assumed — and it is **not** independent evidence: see the limit below.
+
+#### ⚠️ What it costs to judge the other 93 %
+
+The 118 refusals at 220 m are not 118 catches. Decomposed, with each window capped at `FIX_MAX_AGE_MS` because a save past 30 s is `FIX_STALE` anyway:
+
+|                                                  | refusals | exposure (capped) | uncapped | windows over the cap |
+| ------------------------------------------------ | -------- | ----------------- | -------- | -------------------- |
+| catch — the newer fix is corrupt                 | 37       | 18.2 s            | 18 s     | 0                    |
+| **a GOOD fix refused for a corrupt predecessor** | **75**   | **824.2 s**       | 4 007 s  | **20**               |
+| clean at both ends                               | 6        | 1.4 s             | 1 s      | 0                    |
+
+`src/gps/fix-plausibility.ts` already names the middle row for the speed gate — "one spike costs TWO refusals, itself and the good fix after it" — but below the floor the gate used to decline, so **that cost is 100 % new**: 13.7 minutes of the archive in which the rider is refused at a position that is correct, and in 20 of those windows refused repeatedly until the fix goes stale.
+
+**The trade, stated rather than implied, because it is the whole argument.** The two seconds are not worth the same. A saved corrupt waypoint is silent, permanent and _believed_; a refusal is loud, raises a banner, and is re-pressable — **median 572 ms** to the next fix. So 18.2 s of exposure to keeping a wrong place is bought with 825 s of refusing a right one, and that is only defensible because a wrong place that is believed is worse than a right one that has to be asked for twice.
+
+On the population that is not a proxy: a 220 m rule refuses **none** of the 91 real waypoints whose live pair sits under the floor. The largest step under any of them is **19.6 m**, 11× below the threshold. That is corroboration and not proof — waypoints are saved where the rider stops, so it could only have failed if a staircase artefact had landed under a save.
+
+#### ⚠️ What this archive cannot say
+
+**The ground truth is itself defined by a 220 m-scale floor, so no threshold below about 130 m can be certified here.** Re-running the run detector at half the despiker's floor yields 144 displaced fixes with entry steps of 119–123 m; at a quarter, 174 with entry steps of 41–49 m. `docs/route-map.md` has already measured what that population is — the ratio alone rejects 280 points against 17 with the floor, and "the 263 the floor saves are parked jitter, not data". The lower end of the ladder is therefore an artefact of the detector and nothing here leans on it. What pins the threshold from below is the 83.34 m bound above, which uses no archive at all.
+
+(The 132 m entry is real and the rule misses it. 0.002° of _longitude_ at this archive's latitudes is ~120 m rather than 222 m, because the despiker compares in degree space. Catching it needs a threshold under 132 m; the nearest measured row, 100 m, costs 49 lost pairs and 95.5 s.)
+
+#### ⚠️ The issue's own figures do not reproduce
+
+#241 quotes **16 057** judged pairs and **47** refusals; the same file gives **16 075** and **44** here. Reproducing exactly, on the same file: median gap 551 ms, the 93.25 % decline rate, smallest refusal 308 km/h, fastest allowed 290 km/h, largest short-Δt excursion 10 944 km, and the issue's "smallest excursion 227 m" as the second-smallest of this set. Three candidate causes were tested and none lands on 16 057/47 — excluding the 2060 clock-incident rows (15 987/44), the pre-day-4 backup (4 986/23 against the other column's 4 909/24), and row ordering. **No cause is asserted, because none was found.** The figures above are the ones this pipeline produces, and the pipeline is checked against the shipped `buildFixTimeline()` itself — 70 sessions, 0 mismatches.
+
+#### One code, two rules
+
+Both rules answer `WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE`. A separate code was planned and dropped: the two are exclusive by Δt, and `buildFixTimeline()` reconstructs exactly the pairs `precedingFix`/`latestFix` held — both move only on deadbanded rows — so **which rule refused is recoverable from the ride log** without a code of its own. The journal line separates them for a human (`fix implies N km/h` against `fix moved N m`), and the rider's sentence stays literally true at 1 635 km/h. What would earn a code later: a refusal surviving in a segment whose `gps_lat`/`gps_lon` rows did not, where the timeline cannot be rebuilt.
+
+The offline mirror carries `RecoveryVerdict.jumpRule` — `speed`, `step` or `none`. It replaced a boolean, which the change made **vacuously true**: with both rules in force every pair that has a predecessor is judged by one of them, so "did the gate look" stopped carrying information while "which rule looked" still does.
+
+#### A candidate follow-up, measured but not taken
+
+The 824 s is spent refusing fixes that are _correct_, and #178's machinery is the right shape for that: a big step could set an unconfirmed state cleared by the next sample mark, instead of refusing outright. Measured with the log's own proxy for a sample (a `gps_epoch_s` row): **51 of the 75 windows contain one, median wait 554 ms**, so such a rule would leave **86.7 s of the 824.2 s** — a 90 % cut.
+
+Its hole is measured too. **7 of the 82 displaced runs are two fixes or longer**, and in those a sample arrives while the fix is still corrupt, so a witness that only asks "did another sample arrive" confirms the corruption and saves it — converting a loud refusal into a silent wrong save, ~1.2 s of exposure against 737 s. ⚠️ **7 is a lower bound this corpus cannot tighten**: `record()` seals a row only when the value moves, so a corruption that repeats _identically_ is deadbanded away and reaches the timeline as a run of one, indistinguishable from a genuine lone excursion.
+
+Not taken here because it is not pure — it needs `ageMs()`, so it would live in `waypoint.ts` and the mirror would get the weaker `gps_epoch_s` proxy, making `src/gps/recover-holds.ts` knowingly looser in a **second** place where it documents exactly one today.
+
+#### What the checks had to change
+
+`scripts/check-recover-waypoints.ts`'s "fixes closer than the gate's floor are NOT judged" **inverted**: its fixture is a 130.3° longitude 500 ms after a good fix, which is the exact shape #241 was filed for, so it is now refused. A counterweight sits beside it — an ordinary 19 m step at the same cadence, recovered — because without one the assertion is satisfied by a rule that refuses 93 % of this hub's pairs.
+
+`scripts/check-waypoint-corroboration.ts` §4's "a save after the corrected sample takes the corrected position" also inverted, for the cost above: the corrected fix is measured against the spike. It now asserts the refusal and then the recovery one fix later. Its §5 bound assertions are **byte-identical**, which reusing code 6 is what bought. §3 moved above §2b: `first`'s tracker is still running through §2b, so that section's sample 8 km away became §3's `precedingFix` — the fixture was measuring a pair it never meant to, and passed only because the old gate declined below its floor.
+
+`scripts/check-waypoint-endpoint.ts` stages fixtures that teleport between continents microseconds apart, and relied on the gate not looking. Each move to a new position now arrives as two fixes ~11 m apart — the same recovery shape a rider gets after a spike — and the exact staged coordinate is still what the waypoint copies.
 
 ### Provenance: the session, not a new key
 

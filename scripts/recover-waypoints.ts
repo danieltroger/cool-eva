@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { writeFile } from "fs/promises";
 import { resolve } from "path";
 import {
+  JUMP_RULE,
   RECOVERY_OUTCOME,
   distanceKm,
   fireInstant,
@@ -106,10 +107,10 @@ async function main(): Promise<void> {
 /**
  * Everything the report says, and it says what the gates DID rather than what they cover.
  *
- * ⚠️ `jump gate: not judged` is not a pass. implausibleJumpKmh() returns null below
- * MIN_FIX_INTERVAL_MS, and this hub's fixes are mostly closer together than that, so the
- * gate usually declines to look. The bike had the same gate in the same regime — this is
- * faithful, not broken — but printing "cleared" would claim a test that never ran.
+ * ⚠️ `jump gate` names the RULE that looked, not a pass. The two are exclusive by Δt —
+ * a speed above MIN_FIX_INTERVAL_MS, a distance below it — and this hub's fixes are mostly
+ * closer together than that, so `step` is the common answer. `none` means nothing preceded
+ * the fix in its own boot, which is the one case neither rule can judge.
  */
 function report(verdicts: RecoveryVerdict[], options: Options): void {
   const recovered = verdicts.filter(verdict => verdict.outcome === RECOVERY_OUTCOME.RECOVERED);
@@ -130,7 +131,7 @@ function report(verdicts: RecoveryVerdict[], options: Options): void {
   if (recovered.length > 0) {
     console.log("\nrecoverable:");
     for (const verdict of recovered) {
-      const judged = verdict.jumpGateJudged ? "judged" : "NOT judged (fixes closer than the gate's floor)";
+      const judged = verdict.jumpRule === JUMP_RULE.NONE ? "nothing before it in this boot" : verdict.jumpRule;
       // ⚠️ Said out loud for the same reason the jump gate's verdict is: this hold's fix had
       // nothing before it in its own boot, so the corroboration rests on a gps_epoch_s row
       // rather than on the position sample the bike would have used. src/gps/recover-holds.ts

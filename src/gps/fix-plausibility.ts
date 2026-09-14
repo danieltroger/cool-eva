@@ -4,12 +4,14 @@
 // clock — so scripts/check-hold-gestures.ts drives every branch as a table with no timers.
 // ./waypoint.ts is the half that remembers where the last fix was.
 //
-// TWO gates, and they see different things. The RANGE gate refuses a coordinate that is
+// THREE gates, and they see different things. The RANGE gate refuses a coordinate that is
 // not a place at all, which only a decode failure produces (#167). The JUMP gate refuses
 // one that is a legal place the bike cannot have got to: the 2026-08-09 waypoint carried
 // longitude 130.30 while the next `gps_lon` row read 13.04, some 8 000 km away, and 130.3
 // is a perfectly legal longitude — so nothing but its distance from the fix before it can
-// catch that one (#165). docs/waypoints.md §"What each gate can see".
+// catch that one (#165). The STEP gate is the jump gate below its own floor, where an
+// implied speed means nothing and a distance still does — 93 % of this hub's fix pairs
+// land there (#241). docs/waypoints.md §"What each gate can see".
 
 /** A position and when it arrived, on the monotonic clock. */
 export interface Fix {
@@ -60,6 +62,9 @@ export const MAX_PLAUSIBLE_KMH = 300;
  * a short denominator — 7 m in 1 ms reads as 25 000 km/h, and a first attempt at despiking
  * the archive that way rejected 4 718 steps that were all timing artefact rather than bad
  * data. One second is the GPS cadence, so a real pair straddles it.
+ *
+ * Since #241 this is the BRANCH POINT between the two rules rather than the place the gate
+ * gives up: below it implausibleStepMetres() judges a distance instead.
  */
 export const MIN_FIX_INTERVAL_MS = 1_000;
 
@@ -87,6 +92,40 @@ export function implausibleJumpKmh(previous: Fix | null, next: Fix): number | nu
   const km = distanceKm(previous, next);
   const impliedKmh = km / (elapsedMs / 3_600_000);
   return impliedKmh > MAX_PLAUSIBLE_KMH ? impliedKmh : null;
+}
+
+/**
+ * A step this far between two fixes closer together than MIN_FIX_INTERVAL_MS is not a ride.
+ *
+ * ⚠️ FLOORED BY THE TWO CONSTANTS ABOVE rather than chosen freely. MAX_PLAUSIBLE_KMH over
+ * MIN_FIX_INTERVAL_MS is 83.34 m, so anything from there up cannot refuse a bike moving
+ * within the shipped ceiling at any interval under the floor — the slowest pair 220 m
+ * refuses anywhere in the archive implies 1 635 km/h. Where it sits ABOVE that floor is the
+ * archive's to decide, and it is not free: 75 good fixes are refused for a corrupt
+ * predecessor. Both halves, and the 220 the cost curve lands on:
+ * docs/waypoints.md §"The jump gate mostly declines to judge".
+ */
+export const MAX_STEP_METRES = 220;
+
+/**
+ * The metres a fix moved since the one before it, when they are too close together for a
+ * speed to mean anything and the step is too far to be one — otherwise null.
+ *
+ * ⚠️ THE OTHER HALF of implausibleJumpKmh(), never a replacement: the two are mutually
+ * exclusive by Δt, and above the floor the speed test is the stricter of the pair (300 km/h
+ * over one second is 83 m against this 220). Which of them judged a given refusal is
+ * therefore recoverable from a ride log — the fix timeline carries the Δt — which is why
+ * both still answer with WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE.
+ */
+export function implausibleStepMetres(previous: Fix | null, next: Fix): number | null {
+  if (previous === null) {
+    return null;
+  }
+  if (next.at - previous.at >= MIN_FIX_INTERVAL_MS) {
+    return null;
+  }
+  const metres = distanceKm(previous, next) * 1000;
+  return metres > MAX_STEP_METRES ? metres : null;
 }
 
 /** Great-circle kilometres between two fixes, on the mean Earth radius. */

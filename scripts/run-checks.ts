@@ -857,9 +857,13 @@ const CHECKS: SelfCheck[] = [
       "excuse several holds; the position is the last gps_lat/gps_lon row at or before the fire, which is exact " +
       "to within one deadband at ANY row age because src/can/signals.ts compares against the last LOGGED value; " +
       "freshness is witnessed by gps_epoch_s and never by the position rows, since that bound cannot see a " +
-      "receiver that went silent while the bike kept moving; and the jump gate DECLINES to judge fixes closer " +
-      "together than MIN_FIX_INTERVAL_MS, which is most of them at this hub's ~1.8 Hz, so the verdict records " +
-      "whether it looked rather than claiming a test that never ran",
+      "receiver that went silent while the bike kept moving; and the jump gate is TWO rules, exclusive by Δt — " +
+      "an implied speed at or above MIN_FIX_INTERVAL_MS, a distance below it, which is where most of this hub's " +
+      "pairs land — so the verdict names the rule that judged rather than claiming a test that never ran. " +
+      "⚠ The floor fixture INVERTED with #241: a 130.3° longitude 500 ms after a good fix used to be " +
+      "recovered with nothing looking at it, which is the exact shape that issue was filed for, and is now refused; " +
+      "an ordinary 19 m step at the same cadence sits beside it, or the assertion is satisfied by a rule that " +
+      "refuses 93 % of this hub's pairs",
   },
   {
     script: "scripts/check-waypoint-endpoint.ts",
@@ -914,7 +918,13 @@ const CHECKS: SelfCheck[] = [
       "saves after one agreeing sample; that a fix which a later fix SUPERSEDED is left to the " +
       "shipped jump gate; and that the 2026-08-09 shape, replayed as a run's first fix, is refused " +
       "while it is live and saves the CORRECTED position afterwards, so the corrupt longitude never " +
-      "reaches the log. ⚠️ It runs with GPS_TIME_SYNC=0 on purpose, not for convenience: the clock " +
+      "reaches the log; and — new with #241 — that the same shape arriving as the run's SECOND fix, at the " +
+      "ordinary cadence, is refused by the step rule, the case the corroboration gate cannot reach because " +
+      "laterSampleAgreed() answers true on its other arm the moment a predecessor exists. Two counterweights sit " +
+      "beside it, because without them the assertions are satisfied by a rule that refuses every pair under the " +
+      "floor — 93 % of them: an ordinary ~22 m step at the same cadence saves, and the corrected fix after a " +
+      "spike is asserted REFUSED and then saving one fix later, which is the 75-good-fixes cost measured over " +
+      "the archive rather than a surprise. ⚠️ It runs with GPS_TIME_SYNC=0 on purpose, not for convenience: the clock " +
       "gate's five-reading window is what keeps this hole shut on the bike today, so with the clock " +
       "gate in the way every assertion here would pass on a build with no corroboration rule at all. " +
       "⚠️ And the agreeing-sample case carries a guard, because without it the assertion cannot fail " +

@@ -135,6 +135,25 @@ check(
 check("…and the position reaches the log", latestValue("waypoint_lat") === 45.374038);
 stopCounting();
 
+// --- 3. A fix that a later fix superseded ------------------------------------------
+
+console.log("\n3. a fix with a predecessor is the shipped gate's business, not this one");
+
+// ⚠️ ORDERED BEFORE §2b SINCE #241, and the reordering is a finding rather than tidying.
+// `first`'s tracker is still running here, so §2b's sample — 8 km away, to a position this
+// section knows nothing about — used to become this save's `precedingFix`. The old jump
+// gate declined below its floor, so the fixture passed while measuring a pair it never
+// meant to; the step rule judges that pair and refuses it. The move below is ~107 m, which
+// is what this section is actually about.
+sample(45.375, 14.3216);
+await settle();
+const superseded = first.waypoint.saveWaypointNow();
+check(
+  `a second, moved fix saves without waiting for another sample (${superseded.message})`,
+  superseded.saved && superseded.sequence === 2
+);
+first.stop();
+
 // --- 2b. Half a sample is not a sample ----------------------------------------------
 
 console.log("\n2b. one axis refreshed on its own does not corroborate anything");
@@ -155,19 +174,6 @@ check(
   !halfWitnessed.saved && halfWitnessed.refusal === WAYPOINT_REFUSAL.FIX_UNCORROBORATED
 );
 halfSample.stop();
-
-// --- 3. A fix that a later fix superseded ------------------------------------------
-
-console.log("\n3. a fix with a predecessor is the shipped gate's business, not this one");
-
-sample(45.375, 14.3216);
-await settle();
-const superseded = first.waypoint.saveWaypointNow();
-check(
-  `a second, moved fix saves without waiting for another sample (${superseded.message})`,
-  superseded.saved && superseded.sequence === 2
-);
-first.stop();
 
 // --- 4. The 2026-08-09 shape, arriving as a run's FIRST fix -------------------------
 
@@ -193,11 +199,68 @@ check("⚠️  …so the corrupt longitude never reaches the log", latestValue("
 sample(57.7, 13.037036);
 await settle();
 const afterCorrection = corrupt.waypoint.saveWaypointNow();
+// ⚠️ THIS ASSERTION INVERTED WITH #241, and the inversion is a cost rather than a bug. The
+// corrected fix is measured against the spike, so the step rule refuses it exactly as
+// src/gps/fix-plausibility.ts says a spike costs TWO refusals — and below the floor that
+// cost is new, because the gate used to decline there. Measured over the archive: 75 good
+// fixes, 824 s. docs/waypoints.md §"What it costs to judge the other 93 %".
 check(
-  `…and a save after the corrected sample takes the corrected position (${afterCorrection.message})`,
-  afterCorrection.saved && latestValue("waypoint_lon") === 13.037036
+  `⚠️  …the corrected fix is refused too, measured against the spike (${afterCorrection.message})`,
+  !afterCorrection.saved && afterCorrection.refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE
+);
+check("…and still nothing corrupt in the log", latestValue("waypoint_lon") !== 130.303698);
+
+// The sample after THAT gives the gate a pair of good fixes, which is the recovery the
+// rider sees: hold the button again and it works. ~8 m east, past the 3 m deadband.
+sample(57.7, 13.0371);
+await settle();
+const recovered = corrupt.waypoint.saveWaypointNow();
+check(
+  `…and the next fix saves the corrected position (${recovered.message})`,
+  recovered.saved && latestValue("waypoint_lon") === 13.0371
 );
 corrupt.stop();
+
+// --- 4b. ⚠️ The same shape as the run's SECOND fix — the hole #178 left open ---------
+
+console.log("\n4b. ⚠️  the 2026-08-09 decode failure arriving SECOND, at the ordinary cadence");
+
+// This is the case #241 was filed for and the one §4's rule cannot reach: with a good fix
+// already behind it, laterSampleAgreed() answers true on the other arm and the corroboration
+// gate waves it through. Until the step rule there was nothing else — the fixes arrive
+// ~550 ms apart at this hub, under implausibleJumpKmh()'s own floor, so it declined to
+// judge 93 % of the archive's pairs and this one with them.
+const secondFix = await boot("second-fix");
+sample(45.375, 14.322);
+await settle();
+sample(45.375, 14.322);
+await settle();
+const goodFirst = secondFix.waypoint.saveWaypointNow();
+check(`the run's first fix saves once a sample agrees (${goodFirst.message})`, goodFirst.saved);
+
+sample(45.375, 130.303698);
+await settle();
+const corruptSecond = secondFix.waypoint.saveWaypointNow();
+check(
+  `⚠️  …and the corrupt SECOND fix is refused, by the step rule (${corruptSecond.message})`,
+  !corruptSecond.saved && corruptSecond.refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE
+);
+check(
+  "⚠️  …so the corrupt longitude never reaches the log from the second fix either",
+  latestValue("waypoint_lon") !== 130.303698
+);
+
+// ⚠️ THE COUNTERWEIGHT. Without it every assertion above is satisfied by a rule that
+// refuses every pair under the floor, which is 93 % of them — the whole population this
+// change newly judges. 0.0002° of latitude is ~22 m, the scale of a real step at this
+// cadence and an order below MAX_STEP_METRES.
+sample(45.3752, 14.322);
+await settle();
+sample(45.3754, 14.322);
+await settle();
+const ordinaryStep = secondFix.waypoint.saveWaypointNow();
+check(`…while an ordinary ~22 m step at the same cadence saves (${ordinaryStep.message})`, ordinaryStep.saved);
+secondFix.stop();
 
 // --- 5. The code on the wire --------------------------------------------------------
 
