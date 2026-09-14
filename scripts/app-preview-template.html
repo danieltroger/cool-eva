@@ -501,6 +501,16 @@ __MODULES__
             "coolant_out": [38.2, "°C", "coolant"],
             "charge_manager_state": [0x23, "", "charge"],
             "fast_dc_contactor": [1, "", "charge"],
+            // ⚠️ 0x101 too, or this scene inherits PARKED_SIGNALS' 60/62 and the ALL tab renders
+            // the word "parked" over a charging bike. The five below are one real frame,
+            // `68 64 04 14 4B 00 00 00` at 2026-08-09 18:10:59, capture-20260809-181059-551bae3b.log
+            // — the taper session §"0x610 b7" already cites. A DC-charging bike is state 100 /
+            // substate 104 in 1 510 212 of 1 512 555 frames; docs/can-0x101.md §"What the frame
+            // says while charging".
+            "vehicle_state_can": [100, "", "drive"],
+            "vehicle_substate_can": [104, "", "drive"],
+            "vehicle_status_flags": [0x14, "", "vcu"],
+            "limp_pack_res": [75, "", "vcu"],
             "dc_charging": [1, "", "charge"],
             "bms_state_charge": [1, "", "bms"],
             "fast_dc_limit_max_a": [75, "A", "charge"],
@@ -593,6 +603,18 @@ __MODULES__
           signals: {
             "charge_manager_state": [0x02, "", "charge"],
             "charge_manager_status": [0x00, "", "charge"],
+            // ⚠️ 0x101 too, and NOT the parked 60/62 this scene inherited: `60/62` never once
+            // co-occurs with a live 0x610 in 1 700 520 archive frames, so a parked pair beside a
+            // charge manager on the bus is a combination the bike has never produced. The cable-in
+            // pair is `20/34` — 61 144 frames, 11 files, neither charging bit set in 99.94 % of
+            // them. Real frame, `22 14 04 14 4B 00 00 00` at 2026-08-09 14:41:40.749901,
+            // capture-20260809-080235-cd40b535.log. docs/can-0x101.md §"What the frame says while
+            // charging". It is also the ALL tab's UNLABELLED case, which is why no scene of its own
+            // was added for one.
+            "vehicle_state_can": [20, "", "drive"],
+            "vehicle_substate_can": [34, "", "drive"],
+            "vehicle_status_flags": [0x14, "", "vcu"],
+            "limp_pack_res": [75, "", "vcu"],
           },
           gate: gateOf(SERVER.refusedGate),
         },
@@ -658,6 +680,17 @@ __MODULES__
             "motor_rpm": [SERVER.ridingMotorRpm, "rpm", "obd"],
             "throttle_pct": [34, "%", "drive"],
             "go": [1, "", "controls"],
+            // ⚠️ 0x101, for the reason the dc and refused scenes carry it: without these the
+            // riding bike inherits PARKED_SIGNALS' 60/62 and the ALL tab labels it "parked".
+            // Real frame, `2B 28 06 44 72 00 00 00` — 2026-08-02 21:06:05.200454,
+            // capture-20260802-210358-346ecdd5.log, the same frame scripts/check-vehicle-status.ts
+            // uses to prove the two V_DRIVE_VSM fields are read independently. drive_vsm is 6
+            // because 43 is one of the three driving substates.
+            "vehicle_state_can": [40, "", "drive"],
+            "vehicle_substate_can": [43, "", "drive"],
+            "drive_vsm": [6, "", "drive"],
+            "vehicle_status_flags": [0x44, "", "vcu"],
+            "limp_pack_res": [114, "", "vcu"],
           },
           // On the riding curve rather than the speed gate: that opens at 90 km/h and this is 72.
           fan: { dutyPercent: 62, targetPercent: 62, driverEnabled: true, phase: "running" },

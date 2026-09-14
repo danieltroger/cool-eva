@@ -120,6 +120,17 @@ const CASES: FrameCase[] = [
     expect: { drive_vsm_b3: 3, limp_res_valid: 0, vehicle_status_flags: 0x07 },
   },
   {
+    what: "DC charging — state 100 / substate 104, the pair 1 510 183 of 1 510 350 frames carrying the bike's own `dc_charging` bit read. 2026-08-09 18:10:59.647934, capture-20260809-181059-551bae3b.log",
+    hex: "68 64 04 14 4B 00 00 00",
+    expect: {
+      vehicle_substate_can: 104,
+      vehicle_state_can: 100,
+      drive_vsm: 4,
+      vehicle_status_flags: 0x14,
+      limp_pack_res: 75,
+    },
+  },
+  {
     what: "substate 52 — PARK ASSIST, plus limp_res_valid. 2026-09-13 15:28:02.199143, evidence/captures/frames-0x101-capture-20260913-150718-04632ecc.txt",
     hex: "34 28 06 0C 4B 00 00 00",
     expect: { vehicle_substate_can: 52, vehicle_state_can: 40, drive_vsm: 6, limp_res_valid: 1, limp_pack_res: 75 },
