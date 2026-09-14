@@ -714,6 +714,46 @@ So the tile counts down against the TRUE temperature (`batt_temp_hi`, sourced fr
 
 ---
 
+## Fitting a 390 px phone — `style.css`
+
+The phone is 390 CSS px wide and the page may never be wider. It was, on the Faults tab, until #253 — measured on `de72711`, and pre-existing rather than anything #252 did — the lane that filed #253 measured the identical number from that PR's parent: `document.body.scrollWidth` read **449** against a `clientWidth` of 390, the page scrolled sideways, and in the light theme the strip past 390 drew as black bars down the side of the tiles, because the body's background stops where the body does.
+
+### The chain, which starts three levels above the text
+
+One row did it — `B1000 · Position lights open circuit fault · freeze frame · expected`, the freeze-frame code on this bike with both suffixes at once. Measured in the rendered page by cloning each element at `width: min-content`, re-measured for the fix and agreeing with the numbers #253 was filed with — 326.6, 414.6, 440.6 px, rounded below:
+
+| element                                                             | min-content |
+| ------------------------------------------------------------------- | ----------- |
+| `.code-line-text`, `white-space: nowrap`                            | 327 px      |
+| `.code-line` (+ the 3.6 rem id column, the gaps, the 0.9 rem caret) | 415 px      |
+| the tile (+ 0.75 rem of side padding)                               | 441 px      |
+| `.tile-group`'s implicit column, then `.view`'s `1fr` tracks        | 441 px      |
+| `.view`'s 0.5 rem padding → what the body reports                   | **449 px**  |
+
+**The load-bearing fact is that a `1fr` track's automatic minimum is `min-content`, not zero.** A track is free to grow to its share of the space and free to be squeezed down to it — but never below what its items say they need, and an item that cannot break a line says it needs all of it. So the widest row in the list sized the column, the column sized the group, and the group sized the page. Nothing was overflowing its parent; every box was doing exactly what it was told.
+
+Two things had to change, and they answer different halves of it:
+
+- **`minmax(0, 1fr)` on `.view` and `.tile-group`, and `min-width: 0` on `.tile`** — the track may now be narrower than its content, and the item may be narrower than its own content. (`.raw` has carried the same `min-width: 0` since the raw grid was written; this is the same line, three grids later.)
+- **`overflow-wrap: anywhere` on `.code-line-text`** — so the content stops being unbreakable in the first place. `anywhere` rather than `break-word` deliberately: only `anywhere` also shrinks the element's min-content, which is the number every row of the table above is measured in. With `break-word` the row would wrap on screen and still widen the page.
+
+### Wrapping, not an ellipsis
+
+`.code-line-text` was `white-space: nowrap` + `text-overflow: ellipsis`, and with the grid fixed that clipping would have worked — the row would have fitted, truncated, at 374 px. It is the wrong answer for this screen. The Faults tab is the one place on the dashboard meant to be read carefully rather than glanced at, `· freeze frame` and `· expected` are the two suffixes that say why a row matters at all, and they sit at the END of exactly the longest lines. An ellipsis eats the part you needed. Today's list costs one row a second line for that; the rest still fit on one.
+
+### What was measured, and what it means for the guard
+
+Every variant below was injected into the rendered page and measured, at 390×844:
+
+| `.view` / `.tile-group` / `.tile` | `.code-line-text` | `body.scrollWidth` | the long row |
+| --- | --- | --- | --- |
+| as shipped before #253 | `nowrap` + ellipsis | **449** | readable (the tile grew to fit it) |
+| `minmax(0, 1fr)` + `min-width: 0` | `nowrap` + ellipsis | 390 | **clipped** |
+| as shipped before #253 | `overflow-wrap: anywhere` | 390 | readable, two lines |
+| both | both | 390 | readable, two lines |
+
+⚠️ **Either half alone takes the page back to 390**, which is worth writing down because it decides what a check can prove. Once the description wraps, no row the bike can store has a min-content wide enough to widen anything — so nothing in the fixture can show the grid minimums doing any work, and reverting them leaves `scripts/check-phone-width.ts` green on every real row. They are not decoration: they are what makes the tile's width come from the phone rather than from its contents, for the next thing that lands in a full-width tile and cannot wrap. That is why the check carries a synthetic probe as well as the fixture — §11.8 of `docs/diagnostics-and-checks.md`.
+
 ## Light and dark — `lib/theme.js`, `style.css`
 
 The dark screen washes out in direct sun. `lib/theme.js` resolves one of two palettes and stamps it on `<html>` as `data-theme`; `style.css` carries both under the same token names.

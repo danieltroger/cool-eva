@@ -217,10 +217,16 @@ body {
 
 /* ---------- layout ---------- */
 
+/* ⚠️ minmax(0, 1fr), never a bare `1fr`, and the same for every grid below that holds
+   tiles: a `1fr` track's automatic minimum is MIN-CONTENT, not zero, so one row the
+   browser cannot break makes the column — and with it the whole page — as wide as that
+   row. #253 was 449 px against a 390 px phone from a single stored-code line. The pair
+   to this is `.tile { min-width: 0 }`; a track free to shrink still cannot shrink an
+   item whose own automatic minimum holds it open. docs/dashboard-decisions.md. */
 .view {
   display: grid;
   gap: 0.5rem;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 0 0.5rem;
   align-content: start;
 }
@@ -232,6 +238,9 @@ body {
 .tile-group {
   grid-column: 1 / -1;
   display: grid;
+  /* Named rather than left implicit: an implicit column is auto-sized, which is the
+     min-content minimum .view's comment above is about. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
 }
 
@@ -254,6 +263,9 @@ body {
   flex-direction: column;
   gap: 0.2rem;
   min-height: 88px;
+  /* The grid-item half of the rule above .view — `.raw` has carried the same line since
+     the raw grid was written. */
+  min-width: 0;
   transition: opacity 0.3s;
 }
 
@@ -1121,9 +1133,11 @@ body {
 
 /* ---------- stored trouble codes (faults view) ---------- */
 
-/* Thirty-nine of these have to fit on a phone, so one line each: the code on the
-   left at a fixed width so the codes form a readable column, the description
-   filling the rest and clipping rather than wrapping every row to two lines. */
+/* Thirty-nine of these have to fit on a phone: the code on the left at a fixed width so
+   the codes form a readable column, the description filling the rest. Long rows wrap
+   rather than clip — `· freeze frame · expected` are the two suffixes that say why a row
+   matters at all, they sit at the END of the longest lines, and that is exactly what an
+   ellipsis eats. Most rows still take one line; today's list wraps one. */
 .code-line {
   display: flex;
   gap: 0.5rem;
@@ -1141,9 +1155,11 @@ body {
 .code-line-text {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* `anywhere` rather than `break-word`, the same call `.code-field` makes below: only
+     `anywhere` also shrinks the element's MIN-CONTENT, and it is the min-content of this
+     span — 327 px of it — that the grids above resolve their columns against. With
+     `break-word` the row would wrap on screen and still widen the page. */
+  overflow-wrap: anywhere;
 }
 
 /* The open/closed marker on a code line that has a shortlist. Pushed to the right

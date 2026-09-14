@@ -525,12 +525,13 @@ function CodeLine(row, freezeFrame) {
     div(
       {
         class: "code-line",
-        // A div rather than a <button>, because the line is a flex row of two
-        // spans and .code-line-text relies on `text-overflow: ellipsis` across
-        // it — a button resets enough of that to be worth avoiding. The cost is
-        // that the keyboard affordances have to be spelled out: role, tabindex
-        // AND a key handler. role without the handler would be worse than no
-        // role at all, since it advertises a control that then does not work.
+        // A div rather than a <button>: a button arrives with UA styles this row would
+        // then have to undo — rendered side by side at 390 px it comes out in Arial
+        // rather than the page's font, centred, and 4 px taller. (It used to say the
+        // line relied on `text-overflow: ellipsis`; since #253 it wraps instead.) The
+        // cost is that the keyboard affordances have to be spelled out: role, tabindex
+        // AND a key handler. role without the handler would be worse than no role at
+        // all, since it advertises a control that then does not work.
         ...(key === null
           ? {}
           : {
