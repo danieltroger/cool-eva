@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import canModule from "socketcan";
 import type { RawChannel } from "socketcan";
-import { CAN_BITRATE_HZ, type BringUpDecision, canConfigureArgs, decideCanBringUp } from "./link-config.ts";
+import { type BringUpDecision, canConfigureArgs, decideCanBringUp } from "./link-config.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -45,13 +45,6 @@ export async function bringUpCan(iface = "can0", active = true): Promise<void> {
   console.log(`can: ${iface} up @500k — ${mode}`);
 }
 
-// Re-configure and bring the interface back up after the link has dropped — the
-// recovery the dashboard's "CAN bus restart" button reaches. The pair of commands run
-// by hand when the bus goes down mid-ride:
-//
-//   ip link set can0 type can bitrate 500000
-//   ip link set can0 up
-//
 export function openChannel(iface = "can0"): RawChannel {
   // second arg = receive timestamps
   return canModule.createRawChannel(iface, true);

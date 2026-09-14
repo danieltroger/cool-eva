@@ -210,8 +210,9 @@ check(
 // The refreshes are the disarm-on-change path that can be executed without a DOM, and they are
 // the load-bearing pair: every control that HAS a status refreshes BEFORE it arms, so a status
 // landing under an already-armed button has to take the arming with it. ⚠️ views/pi-actions.js's
-// two have no status to land under — nothing about `git pull` or `ip link` is fetched first — so
-// what disarms them is openSheet(), asserted at the end of this section. Armed AFTER the call and before its
+// two fetch no status OF THEIR OWN — nothing about `git pull` or `ip link` is asked first — so
+// none of these refreshes is theirs. What is tied to their own lifecycle is openSheet(), asserted
+// at the end of this section. (Other modules' refreshes still disarm them: one key, one dashboard.) Armed AFTER the call and before its
 // answer, which is the ordering that matters — a button armed against 75 must not fire against
 // the 80 the refresh brought with it.
 
@@ -246,7 +247,7 @@ try {
 // for its second tap. ⚠️ It is also why views/sheet.js imports the gate at all now that the
 // buttons live elsewhere: drop this line and sourceOf() below throws instead of going red.
 check(
-  "⚠️  re-opening the menu sheet disarms — the only disarm the two Pi actions have",
+  "⚠️  re-opening the menu sheet disarms — the only disarm tied to the two Pi actions' own lifecycle",
   declarationBody(sourceOf("public/views/sheet.js"), "export function openSheet()").includes('armed.val = ""')
 );
 
@@ -333,12 +334,22 @@ for (const site of SITES) {
 // of them. `armed` is a single key, so two sites sharing it means arming either one fires the
 // other on the next tap — one tap on "CAN bus restart" and one on "Update" would pull and restart.
 //
-// ⚠️ Sites whose key is still an identifier (`<key>`) are exempt BY NAME: ActionButton is one call
-// site built around a parameter and serving four keyed controls, so "distinct per site" is not a
-// question about it — §5's ALL_KEYS is where those four are held apart.
+// ⚠️ The only sites allowed NOT to resolve are ActionButton's, which is one call site built around
+// a `key` parameter serving four keyed controls — "distinct per site" is not a question about it,
+// and §5's ALL_KEYS is where those four are held apart. Asserted as that exact set rather than as
+// a count: `key => !key.startsWith("<")` exempts anything keyOf() merely FAILED on, so spelling a
+// control's key `let` instead of `const` would drop it out of the comparison below and re-open the
+// hole this section exists for — one keyword, and the count floor only catches it while the margin
+// happens to be zero.
 const refusedKeys = SITES.map(site => keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]));
 const resolvedKeys = refusedKeys.filter(key => !key.startsWith("<"));
 console.log(`   keys the sites refuse on: ${refusedKeys.join(", ")}`);
+const unresolved = refusedKeys.filter(key => key.startsWith("<"));
+check(
+  `⚠️  the ${unresolved.length} sites whose key does not resolve are ActionButton's and nothing else — a control ` +
+    "that stopped resolving would silently leave the comparison below rather than fail it",
+  unresolved.every(key => key === "<key>")
+);
 check(
   "the sites' keys resolved at all — everything reading back as an identifier would pass the one below in silence",
   resolvedKeys.length >= 8

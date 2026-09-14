@@ -72,6 +72,24 @@ check(
   new Set(headerValues.map(entry => entry.value)).size === headerValues.length
 );
 
+// ⚠️ THE OTHER HALF OF THE BARRIER, and until #240 it was claimed in four places and held in
+// none. The header comparison stops the cross-origin `<form>`, which cannot set a header. What
+// stops a cross-origin `fetch` — which can — is that a custom header name makes the request
+// non-simple, so the browser sends an OPTIONS preflight first and THIS SERVER NEVER ANSWERS ONE.
+// Add an OPTIONS branch with `Access-Control-Allow-Headers: X-Cool-Eva` to src/index.ts and every
+// guard in the table above is defeated at once — /fan and /vcu-write with them — while every
+// other assertion in this file still passes. Read off the routing rather than argued about.
+const routing = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+check(
+  "src/index.ts was read at all — an empty string would pass the one below in silence",
+  routing.includes("createServer(")
+);
+check(
+  "⚠️  …and it answers no preflight: no OPTIONS branch and no Access-Control-* header anywhere in " +
+    "the routing, which is what makes a custom header name a barrier rather than a formality",
+  !/["']OPTIONS["']/.test(routing) && !routing.includes("Access-Control-")
+);
+
 // --- 2. /can-restart, against a real server on loopback -----------------------
 
 console.log("\n2. /can-restart: what a page on the bike's wifi can do to the bus");
@@ -83,14 +101,20 @@ await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
 try {
-  const refused = await post("/can-restart");
-  check("⚠️  a POST with NO header is refused with 403 — this is the cross-origin form", refused.status === 403);
+  // ⚠️ The reply is evidence about the REPLY. What §2 is really about is the ORDERING — that the
+  // guard returns before the two `ip link` commands — so the call is observed rather than inferred:
+  // handleCanRestartEndpoint's catch warns with the interface it failed on, and a refused request
+  // must produce no such line. A guard moved BELOW restartCanLink still answers 403 with no
+  // `Restart failed` in the body, and would pass the two assertions either side of this one while
+  // every header-less POST on the bike's wifi really did re-up can0.
+  const refused = await withWarningsRecorded(() => post("/can-restart"));
+  check("⚠️  a POST with NO header is refused with 403 — this is the cross-origin form", refused.result.status === 403);
   check(
-    "…and it never reached restartCanLink: a request that got past the guard comes back " +
-      "`Restart failed`, which only that catch writes",
-    !refused.body.includes("Restart failed")
+    "⚠️  …and restartCanLink was never CALLED — the endpoint's own failure warning never printed, " +
+      "which is the ordering rather than the answer",
+    refused.warnings.length === 0
   );
-  check("…and the refusal names the header it wanted", refused.body.includes(CAN_RESTART_HEADER));
+  check("…and the refusal names the header it wanted", refused.result.body.includes(CAN_RESTART_HEADER));
 
   const wrongValue = await post("/can-restart", { [CAN_RESTART_HEADER]: "not-it" });
   check("a POST carrying the WRONG value is refused too, so the name alone is not the key", wrongValue.status === 403);
@@ -113,11 +137,18 @@ try {
     duplicated.status === 403
   );
 
-  const accepted = await post("/can-restart", { [CAN_RESTART_HEADER]: CAN_RESTART_HEADER_VALUE });
+  const accepted = await withWarningsRecorded(() =>
+    post("/can-restart", { [CAN_RESTART_HEADER]: CAN_RESTART_HEADER_VALUE })
+  );
   check(
     "⚠️  a POST carrying the header gets past the guard and reaches restartCanLink — 500 against " +
       `an interface no machine has, which is how this check can prove that without touching can0`,
-    accepted.status === 500 && accepted.body.includes("Restart failed")
+    accepted.result.status === 500 && accepted.result.body.includes("Restart failed")
+  );
+  check(
+    "…and THAT one did warn, naming the interface — so the silence asserted above is the guard " +
+      "refusing and not a spy that records nothing",
+    accepted.warnings.length === 1 && accepted.warnings[0].includes(NO_SUCH_IFACE)
   );
 
   const upperCase = await post("/can-restart", { "X-COOL-EVA": CAN_RESTART_HEADER_VALUE });
@@ -203,6 +234,26 @@ if (failures > 0) {
   console.log("✓ both Pi-maintenance endpoints refuse a request that carries no header, the wrong value, an empty");
   console.log("  one, a neighbour's or a duplicate — and the page sends the right literal from inside the right");
   console.log("  function. A CSRF barrier, not authentication: docs/wifi-hardening.md");
+}
+
+/**
+ * Runs one request with console.warn recorded, so what the ENDPOINT did can be asserted rather
+ * than what it answered. Restored in a `finally`: a throw here would leave the suite's own
+ * warnings swallowed for every later check in this process.
+ */
+async function withWarningsRecorded<Result>(
+  request: () => Promise<Result>
+): Promise<{ result: Result; warnings: string[] }> {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(argument => String(argument)).join(" "));
+  };
+  try {
+    return { result: await request(), warnings };
+  } finally {
+    console.warn = realWarn;
+  }
 }
 
 /** One request at the loopback server, and how the endpoint answered it. */

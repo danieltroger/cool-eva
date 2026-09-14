@@ -34,7 +34,7 @@ The header **values differ per endpoint** so a caller built for one cannot reach
 | `/update` | `sudo git pull` + `systemctl restart` | `X-Cool-Eva: update` (#150) |
 | `/fan` | the Pi's GPIO | `X-Cool-Eva: fan` |
 | `/charge-auto` | the charge controller's on/off | `X-Cool-Eva: charge-auto` |
-| `/lifetime-read`, `/vcu-read`, `/vcu-probe` | **the bike's bus**, read-only | `X-Cool-Eva: service-mode`, plus the server-side service gate |
+| `/lifetime-read`, `/vcu-read`, `/vcu-probe` | **the bike's bus**, read-only | `X-Cool-Eva: service-mode`, plus the server-side service gate. ⚠️ On `/vcu-read` the guard is on the **POST only** (`src/http/vcu-read.ts`); its `GET` and `DELETE` fall through without it, and neither reaches the bus |
 | `/vcu-write` | **the bike's bus**, writing | `X-Cool-Eva: service-write`, plus the gate, plus a confirm token |
 
 ## The WebSocket: one frame used to be enough (#92)

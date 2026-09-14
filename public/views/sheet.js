@@ -97,9 +97,9 @@ export function Sheet() {
       UpdateButton(),
       // The cooling fan brings its own heading, so it disappears completely on a Pi
       // without FAN_ENABLED rather than leaving a heading over nothing. It sits between
-      // the grey Actions and Service mode because that is what it is: the only control
-      // on this sheet that actuates something, and the only one that actuates something
-      // which is NOT the motorcycle.
+      // the grey Actions and Service mode because that is what it is: the only control on
+      // this sheet that MOVES something physical. (Narrowed in #129's pass: the two Pi
+      // actions above it act on the Pi, but nothing on the bike or in the garage turns.)
       FanControl(),
       // Last of the doing-things sections and first of the reading-things ones,
       // because it is the only SECTION here whose controls reach the bike's bus —
