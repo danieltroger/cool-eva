@@ -204,6 +204,9 @@ const BY_KEY = {
   "charge_cmd_a": [0, 127],
   "charge_cmd_ack": [0, 6],
   "charge_cmd_ack_ms": [0, 60000],
+  // A wrapping settle counter (src/charge/ack-watch.ts), so the whole byte is in range by
+  // construction and this gate can only ever reject a value that is not the counter.
+  "charge_cmd_ack_seq": [0, 255],
   // The automatic controller. ⚠️ Named for the same reason as the ack codes above: blank unit in a
   // non-BOOLEAN_GROUP group is the combination that falls through every rule. The reason bound is
   // the size of CHARGE_AUTO_REASON, tight because the codes are ours — scripts/check-charge-auto.ts

@@ -319,7 +319,12 @@ __MODULES__
           iso: new Date(NOW).toISOString(),
           offsetFromGpsSeconds: 0.2,
         },
-        targets: TARGETS,
+        // ⚠️ Both null HERE, and filled in by `writeStatus()` below: since #107 they are the two
+        // request-dependent halves of this payload — three fields for all 269 names when the
+        // caller wants the list, everything else for the ONE target it named. Built from TARGETS
+        // rather than restated, so the picker cannot offer a name the detail branch does not have.
+        targets: null,
+        detail: null,
         recent: JOURNAL,
         busHeldBy: null,
       };
@@ -1029,6 +1034,24 @@ __MODULES__
         return 200;
       }
 
+      /**
+       * The status payload for one request, sliced the way src/http/vcu-write.ts slices it:
+       * `detail=NAME` fills in the one target, `list=0` says the caller already holds the names.
+       * ⚠️ `targets: null` means NOT ASKED FOR — the page keeps its own copy — so a preview that
+       * returned [] here would show an empty picker after the first refresh.
+       */
+      function writeStatus(params) {
+        const wanted = params.get("detail");
+        return {
+          ...WRITE_STATUS,
+          targets:
+            params.get("list") === "0"
+              ? null
+              : TARGETS.map(target => ({ name: target.name, index: target.index, micro: target.micro })),
+          detail: TARGETS.find(target => target.name === wanted) ?? null,
+        };
+      }
+
       window.fetch = function previewFetch(input, init) {
         const request = typeof input === "string" ? input : input && input.url ? input.url : String(input);
         const url = new URL(request, "http://eva.local/");
@@ -1200,7 +1223,7 @@ __MODULES__
         }
         if (path === "/vcu-write") {
           if (method !== "POST") {
-            return json({ status: WRITE_STATUS, result: null, message: null });
+            return json({ status: writeStatus(url.searchParams), result: null, message: null });
           }
           const result = serviceWrite(url.searchParams);
           // The full-sheet panel renders the answer under the button, the way the bike would.
@@ -1211,7 +1234,7 @@ __MODULES__
             toast(`Preview — nothing was sent. A Pi would have answered: ${said}`);
           }
           return json({
-            status: WRITE_STATUS,
+            status: writeStatus(url.searchParams),
             result,
             message: result ? null : "The preview does not carry that action.",
           });

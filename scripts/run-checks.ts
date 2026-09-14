@@ -202,6 +202,26 @@ const CHECKS: SelfCheck[] = [
       "which gate states do and do not raise the cable caution",
   },
   {
+    script: "scripts/check-charge-write-polling.ts",
+    covers:
+      "what wakes the charge tab, and how often (#207). The charge view's derive read charge_cmd_ack " +
+      "with no value guard, and ws.ts heartbeats a FULL snapshot every 5 s, so the phone re-fetched " +
+      "/vcu-write at 0.2 Hz for a whole charge — a payload that re-read the parameter sweep and the entire " +
+      "append-only audit journal per request, on the event loop serving the 10 Hz WebSocket and the CAN RX " +
+      "handler. Against the real store and the real view with a counted fetch and both clocks stubbed: that " +
+      "five heartbeats changing nothing now cost NOTHING; that a settle whose verdict REPEATS still wakes it, " +
+      "and one the page never commanded does too — the automatic controller steps 32→30→28 A settling `took` " +
+      "each time, and record() logs on change, so a guard on the verdict would freeze the first command's " +
+      "sentence on screen for the rest of the charge; that the counter's 255→0 wrap is an edge like any other; " +
+      "and that a status fetch failing at session start is RETRIED rather than leaving the write controls " +
+      "hidden for the session, once per heartbeat rather than once per message on a derive that runs at 10 Hz. " +
+      "\u26a0 Plus the two invariants those rest on, which are otherwise assertions that cannot fail: that " +
+      "charge_cmd_ack_seq is a REGISTERED signal (signalState() invents a state for any string, so every " +
+      "page-side assertion here stays green with the registry entry deleted), and that two settles carrying " +
+      "an identical verdict really do push two sequence numbers through onChange — the deadband, not the " +
+      "counter, being what a later change could swallow",
+  },
+  {
     script: "scripts/check-charge-write-visibility.ts",
     covers:
       "why the charge tab's write controls used to flicker: that the browser's staleness window for " +
@@ -517,16 +537,42 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-write-audit.ts",
     covers:
-      "the audit journal's reader — the only record of what has been done to this motorcycle, and untested until " +
-      "2026-09-08: that a line of NUL bytes (a power cut leaves the block allocated and the write lost; U+0000 is " +
-      "not JS whitespace, so trim() misses it and JSON.parse threw a stack trace on every GET and POST to " +
-      "/vcu-write) is skipped like a blank line and named once as a record that is gone, mid-file and as a torn " +
-      "last line, while NULs mixed with real content stay a damaged line and keep their warning — the fence that " +
-      "stops the fix widening into 'skip anything that will not parse'. Plus blank lines, ordinary corruption, a " +
-      "torn tail, newest-first order, the limit, an absent journal reading as no records rather than an unreadable " +
-      "one, and a round trip through appendAuditRecord carrying the stamp read's rawHex. \u26a0 Nothing here " +
-      "RECOVERS a lost record: 1 710 NUL bytes are not a record, the returned rows are identical on both readers, " +
-      "and the only assertion that changes colour is the captured console output",
+      "the audit journal's reader \u2014 the only record of what has been done to this motorcycle, and untested " +
+      "until 2026-09-08. A power cut leaves the block allocated and the write lost, and U+0000 is not JS " +
+      "whitespace, so those bytes reached JSON.parse and threw a STACK TRACE ON EVERY GET AND POST to " +
+      "/vcu-write, which the dashboard polls. Three shapes follow and \u00a75 is the fence between them: NULs " +
+      "alone are a hole with nothing to recover; NULs then bytes that will not parse are a hole whose " +
+      "neighbour was torn too, skipped with one line; and NULs then bytes that DO parse are a hole that ended " +
+      "on a record boundary \u2014 the record is KEPT, because skipping it would lower the count of what was " +
+      "done to this bike, and the one on this Pi is an ECUReset of both micros. \u26a0 A NUL anywhere but a " +
+      "contiguous LEADING run stays an ordinary damaged line, which is what stops this widening into " +
+      "\u201cskip anything with a NUL in it\u201d, and salvaged bytes need an `at` and an `action` before " +
+      "they count as a record. Each injury is named ONCE PER PROCESS rather than once per request, with a " +
+      "second, different injury still getting its own line so the dedupe cannot degenerate into once ever. " +
+      "Plus blank lines, ordinary corruption, a torn last line logged rather than warned, the precedence when " +
+      "a holed line is also the last one, newest-first order, the limit, an absent journal reading as no " +
+      "records rather than an unreadable one, and a round trip through appendAuditRecord carrying the stamp " +
+      "read's rawHex. \u26a0 Every section gets its OWN temp directory: the reader's once-per-process key is " +
+      "per file and line, so sections sharing one would claim each other's and \u00a73's warning COUNT read " +
+      "zero instead of one",
+  },
+  {
+    script: "scripts/check-write-status-split.ts",
+    covers:
+      "the /vcu-write payload as a LIST plus ONE DETAIL (#107). summariseTarget ran for all 269 allowlist " +
+      "entries on every request and armWrite() fetches before every arm, so the arming gesture of the controls " +
+      "that change this motorcycle carried a 256 582-byte round trip — 249 878 of it targets — on garage wifi " +
+      "on a Pi Zero. Through the real runner and the real page: that a bare GET still answers the whole " +
+      "allowlist, that `detail=NAME` answers one target in full and an unknown name answers no detail rather " +
+      "than an error, that `list=0` omits the listing as NULL rather than as [] — the page keeps its own copy, " +
+      "and \u201cyou already have it\u201d must not be confusable with \u201cthis bike has nothing " +
+      "writable\u201d — and that a refresh holding the names does not empty the picker while a response naming " +
+      "a different parameter table discards them, since a sweep finishing under this very sheet re-selects it. " +
+      "\u26a0 The scary one: selectedTarget() is now ONE object the Pi hands over rather than a find over an " +
+      "array carrying its own names, and it decides `action=bit` vs `action=parameter` and the compare-and-swap " +
+      "`expected=` \u2014 so a detail whose name is not the selection's is refused, or a coherent-looking write " +
+      "lands against the wrong parameter. Plus that armWrite() still raises `busy` before its refresh, which is " +
+      "the double-tap guard itself",
   },
   {
     script: "scripts/check-freeze-frame.ts",

@@ -30,6 +30,30 @@ That is not a hypothesis. It is what the ride log looks like.
 
 ⚠️ **A fixed writer does not repair a file that is already holed.** That 1710-NUL line is still on the Pi, and it is line 11 of a file the dashboard reads on _every_ GET and POST to `/vcu-write`. U+0000 is not JS whitespace, so `trim()` did not catch it and `JSON.parse` threw once per request. `recentAuditRecords` treats a NUL-only line as blank and names it once instead (#154, `scripts/check-write-audit.ts`) — nothing is recovered, because 1710 NUL bytes are not a record.
 
+### ⚠️ The second holed line is not that shape, and reading it as one loses a record (#189, 2026-09-14)
+
+`service-writes.jsonl` on this Pi has a **second** injury, at line 15, and it is worth stating precisely because both the issue that reported it and the brief that scheduled the fix described it wrongly — as "NULs followed by a torn JSON tail", with the prescribed fix being to skip it. It is not a torn tail. Measured on a copy pulled off the Pi (29 562 bytes, 94 records):
+
+```
+line 15: 429 characters — bytes 0…214 all NUL (a contiguous prefix), then 214 bytes that parse:
+{"at":1788949247772,"clockTrustworthy":true,"action":"reset-vcu","status":"reset","after":null,
+ "note":"both VCU micros restarted (A9: accepted (positive 51); A8: accepted (positive 51))",
+ "runningVersion":"754dfa2"}
+
+line 14: at=1788869836774  read-service-stamp
+line 16: at=1788950222964  charge-current
+```
+
+The tail's stamp sits between its neighbours', so those bytes are the record that belongs there. **The hole is the record _before_ it**, whose block was allocated and never written back — taking its own trailing newline with it, which is what glued the next record onto the same line. So the shape a power cut leaves here is `hole + intact neighbour`, not `hole + fragment`, and the reader that skipped line 15 was **throwing away a complete record of an ECUReset on both VCU micros** while printing a `SyntaxError` and a stack trace on every request.
+
+**The tail is now kept when it parses, and that is not optimism.** A record truncated at the front cannot parse. Across this whole journal, of the 28 933 possible front-truncations of its 94 records, **none parses to any JSON value** — no record carries a `{` after position 0, because `before`/`after` are scalars by type and no `note` contains a brace. So on this corpus "the NUL-stripped tail parses" is exact rather than heuristic: it means the hole ended on a record boundary. Salvaged bytes still face a stricter bar than an ordinary line — an `at` that is a number and an `action` that is a string, the two fields the sheet renders — because a fragment that happens to parse is not thereby a record.
+
+⚠️ **A NUL anywhere but a contiguous leading run is still an ordinary damaged line.** That is the fence, and `scripts/check-write-audit.ts` §5c is red on any reader that switches on `line.includes("\0")` instead: a line with NULs in the _middle_ is not a power-cut prefix, and treating it as one would be the "skip anything that will not parse" widening this whole area exists to prevent.
+
+**Each injury is named once per process, not once per read.** The dashboard polls `/vcu-write`, so "once per read" is dozens of lines a minute about one damaged line — which is what #189 was actually reporting. The key is per file, line number, length and injury kind; an append-only journal cannot change an existing line under that key, and a _different_ injury still gets its own line (asserted, so the dedupe cannot quietly degenerate into "once ever"). A torn **last** line is deliberately excluded: it is routine rather than damage, and the next append turns it into a mid-file line the key then covers. Where a holed line is _also_ the last one, the NUL prefix wins and it is reported as damage — same precedence as the all-NUL trailing line has had since #172.
+
+**Known gap, stated rather than left implicit:** the warning goes to the Pi's journal, and the sheet shows its twelve lines with no sign that one is missing. Telling the _page_ a record was lost would change `recentAuditRecords`' signature and ripple into the payload and the sheet, which is a different change from "stop printing a stack trace per request". Not done here.
+
 Each mid-file hole marks one power cut.
 
 The writes this Pi makes, and what each was doing before this change — none of them flushed (`snapshot-store.ts` owns two of them, and `lifetime-store.ts` was added after and is listed here for the same reason):
@@ -59,6 +83,12 @@ The writes this Pi makes, and what each was doing before this change — none of
 | `replaceFileDurably(path, data)` | tmp → flush → `rename()` → flush directory. A reader sees the whole old file or the whole new one |
 | `syncDirectory(dir)` | an entry created or removed in `dir` survives a cut |
 | `syncFilesystems()` | `sync(1)` as a child process (spawned, stdio ignored), before the service restart |
+
+### Why the reader still reads the whole journal
+
+`recentAuditRecords` reads the file whole and slices, and #207 asked whether it should read only the tail — it is on the event loop that also serves the 10 Hz WebSocket and the CAN RX handler. Measured 2026-09-14 over the real 29 562-byte, 94-record journal, 200 iterations: **0.134 ms** per read-and-parse, against `status()`'s 0.628 ms with a full sweep on disk. Roughly 1.3 ms scaled to a Pi Zero.
+
+Against that, a tail read costs three things. The reader stops seeing damage outside the window, so the line-15 hole above goes invisible the moment the file outgrows it — taking the recovery with it. Line numbers stop being line numbers, so a warning can no longer name the line somebody would `sed -n '15p'`. And "the count of what was done to this bike" becomes "the count in the last N bytes". `write-audit.ts` already made this call — _"at one line per deliberate change to a motorcycle, it will be kilobytes in a decade"_ — and 94 records after a year says it was right. A `stat`-gated cache would cost nothing in correctness and still buys ~0.1 ms on a path #207 itself takes from twelve requests a minute to roughly none, so that is not here either.
 
 `fdatasync` rather than `fsync` on the file: it flushes the data plus the metadata needed to _retrieve_ it, which for a size-extending write is `i_size` and the block map — exactly the metadata whose absence is the hole. It is the minimal correct primitive, **not** a faster one; on ext4 an append dirties `i_size` and forces the journal commit either way.
 

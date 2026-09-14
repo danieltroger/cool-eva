@@ -213,7 +213,10 @@ check(
 
 console.log("\n6. a refresh landing under an armed button");
 
-const STATUS_PAYLOAD = { status: { enabled: true, targets: [] } };
+// ⚠️ `tableGate` is here because fetchStatus() reads its tableType to decide whether the picker's
+// names are still the Pi's (#107). A stub missing it throws inside the very call this section is
+// timing an arm against, and the disarm assertion would pass by failing early.
+const STATUS_PAYLOAD = { status: { enabled: true, targets: [], detail: null, tableGate: { tableType: 16407 } } };
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async () =>
   new Response(JSON.stringify(STATUS_PAYLOAD), { headers: { "content-type": "application/json" } })) as typeof fetch;

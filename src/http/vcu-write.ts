@@ -1,11 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import type { ServiceWriteRequest, ServiceWriteResult, VcuWriteRunner, VcuWriteStatus } from "../vcu/write-runner.ts";
+import type {
+  ServiceWriteRequest,
+  ServiceWriteResult,
+  VcuWriteRunner,
+  VcuWriteStatus,
+  WriteStatusRequest,
+} from "../vcu/write-runner.ts";
 
 // /vcu-write — service mode's WRITE surface.
 //
 //   GET   the allowlist, the gate, whether this Pi's clock is fit to copy, and the
 //         last few lines of the audit journal. Touches nothing.
 //   POST  do exactly one thing to the motorcycle.
+//
+// Both answer the same payload, and both honour two read-only query parameters that say how
+// much of it to build: `detail=NAME` for everything about one target, `list=0` when the caller
+// already holds the 269-name listing. Neither reaches parseWriteRequest, so neither can change
+// what a write does. Why the payload is shaped this way: see parseStatusRequest at the bottom.
 //
 // ⚠️ This is the second endpoint in this repo that causes traffic on the bike's bus,
 // and the FIRST that changes anything. /vcu-read and /vcu-probe are read-only by
@@ -60,7 +71,7 @@ export async function handleVcuWriteEndpoint(
     // Deliberately NOT behind the header. Reading what may be written, what the gate
     // says and what was done last week is how the page explains why a button is
     // unavailable, and none of it goes near the bike.
-    await respond(res, 200, options, null, null);
+    await respond(res, 200, options, url, null, null);
     return;
   }
   if (req.method !== "POST") {
@@ -80,13 +91,13 @@ export async function handleVcuWriteEndpoint(
   if (!parsed.ok) {
     // 400, not 409: the request itself is wrong and re-sending it unchanged will
     // always be wrong. 409 is for a busy bus or a bike that may not be serviced.
-    await respond(res, 400, options, null, parsed.reason);
+    await respond(res, 400, options, url, null, parsed.reason);
     return;
   }
 
   const answer = await options.runner.perform(parsed.request);
   if (!answer.ok) {
-    await respond(res, 409, options, null, answer.reason);
+    await respond(res, 409, options, url, null, answer.reason);
     return;
   }
   // 200 even when the bike refused, and even for a read-back mismatch. Those are
@@ -94,7 +105,7 @@ export async function handleVcuWriteEndpoint(
   // take — and turning them into HTTP errors would collapse the distinction the
   // codec works hardest to keep. `result.succeeded` is where the page reads the
   // verdict from.
-  await respond(res, 200, options, answer.result, null);
+  await respond(res, 200, options, url, answer.result, null);
 }
 
 /**
@@ -301,14 +312,32 @@ function parseNumber(raw: string | null): number | null {
   return Number.isInteger(value) ? value : null;
 }
 
+/**
+ * What the caller asked to be told, from the query. Pure.
+ *
+ * `detail=NAME` asks for everything about one target; `list=0` says the caller already holds the
+ * 269-name listing. ⚠️ The listing is the DEFAULT, and deliberately: forgetting `list=0` costs
+ * 14 397 bytes, while an opt-in listing a caller forgot would render a bike with nothing writable.
+ * The two failure directions are not the same size. docs/dashboard-decisions.md §"Why the write
+ * status is a list plus one detail".
+ */
+export function parseStatusRequest(params: URLSearchParams): WriteStatusRequest {
+  return { detailFor: params.get("detail"), includeList: params.get("list") !== "0" };
+}
+
 async function respond(
   res: ServerResponse,
   statusCode: number,
   options: VcuWriteEndpointOptions,
+  url: URL,
   result: ServiceWriteResult | null,
   message: string | null
 ): Promise<void> {
-  const payload: VcuWriteResponse = { status: await options.runner.status(), result, message };
+  const payload: VcuWriteResponse = {
+    status: await options.runner.status(parseStatusRequest(url.searchParams)),
+    result,
+    message,
+  };
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",

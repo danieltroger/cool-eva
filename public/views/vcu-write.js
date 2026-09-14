@@ -27,6 +27,7 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
 /** @typedef {import("../../src/http/vcu-write.ts").VcuWriteResponse} VcuWriteResponse */
 /** @typedef {import("../../src/http/vcu-probe.ts").VcuProbeResponse} VcuProbeResponse */
 /** @typedef {import("../../src/vcu/write-runner.ts").WriteTargetSummary} WriteTargetSummary */
+/** @typedef {import("../../src/vcu/write-runner.ts").WriteTargetListing} WriteTargetListing */
 /** @typedef {import("../../src/vcu/write-audit.ts").AuditRecord} AuditRecord */
 /** @typedef {import("../../src/vcu/write-runner.ts").VcuWriteStatus} VcuWriteStatus */
 /** @typedef {import("../../src/vcu/service-actions.ts").ServiceStamp} ServiceStamp */
@@ -47,6 +48,29 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
  */
 
 const state = van.state(/** @type {VcuWriteResponse | null} */ (null));
+/**
+ * The 269 names the dropdown is built from, held HERE rather than read off `state`.
+ *
+ * ⚠️ Every refresh but the sheet-opening one asks for `list=0` (14 397 bytes the page already
+ * has), so `status.targets` is null on most responses — null meaning NOT ASKED FOR, never "this
+ * bike has nothing writable". Keeping the list in its own state is what makes those two
+ * impossible to confuse: it is replaced only from a response that carries one, so a pre-arm
+ * refresh cannot empty the picker under a thumb.
+ *
+ * @type {import("../vendor/van-1.6.1.js").State<WriteTargetListing[]>}
+ */
+const listing = van.state([]);
+/**
+ * Which parameter table the listing was fetched under, or null when no listing is held yet.
+ *
+ * ⚠️ `writeTargets()` is derived from the ACTIVE parameter table, and `writeSnapshot()` selects a
+ * new one (src/vcu/snapshot-store.ts) — from this very sheet, which is where sweeps are started.
+ * So a listing can go stale under an open sheet: a response whose tableType differs from the one
+ * the names came from discards them and asks again, rather than offering a picker of names the
+ * Pi would no longer accept. Wrapped in an object so "no listing" and "a listing taken under an
+ * unknown table" stay different things.
+ */
+let listingHeldFor = /** @type {{ tableType: number | null } | null} */ (null);
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
 /**
@@ -363,7 +387,7 @@ function ParameterForm() {
     // safe value. That distinction is what the old five-name allowlist used to enforce
     // by absence, and it is why `purpose` renders uncollapsed.
     div({ class: "action-note" }, () => {
-      const count = state.val?.status.targets.length ?? 0;
+      const count = listing.val.length;
       if (count === 0) {
         return "";
       }
@@ -395,7 +419,7 @@ function ParameterForm() {
  */
 function ParameterSelect() {
   return div(() => {
-    const targets = state.val?.status.targets ?? [];
+    const targets = listing.val;
     return select(
       {
         class: "probe-input",
@@ -407,6 +431,11 @@ function ParameterSelect() {
           // A different parameter means a different value, a different range and a
           // different set of warnings. Everything the form holds about the old one goes.
           forgetSelection();
+          // …including what the Pi said about it, which is now one round trip away. Until it
+          // lands `selectedTarget()` is null, so the form says it is reading and the Read and
+          // Write buttons stay disabled — nothing renders the old parameter's warnings under
+          // the new parameter's name.
+          void fetchStatus();
         },
       },
       ...targets.map(target =>
@@ -427,7 +456,10 @@ function TargetNote() {
   return div({ class: "action-note" }, () => {
     const target = selectedTarget();
     if (!target) {
-      return div();
+      // A selection whose detail has not landed yet — the round trip the `<select>` starts. Said
+      // rather than left blank: an empty space under a parameter name reads as "there is nothing
+      // to know about changing this one", which is the opposite of what it means.
+      return selected.val === "" ? div() : div({ style: `color:${MUTED}` }, "Reading this parameter's notes…");
     }
     const notes = warningsOf(target, state.val?.status?.gate.chargingEvidence ?? null);
     return div(
@@ -1085,7 +1117,7 @@ async function performAllLights(off) {
     // ── Read each circuit and decide what, if anything, to write ────────────
     for (let position = 0; position < LIGHT_CIRCUITS.length; position++) {
       const circuit = LIGHT_CIRCUITS[position];
-      const target = state.val?.status.targets.find(candidate => candidate.name === circuit.param) ?? null;
+      const target = listing.val.find(candidate => candidate.name === circuit.param) ?? null;
       if (!target) {
         skipped.push(`${circuit.label} (not in this bike's table)`);
         continue;
@@ -1826,8 +1858,14 @@ function JournalLine(record) {
   );
 }
 
-function selectedTarget() {
-  return state.val?.status.targets.find(target => target.name === selected.val) ?? null;
+export function selectedTarget() {
+  // ⚠️ The NAME MUST MATCH. The detail is one object the Pi hands over for the target the page
+  // asked about, and it arrives a round trip after the selection moves — so without this the form
+  // would render the previous parameter's purpose, warnings and range against the new name, and
+  // `control.kind` and `onBike()` are what choose `action=bit` over `action=parameter` and what
+  // becomes the compare-and-swap `expected=`. A detail that does not match is no detail.
+  const detail = state.val?.status.detail ?? null;
+  return detail && detail.name === selected.val ? detail : null;
 }
 
 function canReach() {
@@ -2092,7 +2130,7 @@ async function performWrite() {
 
 /** The allowlist entry for BEAM_MAX_CURR_TH on this bike's table, or null when it has none. */
 function beamTarget() {
-  return state.val?.status.targets.find(target => target.name === BEAM_MAX_PARAM) ?? null;
+  return listing.val.find(target => target.name === BEAM_MAX_PARAM) ?? null;
 }
 
 /**
@@ -2100,7 +2138,8 @@ function beamTarget() {
  * header and typing readCurrent() uses. Returns the TYPED value (never the unsigned
  * reading), which is the number a write is compared against.
  *
- * @param {WriteTargetSummary} target
+ * @param {WriteTargetListing} target the name/micro/index a probe read addresses by — a listing
+ *   entry or a detail, since a detail carries all three.
  * @returns {Promise<ReadResult>}
  */
 async function readTargetValue(target) {
@@ -2273,6 +2312,12 @@ function unreachableForARead() {
 async function send(query) {
   busy.val = true;
   message.val = "";
+  // The reply carries a fresh status, so it must carry the same slice of it the page is holding:
+  // without this a POST would answer `detail: null` and collapse the form it just wrote through.
+  if (selected.val !== "" && !query.has("detail")) {
+    query.set("detail", selected.val);
+  }
+  query.set("list", "0");
   try {
     const response = await fetch(`/vcu-write?${query}`, {
       method: "POST",
@@ -2320,7 +2365,16 @@ export async function refreshVcuWrite() {
   stampOutcome.val = null;
   clearOutcome.val = null;
   forgetSelection();
-  await fetchStatus();
+  // The one fetch that asks for the 269 names. Everything else passes `list=0`.
+  await fetchStatus(true);
+}
+
+/**
+ * The dropdown's entries, exported ONLY so scripts/check-write-status-split.ts can assert that a
+ * `list=0` refresh does not empty it. Nothing in public/ reads it; §4 of that check asserts so.
+ */
+export function parameterListing() {
+  return listing.val;
 }
 
 /**
@@ -2330,9 +2384,18 @@ export async function refreshVcuWrite() {
  * `clock.iso` and must not wipe a parameter reading somebody took thirty seconds ago;
  * `refreshVcuWrite` is the sheet-opening reset and deliberately does both.
  */
-async function fetchStatus() {
+export async function fetchStatus(withListing = false) {
+  const query = new URLSearchParams();
+  if (selected.val !== "") {
+    query.set("detail", selected.val);
+  }
+  // The listing is fetched when the sheet opens and never again — 14 397 of the 22 490 bytes
+  // this asks for, against a page that already has it. See the `listing` state.
+  if (!withListing && listingHeldFor !== null) {
+    query.set("list", "0");
+  }
   try {
-    const response = await fetch("/vcu-write", { cache: "no-store" });
+    const response = await fetch(`/vcu-write?${query}`, { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     // ⚠️ Disarmed BEFORE the new status lands, always. A refresh can bring a different
     // value for the selected parameter — a sweep that finished while the sheet was open
@@ -2342,8 +2405,22 @@ async function fetchStatus() {
     // see armClockSync().
     armed.val = "";
     state.val = payload;
-    if (selected.val === "" && payload.status.targets.length > 0) {
-      selected.val = payload.status.targets[0].name;
+    const tableType = payload.status.tableGate.tableType;
+    if (payload.status.targets) {
+      listing.val = payload.status.targets;
+      listingHeldFor = { tableType };
+    } else if (listingHeldFor !== null && listingHeldFor.tableType !== tableType) {
+      // A sweep finished under the open sheet and named a different table, so the names the
+      // picker is showing are no longer the names the Pi would accept. Ask again, with the list.
+      listingHeldFor = null;
+      await fetchStatus(true);
+      return;
+    }
+    if (selected.val === "" && listing.val.length > 0) {
+      // Nothing was selected, so nothing asked for a detail. One more round trip, and it cannot
+      // recur: the selection is set now, and `forgetSelection()` never clears it.
+      selected.val = listing.val[0].name;
+      await fetchStatus();
     }
   } catch (error) {
     // Loud. A section that silently renders nothing looks like a bike with nothing

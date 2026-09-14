@@ -324,6 +324,11 @@ export const SIGNALS: SignalDef[] = [
   { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true },
   { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true },
   { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true },
+  // ⚠️ Which settle a verdict belongs to, wrapped to a byte — the EDGE the two above cannot give.
+  // Because record() logs on change, two commands settling to the same verdict write nothing, and
+  // the charge tab used to poll /vcu-write every heartbeat for the whole charge to notice (#207).
+  // Only inequality is ever asked of it; src/charge/ack-watch.ts says why it is not the send.
+  { key: "charge_cmd_ack_seq", unit: "", group: "charge", source: "sensor", onDemand: true },
   // The automatic charge-current controller (src/charge/auto.ts, src/charge/auto-curve.ts).
   // `charge_auto_reason` is the CHARGE_AUTO_REASON enum, so a ride log says not just what it
   // commanded but why — a stop that ends at the floor and one that never had a usable rate look
