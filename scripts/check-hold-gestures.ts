@@ -671,6 +671,14 @@ check(
   "…and the counter is what moves, so two identical refusals are two banners",
   latestValue("waypoint_refused_seq") === 2
 );
+// ⚠️ THE SENTENCE, PINNED ACROSS THE TWO FILES THAT MUST AGREE ON IT. Both plausibility
+// rules answer this one code, so the Pi has one literal for it and public/lib/announce.js
+// has another — the phone cannot import a .ts module. Nothing asserted they matched until
+// #241 made two gates share them, and a mutation of either stayed green.
+check(
+  "the sentence the Pi returns is the one public/lib/announce.js shows for that code",
+  jumped.message === WAYPOINT_REFUSAL_TEXT[WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE]
+);
 
 // ⚠️ THROUGH THE RUNNER, not by calling saveWaypointNow() again: everything above proves
 // the gates, and nothing yet proves the hold reaches them. This is the second gesture on
@@ -691,6 +699,10 @@ const afterTheSpike = saveWaypointNow();
 check(
   `⚠️  the good fix right after the spike is refused too, measured against it (${afterTheSpike.message})`,
   !afterTheSpike.saved && afterTheSpike.refusal === WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE
+);
+check(
+  "…and the STEP rule's refusal says the same sentence as the speed rule's, being the same code",
+  afterTheSpike.message === WAYPOINT_REFUSAL_TEXT[WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE]
 );
 // ~6 m east, which clears the 3 m deadband and so logs a row: now both tracked fixes are
 // good ones and the pair is an ordinary step again.
