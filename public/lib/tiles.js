@@ -255,7 +255,10 @@ export function Fact(label, value) {
 
 /**
  * A full-width heading between groups of tiles.
- * @param {string} text
+ *
+ * Takes a function wherever the heading carries a count that changes under the
+ * reader — `views/faults.js` binds the stored list's "· N expected" this way.
+ * @param {string | (() => string)} text
  */
 export function SectionLabel(text) {
   return div({ class: "section" }, text);
