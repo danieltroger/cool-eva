@@ -235,7 +235,10 @@ serverTime.val = clock;
 await flush();
 fetches = 0;
 await deliver({ charge_manager_state: DC_SESSION });
-check("§5a a new session asks at once rather than waiting behind the old one's hung request", fetches >= 1);
+// TWO, and the count is the assertion: the session edge's own fetch plus the settle guard meeting
+// the number on the bus again. The settle guard does not consult the in-flight flag, so `>= 1`
+// would be satisfied by it alone and would say nothing about the flag this section is about.
+check("§5a a new session asks at once rather than waiting behind the old one's hung request", fetches === 2);
 for (const release of hung) {
   release();
 }
