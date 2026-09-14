@@ -155,7 +155,9 @@ async function armChargeStop() {
 }
 
 async function performChargeStop() {
-  const query = new URLSearchParams({ action: "charge-stop", confirm: "charge-stop" });
+  // `list=0` for the reason lib/charge-write.js gives: this tab has no parameter picker, so the
+  // 269-name listing is bytes it cannot use — on the reply to a command, over garage wifi.
+  const query = new URLSearchParams({ list: "0", action: "charge-stop", confirm: "charge-stop" });
   message.val = "";
   sending.val = true;
   busy.val = true;

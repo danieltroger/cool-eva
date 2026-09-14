@@ -80,6 +80,8 @@ let listingHeldFor = /** @type {{ tableType: number | null } | null} */ (null);
  * counter, same reason, as views/charge-auto.js's `latestRead`.
  */
 let latestStatusRead = 0;
+/** How many times one fetchStatus() may re-ask before it is a loop rather than a correction. */
+const MAX_STATUS_REASKS = 3;
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
 /**
@@ -2054,13 +2056,18 @@ async function armWrite() {
   const before = onBike();
   const name = selectedTarget()?.name;
   busy.val = true;
+  let refreshed = false;
   try {
-    await fetchStatus();
+    refreshed = await fetchStatus();
   } finally {
     busy.val = false;
   }
   const after = onBike();
-  if (after && before && after.value === before.value && selectedTarget()?.name === name && canWrite()) {
+  // ⚠️ `refreshed` first, and it is not belt-and-braces. A superseded reply applies NOTHING, so
+  // without it `after === before` holds because nothing happened, and this arms on the state the
+  // tap started with — the one case the comparison cannot tell from "the Pi says what it said".
+  // Opening the red fold or changing the picker during the round trip is enough to cause it.
+  if (refreshed && after && before && after.value === before.value && selectedTarget()?.name === name && canWrite()) {
     arm("write");
   }
 }
@@ -2313,6 +2320,11 @@ function unreachableForARead() {
 async function send(query) {
   busy.val = true;
   message.val = "";
+  // ⚠️ In the same queue as the GETs. A POST answers the same payload, and the picker can move
+  // while one is in flight — widest window on the five-circuit batch — so without this its reply
+  // lands a detail for the parameter the form has left, with nothing on its way to replace it.
+  const askedFor = selected.val;
+  const read = (latestStatusRead += 1);
   // The reply carries a fresh status, so it must carry the same slice of it the page is holding:
   // without this a POST would answer `detail: null` and collapse the form it just wrote through.
   if (selected.val !== "" && !query.has("detail")) {
@@ -2330,11 +2342,17 @@ async function send(query) {
     // The body carries the status and the journal on every code this endpoint
     // returns, including 400 and 409, so it is read before the status is judged.
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
-    state.val = payload;
     message.val = payload.result?.message ?? payload.message ?? "";
-    if (adoptListing(payload)) {
-      await fetchStatus(true);
+    if (read === latestStatusRead) {
+      state.val = payload;
+      if (adoptListing(payload)) {
+        await fetchStatus(true);
+      } else if (selected.val !== askedFor) {
+        await fetchStatus();
+      }
     }
+    // ⚠️ Returned whether or not it was applied: the caller reads its OWN request's verdict from
+    // here and never from `state`, which is the whole reason this returns anything.
     return payload;
   } catch (error) {
     // ⚠️ The worst case on this page, and it is said as such. A write request that
@@ -2406,7 +2424,15 @@ export function parameterListing() {
  * `clock.iso` and must not wipe a parameter reading somebody took thirty seconds ago;
  * `refreshVcuWrite` is the sheet-opening reset and deliberately does both.
  */
-export async function fetchStatus(withListing = false) {
+export async function fetchStatus(withListing = false, depth = 0) {
+  if (depth > MAX_STATUS_REASKS) {
+    // ⚠️ Unreachable from a Pi whose parameter table is settled — it takes a tableType that
+    // ALTERNATES between replies — which is exactly why it is loud rather than a silent return.
+    // Left to recurse this is an unbounded request loop on a phone strapped to a handlebar.
+    message.val = "the Pi keeps naming a different parameter table — reopen the sheet";
+    console.warn(`vcu-write: gave up re-asking for the status after ${depth} rounds`);
+    return false;
+  }
   const query = new URLSearchParams();
   if (selected.val !== "") {
     query.set("detail", selected.val);
@@ -2426,8 +2452,10 @@ export async function fetchStatus(withListing = false) {
       // and this one's `detail` may belong to a parameter the form has already left. Dropped rather
       // than applied: `selectedTarget()` refuses a mismatched detail, so applying it would leave
       // the form stuck reading its notes forever with nothing on its way. charge-auto.js does the
-      // same for the same reason.
-      return;
+      // same for the same reason. ⚠️ The caller is TOLD: a superseded reply applies nothing, so
+      // armWrite()'s before/after comparison would find the state unchanged because nothing
+      // happened, and arm on the value the tap started with. See armWrite().
+      return false;
     }
     // ⚠️ Disarmed BEFORE the new status lands, always. A refresh can bring a different
     // value for the selected parameter — a sweep that finished while the sheet was open
@@ -2438,8 +2466,7 @@ export async function fetchStatus(withListing = false) {
     armed.val = "";
     state.val = payload;
     if (adoptListing(payload)) {
-      await fetchStatus(true);
-      return;
+      return await fetchStatus(true, depth + 1);
     }
     if (selected.val === "" && listing.val.length > 0) {
       selected.val = listing.val[0].name;
@@ -2450,13 +2477,15 @@ export async function fetchStatus(withListing = false) {
       // it. Either way this reply describes a different parameter, so ask again for the one the
       // form is on. It cannot recur: a re-entry only fires when the selection moves during ITS own
       // request, and nothing below moves it.
-      await fetchStatus();
+      return await fetchStatus(false, depth + 1);
     }
+    return true;
   } catch (error) {
     // Loud. A section that silently renders nothing looks like a bike with nothing
     // writable, which is a different claim from "the Pi did not answer".
     message.val = `could not reach /vcu-write — ${error instanceof Error ? error.message : String(error)}`;
     console.warn("vcu-write: status fetch failed", error);
+    return false;
   }
 }
 

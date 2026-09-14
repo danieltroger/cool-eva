@@ -280,6 +280,39 @@ check("§5b and it adopts the listing the way fetchStatus does", sendBody.includ
 // untouched state, finds it unchanged, and arms — on the value the tap started with rather than on
 // the Pi's answer now, which is the entire contract of refreshing before arming. Opening the red
 // fold or changing the picker during that round trip is enough, and `busy` disables neither.
+// Behavioural first: the scrape below cannot see a fetchStatus() that starts reporting `true` for
+// a reply it dropped, which is the same hole one layer down.
+const pending: (() => void)[] = [];
+globalThis.fetch = (async (input: string) => {
+  asked.push(String(input));
+  await new Promise<void>(resolve => {
+    pending.push(resolve);
+  });
+  return new Response(
+    JSON.stringify({
+      status: {
+        enabled: true,
+        targets: null,
+        detail: { ...DETAIL, name: "SECOND_ONLY", index: 10, micro: "A8" },
+        tableGate: { tableType: 20000 },
+        clock: { trustworthy: true, iso: "2026-09-14T00:00:00.000Z" },
+        recent: [],
+      },
+      result: null,
+      message: null,
+    }),
+    { headers: { "content-type": "application/json" } }
+  );
+}) as unknown as typeof fetch;
+const heldRead = fetchStatus();
+await new Promise(resolve => setTimeout(resolve, 10));
+const newerRead = fetchStatus();
+await new Promise(resolve => setTimeout(resolve, 10));
+for (const release of pending) {
+  release();
+}
+check("§5c a superseded read reports that it did NOT apply", (await heldRead) === false);
+check("§5c and the newest one reports that it did", (await newerRead) === true);
 check("§5c armWrite reads whether its refresh applied", /=\s*await fetchStatus\(\)/.test(armBody));
 check(
   "§5c and will not arm without it",
