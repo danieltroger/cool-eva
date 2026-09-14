@@ -12,9 +12,11 @@ import { FLASHER_KEYS } from "../public/lib/flasher.js";
 //   node --experimental-strip-types scripts/check-button-decode.ts
 //
 // Every frame below is REAL — copied byte for byte, with its timestamp, out of the
-// candump captures in ~/Documents/cool-eva-archive (see CAPTURES.md there). None is
-// hand-written, because a hand-written frame only proves the decoder agrees with
-// whoever wrote the fixture. The 0x400 button payloads in particular are the only ones
+// candump captures in ~/Documents/cool-eva-archive (see CAPTURES.md there) — except the
+// two marked ⚠️ SYNTHETIC, added 2026-09-14. A hand-written frame only proves the decoder
+// agrees with whoever wrote the fixture, which is why those two are marked, counted
+// separately in the success line, and used only for the four byte-3 bits that are 0 in
+// every frame this bike has ever produced: nothing real can pin their positions. The 0x400 button payloads in particular are the only ones
 // ever recorded on this bike: across 1 099 357 frames of 0x400, byte 2 held a non-zero
 // value in 362 of them and took exactly two values — until 2026-08-19, when a session of
 // deliberate presses finally produced a third (0x01, `btn_set_back`, 132 frames).
@@ -41,6 +43,8 @@ interface FrameCase {
   hex: string;
   /** Every key/value this frame must produce. Other keys may also be produced. */
   expect: Record<string, number>;
+  /** Hand-written rather than captured — see scripts/check-vehicle-status.ts on why it is a field. */
+  synthetic?: true;
 }
 
 const BUTTON_KEYS = [
@@ -212,6 +216,89 @@ const CASES: FrameCase[] = [
     // So neither bit implies the other in either direction, and an OR of the two cannot
     // be inverted back into the pair — which is why the halves are what gets logged.
     expect: { ...NONE_PRESSED_102, front_brake: 1, rear_brake: 1 },
+  },
+  {
+    what: "0x102 the V_DSB_CTRL window — 2026-08-09 21:25:28.828040, capture-20260809-211759-1956320f.log. b3 = 0x41 is the ONLY shape in 15 006 856 frames where bit 2 is clear (279 frames, two windows), and bytes 0-2 are all 00 with it. fast_dc_contactor rose 0.919 s after the bit cleared and it returned 0.330 s later",
+    id: 0x102,
+    hex: "00 00 00 41 8E FF D8 FF",
+    expect: {
+      dsb_control: 0,
+      fast_dc_contactor: 1,
+      mag_good: 1,
+      cruise_active: 0,
+      lie_down_detected: 0,
+      imd_disable: 0,
+      winter_storage: 0,
+      vcu_abs_off: 0,
+      horn_switch: 0,
+      low_beam_switch: 0,
+      blinker_switch_left: 0,
+      blinker_switch_right: 0,
+    },
+  },
+  {
+    what: "0x102 V_MAG_GOOD clear while riding — 2026-08-02 21:05:08.607504, capture-20260802-210358-346ecdd5.log. The bit is clear in 399 208 of 15 006 856 frames, at a mean 87.7 km/h against 18.1 km/h while set, and 398 202 of those are above 5 km/h — b2 bit 7 (`moving`) is set here, as it is in 399 036 of the 399 208",
+    id: 0x102,
+    hex: "80 BE 82 04 0C 00 62 FF",
+    expect: {
+      mag_good: 0,
+      dsb_control: 1,
+      fast_dc_contactor: 0,
+      cruise_active: 0,
+      low_beam_switch: 1,
+      low_beam_lamp: 1,
+      moving: 1,
+      horn_switch: 0,
+    },
+  },
+  {
+    what: "0x102 the RIGHT indicator switch held with its lamp lit — 2026-08-02 21:05:47.359111, capture-20260802-210358-346ecdd5.log, one of the two consecutive frames docs/can-decode-findings.md cites for the side assignment. 🚨 b0 bit 3 is RIGHT and bit 4 is LEFT, measured over the archive by rising-edge attribution (437 vs 5, 328 vs 2) and independently confirmed by Energica's own table naming bit 3 V_R_TURN_SW — against the third-party file, which has them the other way round",
+    id: 0x102,
+    hex: "88 BE 8A 44 FA FF 23 00",
+    expect: {
+      blinker_switch_right: 1,
+      blinker_switch_left: 0,
+      blinker_right: 1,
+      blinker_left: 0,
+      low_beam_switch: 1,
+      mag_good: 1,
+      dsb_control: 1,
+    },
+  },
+  {
+    what: "0x102 the low beam on, both halves — 2026-08-04 03:56:31.470, the same frame as the first case above read for the other pair. `low_beam_switch` (b0 bit 7) and `low_beam_lamp` (b2 bit 1) agree in ALL 15 006 856 archive frames, and that agreement is the whole argument for logging both: it is the baseline a failed bulb shows against. Asserted here for the reason the high-beam pair is",
+    id: 0x102,
+    hex: "80 10 02 44 8E FF D8 FF",
+    expect: { low_beam_switch: 1, low_beam_lamp: 1, high_beam: 0, high_beam_lamp: 0 },
+  },
+  {
+    what: "0x102 both beams off, both halves — 2026-08-04 19:58:18.703, parked with the lights off. The other end of the same pairing: switch and lamp clear together",
+    id: 0x102,
+    hex: "00 10 00 44 B0 FF D2 FF",
+    expect: { low_beam_switch: 0, low_beam_lamp: 0, high_beam: 0, high_beam_lamp: 0 },
+  },
+  {
+    synthetic: true,
+    what: "⚠️ SYNTHETIC — every bit of byte 3 at once, which the bus has NEVER produced. Four of these eight (horn_switch's b1 bit is separate; imd_disable, winter_storage and vcu_abs_off here) read 0 in all 15 006 856 archive frames, so no real frame can pin their positions and a bit-position mutation would stay green without this. It also asserts each comes out as 1 rather than as the vendor's mask (8, 16, 128), which bounds.js would reject as a dead sensor. ⚠️ It asserts fast_dc_contactor and cruise_active set SIMULTANEOUSLY — a combination occurring in 0 of 275 879 frames — and lie_down_detected with them, so it proves the decoder self-consistent and nothing whatever about the bike",
+    id: 0x102,
+    hex: "00 00 00 FF 00 00 00 00",
+    expect: {
+      fast_dc_contactor: 1,
+      cruise_active: 1,
+      dsb_control: 1,
+      imd_disable: 1,
+      winter_storage: 1,
+      lie_down_detected: 1,
+      mag_good: 1,
+      vcu_abs_off: 1,
+    },
+  },
+  {
+    synthetic: true,
+    what: "⚠️ SYNTHETIC — byte 3 bit 3 alone, the asymmetric companion to the all-bits frame above and the reason it is not enough on its own: with every other case setting all of byte 3 or none of it, imd_disable (bit 3) and winter_storage (bit 4) could be SWAPPED and the suite would still pass. Neither bit has ever been set on this bike, so this is the only thing separating them",
+    id: 0x102,
+    hex: "00 01 00 08 00 00 00 00",
+    expect: { imd_disable: 1, winter_storage: 0, dsb_control: 0, vcu_abs_off: 0, horn_switch: 1, mag_good: 0 },
   },
   {
     what: "0x102 the instant the fast-charge contactor closed — 2026-08-04 19:58:45.488",
@@ -437,7 +524,27 @@ for (const key of BUTTONS_GROUP_KEYS) {
 // real measurements and needs its own BY_KEY entry. Raised in review, where it turned
 // out to be the one flag added here that had fallen through both routes and was
 // rendering unbounded.
-for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_beam_lamp", "horn", "dash_day_mode"]) {
+for (const key of [
+  "fast_dc_contactor",
+  "cruise_active",
+  "high_beam_lamp",
+  "low_beam_lamp",
+  "horn",
+  "dash_day_mode",
+  // The nine added 2026-09-14 with the rest of 0x102's vendor-named bits. Four reach the
+  // gate through `controls` and five through `diag`, both BOOLEAN_GROUPS — but which group
+  // a key is in is frozen by db.ts's ON CONFLICT, so asserting the OUTCOME here rather than
+  // the route is what survives someone moving one.
+  "horn_switch",
+  "blinker_switch_left",
+  "blinker_switch_right",
+  "low_beam_switch",
+  "dsb_control",
+  "imd_disable",
+  "winter_storage",
+  "mag_good",
+  "vcu_abs_off",
+]) {
   const signal = defined.get(key);
   if (!signal) {
     failures.push(`${key} is decoded but not defined in src/can/registry.ts`);
@@ -451,6 +558,20 @@ for (const key of ["fast_dc_contactor", "cruise_active", "high_beam_lamp", "low_
   }
 }
 
+// The prose marker and the field must agree. ⚠️ This is what makes two sources of truth safe:
+// `what` is written for a person and `synthetic` is what the success line counts, and the one
+// failure that matters — a hand-written frame counted as evidence off the bike — is exactly a
+// disagreement between them. Asserted rather than chosen, because the marker in the prose is
+// what a reader of the case sees and the field is what the number comes from.
+for (const testCase of CASES) {
+  const saysSynthetic = testCase.what.includes("SYNTHETIC");
+  if (saysSynthetic !== (testCase.synthetic === true)) {
+    failures.push(
+      `${testCase.hex} — the case ${saysSynthetic ? "is marked ⚠️ SYNTHETIC in its prose but has no `synthetic: true`" : "carries `synthetic: true` but its prose does not say ⚠️ SYNTHETIC"}, so the success line would ${saysSynthetic ? "count a hand-written frame as captured" : "understate the captured frames"}`
+    );
+  }
+}
+
 console.log("");
 if (failures.length > 0) {
   console.error("FAILED:");
@@ -459,8 +580,9 @@ if (failures.length > 0) {
   }
   process.exit(1);
 }
+const syntheticCases = CASES.filter(testCase => testCase.synthetic).length;
 console.log(
-  `✓ ${CASES.length} captured frames decode as recorded; 0x400 is filtered in, short frames stay honest, ` +
+  `✓ ${CASES.length - syntheticCases} captured frames decode as recorded (plus ${syntheticCases} synthetic, which pin only that the decoder is self-consistent); 0x400 is filtered in, short frames stay honest, ` +
     `the beam lamps did not revert to charging/charge_port_unlocked, the two brake bits stay on 0x20 and 0x40 ` +
     `over all 256 values of byte 2, flasher.js's ${FLASHER_KEYS.size} coalesced keys are real and are not buttons, ` +
     `and all ${BUTTONS_GROUP_KEYS.length} signals in the buttons section are registered, deadband-free and ` +

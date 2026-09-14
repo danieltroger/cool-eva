@@ -26,7 +26,7 @@ export interface ObdPollerHold {
  * opens — comfortably inside ten seconds. Past that, something is wrong with the read
  * and telemetry matters more.
  */
-const MAX_HOLD_MS = 15_000;
+export const MAX_HOLD_MS = 15_000;
 
 /**
  * How long to WAIT for the loop to park before giving up.
@@ -123,4 +123,36 @@ export function parkedForHold(): boolean {
     hold.announce = null;
   }
   return true;
+}
+
+/**
+ * Parks the poller, runs `body`, and releases on every path out — including a throw.
+ *
+ * ⚠️ ONE refusal sentence for one failure. The lifetime read and the trouble-code clear both
+ * park the poller around a bounded exchange, and they had drifted into two wordings for "it
+ * would not park" before this existed. A leaked hold takes speed, rpm and the temperatures off
+ * the dashboard AND out of the ride log on a bike with no reception, so the release belongs in
+ * one `finally` rather than in each caller's.
+ */
+export async function withObdPollerHold<T>(
+  what: string,
+  body: () => Promise<T>,
+  // ⚠️ Injectable, and the reason is the same one `gate` and `latestSweep` are injected on the
+  // write runner: a check has to be able to grant a fake hold and assert both that nothing
+  // reached the bus before the park was acknowledged and that the release ran on every path
+  // out. Production callers pass nothing.
+  acquire: (reason: string) => Promise<ObdPollerHold | null> = holdObdPoller
+): Promise<{ ok: true; result: T } | { ok: false; reason: string }> {
+  const hold = await acquire(what);
+  if (!hold) {
+    return {
+      ok: false,
+      reason: `the OBD poller would not go quiet in time, so ${what} could not have the bus to itself — nothing was sent`,
+    };
+  }
+  try {
+    return { ok: true, result: await body() };
+  } finally {
+    hold.release();
+  }
 }

@@ -34,6 +34,44 @@ The rule this replaces had **no target temperature at all**: it commanded the ce
 
 Both tiers are gone, replaced by the single setpoint. What they were _for_ — a whole-degree sensor cannot resolve the last degree, so a reading of 54 may be a true 54.99 — survives as the `min(headroom, 0)` clamp: **nothing may raise at or above the setpoint**, and the 0.5 K deadband is not applied there either.
 
+## The taper — why a step down is sometimes suppressed
+
+⚠️ **The reaction horizon assumes the present current keeps flowing for twelve minutes, and the pack's own taper takes it away first.** That was in the field on 2026-09-10 and 2026-09-13 (#201): the rule reached `CLOSING` at a reading of **48**, stepped 76 → 70 → 68 → 64 → 59 between 75 % and 84 % SOC, and when Daniel switched it off the pack sat at **50 °C for eight minutes and then cooled** with the ceiling back at 80 A. `docs/dc-taper.md` has that session tick by tick.
+
+So the rule gains one branch and nothing else:
+
+```
+sessionAhead = minutes until the taper falls below what the vehicle is asking for
+
+T < 54  AND  the rule decided to LOWER  AND  (54 − T) − rate × sessionAhead ≥ 0   →  hold
+```
+
+⚠️ **The shape is the safety argument, so read what it cannot do.** It is consulted only after the shipped rule has decided _and sized_ its step, so it never raises, never sizes anything, and leaves `AMPS_PER_KELVIN` and the sweep behind it untouched. It cannot fire at or above the setpoint, on a decision that was not a lowering command, or on a `bounded` rather than a fitted rate. **At every tick the rule therefore either decides exactly what it decided before, or holds where it would have lowered — there is no third outcome.** `check-charge-auto.ts` §15 asserts that as a property over 1 500 generated inputs rather than as a fixture.
+
+⚠️ **It is inert at the setpoint on purpose, and 2026-09-11 is why.** That session spent 34 minutes at the 35 A floor from 74 % SOC to full — and still touched 55 at 11:02:33. The pack read 54 throughout, which is exactly where the shipped law is supposed to act, so nothing here may reach it.
+
+⚠️ **One guard inside it is redundant by construction, and is kept anyway.** Measured: delete the `packTemperatureC >= TARGET_C` check in `sessionEndsFirst` and **67 200 inputs at or above the setpoint still decide identically**, because `CLIFF_C` takes every reading of 55 or more before it runs and a reading of exactly 54 only reaches the lowering path when `rate > 0`, which makes the test `0 − rate × minutes` and so always negative. It stays because "never at or above the setpoint" is the headline claim and resting it on two other branches makes it a three-place invariant a future edit could open silently. A mutation deleting it therefore **survives** the check, and `evidence/mutate-201.sh` marks it so: §15 asserts the property itself, and nothing can reach the guard to violate it. The same is true of `taperEnvelopeAmpsAt`'s `?? FULL_REQUEST_A` — unreachable while the table covers 88-100, and a fail-**safe** default kept for the edit that reaches it.
+
+⚠️ **No horizon floor, and no `min(REACTION_MIN, …)` either.** Reaching the branch means the shipped headroom was negative with T below the setpoint, which forces `rate > 0`; a session-ahead longer than `REACTION_MIN` therefore makes the quantity no larger than the one that was already negative and the veto cannot fire. A cap there would be arithmetic that never changes an outcome. What bounds a _wrong_ session-ahead is the direction of the SOC estimate and the setpoint's own inertness, not a constant.
+
+### The SOC rate is a lower bound, and the direction is the whole point
+
+`soc` is whole percent logged on change, so a sample exists at the instant the reading became that value: between the oldest in-window sample and now the pack advanced **at least** `newest − oldest` points and at most one more. `estimateSocRate` returns the smaller end. Under-stating the rate over-states the time left, which _lengthens_ the horizon, which suppresses **fewer** steps down.
+
+⚠️ **And it declines entirely at or above 88 % SOC.** Above the taper knee, SOC slows as the current falls, so a trailing estimate over-states the next ten minutes — measured 2026-09-11 at 11:35, where the window supports 0.3 %/min and 99 → 100 actually took 7.0 minutes against a predicted 2.5. A least-squares fit is trailing too and does not fix it, which is why the guard is a band rather than a better estimator.
+
+⚠️ **`minutesUntilTaperBites` is computed from what the vehicle is ASKING for, and that is not circular.** Once the controller has lowered the ceiling the vehicle asks for less — and a _lower_ current meets the envelope at a _higher_ SOC, so the horizon gets longer and the veto becomes less likely, not more. Throttling cannot talk the rule into throttling less.
+
+### The charge target, and why it is not here yet
+
+#201 asks for a second clock as well — _"maybe have a prompt box for how far one wants to charge"_ — and it is **deliberately not shipped**. It was built, measured, and taken out again.
+
+The arithmetic is the same `min()`: a rider stopping at 80 % has less time left than the reaction horizon, so the rule should not spend current protecting a temperature the charge never reaches. Measured on `TAPER_GRID` with the plant **actually stopping** at the target, that works — **zero added crossings of 55 °C at targets of 70, 80 and 90 %.**
+
+⚠️ **What breaks it is the rider overrunning their own target, and #201's first report is exactly that:** _"we only wanted to charge to 80 %… But we ended up charging full anyway"_. The controller relaxes on a promise the charge then breaks, and the heat banked before the target is still there afterwards. Measured with the plant charging on to 100 % against a target of 80: **5 of 100 plants newly cross the cliff**, peaking 1.8 K above the shipped rule. Switching the term off once the target is passed (rather than letting it go to zero, which suppressed **every** step down from the target to the knee and cost 8 plants) is necessary but not sufficient — it does not unbank the heat.
+
+The fix is not a better estimate. It is that a target should **end the charge** rather than merely inform the horizon, which makes the promise self-fulfilling and is a different feature with its own safety case — the Pi already has a stop path (`src/charge/ack-watch.ts`, `public/views/charge-stop.js`). Until that exists, the honest position is that this controller has no opinion about when the rider means to leave.
+
 ## The silence is a bound too — and ignoring it cost 45 A at 51 °C
 
 ⚠️ **This is the defect behind #186's third complaint, and it is in the estimator rather than the rule.** A least-squares slope is fitted to the _samples_, and a whole-degree sensor emits one only when the degree changes — so a pack that climbs fast and then flattens leaves the window holding a cluster of early points and **keeps reporting the steep slope for as long as it stays still.**
@@ -88,6 +126,10 @@ The span is measured **to now**, not to the newest sample: samples arrive only w
 | `QUANTISATION_K` | 0.5 K | Half a least count of a whole-degree sensor. **Derived, not chosen**, and applied only _below_ the setpoint. |
 | **`MIN_COMMAND_A`** | **35 A** | ⚠️ **The one knob that matters.** Capping below this is worse than not acting: the cliff's saw-tooth averages a measured **35.3 A** duty-weighted (1.30 min/SOC-point), so break-even is `0.53 × 72.6 / 1.30 = 29.6 A`, and a 25 A floor would be **18 % slower than doing nothing**. |
 | `RATE_WINDOW_MS` | 10 min | ≥3 periods of the longest (1–3 min) saw-tooth, so the slope is bulk drift rather than oscillation. Fitting to the saw-tooth over-predicts the real climb by **3.5×**. |
+| **`TAPER_ENVELOPE_A`** | 88 % → 70 A … 99 % → 29 A | The largest current the vehicle has ever asked for at each SOC, over every DC tick of 15 sessions with the pack under 55 °C, monotone from the top. ⚠️ A MAXIMUM, so the filter is loose: a tick where something else was binding can only pull a value down. `docs/dc-taper.md`. |
+| `TAPER_KNEE_SOC` | 88 % | Where the envelope stops being flat — and the deceleration guard, which is the more important half. |
+| `FULL_REQUEST_A` | 75 A | The pad below the knee. ⚠️ The data says 73 there; padding UP makes the taper look further away, which is the safe direction. And 73 is no longer a cap — see `docs/dc-taper.md`. |
+| `SOC_MAX_AGE_MS` | 5 s | The same freshness `batt_temp_hi` gets, and `soc` rides the same 20 Hz `0x200`. |
 | `AUTO_TICK_MS` | 60 s | The input changes every 1.5–2.5 min on a steady charge; updating faster adds bus frames and dash flicker for nothing. ⚠️ Not a guarantee: on 2026-09-09 the service stalled for six minutes and logged nothing at all, so the replays index by timestamp rather than by tick. |
 
 ### The sweep, and why these three
@@ -203,5 +245,7 @@ Three real stops of 2026-09-07 (arrival temperature, ambient and SOC band all me
 ⚠️ **The replays alone could not see over-throttling at all.** Under the fitted constants, equilibrium at full current is `ambient + 83.7 K`, so every stop in the 2026-09-07 set is doomed to cross 55 °C whatever the controller does — which makes "throttled a charge it should have left alone" _unrepresentable_. Six mutations survived the check until two **cold plants** were added, on which full current never approaches the cliff and the right answer is to do nothing: the check now asserts zero cap events and no time cost on those. A third plant arrives hot on a cold day and cools, which is the only thing that exercises giving the current back.
 
 ⚠️ **The 2026-09-09 episodes are OPEN-LOOP, and the check says so where they are used.** Replaying that day's logged `batt_temp_hi` shows what the rule would have _decided_ seeing that history — never what would have _happened_, because a different current changes the pack's trajectory and the log cannot say how. The plant grid is the closed-loop half. The two things they do settle are the two Daniel asked for: at 16:03:08, with the pack reading 50 and unmoved for 7.7 minutes, the rule gives current back rather than taking 5 A away; and seeded at the 45 A he found, three degrees below the setpoint, it climbs.
+
+⚠️ **What the session-ahead veto costs when it is wrong.** `TAPER_GRID` in `scripts/charge-auto-plant.ts` runs 60 → 100 % SOC with **no taper at all**, so the veto suppresses steps on the strength of a taper that never arrives — the harshest arrangement there is. Over that grid it fires on **152 of 2 984 ticks**, adds **no crossing of 55 °C**, costs at worst **1.6 min**, saves at best 2.3, and reverses 4 times against the shipped rule's 5. It fires **zero** times on the replays §3, §4, §6 and §11 pin their numbers over, which is why those numbers are unchanged — asserted rather than assumed, because otherwise they would stop meaning what their comments say and nothing would notice.
 
 ⚠️ Buying "never crosses the cliff" **costs time on the stops that would have got away with it**. DC3 arrived at 42 °C and never reached 55; the controller still throttles it and pays a few minutes. That is the trade, it is bounded, and the check asserts the bound rather than pretending it is zero.

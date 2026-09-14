@@ -72,6 +72,26 @@ const CHECKS: SelfCheck[] = [
       "[Service] where systemd ignores it, and that the script parses as POSIX sh",
   },
   {
+    script: "scripts/check-attitude.ts",
+    covers:
+      "the attitude pair on 0x102 b4-7, which had no assertion anywhere in this suite until the bike fell onto " +
+      "its right side on 2026-09-13: that six fixtures still decode to the degrees they were logged as — four " +
+      "of them frames captured off the bike's own bus, two only counts from the ride log and labelled as such, " +
+      "since a fixture the decoder itself produced is circular against a wrong scale but still guards the " +
+      "LAYOUT (offsets, endianness, axis order, ÷10); that decodeFrame still ROUTES 0x102 b4-7 to that decoder " +
+      "rather than only the decoder working when called directly; that the " +
+      "±1800 band is inclusive at the limit and drops counts past it on BOTH signs, since a bare `>` would " +
+      "let −180.1° through; that one bad axis never mutes the other; that the warning needs five " +
+      "CONSECUTIVE frames, is rationed to one per axis per process, restarts after a good frame, and comes back " +
+      "after resetAttitudeDecoder(); that bounds.js gates both keys to exactly attitude.ts's own MAX_DECIDEGREES " +
+      "÷ 10, asked of bounds.js rather than copied, and that gps_course_deg is gated at all — 3 of " +
+      "105 118 archived rows read past 360°, two of them on 2026-08-08; and lie_down_detected (0x102 b3 bit 5), " +
+      "CONFIRMED against the Pi's own capture of the fall — one transition in 60 s, 0.669 s after the roll peak " +
+      "and 0.551 s before the VCU cut the drive, and still clear AT that peak, so it is not a threshold on the " +
+      "angle. ⚠ The guard is EXERCISED today by check-derived-signals.ts, whose byte " +
+      "sweep makes both warnings print on every run — it was never ASSERTED, which is the gap this closes",
+  },
+  {
     script: "scripts/check-can-decoders.ts",
     covers:
       "the broadcast frame decoders against frames captured 2026-08-02, plus three properties of the decoder set as a whole: that every id which decodes is in the kernel RX filter, that every emitted key is declared in the registry, and that no 1/0 flag carries a deadband big enough to swallow its own transitions",
@@ -124,6 +144,19 @@ const CHECKS: SelfCheck[] = [
       "day and that moved no current, that both decoders read the captured commands back, that the opcode gate " +
       "emits nothing for the real non-command frames sharing the id, and that the transmit spacing sits inside the " +
       "dash's own measured 4.2-10.1 ms",
+  },
+  {
+    script: "scripts/check-clear-dtcs.ts",
+    covers:
+      'OBD Mode 04 and the read-back that is the only thing separating "the bike said 44" from "the bike erased ' +
+      'its fault memory": that the OBD poller is parked BEFORE any frame goes out and released on every path out ' +
+      "including a refusal and a silence, that a poller which will not park sends nothing at all, that PID 01 and " +
+      "PID 31 are read on both sides of the frame and the stored list and freeze frame after it, that a positive " +
+      "44 with PID 31 unmoved is reported as ERASED NOTHING rather than as success (the 2026-08-08 and 2026-09-11 " +
+      "shape), that a counter which could not be read becomes null rather than zero, that the fresh list reaches " +
+      "the snapshot /stored-dtcs serves so the pre-clear list cannot be shown after the button, that a bike going " +
+      "unsafe during the read-back no longer makes the gate watchdog announce an abort it did not perform, and " +
+      "which gate states do and do not raise the cable caution",
   },
   {
     script: "scripts/check-charge-write-visibility.ts",
@@ -639,6 +672,17 @@ const CHECKS: SelfCheck[] = [
       "be deleted while it stayed green. Plus the divergence that is deliberate (a callback reads its OWN " +
       "deadline, not the end of the step) and the three inputs that would silently corrupt the clock: a NaN " +
       "delay, a self-rearming zero-delay timer, and two advance() calls in flight at once",
+  },
+  {
+    script: "scripts/check-vehicle-status.ts",
+    covers:
+      "0x101 VCU_VEHICLE_STS, replayed from fourteen real frames: the parked 60/62 the engineering menu shows, " +
+      "the blocking-fault substate 83, a bit-7 substate whose state band latches, park assist at 52, and the two " +
+      "frames where b2 and b3's low bits disagree — which is what stops Energica's own double assignment of " +
+      "V_DRIVE_VSM (its parser loses byte 2) being reproduced here. Plus the filter entry, short-frame silence, " +
+      "and the two guards a rename could quietly undo: that the CAN keys never collide with the BLE transport's " +
+      "vehicle_state/vehicle_substate, and that every state and substate the archive has produced — 150 included " +
+      "— still passes the dashboard's plausibility gate",
   },
   {
     script: "scripts/check-vendor-names.ts",

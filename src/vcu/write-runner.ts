@@ -1,8 +1,16 @@
 import type { RawChannel } from "socketcan";
 import { ageMs, latestValue } from "../can/signals.ts";
+import type { ObdPollerHold } from "../can/obd-hold.ts";
+import { performClearDtcs, type ClearDtcsCounts } from "./clear-dtcs.ts";
 import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { parameterAtIndex } from "./param-table.ts";
-import { SERVICE_STAMP_IDENTIFIERS, checkPiClock, type PiClockVerdict, type ServiceStamp } from "./service-actions.ts";
+import {
+  SERVICE_STAMP_IDENTIFIERS,
+  checkPiClock,
+  readPiClock,
+  type PiClockVerdict,
+  type ServiceStamp,
+} from "./service-actions.ts";
 import type { ServiceGateSample, ServiceGateVerdict } from "./service-gate.ts";
 import { chargeManagerIsLive, chargePathIsActive, chargeSessionFrom } from "./charge-session.ts";
 import type { LatestSweep } from "./snapshot-store.ts";
@@ -11,7 +19,6 @@ import { evaluateTableGate, type TableGateVerdict } from "./table-gate.ts";
 import { appendAuditRecord, recentAuditRecords, type AuditAction, type AuditRecord } from "./write-audit.ts";
 import type { ChargeMode } from "../can/charge-command.ts";
 import {
-  clearStoredDtcs,
   readServiceStamp,
   resetVcu,
   sendChargeCommand,
@@ -20,7 +27,6 @@ import {
   syncBikeClock,
   writeParameter,
   writeParameters,
-  type ClearDtcsOutcome,
   type ResetVcuOutcome,
   type RunningWriteSession,
   type ServicePointOutcome,
@@ -155,7 +161,11 @@ export interface ServiceWriteResult {
    * The top-level `status`/`message`/`succeeded` summarise the whole run.
    */
   writes?: PerWriteResult[];
+  /** What the counters read on either side of an OBD Mode 04. Only for `clear-dtcs`. */
+  clear?: ClearDtcsCounts;
 }
+
+export type { ClearDtcsCounts };
 
 /** One parameter's outcome inside a batch, in the shape the page renders per row. */
 export interface PerWriteResult {
@@ -307,6 +317,20 @@ export interface VcuWriteRunnerOptions {
    * gate, and fills in the values, without a restart.
    */
   latestSweep: () => Promise<LatestSweep | null>;
+  /**
+   * Parks the always-on OBD poller, resolving only once it has actually stopped — or null
+   * when it would not park in time.
+   *
+   * ⚠️ Injected rather than imported so a check can drive an action with a fake hold and
+   * assert both that nothing reaches the bus before the park is acknowledged and that the
+   * hold is released on every path out. Same reason `gate` and `latestSweep` are injected.
+   *
+   * ⚠️ It is NOT the bus lease. The lease (./bus-lease.ts) only excludes the two
+   * service-mode runners from each other; the OBD poller holds no lease and is never
+   * paused by service mode — src/vcu/service-actions.ts says so above `isClearDtcsReply`.
+   * Only `clear-dtcs` takes this, because only it reads the bike back on the same bus.
+   */
+  holdPoller: (what: string) => Promise<ObdPollerHold | null>;
 }
 
 /**
@@ -389,14 +413,6 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
  * would otherwise make a stale GPS reading look fresh, which on this particular
  * decision means vouching for a clock with evidence from an hour ago.
  */
-function readPiClock(): PiClockVerdict {
-  return checkPiClock({
-    systemEpochMs: Date.now(),
-    gpsEpochSeconds: latestValue("gps_epoch_s"),
-    gpsAgeMs: ageMs("gps_epoch_s"),
-  });
-}
-
 function summariseTarget(target: WriteTarget, sweep: VcuParameterSnapshot | null): WriteTargetSummary {
   return {
     name: target.name,
@@ -461,6 +477,24 @@ const NOT_CONSULTED: ServiceGateVerdict = { safe: true, blockers: [], checks: []
  * instead of rebuilding `(!gateApplies || safe) && !(refused && charging)` beside it — the
  * check-writes-its-own-version-of-production failure this whole change exists to close.
  */
+/**
+ * The shipped refusal for one action, sampled the way the gate samples.
+ *
+ * Hoisted out of `checkPreconditions` because `clear-dtcs` re-asks it mid-action — it parks the
+ * OBD poller for up to six seconds between the entry check and an irreversible frame, and the
+ * watchdog cannot cover that window because nothing is in flight to abort. Composed here rather
+ * than at the call site so the entry check and the re-checks cannot answer differently.
+ */
+function refusalFor(context: WriteContext, kind: ServiceWriteRequest["kind"]): string | null {
+  const policy = serviceActionPolicy(kind);
+  return serviceActionRefusal(
+    policy,
+    policy.bikeStateGateApplies ? context.gate() : NOT_CONSULTED,
+    key => ({ value: latestValue(key), ageMs: ageMs(key) }),
+    kind
+  );
+}
+
 export function serviceActionRefusal(
   policy: ServiceActionPolicy,
   gate: ServiceGateVerdict,
@@ -584,12 +618,7 @@ async function checkPreconditions(
   // and keying this on one of them permitted `11 02` into a DC fast charge the contactor was
   // witnessing. Sampled the way the gate samples, so the two cannot disagree.
   const policy = serviceActionPolicy(request.kind);
-  const refusal = serviceActionRefusal(
-    policy,
-    policy.bikeStateGateApplies ? context.gate() : NOT_CONSULTED,
-    key => ({ value: latestValue(key), ageMs: ageMs(key) }),
-    request.kind
-  );
+  const refusal = refusalFor(context, request.kind);
   if (refusal) {
     return { ok: false, reason: refusal };
   }
@@ -703,7 +732,22 @@ async function performOnBus(
     case "sync-clock":
       return await performClockSync(context, channel);
     case "clear-dtcs":
-      return await performClearDtcs(context, channel);
+      return await performClearDtcs(
+        {
+          ...context,
+          // ⚠️ The SHIPPED composition, re-asked. Not `gate().safe`: serviceActionPolicy is the
+          // one total table saying which gates apply to which action, and a private gate read
+          // inside the clear would keep refusing on a row someone had turned off here.
+          refuseNow: () => refusalFor(context, request.kind),
+          set running(session: RunningWriteSession | null) {
+            context.running = session;
+          },
+          get running() {
+            return context.running;
+          },
+        },
+        channel
+      );
     case "charge-current":
       return await performChargeCurrent(context, request, channel);
     case "charge-stop":
@@ -1091,40 +1135,6 @@ async function performClockSync(context: WriteContext, channel: RawChannel): Pro
   };
 }
 
-async function performClearDtcs(context: WriteContext, channel: RawChannel): Promise<ServiceWriteAnswer> {
-  console.warn("vcu-write: about to send OBD Mode 04 — the stored trouble codes and the freeze frame will be erased");
-  const session = clearStoredDtcs(channel);
-  context.running = session.session;
-  const outcome = await session.finished;
-  await appendAuditRecord(context.directory, {
-    at: Date.now(),
-    clockTrustworthy: readPiClock().trustworthy,
-    action: "clear-dtcs",
-    status: outcome.status,
-    note: describeClear(outcome),
-  });
-  return {
-    ok: true,
-    result: {
-      action: "clear-dtcs",
-      status: outcome.status,
-      message: describeClear(outcome),
-      succeeded: outcome.status === "cleared",
-    },
-  };
-}
-
-function describeClear(outcome: ClearDtcsOutcome): string {
-  switch (outcome.status) {
-    case "cleared":
-      return "Mode 04 accepted. The stored list is gone; codes whose faults are still active will come back on the next drive cycle. Read the list again to see what remains.";
-    case "refused":
-      return `Refused: ${outcome.description}.`;
-    case "failed":
-      return `Nothing confirmed: ${outcome.reason}`;
-  }
-}
-
 /**
  * Commands the charge current, choosing the opcode and ceiling from the LIVE session state.
  *
@@ -1375,6 +1385,7 @@ function describeResetOutcome(outcome: ResetVcuOutcome): string {
  */
 function startGateWatchdog(context: WriteContext): ReturnType<typeof setInterval> {
   let fired = false;
+  let noticedUnsafe = false;
   const timer = setInterval(() => {
     if (fired) {
       return;
@@ -1383,9 +1394,30 @@ function startGateWatchdog(context: WriteContext): ReturnType<typeof setInterval
     if (verdict.safe) {
       return;
     }
+    const running = context.running;
+    if (running === null) {
+      // ⚠️ Nothing is in flight, so there is nothing to cut short — and saying "ABORTING"
+      // anyway would put an abort that never happened into the only witness this bike has.
+      //
+      // ⚠️ NOT a clear-dtcs special case, though that is what exposed it. Every gated action
+      // has a pre-session window with `running` still null, and `performClockSync` never sets
+      // it at all — so sync-clock has been eligible for a phantom "ABORTING" line since it
+      // shipped, and this guard fixes that too. Take it out with clear-dtcs and sync-clock
+      // silently gets it back. What clear-dtcs added is a window AFTER the frame as well.
+      if (!noticedUnsafe) {
+        noticedUnsafe = true;
+        // Said once, because a refusal is not audited (src/http/vcu-write.ts answers 409 and
+        // writes no journal line), so without this the journal has no record that the bike
+        // went unsafe mid-action at all.
+        console.warn(
+          `vcu-write: the bike stopped being safe to service with nothing in flight — ${verdict.blockers.join("; ")}`
+        );
+      }
+      return;
+    }
     fired = true;
     console.warn(`vcu-write: ABORTING — the bike stopped being safe to service: ${verdict.blockers.join("; ")}`);
-    context.running?.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
+    running.abort(`the bike stopped being safe to service — ${verdict.blockers.join("; ")}`);
   }, GATE_WATCH_INTERVAL_MS);
   // This timer must never be the reason a `systemctl stop` hangs.
   timer.unref?.();

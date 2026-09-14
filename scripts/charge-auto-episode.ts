@@ -1,4 +1,5 @@
 import type { TemperatureSample } from "../src/charge/rate.ts";
+import type { SocSample } from "../src/charge/soc.ts";
 
 // A REAL thermal episode off the bike, 2026-08-08 13:32-14:09 UTC: the pack climbed to the cliff,
 // touched 55 °C, and came back down. Every value is `batt_temp_hi` exactly as logged.
@@ -86,3 +87,103 @@ export const SEPTEMBER_9_RATCHET_MS = 732_000;
 
 /** 16:07:08 — four ticks later, where it reached 45 A with the reading at 51. */
 export const SEPTEMBER_9_AT_45A_MS = 972_000;
+
+/**
+ * 2026-09-13, the DC stop that produced #201's second field report — nrg AVIN 4052, 60 → 95 % SOC,
+ * arriving at 44 °C. Three rings exactly as logged, from the session's first `soc` row
+ * (12:03:43.797 UTC) to the tap that switched the controller off at 12:19:54.
+ *
+ * ⚠️ THE FIXTURE THAT SHOWS THE OVER-THROTTLE. `CLOSING` fires at 12:11:44 on a reading of **48**
+ * — 49 arrives four seconds later — and the controller steps 76 → 70 → 68 → 64 → 59 while the pack
+ * climbs to 50 and stops there. When Daniel switched it off at 84 % the ceiling went back to 80 A,
+ * the pack took what it wanted, and `batt_temp_hi` held 50 for eight minutes and then fell. That is
+ * the measurement the session-ahead veto exists for: docs/dc-taper.md.
+ *
+ * ⚠️ OPEN-LOOP, like the 2026-09-09 rings above — what the rule would DECIDE on this history, never
+ * what would have happened.
+ */
+export const SEPTEMBER_13_EPISODE: TemperatureSample[] = [
+  { atMs: 333, celsius: 44 },
+  { atMs: 125501, celsius: 45 },
+  { atMs: 206612, celsius: 46 },
+  { atMs: 295740, celsius: 47 },
+  { atMs: 391873, celsius: 48 },
+  { atMs: 485002, celsius: 49 },
+  { atMs: 668259, celsius: 50 },
+];
+
+/** `soc` across the same stop. Whole percent, logged on change, as src/charge/soc.ts reads it. */
+export const SEPTEMBER_13_SOC: SocSample[] = [
+  { atMs: 0, percent: 60 },
+  { atMs: 21035, percent: 61 },
+  { atMs: 49074, percent: 62 },
+  { atMs: 85173, percent: 63 },
+  { atMs: 117067, percent: 64 },
+  { atMs: 145105, percent: 65 },
+  { atMs: 181105, percent: 66 },
+  { atMs: 209093, percent: 67 },
+  { atMs: 245193, percent: 68 },
+  { atMs: 273237, percent: 69 },
+  { atMs: 305232, percent: 70 },
+  { atMs: 341231, percent: 71 },
+  { atMs: 369220, percent: 72 },
+  { atMs: 405269, percent: 73 },
+  { atMs: 433258, percent: 74 },
+  { atMs: 465252, percent: 75 },
+  { atMs: 497297, percent: 76 },
+  { atMs: 529245, percent: 77 },
+  { atMs: 565296, percent: 78 },
+  { atMs: 593383, percent: 79 },
+  { atMs: 625327, percent: 80 },
+  { atMs: 665333, percent: 81 },
+  { atMs: 693371, percent: 82 },
+  { atMs: 733377, percent: 83 },
+  { atMs: 769376, percent: 84 },
+];
+
+/** One step of `fast_dc_target_a` — the current the vehicle is asking the station for. */
+export interface RequestStep {
+  atMs: number;
+  amps: number;
+}
+
+/**
+ * `fast_dc_target_a` across the same stop, thinned to the steps that lasted more than five seconds.
+ *
+ * ⚠️ Thinned because the raw series ramps a dozen times a SECOND at a session's start and through
+ * every change — 147 rows for fifteen steps — and a fixture nobody can read is a fixture nobody
+ * checks. Every value here is logged; only the intermediate rungs of each ramp are dropped.
+ */
+export const SEPTEMBER_13_REQUEST_A: RequestStep[] = [
+  { atMs: 35, amps: 73 },
+  { atMs: 540735, amps: 71 },
+  { atMs: 600639, amps: 69 },
+  { atMs: 660743, amps: 70 },
+  { atMs: 693245, amps: 69 },
+  { atMs: 699545, amps: 68 },
+  { atMs: 708146, amps: 67 },
+  { atMs: 714547, amps: 66 },
+  { atMs: 720647, amps: 65 },
+  { atMs: 741349, amps: 63 },
+  { atMs: 748750, amps: 62 },
+  { atMs: 756950, amps: 61 },
+  { atMs: 769551, amps: 60 },
+  { atMs: 957307, amps: 59 },
+  { atMs: 968008, amps: 58 },
+];
+
+/**
+ * The controller's own 60 s ticks across that stop, as `charge_auto_reason` timestamps them, with
+ * the commanded current it was holding when each one ran.
+ *
+ * ⚠️ `commandedAmps` is what the shipped rule stepped FROM, and it is load-bearing — replayed with
+ * null every raise clamps at the ceiling and looks like a hold. check-charge-auto.ts §16 says what
+ * that cost. The first two ticks are null because no command had landed yet.
+ */
+export const SEPTEMBER_13_TICKS = [
+  { clock: "12:11:44", atMs: 480_203, reading: 48, soc: 75, commandedAmps: null },
+  { clock: "12:12:44", atMs: 540_203, reading: 49, soc: 77, commandedAmps: 76 },
+  { clock: "12:13:44", atMs: 600_203, reading: 49, soc: 79, commandedAmps: 70 },
+  { clock: "12:15:44", atMs: 720_203, reading: 50, soc: 82, commandedAmps: 70 },
+  { clock: "12:16:44", atMs: 780_203, reading: 50, soc: 84, commandedAmps: 64 },
+];

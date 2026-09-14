@@ -45,7 +45,7 @@ import { startCanLinkMonitor } from "./can/link-status.ts";
 import { decodeFrame, STREAM_IDS } from "./can/decode.ts";
 import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
-import { initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
+import { holdObdPoller, initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
 import { syncSystemClockFromGps } from "./gps/clock.ts";
 import { GPS_CAN_ID } from "./can/gps.ts";
@@ -269,6 +269,11 @@ const vcuWriteRunner = createVcuWriteRunner({
   // The SAME gate the read path uses, passed in rather than re-implemented. Two
   // opinions about whether a motorcycle is safe to touch is one opinion too many.
   gate: () => vcuReadRunner.gate(),
+  // ⚠️ The REAL poller hold, injected rather than imported by the runner so a check can drive
+  // a clear with a fake one. Only clear-dtcs uses it: it is the one action that reads the bike
+  // back on the same bus, and the always-on poller's own 0x7DF traffic would otherwise make the
+  // VCU abandon the mode-03 transfer it does that with.
+  holdPoller: holdObdPoller,
   // ⚠️ Every charge current about to reach the bus, hand-set or automatic, and told BEFORE the
   // frames go out — the bike answers our own commit within milliseconds, so a controller told
   // afterwards reads its own command as the rider. A hand-set one still stands it down.

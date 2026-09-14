@@ -2,6 +2,7 @@ import { ageMs, latestValue, onChange, record } from "../can/signals.ts";
 import { monotonicNow } from "../monotonic.ts";
 import { isPackTemperaturePlausible } from "../fan/curve.ts";
 import { RATE_WINDOW_MS, type TemperatureSample } from "./rate.ts";
+import { isSocPlausible, type SocSample } from "./soc.ts";
 import {
   CHARGE_AUTO_REASON,
   decideChargeCurrent,
@@ -105,6 +106,7 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     lastSentAmps: null,
     riderOverride: false,
     samples: [],
+    socSamples: [],
     inFlight: false,
     lastSessionState: null,
     timer: null,
@@ -113,6 +115,9 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
   context.unsubscribe = onChange(changed => {
     if (changed["batt_temp_hi"] !== undefined) {
       remember(context, changed["batt_temp_hi"].value);
+    }
+    if (changed["soc"] !== undefined) {
+      rememberSoc(context, changed["soc"].value);
     }
     // ⚠️ ONLY a setpoint that is NOT the one we asked for is the rider. The bike answers our own
     // `0x120` commit with a `0x121` carrying the amps we just commanded, so on 2026-09-09 every one
@@ -179,6 +184,7 @@ interface AutoContext {
   lastSentAmps: number | null;
   riderOverride: boolean;
   samples: TemperatureSample[];
+  socSamples: SocSample[];
   /** True while a command is in flight, so a slow POST cannot overlap the next tick. */
   inFlight: boolean;
   /** The last `charge_manager_state` seen, so entering and leaving a session are both edges. */
@@ -230,6 +236,13 @@ function decide(context: AutoContext): ChargeAutoDecision {
     commandedAmps: context.commandedAmps,
     riderOverride: context.riderOverride,
     samples: context.samples,
+    socPercent: latestValue("soc"),
+    socAgeMs: ageMs("soc"),
+    socSamples: context.socSamples,
+    // ⚠️ What the VEHICLE asks the station for, not what flows: `0x615` b2 leads the delivered
+    // current by 0.03-2.40 s in all eight captured ramps (docs/charge-manager.md), and it is the
+    // signal the pack's own taper moves. `pack_a` would answer the same question later and noisier.
+    requestedAmps: latestValue("fast_dc_target_a"),
     nowMs: monotonicNow(),
   });
 }
@@ -254,6 +267,24 @@ function remember(context: AutoContext, celsius: number): void {
 }
 
 /**
+ * The SOC ring, trimmed the same way the temperature ring is.
+ *
+ * ⚠️ NO ANCHOR kept here, unlike `remember` above. src/charge/soc.ts § estimateSocRate says why.
+ */
+function rememberSoc(context: AutoContext, percent: number): void {
+  if (!isSocPlausible(percent)) {
+    console.warn(`charge-auto: ignoring an implausible SOC of ${percent} %`);
+    return;
+  }
+  const atMs = monotonicNow();
+  context.socSamples.push({ atMs, percent });
+  const oldest = atMs - RATE_WINDOW_MS;
+  while (context.socSamples.length > 0 && context.socSamples[0].atMs < oldest) {
+    context.socSamples.shift();
+  }
+}
+
+/**
  * A session that ended takes the controller's memory with it.
  *
  * ⚠️ Including `riderOverride`: standing down is for the rest of THIS charge, not for ever. And
@@ -264,6 +295,7 @@ function forgetSession(context: AutoContext): void {
   context.lastSentAmps = null;
   context.riderOverride = false;
   context.samples.length = 0;
+  context.socSamples.length = 0;
 }
 
 /**

@@ -108,6 +108,18 @@ const RETRY_ATTEMPTS = 4;
  */
 const RETRY_GAP_MS = 120;
 
+/**
+ * The longest one trouble-code transfer can take: every attempt timing out at both stages,
+ * with the gaps between them.
+ *
+ * Exported as the derived figure rather than the four constants behind it, so a caller sizing
+ * a budget around this transfer asserts a relationship instead of restating the arithmetic —
+ * obd-hold.ts's MAX_HOLD_MS prose is this same sum, and scripts/check-clear-dtcs.ts §9 now
+ * checks the clear's parked window against it.
+ */
+export const WORST_CASE_TRANSFER_MS =
+  (RETRY_ATTEMPTS + 1) * (FIRST_REPLY_TIMEOUT_MS + TRANSFER_TIMEOUT_MS) + RETRY_ATTEMPTS * RETRY_GAP_MS;
+
 export type DtcReadOutcome =
   /** A reply arrived and decoded. `response` may still be a refusal. */
   | { outcome: "answered"; mode: number; response: ObdDtcResponse; payload: Uint8Array }

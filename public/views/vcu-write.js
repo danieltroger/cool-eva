@@ -30,6 +30,8 @@ const { button, div, h2, h3, input, option, select, span } = van.tags;
 /** @typedef {import("../../src/vcu/write-audit.ts").AuditRecord} AuditRecord */
 /** @typedef {import("../../src/vcu/write-runner.ts").VcuWriteStatus} VcuWriteStatus */
 /** @typedef {import("../../src/vcu/service-actions.ts").ServiceStamp} ServiceStamp */
+/** @typedef {import("../../src/vcu/write-runner.ts").ClearDtcsCounts} ClearDtcsCounts */
+/** @typedef {import("../../src/vcu/service-gate.ts").ServiceGateVerdict} ServiceGateVerdict */
 
 /**
  * @typedef {{ value: number, rawHex: string | null, label: string | null,
@@ -74,12 +76,28 @@ const warningsOpen = van.state(false);
  */
 const dangerOpen = van.state(false);
 /**
+ * The last clear made from this page — the Pi's sentence and the Pi's verdict — or null.
+ *
+ * Its own state rather than read off `state.val.result` for the reason StampOutcome has one: a
+ * request that never comes back leaves the PREVIOUS answer in `state`, and a stale green proof
+ * under a button whose press just vanished is the worst thing this card could say.
+ */
+const clearOutcome = van.state(/** @type {{ message: string, verdict: ClearDtcsCounts["verdict"] } | null} */ (null));
+/**
  * The last write attempt made from this page, so the outcome and the verification hint
  * can be shown against the parameter they belong to rather than to whatever is selected
  * when the answer lands.
  */
 const lastWrite = van.state(/** @type {{ name: string, status: string, succeeded: boolean } | null} */ (null));
 const busy = van.state(false);
+
+/**
+ * WHICH control is mid-request, or "" when none is.
+ *
+ * `busy` alone disables every button, which is right; it cannot say which one is working,
+ * and a spinner caption on all four would claim three actions are running that are not.
+ */
+const working = van.state("");
 /**
  * True only while a write's own POST is in flight.
  *
@@ -640,7 +658,10 @@ function ReadButton() {
     },
     () => {
       if (busy.val) {
-        return "⏳  Reading…";
+        // ⚠️ Only when the READ is what is running. `busy` is global, so this said "Reading…"
+        // through a clear, a service stamp and a clock sync — claiming an operation that was not
+        // happening, which is the exact thing `working` was added for one screen away.
+        return working.val === "" ? "⏳  Reading…" : "⏳  Busy…";
       }
       // Two captions, because the button is answering two different questions. With
       // nothing read it is the way to get a value at all; with a sweep's value already
@@ -1342,6 +1363,14 @@ function IrreversibleActions() {
         onclick: () => {
           dangerOpen.val = !dangerOpen.val;
           armed.val = "";
+          // ⚠️ The only re-poll of /vcu-write while the sheet is open, and the Clear card's cable
+          // caution is why it exists: the gate the browser holds is otherwise the one fetched when
+          // the sheet was opened, so plugging the bike in after opening it produced no warning at
+          // all. Opening this fold is the last deliberate act before an irreversible tap, which
+          // makes it the right moment — and it is one request that touches nothing on the bike.
+          if (dangerOpen.val) {
+            void fetchStatus();
+          }
         },
       },
       // ⚠️ The SENTENCE does not change between states — only the caret turns, so the
@@ -1403,12 +1432,96 @@ export const IRREVERSIBLE = [
       ActionButton("clear-dtcs", () => "🧹  Clear the stored trouble codes", {
         confirm: "WIPE the stored codes and their freeze frame",
         noUndo: "The freeze frame goes with the codes.",
-        does: "OBD Mode 04 — clears every code the bike currently holds stored.",
-        caution:
-          "⚠️ This bike's stored list has been accumulating since before anyone started looking. Codes whose faults are still active come straight back.",
+        does:
+          "OBD Mode 04 — clears every code the bike currently holds stored. The Pi parks its own OBD " +
+          "polling and reads the counters either side of the frame, so this takes a few seconds.",
+        caution: clearCodesCaution,
+        outcome: ClearOutcome,
       }),
   },
 ];
+
+/**
+ * Is a charger attached RIGHT NOW, as the gate sees it?
+ *
+ * Two ways, because the gate reports two different facts: `chargingEvidence` is a witnessed
+ * charge session, and the veto row reaching `ok` means the charge manager is on the bus,
+ * fresh, and reporting a cable in the inlet (src/vcu/service-gate.ts `inletCheck` — `ok` is
+ * unreachable when the sample is stale, absent, or says the inlet is empty).
+ *
+ * ⚠️ Read off the served gate rather than by re-testing the bit here. The inlet mask lives in
+ * src/vcu/charge-session.ts and is not exported; a copy of it in a browser file would be a
+ * constant that can drift from the one the Pi actually vetoes on.
+ *
+ * @param {ServiceGateVerdict | undefined} gate
+ */
+export function chargerIsAttached(gate) {
+  if (gate === undefined) {
+    return false;
+  }
+  if (gate.chargingEvidence !== null) {
+    return true;
+  }
+  // The key is `CHARGE_INLET_VETO.key` on the Pi (src/vcu/charge-session.ts). Spelled out here
+  // because public/ has no build step and cannot import a `.ts` at runtime; the Pi's own copy is
+  // `verdictSeesACable`, and scripts/check-clear-dtcs.ts §8 drives both through the same cases.
+  return gate.checks.find(check => check.key === "charge_manager_status")?.state === "ok";
+}
+
+/**
+ * The argument against pressing Clear, which grows a paragraph when a cable is in.
+ *
+ * ⚠️ The added paragraph states two logged cases and refuses to generalise from them, because
+ * two is what there is. It also says what cannot be known: the ride log is log-on-change while
+ * the gate's freshness budget is 5 s, so the log cannot say what THIS gate would have read on
+ * those days — the cable bit is recorded, the gate's own verdict is not. docs/clear-dtcs.md.
+ */
+function clearCodesCaution() {
+  const base =
+    "⚠️ This bike's stored list has been accumulating since before anyone started looking. " +
+    "Codes whose faults are still active come straight back.";
+  if (!chargerIsAttached(state.val?.status.gate)) {
+    return base;
+  }
+  return (
+    base +
+    "\n\n⚠️ The charge manager reports a cable in the inlet. The two clears we have logged with a " +
+    "cable or a charge involved — 2026-08-08 and 2026-09-11 — were accepted by the bike and erased " +
+    "nothing; the one with nothing plugged in erased 41 codes. That is two against one, not a rule, " +
+    "and the ride log cannot tell us what this gate read on those days. Unplug first if you can."
+  );
+}
+
+/**
+ * What the bike answered — the Pi's own sentence, styled by the Pi's own verdict.
+ *
+ * ⚠️ THE WORDS ARE THE SERVER'S. This used to rebuild the sweep and the proof line from
+ * `result.clear`, which put that prose in three places (here, src/vcu/clear-dtcs.ts and the
+ * preview template) with only the VERDICT cross-checked — so the two sentences could drift while
+ * every check stayed green, and a refused clear rendered an empty div because it carries no
+ * counts. StampOutcome states the rule this now follows: take the message, do not recompute it.
+ *
+ * ⚠️ Reads `clearOutcome`, not `state.val.result`. A second press that never comes back leaves
+ * the previous answer in `state` — `send()`'s catch deliberately does not touch it — so reading
+ * the result directly left a green "erased" proof under a button whose request had vanished.
+ */
+function ClearOutcome() {
+  return div(() => {
+    const answer = clearOutcome.val;
+    if (answer === null) {
+      return div();
+    }
+    if (answer.verdict === "erased-nothing") {
+      // ⚠️ `.action-note.failure`, which is WEIGHT as well as hue — --bad and --warn are the
+      // closest adjacent pair in the ramp, so in light theme a red line between two amber
+      // cautions read as a third near-identical paragraph. NoUndoLine spells the argument out.
+      // No badge: the Pi's own sentence already opens "AND THE BIKE ERASED NOTHING" in caps, and
+      // a badge above it said the same words twice in a row.
+      return div({ class: "action-note failure" }, answer.message);
+    }
+    return div({ class: "action-note", style: `color:${answer.verdict === "erased" ? GOOD : WATCH}` }, answer.message);
+  });
+}
 
 const IRREVERSIBLE_COUNT = IRREVERSIBLE.length;
 
@@ -1514,7 +1627,11 @@ function ClockAction() {
  * "it will probably do nothing" and "IRREVERSIBLE. There is no unset." — the same
  * colour, the same size, the same paragraph.
  *
- * @typedef {{ noUndo?: string, does: string, caution?: string }} ActionNotes
+ * `caution` may be a THUNK rather than a string, for the one control whose argument
+ * against pressing it depends on the live gate: clearing the codes with a cable in the
+ * inlet. A string is still the normal case and still what the other controls pass.
+ *
+ * @typedef {{ noUndo?: string, does: string, caution?: string | (() => string) }} ActionNotes
  */
 
 /**
@@ -1588,7 +1705,17 @@ function ActionButton(action, caption, notes) {
       // since #81 for the same reason (see describeChange): the caption is the one
       // place a person commits, and a thumb that landed on the wrong control is
       // exactly the case it exists to catch.
-      () => (armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption())
+      // ⚠️ Three captions, not two. A clear now parks the OBD poller and reads the bike back on
+      // both sides of the frame, so its POST takes up to ~11 s where it used to take 0.6 — and a
+      // 55 px control that looks identical for eleven seconds in a garage gets pressed again.
+      // `disabled` already refuses the second press; this is what says why. Deliberately generic:
+      // all four ActionButtons share it and two of them read nothing back.
+      () => {
+        if (busy.val && working.val === key) {
+          return "⏳  Working…";
+        }
+        return armed.val === key ? `⚠️  Tap again — ${notes.confirm}` : caption();
+      }
     ),
     // ⚠️ ABOVE the prose. The prose is static and says what the button is FOR; this is what
     // it just did. docs/dashboard-decisions.md §"Where an ANSWER goes".
@@ -1636,10 +1763,30 @@ function NoUndoLine(notes) {
  * @param {ActionNotes} notes
  */
 function NoteBlock(notes) {
+  const caution = notes.caution;
   return div(
     div({ class: "action-note" }, notes.does),
-    notes.caution === undefined ? div() : div({ class: "action-note caution" }, notes.caution)
+    // A thunk, so a caution that reads the gate re-renders when the gate moves. VanJS
+    // binds on the function, not on the string it returned when this node was built.
+    caution === undefined
+      ? div()
+      : // ⚠️ Split on blank lines into separate paragraphs. The cable warning is a second
+        // argument against pressing, not a continuation of the first, and run together as one
+        // block it read as "…come straight back. ⚠️ The charge manager reports…" — two warnings
+        // sharing a sentence, which is how the more urgent one gets skipped.
+        div({ class: "action-note caution" }, () =>
+          div(...cautionParagraphs(typeof caution === "function" ? caution() : caution))
+        )
   );
+}
+
+/**
+ * One `<div>` per paragraph, so a multi-part caution reads as multiple warnings.
+ *
+ * @param {string} text
+ */
+function cautionParagraphs(text) {
+  return text.split(/\n{2,}/).map(paragraph => div({ class: "caution-paragraph" }, paragraph));
 }
 
 /**
@@ -2046,7 +2193,15 @@ async function performHeadlight(off) {
  * @param {string} confirmation
  */
 async function performAction(action, confirmation) {
-  const payload = await send(new URLSearchParams({ action, confirm: confirmation }));
+  working.val = `action:${action}`;
+  let payload;
+  try {
+    payload = await send(new URLSearchParams({ action, confirm: confirmation }));
+  } finally {
+    // In a `finally` because `send` resolves null rather than throwing, but a bug that made
+    // it throw would otherwise leave every button on the sheet captioned "Working" for good.
+    working.val = "";
+  }
   if (action === "read-service-stamp") {
     // Taken from `message` rather than recomputed: send() composes the transport-failure
     // sentence itself, and a refusal arrives as `payload.message` — so whatever send()
@@ -2061,6 +2216,20 @@ async function performAction(action, confirmation) {
     // heading and an ellipsis. The condition is "is the node that renders this still
     // there", which is what hasControls() answers.
     if (hasControls()) {
+      message.val = "";
+    }
+    return;
+  }
+  if (action === "clear-dtcs") {
+    // Null on a transport failure too: `send()` leaves `state` alone there, and the previous
+    // press's proof must not stand under a request that never came back.
+    const counts = payload?.result?.clear;
+    clearOutcome.val = counts ? { message: payload?.result?.message ?? "", verdict: counts.verdict } : null;
+    // ⚠️ Cleared for the same reason read-service-stamp clears it: the sentence is now rendered
+    // AT the button, and leaving it in `message` too showed the same verdict twice, three
+    // sections apart. Only when the card is actually showing it — a refusal has no `clear`, and
+    // for that ending `message` is the only home the answer has.
+    if (clearOutcome.val && hasControls()) {
       message.val = "";
     }
     return;
@@ -2149,6 +2318,7 @@ export async function refreshVcuWrite() {
   lightsProgress.val = "";
   // An answer read through a previous sheet-opening must not be read as this one's.
   stampOutcome.val = null;
+  clearOutcome.val = null;
   forgetSelection();
   await fetchStatus();
 }

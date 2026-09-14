@@ -420,6 +420,31 @@ __MODULES__
         // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
         // and permanent on this bike, because the coolant pump is wired to the
         // heated-grip output and the VCU's own pump driver is left open.
+        // 0x101 VCU_VEHICLE_STS and the rest of 0x102's named bits, added 2026-09-14. Every
+        // value here is what the real frames say a PARKED bike publishes, byte for byte:
+        // 0x101 reads `3E 3C 04 04 64 00 00 00` (state 60 / substate 62 — the pair the
+        // engineering menu shows) and 0x102's byte 3 reads 0x44. They are in the fixture so
+        // the ALL tab's new `vcu` section and the four new `controls` tiles render at all —
+        // that page builds its sections from the signals that have ARRIVED, so an unlisted
+        // key is an invisible one and the design gate would be looking at nothing.
+        "vehicle_state_can": [60, "", "drive"],
+        "vehicle_substate_can": [62, "", "drive"],
+        "drive_vsm": [4, "", "drive"],
+        "drive_vsm_b3": [0, "", "drive"],
+        "limp_pack_res": [100, "", "vcu"],
+        "limp_module_word": [0, "", "vcu"],
+        "vehicle_status_flags": [4, "", "vcu"],
+        "limp_mode_status": [1, "", "diag"],
+        "limp_res_valid": [0, "", "diag"],
+        "horn_switch": [0, "", "controls"],
+        "blinker_switch_left": [0, "", "controls"],
+        "blinker_switch_right": [0, "", "controls"],
+        "low_beam_switch": [1, "", "controls"],
+        "dsb_control": [1, "", "diag"],
+        "imd_disable": [0, "", "diag"],
+        "winter_storage": [0, "", "diag"],
+        "mag_good": [1, "", "diag"],
+        "vcu_abs_off": [0, "", "diag"],
         "dtc_0044_0": [1, "", "diag"],
         "dtc_0002_0": [1, "", "diag"],
         "dtc_count": [2, "", "diag"],

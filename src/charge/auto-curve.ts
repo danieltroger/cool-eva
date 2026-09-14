@@ -1,4 +1,5 @@
-import { estimateHeatingRate, minutesSinceNewestSample, type TemperatureSample } from "./rate.ts";
+import { estimateHeatingRate, minutesSinceNewestSample, type HeatingRate, type TemperatureSample } from "./rate.ts";
+import { sessionAheadMinutes, type SocSample } from "./soc.ts";
 import { CHARGE_MANAGER_STATE_DC } from "../fan/curve.ts";
 
 // What current to command during a DC fast charge, so the pack does not reach the cliff. Pure —
@@ -50,6 +51,8 @@ export const CHARGE_AUTO_REASON = {
   AT_FLOOR: 11,
   /** At the setpoint and not heating: holding this current, and never raising from here. */
   NEAR_CEILING: 12,
+  /** Below the setpoint, and the pack's own taper takes the current away before it matters. */
+  TAPERING: 13,
 } as const;
 
 export type ChargeAutoReason = (typeof CHARGE_AUTO_REASON)[keyof typeof CHARGE_AUTO_REASON];
@@ -159,6 +162,12 @@ export interface ChargeAutoInput {
   riderOverride: boolean;
   /** The temperature ring, and the monotonic reading to judge it against. */
   samples: TemperatureSample[];
+  /** `soc` and its age, for the session-ahead veto below. Absent leaves the shipped horizon alone. */
+  socPercent: number | null;
+  socAgeMs: number | null;
+  socSamples: SocSample[];
+  /** `fast_dc_target_a` — what the vehicle is asking for, which is what the taper acts on. */
+  requestedAmps: number | null;
   nowMs: number;
 }
 
@@ -233,7 +242,7 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
   // now. Positive is room to give, negative is a move to take back. ⚠️ `headroomKelvin < 0` is
   // algebraically the shipped time-to-cliff test aimed at 54 instead of 55, which is why the steep
   // -heating guard needs no branch of its own — it IS this line.
-  const headroomKelvin = TARGET_C - temperature - rate.perMinute * REACTION_MIN;
+  const headroomKelvin = predictedHeadroomKelvin(temperature, rate.perMinute, REACTION_MIN);
   // ⚠️ Never raise at or above the setpoint. A reading of 54 can be a true 54.99, and this is the
   // surviving half of the quantisation argument the 53/54 tiers were built on. Expressed as a hold
   // rather than by clamping the headroom to 0 and testing for it: that test was a float equality
@@ -249,7 +258,86 @@ export function decideChargeCurrent(input: ChargeAutoInput): ChargeAutoDecision 
     return stepTo(current + step, current, ceiling, CHARGE_AUTO_REASON.CLEAR);
   }
   const lowering = temperature >= TARGET_C ? CHARGE_AUTO_REASON.HARD_CEILING : CHARGE_AUTO_REASON.CLOSING;
-  return stepTo(current - step, current, ceiling, lowering);
+  const stepped = stepTo(current - step, current, ceiling, lowering);
+  return sessionEndsFirst(input, stepped, current, temperature, rate) ?? stepped;
+}
+
+/**
+ * The one thing the session's remaining length is allowed to do: turn a step DOWN into a hold.
+ *
+ * ⚠️ THE SHAPE IS THE SAFETY ARGUMENT, so read what it cannot do. It is consulted only after the
+ * shipped rule has already decided and sized its step, so it never raises, never sizes anything,
+ * and leaves AMPS_PER_KELVIN and the sweep behind it untouched. It cannot fire at or above the
+ * setpoint, on a decision that was not a lowering command, or on a bound rather than a fitted
+ * slope. At every tick this rule therefore either decides exactly what the shipped one decides, or
+ * holds where that one lowered — there is no third outcome. docs/charge-auto.md.
+ *
+ * ⚠️ A `bounded` rate is declined for the reason NEAR_CEILING declines it — it says only "the
+ * reading did not move". The setpoint guard is redundant by construction and kept anyway, so a
+ * mutation deleting it survives: docs/charge-auto.md § "The taper" has both.
+ */
+function sessionEndsFirst(
+  input: ChargeAutoInput,
+  stepped: ChargeAutoDecision,
+  current: number,
+  temperature: number,
+  rate: HeatingRate
+): ChargeAutoDecision | null {
+  if (temperature >= TARGET_C || rate.kind !== "rate") {
+    return null;
+  }
+  // ⚠️ Nothing to suppress at or below the floor, and this is THIS module's policy rather than a
+  // fact about how much charge is ahead: the rule cannot command less than MIN_COMMAND_A, so once
+  // the vehicle is asking for that or less the ceiling is not what limits the charge. Asked here
+  // rather than inside ./soc.ts, which would have to be handed the floor to answer it.
+  if (input.requestedAmps !== null && input.requestedAmps <= MIN_COMMAND_A) {
+    return null;
+  }
+  // ⚠️ Not a lowering, and BOTH halves are load-bearing. A hold — the deadband, or the floor clamp
+  // — is already the shipped answer, and replacing its reason would claim the taper did what the
+  // floor did. And `stepTo` clamps with `max(MIN_COMMAND_A, …)`, so from a `current` below the
+  // floor a "step down" comes back as a command to RAISE: 20 A → 35 A. Without the second half the
+  // veto turns that recovery into a hold, which is the third outcome this function may not have.
+  // Unreachable through ./auto.ts, where `commandedAmps` is only ever a previous clamped command —
+  // but this is a pure function and check-charge-auto.ts §15 calls it directly, so the guarantee
+  // belongs here rather than in an unstated invariant two modules away.
+  if (stepped.kind !== "command" || stepped.amps >= current) {
+    return null;
+  }
+  const ahead = sessionAheadMinutes({
+    socPercent: input.socPercent,
+    socAgeMs: input.socAgeMs,
+    socSamples: input.socSamples,
+    requestedAmps: input.requestedAmps,
+    nowMs: input.nowMs,
+  });
+  if (ahead === null) {
+    return null;
+  }
+  // The same headroom line, over the session's own clock instead of the reaction time. Positive
+  // means the pack stays under the setpoint for as long as this current is still the one flowing,
+  // so taking current away buys nothing and costs the rest of the charge.
+  //
+  // ⚠️ NOT capped at REACTION_MIN, and it needs no cap: reaching here means the shipped headroom
+  // was negative with T below the setpoint, which forces `rate.perMinute > 0`. A horizon at or past
+  // REACTION_MIN therefore makes this quantity no larger than the one that was already negative,
+  // and the veto cannot fire. A `Math.min` here would be arithmetic that never changes an outcome.
+  if (predictedHeadroomKelvin(temperature, rate.perMinute, ahead) < 0) {
+    return null;
+  }
+  return { kind: "hold", reason: CHARGE_AUTO_REASON.TAPERING };
+}
+
+/**
+ * How far below the setpoint the pack is predicted to be `horizonMinutes` from now.
+ *
+ * ⚠️ ONE definition, called twice: once with REACTION_MIN, which is the shipped rule, and once with
+ * the session's own clock in `sessionEndsFirst`. Written out twice it was a claim in a comment that
+ * the two were the same line; here the horizon is the only thing that differs, which is exactly
+ * what the veto's safety argument rests on.
+ */
+function predictedHeadroomKelvin(temperatureC: number, ratePerMinute: number, horizonMinutes: number): number {
+  return TARGET_C - temperatureC - ratePerMinute * horizonMinutes;
 }
 
 /**

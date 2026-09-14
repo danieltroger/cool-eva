@@ -486,7 +486,27 @@ export const SIGNALS: SignalDef[] = [
   { key: "odometer_can_km", unit: "km", group: "drive", source: "stream" },
   { key: "speed_can_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_rpm_can", unit: "rpm", group: "drive", source: "stream", deadband: 50 },
-  { key: "reverse_gear", unit: "", group: "drive", source: "stream" },
+
+  // 0x104 bit 63 — the bike rolling BACKWARDS, renamed from `reverse_gear` 2026-09-14.
+  //
+  // 🚨 It shipped as `reverse_gear` from the .xdbc's word, and it is not a gear. The A8
+  // firmware writes it at 0x0000C924 as `signed motor speed < 0 AND |speed| past a
+  // deadband of ±500 counts of the VCU's internal 0.001 km/h speed unit, i.e. ±0.5 km/h`.
+  // Energica's own name for the field is `V_SPD_DIR`. The old rows
+  // are not garbage: they are correct readings of this bit under a wrong name, so
+  // grafana/dashboards/ride-summary.json UNIONs the old key into the new lane and the
+  // history stays continuous, the same way the beam-lamp and attitude renames did.
+  //
+  // ⚠️ The deadband has NO HYSTERESIS, so at walking pace this chatters at bus rate as the
+  // speed crosses 0.5 km/h — 404 of 597 pulses under 50 ms. It is a sample, not a state.
+  // Anything wanting "is the bike in park assist" should use 0x101's substate instead.
+  { key: "rolling_backwards", unit: "", group: "drive", source: "stream" },
+
+  // 0x104 bit 62 — Energica's `V_TACHO_OUT`, one pulse per 0.1 km of indicated travel
+  // (measured: 1371 of 1373 gaps between rising edges are exactly one odometer count, i.e.
+  // 100 m, over 1373 gaps from 49 to 152 km/h). No deadband: it is a
+  // 0/1 flag and a deadband ≥ 1 would log it once at boot and then never again.
+  { key: "odometer_pulse", unit: "", group: "drive", source: "stream" },
 
   // 0x109 b2-7 — the inverter's current limits, alongside the throttle above. Same 1 A
   // deadband as the BMS's allowed_* pair, and for the same reason: derate limits move
@@ -555,6 +575,19 @@ export const SIGNALS: SignalDef[] = [
   // bounds.js's BY_UNIT fallback and there is no sensible range for a flag, while
   // anything numeric-looking invites a Grafana panel to plot it against real amps.
   { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
+  // 0x102 b3 bit5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ Confirmed against
+  // this bike on 2026-09-14: one transition in the 60 s around the fall, 0.669 s after
+  // the roll peak and 0.551 s BEFORE the VCU cut the drive. src/can/decode.ts has the
+  // timing.
+  //
+  // Group "controls" rather than "drive" or a new group of its own, and that is the
+  // load-bearing part of this line: `controls` is a BOOLEAN_GROUP in public/lib/bounds.js,
+  // so the key gets the 0/1 gate for free. In "drive" it would have a blank unit in a
+  // non-boolean group — the exact combination that reaches no rule in that file and
+  // renders whatever arrives, which is how `fast_dc_contactor` above ended up needing a
+  // hand-written bound. No deadband, ever: |1 − 0| > 1 is false, so a deadband of 1 would
+  // log the first sample after boot and then never again, silently, forever.
+  { key: "lie_down_detected", unit: "", group: "controls", source: "stream" },
   { key: "moving", unit: "", group: "drive", source: "stream" }, // b2 bit7, .xdbc: speed > 1 km/h
 
   // 0x102 b4-7 — the attitude sensor's roll and pitch, in degrees. Logged until
@@ -568,15 +601,14 @@ export const SIGNALS: SignalDef[] = [
   // ⚠️ Gravity-referenced, so neither means what a rider would assume from the name.
   // attitude_roll_deg reads ≈0 in a steady corner, because the bike leans into the
   // resultant; attitude_pitch_deg mostly reports braking and acceleration rather than
-  // gradient. They answer "which way is down, as far as the bike can tell".
+  // gradient. They answer "which way is down, as far as the bike can tell". Measured
+  // over 373 steady corners on 2026-09-13: hard right and hard left turns separate by
+  // 1.20°, where a true lean angle would separate them by 60-90°.
 
-  // 1.0° replaces the old 100 counts, which under the wrong scale was believed to be
-  // ~0.5 g and is really 10° — coarse enough to quantise a lean trace into three or four
-  // levels, which is what made the Grafana panel unreadable. The old objection was row
-  // rate; the measured answer is a floor of ≥161 000 rows for pitch and ≥6 600 for roll
-  // over the seven days of log that exist, against 1 038 747 for throttle_pct in the same
-  // window — an order of magnitude of headroom, with the 100 Hz frame rate still the
-  // ceiling. Count a real ride's rows before tightening further.
+  // Both are named in public/lib/bounds.js at ±180° — a decorative gate that agrees with
+  // the decoder rather than second-guessing it, and the reason it exists at all is that
+  // the unit "°" reaches no rule in that file, so the pair rendered entirely ungated from
+  // 2026-08-15 until the fall of 2026-09-13 was analysed. The argument is in bounds.js.
   { key: "attitude_roll_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
   { key: "attitude_pitch_deg", unit: "°", group: "imu", source: "stream", deadband: 1 },
 
@@ -645,12 +677,39 @@ export const SIGNALS: SignalDef[] = [
   { key: "high_beam", unit: "", group: "buttons", source: "stream" }, // 0x102 b0 bit6
   { key: "blinker_left", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x04
   { key: "blinker_right", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x08
+
+  // The SWITCHES for three of the outputs above, added 2026-09-14 (0x102 b0 bits 3/4/7 and
+  // b1 bit 0). Group "controls", not "buttons": the BUTTONS section keeps two tiles for two
+  // indicators rather than four, and what a rider means by "is my indicator on" is still the
+  // lamp. ../../public/lib/latched.js names the two indicator switches and `horn_switch` so
+  // they still get the latched tile — a 0.2 s press is two frames of a 60 Hz display.
+  //
+  // ⚠️ `low_beam_switch` is deliberately NOT latched: it is held for an entire ride, which is the
+  // reason `key_on` sits in check-all-view-tiles.ts's MUST_NOT_LATCH. `high_beam` stays in
+  // "buttons" because a flash-to-pass is momentary. Same byte, different tile, different use.
+  { key: "horn_switch", unit: "", group: "controls", source: "stream" }, // 0x102 b1 bit0 V_HORN_SW
+  { key: "blinker_switch_right", unit: "", group: "controls", source: "stream" }, // b0 bit3 V_R_TURN_SW
+  { key: "blinker_switch_left", unit: "", group: "controls", source: "stream" }, // b0 bit4 V_L_TURN_SW
+  { key: "low_beam_switch", unit: "", group: "controls", source: "stream" }, // b0 bit7 V_LOW_BEAM_SW
   { key: "front_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x20
   { key: "rear_brake", unit: "", group: "buttons", source: "stream" }, // 0x102 b2 0x40
   // 0x102 b3 bit1 — cruise armed. A vehicle state, not a button, so it goes with the
   // other 0x102 state bits above rather than in `buttons`; `controls` is already a
   // BOOLEAN_GROUP so it gets the same 0/1 gate.
   { key: "cruise_active", unit: "", group: "controls", source: "stream" },
+
+  // The rest of 0x102 byte 3, added 2026-09-14 — every bit of the byte is now decoded. All
+  // five go in "diag" for the free 0/1 gate, and none may carry a deadband: |1 − 0| > 1 is
+  // false, so a flag with one logs its first sample after boot and then never again.
+  //
+  // ⚠️ `mag_good` costs ~2 258 rows/h on its own, 97 % of this batch, because it has 47 020
+  // rising edges. The other four are ~1 row per boot each: they are 0 (or, for dsb_control,
+  // 1) in all but a handful of the archive's 15 006 856 frames. See src/can/decode.ts.
+  { key: "dsb_control", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_DSB_CTRL
+  { key: "imd_disable", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_IMD_DISABLE
+  { key: "winter_storage", unit: "", group: "diag", source: "stream" }, // b3 bit4 V_WINTER_STORAGE
+  { key: "mag_good", unit: "", group: "diag", source: "stream" }, // b3 bit6 V_MAG_GOOD
+  { key: "vcu_abs_off", unit: "", group: "diag", source: "stream" }, // b3 bit7 V_ABSOFF
   // 0x400 b5 bit7 — the dashboard's own day/night flag, and what the phone dashboard's
   // light theme follows. `controls` for the same reason as the row above: it is a
   // vehicle state rather than a thing a thumb presses, and the group is already a
@@ -846,6 +905,43 @@ export const SIGNALS: SignalDef[] = [
   { key: "vcu_err_system_blocking_fault", unit: "", group: "diag", source: "stream" }, // b3 bit7
   { key: "vcu_err_drive_ot", unit: "", group: "diag", source: "stream" }, // b4 bit1
   { key: "vcu_err_leak_detect", unit: "", group: "diag", source: "stream" }, // b6 bit0
+
+  // 0x101 `VCU_VEHICLE_STS` — the VCU's own state machine, 100 Hz (src/can/vehicle-status.ts).
+  // Named by Energica's database and logged nowhere until 2026-09-14. Costs ~86 rows/h of
+  // bike-on time for all nine, measured by replaying the archive through the log-on-change
+  // rule in file sequence. Every one of them is unitless: the database gives types and no
+  // scaling factors at all, so a unit here would be an assertion nobody has measured — and
+  // db.ts writes `signal` with ON CONFLICT(key) DO NOTHING, which freezes unit and group for
+  // the life of the ride log. Evidence and the substate vocabulary: docs/can-0x101.md.
+  //
+  // ⚠️ The `_can` suffix is not decoration. `vehicle_state` and `vehicle_substate` already
+  // exist above, written by the BLE hub (src/ble/protocol.ts); one key with two writers
+  // flaps between them. Same split, same reason, as `odometer_can_km` beside `odometer_km`.
+  // Group `drive` so the two land in one section of the All tab, which is the comparison
+  // the split exists to make possible.
+  { key: "vehicle_state_can", unit: "", group: "drive", source: "stream" }, // b1 V_VEHICLE_STATE
+  { key: "vehicle_substate_can", unit: "", group: "drive", source: "stream" }, // b0 V_VEHICLE_SUBSTATE
+  // b2 and b3&0x03, which Energica's parser assigns one name and loses the first of (§A.3).
+  // Two distinct quantities here. b2 is the drive state machine's transition marker.
+  { key: "drive_vsm", unit: "", group: "drive", source: "stream" }, // b2 V_DRIVE_VSM
+  { key: "drive_vsm_b3", unit: "", group: "drive", source: "stream" }, // b3 mask 0x03, the duplicate
+  // The 0x100 arrangement, one frame over: the raw word goes in "vcu" because a byte gated
+  // to 0/1 would be rejected as a dead sensor on every frame where anything is set, and the
+  // broken-out booleans go in "diag" precisely because it IS a BOOLEAN_GROUP and they
+  // inherit the 0/1 gate with no per-key bounds entry. The two numbers join the raw word:
+  // they need a BY_KEY bound either way, and "diag" would reject them outright.
+  { key: "limp_pack_res", unit: "", group: "vcu", source: "stream" }, // b4-5 LE V_LIMP_PACK_RES
+  { key: "limp_module_word", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
+  // ⚠️ The raw byte contains three keys above it — `drive_vsm_b3` is `& 3`, `limp_mode_status`
+  // bit 2, `limp_res_valid` bit 3 — which is the shape `brake` was REMOVED for ("this log stores
+  // measured bits rather than derived combinations"). It is kept for the reason 0x100 keeps
+  // `vcu_flags_low/high` beside its twelve broken-out flags and `brake` had nothing of: bits 4
+  // and 6 MOVE and Energica does not name them, so a key for either would have to invent a name,
+  // and this byte is the only lossless record of them. If those two are ever identified, this
+  // key is the one to reconsider.
+  { key: "vehicle_status_flags", unit: "", group: "vcu", source: "stream" }, // b3 raw; bits 4 and 6 unnamed and moving
+  { key: "limp_mode_status", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_LIMP_MODE_STATUS
+  { key: "limp_res_valid", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_LIMP_RES_VALID
 
   // Waypoints — "I am here, now", from the dashboard button or a Siri Shortcut via
   // GET /waypoint (src/http/waypoint.ts). Not measurements: they are written only

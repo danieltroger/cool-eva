@@ -16,6 +16,14 @@ Energica_Manuals
 # (Self-contained: scripts + venv + logs all resolve relative to this folder.)
 obd-garage
 
+# Audit journal copies pulled off a Pi for one investigation: per-bike evidence, not repo content.
+evidence/*.jsonl
+
+# Dashboard-gate screenshots: the chrome-devtools MCP can only write inside the
+# workspace, so the preview shots land here. They are evidence for one PR, not
+# repo content, and this repo has never carried a committed PNG.
+.preview-shots
+
 # Editor / IDE
 .idea/
 # ---------------------------------------------------------------------------
@@ -205,15 +213,52 @@ preview-shots/
 # Ride logs are large encrypted blobs and are never committed — decrypt them on the Mac with
 # scripts/decrypt-log.ts. The small text extracts beside them ARE tracked: docs/charge-auto.md and
 # docs/can-0x121-charge-command.md cite them as the provenance for #186's measurements.
+# The coordinator's per-id frame extracts: 70 MB for one boot of 0x101 alone. The small
+# excerpts docs/can-0x101.md points at are committed under evidence/x101/ instead — a
+# document's headline claim should be reproducible from the repo, and 70 MB of it is not.
+evidence/captures/
+# (The committed excerpts are `.txt`, like every other tracked file in evidence/ — the
+# global `*.log` rule above would otherwise swallow them.)
+
 evidence/*.celog
+# Trailing glob rather than `evidence/*.db`: a scratch DB opened read-write leaves `-shm`
+# and `-wal` siblings next to a file that was 1.98 GB here. `rides.db-shm`/`-wal` below are
+# enumerated one by one for that same reason; a glob covers the case without the list.
+evidence/*.db*
+
+# Bulk material pulled off the Pi for one investigation. Same rule as the ride logs
+# above: the raw thing is never committed and the DOC carries the extract — #214's
+# docs/vcu-reverse-and-backup.md quotes the audit record and the probe values it cites.
+# evidence/captures/ reached 115 MB of candump text in one night, which `git add -A`
+# will happily sweep into a public repo if nothing stops it.
+evidence/captures/
+evidence/service-writes.jsonl
+evidence/probes-*.txt
 
 # Recovered waypoints carry coordinates; this is a PUBLIC repo and docs/route-map.md
 # forbids them in committed files. scripts/recover-waypoints.ts writes outside the repo
 # by default, and this is the second line of defence for a --gpx that points inside it.
 *.gpx
 
+# Scratch databases decrypted from a .celog for one investigation — `scripts/decrypt-log.ts
+# --out evidence/scratch-<date>.db`. A full /dl dump rebuilds to ~2 GB of VIN, GPS and ride
+# history, and `evidence/` is a TRACKED directory, so without this the file sits one
+# `git add -A` away from a public repo. The -shm/-wal siblings are matched by the same glob
+# because SQLite in WAL mode leaves them behind whenever a reader exits uncleanly.
+evidence/*.db
+evidence/*.db-shm
+evidence/*.db-wal
+
 # Rendered route-map screenshots show exactly where the bike went — the same thing the
 # coordinate rule forbids in text, in a form that is harder to notice. Keep them local and
 # hand them over out of band; a map PNG in a public repo is a published GPS trace.
 evidence/*.png
 evidence/*.jpg
+
+# A .celog decrypted for one investigation, written by scripts/decrypt-log.ts --out evidence/… .
+# Large, and full of VIN/GPS — the same reason rides.db above is ignored. Trailing glob so the
+# WAL and shm files beside it are covered too. The throwaway scripts that read one go here as
+# well: tsconfig's include list reaches `*.ts` at the root but not this directory, so a scratch
+# replay parked here cannot break `npm run typecheck` the way one in the root does.
+evidence/*.db*
+evidence/*.ts

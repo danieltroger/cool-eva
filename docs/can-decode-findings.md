@@ -410,86 +410,17 @@ after    01 00 A0 80 00 00 10 01
 
 ⚠️ **This sentence used to say "the last transmit", full stop, and that is false.** The Pi transmits `0x7DF` OBD requests continuously — tens of thousands of frames in an ordinary capture on this bike (42 748 and 122 934 in two archive captures picked at random, against zero `0x7C0` in the same files). So the Pi **was** transmitting on the bus when the fault appeared; what it was not doing was KWP. The narrower claim is the true one and it is the one that should have been written, because this is an exculpatory statement about a fault on someone's motorcycle and the difference between "we were silent" and "we were doing the routine thing we always do" is exactly the difference that matters. Routine mode-01 polling has run for months across every capture in the archive without a blocking fault, which is the actual argument.
 
-### ⚠️ `0x101` is `VCU_VEHICLE_STS`, and the name was in this repo the whole time
+### `0x101` `VCU_VEHICLE_STS` — moved to its own document
 
-**Everything under this heading replaces a decode that was merged into `main` on 2026-09-08 and was wrong.** Two independent reviews plus an archive sweep of **15 006 844 `0x101` frames** — every capture in `~/Documents/cool-eva-archive` — took it apart. The correction is recorded in full rather than quietly rewritten, because how it went wrong is more useful than the answer.
+This frame's findings lived here from 2026-09-08 until 2026-09-14, when it was decoded and the section outgrew a subsection of this file. **They are now in [`docs/can-0x101.md`](can-0x101.md)**, in full and unpruned — including the refuted `floor(b0/20)*20` formula and the two refutations of mine that did not survive, which are the most useful prose in it.
 
-**It was never a decode problem.** The 2024 service-tool analysis in `obd-garage/`, §`0x101` `VCU_VEHICLE_STS`, names the frame and all eight of its signals:
-
-```
-0x101  VCU_VEHICLE_STS
-  b0        V_VEHICLE_SUBSTATE
-  b1        V_VEHICLE_STATE
-  b2        V_DRIVE_VSM
-  b3 &0x03  V_DRIVE_VSM       &0x04 V_LIMP_MODE_STATUS   &0x08 V_LIMP_RES_VALID
-  b4-5 LE   V_LIMP_PACK_RES   (short)
-  b6-7 LE   V_LIMP_MODULE_STS (short)
-```
-
-That file is in this repository. It was not consulted, and days of statistics went into re-deriving a worse version of a table already on disk. ⚠️ **Before analysing an unknown frame, grep `obd-garage/` for its id.** The inventory of "unmapped frames" is a list of frames nobody looked up, not a list of frames without names.
-
-#### ❌ The merged formula is false
-
-```
-b1 == floor(b0 / 20) * 20     claimed: 344 957 of 344 957 frames, zero exceptions
-                              actual:  1 992 exception frames archive-wide
-```
-
-Seven b0 values break it — `2, 3, 6, 9` (b1 = 1, predicted 0) and `143, 144, 150` (b1 = 40, 100, 40, predicted 140). It was measured over six captures that happened to contain none of them. ⚠️ **A counterexample was named two paragraphs above the claim**: the inventory line quoted b0 spanning `29-96`, and `0x96` is 150.
-
-A first correction offered in review — _"it holds wherever b0 < 128"_ — **is also false**: b0 = 2, 3, 6, 9 are all below 128 and all break it. Recorded because the near-miss fix is the tempting one.
-
-#### ✅ What actually holds
-
-b1 is a **state** and b0 its **substate**, so the arithmetic was a numbering convention misread as a computation. b1 takes exactly **six values in 15 million frames — `1, 20, 40, 60, 80, 100`** — and each owns a band of substates:
-
-| b1 (`V_VEHICLE_STATE`) | b0 seen in that band (`V_VEHICLE_SUBSTATE`)      |
-| ---------------------- | ------------------------------------------------ |
-| 1                      | 2, 3, 6, 9                                       |
-| 20                     | 20, 22, 23, 26, 28, 31, 32, 33, 34               |
-| 40                     | 41, 42, 43, 46, 47, 51, 52, 53, 59               |
-| 60                     | 62, 63                                           |
-| 80                     | 83                                               |
-| 100                    | 101, 102, 104, 105, 106, 107, 109, 110, 112, 113 |
-
-`floor(b0/20)*20` fits the middle of that table by coincidence of numbering and fails at both ends — at the bottom because state 1 is not state 0, at the top because **b1 is capped at 100 and b0 is not**.
-
-✅ **The out-of-band case has a clean rule of its own.** Whenever b0 has bit 7 set (143, 144, 150), b1 **holds its previous value** instead of following:
-
-```
-b0 >= 128:  b1 unchanged from the preceding frame     1 748 / 1 748 frames, zero exceptions
-```
-
-143 → 40 and 150 → 40 in a capture sitting in state 40; 144 → 100 in one sitting in state 100. A substate with bit 7 set does not belong to a state band at all — the state latches while it is present.
-
-#### ✅ Substate 83 is the blocking fault
-
-Aligned against `0x100` byte 3 bit 7 (`vcu_err_system_blocking_fault`) across the whole archive, last-seen alignment:
-
-```
-b0 = 83 while the blocking fault is set     194 947 frames
-b0 = 83 while it is clear                        40 frames  (0.02%)
-any other b0 while the fault is set               1 frame
-```
-
-**194 947 of 194 948 fault frames are substate 83**, and state 80 exists for essentially nothing else in 15 million frames. ⚠️ This section previously called that "three observations of it is not a decode" — a statement about the sample that had been looked at, which is the same error as the formula above, made twice in one section.
-
-#### ❌ Two of my own refutations did not survive
-
-- ❌ _"b0 is not SOC — `b0 == soc` in 0 of 230 620 samples, ranges disjoint."_ **Scoped far too widely from one capture.** In `capture-20260808-211445` the two are equal in 32 341 of 230 020 samples, r = +0.493. b0 is not SOC — it is a named substate — but the numbers offered as proof were an artefact of the capture chosen. The vendor name is the evidence; the statistics never were.
-- ⚠️ _"b0 correlates −0.57 with speed and rpm."_ The warning attached to it was right and is kept, but the figure is capture-specific: archive-wide it ranges **−0.387 to −0.87**. It is now explained rather than merely distrusted — substates encode drive states, and drive states co-occur with speed. A correlation between a state enumeration and a physical quantity measures the schedule of the states, not a relationship between them.
-
-#### ❌ b4 is not SOC either — it is `V_LIMP_PACK_RES`
-
-Checked because b4 moved 100 → 75 between two captures and looked like a percentage. It is not: across eight captures b4 sits **dead constant while SOC sweeps** — 75 through SOC 25→60 (1 775 661 frames), 85 through 63→89, 146 through 29→39 — and it exceeds 100, which SOC cannot. ⚠️ **And the "two exact-equality hits" figure that first appeared here was itself a subset claim** — the same error this section is about. Archive-wide `b4 == soc` in **231 691 of 15 006 589 aligned frames**, 155 391 of them in one capture (`capture-20260809-080235-cd40b535`) where b4 sweeps 75-129. Coincidental equality is _common_ for a byte that lives near the SOC range, which is exactly why equality counts are weak evidence in either direction and the constancy-while-SOC-sweeps test is the one that settles it. b4 takes 53 distinct values from 75 to 154 across the archive. 🟡 b5-7 are 0 in all 2 105 072 frames of the widest capture, so the `b4-5` short equals b4, and its 75-146 range sits in the plausible band for pack resistance (`docs/pack-resistance.md`). The b3 `4 → 0` on the fresh boot is `V_LIMP_MODE_STATUS` clearing — a flag, not a number.
-
-#### What is actually left open
-
-The **meanings** of the six states and their substates. The names give the structure, not the vocabulary: nothing yet says which state is "ready", which is "charging", or what separates substate 43 from 62. That wants a capture with deliberate, logged mode changes — key-on, drive, reverse, charge, fault — not more correlation against the archive.
+What is there now and was not here: the frame is decoded (`src/can/vehicle-status.ts`), `V_DRIVE_VSM` has a measured meaning, the drive-enable substate chain is enumerated, and the state words turn out to have been logged over BLE all along under `vehicle_state`/`vehicle_substate`.
 
 ## 0x102 — body, lights, vehicle state and attitude
 
 `src/can/decode.ts` (bytes 0-3) and `src/can/attitude.ts` (bytes 4-7). 100 Hz.
+
+> 🚨 **Read this before quoting a number from this section.** Much of what is below was measured over **1 103 000 frames in 14 captures**, and the archive is now **15 006 856 frames in 97 files** — 13.6× more. In three days of 2026-09 that difference falsified three claims that had shipped as settled: `V_DSB_CTRL` "never once clear" (it is clear in 279), `fast_dc_contactor` "set in exactly one interval in the whole corpus" (11 rising edges), and `cruise_active` "never moved otherwise" (35 rising edges). None of them was wrong when written. **A count here without its corpus beside it is not a measurement**, and the habit that keeps catching these is re-running the sweep rather than re-reading the sentence.
 
 ### Bytes 0 and 2: switches vs outputs
 
@@ -547,13 +478,13 @@ There was a third brake key. `brake` = `front_brake | rear_brake`, emitted by th
 
 ### Byte 1: vehicle state
 
-Everything in b1 comes from the `.xdbc` and matched a parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): `key_on` 1, `energized` / `go` / `go_request` / `ignition_button` / `throttle_on` 0, `stand_up` 0 (it is on the sidestand), `moving` 0, low beam on. The garage lap that afternoon then caught `energized`, `go_request`, `go`, `stand_up`, `ignition_button`, `throttle_on` and `moving` all toggling with the rider's actions, so those are confirmed against real transitions rather than one parked sample. ✅ `key_on` stayed 1 throughout both, so it rests on the parked sample alone — a key-off capture is what would confirm it.
+⚠️ Everything in b1 came from the `.xdbc` until 2026-09-14, when `horn_switch` (bit 0) was taken off Energica's own table; the rest of what follows is still the `.xdbc`'s and matched a parked bike on 2026-08-02 (`80 10 02 44 99 FF D8 FF`): `key_on` 1, `energized` / `go` / `go_request` / `ignition_button` / `throttle_on` 0, `stand_up` 0 (it is on the sidestand), `moving` 0, low beam on. The garage lap that afternoon then caught `energized`, `go_request`, `go`, `stand_up`, `ignition_button`, `throttle_on` and `moving` all toggling with the rider's actions, so those are confirmed against real transitions rather than one parked sample. ✅ `key_on` stayed 1 throughout both, so it rests on the parked sample alone — a key-off capture is what would confirm it.
 
 ### Byte 0's low bits — the left pod's momentary buttons
 
 Added 2026-08-16. These four are the ones Energica's free-frame table names `Left/Right/Enter Mode Switch` and `RST Switch`.
 
-Of the other two: **bit 6 is `high_beam`** (set in 137 of the 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture counts). **Bit 7 is the LOW BEAM SWITCH**, set in 50.64 % of frames — settled on 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000 frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. It gets no key of its own: `low_beam_lamp` already carries the same information and a third beam key earns nothing. Named here so the next person does not re-derive it.
+Of the other two: **bit 6 is `high_beam`** (set in 137 of the 1 103 000 frames — it is a flash-to-pass, which is what the dashboard's own gesture counts). **Bit 7 is the LOW BEAM SWITCH**, set in 50.64 % of frames — settled on 2026-08-16 by the byte-2 work above, since it agrees with b2 bit 1 in all 1 103 000 frames and Energica's own list pairs `V_LOW_BEAM_SW` with `V_LOW_BEAM`. ⚠️ **It got no key of its own until 2026-09-14**, on the argument that `low_beam_lamp` already carries the same information and a third beam key earns nothing. It has one now — `low_beam_switch` — and the reversal is argued in §"Byte 0's switches" above rather than here, because the decision recorded in this sentence was sound on what it knew.
 
 Evidence is 1 103 000 frames of 0x102 across the same 14 captures as 0x400. What makes these more than "the bit moves" is that the six low bits split cleanly into two behaviours, and the split is the one the owner's manual predicts:
 
@@ -605,7 +536,7 @@ Speed decays 87.9 → 83.6 km/h until 18:04:45.4, then climbs back and sits at 8
 
 That does not touch the decode, and it does not touch the 1200 ms threshold, which still clears the longest press by 4.1×. What it kills is the _argument_ that ENTER is inert while riding, which the fan gesture was originally justified with: the button is pressed at speed, so a gesture on it has to be harmless at speed by construction rather than by the rider never touching it. The manual's ">3 km/h exits the menu" is about the dash MENU, and says nothing about what else a press may do. What the rider is doing with it at 118 km/h is not known.
 
-#### bits 3 and 4 — the turn-indicator SWITCHES, left undecoded
+#### bits 3 and 4 — the turn-indicator SWITCHES (decoded 2026-09-14)
 
 Which side is which is no longer an open question, so it is written down.
 
@@ -625,7 +556,7 @@ The remaining 53 started nothing: 47 changed no lamp at all and 6 stopped one, w
 
 **Do not "fix" this from the third-party file** — that file was already caught calling the high beam `charging`.
 
-**They stay undecoded because nothing reads them:** the dashboard's buttons section was given the LAMPS (`blinker_left` / `blinker_right`, b2 bits 2/3) on 2026-08-19, since what a rider means by "is my indicator on" is the lamp and not the thumb. Two more keys would put four tiles on screen for two indicators. If something ever wants the switches — telling a failed bulb from a missed press is the obvious one — they are `bit(handlebar, 3)` for right and `bit(handlebar, 4)` for left, and the measurement above is the evidence.
+⚠️ **They stayed undecoded until 2026-09-14, because nothing read them:** the dashboard's buttons section was given the LAMPS (`blinker_left` / `blinker_right`, b2 bits 2/3) on 2026-08-19, since what a rider means by "is my indicator on" is the lamp and not the thumb. Two more keys would put four tiles on screen for two indicators. If something ever wants the switches — telling a failed bulb from a missed press is the obvious one — they are `bit(handlebar, 3)` for right and `bit(handlebar, 4)` for left, and the measurement above is the evidence.
 
 #### bit 5 — the indicator-cancel press
 
@@ -633,16 +564,75 @@ The remaining 53 started nothing: 47 changed no lamp at all and 6 stopped one, w
 
 ### Byte 3 — the fast-charge contactor monitor and cruise state
 
-Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was first decoded, which is true of a parked bike and false of a charging one: across the 14 captures it takes five values — 0x44 (88.4 %), 0x45 (9.4 %), 0x46 (1.2 %), 0x04 (1.0 %) and 0x06 (0.02 %). **Bit 2 is set in all five and is never once clear in 1 103 000 frames**, so it is left undecoded rather than logged as a constant 1. Bit 6 moves constantly and is not understood; bits 3, 4, 5 and 7 are never set.
+Added 2026-08-16. This byte was written off as "a constant 0x44" when 0x102 was first decoded, which is true of a parked bike and false of a charging one: across the 14 captures it takes five values — 0x44 (88.4 %), 0x45 (9.4 %), 0x46 (1.2 %), 0x04 (1.0 %) and 0x06 (0.02 %). 🚨 **Every clause of the sentence that stood here is now false, and it is replaced rather than patched.** It read: _"Bit 2 is set in all five and is never once clear in 1 103 000 frames, so it is left undecoded rather than logged as a constant 1. Bit 6 moves constantly and is not understood; bits 3, 4, 5 and 7 are never set."_ As of 2026-09-14: bit 2 is clear in **279** frames and **is** decoded (`dsb_control`); bit 6 is decoded (`mag_good`); bits 3, 4 and 7 are decoded (`imd_disable`, `winter_storage`, `vcu_abs_off`); and bit 5 is `lie_down_detected`, which #221 confirmed **set** when the bike fell over. **Every bit of this byte now has a key** — see §"The rest of byte 3" below for what each one's corpus does and does not show.
 
 **bit 0 — `V_FASTDC_MON_SW`**, the DC fast-charge contactor state monitor, and the analog wire `A020_FCHG_MON` it corresponds to. ✅ CONFIRMED, and it is the best-evidenced bit in that change:
 
-- Set in **EXACTLY ONE interval in the whole corpus** — 2026-08-04 19:58:45.489 → 20:16:03.587, 1038.1 s, which is 103 790 of the 1 103 000 frames. Zero everywhere else: all riding, all parking, all key-off.
+- Set in exactly one interval of the **14-capture** corpus — 2026-08-04 19:58:45.489 → 20:16:03.587, 1038.1 s, which is 103 790 of those 1 103 000 frames. ⚠️ "In the whole corpus" is what this line said until 2026-09-14 and it is a statement about that sample: archive-wide the bit is set in **1 512 726 frames with 11 rising edges**. The identification is unaffected — one DC session against zero AC ones is still the argument — but the count is not one.
 - That interval is a DC fast charge, from the pack's own frames: 0x200 shows current going from −0.1 A to +63.2 A within 4.6 s of the rise, and SOC climbing 30 % → 42 % over the window. No 0x305/0x306 appear at all, which is right — a DC charger bypasses the onboard AC charger that sends them.
 - **It leads the charge:** it rises 190 ms before `charger_enabled` (0x300 byte 0) and ~470 ms before the first positive pack amp. A contactor monitor should lead, because the contactor closes before anything can flow through it.
 - It reads 0 through **every AC charge in the corpus** — four separate sessions, one of them 48 minutes at 14 A mains. So it discriminates DC from AC rather than just meaning "plugged in", which is the whole reason to want it.
 
-**bit 1 — cruise control armed.** 🟡 Not in any vendor table; inferred here, and inferred from exactly two events, which is why it keeps the 🟡. Both are clean: it came up 0.525 s and 0.546 s after the only two presses of `btn_cruise_enable` on 0x400, held for 51.4 s and 82.3 s, and never moved otherwise. It is logged because it is the evidence for those two buttons — with this on the dashboard the owner can press cruise ON/OFF and watch the state follow, which is the check that would otherwise need a laptop and candump.
+**bit 1 — cruise control armed.** ✅ **CONFIRMED 2026-09-14 over the whole archive.** It was 🟡 until then, on two events.
+
+Every rising edge of this bit in 15 006 856 frames was paired against every rising edge of `btn_cruise_enable` (0x400 b2 bit 1):
+
+```
+btn_cruise_enable presses, archive-wide                              36
+0x102 b3 bit 1 rising edges                                          35
+…edges with a cruise press in the preceding 5 s                 35 of 35     100 %
+lag, every one of the 35                             0.513 – 0.574 s     median 0.538, spread 61 ms
+```
+
+35 of 35, a 61 ms spread on a half-second latency, and no unexplained onset anywhere. The two events this used to rest on reproduce inside it to the millisecond — `18:04:42.270496 → 0.525 s` and `19:45:47.924130 → 0.546 s`, against the 0.525 and 0.546 recorded here from a different pass months earlier. ⚠️ The **converse** is 35 of 36: one press is unaccounted for, and the pass cannot say which, because it counts presses without timestamping them.
+
+⚠️ **These 35 are distinct physical events, unlike most edge counts in this file.** The archive's overlapping captures inflate an edge count — 85 of 92 files carrying 0x102 overlap another — but these 35 edges sit behind **35 distinct press timestamps with no collisions**, and the pairing resets per file, so a duplicated capture would have shown as two edges sharing one press.
+
+🚨 **"Not in any vendor table" was FALSE.** The table names b3 bit 1 **`V_CHGSW_CTRL`** — and the name disagrees with the measurement. **The key keeps our name.** A charge-switch control does not wait half a second for a handlebar button 35 times running, and this repo's standing rule is that where a table contradicts something measured on this bike, ours wins — the rule that was learned when `charging` turned out to be the high beam. 🟡 Corroborating only: the bit is set in 0 of 275 879 frames where `fast_dc_contactor` is also set. ⚠️ That covers **DC only** — `fast_dc_contactor` reads 0 through every AC charge in the corpus — so it rules out a DC charge switch and says nothing about AC. **AC charging was not tested against this bit.**
+
+### The rest of byte 3, decoded 2026-09-14
+
+Every bit of the byte now has a key. `V_LIEDOWN_DETECTED` (bit 5) arrived with #221 and is above.
+
+| bit | vendor name        | key              | what the archive shows                              |
+| --- | ------------------ | ---------------- | --------------------------------------------------- |
+| 2   | `V_DSB_CTRL`       | `dsb_control`    | 🟡 clear in **279 of 15 006 856**, in two windows   |
+| 3   | `V_IMD_DISABLE`    | `imd_disable`    | 🟡 **never set**                                    |
+| 4   | `V_WINTER_STORAGE` | `winter_storage` | 🟡 **never set**                                    |
+| 6   | `V_MAG_GOOD`       | `mag_good`       | 🟡 set in 14 607 648 (97.34 %), 47 020 rising edges |
+| 7   | `V_ABSOFF`         | `vcu_abs_off`    | 🟡 **never set**                                    |
+
+⚠️ **"Never set" is an absence of the OCCASION, not evidence a bit is dead.** This bike has not been in winter storage, has had no insulation-monitor event and has never had ABS switched off while a capture ran. They are decoded ahead of the occasion, the way `src/can/vcu-flags.ts` decodes eleven never-fired VCU error bits, and their positions are the vendor's word and nothing more. `scripts/check-button-decode.ts` covers them with two ⚠️ SYNTHETIC frames — an all-bits one that pins they do not collide and that each emits `1` rather than the vendor's mask, and a one-bit-at-a-time one so `imd_disable` and `winter_storage` cannot be swapped. Those frames prove the decoder self-consistent and nothing about the bike.
+
+**🟡 `V_DSB_CTRL` is not the constant it was taken for.** Clear in exactly two contiguous windows:
+
+```
+2026-08-02 20:40:17.611 → 20:40:19.130   153 frames, 1.52 s   capture-20260802-203750-7ce067a7.log
+2026-08-09 21:25:27.908 → 21:25:29.158   126 frames, 1.25 s   capture-20260809-211759-1956320f.log
+```
+
+In both, 0x102 bytes 0-2 are all `00` — every lamp, switch and state bit dark. The second is a **DC charge start**: `fast_dc_contactor` rises **0.919 s** after the bit clears and the bit returns **0.330 s** later (`…44` → `40` → `41` → `45` → `44`). In the first, 0x101 reads state 1 / substate 3, the lowest state. A transient at a vehicle transition, characterised but not understood.
+
+**🟡 `V_MAG_GOOD` drops briefly, and almost only at speed.** The name is the table's; "MAG" is not obviously magnet, magnitude or magneto and nothing is guessed here. What is measured:
+
+|           | mean `speed_can_kmh` at the frame | frames                                  |
+| --------- | --------------------------------- | --------------------------------------- |
+| bit clear | **87.7 km/h**                     | 399 208 — of which 398 202 above 5 km/h |
+| bit set   | **18.1 km/h**                     | 14 607 623                              |
+
+Against 0x102's own `moving` bit: clear in **172 of 11 237 945** stopped frames (0.0015 %) and **399 036 of 3 768 911** moving ones (10.6 %). Clear runs are short — 9 719 of one frame, 6 942 of two, 704 of fifty or more. ⚠️ It is the most expensive key in this batch by two orders of magnitude: **94 137 rows, ~2 258 rows/h** of bike-on time, against ~60 rows/h for the other eight 0x102 bits together. A deadband cannot reduce it — `|1 − 0| > 1` is false, so any deadband on a flag stops it logging after the first sample — so the choice was include or exclude, and 47 020 edges are the whole reason to want it.
+
+### Byte 0's switches and byte 1 bit 0, decoded 2026-09-14
+
+**✅ `V_LOW_BEAM_SW` (b0 bit 7) → `low_beam_switch`.** Agrees with `low_beam_lamp` in **15 006 856 of 15 006 856 frames, zero disagreements** — the 1 103 000-frame claim below, extended 13.6×.
+
+⚠️ **This reverses a decision recorded below** (_"a third beam key earns nothing"_), which was taken with the vendor pairing already cited and is not overturned by new evidence about the split. Two things changed. This is not the case `scripts/check-derived-signals.ts` and the `brake` removal are about — that rule is for a key **our decoder computes** from another on the same frame, and nothing computes this one: b0 bit 7 and b2 bit 1 are two wires, read independently, and their perfect agreement is the **baseline a failed bulb shows against** rather than a reason to drop one. And the standing rule for the work that decoded the rest of this frame is that every signal that can be decoded should be.
+
+**✅ `V_R_TURN_SW` / `V_L_TURN_SW` (b0 bits 3/4) → `blinker_switch_right` / `blinker_switch_left`.** 10 039 and 6 673 frames, 464 and 361 rising edges archive-wide (an upper bound — overlapping captures inflate an edge count). 🚨 The side assignment is unchanged and now has a second witness: Energica's table names **bit 3** `V_R_TURN_SW`, agreeing with the 2026-08-19 rising-edge measurement and against the third-party file. They log in `controls`, not the `buttons` group, so the BUTTONS section keeps two tiles for two indicators.
+
+**🟡 `V_HORN_SW` (b1 bit 0) → `horn_switch`. Never set in 15 006 856 frames.**
+
+⚠️ **And the OUTPUT has never been seen set either.** `horn` (b2 bit 4) reads 0 in all 15 006 856 archive frames and in **all 213 rows** it has ever logged, across 128 sessions — one row per boot, which is what a signal nobody exercised looks like. So this is not a working half beside an unknown one; both are unexercised on record. The ✅ that b2 bit 4 carries comes from a 2026-06 bench session, and **nothing on disk predates 2026-08-02** — neither the candump archive nor `rides.db` — so an August-onward corpus cannot reproduce it and does not falsify it. The position is confirmed twice over (that session, and the table naming b2 bit 4 `V_HORN`); what is missing is any recent exercise of the circuit.
 
 ### Bytes 4-7 — the attitude sensor's two angles. NOT accelerations.
 
@@ -676,15 +666,175 @@ b6-7 LE int16 = pitch, Energica's AttitudeSensor_Thete.  Positive = nose-down, i
 
 **Why the out-of-range warning needs five consecutive frames.** A bare inequality would spend the warning on noise. This bike emits occasional junk samples on plenty of signals — `high_beam` reading 193, 0xFFFF cell voltages, −32767 GPS altitude, the whole reason `public/lib/bounds.js` exists — and one of those landing in b4-7 must not silence the diagnostic for the rest of the boot, because the thing it is there to catch (a frame layout change) arrives later and lasts forever. 0x102 is 100 Hz, so five frames is 50 ms: nothing a real layout change would survive, and far more than a single corrupted sample can fake. `pack-temperature.ts` guards its warnings the same way at 3, against frames that arrive at 1-20 Hz rather than 100. The journal line is rationed to once per axis per process for the same reason: at 100 Hz a layout change would otherwise fill the journal at 200 lines a second and push out whatever else went wrong at the same moment. The sample itself is dropped on every out-of-range frame regardless.
 
+### ✅ 2026-09-13: the bike fell over, which is the experiment nobody would run on purpose
+
+⚠️ **Every time in this subsection is UTC.** The Pi runs UTC; add your own offset.
+
+Everything above rests on angles under 20°. A fall at walking pace is the one event where the true roll is large and unambiguous, so it pins the axis assignment, the sign and the scale at a gross attitude instead of near zero. **Source for every figure below:** `~/Documents/cool-eva-route/data/ride-logs/cool-eva-2026-09-13.celog`, 322 317 980 bytes, a full `/dl` dump, decrypted with `scripts/decrypt-log.ts` to **39 258 150 readings from 21 255 segments** — 63 segments unreadable (one auth failure at byte 81 211 736, 14 bad-magic resyncs, all recovered past). The day itself is **3 709 811 readings across sessions 138-147**.
+
+#### What happened
+
+```
+16:21:50-57   roll ±5…20° at ~1 Hz, pitch −17…−45°   creeping at 1.5-4 km/h up a ~34 % gravel
+                                                      climb, front brake on, throttle 0
+16:21:57.911  roll  +45.3°   pitch −50.1°            first row past 45°
+16:21:58.130  roll +103.1°   pitch −39.2°            the highest roll the LOG holds
+16:21:58.142  roll +104.1°                              the true peak, one frame later (raw capture)
+16:21:58.4 →  roll  +70…72°  pitch −17…−20°          settled, and it stays there
+16:21:59.362  energized 1→0, go_request 1→0, go 1→0   the bike's own response kills the drive
+16:21:59.391  roll  +70.1°                            the last 0x102 frame of the session
+```
+
+The clock is trustworthy here: across the 50 s around the fall `gps_epoch_s` tracks the system clock to within 0.17-0.71 s, sawtoothing the way a whole-second fix reported late does.
+
+⚠️ **Two things a reader would reasonably assume, both false.** It was **not** at a standstill — `speed_can_kmh` read 4.0 km/h at the onset and 0.9 km/h by the time roll passed 57°. And the bike did **not** end up flat on its side: it rests at **+70.1°, not 90°**, because it landed on its panniers and the luggage held it off the ground. The settle angle is a property of what was strapped to the bike, not of the sensor, and a future fall compared against this one needs to know that.
+
+⚠️ **How long it lay there is NOT recoverable and is not claimed.** After 16:21:59.391 no 0x102-derived signal logs again in that session, and BMS rows keep arriving until 16:22:19, when the Pi lost power. 🚨 **An earlier version of this paragraph explained that silence as "the VCU stopped transmitting". The recovered capture falsifies it:** 0x102 keeps arriving at 100 Hz for the whole remaining 31 s of the capture, 5 998 frames in 60 s with no gap. The signals stopped being LOGGED because they stopped CHANGING by more than their deadband — the bike was lying still. Log-on-change silence is not bus silence, and reading it as bus silence is the same error `docs/vcu-parameters.md` §12 records under a different name. The next boot's first rows are stamped 16:20:27, _before_ the fall, because the Pi has no RTC and boots on a stale clock; GPS steps it at **seq 289 @ 16:20:32.090 → seq 290 @ 16:30:52.000**, a jump of 619 910 ms. Anything derived from those pre-step timestamps is fiction. What the next boot does say is that the bike was **upright again** by its first frame: roll +3.5°, pitch −1.2°, key on.
+
+#### 1. The axis assignment — and it does not need the fall
+
+Over the window these two keys exist, **2026-08-19 15:50:22 → 2026-09-13 19:24:33**:
+
+```
+attitude_roll_deg    1 120 961 rows   −170.3 … +174.2      22 rows beyond ±90
+attitude_pitch_deg   3 782 692 rows    −86.0 …  +85.4       0 rows beyond ±90
+```
+
+A pitch taken as the angle of one axis against the magnitude of the other two is bounded by ±90 **by construction**; a roll taken as an `atan2` of two is not. That asymmetry is the aerospace convention showing through 4.9 M samples, with no experiment at all. The fall then demonstrates the same thing directly: the axis that reaches 90° when the bike goes over is b4-5, and pitch never leaves ±52° across the whole event. Of the 22 roll rows beyond ±90 in the corpus, **seven are this fall** — and it is the only event in 1 120 961 rows where the angle crosses 45° and stays there. Every other one is a 40-60 ms wrap spike.
+
+✅ **A fifth witness, from the manufacturer's own FRAME database rather than its parameter list.** Everything above was reached through KWP parameter reads (A9 bank 2 ids 138/139). The 2024 service-tool analysis in `obd-garage/`, §`0x102` `VCU_DIGITALS` — 34 signals — ends verbatim with:
+
+```
+| V_PHI   | short | bytes 4..5 LE |
+| V_THETA | short | bytes 6..7 LE |
+```
+
+Two transports, two vendor artefacts, the same two fields at the same offsets, both **signed**. ⚠️ It settles the layout and the signedness and **nothing else**: the table gives no scale and no sign convention, and φ/θ is the aerospace convention for roll/pitch rather than a statement in the document. Which of the two is roll still rests on measurement — which is what the fall supplies.
+
+🔎 **And it probably explains the original error.** `0x105` `VCU_MODULES_STS` carries `X_ACCEL` and `Y_ACCEL` as shorts at **bytes 4..5 and 6..7** — the same offsets, one frame away. A rider-made `.xdbc` calling `0x102` b4-7 "accelerations in g" is exactly the mistake that layout invites.
+
+#### 2. The sign — three witnesses, two of them new
+
+- **The side stand.** Across **18 closed stand-down intervals on 2026-09-13** carrying roll rows, the median roll is negative in **17**. (A stricter rule that merges sessions by wall clock gives 15 of 16; sessions overlap in wall clock whenever one boots with a stale clock, and merging drags a concurrently-logging session's riding rows into the window, so the per-session count is the one published here.) The single exception is a **7-second** interval at 10:06:43 with 40 rows, median +4.0° — the rider still holding the bike. Negative is leaning left, the stand side, which is where the KWP gravity vector put it at −10.33°.
+- **The fall goes positive**, to +103.1°, and **the owner confirms the bike landed on its right side**. That makes the convention a measurement against a known event rather than a chain of inference.
+- **The corners, which need neither.** Over **373 steady corners** on 2026-09-13 — a corner being a `gps_course_deg` row whose next 6 s of rows accumulate ≥ 60° of heading change, sampled at 35 km/h or more, non-overlapping and taking the first match — the mean roll is **+0.24 ± 0.92° in the 181 right turns against −0.96 ± 0.92° in the 192 left turns — a 1.20° separation at 12.5 standard errors**, Pearson r(turn, mean roll) = 0.534. The residual leans the same way as the turn. ⚠️ **The COUNT is an artefact of that definition** — independent implementations of "a corner" over the same day give 265 and 380 — so read 373 as one estimator's bookkeeping. What survives every version is the separation, ~1.2° at ~12 standard errors, which is the claim. The turn direction is measured rather than assumed: `gps_course_deg` is degrees clockwise from true north, median residual **−0.4°** against the bearing between consecutive fixes, over the 616 pairs that survive one filter — consecutive logged `gps_lat`/`gps_lon` rows ≥ 8 m apart, ≤ 3 s apart, with a `gps_course_deg` row within 2 s — 95.9 % of them within 20°. ⚠️ That count moves a long way with the distance threshold (thousands of pairs at a looser one); the **−0.4° median is what does not**, which is the part being claimed.
+
+⚠️ **That same measurement is the sharpest statement of how little cornering shows.** 1.20° between hard left and hard right, where a true lean angle would separate them by 60-90°.
+
+#### 3. The scale, against an independent physical quantity
+
+A gravity-referenced pitch under longitudinal acceleration reads `atan(−a/g)`. Differentiating `speed_can_kmh` and regressing the window-mean pitch on it over 2026-09-13:
+
+```
+window   n       slope    r       intercept
+ 500 ms  4 138   0.883   0.799    −4.58°
+1000 ms  4 853   0.988   0.863    −4.43°
+2000 ms  4 880   1.013   0.868    −4.32°
+4000 ms  4 880   1.004   0.828    −4.18°
+```
+
+**The estimator is named on purpose**, because the slope is partly a property of it: window-mean pitch against a two-point speed difference. Other samplers give a wider spread. ⚠️ **And the reference is biased**: `speed_can_kmh` reads **~3.5 % high** and is exactly `motor_rpm_can / 42.0` (see below), which pushes the true slope _up_ by about that much. So this is **0.1°/count confirmed at the few-percent level across the real dynamic range** — corroboration at large angle, not a precision measurement. The arctangent-lattice fit above already pins the scale to 0.7 % and remains the tighter number.
+
+🟡 **The intercept is the new fact.** It sits at **−4.2° to −4.6°** whatever the window here, and independent implementations put it between −3.9° and −4.6°, so the honest figure is **about −4°**. What matters is that it is a constant offset rather than noise — it barely moves across window lengths or implementations — most plausibly the sensor's mounting rake. It is why a level bike does not read 0.0° pitch. It is deliberately **not** corrected in the decoder: this log stores what the bike said, and a calibration fitted to one day's regression belongs in this paragraph rather than inside a pure decoder where every future reader would have to unpick it.
+
+#### 4. What the ±1800 guard is, and is not, evidence of
+
+⚠️ **"No logged row lies outside ±180°" is a tautology and is not offered as evidence** — `src/can/attitude.ts` drops such counts before anything reaches the log, so the statement is about the decoder, not the bike.
+
+✅ **The non-circular version exists, because the old keys were logged with no guard at all.** `accel_lateral_raw` and `accel_frontal_raw` ran from 2026-08-02 with no range check in the path, and their extremes across **689 + 15 039 = 15 728 rows** are **−1703 and +797** — inside ±1800 without anything enforcing it. `accel_lateral_raw`'s −1703 is the same wrap value the new key reaches at −170.3°, six weeks apart under a different name.
+
+⚠️ **15 728 does not match the 15 455 this document and `src/can/registry.ts` both state for the pair**, and no candidate cut reproduces 15 455 (127 of the rows carry the bogus 2060 clock; excluding them, or the pre-rename window, or the 2060 rows only, gives none of them). The figure is recorded as **unexplained** rather than corrected — it may count a different corpus, and asserting which would be a guess.
+
+🔎 **The band is genuinely reachable, which is why it must not be tightened.** The cleanest wrap in the corpus is 2026-09-13 15:02:18.723-.784 at 63.9 km/h: roll −7.5 → −165.9 → **−170.3** → −135.3 while pitch simultaneously swings −70.6 → +70.1, and both are back inside ±3° / ±30° within 60 ms. The rider chopped the throttle from 9.8 % to 0 across it. That co-witnessed double swing is what an `atan2` does when an impact drives the measured vertical through the horizontal plane, and it is only expressible at all because the field is an angle scaled at 0.1°.
+
+#### 5. ✅ `V_LIEDOWN_DETECTED` — the VCU knew it had fallen, 551 ms before it cut the drive
+
+The Pi's own `candump` of that boot was recovered on 2026-09-14 (`capture-20260913-180503-2b9d0f5b.log`, session 143's boot, 18:05:10-18:22:38 in the Pi's local rendering; the 60 s around the fall are kept in `evidence/`, gitignored — **80 357 frames, 5 998 of them 0x102**). ⚠️ `candump -tA` formats with `localtime()`, so the file renders UTC+2; the underlying epoch is the same, and every time below is UTC.
+
+`0x102` b3 bit 5 has **exactly one transition in the whole 60 s window**, and never clears again:
+
+```
+16:21:57.911Z   roll crosses +45°                      b3 = 0x04   bit5 = 0
+16:21:58.142Z   roll peaks at +104.1°                  b3 = 0x04   bit5 = 0
+16:21:58.811Z   V_LIEDOWN_DETECTED  0 → 1              b3 = 0x64   bit5 = 1   ← +0.669 s after the peak
+16:21:59.362Z   energized, go_request, go  all 1 → 0               ← +0.551 s after that
+```
+
+Set in **3 118 of 5 998** frames, all of them after that single edge. ✅ **Two things make this an identification rather than a name.** It **leads the drive shutdown by 551 ms** — the same argument `fast_dc_contactor` rests on, that a monitor has to precede what it monitors. And it is **not a restatement of the attitude pair**: at the roll peak, 681 ms earlier and 104° over, the bit is still clear, so it is a debounced decision rather than a threshold on `V_PHI`.
+
+🔎 **The other three "never set" bits in that byte really are never set, even here.** Across all 5 998 frames: bit 3 `V_IMD_DISABLE` 0, bit 4 `V_WINTER_STORAGE` 0, bit 7 `V_ABSOFF` 0. Bit 2 `V_DSB_CTRL` is set in all 5 998 (as in the 1 103 000 archived frames), and bit 6 `V_MAG_GOOD` in 4 718 — "moves constantly", confirmed. So the old comment was right about three bits and wrong about the one the corpus had no occasion for.
+
+#### 6. What the raw capture settles about `reverse_gear`, from the wire
+
+The same window carries 5 998 frames of `0x104`, so `V_SPD_DIR` can be read directly instead of through log-on-change. Across 16:21:53.2-16:21:58.5Z it is set in **517 of 529 frames** (that window is rounded to tenths for legibility; the run below is the exact edge pair), and the sustained run is on the wire:
+
+```
+16:21:52.879Z → 16:21:52.899Z   0.020 s
+16:21:53.289Z → 16:21:58.440Z   5.151 s   ← the slide
+16:21:58.471Z → 16:21:58.491Z   0.020 s
+16:21:58.531Z → 16:21:58.551Z   0.020 s
+16:21:58.581Z → 16:21:58.611Z   0.030 s
+```
+
+The decoded ride log put that sustained run at 5.158 s; the raw frames put it at **5.151 s** — agreement to 7 ms, the difference being the log's last-frame-before-change against the capture's exact edge. **A 5.151-second continuous assertion is not a ~10 ms pulse**, and this is now established from the bus rather than inferred from a log. The 20-30 ms runs either side are the comparator chatter the same window shows.
+
+#### 7. What this changed in the code
+
+`public/lib/bounds.js` gained `attitude_roll_deg` and `attitude_pitch_deg` at ±180 and `gps_course_deg` at 0…360. All three had been **completely ungated**: the unit `"°"` has no `BY_UNIT` rule (seven signals carry it across four natural ranges, so a union would gate nothing), `imu` and `gps` are not `BOOLEAN_GROUPS`, and neither was named in `BY_KEY`. The two attitude bands are decorative — the decoder drops out-of-range counts first — and `scripts/check-attitude.ts` asserts they equal `attitude.ts`'s own `MAX_DECIDEGREES ÷ 10` so the two cannot drift. `gps_course_deg` is the one that fires: the field is 9 bits, and **3 of 105 118 rows read past 360, the highest 442.0** — two of those on 2026-08-08 and one at 366.0 on 2026-09-13 itself, which is 1 of that day's 12 771 rows. ⚠️ The denominator is the WHOLE dump, not the day; the file is named for the day it was pulled but carries every day back to 2026-08-02.
+
 ---
 
 ## 0x104 — odometer / speed / rpm
 
 `src/can/decode.ts`. LE and not byte-aligned, at 100 Hz.
 
-### 🟡 `reverse_gear` (bit 63) — a PULSE not a level, and it is probably not "reverse"
+⚠️ **The key `reverse_gear` was renamed `rolling_backwards` on 2026-09-14 (#216).** Everything the section below measures still holds — only the name moved, for the reason the section itself establishes: it is not a gear. Old rows are correct readings under the wrong name and Grafana reads both keys together, the same way the beam-lamp and attitude renames were handled.
 
-⚠️ **This section was written as ✅ and it should not have been. It also failed to cite `docs/vcu-parameters.md` §12, which had already settled the same question three weeks earlier on a far larger sample — and reached a different conclusion.** §12 stands; this section defers to it. What survives here is the pulse shape, not the meaning.
+### ✅ The field boundaries, re-cut 2026-09-14 — and no logged value moved
+
+The layout was `odometer u32 · speed u13 at bit 32 · rpm u15 at bit 45 ×1 · a "u3 at bits 60-62" · bit 63`. Three of those are wrong, and the manufacturer's own frame database says so — it gives `0x104 VCU_SPEEDODO` exactly four signals: `V_ODOMETER` (bytes 0-3), `V_REAL_SPEED` (bytes 4-5), `V_TACHO_OUT` (byte 7 mask 0x40) and `V_SPD_DIR` (byte 7 mask 0x80). The corrected cut:
+
+| bits  | field                                 | key                 |
+| ----- | ------------------------------------- | ------------------- |
+| 0-31  | odometer, u32 ÷10                     | `odometer_can_km`   |
+| 32-46 | speed, **u15** ÷10                    | `speed_can_kmh`     |
+| 47-61 | motor rpm, **u15 at 4 rpm per count** | `motor_rpm_can`     |
+| 62    | `V_TACHO_OUT`, a distance pulse       | `odometer_pulse`    |
+| 63    | `V_SPD_DIR`                           | `rolling_backwards` |
+
+🔥 **The values did not change, and that is a measurement rather than an argument.** `bitFieldLe(data, 45, 15)` evaluates to `4 × (the real field truncated to 13 bits)`, which equals the true rpm while speed stays under 819.1 km/h and rpm under 32 768 — the bits between the two fields are always zero. Replayed over all **681 458** frames of `capture-20260809-080235`: **zero disagreements**. So `motor_rpm_can` has no discontinuity and its six weeks of history stay comparable, which is why this is a boundary fix and not a migration.
+
+**What pins the 4-rpm scale, in one frame.** `0C AC 02 00 AD 03 EE 41` at 94.1 km/h: the rpm field reads 988, and the inverter's own `D_MOTOR_SPD` on `0x025` read exactly **3952** at that instant — 988 × 4. That frame is a replay case in `scripts/check-can-decoders.ts`, alongside the two below.
+
+**Why the old "u3 at bits 60-62" looked constant at 4.** Bits 60 and 61 are the rpm field's top two bits and cannot be set by any real rpm — they would need ≥ 32 768 — so only bit 62 ever moves in that window, and a 3-bit read of it lands on 4. Across 681 458 frames byte 7 only ever takes `00 01 02 03 40 41 42 43 80 C0`.
+
+### ✅ Bit 62 is a distance pulse, not a flag
+
+`V_TACHO_OUT` fires **one pulse per 0.1 km of indicated travel**: **1371 of 1373 gaps between rising edges are exactly one odometer count**, i.e. 100 m, across 1373 gaps from 49 to 152 km/h. That is the classic vehicle-speed-output line a tachograph or an aftermarket accessory would tap. Logged as `odometer_pulse` with no deadband, because a 0/1 flag with a deadband ≥ 1 logs once at boot and then silently never again.
+
+### ✅ Why bit 63 chatters — the mechanism, from the A8 firmware
+
+The bit is written at **A8 `0x0000C924`**, in the packer for the frame A8 itself transmits (`0x104` is a TX entry in A8's message-object table at `0x00028828`; neither of A9's two tables carries it at all):
+
+```
+ldrsh.w r0, [0x20000174]   ; the signed speed; 0x025's D_MOTOR_SPD scaled, only the SIGN is direct
+cmp     r0, #0
+bge     clear              ; not negative -> clear bit 63
+ldrb    r0, [0x20001240+0x1e]
+cmp     r0, #1
+bne     clear              ; inside the deadband -> clear bit 63
+...                        ; else set bit 7 of payload byte 7
+```
+
+So **bit 63 = (signed motor speed < 0) AND (|speed| past a ±500-count deadband)** — ⚠️ those counts are the VCU's internal speed unit of **0.001 km/h**, so the threshold is **±0.5 km/h**, not 500 of anything on the wire; the measured flip sits at 4-5 counts of the frame's own 0.1 km/h speed field, the deadband computed at `0x00012F1C`-`0x00012FFC` (`cmp #0x1F4` / `cmn #0x1F4`). ⚠️ **The comparator has no hysteresis.** That is the whole explanation for the chatter: at 0.3-0.7 km/h the speed crosses the 0.5 km/h threshold at bus rate, and the bit follows it at 100 Hz while the direction never changes at all.
+
+Verified against the capture: of **4024** frames with bit 63 set, **4024** have a negative `D_MOTOR_SPD`; of 474 193 frames with it clear while moving, **none** do. The 2840 remaining negative-speed frames are exactly the ones inside the deadband. The threshold is a step at speed field 5 with zero exceptions in 6864 reverse-moving frames — and that 0.5 km/h floor is the same one the archive sweep below measured without knowing why.
+
+### 🟡 `reverse_gear` (bit 63) — Energica's `V_SPD_DIR`, a comparator on speed direction
+
+⚠️ **This section was written as ✅ and it should not have been. It also failed to cite `docs/vcu-parameters.md` §12, which had already settled the same question three weeks earlier on a far larger sample — and reached a different conclusion.** §12 stands; this section defers to it.
+
+⚠️ **Corrected again 2026-09-14: the pulse shape did NOT survive either.** This heading used to read _"a PULSE not a level, and it is probably not 'reverse'"_. The second half was already right and is now confirmed by the manufacturer's own frame table; the first half is wrong, and the measurement that refutes it is below. What survives from the 2026-09-08 experiment is two frames, not a general shape.
 
 Measured 2026-09-08 with the bike connected, reverse selected deliberately twice:
 
@@ -695,7 +845,28 @@ Measured 2026-09-08 with the bike connected, reverse selected deliberately twice
 14:37:05.174  b7 0xC0 → 0x40   bit63=0    (10 ms)
 ```
 
-✅ **What is solid:** the bit fires as a ~10 ms pulse, twice, on the two occasions reverse was touched. Decoded as a level (`bitFieldLe(data, 63, 1)`), a consumer that samples rather than watches every frame will essentially never see it. That much is real and is why the dashboard cannot render reverse from this signal.
+❌ **"The bit fires as a ~10 ms pulse … a consumer that samples rather than watches every frame will essentially never see it. That much is real."** ⚠️ **It is not, and this sentence stood as a ✅ for six days.** Refuted 2026-09-14 against the decoded ride log of 2026-09-13 (`cool-eva-2026-09-13.celog`, a full `/dl` dump; the day holds 3 709 811 readings over sessions 138-147). The bit is asserted **241** times that day. It is a **comparator output, not a pulse** — the short assertions are chatter, and a third of a minute is also within its range:
+
+```
+240 clock-clean assertions (1 discarded, below)
+  HIGH runs   median  30 ms   p25  20   p75 160   171 of 240 ≤ 100 ms
+  LOW  runs   median  40 ms   p25  20   p75 690   147 of 233 ≤ 100 ms
+  33 of 240 runs last ≥ 1 s; the longest is 17.930 s (14:50:31.885 → 14:50:49.815)
+```
+
+A 1 Hz sampler would have seen that longest one set on seventeen consecutive samples. So the pulse SHAPE is the common case rather than the rule, and the consequence drawn from it — that a sampling consumer cannot see the bit — does not hold.
+
+✅ **And it now has a name and a mechanism.** The 2024 service-tool analysis in `obd-garage/`, §`0x104` `VCU_SPEEDODO`, gives the field verbatim as `V_SPD_DIR | byte | byte 7 mask 0x80 >>7` — which is bit 63 exactly, the bit `src/can/decode.ts` emits as `reverse_gear`. **Energica calls it speed direction.** The key name is therefore wrong: it is not a gear. It is left alone here rather than renamed, because a rename is a history migration (the `accel_*_raw` and `charging` precedents) and belongs in its own change.
+
+✅ **Reported by #216 and since verified against the A8 image and a second reviewer (2026-09-14):** a firmware read of the A8, over 681 458 raw `0x104` frames, gives the bit as `(signed D_MOTOR_SPD from 0x025 < 0)` gated by a **±500-count (~0.5 km/h) deadband with no hysteresis**. That is attributed rather than reproduced — this document has not read that firmware, and CLAUDE.md's rule is to cite source you have read.
+
+✅ **What this corpus does independently corroborate** is the consequence, which is a sharper test than it sounds. A hysteresis-free comparator on a bike creeping across ±0.5 km/h at 100 Hz predicts short runs in _both_ directions; #216 predicts median 30 ms high and 50 ms low from the firmware; the table above, measured from the ride log with no knowledge of that, gives **30 ms and 40 ms**. It also explains the two numbers this document could not: the rising edges cluster at walking pace because the threshold is at walking pace — median `speed_can_kmh` **0.3 km/h**, p95 0.9, max **1.2**, and **0 of 240 above 4.5** — which reproduces §12's median 0.4 / p95 0.7 / never-above-4.1 on a seventh day and a corpus neither earlier analysis used. It strengthens to a form neither had: **never above 4.9 km/h at any moment while set**, not merely at the rise.
+
+⚠️ **The polarity is still not established from anything in this repo.** The vendor table names the field and gives no sense; `speed_can_kmh` and `motor_rpm_can` are both unsigned, so no witness in the ride log can tell "travelling backwards" from "travelling forwards" directly. #216's firmware condition implies 1 = reverse, and the observed confinement to ≤ 4.9 km/h is consistent with it, but consistency is not a measurement of direction.
+
+🔎 **One genuine sustained assertion is worth recording on its own.** On 2026-09-13 the bike was ridden at ~3 km/h up a ~34 % gravel climb, lost rear traction (13 `tc_event` rises in 8.0 s), stopped, and slid back down with the front brake held at a median 29 bar before going onto its right side. `reverse_gear` was asserted **16:21:53.289 → 16:21:58.447, 5.158 s** — rising 180 ms _before_ the brake went on and clearing as the bike hit the ground, spanning the whole 2.63 m the rear wheel rotated. The owner's account of the event is that he slid backwards. That is one of the 33 long runs, it is clock-clean, and it is the cleanest sustained-reverse sample in the corpus; it is **one event**, and is recorded as such rather than as proof of the polarity.
+
+⚠️⚠️ **A DURATION FROM A RIDE LOG IS NOT A DURATION UNTIL YOU HAVE CHECKED FOR A CLOCK STEP, and this section nearly shipped the opposite conclusion because of it.** The first pass at these numbers found a **4 673.8 s** assertion apparently spanning riding at up to 86.8 km/h, and read it as refuting the rollback interpretation outright. It is an artefact. The Pi has no RTC and `gps/clock.ts` steps the wall clock when satellite time disagrees: in session 147 the Pi booted ~78 minutes slow, `gps_epoch_s` reads 4 671 137 ms _ahead_ of the system clock at seq 1110, the clock steps **+4 671.0 s at seq 1317**, and the rise (seq 822) and fall (seq 1363) sit on opposite sides of it. The true elapsed time is a couple of seconds. The 86.8 km/h was contaminated the same way — the query selected speed rows by `ts` range, which swept in a _concurrently logging_ session's rows from a different part of the ride. **Rule for anyone mining these logs: `reading.ts` is wall clock. Walk a session by `seq`, mark every `ts` discontinuity, and discard any interval that spans one — or compare `gps_epoch_s − ts` and watch it jump.** This is CLAUDE.md's `monotonicNow()` rule appearing in analysis rather than in code, and it costs a conclusion rather than a timeout.
 
 #### ❌ Three things this section claimed that do not hold
 
@@ -737,7 +908,7 @@ The 2026-09-08 pulses fit that reading exactly rather than contradicting it. Bot
 
 ⚠️ **This experiment cannot separate the two readings, by construction.** Engaging reverse is what turns the wheel backwards, so "reverse was selected" and "the wheel rotated backwards" happened at the same instant both times. A test that discriminates has to produce one without the other — roll the bike backwards in neutral (rollback, no reverse selected), or select reverse with the wheel held still.
 
-**What this leaves open:** whether a consumer should latch the pulse is a design decision, not a decode one, and is deliberately not made here. `reverse_gear` has three consumers — `EXCLUDED_FROM_GATE` in `src/vcu/service-gate.ts`, `grafana/dashboards/ride-summary.json`, and §12 — and §12 already excludes it from the safety gate _because_ it is a short pulse, so nothing safety-bearing depends on the wrong name. The **doc** needed fixing, not the code.
+**What this leaves open:** whether a consumer should latch the pulse is a design decision, not a decode one, and is deliberately not made here. ⚠️ Written before the rename; the key is `rolling_backwards` now and the Grafana lane reads both. It has three consumers — `EXCLUDED_FROM_GATE` in `src/vcu/service-gate.ts`, `grafana/dashboards/ride-summary.json`, and §12 — and §12 already excludes it from the safety gate _because_ it is a short pulse, so nothing safety-bearing depends on the wrong name. The **doc** needed fixing, not the code.
 
 **The odometer is the solid part:** `8D 99 02 00 …` → 170381 × 0.1 = 17038.1 km. ✅ It gets its own key rather than overwriting the BLE hub's `odometer_km`, because the bike publishes three odometer-ish numbers and they do not all agree. Read within the same minute on 2026-08-02, parked: CAN 17038.1 km · BLE `odometer_km` 17038 km · OBD PID 31 `dist_since_clear_km` 17042 km. So CAN and BLE agree to within their resolution and PID 31 sits 4 km above both — which is what you'd expect, since PID 31 counts distance since the last DTC clear rather than lifetime distance, and evidently started from a non-zero odometer. Keeping them as separate signals means a ride can settle it; merging them would just make one value flap between writers.
 
@@ -748,9 +919,9 @@ The 2026-09-08 pulses fit that reading exactly rather than contradicting it. Bot
 67 00 36 00 → speed 103 → 10.3 km/h (OBD PID 0D: 10)   rpm 432 (PID 0C: 427)
 ```
 
-Both track their PIDs to within ~1-2 % across the lap, which fixes speed as a **u13 at bit 32** and rpm as a **u15 at bit 45**. rpm's start bit in particular is pinned to the bit: 44 would decode 800/864 and 46 would decode 200/216 against a PID reading 411/427, so only 45 reproduces it. The reverse bit is real as well: b7 = 0x80 on 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits 60-62. So the `.xdbc`'s own C fragment (`data[4] | (data[5] << 7)` — a shift of 7, not 8) is the thing that doesn't reconcile, not the normalised layout used here.
+Both track their PIDs to within ~1-2 % across the lap, which fixed speed as a **u13 at bit 32** and rpm as a **u15 at bit 45**. ⚠️ **Both were re-cut by #216** to a u15 at bit 32 and a u15 at bit 47 × 4 — the numbers below are unaffected, because the two cuts agree on every frame the bike can produce, but the widths and the rpm start bit stated in this subsection are the old ones. The current layout is at the top of this section. rpm's start bit in particular is pinned to the bit: 44 would decode 800/864 and 46 would decode 200/216 against a PID reading 411/427, so only 45 reproduces it. The reverse bit is real as well: b7 = 0x80 on 1122 frames, with 0x40 on another 406 belonging to the tachometer field at bits 60-62. So the `.xdbc`'s own C fragment (`data[4] | (data[5] << 7)` — a shift of 7, not 8) is the thing that doesn't reconcile, not the normalised layout used here.
 
-**The lap only reached ~10 km/h / ~430 rpm**, so the top of both fields was never exercised — but that residual announces itself instead of hiding. 200 km/h needs 11 of speed's 13 bits and 11 000 rpm needs 14 of rpm's 15, so bits 43/44 and 59 can never be set by the quantity itself. If something else lives there the value is impossible rather than plausible: speed jumps by 204.8 or 409.6 km/h, rpm by 16 384. Seeing either is the signal that the field is narrower than assumed.
+**The lap only reached ~10 km/h / ~430 rpm**, so the top of both fields was never exercised — but that residual announces itself instead of hiding. 200 km/h needs 11 of speed's bits and 11 000 rpm needs 12 of the re-cut rpm field's 15, so bits 43/44 and 59 can never be set by the quantity itself. If something else lives there the value is impossible rather than plausible: speed jumps by 204.8 or 409.6 km/h, rpm by 16 384. Seeing either is the signal that the field is narrower than assumed.
 
 ⚠️ **The bit layout is right; the NUMBER is the bike's, and the bike's is optimistic.** Against GPS over two 2026-08-04 road captures, `speed_can_kmh` reads +3.5 % and the odometer accumulates +3.4 % — about +3.4 km/h at an indicated 100. `speed_can_kmh` is exactly `motor_rpm_can` / 42.0, so it is geared driveline speed and not a wheel measurement, whatever the dashboard labels it. Full working in [the dash over-read](#the-dash-over-reads-and-by-how-much); **do not re-derive it against 0x104 itself, which is how the ABS scale went wrong.**
 

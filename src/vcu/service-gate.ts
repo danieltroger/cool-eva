@@ -314,8 +314,9 @@ const RULES: ServiceGateRule[] = [
  *
  * ⚠️ Most of them are traps, several are things a brief would reasonably suggest, and the
  * reasons they do not work are not obvious — so read docs/vcu-parameters.md §12 before
- * adding one. In brief: `reverse_gear` is not a latched gear selection but 30 ms bus-rate
- * chatter at walking pace; `stand_up` is excluded on MEANING, since a bike on a workshop
+ * adding one. In brief: `rolling_backwards` (which shipped as `reverse_gear`) is not a latched gear
+ * selection but 30 ms bus-rate chatter at walking pace, because the firmware comparator
+ * behind it has no hysteresis; `stand_up` is excluded on MEANING, since a bike on a workshop
  * lift reads 1 and that is precisely the situation service mode is for; `key_on` has never
  * been observed as anything but 1, and a check never seen to fail is not a check;
  * `throttle_pct`'s 🟡 ÷10 scale could refuse every sweep for ever; 0x101 b0/b1 is a
@@ -325,7 +326,7 @@ const RULES: ServiceGateRule[] = [
  * state — nothing on this bus broadcasts HV-live at all.
  */
 const EXCLUDED_FROM_GATE = [
-  "reverse_gear",
+  "rolling_backwards",
   "stand_up",
   "key_on",
   "throttle_pct",

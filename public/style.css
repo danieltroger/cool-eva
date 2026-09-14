@@ -845,6 +845,19 @@ body {
   color: var(--warn);
 }
 
+/* A caution may carry more than one argument against pressing — the Clear button gains a
+   second one when the gate sees a cable in the inlet. Separated rather than run together:
+   as one block it read as "…come straight back. ⚠️ The charge manager reports…", two
+   warnings sharing a sentence, which is how the more urgent of the two gets skipped.
+
+   The "erased nothing" verdict uses .action-note.failure and the .no-undo badge rather than a
+   fourth set of red numbers: --bad and --warn are the closest adjacent pair in this ramp
+   (check-theme-contrast.ts's SEPARATION_FLOOR is set at 15 and that pair is what holds it
+   there), so a red line among amber ones has to carry its severity in weight, not in hue. */
+.caution-paragraph + .caution-paragraph {
+  margin-top: 0.6em;
+}
+
 /* Machine output — git's, from the Update button — rather than prose we wrote.
    pre-wrap because a pull's summary is multi-line and CSS would otherwise collapse
    `Updating a1b2..c3d4 / Fast-forward / src/… | 3 +-` into one run-on sentence.

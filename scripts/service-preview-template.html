@@ -775,13 +775,41 @@
           };
         }
         if (action === "clear-dtcs") {
-          record({ action: "clear-dtcs", status: "cleared" });
+          // ⚠️ The 2026-09-13 press, verbatim: 46 stored before, 5 after, PID 31 19 671 km → 0.
+          // Round invented numbers would let the sentence and the counters be screenshotted
+          // disagreeing, which is the one thing this card exists to prevent. `?clear=nothing` is
+          // the 2026-08-08 / 2026-09-11 shape — a positive 44 with PID 31 unmoved. `?clear=retry`
+          // is the commonest third: pressing again a minute later, when PID 31 already reads 0
+          // and so cannot prove anything either way.
+          const ending = new URLSearchParams(window.location.search).get("clear");
+          const erasedNothing = ending === "nothing";
+          const retry = ending === "retry";
+          const clear = {
+            storedBefore: retry ? 5 : 46,
+            storedAfter: erasedNothing ? 46 : 5,
+            distSinceClearBeforeKm: retry ? 0 : 19671,
+            distSinceClearAfterKm: erasedNothing ? 19671 : 0,
+            listedAfter: erasedNothing ? null : 5,
+            verdict: erasedNothing ? "erased-nothing" : retry ? "unproven" : "erased",
+          };
+          // Derived from `clear`, not written out: a hardcoded "46 stored" put a journal line
+          // beside `?clear=retry`'s counters that contradicted them.
+          record({
+            action: "clear-dtcs",
+            status: "cleared",
+            before: `${clear.storedBefore} stored, ${clear.distSinceClearBeforeKm} km since clear`,
+            after: `${clear.storedAfter} stored, ${clear.distSinceClearAfterKm} km since clear`,
+          });
           return {
             action: "clear-dtcs",
             status: "cleared",
-            message:
-              "Mode 04 accepted. The stored list is gone; codes whose faults are still active will come back on the next drive cycle. Read the list again to see what remains.",
-            succeeded: true,
+            message: erasedNothing
+              ? "⚠️ Mode 04 was accepted AND THE BIKE ERASED NOTHING: distance since codes cleared still reads 19671 km, which a real clear resets to zero within half a second. This has happened twice before, both times with a cable or a charge involved."
+              : retry
+                ? "Mode 04 accepted, but nothing here proves the bike acted on it — a positive answer alone has twice meant nothing on this bike. The list now holds 5. Distance since codes cleared already read 0 km before the press, so it cannot show a reset. Ride, then read the Faults tab."
+                : "Cleared: 46 stored → 5 stored, 41 cleared. Distance since codes cleared went 19671 km → 0 km, which is the proof the bike really erased its fault memory. The list now holds 5. Codes whose faults are still active come straight back.",
+            succeeded: !erasedNothing,
+            clear,
           };
         }
         if (action === "sync-clock") {

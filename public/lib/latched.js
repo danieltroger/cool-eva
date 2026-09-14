@@ -38,7 +38,21 @@ export const BUTTON_GROUP = "buttons";
  * decision about the tile's wording rather than about this mechanism (src/can/abs.ts).
  * @type {ReadonlySet<string>}
  */
-export const LATCHED_KEYS = new Set(["horn", "ignition_button"]);
+export const LATCHED_KEYS = new Set([
+  "horn",
+  "ignition_button",
+  // The three switches added 2026-09-14 (0x102 b1 bit 0 and b0 bits 3/4). A thumb works
+  // each of them and an indicator press is ~0.2 s, so the raw bit cannot be watched at all.
+  // They log in `controls` rather than the `buttons` group so the BUTTONS section keeps two
+  // tiles for two indicators — see src/can/registry.ts.
+  //
+  // ⚠️ `low_beam_switch` (b0 bit 7) is deliberately absent: it is held for an entire ride, so
+  // "PRESSED" and "3 presses" would both be wrong about it. That is `key_on`'s reason, and
+  // scripts/check-all-view-tiles.ts asserts it.
+  "horn_switch",
+  "blinker_switch_left",
+  "blinker_switch_right",
+]);
 
 /**
  * Whether this signal's tile should latch, count and time its edges rather than print its
