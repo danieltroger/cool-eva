@@ -764,8 +764,7 @@ const crossings = crossed.length;
       }) as never,
   });
   const answer = await runner.perform({ kind: "charge-current", amps: 45, origin: "automatic" });
-  // The microtask that delivers the change batch has to run before the state is read.
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await settleBatches();
   if (!answer.ok) {
     failures.push(`§12 the stubbed charge-current command did not reach the bus: ${answer.reason}`);
   }
@@ -779,7 +778,7 @@ const crossings = crossed.length;
   // phone, still stands the controller down unconditionally. Deleting that path left all 45 checks
   // green before this assertion existed, which made "the rider always wins" a claim with no test.
   const byHand = await runner.perform({ kind: "charge-current", amps: 52, origin: "manual" });
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await settleBatches();
   if (!byHand.ok) {
     failures.push(`§12 the stubbed hand-set command did not reach the bus: ${byHand.reason}`);
   }
@@ -797,7 +796,7 @@ const crossings = crossed.length;
 
   // And the other half: a setpoint that is NOT ours is still the rider, or the feature is gone.
   record("dc_charge_limit_selected_a", 62);
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await settleBatches();
   if (automatic.state().reason !== CHARGE_AUTO_REASON.RIDER) {
     failures.push(
       `§12 a setpoint of 62 A after we commanded 45 A is the rider turning the dial and must stand the ` +
@@ -1251,7 +1250,11 @@ if (frozenGridVetoes !== EXPECTED_FROZEN_GRID_VETOES || frozenGridPlants !== EXP
   );
 }
 
-/** One turn of the microtask queue, which is when ../src/can/signals.ts delivers a change batch. */
+/**
+ * One turn of the TIMER queue, which is late enough that ../src/can/signals.ts has delivered a
+ * change batch — `notifyChange` hands the batch to `queueMicrotask`, and every microtask runs
+ * before the next timer does. (A `setTimeout(…, 0)` is not itself a microtask.)
+ */
 function settleBatches(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
 }

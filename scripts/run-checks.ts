@@ -492,9 +492,24 @@ const CHECKS: SelfCheck[] = [
       "ORDER that lies. Every step of the cycle must raise exactly ONE banner and it must name 100 %, 0 % or " +
       "automatic — held against a settled curve duty AND against one still inside its 1500 ms kick-start, which " +
       "are two different bugs and fail separately. Then the property under the wording: the duty reaches the wire " +
-      "in the mode's batch or an earlier one, never a later one; a duty commanded mid-kick is published rather " +
-      "than held for the rest of the kick; and a bridge that never answers leaves the loop's mode readable rather " +
-      "than ending the process",
+      "in the mode's batch or an earlier one, never a later one, and a duty commanded mid-kick is published " +
+      "rather than held for the rest of the kick",
+  },
+  {
+    script: "scripts/check-fan-race.ts",
+    covers:
+      "the other half of that pair: what the phone is told when a MODE PUBLISH races a command already in " +
+      "flight, which is a different mechanism from the banner's own wording and was split out of " +
+      "check-fan-banner.ts when that file passed the ~400-line line with both subjects in it. A bridge that " +
+      "never answers must leave the loop's mode readable rather than ending the process — the documented cost " +
+      "of publishing after an awaited command. A tap back to Auto landing INSIDE a slider command must not be " +
+      "overwritten with the MANUAL reason by the command it interrupted, which would put 'The slider is driving " +
+      "the fan.' under Automatic until the next tick. And #206: a /fan?mode=manual tap landing inside a CURVE " +
+      "command, in both directions — inside a bring-up it used to raise 'Fan: off' over a fan being given 68 % " +
+      "and then a second banner when the duty caught up, and inside a stop 'Fan: manual 68 %' over a fan being " +
+      "stopped. Driven against a bridge PARKED mid-command rather than merely slowed, because a timing race " +
+      "that resolves the wrong way leaves the ordering accidentally correct and the section green having " +
+      "exercised nothing; the parked state is asserted as a premise before each tap",
   },
   {
     script: "scripts/check-fan-endpoint.ts",

@@ -171,11 +171,8 @@ expect(
 
 // ── §7 ⚠️ THE SESSION BOUNDARY, AND THE ONE LINE THAT HOLDS THE TILE ───────
 //
-// Until #204, forgetSession() nulled the controller's commanded amps on the `charge_manager_state`
-// edge and recorded NOTHING — not even the reason — so for up to one 60 s tick /charge-auto
-// answered "commanding nothing" with the previous session's sentence, and this section asserted
-// that stale sentence as what the page must show. It now records a re-decided reason at the edge,
-// so the unplug DOES patch, and the wanted text is the true one.
+// The Pi re-decides and records the reason on the `charge_manager_state` edge since #204, so the
+// unplug patches and the wanted text below is the true sentence rather than the last session's.
 //
 // ⚠️ The second half is the assertion that defends `onChargeSessionEnd(() => { loaded.val = false })`
 // in public/views/charge-auto.js, whose deletion has now been proposed twice on the grounds that

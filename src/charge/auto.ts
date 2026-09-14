@@ -382,8 +382,9 @@ function standDown(context: AutoContext): void {
  *
  * ⚠️ One helper because they are one fact with two readers: /charge-auto answers from `state()`
  * and the dashboard binds to `charge_auto_reason`. Every place that has ever set one and
- * forgotten the other left the two disagreeing — which is #204 exactly. `publishMode` below is
- * the same argument for the mode.
+ * forgotten the other left the two disagreeing — which is #204 exactly. `publishMode` above is
+ * the same argument for the mode. (Every place WITH A CONTEXT, that is: the disabled-controller
+ * branch in startChargeAutomatic has none yet and records the reason directly.)
  */
 function setReason(context: AutoContext, reason: ChargeAutoReason): void {
   context.reason = reason;
