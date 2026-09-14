@@ -95,4 +95,4 @@ Delete `-H` and ssh keeps working, which is exactly how it would get deleted for
 - `INSTALL.md` §3 — what to type, for an operator setting up a Pi.
 - `scripts/check-update-endpoint.ts` — the checks, including the argv assertions that catch a regression to pulling as root.
 - Issue #146 (the diagnosis and three rounds of review), PR #148.
-- Issue #150 — `/update` has no `X-Cool-Eva` guard, unlike `/fan` and `/vcu-write`.
+- Issue #150 — `/update` now requires `X-Cool-Eva: update`, like `/fan` and `/vcu-write`. Without it a cross-origin `<form method="POST">` on any page the phone opened triggered this sudo pull and restart. ⚠️ It is a CSRF barrier and not authentication — a `curl` on the bike's wifi still reaches it, and so does the restart loop built on that. `docs/wifi-hardening.md`; asserted by `scripts/check-endpoint-headers.ts`.

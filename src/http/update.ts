@@ -38,6 +38,19 @@ export interface UpdateReply {
 /** git pull can hang on bad garage wifi; don't leave the button spinning forever. */
 const PULL_TIMEOUT_MS = 60_000;
 
+/**
+ * The header a POST must carry, and a value that is no other endpoint's.
+ *
+ * ⚠️ It is a CSRF barrier, NOT authentication. Without it, this is a SIMPLE cross-origin
+ * request — `<form method="POST" action="http://cool-eva.local/update">` on any page the
+ * rider's phone opens on the hotspot triggers a sudo `git pull` and a service restart, and
+ * CORS would only stop the attacker reading the reply. A custom header NAME is what forces
+ * a preflight this server never answers. It stops nobody holding a `curl`: docs/wifi-hardening.md.
+ */
+export const UPDATE_HEADER = "x-cool-eva";
+
+export const UPDATE_HEADER_VALUE = "update";
+
 export async function handleUpdateEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
@@ -46,6 +59,13 @@ export async function handleUpdateEndpoint(
   if (req.method !== "POST") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8", "Allow": "POST" });
     res.end("POST to pull the latest code\n");
+    return;
+  }
+  if (req.headers[UPDATE_HEADER] !== UPDATE_HEADER_VALUE) {
+    // 403 and a plain-text reason, like /fan: what reaches this is `curl` without the
+    // header or a cross-origin form, and neither reads JSON.
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(`pulling and restarting needs the ${UPDATE_HEADER}: ${UPDATE_HEADER_VALUE} header\n`);
     return;
   }
   const startedAt = monotonicNow();

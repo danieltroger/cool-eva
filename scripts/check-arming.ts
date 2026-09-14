@@ -12,11 +12,12 @@ import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.
 //   node --experimental-strip-types scripts/check-arming.ts
 //
 // ⚠️ This module had no coverage at all until 2026-08-30, and it is the whole of what stands
-// between a double-tap and a write to a calibration EEPROM. The three surfaces behind it —
+// between a double-tap and a write to a calibration EEPROM. The surfaces behind it —
 // views/vcu-write.js (a parameter write, `31 FC`, Mode 04 and the bike's own clock),
-// views/charge-current.js and views/charge-stop.js — each spell the gate out again at their own
-// `onclick`, so half of what is asserted here is that all seven firing sites still spell it the
-// same way (§7). A gate one site forgot is exactly as absent as one that was deleted.
+// views/charge-current.js, views/charge-stop.js, views/service-mode.js, views/lifetime-read.js
+// and views/pi-actions.js — each spell the gate out again at their own `onclick`, so half of
+// what is asserted here is that all eleven firing sites still spell it the same way (§7). A gate
+// one site forgot is exactly as absent as one that was deleted.
 //
 // The dwell is time-based, so `arm()` and `armDwellElapsed()` take an optional reading and this
 // check hands one in: 399 ms and 400 ms are asserted rather than slept through, and nothing here
@@ -28,7 +29,7 @@ import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.
 //
 // Same shape as scripts/check-irreversible-actions.ts, and for the same reason: public/ is ES
 // modules with no build step, so a browser file imports straight into Node. What needs a DOM is
-// the seven `onclick` bodies, which is why §7 and §8 read them rather than running them.
+// the eleven `onclick` bodies, which is why §7 and §8 read them rather than running them.
 
 let failures = 0;
 
@@ -171,12 +172,15 @@ const ALL_KEYS = [
   // outside the fold, so IRREVERSIBLE does not name it.
   "action:read-service-stamp",
   ...IRREVERSIBLE.filter(entry => entry.action !== "sync-clock").map(entry => `action:${entry.action}`),
-  // ⚠️ The service sheet's two, which §5 could not see until they were added here — and
-  // they are the pair that most needs it: the lifetime read's button sits directly under
-  // the sweep's on one screen, which is exactly the co-visibility this section is about.
+  // ⚠️ The service sheet's two and the menu's two, which §5 could not see until they were
+  // added here — and the first pair is the one that most needs it: the lifetime read's button
+  // sits directly under the sweep's on one screen, which is exactly the co-visibility this
+  // section is about. ⚠️ Hand-maintained, unlike ARMING_CONSUMERS, and it cannot simply be
+  // derived from that list: charge-current.js and charge-stop.js export `ARMED_KEY`, which
+  // matches `\w+_KEY` too and would double-count into ALL_KEYS against its own uniqueness test.
   // Scraped the way vcu-write.js's are a few lines above, rather than imported: this
   // file is a check OVER the shipped modules, not a consumer of them.
-  ...["public/views/service-mode.js", "public/views/lifetime-read.js"].flatMap(path =>
+  ...["public/views/service-mode.js", "public/views/lifetime-read.js", "public/views/pi-actions.js"].flatMap(path =>
     [...sourceOf(path).matchAll(/const \w+_KEY = "([^"]+)"/g)].map(match => match[1])
   ),
 ];
@@ -204,8 +208,10 @@ check(
 // --- 6. what disarms, run for real -------------------------------------------
 //
 // The refreshes are the disarm-on-change path that can be executed without a DOM, and they are
-// the load-bearing pair: all nine controls refresh BEFORE they arm, so a status that lands under
-// an already-armed button has to take the arming with it. Armed AFTER the call and before its
+// the load-bearing pair: every control that HAS a status refreshes BEFORE it arms, so a status
+// landing under an already-armed button has to take the arming with it. ⚠️ views/pi-actions.js's
+// two have no status to land under — nothing about `git pull` or `ip link` is fetched first — so
+// what disarms them is openSheet(), asserted at the end of this section. Armed AFTER the call and before its
 // answer, which is the ordering that matters — a button armed against 75 must not fire against
 // the 80 the refresh brought with it.
 
@@ -234,6 +240,16 @@ try {
   globalThis.fetch = realFetch;
 }
 
+// ⚠️ Read rather than run: openSheet() mounts a sheet and needs a DOM. It is the ONLY thing
+// that disarms views/pi-actions.js's two — they fetch no status, so §6's refresh path cannot
+// reach them — and without it, re-opening the sheet would find a half-confirmed Update waiting
+// for its second tap. ⚠️ It is also why views/sheet.js imports the gate at all now that the
+// buttons live elsewhere: drop this line and sourceOf() below throws instead of going red.
+check(
+  "⚠️  re-opening the menu sheet disarms — the only disarm the two Pi actions have",
+  declarationBody(sourceOf("public/views/sheet.js"), "export function openSheet()").includes('armed.val = ""')
+);
+
 // --- 7. every firing site on the dashboard, read off its own source ----------
 //
 // ⚠️ THE GATE IS NOT IN ONE PLACE. arming.js holds the dwell; the RULE — test my key, then the
@@ -242,7 +258,7 @@ try {
 // src/http/vcu-write.ts rather than trusting a sentence about it. An eighth firing site, or one
 // that drops a line of the rule, is what this section exists to make loud.
 
-console.log("\n7. the nine firing sites, and the rule each of them repeats");
+console.log("\n7. the eleven firing sites, and the rule each of them repeats");
 
 const SITES = ARMING_CONSUMERS.flatMap(path => firingSites(path, sourceOf(path)));
 console.log(`   found: ${SITES.map(site => shortName(site)).join(", ")}`);
@@ -258,6 +274,11 @@ const EXPECTED_SITES = [
   // used to be scoped away from this file for that reason. Importing arming.js for the
   // lifetime read brought the sweep with it, which is the migration this check forced.
   "lifetime-read.js → performLifetimeRead",
+  // The menu sheet's two Pi-maintenance actions (#130). They fired on a SINGLE tap until
+  // then — `/update` pulls new code and restarts the service, `/can-restart` drops the bus
+  // — while the read-only sweep above them already took two.
+  "pi-actions.js → performCanRestart",
+  "pi-actions.js → performUpdate",
   "service-mode.js → performSweep",
   "vcu-write.js → performAction",
   "vcu-write.js → performAction",
@@ -306,6 +327,27 @@ for (const site of SITES) {
     site.props.includes("onkeydown: refuseKeyRepeat")
   );
 }
+
+// ⚠️ NO TWO SITES MAY REFUSE ON THE SAME KEY, which is a different question from §5's "no two
+// declared keys collide": §5 reads the CONSTANTS and passes while two controls both point at one
+// of them. `armed` is a single key, so two sites sharing it means arming either one fires the
+// other on the next tap — one tap on "CAN bus restart" and one on "Update" would pull and restart.
+//
+// ⚠️ Sites whose key is still an identifier (`<key>`) are exempt BY NAME: ActionButton is one call
+// site built around a parameter and serving four keyed controls, so "distinct per site" is not a
+// question about it — §5's ALL_KEYS is where those four are held apart.
+const refusedKeys = SITES.map(site => keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]));
+const resolvedKeys = refusedKeys.filter(key => !key.startsWith("<"));
+console.log(`   keys the sites refuse on: ${refusedKeys.join(", ")}`);
+check(
+  "the sites' keys resolved at all — everything reading back as an identifier would pass the one below in silence",
+  resolvedKeys.length >= 8
+);
+check(
+  `⚠️  no two of the ${resolvedKeys.length} resolved firing sites refuse on the SAME key — two that did would each ` +
+    "fire on the other's first tap",
+  new Set(resolvedKeys).size === resolvedKeys.length
+);
 
 // ⚠️ THE SEAM IS A BYPASS AS WELL AS A TEST HOOK, and this is the only thing standing on it.
 // `arm(key, performance.now() - 10_000)` at any call site arms a control whose dwell has already
@@ -459,7 +501,7 @@ if (failures > 0) {
 } else {
   console.log("✓ two taps 400 ms apart, the second ignored rather than disarmed inside the dwell, one key for the");
   console.log("  whole dashboard with no two controls sharing it, every refresh disarming what it lands under, and");
-  console.log("  all nine firing sites still spelling the same rule — on the injected clock and on the real one");
+  console.log("  all eleven firing sites still spelling the same rule — on the injected clock and on the real one");
 }
 
 /**
@@ -551,6 +593,15 @@ function keyOf(file: string, expression: string | undefined): string {
       throw new Error(`check-arming: ${file} names ARMED_KEY and EXPORTED_KEYS does not import it`);
     }
     return exported;
+  }
+  // ⚠️ A module-local `const SOMETHING_KEY = "…"`, resolved out of the file that names it. Until
+  // this existed every such key read back as its own identifier, which made the per-site "refuses
+  // on what it arms" assertion trivially true and let TWO controls in ONE module point at the
+  // SAME constant undetected — a mutation that survived on 2026-09-14 and would have fired an
+  // Update off one tap on the CAN restart beside it. The distinctness test below is the other half.
+  const declared = sourceOf(file).match(new RegExp(`const ${expression} = "([^"]+)"`));
+  if (declared !== null) {
+    return declared[1];
   }
   return `<${expression}>`;
 }
