@@ -788,6 +788,27 @@ const CHECKS: SelfCheck[] = [
       "a corroborated time contradicting one already trusted \u2014 check-gps-clock.ts drives that gate directly",
   },
   {
+    script: "scripts/check-waypoint-corroboration.ts",
+    covers:
+      "the gate that refuses the FIRST fix of a run until a later sample has agreed with it (#178). " +
+      "implausibleJumpKmh() judges a fix against the one before it and answers null when there is " +
+      "none, so a corrupt first fix used to be saved with nothing able to see it — the 2026-08-09 " +
+      "decode failure arriving one sample earlier than it really did. The witness is a second " +
+      "SAMPLE rather than a second FIX: record() marks every decoded sample, deadbanded or not, so a " +
+      "mark newer than the fix means another sample arrived and moved the position by less than the " +
+      "3 m deadband, which a parked bike never logs at all. Asserted here: that a fix no tracker ever " +
+      "saw is refused rather than waved through; that the first fix of a run is refused once and " +
+      "saves after one agreeing sample; that a fix which a later fix SUPERSEDED is left to the " +
+      "shipped jump gate; and that the 2026-08-09 shape, replayed as a run's first fix, is refused " +
+      "while it is live and saves the CORRECTED position afterwards, so the corrupt longitude never " +
+      "reaches the log. ⚠️ It runs with GPS_TIME_SYNC=0 on purpose, not for convenience: the clock " +
+      "gate's five-reading window is what keeps this hole shut on the bike today, so with the clock " +
+      "gate in the way every assertion here would pass on a build with no corroboration rule at all. " +
+      "⚠️ And the agreeing-sample case carries a guard, because without it the assertion cannot fail " +
+      "— if that second sample ever LOGGED a row the save would pass through the other arm of the " +
+      "gate, so the check counts change events and asserts the deadband suppressed it",
+  },
+  {
     script: "scripts/decode-dtc-response.ts",
     covers:
       "ISO-TP reassembly and the OBD-II mode-03 decoder, against a real 80-byte transfer captured 2026-08-04, plus the gapped, oversized, refused and foreign replies they must reject",

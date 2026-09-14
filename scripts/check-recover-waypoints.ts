@@ -145,7 +145,14 @@ function judge(overrides: Partial<Parameters<typeof judgeHolds>[0]> = {}) {
     cancelRows: hold,
     latitudeRows: [here.lat],
     longitudeRows: [here.lon],
-    epochRows: [{ ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 }],
+    // ⚠️ TWO ROWS, and the second is not padding. Since #178 a fix with nothing before it in
+    // its own boot is believed only once a LATER SAMPLE has agreed with it, and gps_epoch_s
+    // is what a log has to witness that with. One row here is a bike that produced a single
+    // sample and stopped, which the gate refuses — correctly, and which is asserted below.
+    epochRows: [
+      { ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 },
+      { ts: BASE + 1450, value: 1_788_000_000.55, sessionId: 1, seq: 2 },
+    ],
     waypointRows: [],
     holdMs: 500,
     beatMs: 0,
@@ -212,6 +219,72 @@ check(
 
 const live = judge({ waypointRows: [{ ts: BASE + 1600, value: 1, sessionId: 1, seq: 1 }] });
 check("a hold that already saved a waypoint is not recovered again", live[0].outcome === RECOVERY_OUTCOME.ALREADY_LIVE);
+
+// --- The first fix of a boot (#178), mirrored ---------------------------------------
+//
+// ⚠️ The bike refuses a fix with nothing before it in this run until a later sample has
+// agreed with it, so a recovery that did not would invent exactly the waypoints #178 is
+// about. In a log the witness is a gps_epoch_s row after the fix and in the SAME boot:
+// a sample that disagreed by more than the deadband would have logged a position row,
+// and that row would have given the fix a predecessor.
+check(
+  "⚠️  a boot's first fix with no later sample is refused as FIX_UNCORROBORATED",
+  judge({ epochRows: [{ ts: BASE + 900, value: 1_788_000_000, sessionId: 1, seq: 1 }] })[0].refusal ===
+    WAYPOINT_REFUSAL.FIX_UNCORROBORATED
+);
+
+// ⚠️ TWO BOOTS IN ONE WINDOW, which is the case that makes the session split load-bearing
+// rather than decorative. scripts/recover-waypoints.ts fetches by TIME RANGE, so a window
+// routinely spans several runs — and `ts` is wall clock the Pi steps, so the row before
+// this fix in `ts` order can belong to a run the bike had already forgotten. Session-blind,
+// that row is a predecessor, the gate above never applies, and boot 2's unwitnessed first
+// fix is recovered. The two positions are deliberately IDENTICAL so nothing else refuses it.
+const twoBoots = {
+  cancelRows: [edge(0, 0, 2, 1), edge(1000, 1, 2, 2), edge(2400, 0, 2, 3)],
+  latitudeRows: [
+    { ts: BASE - 5000, value: 57.7, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 57.7, sessionId: 2, seq: 1 },
+  ],
+  longitudeRows: [
+    { ts: BASE - 5000, value: 11.97, sessionId: 1, seq: 1 },
+    { ts: BASE + 900, value: 11.97, sessionId: 2, seq: 1 },
+  ],
+  waypointRows: [],
+  holdMs: 500,
+  beatMs: 0,
+  legacyHoldMs: 100_000,
+  liveToleranceMs: 200,
+};
+check(
+  "⚠️  a second boot's unwitnessed first fix is refused, not recovered off the previous boot's row",
+  judgeHolds({
+    ...twoBoots,
+    epochRows: [
+      { ts: BASE - 5000, value: 1_787_999_994, sessionId: 1, seq: 1 },
+      { ts: BASE + 900, value: 1_788_000_000, sessionId: 2, seq: 1 },
+    ],
+  })[0].refusal === WAYPOINT_REFUSAL.FIX_UNCORROBORATED
+);
+check(
+  "…and a later sample IN THAT BOOT does witness it, so the arm is not simply always-refuse",
+  judgeHolds({
+    ...twoBoots,
+    epochRows: [
+      { ts: BASE + 900, value: 1_788_000_000, sessionId: 2, seq: 1 },
+      { ts: BASE + 1450, value: 1_788_000_000.55, sessionId: 2, seq: 2 },
+    ],
+  })[0].outcome === RECOVERY_OUTCOME.RECOVERED
+);
+check(
+  "…while a later sample from the OTHER boot does not, however close it lands",
+  judgeHolds({
+    ...twoBoots,
+    epochRows: [
+      { ts: BASE + 900, value: 1_788_000_000, sessionId: 2, seq: 1 },
+      { ts: BASE + 1450, value: 1_788_000_000.55, sessionId: 1, seq: 2 },
+    ],
+  })[0].refusal === WAYPOINT_REFUSAL.FIX_UNCORROBORATED
+);
 
 const shortPress = judgeHolds({
   cancelRows: [edge(0, 0), edge(1000, 1), edge(1300, 0)],

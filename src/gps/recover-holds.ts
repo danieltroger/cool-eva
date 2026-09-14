@@ -69,6 +69,26 @@ export interface RecoveryVerdict {
 }
 
 /**
+ * A fix in the recovery timeline, carrying the boot it belongs to.
+ *
+ * ⚠️ The session is not decoration. `ts` is wall clock and the Pi steps it, so two boots
+ * interleave in `ts` order across a step — the archive does it three times. Without this,
+ * "the fix before this one" can be a fix from another boot, hundreds of km away, which the
+ * live gate never had: ../gps/waypoint.ts's `precedingFix` is per process by construction.
+ */
+export interface TimelineFix extends Fix {
+  sessionId: number | null;
+}
+
+/** What judgeJump() found: the pair it judged, and the two fixes it judged them from. */
+interface JumpVerdict {
+  jump: number | null;
+  judged: boolean;
+  current: TimelineFix | null;
+  previous: TimelineFix | null;
+}
+
+/**
  * Pairs a button signal's rows into presses.
  *
  * ⚠️ Three rules, each of which cost a wrong number before it was written down:
@@ -228,7 +248,7 @@ function judgeOneHold(
   press: RecoveredPress,
   fireAt: number,
   alreadyFired: Set<RecoveredPress>,
-  fixes: Fix[],
+  fixes: TimelineFix[],
   inputs: RecoveryInputs
 ): RecoveryVerdict {
   if (alreadyFired.has(press)) {
@@ -255,9 +275,16 @@ function judgeOneHold(
   if (epoch === null || fireAt - epoch.ts > FIX_MAX_AGE_MS) {
     return refused(press, fireAt, WAYPOINT_REFUSAL.FIX_STALE);
   }
-  const { jump, judged } = judgeJump(fixes, fireAt);
+  const { jump, judged, current, previous } = judgeJump(fixes, fireAt);
   if (jump !== null) {
     return { ...refused(press, fireAt, WAYPOINT_REFUSAL.FIX_IMPLAUSIBLE), jumpGateJudged: judged };
+  }
+  // ⚠️ The bike's #178 rule, mirrored: with nothing before it in this boot, the fix is
+  // believable only once a later sample has agreed. `current === null` reaches here when
+  // the boot logged one axis and the other was carried in from an earlier run — a fix the
+  // bike never held, and which this used to recover anyway.
+  if (previous === null && (current === null || !sampleAgreedAfter(inputs.epochRows, current, fireAt))) {
+    return refused(press, fireAt, WAYPOINT_REFUSAL.FIX_UNCORROBORATED);
   }
   return {
     press,
@@ -277,22 +304,32 @@ function judgeOneHold(
  * gps_lat rows. The two are deadbanded independently, so pairing one axis against itself
  * feeds implausibleJumpKmh() pairs the bike never held and judges a jump it never saw.
  */
-export function buildFixTimeline(latitudeRows: LogRow[], longitudeRows: LogRow[]): Fix[] {
-  const instants = [...latitudeRows, ...longitudeRows].map(row => row.ts).sort((left, right) => left - right);
-  const fixes: Fix[] = [];
-  let previousAt = Number.NEGATIVE_INFINITY;
-  for (const at of instants) {
-    if (at === previousAt) {
-      continue;
-    }
-    previousAt = at;
-    const latitude = carryBack(latitudeRows, at);
-    const longitude = carryBack(longitudeRows, at);
-    if (latitude !== null && longitude !== null) {
-      fixes.push({ latitudeDeg: latitude.value, longitudeDeg: longitude.value, at });
+export function buildFixTimeline(latitudeRows: LogRow[], longitudeRows: LogRow[]): TimelineFix[] {
+  const sessionIds = new Set<number | null>();
+  for (const row of [...latitudeRows, ...longitudeRows]) {
+    sessionIds.add(row.sessionId);
+  }
+  const fixes: TimelineFix[] = [];
+  for (const sessionId of sessionIds) {
+    const latitudes = latitudeRows.filter(row => row.sessionId === sessionId);
+    const longitudes = longitudeRows.filter(row => row.sessionId === sessionId);
+    const instants = [...latitudes, ...longitudes].map(row => row.ts).sort((left, right) => left - right);
+    let previousAt = Number.NEGATIVE_INFINITY;
+    for (const at of instants) {
+      if (at === previousAt) {
+        continue;
+      }
+      previousAt = at;
+      // Carried back WITHIN the boot, so a boot that logged only one axis contributes no
+      // fix at all rather than borrowing the other axis from the boot before it.
+      const latitude = carryBack(latitudes, at);
+      const longitude = carryBack(longitudes, at);
+      if (latitude !== null && longitude !== null) {
+        fixes.push({ latitudeDeg: latitude.value, longitudeDeg: longitude.value, at, sessionId });
+      }
     }
   }
-  return fixes;
+  return fixes.sort((left, right) => left.at - right.at);
 }
 
 /**
@@ -304,21 +341,58 @@ export function buildFixTimeline(latitudeRows: LogRow[], longitudeRows: LogRow[]
  * against the same cadence, so reproducing that is correct — but a report must not print
  * "cleared the jump gate" when the gate declined to look. docs/waypoints.md has the rate.
  */
-function judgeJump(fixes: Fix[], fireAt: number): { jump: number | null; judged: boolean } {
-  let previous: Fix | null = null;
-  let current: Fix | null = null;
-  for (const fix of fixes) {
-    if (fix.at > fireAt) {
+function judgeJump(fixes: TimelineFix[], fireAt: number): JumpVerdict {
+  let currentIndex = -1;
+  for (let index = 0; index < fixes.length; index += 1) {
+    if (fixes[index].at > fireAt) {
       break;
     }
-    previous = current;
-    current = fix;
+    currentIndex = index;
   }
-  if (previous === null || current === null) {
-    return { jump: null, judged: false };
+  if (currentIndex < 0) {
+    return { jump: null, judged: false, current: null, previous: null };
+  }
+  const current = fixes[currentIndex];
+  // ⚠️ Backwards to the nearest fix of the SAME BOOT, not simply the one before it in the
+  // array. Fixes are ordered by `ts`, and across a clock step that order interleaves two
+  // boots — so the array neighbour can belong to a run the bike had already forgotten.
+  let previous: TimelineFix | null = null;
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
+    if (fixes[index].sessionId === current.sessionId) {
+      previous = fixes[index];
+      break;
+    }
+  }
+  if (previous === null) {
+    return { jump: null, judged: false, current, previous: null };
   }
   const judged = current.at - previous.at >= MIN_FIX_INTERVAL_MS;
-  return { jump: implausibleJumpKmh(previous, current), judged };
+  return { jump: implausibleJumpKmh(previous, current), judged, current, previous };
+}
+
+/**
+ * Whether a SAMPLE arrived after this fix and before the hold fired — ../gps/waypoint.ts's
+ * `laterSampleAgreed()`, read out of a log.
+ *
+ * ⚠️ `gps_epoch_s` is the witness and agreement is implied rather than measured, which is
+ * exact rather than approximate: a sample that disagreed by more than the 3 m deadband
+ * would have LOGGED a gps_lat/gps_lon row, and that row would have given this fix a
+ * predecessor — so this branch is only ever reached when every later sample agreed.
+ *
+ * ⚠️ At or before the fire, and in the same boot, for the two reasons the freshness gate
+ * gives: the bike can only ever have seen the past, and a row from another run is not
+ * evidence about this one.
+ */
+function sampleAgreedAfter(epochRows: LogRow[], fix: TimelineFix, fireAt: number): boolean {
+  for (const row of epochRows) {
+    if (row.ts > fireAt) {
+      return false;
+    }
+    if (row.ts > fix.at && row.sessionId === fix.sessionId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function refused(press: RecoveredPress, fireAt: number, refusal: WaypointRefusal): RecoveryVerdict {

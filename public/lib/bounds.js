@@ -188,7 +188,7 @@ const BY_KEY = {
   // `waypoint_refusal` is here and `waypoint_seq` / `waypoint_refused_seq` deliberately
   // are not. They are not COUNTER_KEYS either: that set is the `diag` group's 0…1000
   // counts, which is a bound, and these two have no ceiling worth naming.
-  "waypoint_refusal": [1, 7],
+  "waypoint_refusal": [1, 8],
   // The DC charge-current limit the rider picked on the bike's own screen (0x121).
   // Named here because BY_UNIT's "A" fallback is [-1000, 1000], which would happily draw
   // a misread opcode byte as 147 A. 127 is the real hard stop, and it is not a guess: the

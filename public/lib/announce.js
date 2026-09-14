@@ -35,6 +35,7 @@ export const WAYPOINT_REFUSAL_TEXT = {
   5: "Bike's clock disagrees with GPS — waypoint not saved.",
   6: "GPS fix jumped somewhere the bike cannot have ridden — waypoint not saved.",
   7: "GPS fix is not a real position — waypoint not saved.",
+  8: "GPS fix not confirmed yet — waypoint not saved.",
 };
 
 /**
