@@ -95,18 +95,20 @@ export function sitsMidPlateau(trajectory: SocTrajectory, atMs: number): boolean
 }
 
 /**
- * The shapes a DC charge takes, swept by check-soc-rate.ts.
+ * The shapes a DC charge takes, swept by check-soc-rate.ts. All four end under 100 %, because a
+ * reading above that is one `rememberSoc` drops rather than one it rings.
  *
- * The three constant rates are the p10, median and p90 of the 304 crossings measured inside a DC
- * session in the 2026-09-07…13 log (docs/dc-taper.md). The other three are shapes that log has but
- * not enough of to measure: a charge ramping up, the taper coming on, and a stall.
+ * ⚠️ ONE constant rate, not the three measured quantiles. A constant trajectory's crossings land on
+ * sampler ticks, so its first sample is exact and the slack term — the subtlest arithmetic here — is
+ * never exercised by one; measured, the median and p90 fired on nothing the p10 did not. The three
+ * shapes that earn their place do it for named reasons: the ramp-up is the only one that exercises
+ * `slack` at all hard, and the taper and the stall are the only two whose newest in-window sample
+ * sits well before `nowMs`, which is what catches a span measured between samples instead of to now.
  */
 export const RISING_TRAJECTORIES: SocTrajectory[] = [
   constantRate("a steady 0.60 %/min, the p10 of 304 measured crossings", 60, 0.6),
-  constantRate("a steady 1.50 %/min, the median", 40, 1.5),
-  constantRate("a steady 2.13 %/min, the p90", 25, 2.13),
-  acceleratingClimb("a charge ramping up, 0.60 → 2.20 %/min", 25, 0.6, 2.2, 45),
-  acceleratingClimb("the taper coming on, 2.20 → 0.30 %/min", 30, 2.2, 0.3, 45),
+  linearRateChange("a charge ramping up, 0.60 → 2.20 %/min", 25, 0.6, 2.2, 45),
+  linearRateChange("the taper coming on, 2.20 → 0.30 %/min", 30, 2.2, 0.3, 45),
   stalledClimb("1.50 %/min with a 6.8 min stall, the longest gap in the log", 20, 1.5, 10, 6.8),
 ];
 
@@ -126,14 +128,14 @@ export const FALLING_TRAJECTORY = constantRate("a pack losing 0.50 %/min", 80, -
  * starts in the dip over-states by up to one whole count once the climb resumes. Not observed:
  * 304 of 304 DC crossings in the log are `+1` (docs/dc-taper.md).
  */
-export const DIPPING_TRAJECTORY = dipThenClimb("SOC dipping 3 points and then climbing", 70, 0.5, 6, 1.5);
+export const DIPPING_TRAJECTORY = dipThenClimb("SOC dipping 3 points and then climbing", 30, 0.5, 6, 1.5);
 
 function constantRate(name: string, fromPercent: number, perMinute: number): SocTrajectory {
   return { name, percentAt: atMs => fromPercent + (perMinute * atMs) / 60_000 };
 }
 
-/** A rate moving linearly from `fromPerMinute` to `toPerMinute` over `overMinutes`. */
-function acceleratingClimb(
+/** A rate moving linearly from `fromPerMinute` to `toPerMinute` over `overMinutes` — either way. */
+function linearRateChange(
   name: string,
   fromPercent: number,
   fromPerMinute: number,

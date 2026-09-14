@@ -15,6 +15,7 @@ import {
   socRingFrom,
   trueMeanRatePerMinute,
   type SocTrajectory,
+  type TrajectoryRing,
 } from "./soc-trajectory.ts";
 import { defineSignals, latestValue, record } from "../src/can/signals.ts";
 import { SIGNALS } from "../src/can/registry.ts";
@@ -48,21 +49,30 @@ const PROBE_STEP_MS = 30_000;
 /** What the vehicle asks for below the knee, so the horizon in §4 has something to be measured to. */
 const PROBE_REQUEST_A = 73;
 
-/** Floating-point slop. Every margin this file deals in is ≥ 1e-4, so nothing real hides under it. */
+/** Floating-point slop only. The real margins here start around 1e-5, four orders above it. */
 const EPSILON = 1e-9;
 
 // ── §1 the property: the estimate never exceeds the trajectory's own mean rate ──
 //
-// ⚠️ `truth` comes from the trajectory, not from the samples. The only thing taken from the
-// estimator is WHICH SPAN it claims — the oldest sample inside its window — and the property is
-// about the quotient over that span, which is the part under test.
+// ⚠️ NOTHING here is taken from the estimator. `truth` comes from the trajectory, and the span it is
+// measured over comes from `oldestInWindow` below, which re-derives the window rule independently.
+// That independence is exactly why this catches a widened window: if the span came from the
+// estimator, a filter that reached past `nowMs` would move `truth` with it and the probe would pass.
 interface TrajectoryResult {
   answered: number;
   worstMargin: number;
 }
 const propertyResults = new Map<string, TrajectoryResult>();
+// One ring per trajectory, built once and read by §1 and §4 alike: two construction calls are two
+// things to edit, and the sections would then be judging different rings while claiming otherwise.
+const rings = new Map<string, TrajectoryRing>(
+  [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECTORY].map(trajectory => [
+    trajectory.name,
+    socRingFrom(trajectory, { fromMs: 0, toMs: SWEEP_TO_MS }),
+  ])
+);
 for (const trajectory of RISING_TRAJECTORIES) {
-  const ring = socRingFrom(trajectory, { fromMs: 0, toMs: SWEEP_TO_MS });
+  const ring = ringFor(trajectory);
   const result: TrajectoryResult = { answered: 0, worstMargin: -Infinity };
   let reported = false;
   let slackReported = false;
@@ -142,7 +152,7 @@ const midPlateauRing = socRingFrom(MID_PLATEAU_TRAJECTORY, {
   toMs: SWEEP_TO_MS,
   keepFirstReading: true,
 });
-const dippingRing = socRingFrom(DIPPING_TRAJECTORY, { fromMs: 0, toMs: SWEEP_TO_MS });
+const dippingRing = ringFor(DIPPING_TRAJECTORY);
 const BOUNDED_CASES = [
   { name: "a first reading kept mid-plateau", trajectory: MID_PLATEAU_TRAJECTORY, ring: midPlateauRing },
   { name: "a ring that leads with a downward crossing", trajectory: DIPPING_TRAJECTORY, ring: dippingRing },
@@ -193,7 +203,9 @@ for (const probe of BOUNDED_CASES) {
 // catches the `advanced <= 0` guard being deleted.
 let horizonsAnswered = 0;
 for (const probe of [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECTORY]) {
-  const ring = socRingFrom(probe, { fromMs: 0, toMs: SWEEP_TO_MS });
+  const ring = ringFor(probe);
+  let answered = 0;
+  let reported = false;
   for (let nowMs = 0; nowMs <= SWEEP_TO_MS; nowMs += PROBE_STEP_MS) {
     const ahead = sessionAheadMinutes({
       socPercent: Math.floor(probe.percentAt(nowMs)),
@@ -205,19 +217,29 @@ for (const probe of [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECT
     if (ahead === null) {
       continue;
     }
-    horizonsAnswered += 1;
-    if (ahead < 0) {
+    answered += 1;
+    // Counted before the report and never broken out of, so a mutation that turns several probes
+    // negative cannot also trip the vacuity floor below and point away from itself.
+    if (ahead < 0 && !reported) {
+      reported = true;
       failures.push(
         `§4 ${probe.name} at ${(nowMs / 60_000).toFixed(1)} min: the session-ahead estimate is ` +
           `${ahead.toFixed(1)} minutes. A negative horizon makes the predicted headroom LARGER, which suppresses ` +
           `a step down on a pack that is not charging`
       );
-      break;
     }
   }
-}
-if (horizonsAnswered < MIN_ANSWERED_HORIZONS) {
-  failures.push(`§4 only ${horizonsAnswered} horizons were answered at all, so the sign assertion is vacuous`);
+  horizonsAnswered += answered;
+  // ⚠️ PER PROBE, not pooled, and the dipping one is why: the rising shapes answer hundreds between
+  // them, so a pooled floor would clear by an order of magnitude while the one OTHER shape that can
+  // produce a negative horizon had quietly stopped reaching the assertion at all. The falling probe
+  // is exempt because answering nothing is what it asserts, and the block below pins that separately.
+  if (probe !== FALLING_TRAJECTORY && answered < MIN_ANSWERED_HORIZONS) {
+    failures.push(
+      `§4 ${probe.name} answered only ${answered} horizons, under the ${MIN_ANSWERED_HORIZONS} it has to carry — ` +
+        `the sign assertion is vacuous for the one shape it is supposed to cover`
+    );
+  }
 }
 
 // ⚠️ THE FALLING PROBE'S OWN PRECONDITIONS, and they are what make it arm. At −0.50 %/min the
@@ -225,12 +247,15 @@ if (horizonsAnswered < MIN_ANSWERED_HORIZONS) {
 // to decline it. At −0.20 the same fixture yields two distinct readings, the DISTINCT guard
 // declines first, and a deleted sign guard would pass in silence.
 const FALLING_PROBE_NOW_MS = SOC_WINDOW_MS;
-const fallingRing = socRingFrom(FALLING_TRAJECTORY, { fromMs: 0, toMs: SWEEP_TO_MS });
+const fallingRing = ringFor(FALLING_TRAJECTORY);
 const fallingWindow = fallingRing.samples.filter(
   sample => sample.atMs >= FALLING_PROBE_NOW_MS - SOC_WINDOW_MS && sample.atMs <= FALLING_PROBE_NOW_MS
 );
 const fallingDistinct = new Set(fallingWindow.map(sample => sample.percent)).size;
-const fallingSpanMs = FALLING_PROBE_NOW_MS - (oldestInWindow(fallingRing.samples, FALLING_PROBE_NOW_MS)?.atMs ?? 0);
+const fallingOldest = oldestInWindow(fallingRing.samples, FALLING_PROBE_NOW_MS);
+// ⚠️ No default span. An empty window is the WORST state this probe can be in, and defaulting its
+// start to 0 would read as the longest span there is and pass the very clause that exists to catch it.
+const fallingSpanMs = fallingOldest === null ? 0 : FALLING_PROBE_NOW_MS - fallingOldest.atMs;
 if (fallingDistinct < SOC_MIN_DISTINCT || fallingSpanMs < SOC_MIN_SPAN_MS) {
   failures.push(
     `§4 the falling probe reaches only ${fallingDistinct} distinct readings over ${(fallingSpanMs / 60_000).toFixed(1)} ` +
@@ -250,7 +275,9 @@ if (estimateSocRate(fallingRing.samples, FALLING_PROBE_NOW_MS) !== null) {
 // controller says so when it does keep such a sample. docs/dc-taper.md.
 //
 // ⚠️ ORDER IS LOAD-BEARING HERE: `liveState` is never cleared, so "no soc recorded" is a one-way
-// door inside one process. The precondition is asserted rather than assumed.
+// door inside one process, and the `0xFF` case below leaves a value behind that the last case needs
+// to be plausible. The precondition is asserted rather than assumed, and the three run in the only
+// order that can work.
 defineSignals(SIGNALS);
 if (latestValue("soc") !== null) {
   failures.push("§5 a SOC was already recorded before this section ran, so its first case cannot be constructed");
@@ -259,12 +286,12 @@ const inertSink = {
   commandChargeCurrent: async () => ({ succeeded: false, message: "check-soc-rate.ts never commands a current" }),
 };
 const warnedOnFirstEver = await warningsWhile(async () => {
-  const controller = startChargeAutomatic(inertSink, { enabled: true });
-  record("soc", 55);
-  await settle();
-  record("soc", 56);
-  await settle();
-  controller.stop();
+  await withController(async () => {
+    record("soc", 55);
+    await settle();
+    record("soc", 56);
+    await settle();
+  });
 });
 if (warnedOnFirstEver.length !== 1) {
   failures.push(
@@ -272,11 +299,32 @@ if (warnedOnFirstEver.length !== 1) {
       `said so ${warnedOnFirstEver.length} time(s), expected exactly 1: ${JSON.stringify(warnedOnFirstEver)}`
   );
 }
-const warnedWhenSocWasKnown = await warningsWhile(async () => {
-  const controller = startChargeAutomatic(inertSink, { enabled: true });
-  record("soc", 57);
+// ⚠️ AND A GARBLED BYTE COUNTS AS NOTHING RECORDED. `soc` is the raw `data[1]` of `0x200` and
+// `record()` has no plausibility gate, so a `255` sitting in `liveState` at subscribe would answer
+// "a SOC is known" while the next reading is a change against the garbage rather than a crossing.
+// A null test here passed this case in silence — no warn at all, since `rememberSoc`'s own
+// implausible-SOC line needs the 255 to arrive AFTER the controller subscribed.
+const warnedAfterAGarbledByte = await warningsWhile(async () => {
+  record("soc", 255);
   await settle();
-  controller.stop();
+  await withController(async () => {
+    record("soc", 60);
+    await settle();
+    record("soc", 61);
+    await settle();
+  });
+});
+if (warnedAfterAGarbledByte.length !== 1) {
+  failures.push(
+    `§5 a controller that subscribed with only an implausible SOC on record is in the same position as one that ` +
+      `subscribed with none, and must say so once: got ${JSON.stringify(warnedAfterAGarbledByte)}`
+  );
+}
+const warnedWhenSocWasKnown = await warningsWhile(async () => {
+  await withController(async () => {
+    record("soc", 57);
+    await settle();
+  });
 });
 if (warnedWhenSocWasKnown.length !== 0) {
   failures.push(
@@ -305,9 +353,40 @@ console.log(
     `says so exactly once when it keeps a first sample with no crossing behind it, and nothing when it does not`
 );
 
-/** The oldest sample the estimator could have measured from — its window, and nothing else of it. */
+/** The one ring built for this trajectory. Throws rather than building a second one on a typo. */
+function ringFor(trajectory: SocTrajectory): TrajectoryRing {
+  const ring = rings.get(trajectory.name);
+  if (ring === undefined) {
+    throw new Error(`no ring was built for "${trajectory.name}"`);
+  }
+  return ring;
+}
+
+/**
+ * The oldest sample the estimator could have measured from.
+ *
+ * ⚠️ Re-derived from the window rule rather than read back out of the estimator, which is what makes
+ * §1 an assertion instead of an identity: a filter that reached past `nowMs` would otherwise move
+ * this with it.
+ */
 function oldestInWindow(samples: SocSample[], nowMs: number): SocSample | null {
   return samples.find(sample => sample.atMs >= nowMs - SOC_WINDOW_MS && sample.atMs <= nowMs) ?? null;
+}
+
+/**
+ * Runs `body` with a real controller subscribed, and stops it however that ends.
+ *
+ * ⚠️ The `finally` is not decoration: a throw with the controller still up leaks a live `onChange`
+ * listener and a 60 s interval into every later case, which would then be deciding on this one's
+ * readings. Same argument `warningsWhile` makes for the logger.
+ */
+async function withController(body: () => Promise<void>): Promise<void> {
+  const controller = startChargeAutomatic(inertSink, { enabled: true });
+  try {
+    await body();
+  } finally {
+    controller.stop();
+  }
 }
 
 /** Lets the change batch that `record()` queued as a microtask reach the controller's listener. */

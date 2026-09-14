@@ -107,10 +107,14 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     riderOverride: false,
     samples: [],
     socSamples: [],
-    // Decided HERE because this is the instant the listener starts: with no `soc` on record, the
-    // next notification will be this process's first-ever reading, which `record()` delivers as a
-    // change even though nothing crossed. See `rememberSoc`.
-    firstSocMayNotBeACrossing: latestValue("soc") === null,
+    // Decided HERE because this is the instant the listener starts: with no USABLE `soc` on record,
+    // the next notification cannot be a crossing — either it is this process's first-ever reading,
+    // which `record()` delivers as a change because there is nothing to compare it to, or it is the
+    // first reading after a garbled one, which is a change against the garbage rather than a
+    // crossing. ⚠️ `isSocPlausible` rather than a null test: `soc` is the raw `data[1]` of `0x200`
+    // and `record()` has no plausibility gate, so a `255` already in `liveState` would otherwise
+    // disarm this and the sample would be kept with nothing said. See `rememberSoc`.
+    firstSocMayNotBeACrossing: !isSocPlausible(latestValue("soc")),
     inFlight: false,
     lastSessionState: null,
     timer: null,
@@ -278,13 +282,14 @@ function remember(context: AutoContext, celsius: number): void {
  * ⚠️ NO ANCHOR kept here, unlike `remember` above. src/charge/soc.ts § estimateSocRate says why.
  *
  * ⚠️ EVERY SAMPLE IS A CROSSING INSTANT, and the lower bound rests on it: `record()` notifies only
- * when the value moved, so a sample exists at the moment the reading BECAME that value. The one
- * exception is a process's FIRST-EVER reading, delivered as a change because there is nothing to
- * compare it to — kept out of the ring only by the CAN channel having recorded a `soc` before this
- * controller subscribes, which nothing enforces (src/index.ts, docs/dc-taper.md). So this says so
- * rather than guarding: the sample is still kept, the first rate may over-state by one whole point,
- * and the journal carries the line that explains it. Not re-armed by `forgetSession` — an emptied
- * ring refills from changes, and only the PROCESS's first reading is not one.
+ * when the value moved, so a sample exists at the moment the reading BECAME that value. What is not
+ * a crossing is the first reading after there was nothing usable to compare against — kept out of
+ * the ring only by the CAN channel having recorded a plausible `soc` before this controller
+ * subscribes, which nothing enforces (src/index.ts, docs/dc-taper.md). So this says so rather than
+ * guarding: the sample is still kept, the first rate may over-state by one whole point, and the
+ * journal carries the line that explains it. Not re-armed by `forgetSession` — an emptied ring
+ * refills from changes. ⚠️ Nor by a LATER implausible reading, which leaves the same hole in the
+ * middle of a session: bounded by the same whole point, unguarded, and named in docs/dc-taper.md.
  */
 function rememberSoc(context: AutoContext, percent: number): void {
   if (!isSocPlausible(percent)) {
@@ -294,8 +299,9 @@ function rememberSoc(context: AutoContext, percent: number): void {
   if (context.firstSocMayNotBeACrossing) {
     context.firstSocMayNotBeACrossing = false;
     console.warn(
-      `charge-auto: keeping a first SOC of ${percent} % with no crossing instant behind it — this process ` +
-        "subscribed before any SOC arrived, so the first rate of this charge may over-state by up to one point"
+      `charge-auto: keeping a first SOC of ${percent} % with no crossing instant behind it — no usable SOC had ` +
+        "been recorded when this controller subscribed, so the first rate this session reports may over-state by " +
+        "up to one whole point"
     );
   }
   const atMs = monotonicNow();
