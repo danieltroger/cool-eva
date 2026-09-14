@@ -287,8 +287,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // real transitions rather than one parked sample. key_on stayed 1 throughout both, so
     // it rests on the parked sample alone — a key-off capture is what would confirm it.
     //
-    // b0's low bits and b3 are decoded in vcu-digitals.ts, both added 2026-08-16 — see
-    // the comments on `handlebarSwitches` and `vehicleFlagsByte3` there.
+    // b0's low bits and b3 are decoded in vcu-digitals.ts, both added 2026-08-16.
     case 0x102: {
       if (data.length < 3) return [];
       const handlebar = data[0];
