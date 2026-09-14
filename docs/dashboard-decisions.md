@@ -1173,11 +1173,11 @@ Adding a second charge-tab write control was the moment to lift the session/stat
 
 `boundsFor()` has four routes: a `BY_KEY` entry, the cell-voltage pattern, `COUNTER_KEYS`, and a `BOOLEAN_GROUPS`-plus-blank-unit rule, falling through to `BY_UNIT[unit] ?? null`. **A signal with a blank unit, in a group that is not a `BOOLEAN_GROUP`, and no `BY_KEY` entry reaches none of them**, so `boundsFor()` returns `null` and `views/all.js` renders whatever arrives.
 
-That file's header has warned about the combination since it was written. It did not stop it happening: **`moving` and `reverse_gear` — both 1/0 flags, both in `drive` — were ungated from June until 2026-09-14**, when a diff reviewer on #234 went looking. Nothing was red, and nothing could have been: every other guard in this repo walks the signals that _are_ gated. `check-can-decoders.ts` §2 asks `bounds.js` which keys are 0/1-gated and checks their deadbands — an ungated key is invisible to it from both ends.
+That file's header has warned about the combination since it was written. It did not stop it happening: **`moving` and 0x104's `rolling_backwards` (then called `reverse_gear`) — both 1/0 flags, both in `drive` — were ungated from June until 2026-09-14**, when a diff reviewer on #234 went looking. Nothing was red, and nothing could have been: every other guard in this repo walks the signals that _are_ gated. `check-can-decoders.ts` §2 asks `bounds.js` which keys are 0/1-gated and checks their deadbands — an ungated key is invisible to it from both ends.
 
 ### What was done, and what deliberately was not
 
-`moving` and `reverse_gear` are fixed. **The other 59 are not**, and `scripts/check-all-view-tiles.ts` §5 now carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when a 60th appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing the 59 means deciding a physical range for each, which belongs with whoever owns each frame.
+`moving` is fixed here, and #230 fixed 0x104's two flags the same day and independently. **The other 57 are not**, and `scripts/check-all-view-tiles.ts` §5 now carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when a 58th appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing the 57 means deciding a physical range for each, which belongs with whoever owns each frame.
 
 Three kinds are on that list for good reasons, and they are why the check is an allow-list rather than a ban:
 

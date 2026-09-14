@@ -129,16 +129,15 @@ const BY_KEY = {
   "vehicle_status_flags": [0, 255],
   "limp_pack_res": [0, 65_535],
   "limp_module_status": [0, 65_535],
-  // 🚨 `moving` and `reverse_gear` are 0/1 flags that rendered COMPLETELY UNGATED until
-  // 2026-09-14 — blank unit, group `drive`, in neither table, so boundsFor() ran off the end
-  // and returned null. Exactly the combination the header above warns about, on the tab a
-  // rider reads, and the shape of `high_beam` once reading 193. scripts/check-can-decoders.ts
-  // could not catch it: it only walks signals that ARE gated. Both are 0/1 by construction —
-  // `bit(lampsAndState, 7)` and `bitFieldLe(data, 63, 1)` — so this cannot reject a real
-  // reading. Found while reviewing the 0x101 plan; the group is frozen by db.ts's
-  // ON CONFLICT, so naming them here is the fix that does not spend the history.
+  // 🚨 `moving` is a 0/1 flag that rendered COMPLETELY UNGATED until 2026-09-14 — blank unit,
+  // group `drive`, in neither table, so boundsFor() ran off the end and returned null. The
+  // combination this file's header warns about, on the tab a rider reads, and the shape of
+  // `high_beam` once reading 193. scripts/check-can-decoders.ts cannot catch it: it only walks
+  // signals that ARE gated. 0/1 by construction — `bit(lampsAndState, 7)` — so this cannot
+  // reject a real reading. ⚠️ #230 found the same miss on the same day, on 0x104's two flags,
+  // and fixed it below under `rolling_backwards`; check-all-view-tiles.ts §5 now ratchets the
+  // whole class so the next one cannot arrive silently.
   "moving": [0, 1],
-  "reverse_gear": [0, 1],
   "speed_kmh": [0, 300],
   "motor_rpm": [-12_000, 12_000],
   "aux_12v": [0, 20],

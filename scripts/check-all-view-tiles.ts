@@ -148,7 +148,7 @@ console.log(`${Object.keys(MUST_NOT_LATCH).length} outputs, states and measureme
 
 // 5. 🚨 THE RATCHET. A signal with a blank unit in a group that is not a BOOLEAN_GROUP, and no
 //    BY_KEY entry, reaches no rule in bounds.js at all: boundsFor() returns null and the tile
-//    renders whatever arrives. That is how `moving` and `reverse_gear` — two 0/1 flags — sat
+//    renders whatever arrives. That is how `moving` and `rolling_backwards` — two 0/1 flags — sat
 //    ungated on this page from June until 2026-09-14, with nothing red, because every other
 //    guard in this repo walks the signals that ARE gated.
 //
@@ -229,7 +229,7 @@ for (const signal of ungated) {
     failures.push(
       `${signal.key} (group "${signal.group}", unit "${signal.unit}") reaches no rule in public/lib/bounds.js, so ` +
         `boundsFor() returns null and the ALL page renders whatever arrives — the combination that left moving ` +
-        `and reverse_gear ungated for three months. Give it a BY_KEY entry, or a group whose rule covers it, or ` +
+        `and rolling_backwards ungated for three months. Give it a BY_KEY entry, or a group whose rule covers it, or ` +
         `add it to KNOWN_UNGATED here with the reason`
     );
   }

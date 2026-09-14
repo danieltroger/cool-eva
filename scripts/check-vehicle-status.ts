@@ -154,7 +154,7 @@ const ARCHIVE_SUBSTATES = [
 const ARCHIVE_PACK_RES = [75, 154];
 
 /** Of the keys checked below, the ones that really are 1/0 and must be gated exactly so. */
-const FLAG_KEYS = new Set(["moving", "reverse_gear", "limp_mode_status", "limp_res_valid"]);
+const FLAG_KEYS = new Set(["moving", "rolling_backwards", "limp_mode_status", "limp_res_valid"]);
 
 const failures: string[] = [];
 const defined = new Map(SIGNALS.map(signal => [signal.key, signal]));
@@ -229,14 +229,14 @@ for (const [key, values] of [
 }
 console.log(`  ${ARCHIVE_SUBSTATES.length} archive substates and ${ARCHIVE_STATES.length} states pass the bounds`);
 
-// 5. 🚨 `moving` and `reverse_gear` rendered completely ungated until 2026-09-14 — 0/1 flags
+// 5. 🚨 `moving` and 0x104's `rolling_backwards` rendered completely ungated until 2026-09-14 — flags
 //    with a blank unit in `drive`, which is not a BOOLEAN_GROUP, and in neither bounds table.
 //    scripts/check-can-decoders.ts cannot catch that: it only walks signals that ARE gated,
 //    so an ungated one is invisible to it from both ends. Asserted here by name.
 // ⚠️ ALL of them, not the flags only. `drive_vsm`, `vehicle_status_flags` and
 // `limp_module_status` live in `drive`/`vcu` with a blank unit, so deleting their BY_KEY lines
 // would leave them rendering whatever arrives with nothing red — byte for byte the
-// moving/reverse_gear bug two lines below. Asserting the OUTCOME of boundsFor rather than the
+// moving/rolling_backwards bug two lines below. Asserting the OUTCOME of boundsFor rather than the
 // route is what survives someone moving a key to a different group.
 for (const key of [
   "vehicle_state_can",
@@ -247,7 +247,7 @@ for (const key of [
   "limp_pack_res",
   "limp_module_status",
   "moving",
-  "reverse_gear",
+  "rolling_backwards",
   "limp_mode_status",
   "limp_res_valid",
 ]) {
