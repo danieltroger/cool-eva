@@ -131,9 +131,14 @@ function report(verdicts: RecoveryVerdict[], options: Options): void {
     console.log("\nrecoverable:");
     for (const verdict of recovered) {
       const judged = verdict.jumpGateJudged ? "judged" : "NOT judged (fixes closer than the gate's floor)";
+      // ⚠️ Said out loud for the same reason the jump gate's verdict is: this hold's fix had
+      // nothing before it in its own boot, so the corroboration rests on a gps_epoch_s row
+      // rather than on the position sample the bike would have used. src/gps/recover-holds.ts
+      // §sampleAgreedAfter has the asymmetry.
+      const witness = verdict.epochWitnessedOnly ? "  ⚠️ first fix of its boot: witnessed by gps_epoch_s only" : "";
       console.log(
         `  ${new Date(verdict.fireAt).toISOString()}  held ${verdict.press.durationMs} ms  ` +
-          `position ${verdict.positionAgeMs} ms old  jump gate: ${judged}`
+          `position ${verdict.positionAgeMs} ms old  jump gate: ${judged}${witness}`
       );
     }
   }

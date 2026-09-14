@@ -35,7 +35,46 @@ export interface SignalDef {
    * names the groups that must always be summarised and goes red if one vanishes.
    */
   onDemand?: true;
+  /**
+   * The physical range this signal can be in, widest that is still definitely wrong
+   * outside. Generated into public/lib/generated-bounds.js, which the dashboard reads —
+   * it has no build step and cannot import this file.
+   *
+   * ⚠️ A rejected value is drawn as a FAULT, never clamped, so a bound that is too tight
+   * draws a working sensor as a broken one. Derive it from the physical range or the
+   * field width, never from the values seen so far: a bound round today's set draws
+   * tomorrow's first new state as a dead sensor. docs/signal-bounds.md.
+   */
+  bounds?: readonly [number, number];
+  /**
+   * Declared instead of `bounds` when no honest range exists, saying WHICH kind of
+   * unboundable this is. The generator requires one or the other for a signal that
+   * reaches no rule in public/lib/bounds.js, so a new signal cannot arrive ungated.
+   *
+   * `counter` — monotonic; any ceiling is arbitrary and the counter that outgrew it
+   * would be drawn as a dead sensor on a working bike.
+   * `raw-word` — a multi-byte flag or state word read for its bits.
+   * `index` — an index into a structure whose size is the real bound, where that size
+   * is not documented anywhere; bounding it on the name is how a real reading gets
+   * rejected.
+   * `unresolved` — the scale or the meaning is unconfirmed in the decoder itself, so
+   * any bound would state a claim this repo has refused. Needs a named entry in
+   * docs/signal-bounds.md saying what is unknown.
+   */
+  unbounded?: "counter" | "raw-word" | "index" | "unresolved";
 }
+
+/**
+ * The whole width of a byte and of a 16-bit field.
+ *
+ * ⚠️ Named so a reader of a table of physical limits can see which entries are NOT one.
+ * A field width gates a decode that reads the wrong bytes and nothing else — it cannot
+ * reject a sentinel, because every value the field holds is inside it. Right for an
+ * identifier or a state enumeration, wrong for a measurement. docs/signal-bounds.md.
+ */
+export const FIELD_U8: readonly [number, number] = [0, 255];
+/** @see FIELD_U8 */
+export const FIELD_U16: readonly [number, number] = [0, 65_535];
 
 export interface LiveValue {
   value: number;

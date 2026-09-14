@@ -2,14 +2,14 @@ import { decodeFrame } from "../src/can/decode.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 
-// The eighteen signals #227 took off check-all-view-tiles.ts's KNOWN_UNGATED list, and the
-// two different arguments that justify their bounds.
+// The signals whose bound is a claim about their DECODER rather than about the bike, and the
+// three different arguments that justify one.
 //
 //     node --experimental-strip-types scripts/check-flag-bounds.ts
 //
-// §5 of check-all-view-tiles.ts already ratchets that a signal reaches SOME rule, in both
-// directions. What it cannot say is WHICH rule or what the numbers are, and for these
-// eighteen the numbers are the whole argument: fifteen are 1/0 flags where [0, 1] must
+// scripts/generate-signal-bounds.ts ratchets that every signal reaches SOME rule or says why
+// not. What it cannot say is WHICH rule or what the numbers are, and here the numbers are the
+// whole argument: fifteen are 1/0 flags where [0, 1] must
 // reject a masked byte, and three are state words where the whole byte is legitimate and a
 // bound drawn round today's values would draw tomorrow's state as a dead sensor.
 //
@@ -39,8 +39,22 @@ const FLAG_KEYS = [
   "bms_warn_balancing_required",
 ];
 
-/** One byte each, so the whole 0…255 is legitimate. */
-const STATE_WORD_KEYS = ["vehicle_state", "vehicle_substate", "charge_state"];
+/**
+ * One byte each, so the whole 0…255 is legitimate.
+ *
+ * ⚠️ Four joined in #227 on the same sentence this comment already made. `lmu_cell_mux` is
+ * a single byte too and is deliberately NOT here — it is the one selector the decoder logs
+ * valid or not, and docs/signal-bounds.md says why bounding it would be actively harmful.
+ */
+const STATE_WORD_KEYS = [
+  "vehicle_state",
+  "vehicle_substate",
+  "charge_state",
+  "bms_io_state",
+  "clamp_gate",
+  "clamp_amount",
+  "charger_enabled",
+];
 
 // ⚠️ CONSTRUCTED, and check-charge-mode.ts says so where these come from: byte 0 is an
 // OBSERVED value in each — a discharging bike, an AC session, the BMS's Idle — while bytes 1-7
@@ -115,15 +129,35 @@ for (const key of STATE_WORD_KEYS) {
   check(`…and rejects 256, so a bound widened past a byte stops holding`, !accepts(key, 256));
 }
 
+console.log("\n4. the two remaining-energy twins agree about what counts as a fault");
+// ⚠️ A ratchet, not a comment. `bms_remaining_energy_wh` (a u24 off 0x661) and
+// `residual_energy_wh` (the VCU's 2 Wh figure off 0x10A) are the SAME quantity by two
+// routes, and public/lib/derive.js prefers the first — `??` falls through only on null, so
+// the second is never consulted while the first returns a number. Bounding one and not the
+// other is how that went unnoticed; asserting they are EQUAL is what stops it recurring.
+// docs/signal-bounds.md §"The bounds added by #227".
+const TWINS = ["bms_remaining_energy_wh", "residual_energy_wh"];
+const twinBands = TWINS.map(key => JSON.stringify(boundsOf(key)));
+check(
+  `${TWINS.join(" and ")} are both gated`,
+  twinBands.every(band => band !== "null")
+);
+check(
+  `…to the same band — they measure one pack and must agree what a fault is (${twinBands[0]})`,
+  twinBands[0] === twinBands[1]
+);
+
 if (failures.length > 0) {
-  console.error(`\n${failures.length} of the eighteen signals #227 gated are not gated the way they must be:`);
+  console.error(`\n${failures.length} assertion(s) about the declared bounds do not hold:`);
   for (const failure of failures) {
     console.error(`  ✗ ${failure}`);
   }
   process.exit(1);
 }
 console.log(
-  `\n✓ all ${FLAG_KEYS.length + STATE_WORD_KEYS.length} signals #227 took off KNOWN_UNGATED are gated: the fifteen ` +
-    `flags to 0…1, accepting both real readings and rejecting the masked byte, on four replayed 0x201 frames; the ` +
-    `three state words to the whole byte, so an unseen state renders as a state rather than as a dead sensor`
+  `\n✓ all ${FLAG_KEYS.length + STATE_WORD_KEYS.length} signals are gated to the band their decoder justifies: the ` +
+    `${FLAG_KEYS.length} BMS flags to 0…1, accepting both real readings and rejecting the masked byte a future ` +
+    `decoder could return, over four replayed 0x201 frames; the ${STATE_WORD_KEYS.length} single-byte words to the ` +
+    `whole byte, so a state this bike has not reached renders as a state rather than as a dead sensor; and the two ` +
+    `remaining-energy twins to the same band, which is what stops one of them being gated and the other not`
 );

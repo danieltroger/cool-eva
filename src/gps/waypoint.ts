@@ -1,6 +1,6 @@
 import { ageMs, latestValue, onChange, record, type LiveValue } from "../can/signals.ts";
 import type { HoldGesture } from "../gestures/runner.ts";
-import { monotonicNow } from "../monotonic.ts";
+import { monotonicNow, since } from "../monotonic.ts";
 import { implausibleJumpKmh, isPositionOnEarth, type Fix } from "./fix-plausibility.ts";
 import { systemClockTrust } from "./clock.ts";
 
@@ -66,6 +66,8 @@ export const WAYPOINT_REFUSAL = {
   FIX_IMPLAUSIBLE: 6,
   /** The coordinates are not a position on Earth at all — only a decode failure does this. */
   FIX_NOT_ON_EARTH: 7,
+  /** The first fix of this run, with no later sample yet agreeing with it. */
+  FIX_UNCORROBORATED: 8,
 } as const;
 
 export type WaypointRefusal = (typeof WAYPOINT_REFUSAL)[keyof typeof WAYPOINT_REFUSAL];
@@ -181,6 +183,20 @@ export function saveWaypointNow(): WaypointOutcome {
     );
   }
 
+  // ⚠️ THE FIRST FIX OF A RUN HAS NOTHING BEHIND IT, so the gate above answers null and a
+  // corrupt one would be saved (#178). A later SAMPLE is the missing witness: record() marks
+  // every decoded sample, deadbanded or not, so a mark newer than the fix means another
+  // sample arrived and moved the position by less than the 3 m deadband. Measured max life of
+  // a corrupt fix: 661 ms over 65 archive excursions. docs/waypoints.md §"The first fix".
+  // ⚠️ NOT covered here: a corrupt fix that is not the first of the run — #241.
+  if (!laterSampleAgreed()) {
+    return refuse(
+      WAYPOINT_REFUSAL.FIX_UNCORROBORATED,
+      "GPS fix not confirmed yet — waypoint not saved.",
+      "this run's first fix has no later sample agreeing with it"
+    );
+  }
+
   // A waypoint is a place AND a time, and the time is the half this bike is bad at. The
   // Pi has no RTC, so before the first GPS sync the clock is wherever the filesystem left
   // it — and #59 documents a corrupt hub frame that once put it in 2060 and stamped
@@ -234,6 +250,40 @@ export function waypointHoldGesture(): HoldGesture {
 /** How many waypoints this boot — for /status. */
 export function waypointsSaved(): number {
   return waypointCount;
+}
+
+/**
+ * Whether the fix a save would take has been seen twice.
+ *
+ * ⚠️ TWO DIFFERENT STREAMS, and that is the whole trick. `precedingFix` moves only on a
+ * DEADBANDED change, so on a bike that has not moved 3 m it stays null for as long as the
+ * bike stands there — while ageMs() is marked by EVERY decoded sample. A mark newer than
+ * the fix therefore means a second sample arrived and agreed with it to within the deadband.
+ *
+ * ⚠️ The older of the two axes, because ../gps/decode.ts emits them together: a mark that
+ * moved on one axis only is not a fix this bike produces, and taking the newer one would
+ * believe half a sample.
+ */
+function laterSampleAgreed(): boolean {
+  if (precedingFix !== null) {
+    // A second fix already superseded the first; ./fix-plausibility.ts owns that pair.
+    return true;
+  }
+  if (latestFix === null) {
+    // onFixChanged() runs from a microtask, so this is the tick between record() and the
+    // tracker seeing it — and it is also what a caller that never started the tracker looks
+    // like. Neither is evidence, and "not yet" is the safe answer to both.
+    return false;
+  }
+  const latitudeAge = ageMs("gps_lat");
+  const longitudeAge = ageMs("gps_lon");
+  if (latitudeAge === null || longitudeAge === null) {
+    return false;
+  }
+  // monotonicNow() is performance.now(), sub-millisecond, and the fix's own mark is stamped
+  // in the microtask AFTER record() marked the sample — so the fix's own sample can never
+  // satisfy this, and a tie is not a case that arises.
+  return Math.max(latitudeAge, longitudeAge) < since(latestFix.at);
 }
 
 /**

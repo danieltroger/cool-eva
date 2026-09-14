@@ -263,9 +263,9 @@ for (const [key, values] of [
 console.log("  the widest archive state, substate and pack resistance pass the bounds");
 
 // 5. The 0/1 flags among the keys above must be gated to exactly [0, 1], not merely gated.
-//    ⚠️ Only that half lives here. "Is it gated at all" is scripts/check-all-view-tiles.ts §5's
-//    job — it walks EVERY registry signal and fails for any with null bounds that is not on its
-//    known-ungated list, so a deleted BY_KEY line goes red there whether or not anyone remembers
+//    ⚠️ Only that half lives here. "Is it gated at all" is scripts/generate-signal-bounds.ts's
+//    job — it walks EVERY registry signal and fails for any that reaches no rule and declares
+//    neither bounds nor a reason, so a deleted bound goes red there whether or not anyone remembers
 //    to name the key in this file. Keeping a second copy would be the duplication this file's
 //    header says it does not keep. `moving` is here rather than in check-button-decode.ts
 //    because it is the key whose three ungated months prompted the ratchet.

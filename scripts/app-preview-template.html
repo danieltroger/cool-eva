@@ -422,6 +422,13 @@ __MODULES__
         "waypoint_seq": [4, "", "waypoint", NOW - 6 * MINUTE],
         "waypoint_lat": [51.4779, "°", "waypoint", NOW - 6 * MINUTE],
         "waypoint_lon": [-0.0015, "°", "waypoint", NOW - 6 * MINUTE],
+        // And a refusal, so the code has a tile to be drawn in. ⚠️ It is the NEWEST code
+        // (FIX_UNCORROBORATED, #178) on purpose: public/lib/bounds.js gates this key to the
+        // size of the enum, so a code added without widening that bound renders as a dead
+        // sensor rather than as a number — which is a thing a screenshot can catch and a
+        // check cannot phrase as well.
+        "waypoint_refused_seq": [2, "", "waypoint", NOW - 3 * MINUTE],
+        "waypoint_refusal": [8, "", "waypoint", NOW - 3 * MINUTE],
         // Two codes the bike is holding. 0044/0 is the water-pump open circuit — real,
         // and permanent on this bike, because the coolant pump is wired to the
         // heated-grip output and the VCU's own pump driver is left open.

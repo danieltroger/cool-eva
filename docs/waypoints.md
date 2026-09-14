@@ -46,7 +46,8 @@ Four gates now exist, and they are not interchangeable.
 | --- | --- | --- |
 | `src/gps/fix-plausibility.ts`, ±90 / ±180 | a decode that leaves the planet | anything that is still a legal coordinate |
 | `public/lib/bounds.js`, the same four signals | the same, on the dashboard, as a visible fault | the same |
-| `src/gps/fix-plausibility.ts`, the implied-speed test | a legal coordinate the bike cannot have got to | a bad FIRST fix, which has nothing to be compared against |
+| `src/gps/fix-plausibility.ts`, the implied-speed test | a legal coordinate the bike cannot have got to | a fix closer to its predecessor than 1 s, which is 93 % of them (#241) |
+| `src/gps/waypoint.ts`, the corroboration test | a bad FIRST fix, which has nothing before it | a corruption that outlives its own successor |
 | the route map's corroboration test | a position the surrounding track contradicts | excursions under 0.5°, and unwitnessed saves |
 
 **The bike can now refuse the 2026-08-09 case itself.** #165's gate landed with the server-side handlebar gestures: the fix is measured against the one before it, and anything implying more than 300 km/h — `bounds.js`'s own ceiling for `gps_speed_kmh`, read from it rather than copied — is refused before the save. Two things bound it, both of them lessons this repo had already paid for: the two fixes must be at least 1 s apart, because `docs/route-map.md` records an implied-speed test with a short denominator reading 7 m in 1 ms as 25 000 km/h; and one spike costs **two** refusals, itself and the good fix after it, which is the right side to fail on.
@@ -78,6 +79,61 @@ The two constants:
 **A refuted alternative, so it is not re-derived.** Witnessing against the route query's own despiked `clean` CTE looks stronger and is not. It still returns `on track` on the end-of-data case at both ±30 min and ±6 h spans, because a corrupt fix with no successor cannot be shown to be a spike and so survives into the witness set to vouch for itself; it costs 0.77 s / 2.01 s against 0.022 s; and its `LAG`/`LEAD` over a union of per-waypoint neighbourhoods makes a row's successor depend on which _other_ waypoints are in the window — at ±6 h one row's successor was a fix 28.5 days later. The skew guard needs no window functions at all.
 
 **A refuted window derivation, for the same reason.** A first draft justified a 60 s window with a measured near-miss: a corrupt fix 110 s after a good waypoint, which at ±120 s would have destroyed it. That number is real and it constrains nothing, because the query takes the _nearest_ witness and something closer always lies between. Swept from 1 s to 24 h, the verdicts are identical at every window size in this archive. What the window actually decides is how stale a witness may be before it stops being evidence.
+
+## The first fix of a run
+
+`implausibleJumpKmh()` judges a fix against the one before it and answers `null` when there is none, so until #178 the **first fix of a run** was saved with nothing able to see it — the 2026-08-09 decode failure arriving one sample earlier than it really did. The range gate cannot help: a longitude carrying an extra leading digit is a legal longitude.
+
+**The witness is a second SAMPLE, not a second FIX**, and the difference is the whole rule. `record()` marks every decoded sample whether or not the deadband logs it (`lastSeenMonotonic` is written before the deadband check), while `precedingFix` moves only when a row is actually logged. A parked bike logs no second fix for hours; it produces a second sample in about 550 ms. So "a mark newer than the tracked fix" means _another sample arrived and moved the position by less than 3 m_ — which is exactly agreement, and it is free to read.
+
+The gate sits after the jump gate and before the clock gate, keeping the file's existing order of position gates before time gates.
+
+### The constants, and where they come from
+
+- **A corrupt fix lives at most 661 ms.** Over the archive (2026-08-02 → 2026-09-12) the shape test `docs/route-map.md` derives — 5× ratio, 220 m floor, re-derived here over **raw rows** rather than the per-second points that file uses — finds **65 lone excursions** built per session. The time from each to the next row of the **corrupted axis** is min 4 ms, median 550 ms, **max 661 ms**. That bound is exact rather than approximate: a sample near the true position differs from a logged excursion by thousands of kilometres, so it always clears the 0.00003° deadband and is always logged. The logged gap _is_ the lifetime. ⚠️ Take the successor of the **corrupted** axis, not the newer of the two. The healthy axis's next row is a deadband gap — whenever the bike next moves 3 m — and reading it as a lifetime gives figures of 1 107 ms and 1 394 ms for excursions that were really corrected in 562 ms and 298 ms. That mistake was made during review and caught by re-deriving.
+- **The wait it adds is one sample.** Every one of the archive's 85 boots got a second sample. Two constructions, both worth having: taking the **earlier of** the next logged fix and the next `gps_epoch_s` row gives **82 of 85 within 1.2 s and 84 within 6 s**; taking the next `gps_epoch_s` row **only** — the conservative one — gives 80 and 80, with five boots at **23.7 s, 26.1 s, 144.1 s, 359.6 s and 8 446.6 s**. The last is that boot's clock step rather than a wait. ⚠️ Both are proxies: a log holds logged rows, never decoded samples, so neither can see the ~1.8 Hz stream directly. The five outliers are the receiver-hiccup tail and are where the wait would actually be felt.
+
+### What was keeping it shut, which was nobody's design
+
+Nothing could save a waypoint until `systemClockTrust()` said `satellite-backed`, and `GpsClockGate` needs **five** consistent readings — at best the 3rd sample with both transports, at worst the 5th. The corrupt first fix is superseded by the **2nd**. So the hole was closed by an ordering accident between two files that know nothing about each other.
+
+⚠️ **And the accident has a hole of its own.** `#decodeUtc` emits `gps_epoch_s` on `#fix !== 0` and ≥ 4 satellites, while a position _additionally_ needs `bothAxesFresh` and a non-null-island coordinate. So five time-only sub-frames can confirm the clock **before the first position ever arrives** — the `suppressedFixes` path the decoder already counts, or the null island during acquisition. The clock is then trusted when the first fix lands, corrupt or not. `GPS_TIME_SYNC=0` removes the clock gate outright, which is why `scripts/check-waypoint-corroboration.ts` runs with it set: with the clock gate in the way every assertion in that file would pass on a build with no corroboration rule at all.
+
+### The shape not taken, and why
+
+"Remember where the bike was switched off and treat the first fix as a jump from that" is the obvious alternative, and two measurements make it the expensive one:
+
+- **The system clock is wrong at exactly the moment such a rule would read it.** At each boot's first `gps_epoch_s` row, satellite time minus the stamp: **45 of the 84 sessioned boots are more than 5 s out, 40 more than 60 s, worst 259 967 s** — nearly three days. One boot's first fix is stamped 69 289 s early and the clock steps 19.25 h two readings later. So a cross-boot Δt has to come from `gps_epoch_s`, not `Date.now()`.
+- **The bike really is carried between runs**: 929 km over 192 h, 224 km over 332 h, 360 km over 19.25 h. Any "jump from where you were" rule needs an answer for those, and the answer is another speed test with another clock.
+
+Both are solvable. Neither is needed by a rule whose witness is the next sample.
+
+### ⚠️ What the archive cannot say
+
+**110 654 of the 395 487 `gps_lat`/`gps_lon` rows carry no `session_id`**, spanning 2026-08-02 19:07 → 2026-08-09 21:20; sessioned GPS starts 2026-08-23. A week of many boots is therefore one bucket — **and the 2026-08-09 corrupt longitude, the row this rule exists for, is inside it.** So the honest claim is: _no corrupt first fix among the 84 sessioned boots from 2026-08-23 on_. Across all **85** buckets — those 84 plus the un-sessioned week counted as one — 72 have the three fixes needed to judge and 13 do not. It says nothing about that week.
+
+### ⚠️ The offline mirror is weaker in one place
+
+`src/gps/recover-holds.ts` reproduces the bike gate for gate, and for the corroboration rule it cannot quite. The bike reads `ageMs("gps_lat")`, which moves only when a **position** was sampled. A log has no such witness — a position sample that agreed within the 3 m deadband logs nothing at all — so the recovery uses a `gps_epoch_s` row instead, and `src/gps/decode.ts` emits one on a healthy fix flag and four satellites while **withholding the position** unless both coordinate sub-frames arrived in that cycle (the `suppressedFixes` path `SuppressedFixWatcher` complains about).
+
+So through a suppressed-fix stretch the recovery can recover a hold the bike would have refused. Measured over the sessioned archive, **none of the 7 recoverable holds rests on it** — every one has a real predecessor in its own boot — so the weaker witness carries no recovered waypoint today. The direction is stated rather than hidden, and `RecoveryVerdict.sampleWitnessed` carries it so `scripts/recover-waypoints.ts` prints which holds rest on it — the same honesty `jumpGateJudged` exists for.
+
+**Every timeline is sliced per boot** for the same reason the fix pairs are — **with one deliberate exception**. `matchLiveWaypoints()` must stay session-blind: `scripts/recover-waypoints.ts` commits recovered rows under a synthetic `recovered-192-…` session, so a waypoint that vouches for a press never shares that press's session. 8 of the archive's 92 matches are cross-session and all 8 are that run. A session predicate there would hide every committed recovery, and the next `--commit` would duplicate all of them.
+
+Everywhere else the slicing is the point. `carryBack` used to be session-blind, so a boot that logged a latitude and never a longitude had the longitude carried in from the run before it, and the pair was recovered as a position the bike never held — at neither place. A press belongs to one run of the service, and the Pi's `liveState` is per process, so the only rows it could have seen are the ones that run wrote.
+
+### The shipped jump gate, replayed
+
+Two archives, same pipeline — fixes formed at every `gps_lat` **or** `gps_lon` row with the other axis carried back, which is how `onFixChanged()` forms them:
+
+|                         | 2026-09-07 archive | current archive |
+| ----------------------- | ------------------ | --------------- |
+| judged pairs (Δt ≥ 1 s) | 4 909              | 16 057          |
+| refused                 | 24                 | 47 (0.293 %)    |
+| smallest refusal        | 308 km/h           | 308 km/h        |
+| fastest allowed         | 278 km/h           | 290 km/h        |
+
+⚠️ Issue #178 quotes **22** refusals and a smallest of **372 km/h** for the first column. The denominator and the fastest-allowed figure reproduce exactly, so the timeline construction is the same one; the refusal set does not, and no pair anywhere in either archive implies 372 km/h. The numbers above are the measured ones.
 
 ## Where a waypoint can be seen
 

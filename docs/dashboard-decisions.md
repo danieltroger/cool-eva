@@ -449,63 +449,9 @@ A Pi that has never taken a reading shows one instruction, and after [#177](http
 
 Two of these numbers are shown **unscaled** — `TotalExchangedAh` because its scale is refused, `AvgDOD` because Energica's equation for it is malformed — so the line underneath is what makes the number mean anything at all. It renders at the same weight as a rejected reading rather than tucked away, and it carries the thing a person standing at the bike can act on: what would settle it. `docs/lifetime-battery-statistics.md`.
 
-## Plausibility bounds — `lib/bounds.js`
+## Plausibility bounds
 
-The gate exists because the real data is not clean. Across 7.6 M logged readings (Apr–Aug 2026) the bike has produced `coolant_in` at −242 °C in 59 450 rows and `coolant_out` at 988 °C in 40 351 rows — an open/flaky PT100, not noise — plus rarer `0xFFFF` sentinels on the cell voltages, −32767 on GPS altitude, and `high_beam` briefly reading 193. Rendering those raw is how you end up watching "−242 °C" on a coolant tile at 90 km/h, and a single one of them destroys a sparkline's autoscale for as long as it stays in the window.
-
-The gate **rejects rather than clamps**. Clamping invents a plausible number and hides a real fault; dropping the sample keeps the last good value on screen and lets the tile say "fault" — which is the actionable thing, because on this bike an out-of-range coolant probe is a wire to go and wiggle.
-
-Order of consultation in `boundsFor()`: `BY_KEY`, then the cell-voltage pattern, then `COUNTER_KEYS`, then `BOOLEAN_GROUPS` (flags before units, because their unit is `""` — which would otherwise fall through to unbounded and let `high_beam=193` render as "on"), then `BY_UNIT`.
-
-### Why cell voltages are gated no tighter than the decoder
-
-`CELL_VOLTAGE_PATTERN` gets `[1000, 5000]`, the same band the decoder uses (`MIN`/`MAX_PLAUSIBLE_CELL_MV` in `src/can/decode-bms.ts`), and deliberately not tighter. A tighter client gate is actively harmful here. The decoder's band is wide on purpose — "far wider than this pack's own configured limits, so no real cell, even a badly damaged one, can fall outside it" — and anything this rejects does not reach `signalState`, so `CellStrip` goes on drawing the last good bar. A cell collapsing to 1400 mV would then be invisible on the one screen whose premise is that a single cell out of 81 ends the ride. The server has already dropped the `0xFFFF` sentinel and the 8192 mV pad; this is defence in depth, so it should agree rather than second-guess.
-
-### The charge manager's numeric bounds (2026-08-20)
-
-The same miss `dc_charge_limit_selected_a` had, arrived at from the other direction: these signals do reach a rule, but the rule is `BY_UNIT`'s "A" fallback of `[-1000, 1000]`, and every one of them is a plain u8. No value a byte can hold is rejectable, so the gate was decorative. Each bound is derived from something, not guessed:
-
-- **127** is `MAX_DC_CHG_CURRENT`'s FIELD range. Parameter 258 is a BYTE S that Energica's own option data masks with 0x7F (`src/vcu/write-targets.ts`), so the value field is 0…127 whatever the sign column says, and `fast_dc_limit_max_a` is that parameter read back off `0x625`. This bike holds 75.
-
-  **⚠️ NOT 80.** 80 is this project's WRITE POLICY — the highest value Energica ever shipped a variant at, which is why `scripts/check-vcu-params.ts` refuses to write 81 and annotates 127 as "the datatype's own ceiling is NOT the policy's". A plausibility gate is about what the field can legitimately carry, not about what we are willing to write into it. Bounding at 80 would render a dealer write, or a differently-optioned bike, as a dead SENSOR rather than as the new value — defeating the one reason this key is logged, which is to notice the day the parameter changes. It would also have this key disagree with `dc_charge_limit_selected_a` about what counts as a fault for the same underlying parameter, which is the mistake the two DC voltages below are given identical bands to avoid.
-
-- `fast_dc_limit_a` is `0x620` b0, bounded by that configured max, so it inherits the 127.
-- `fast_dc_target_a` is the current the VEHICLE ASKS FOR, bounded in turn by the live limit the station offers — but the two frames run at 10 Hz and 20 Hz, so across a step edge the request reads up to 12 A above the limit for a frame or two (50 such frames in the corpus, all within 1 s of a step). 150 covers 127 plus that skew and still rejects the 255 an all-ones payload decodes to, which is what these entries were added for.
-
-  ⚠️ **Renamed from `fast_dc_a` on 2026-08-20**, when `0x615` turned out to be the VCU's request frame rather than the charge manager reporting. The bound is unchanged; only the reason it is 150 rather than 127 is now stated in terms of a request. See `docs/charge-manager.md`.
-
-- `fast_dc_target_v` and `fast_dc_limit_max_v` (`0x615` b0-1 and `0x625` b0-1) are 16-bit DC voltages whose decoders gate the high byte to `0x01`, so each can only emit 256…511 V while `BY_UNIT`'s "V" fallback is `[-50, 900]`. Both take `pack_v`'s `[0, 450]`: all three are voltages for the same 81-series pack, and a second witness must not be looser or the two disagree about what counts as a fault. ⚠️ `fast_dc_target_v` **replaced `charge_manager_pack_v`, and its value changed** — that key was documented as "the SAME QUANTITY as `pack_v`" and it is not, it is a request running a median 13.4 V above the pack.
-
-- `charge_manager_error_src` and `charge_manager_error_code` (`0x610` b1 and b2-3) are a fault SOURCE and a fault CODE, so like `freeze_frame_dtc` they are identifiers and the whole field is legitimate — `[0, 255]` and the full signed 16 including the negative half, whose sign is the manufacturer's rather than ours. Only two of each have ever been seen; bounding round those would reject every fault this bike has not had yet, which is the entire reason the pair is logged.
-- `ac_supply_limit_a` is SUPPLY-side — a cable or EVSE rating, not the bike's. It has only ever read 8, 10 and 13 A here and the bike's own AC charger stops at ~14.3 A, but a bound drawn round either of those would reject a legitimate reading at a bigger outlet. The ceiling comes from the STANDARD rather than from this bike: IEC 61851's control pilot cannot encode more than 80 A, so above that it is not a supply rating at all.
-
-These are the second line of defence, not the first. `src/can/charge-manager.ts` checks frame invariants on `0x610`, `0x615`, `0x620` and `0x625`, so an all-ones payload still REACHES those decoders and they refuse it — the value never gets as far as this file. Both layers are wanted, because they fail differently: the invariant catches a sender that has stopped talking, and these catch a decode that is wrong in a way no invariant can see, since a byte read at the wrong offset still arrives in a frame with a perfectly good b1 = 0x01.
-
-### The blank-unit trap, in three variations
-
-A signal with a blank unit in a group that is not a `BOOLEAN_GROUP` reaches no rule at all and renders whatever arrives — the one outcome this file exists to prevent. Three keys were caught by it separately and each needs its own `BY_KEY` line:
-
-- `fast_dc_contactor` — a 1/0 flag in `charge`, which is not a `BOOLEAN_GROUP` and must not become one, because `mains_v` and `dc_a` live there. Its unit is `""` precisely so it cannot fall into `BY_UNIT`'s numeric ranges.
-- The charge manager's flags and raw state bytes (`dc_charging`, `ac_charging`, `bms_leak_detect_inhibit`, `charge_type`, `charge_manager_status`, `charge_manager_state`) — same group, same blank unit. The two raw state bytes are gated to a byte rather than to the values they have been seen to take: `0x610` b0 has produced seven values and b7 nine across 29 sessions, and the point of logging them raw is to catch a state nobody has seen yet; a bound drawn round today's set would reject exactly that.
-- `speed_redundant_a_raw` / `_b_raw` (`0x125`) — raw counts, blank unit, non-boolean group. There is no scale to bound them by (see `src/can/drive.ts`), so the bound is derived from the one thing that is known: at the measured ~109-117 counts per km/h this bike's 200 km/h top speed is at most ~23 400 counts, so 40 000 cannot reject a real reading and does reject the wild value a wrong offset or width would produce.
-
-The opposite failure, a unit fallback that is too tight, has its own examples. `psu_12v_mv` and `psu_12v_lowpower_mv` are in mV, and `BY_UNIT`'s mV fallback is `[0, 5000]` because it was written for cell voltages — a healthy 12 704 mV rail would fall straight through it and be drawn as a dead sensor. 20 000 mV is well above anything a 12 V system produces and well below the 65 535 a decode failure would show. `dc_charge_limit_selected_a` is named because `BY_UNIT`'s "A" fallback of `[-1000, 1000]` would happily draw a misread opcode byte as 147 A.
-
-`abs_warning_lamp` is the reverse again: **⚠️ not** a 1/0 flag, despite living in `diag` with a blank unit. Energica's `A_WARN_LAMP` is `byte 4 mask 0x0C >> 2` — TWO bits, so 0…3 — and the mask is kept as the vendor wrote it rather than narrowed to the one bit this bike has been seen to use. Without the `BY_KEY` entry the group-wide boolean rule would gate it to `[0, 1]` and reject lamp states 2 and 3 as a dead sensor, precisely when the lamp has something to say.
-
-`freeze_frame_dtc` is an IDENTIFIER, not a measurement, so the whole 16-bit space is legitimate (P0514 is 0x0514 = 1300, and a U-code reaches 0xFFFF). 0 is meaningful too: it is the bike's own way of saying no freeze frame is stored.
-
-`COUNTER_KEYS` exists because `dtc_count` (0…127, PID 01) and `warmups_since_clear` (0…255, PID 30) share the `diag` group with the 154 generated `dtc_*` flags but are counts, not flags — the group-wide 1/0 rule would reject every value above 1 as a sensor fault, gating out exactly the stored-code count that the Faults tab's OBD cross-check exists to show, precisely when there is something to cross-check. (The service sheet carried a tile until 2026-08-20 that put the Hub's ACTIVE `dtc_*` flags beside PID 01's STORED count — two numbers `Counters()` says measure different things and always disagree — and left the reader to make of that what they would. It was removed as a duplicate of the Faults tab, which is strictly more: it names the codes, carries their history, and runs a real cross-check of PID 01's counter against the length of mode 03's list, saying so when those two disagree. Note that is a DIFFERENT pair of numbers, so nothing was 'moved' — the tile's juxtaposition simply had no reading worth keeping.) `dtc_stored_count` reads 39 on this bike today.
-
-`buttons` joined `BOOLEAN_GROUPS` on 2026-08-16. Today their decoder can only emit 0 or 1 (it returns `bit()`), so the gate rejects nothing — it is there for the same reason `controls` is, which is that `high_beam` once read 193. A decoder that later returned the masked byte instead of the bit (`handlebar & 0x20` is 32, not 1) would otherwise paint a pressed button as an ordinary number, and a button tile that lights on 32 but not on 1 is exactly the kind of quiet wrong answer this file exists to stop.
-
-### `km_per_kwh_can` — why not the same band as the hub's pair
-
-`0x10B` carries the VCU's own consumption: the same two quantities as `km_per_kwh` / `kwh_per_100km`, down a different path, and deliberately NOT given the same band. The hub's pair is smoothed; this one is instantaneous at 10 Hz, and an instantaneous km/kWh is unbounded above by construction — coast or regen for a moment and you cover distance on no net energy at all. Replaying the 2026-08-02 lap through this gate at the hub's `[0.5, 200]` rejected 159 of 448 readings, a third of a healthy signal drawn as a dead sensor, which is this file's own failure mode.
-
-Those readings are real, not decode noise: the peak, 3379.3 km/kWh, pairs with 0.030 kWh/100 km in the same frame, and 3379.3 × 0.0296 = 100 exactly as the reciprocal requires. So the honest bound is the whole range the field can still express once the decoder has dropped the ≥ 65000 saturation clamp — 6499.9 and 64.999. Wide, but a narrower one here would be a guess about the bike rather than about the decode, and only the decode is knowable from this side. The 100 m averages get the same band, read unsigned and saturation-guarded the same way.
-
----
+Moved to [`signal-bounds.md`](signal-bounds.md) when #227 made the bounds generated. They are declared beside each signal in `src/can/registry.ts` now, not in a table in `public/lib/bounds.js`, and that doc is where the derivations live.
 
 ## Derived numbers and charts — `lib/derive.js`, `lib/power-limits.js`, `lib/ring.js`, `lib/svg.js`, `lib/tiles.js`, `lib/dwell.js`
 
@@ -1309,40 +1255,6 @@ Unlike set-current, stop takes no fields and makes no AC/DC decision: the same p
 
 Adding a second charge-tab write control was the moment to lift the session/status machinery out of `charge-current.js` (which was at the ~400-line split line) into `lib/charge-write.js`: the `writeStatus`/`sessionLive` states, the one lazy `serverTime`-subscribing session derive, `liveChargeType()`/`liveCeiling()`, `fetchChargeWriteStatus()`, and an `onChargeSessionEnd()` hook each control registers to clear its own form. One derive, one status fetch, one definition of "a charge is live" — so the two controls cannot disagree about when a command may be offered.
 
-## The ungated signals — `public/lib/bounds.js`, and the ratchet in `check-all-view-tiles.ts`
+## The ungated signals
 
-`boundsFor()` has four routes: a `BY_KEY` entry, the cell-voltage pattern, `COUNTER_KEYS`, and a `BOOLEAN_GROUPS`-plus-blank-unit rule, falling through to `BY_UNIT[unit] ?? null`. **A signal with a blank unit, in a group that is not a `BOOLEAN_GROUP`, and no `BY_KEY` entry reaches none of them**, so `boundsFor()` returns `null` and `views/all.js` renders whatever arrives.
-
-That file's header has warned about the combination since it was written. It did not stop it happening: **`moving` and 0x104's `rolling_backwards` (then called `reverse_gear`) — both 1/0 flags, both in `drive` — were ungated from June until 2026-09-14**, when a diff reviewer on #234 went looking. Nothing was red, and nothing could have been: every other guard in this repo walks the signals that _are_ gated. `check-can-decoders.ts` §2 asks `bounds.js` which keys are 0/1-gated and checks their deadbands — an ungated key is invisible to it from both ends.
-
-### Gating the fifteen BMS flags and three state words
-
-Eighteen of the 57 left ungated above are gated as of #227, and they divide by the kind of argument that justifies them rather than by subsystem.
-
-**Fifteen are 1/0 flags** — the seven `bms_state_*`, six `bms_err_*` and two `bms_warn_*`. Every one is `bit()` or `mask ? 1 : 0` in `src/can/decode-bms.ts`, so `[0, 1]` **cannot reject a real reading**; it is not a claim about the bike at all. What it catches is a decoder that later returns the masked byte instead of the bit — `flags & 0x20` is 32, not 1 — which is the same failure `bounds.js` records for the `buttons` group, and the same shape as `high_beam` once reading 193.
-
-⚠️ **The obvious alternative does not work.** Adding `bms` to `BOOLEAN_GROUPS` would gate all fifteen in one line, and it would also gate `bms_error_flags` (a `readUInt32BE`) and `bms_warning_flags` (a 24-bit word) in the same group, rejecting every fault they exist to carry on every frame where anything is set. Fifteen named lines is the cost of that group holding two kinds of thing.
-
-⚠️ **The list said "fourteen" of them and there are fifteen.** The miscount sat in `check-all-view-tiles.ts`'s own comment and was copied forward into the work that fixed them; counted from the list, it is seven plus six plus two.
-
-**Three are single-byte state words** — `vehicle_state`, `vehicle_substate` (`frame[3]` and `frame[4]`, `src/ble/protocol.ts`) and `charge_state` (the System State byte). These get `FIELD_U8`, the **field width and not the values observed**, because the whole point of logging a state machine raw is to catch a state nobody has seen and a bound drawn round today's set would draw exactly that as a dead sensor.
-
-⚠️ **These two arrive by both transports and the two do not agree** — `protocol.ts:150` records the BLE path logging `vehicle_state` 4 and 0, which the CAN byte never produces. That disagreement is an argument **for** matching the CAN twins' field width and **against** ever matching one path's observed values to the other's. It is also why the gate can never fire today: a byte cannot leave `0…255`. It is kept for the reason `bounds.js` gives about `front_brake_pressure_bar` — the gate catches a future widening of the field, and the alternative is that the widening renders as a plausible state.
-
-`scripts/check-flag-bounds.ts` holds all eighteen, and asserts what §5's ratchet structurally cannot: not merely that each reaches a rule, but **which** bound it got.
-
-### What was done, and what deliberately was not
-
-`moving` is fixed here, and #230 fixed 0x104's two flags the same day and independently. **The other 57 were not**, and `scripts/check-all-view-tiles.ts` §5 carries them as `KNOWN_UNGATED` — a **ratchet, not a blessing**. It fails when one more appears, and it fails when an entry stops naming a real signal, so the list cannot rot into decoration. Fixing them means deciding a physical range for each, which belongs with whoever owns each frame.
-
-⚠️ **The list is 39 now, not 57**: #227 gated the eighteen described in §"Gating the fifteen BMS flags and three state words" above. The three kinds that follow are still why the check is an allow-list rather than a ban.
-
-Three kinds are on that list for good reasons, and they are why the check is an allow-list rather than a ban:
-
-- **Flag words and raw state bytes** — `bms_error_flags`, `vcu_flags_low`, `bms_io_state`. A 0/1 gate would reject them on every frame where anything is set; that is exactly why `registry.ts` puts `vcu_flags_low/high` in `vcu` rather than `diag`.
-- **Indices and counts into a structure** — `cell_lowest_v_idx`, `gps_satellites`. The structure's size is the real bound.
-- **Monotonic counters and odometers** — `waypoint_seq`, `odometer_km`, `time_since_clear_min`. Any ceiling is arbitrary, and the counter that outgrew it would be drawn as a dead sensor on a working bike. `bounds.js` already says this about `waypoint_seq`.
-
-⚠️ **And some were simply wrong**, marked as such in the list so the next person inherited the judgement rather than the surprise. `vehicle_state` and `vehicle_substate` are the BLE twins of `vehicle_state_can` / `vehicle_substate_can`, which #234 gated — so one transport's copy of a quantity was gated and the other's was not. **#227 took that fix**, which is what this paragraph asked for.
-
-⚠️ **This paragraph named `speed_can_kmh` too, and was wrong by the time it was written**: #230 gated it and `motor_rpm_can` while #234 was in review, and the list went on naming both. The ratchet's own staleness arm could not see it — it asked whether an entry was still a signal, not whether it was still ungated. Both arms are there now, and the second one is why the count reached 57 rather than 59 — and why gating eighteen of them in #227 could not leave a stale list behind: the same arm fails on an entry that has since been gated.
+Moved to [`signal-bounds.md`](signal-bounds.md) § "What has no bound, and why". The hand-maintained `KNOWN_UNGATED` list this section described is gone: a signal declares `unbounded` beside itself now, and `scripts/generate-signal-bounds.ts` fails the build on one that declares neither that nor a bound.

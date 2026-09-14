@@ -639,6 +639,13 @@ check(`no GPS fix at all is refused (${noFix.message})`, !noFix.saved && noFix.r
 record("gps_lat", 57.7, Date.now());
 record("gps_lon", 11.97, Date.now());
 await settle(20);
+// ⚠️ A SECOND SAMPLE CARRYING THE SAME POSITION, because since #178 the first fix of a run
+// is refused until a later sample has agreed with it. Equal values sit inside the 3 m
+// deadband, so nothing is logged and `precedingFix` stays null — which is the state the
+// gate is about, and the state the hub really produces ~550 ms after a fix at a standstill.
+record("gps_lat", 57.7, Date.now());
+record("gps_lon", 11.97, Date.now());
+await settle(20);
 const saved = saveWaypointNow();
 check(`a fresh fix saves (${saved.message})`, saved.saved && saved.sequence === 1 && waypointsSaved() === 1);
 check("…and the position reaches the log as its own signals", latestValue("waypoint_lat") === 57.7);

@@ -2,7 +2,7 @@
 
 `grafana/dashboards/route-map.json` — where the bike went, and where it charged, from the decrypted ride log. Related: `grafana/README.md` (the datasource's own traps), `docs/charge-manager.md` (what the charge signals mean), `docs/dashboard-decisions.md`.
 
-Everything below was measured against the 2026-09-07 decrypt (15 477 057 readings, 2026-08-02 → 2026-09-07). No coordinates appear in this file or in the dashboard JSON, and that is deliberate — see [No coordinates anywhere](#no-coordinates-anywhere).
+Everything below was measured against the 2026-09-07 decrypt (15 477 057 readings, 2026-08-02 → 2026-09-07), **except the charge-stop corroboration section**, which is measured against the archive as it stood on 2026-09-14 (2026-08-02 → 2026-09-12) and says so where the numbers differ. No coordinates appear in this file or in the dashboard JSON, and that is deliberate — see [No coordinates anywhere](#no-coordinates-anywhere).
 
 ## Reconstructing a track from two independent signals
 
@@ -112,6 +112,52 @@ So `view.zoom` is set to 18. Because `id` is `fit`, geomap's final `if (view.zoo
 A charge stop is therefore drawn at the **last fix from before the bike was plugged in**, and that fix's age ranges from seconds to over a week (the worst in the archive is 14 122 minutes — nearly ten days). Two sessions have no prior fix at all, because GPS logging started later that same evening; they are listed in the table but cannot be drawn.
 
 `Fix age (min)` is carried as a field and drives the marker colour — green under 30 minutes, amber past that, red past six hours — so a stale position is visible as stale rather than drawn as a confident pin. This is the same argument `public/lib/bounds.js` makes for readings: a value that cannot be trusted is shown as a fault, never quietly rendered as something plausible. (That file gates no coordinate — `gps_lat` and `gps_lon` have no entry in it — so the principle is borrowed, not the mechanism. Nothing upstream of this dashboard filters a position.)
+
+### The inherited fix has to be one nothing contradicts
+
+The lookup takes the newest row at or before plug-in, and **that is the one row a despiker can never see**: a lone excursion is only ever visible from its neighbours, and `r.ts <= sess.start_ts` forbids looking at the one that comes after. A corrupt final fix therefore sat there as the newest row for the whole session, and because all three layers share one `options.view` of `fit` with `allLayers: true`, one pin on another continent reframed the whole map — verbatim the failure [Despiking by shape](#despiking-by-shape-not-by-speed-and-not-by-coordinate-range) exists to prevent (#173).
+
+So each of the three GPS sub-selects carries a clause refusing a row that a same-axis row **within ±2 s of it, in the same run**, disagrees with by more than 0.002°. `ORDER BY r.ts DESC LIMIT 1` then walks back to the newest row nothing contradicts. No window functions, no per-second pivot, no `clean` CTE duplicated into four targets.
+
+**The two constants:**
+
+- **±2 000 ms** — 3.03× the measured maximum lifetime of an excursion (661 ms; `docs/waypoints.md` §"The first fix of a run" has the derivation), and short enough that the bike cannot cross the threshold **in latitude** inside it: 300 km/h for 2 s is 167 m against 222.6 m. ⚠️ Not a guarantee in longitude — the next bullet has the threshold as tight as 118 m there.
+- **0.002°** — 222 m in latitude, and 118–182 m in longitude across the 35–58°N this archive spans. Above the 220 m floor the track's despiker already derives; below the smallest measured excursion, 227 m. ⚠️ The longitude figure is the tight end, and a genuinely fast pair with a 2 s row gap would be called contradicted and step back a row — **up to ~180 m**, not the ~40 m an earlier draft claimed. That is affordable _here_ and would not be in `src/gps/waypoint.ts`: a false positive costs metres of pin on a position whose staleness is already reported in minutes, not a place the rider loses.
+
+**Both directions are load-bearing.** Forward catches an excursion whose correction is logged; backward catches one the receiver never corrected because it fell silent — which is the mechanism the issue describes. A refinement of "backward **AND** (forward **OR** no successor)" was tried and refuted by the archive: it catches **5 of 13** independent ≥1 000 km excursions and **moves a charge pin by 271 km**, because an excursion after a > 2 s gap has no backward witness and one before silence has no forward witness. The `OR` across the two arms is what makes it work.
+
+⚠️ **`IS`, never `=`, on the session** — and the failure direction is the point. The predicate sits inside `NOT EXISTS`, so an unknown comparison selects nothing, `NOT EXISTS` is satisfied, and the row is **never marked**. `=` does not over-reject the 110 654 GPS rows that carry no session; it **switches the gate off** over them, silently, with nothing in the query plan to say so. Measured: 57 `gps_lat` and 57 `gps_lon` rows marked in that block under `IS`, **0 and 0** under `=` — and the 2026-08-09 corrupt longitude, the row this exists for, is contradicted under `IS` and not under `=`.
+
+And the session predicate is needed at all because `ts` is wall clock the Pi steps: without it, rows from two runs written days and hundreds of km apart contradict each other, and **26 `gps_lat` and 29 `gps_lon` real fixes** are rejected across the archive.
+
+**What it costs, measured over the whole archive:**
+
+|                                             |                                            |
+| ------------------------------------------- | ------------------------------------------ |
+| independent ≥ 1 000 km excursions caught    | 13 of 13                                   |
+| all shape-test excursions caught            | 65 of 65                                   |
+| `gps_lat` / `gps_lon` rows marked           | 189 (0.099 %) / 237 (0.116 %)              |
+| charge sessions whose inherited row changes | **1 of 29**                                |
+| that pin's move                             | 0.9 m, and its `Fix age` 13.9 → 14.4 min   |
+| target G over the whole archive             | 0.30 s, against the shipped query's 0.30 s |
+
+The one row that changes is not a save: it falls back from the **correction row** immediately after a 2.442° latitude excursion to the row before that excursion. Near a known excursion the lookup steps to a row with nothing anomalous inside its own window, which is the "up to two rows back" cost.
+
+⚠️ `lat` and `lon` are resolved by **independent** sub-selects, so a gated axis can step back while the other does not, and `fix_ts` follows `lat` only. That was already true; the clause makes it visible.
+
+**The residual, stated:** an excursion that is _both_ the first fix after a gap longer than 2 s _and_ the last before silence has no witness on either side. It is the same shape as the first-fix hole in `docs/waypoints.md`, and it is not closable from one row.
+
+### ⚠️ The skew that was measured and not taken
+
+The obvious fix — take the last fix at least ~5 s before `start_ts`, the way #167's waypoint gate skews its witness — **does not reduce the hazard**, and the measurement is worth keeping so it is not proposed again.
+
+The newest row before _any_ fixed cutoff is an excursion exactly when the cutoff falls in the band between an excursion and its correction. Moving the cutoff 5 s earlier does not remove that band, it moves it — and the correction that would have exposed the excursion is then _also_ after the cutoff, and _also_ excluded. Three measurements say the same thing:
+
+- **20 of the 27 placeable sessions inherit a row already older than 5 s** (10 s to 847 337 s — nearly ten days), so a 5 s shift reaches nothing at all for two thirds of the archive. Only 7 sessions have a last fix inside 5 s.
+- For those 7 it costs **1.9, 19.8, 21.5, 32.5, 36.6, 88.6 and 156.3 m** of pin position, for no change in exposure.
+- The premise that plug-in is a special moment is not supported: excursions within ±120 s of the 29 session starts, **0 observed against 1.400 expected**; at ±600 s, 3 against 6.999. ⚠️ That test refutes nothing on its own — P(0 | 1.4) = 0.247 — **and it is the wrong test**: it measures _clustering_, while the issue argued _persistence_, that an excursion near plug-in is more likely to have no successor and so stay the newest row. The clause above makes that moot rather than untested, because it does not depend on a successor existing.
+
+The defect was never where the cutoff sits. It was that the query only ever looked backwards, while the hub keeps logging past plug-in: in all seven sessions whose last fix is within 1.2 s of `start_ts`, there is another fix **0.1–2.6 s after** it.
 
 ## Charge sessions are built from evidence that current flowed
 
