@@ -239,6 +239,16 @@ await deliver({ charge_manager_state: DC_SESSION });
 // the number on the bus again. The settle guard does not consult the in-flight flag, so `>= 1`
 // would be satisfied by it alone and would say nothing about the flag this section is about.
 check("§5a a new session asks at once rather than waiting behind the old one's hung request", fetches === 2);
+
+// ⚠️ And the OLD session's request, settling late, must not clear the flag the new one is holding.
+// Released alone, with the new session's own request still hanging: a retry window then passes and
+// nothing new may be sent, because the request in flight is still in flight.
+const abandoned = hung.shift();
+abandoned?.();
+await flush();
+fetches = 0;
+await deliver({ charge_manager_state: DC_SESSION }, STATUS_RETRY_MS);
+check("§5a and a request abandoned by the last session cannot clear the flag under it", fetches === 0);
 for (const release of hung) {
   release();
 }
@@ -272,7 +282,12 @@ for (const entry of await readdir(new URL("../public", import.meta.url), { recur
   if (typeof entry !== "string" || !entry.endsWith(".js") || entry.startsWith("vendor")) {
     continue;
   }
-  const text = await readFile(new URL(`../public/${entry}`, import.meta.url), "utf-8");
+  // ⚠️ Comments stripped first. A `// list: "0"` beside the line that omits it satisfies a raw
+  // text scan, which is a green check over the exact bug. `[^:]` keeps `https://` intact.
+  const text = (await readFile(new URL(`../public/${entry}`, import.meta.url), "utf-8")).replace(
+    /(^|[^:])\/\/[^\n]*/g,
+    "$1"
+  );
   if (!text.includes("/vcu-write")) {
     continue;
   }
