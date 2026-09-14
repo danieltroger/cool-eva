@@ -39,7 +39,20 @@ if ! command -v candump >/dev/null 2>&1; then
 fi
 
 BOOT_ID=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
-OUTPUT="$DIRECTORY/capture-$(date +%Y%m%d-%H%M%S)-$BOOT_ID.log"
+# Whole seconds of uptime. The Pi has no RTC, so this is the ONLY monotonic thing it has:
+# `date` below can be years out at this point and has been (#188 — two .celog files and a
+# capture named for 2060). Padded to 8 digits so it sorts as a number rather than a string,
+# and 8 rather than 6 so the padding has no expiry date the bike can outlive.
+UPTIME=$(printf %08d "$(cut -d. -f1 /proc/uptime)")
+# Date FIRST, and it stays first: over all 98 boots in the archive, sorting by this name
+# agrees with sorting by each file's own first frame in every one, 0 exceptions. The uptime
+# is appended because it fixes the case the date cannot — a clock that steps mid-boot — and
+# putting the boot id first instead would cost a chronological `ls` over the whole archive
+# forever to fix a hazard that has never fired. docs/ride-log-clock.md.
+#
+# ⚠️ The file's MTIME is still whatever the clock says, and nothing here can change that.
+# Within a boot, sort by name; across boots, `ls -t` is not evidence.
+OUTPUT="$DIRECTORY/capture-$(date +%Y%m%d-%H%M%S)-$BOOT_ID-$UPTIME.log"
 
 echo "capturing to $OUTPUT"
 # stdbuf -oL: line-buffered, so a hard power cut costs at most the current line.
@@ -53,4 +66,12 @@ echo "capturing to $OUTPUT"
 # ⚠️ 2>&1 is deliberate and must stay. -D removes the file boundary that used to
 # mark a gap, so candump's own "can0: interface down" line is the only evidence
 # IN THE FILE that one happened; the journal does not travel with the archive.
-exec stdbuf -oL timeout 28800 candump -D -tA can0 > "$OUTPUT" 2>&1
+#
+# The `echo` puts the boot id and the uptime INSIDE the file, for the same reason 2>&1 is
+# here: the archive travels to the laptop and the journal stays on a card that gets
+# reflashed, so anything not in the file is lost. scripts/replay-capture.ts counts any line
+# it cannot parse as `framesSkipped` and carries on, so it costs a reader nothing.
+{
+  echo "# boot $BOOT_ID uptime $UPTIME"
+  exec stdbuf -oL timeout 28800 candump -D -tA can0
+} > "$OUTPUT" 2>&1

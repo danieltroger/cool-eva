@@ -34,6 +34,10 @@ export interface StatusPayload {
    * `files` is a count of `.celog` FILES, not of the segments sealed into them.
    * See measureLog() — the two differ by orders of magnitude, and the field was
    * called `segments` until the dashboard caption built on that name went wrong.
+   *
+   * ⚠️ Nor is it one file per day any more. Since #188 a boot writes `rides-boot-<session>`
+   * until its clock is worth believing, so an ordinary day leaves two or three files rather
+   * than one. docs/ride-log-clock.md.
    */
   log: { files: number; bytes: number; enabled: boolean };
   /** Live-vs-total signal counts per group, e.g. `{ battery: [16, 16] }`. */
@@ -62,10 +66,17 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
  *
  * ⚠️ **Files, not segments**, and the gap is not small: `storage/encrypted-log.ts`
  * seals a segment on a timer (every 30 s by default) and **appends** each one to
- * `rides-<YYYY-MM-DD>.celog`, so one file is one calendar day's worth of segments —
- * hundreds or thousands of them. `scripts/decrypt-log.ts` counts the real thing, by
- * walking the framing inside each file. This used to return the same number under
- * the name `segments`, and the dashboard printed it as "N sealed segments".
+ * `rides-<YYYY-MM-DD>.celog` — hundreds or thousands of segments per file.
+ * `scripts/decrypt-log.ts` counts the real thing, by walking the framing inside each
+ * file. This used to return the same number under the name `segments`, and the
+ * dashboard printed it as "N sealed segments".
+ *
+ * ⚠️ It is also no longer one file per calendar day: segments sealed before the clock is
+ * satellite-backed go to `rides-boot-<session>.celog` instead, because the day name is
+ * `new Date()` and that is how a file called `rides-2060-08-08.celog` came to hold real
+ * riding (#188). Measured over 130 boots, that is ~3 extra files a day. Nothing here
+ * prunes them — they are swept to the laptop with the day files, by hand, like everything
+ * else in this directory. docs/ride-log-clock.md.
  *
  * Counting segments here would mean walking every file's framing on each /status
  * poll, for a number the download button has no use for. So the cheap answer stays

@@ -80,6 +80,11 @@ const SEGMENTS_TO_SEAL = 5;
  * date. Three would need the run to cross midnight twice, so this is a real ceiling
  * and not a fudge factor, while asserting exactly one would go red once a day and a
  * check that does that gets deleted.
+ *
+ * ⚠️ Two only because this section pins `clockTrust` to satellite-backed. A real boot also
+ * writes `rides-boot-<session>.celog` until its clock is worth believing, which is
+ * scripts/check-ride-log-clock.ts's subject — and the reason this bound is still a bound
+ * rather than something that quietly became wrong when #188 landed.
  */
 const FILES_ONE_RUN_MAY_MAKE = 2;
 
@@ -231,6 +236,9 @@ async function sealRealSegments(directory: string, recipient: ThrowawayKeypair):
     // An hour, so the periodic timer never fires and every seal below is one this
     // check asked for. flushEncryptedLog() is what actually writes them.
     segmentIntervalMs: 3_600_000,
+    // §1-§4 are about the day file and what /status counts, so they want the
+    // satellite-backed path. The boot-named file is check-ride-log-clock.ts's subject.
+    clockTrust: () => "satellite-backed",
   });
   if (!enabled) {
     // Without this, appendReading() silently no-ops and the failure surfaces as

@@ -236,6 +236,21 @@ const CHECKS: SelfCheck[] = [
       "'not charging' for ever in silence",
   },
   {
+    script: "scripts/check-ride-log-clock.ts",
+    covers:
+      "the ride log against a Pi with no RTC (#188) and the seal that parking buys (#57): that splitByTrust cuts " +
+      "contiguous runs, keeps their order and is BOUNDED — five alternating runs collapse to one carrying the most " +
+      "pessimistic trust, so a flapping clock cannot put an X25519 keygen and an fdatasync per flap on the event " +
+      "loop; that a reading sealed under an unconfirmed clock goes to rides-boot-<session>.celog and a trusted one " +
+      "to rides-<date>.celog, both untrusted seals sharing ONE file; that a buffer spanning the step seals as TWO " +
+      "labelled segments — the case a seal-time sample gets wrong for the median boot, whose clock steps 15.9 s in " +
+      "against a 30 s timer — with no timestamp rewritten to make them agree; that the header is v3 and a v2 " +
+      "segment beside it still decodes and reports no trust rather than a good one; that a seal failing on its " +
+      "SECOND run re-queues both runs ahead of what was buffered while it ran, writing every reading exactly once " +
+      "and in the order recorded; and that the park seal fires on an observed entry into state 60 but not on the " +
+      "first sample nor an unrelated change, and still seals the new readings when a seal is already in flight",
+  },
+  {
     script: "scripts/check-ride-log-status.ts",
     covers:
       "what /status reports about the ride log, and about the CAN sources: that the log count is read " +

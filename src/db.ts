@@ -28,6 +28,7 @@ interface QueuedRow {
   value: number;
   session_id: number | null;
   seq: number | null;
+  clock_trust: string | null;
 }
 
 let db: Database.Database;
@@ -68,11 +69,12 @@ export function initDb(path: string, flushMs = 200): void {
       uid TEXT UNIQUE
     );
     CREATE TABLE IF NOT EXISTS reading (
-      ts         INTEGER NOT NULL,
-      signal_id  INTEGER NOT NULL REFERENCES signal(id),
-      value      REAL NOT NULL,
-      session_id INTEGER REFERENCES session(id),
-      seq        INTEGER
+      ts          INTEGER NOT NULL,
+      signal_id   INTEGER NOT NULL REFERENCES signal(id),
+      value       REAL NOT NULL,
+      session_id  INTEGER REFERENCES session(id),
+      seq         INTEGER,
+      clock_trust TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_reading_sig_ts ON reading(signal_id, ts);
     CREATE TABLE IF NOT EXISTS info (
@@ -83,7 +85,9 @@ export function initDb(path: string, flushMs = 200): void {
   `);
   addOrderingColumns();
 
-  insertReading = db.prepare("INSERT INTO reading (ts, signal_id, value, session_id, seq) VALUES (?, ?, ?, ?, ?)");
+  insertReading = db.prepare(
+    "INSERT INTO reading (ts, signal_id, value, session_id, seq, clock_trust) VALUES (?, ?, ?, ?, ?, ?)"
+  );
   insSession = db.prepare("INSERT INTO session (uid) VALUES (?) ON CONFLICT(uid) DO NOTHING");
   selSession = db.prepare("SELECT id FROM session WHERE uid = ?");
   insSignal = db.prepare("INSERT INTO signal (key, unit, grp, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO NOTHING");
@@ -94,7 +98,7 @@ export function initDb(path: string, flushMs = 200): void {
   selInfo = db.prepare("SELECT value FROM info WHERE key = ?");
 
   const txn = db.transaction((rows: QueuedRow[]) => {
-    for (const r of rows) insertReading.run(r.ts, r.signal_id, r.value, r.session_id, r.seq);
+    for (const r of rows) insertReading.run(r.ts, r.signal_id, r.value, r.session_id, r.seq, r.clock_trust);
   });
   flushTxn = txn;
 
@@ -127,11 +131,19 @@ export function recordReading(
   grp: string,
   source: SignalSource,
   session?: string,
-  seq?: number
+  seq?: number,
+  clockTrust?: string
 ): void {
   const id = getSignalId(key, unit, grp, source);
   const sessionRowId = session === undefined ? null : getSessionId(session);
-  queue.push({ ts, signal_id: id, value, session_id: sessionRowId, seq: seq ?? null });
+  queue.push({
+    ts,
+    signal_id: id,
+    value,
+    session_id: sessionRowId,
+    seq: seq ?? null,
+    clock_trust: clockTrust ?? null,
+  });
 }
 
 /** Interns a ride-log session id, the same way getSignalId interns a signal key. */
@@ -167,7 +179,7 @@ export function closeDb(): void {
 }
 
 /**
- * Adds `session_id` and `seq` to a `reading` table created before they existed.
+ * Adds `session_id`, `seq` and `clock_trust` to a `reading` table created before they existed.
  *
  * `CREATE TABLE IF NOT EXISTS` above is a no-op against a database that already has
  * the table, so a rides.db rebuilt before 2026-08-16 would keep the three-column
@@ -184,9 +196,14 @@ function addOrderingColumns(): void {
   for (const [name, definition] of [
     ["session_id", "INTEGER REFERENCES session(id)"],
     ["seq", "INTEGER"],
+    // What the Pi's clock was worth when `ts` was taken, off the segment header (v3+).
+    // NULL on every older row, which is true: nothing recorded it. Here rather than only in
+    // decrypt-log.ts's output because a line on stdout during a twenty-minute decrypt is not
+    // something anyone can query, and rides.db is what Grafana and every later analysis read.
+    ["clock_trust", "TEXT"],
   ]) {
     if (!present.has(name)) {
-      console.log(`db: adding reading.${name} (write-order columns, added 2026-08-16)`);
+      console.log(`db: adding reading.${name}`);
       db.exec(`ALTER TABLE reading ADD COLUMN ${name} ${definition}`);
     }
   }

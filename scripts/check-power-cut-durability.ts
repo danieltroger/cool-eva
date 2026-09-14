@@ -426,7 +426,14 @@ async function checkHoledRideLog(): Promise<void> {
   await writeFile(privateKeyPath, pair.privateKey.export({ type: "pkcs8", format: "pem" }));
   await writeFile(publicKeyPath, pair.publicKey.export({ type: "spki", format: "pem" }));
 
-  const enabled = await initEncryptedLog({ publicKeyPath, directory, segmentIntervalMs: 3_600_000 });
+  const enabled = await initEncryptedLog({
+    publicKeyPath,
+    directory,
+    segmentIntervalMs: 3_600_000,
+    // This section is about DURABILITY, so it wants the ordinary day-file path; the
+    // clock-trust naming and the split are scripts/check-ride-log-clock.ts's job.
+    clockTrust: () => "satellite-backed",
+  });
   if (!enabled) {
     check("initEncryptedLog accepted the throwaway key", false);
     return;
