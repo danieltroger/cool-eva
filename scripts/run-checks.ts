@@ -788,6 +788,30 @@ const CHECKS: SelfCheck[] = [
       "a corroborated time contradicting one already trusted \u2014 check-gps-clock.ts drives that gate directly",
   },
   {
+    script: "scripts/check-route-map-sql.ts",
+    covers:
+      "the route map's charge-stop position, by RUNNING the dashboard's own SQL — the queries are read " +
+      "out of grafana/dashboards/route-map.json rather than restated, so a green check is a claim " +
+      "about what Grafana will execute. Nothing covered that file before; #173 was found by reading " +
+      "it. A charge stop inherits its position from the last fix before plug-in, because the hub " +
+      "sleeps while charging, and that newest row is the one row a despiker can never see: a lone " +
+      "excursion is only visible from its NEIGHBOURS, and the lookup's own `r.ts <= sess.start_ts` " +
+      "forbids looking at the one after it. Asserted here: that a clean map is untouched; that a " +
+      "leading-digit excursion last before plug-in is stepped over on EITHER axis; that it is still " +
+      "stepped over when the receiver falls silent straight afterwards, which is the mechanism the " +
+      "issue describes and the one a forward-only clause cannot reach; that an excursion of 0.0025° " +
+      "— the size the threshold actually decides, where a 100° fixture would pass at any threshold — " +
+      "is caught; that a bike genuinely carried three degrees across a six-hour gap is NOT; that two " +
+      "runs whose rows interleave because the Pi stepped its clock do not contradict each other, " +
+      "which is what the session predicate is for; that an excursion among the 110 654 rows carrying " +
+      "no session at all is still caught, because `=` there would satisfy NOT EXISTS and switch the " +
+      "gate off silently over a third of the archive; and that a row stamped 2060 reaches neither. " +
+      "⚠️ Every excursion case also asserts that the query WITHOUT the clause returns the corrupt " +
+      "row, so no fixture can be one the old query would have got right anyway. And the two tiles " +
+      "are asserted to contain the table's body verbatim, because they select COUNT() and SUM() and " +
+      "no behavioural assertion can notice the clause going missing from them",
+  },
+  {
     script: "scripts/check-waypoint-corroboration.ts",
     covers:
       "the gate that refuses the FIRST fix of a run until a later sample has agreed with it (#178). " +
