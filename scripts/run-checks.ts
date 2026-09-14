@@ -139,8 +139,8 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-soc-rate.ts",
     covers:
       "the SOC rate's LOWER-BOUND invariant, against continuous trajectories rather than against hand-written " +
-      "instances: that across six shapes a DC charge takes — three measured constant rates, a ramp-up, the taper " +
-      "and a stall — the estimate never exceeds the rate the trajectory ITSELF rose at over the span the estimator " +
+      "instances: that across four shapes a DC charge takes — a measured constant rate, a ramp-up, the taper and a " +
+      "stall — the estimate never exceeds the rate the trajectory ITSELF rose at over the span the estimator " +
       "claims to have measured, which is the direction the session-ahead veto lives by, since over-stating it " +
       "shortens the horizon and suppresses more steps down; that every trajectory reaches the property rather than " +
       "answering null through it; that the crossing-instant precondition underneath the bound is real — a ring led " +

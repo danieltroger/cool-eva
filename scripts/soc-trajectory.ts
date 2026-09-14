@@ -65,8 +65,8 @@ export const SOC_FRAME_PERIOD_MS = 50;
  */
 export function socRingFrom(trajectory: SocTrajectory, options: SocRingOptions): TrajectoryRing {
   const samples: SocSample[] = [];
-  let lastReading = Math.floor(trajectory.percentAt(options.fromMs));
   let lastTruePercent = trajectory.percentAt(options.fromMs);
+  let lastReading = Math.floor(lastTruePercent);
   let largestAdvance = 0;
   if (options.keepFirstReading) {
     samples.push({ atMs: options.fromMs, percent: lastReading });
@@ -105,8 +105,10 @@ export function sitsMidPlateau(trajectory: SocTrajectory, atMs: number): boolean
  * `slack` at all hard, and the taper and the stall are the only two whose newest in-window sample
  * sits well before `nowMs`, which is what catches a span measured between samples instead of to now.
  */
+export const STEADY_TRAJECTORY = constantRate("a steady 0.60 %/min, the p10 of 304 measured crossings", 60, 0.6);
+
 export const RISING_TRAJECTORIES: SocTrajectory[] = [
-  constantRate("a steady 0.60 %/min, the p10 of 304 measured crossings", 60, 0.6),
+  STEADY_TRAJECTORY,
   linearRateChange("a charge ramping up, 0.60 → 2.20 %/min", 25, 0.6, 2.2, 45),
   linearRateChange("the taper coming on, 2.20 → 0.30 %/min", 30, 2.2, 0.3, 45),
   stalledClimb("1.50 %/min with a 6.8 min stall, the longest gap in the log", 20, 1.5, 10, 6.8),
@@ -125,8 +127,8 @@ export const FALLING_TRAJECTORY = constantRate("a pack losing 0.50 %/min", 80, -
  * A dip and then a climb — the second way a leading sample can fail to be an upward crossing.
  *
  * Falling through a whole percent puts the sample at `p + 1` rather than at `p`, so a ring that
- * starts in the dip over-states by up to one whole count once the climb resumes. Not observed:
- * 304 of 304 DC crossings in the log are `+1` (docs/dc-taper.md).
+ * starts in the dip over-states by up to one whole count once the climb resumes. Never observed on
+ * this bus, measured over every DC crossing in the log: docs/dc-taper.md.
  */
 export const DIPPING_TRAJECTORY = dipThenClimb("SOC dipping 3 points and then climbing", 30, 0.5, 6, 1.5);
 
@@ -177,13 +179,14 @@ function dipThenClimb(
   dipMinutes: number,
   perMinute: number
 ): SocTrajectory {
+  const lowestPercent = fromPercent - dipPerMinute * dipMinutes;
   return {
     name,
     percentAt: atMs => {
       const minutes = atMs / 60_000;
       return minutes <= dipMinutes
         ? fromPercent - dipPerMinute * minutes
-        : fromPercent - dipPerMinute * dipMinutes + perMinute * (minutes - dipMinutes);
+        : lowestPercent + perMinute * (minutes - dipMinutes);
     },
   };
 }

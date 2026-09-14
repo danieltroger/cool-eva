@@ -2,7 +2,7 @@ import { ageMs, latestValue, onChange, record } from "../can/signals.ts";
 import { monotonicNow } from "../monotonic.ts";
 import { isPackTemperaturePlausible } from "../fan/curve.ts";
 import { RATE_WINDOW_MS, type TemperatureSample } from "./rate.ts";
-import { isSocPlausible, type SocSample } from "./soc.ts";
+import { isSocPlausible, SOC_WINDOW_MS, type SocSample } from "./soc.ts";
 import {
   CHARGE_AUTO_REASON,
   decideChargeCurrent,
@@ -107,13 +107,10 @@ export function startChargeAutomatic(sink: ChargeCommandSink, options: ChargeAut
     riderOverride: false,
     samples: [],
     socSamples: [],
-    // Decided HERE because this is the instant the listener starts: with no USABLE `soc` on record,
-    // the next notification cannot be a crossing — either it is this process's first-ever reading,
-    // which `record()` delivers as a change because there is nothing to compare it to, or it is the
-    // first reading after a garbled one, which is a change against the garbage rather than a
-    // crossing. ⚠️ `isSocPlausible` rather than a null test: `soc` is the raw `data[1]` of `0x200`
+    // Decided here because this is the instant the listener starts; `rememberSoc` says why it
+    // matters. ⚠️ `isSocPlausible` rather than a null test: `soc` is the raw `data[1]` of `0x200`
     // and `record()` has no plausibility gate, so a `255` already in `liveState` would otherwise
-    // disarm this and the sample would be kept with nothing said. See `rememberSoc`.
+    // answer "a SOC is known", disarm this, and the sample would be kept with nothing said.
     firstSocMayNotBeACrossing: !isSocPlausible(latestValue("soc")),
     inFlight: false,
     lastSessionState: null,
@@ -306,7 +303,11 @@ function rememberSoc(context: AutoContext, percent: number): void {
   }
   const atMs = monotonicNow();
   context.socSamples.push({ atMs, percent });
-  const oldest = atMs - RATE_WINDOW_MS;
+  // ⚠️ SOC_WINDOW_MS, not the thermal constant next to it. The same number today and deliberately a
+  // separate one: src/charge/soc.ts § SOC_WINDOW_MS is the indirection, and reaching past it means a
+  // thermal argument that shortens RATE_WINDOW_MS silently trims this ring inside the estimator's
+  // own window.
+  const oldest = atMs - SOC_WINDOW_MS;
   while (context.socSamples.length > 0 && context.socSamples[0].atMs < oldest) {
     context.socSamples.shift();
   }

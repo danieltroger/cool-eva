@@ -11,6 +11,7 @@ import {
   FALLING_TRAJECTORY,
   RISING_TRAJECTORIES,
   SOC_FRAME_PERIOD_MS,
+  STEADY_TRAJECTORY,
   sitsMidPlateau,
   socRingFrom,
   trueMeanRatePerMinute,
@@ -29,16 +30,11 @@ import { startChargeAutomatic } from "../src/charge/auto.ts";
 // Run by `npm test` via scripts/run-checks.ts. Takes no arguments.
 //
 // ⚠️ WHAT THIS EXISTS TO CATCH, because check-charge-auto.ts §17 and §18 already cover the
-// arithmetic. Measured by mutation, verdicts from the exit code: `advanced + 1`, a span measured
-// from the newest sample, `SOC_MIN_DISTINCT → 2` and a rate multiplied by 1.02 all go red on §17 or
-// §18 today. TWO do not, and they are why this file exists:
-//   · the window filter losing its `<= nowMs` clause — every fixture in that suite ends on or
-//     before its own `nowMs`, so a FUTURE sample cannot exist in one;
-//   · the `advanced <= 0` guard deleted — §17's backwards probe passes it, because the estimator
-//     answers −0.2 %/min and both of §17's tests are upper bounds. A negative rate comes back
-//     through `minutesUntilTaperBites` as a NEGATIVE horizon, which fires the veto on a pack whose
-//     SOC is falling.
-// docs/charge-auto.md § "The SOC rate is a lower bound".
+// arithmetic. Two mutations of `estimateSocRate` survive that whole suite and go red here: the
+// window filter losing its `<= nowMs` clause, and the `advanced <= 0` guard deleted — the second
+// answering a NEGATIVE horizon, which fires the veto on a pack that is not charging. Why neither is
+// visible over there, and the rest of the matrix: docs/charge-auto.md § "The SOC rate is a lower
+// bound".
 
 const failures: string[] = [];
 
@@ -65,14 +61,14 @@ interface TrajectoryResult {
 const propertyResults = new Map<string, TrajectoryResult>();
 // One ring per trajectory, built once and read by §1 and §4 alike: two construction calls are two
 // things to edit, and the sections would then be judging different rings while claiming otherwise.
-const rings = new Map<string, TrajectoryRing>(
+const rings = new Map<SocTrajectory, TrajectoryRing>(
   [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECTORY].map(trajectory => [
-    trajectory.name,
+    trajectory,
     socRingFrom(trajectory, { fromMs: 0, toMs: SWEEP_TO_MS }),
   ])
 );
 for (const trajectory of RISING_TRAJECTORIES) {
-  const ring = ringFor(trajectory);
+  const ring = rings.get(trajectory)!;
   const result: TrajectoryResult = { answered: 0, worstMargin: -Infinity };
   let reported = false;
   let slackReported = false;
@@ -120,14 +116,12 @@ for (const trajectory of RISING_TRAJECTORIES) {
 //
 // ⚠️ A sweep where the estimator answers `null` everywhere satisfies §1 perfectly and proves
 // nothing. Each trajectory has to reach the property on its own, or it is decoration.
-const MIN_PROBES_PER_TRAJECTORY = 30;
-/** The same floor for §4, which sweeps every trajectory into one count rather than one per shape. */
-const MIN_ANSWERED_HORIZONS = 30;
+const MIN_ANSWERED_PROBES = 30;
 for (const [name, result] of propertyResults) {
-  if (result.answered < MIN_PROBES_PER_TRAJECTORY) {
+  if (result.answered < MIN_ANSWERED_PROBES) {
     failures.push(
       `§2 ${name}: the estimator answered only ${result.answered} of the probes, under the ` +
-        `${MIN_PROBES_PER_TRAJECTORY} this trajectory has to carry — §1 holds vacuously for it`
+        `${MIN_ANSWERED_PROBES} this trajectory has to carry — §1 holds vacuously for it`
     );
   }
 }
@@ -139,22 +133,21 @@ for (const [name, result] of propertyResults) {
 // and the estimate over-states — by at most one whole count over the claimed span, which is what
 // bounds the blast radius. Neither case is reachable on this bike and both are measured rather than
 // assumed: docs/dc-taper.md § "The first SOC sample, and why it is a crossing".
-const MID_PLATEAU_TRAJECTORY = RISING_TRAJECTORIES[0];
 const MID_PLATEAU_FROM_MS = 50_000;
-if (!sitsMidPlateau(MID_PLATEAU_TRAJECTORY, MID_PLATEAU_FROM_MS)) {
+if (!sitsMidPlateau(STEADY_TRAJECTORY, MID_PLATEAU_FROM_MS)) {
   failures.push(
-    `§3 ${MID_PLATEAU_FROM_MS} ms is not mid-plateau on "${MID_PLATEAU_TRAJECTORY.name}" — the reading changed ` +
+    `§3 ${MID_PLATEAU_FROM_MS} ms is not mid-plateau on "${STEADY_TRAJECTORY.name}" — the reading changed ` +
       `there, so the ring leads with a crossing after all and this section is testing the ordinary case twice`
   );
 }
-const midPlateauRing = socRingFrom(MID_PLATEAU_TRAJECTORY, {
+const midPlateauRing = socRingFrom(STEADY_TRAJECTORY, {
   fromMs: MID_PLATEAU_FROM_MS,
   toMs: SWEEP_TO_MS,
   keepFirstReading: true,
 });
-const dippingRing = ringFor(DIPPING_TRAJECTORY);
+const dippingRing = rings.get(DIPPING_TRAJECTORY)!;
 const BOUNDED_CASES = [
-  { name: "a first reading kept mid-plateau", trajectory: MID_PLATEAU_TRAJECTORY, ring: midPlateauRing },
+  { name: "a first reading kept mid-plateau", trajectory: STEADY_TRAJECTORY, ring: midPlateauRing },
   { name: "a ring that leads with a downward crossing", trajectory: DIPPING_TRAJECTORY, ring: dippingRing },
 ];
 for (const probe of BOUNDED_CASES) {
@@ -182,7 +175,7 @@ for (const probe of BOUNDED_CASES) {
       );
     }
   }
-  if (answered < MIN_PROBES_PER_TRAJECTORY) {
+  if (answered < MIN_ANSWERED_PROBES) {
     failures.push(`§3 ${probe.name}: only ${answered} answered probes, so its bound holds vacuously`);
   }
   // ⚠️ And it has to actually over-state, or the probe has stopped constructing the case it is
@@ -203,7 +196,7 @@ for (const probe of BOUNDED_CASES) {
 // catches the `advanced <= 0` guard being deleted.
 let horizonsAnswered = 0;
 for (const probe of [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECTORY]) {
-  const ring = ringFor(probe);
+  const ring = rings.get(probe)!;
   let answered = 0;
   let reported = false;
   for (let nowMs = 0; nowMs <= SWEEP_TO_MS; nowMs += PROBE_STEP_MS) {
@@ -234,9 +227,9 @@ for (const probe of [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECT
   // them, so a pooled floor would clear by an order of magnitude while the one OTHER shape that can
   // produce a negative horizon had quietly stopped reaching the assertion at all. The falling probe
   // is exempt because answering nothing is what it asserts, and the block below pins that separately.
-  if (probe !== FALLING_TRAJECTORY && answered < MIN_ANSWERED_HORIZONS) {
+  if (probe !== FALLING_TRAJECTORY && answered < MIN_ANSWERED_PROBES) {
     failures.push(
-      `§4 ${probe.name} answered only ${answered} horizons, under the ${MIN_ANSWERED_HORIZONS} it has to carry — ` +
+      `§4 ${probe.name} answered only ${answered} horizons, under the ${MIN_ANSWERED_PROBES} it has to carry — ` +
         `the sign assertion is vacuous for the one shape it is supposed to cover`
     );
   }
@@ -247,10 +240,8 @@ for (const probe of [...RISING_TRAJECTORIES, FALLING_TRAJECTORY, DIPPING_TRAJECT
 // to decline it. At −0.20 the same fixture yields two distinct readings, the DISTINCT guard
 // declines first, and a deleted sign guard would pass in silence.
 const FALLING_PROBE_NOW_MS = SOC_WINDOW_MS;
-const fallingRing = ringFor(FALLING_TRAJECTORY);
-const fallingWindow = fallingRing.samples.filter(
-  sample => sample.atMs >= FALLING_PROBE_NOW_MS - SOC_WINDOW_MS && sample.atMs <= FALLING_PROBE_NOW_MS
-);
+const fallingRing = rings.get(FALLING_TRAJECTORY)!;
+const fallingWindow = fallingRing.samples.filter(sample => isInWindow(sample, FALLING_PROBE_NOW_MS));
 const fallingDistinct = new Set(fallingWindow.map(sample => sample.percent)).size;
 const fallingOldest = oldestInWindow(fallingRing.samples, FALLING_PROBE_NOW_MS);
 // ⚠️ No default span. An empty window is the WORST state this probe can be in, and defaulting its
@@ -270,9 +261,9 @@ if (estimateSocRate(fallingRing.samples, FALLING_PROBE_NOW_MS) !== null) {
 //
 // ⚠️ `record()` notifies when `prev === undefined`, so a process's FIRST-EVER reading is delivered
 // as a change even though it is not a crossing. What saves the ring is that the CAN channel has
-// always recorded one long before the controller subscribes — 530-1282 ms across 77 boots, the
-// margin being the serial per-file `loadStaticFiles` read between the two. Nothing enforces that,
-// so the controller says so when it does keep such a sample. docs/dc-taper.md.
+// always recorded one before the controller subscribes, by a margin measured on every logged boot —
+// the serial per-file `loadStaticFiles` read between the two. Nothing enforces that, so the
+// controller says so when it does keep such a sample. docs/dc-taper.md.
 //
 // ⚠️ ORDER IS LOAD-BEARING HERE: `liveState` is never cleared, so "no soc recorded" is a one-way
 // door inside one process, and the `0xFF` case below leaves a value behind that the last case needs
@@ -353,15 +344,6 @@ console.log(
     `says so exactly once when it keeps a first sample with no crossing behind it, and nothing when it does not`
 );
 
-/** The one ring built for this trajectory. Throws rather than building a second one on a typo. */
-function ringFor(trajectory: SocTrajectory): TrajectoryRing {
-  const ring = rings.get(trajectory.name);
-  if (ring === undefined) {
-    throw new Error(`no ring was built for "${trajectory.name}"`);
-  }
-  return ring;
-}
-
 /**
  * The oldest sample the estimator could have measured from.
  *
@@ -370,7 +352,12 @@ function ringFor(trajectory: SocTrajectory): TrajectoryRing {
  * this with it.
  */
 function oldestInWindow(samples: SocSample[], nowMs: number): SocSample | null {
-  return samples.find(sample => sample.atMs >= nowMs - SOC_WINDOW_MS && sample.atMs <= nowMs) ?? null;
+  return samples.find(sample => isInWindow(sample, nowMs)) ?? null;
+}
+
+/** The window rule itself, written once: the `<= nowMs` half is what a widened filter deletes. */
+function isInWindow(sample: SocSample, nowMs: number): boolean {
+  return sample.atMs >= nowMs - SOC_WINDOW_MS && sample.atMs <= nowMs;
 }
 
 /**
@@ -389,7 +376,12 @@ async function withController(body: () => Promise<void>): Promise<void> {
   }
 }
 
-/** Lets the change batch that `record()` queued as a microtask reach the controller's listener. */
+/**
+ * Lets the change batch that `record()` queued as a microtask reach the controller's listener.
+ *
+ * Not charge-auto-live-harness.ts's identical `settle`: importing it runs that module's top level,
+ * which replaces `globalThis.fetch` and pulls in three `public/` modules this check has no use for.
+ */
 function settle(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
