@@ -26,6 +26,8 @@ import type { ClockTrust } from "../src/gps/clock.ts";
 //   §5  a failed second run re-queues BOTH runs, in order, and nothing is written twice
 //   §6  the park seal fires on an observed entry into state 60, and only then
 //   §7  it seals the new rows even when a seal is already in flight
+//   §8  the park seal's rate limit is monotonic — a SOURCE assertion, and it says so
+//   §9  the real decrypt-log.ts carries the trust into rides.db and rewrites no timestamp
 //
 // ⚠️ §6 and §7 settle asynchronously — the listener runs in a microtask and the seal is
 // async — so they poll to a monotonic deadline rather than sleeping a fixed time. A
@@ -81,6 +83,8 @@ try {
   await checkFailedSecondRun();
   await checkParkTrigger();
   await checkParkDuringSeal();
+  await checkRateLimitIsMonotonic();
+  await checkTrustReachesTheDatabase();
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }
@@ -350,6 +354,88 @@ async function checkParkDuringSeal(): Promise<void> {
     stop();
     await closeEncryptedLog();
   }
+}
+
+/**
+ * §9 — the flag has to reach the thing people query, not just stdout.
+ *
+ * The subprocess is the point, the same way scripts/check-power-cut-durability.ts §5 runs
+ * the tool Daniel actually runs: the reader above is a MIRROR of decrypt-log.ts's framing,
+ * and a mirror cannot catch the mirror drifting. A line printed during a twenty-minute
+ * decrypt is not something anyone can query; `reading.clock_trust` is.
+ */
+async function checkTrustReachesTheDatabase(): Promise<void> {
+  console.log("\n§9 decrypt-log.ts carries the trust into rides.db and alters no timestamp");
+  const directory = await startLog("decrypt");
+  const privateKeyPath = join(workDir, "throwaway.private.pem");
+  await writeFile(privateKeyPath, recipientPrivate!.export({ type: "pkcs8", format: "pem" }).toString());
+
+  trust = "never-synced";
+  appendReading(1_500, "soc", 30, "%", "battery", "stream");
+  trust = "satellite-backed";
+  appendReading(1_788_000_000_001, "soc", 31, "%", "battery", "stream");
+  await flushEncryptedLog();
+  await closeEncryptedLog();
+
+  const outputPath = join(workDir, "decrypted.db");
+  const { execFile } = await import("child_process");
+  const run = promisify(execFile);
+  const decrypted = await run(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      new URL("./decrypt-log.ts", import.meta.url).pathname,
+      directory,
+      "--out",
+      outputPath,
+    ],
+    { env: { ...process.env, RIDE_LOG_PRIVATE_KEY: privateKeyPath } }
+  );
+  check(
+    "it says out loud that some readings were sealed under a clock it cannot vouch for",
+    decrypted.stderr.includes("could not be trusted") && decrypted.stderr.includes("never-synced")
+  );
+  check("and points at the file that holds them", decrypted.stderr.includes("rides-boot-"));
+
+  const { default: Database } = await import("better-sqlite3");
+  const db = new Database(outputPath, { readonly: true });
+  try {
+    const rows = db
+      .prepare("SELECT r.ts AS ts, r.value AS value, r.clock_trust AS trust FROM reading r ORDER BY r.seq")
+      .all() as { ts: number; value: number; trust: string | null }[];
+    check("both readings are in the database", rows.length === 2);
+    check("the pre-step one is marked never-synced", rows[0]?.trust === "never-synced");
+    check("the post-step one is marked satellite-backed", rows[1]?.trust === "satellite-backed");
+    check(
+      "and neither timestamp was repaired on the way in",
+      rows[0]?.ts === 1_500 && rows[1]?.ts === 1_788_000_000_001
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * §8 — read off the CODE, because no behavioural check can reach it.
+ *
+ * ⚠️ A SOURCE assertion, and labelled as one so nobody records it as a behavioural kill.
+ * `Date.now()` and `monotonicNow()` behave identically unless the wall clock moves during
+ * the measurement, and nothing here can make that happen — so the only way to catch a
+ * duration measured on the clock this process STEPS is to look for it. The same shape
+ * scripts/check-arming.ts uses, for the same reason. ../src/monotonic.ts.
+ */
+async function checkRateLimitIsMonotonic(): Promise<void> {
+  console.log("\n§8 the park seal measures its rate limit on the monotonic clock (source assertion)");
+  const source = await readFile(new URL("../src/storage/seal-on-park.ts", import.meta.url), "utf-8");
+  const code = source
+    .split("\n")
+    .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+  check("no Date.now() anywhere in the module's code", !code.includes("Date.now"));
+  check(
+    "and the rate limit is measured with since()/monotonicNow()",
+    code.includes("since(") && code.includes("monotonicNow()")
+  );
 }
 
 // ---------------------------------------------------------------------------------------
