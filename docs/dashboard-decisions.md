@@ -449,6 +449,16 @@ A Pi that has never taken a reading shows one instruction, and after [#177](http
 
 Two of these numbers are shown **unscaled** — `TotalExchangedAh` because its scale is refused, `AvgDOD` because Energica's equation for it is malformed — so the line underneath is what makes the number mean anything at all. It renders at the same weight as a rejected reading rather than tucked away, and it carries the thing a person standing at the bike can act on: what would settle it. `docs/lifetime-battery-statistics.md`.
 
+## State-machine labels on the All tab — `views/all.js`, `lib/state-labels.js`
+
+Daniel, looking at the All tab after `0x101` landed: _"to understand if the bike is in drive or reverse for debugging it's very hard to understand '60' myself."_ So `vehicle_state_can` and `vehicle_substate_can` carry a phrase under the number. **The vocabulary is not here** — it is the tables in `docs/can-0x101.md` §"The vocabulary the dashboard renders", and `scripts/check-vehicle-state-labels.ts` compares the two in both directions. Three decisions worth keeping:
+
+- **Both tiles print the PAIR's phrase**, because the document gives meaning to pairs. `vehicle_state_can 60` and `vehicle_substate_can 62` both read `parked`. One line of redundancy buys a tile that can be read on its own; the alternative is a number whose meaning is on the tile next to it. The one exception is a state whose own meaning is measured — state 100 is charging even where its substate is a mystery.
+- **Two kinds of nothing, and they do not look alike.** `unlabelled` in the muted ink is a pair the archive has produced that nobody has identified. `never captured`, in the fault ink, is a pair in neither table — the thing the raw logging exists to catch, and not something a second grey line would ever get anyone to notice.
+- **No label names a gear, and a check enforces it.** Reverse is not a `0x101` state: it is `rolling_backwards` on `0x104`. Park assist reads `park assist` in both its substates, because which of 52 and 53 is reverse is flagged in `docs/vcu-reverse-and-backup.md` §8 as the weakest link in its own chain. ⚠️ **So this tile does not answer the question that prompted it** — it says what mode the bike is in, not which way it would move.
+
+`drive_vsm` deliberately gets no phrase although the issue names it. `b2` is a coarse copy of the substate — 6 in 43, 52 and 53, 4 everywhere else — so a phrase there would restate the tile beside it, and it dips to 4 for ~0.18 s at every substate change among those three (`docs/can-0x101.md`, 26 of 26), which would put two English sentences on screen disagreeing. It prints its number; the meaning is one paragraph away in the document.
+
 ## Plausibility bounds — `lib/bounds.js`
 
 The gate exists because the real data is not clean. Across 7.6 M logged readings (Apr–Aug 2026) the bike has produced `coolant_in` at −242 °C in 59 450 rows and `coolant_out` at 988 °C in 40 351 rows — an open/flaky PT100, not noise — plus rarer `0xFFFF` sentinels on the cell voltages, −32767 on GPS altitude, and `high_beam` briefly reading 193. Rendering those raw is how you end up watching "−242 °C" on a coolant tile at 90 km/h, and a single one of them destroys a sparkline's autoscale for as long as it stays in the window.

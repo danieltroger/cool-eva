@@ -12,6 +12,7 @@ import { getsLatchedTile } from "../lib/latched.js";
 import { isFlasher, pressTracker, secondsHeld, secondsSincePress } from "../lib/press.js";
 import { formatLifetimeValue, lifetimeError, lifetimeStats, loadLifetimeStats } from "../lib/lifetime.js";
 import { ageInWords, reading } from "../lib/format.js";
+import { pairLabel, stateLabel } from "../lib/state-labels.js";
 
 const { div, input, span } = van.tags;
 
@@ -182,8 +183,44 @@ function RawTile(key) {
       // Only worth showing once a good value exists too — otherwise the line above
       // already says the only thing known about this signal.
       return rejected && state.val ? div({ class: "raw-fault" }, `rejected ${rejected.value}`) : span();
-    }
+    },
+    StateLabelLine(key)
   );
+}
+
+/**
+ * What the VCU's state machine is doing, in words, under the two 0x101 tiles that have a
+ * vocabulary. `null` for every other key, so the ~230 other tiles gain no binding at all.
+ *
+ * Both halves or nothing: the phrase belongs to the PAIR, so a tile whose partner has not
+ * arrived prints no line rather than a verdict about a number the bike never sent. Reading
+ * both signals through `.val` is a real subscription and is meant to be — they are 100 Hz
+ * frames, but signals.ts logs on change and the whole archive holds 214 state rows and 803
+ * substate rows, so these bindings repaint a handful of times a ride.
+ *
+ * A pair in neither table takes `.raw-fault` rather than `.raw-sub`: catching a state nobody
+ * has captured is the reason the state machine is logged raw, and a second grey line is not
+ * how you notice one. docs/can-0x101.md §"The vocabulary the dashboard renders".
+ * @param {string} key
+ */
+function StateLabelLine(key) {
+  if (key !== "vehicle_state_can" && key !== "vehicle_substate_can") {
+    return null;
+  }
+  const state = signalState("vehicle_state_can");
+  const substate = signalState("vehicle_substate_can");
+  return () => {
+    const stateReading = state.val;
+    const substateReading = substate.val;
+    if (!stateReading || !substateReading) {
+      return span();
+    }
+    const label =
+      key === "vehicle_state_can"
+        ? stateLabel(stateReading.value, substateReading.value)
+        : pairLabel(stateReading.value, substateReading.value);
+    return div({ class: label.documented ? "raw-sub" : "raw-fault" }, label.text);
+  };
 }
 
 /**

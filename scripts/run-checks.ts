@@ -806,6 +806,19 @@ const CHECKS: SelfCheck[] = [
       "delay, a self-rearming zero-delay timer, and two advance() calls in flight at once",
   },
   {
+    script: "scripts/check-vehicle-state-labels.ts",
+    covers:
+      "the words the ALL page prints under the two 0x101 tiles, against the tables in docs/can-0x101.md they are " +
+      "copied from: that the mapping covers the band table exactly in BOTH directions, that every phrase matches " +
+      "its vocabulary row string for string and every row has a phrase, that the three bit-7 substates and the one " +
+      "state with a meaning of its own agree, and that no phrase names a gear — the bike's reverse is not a 0x101 " +
+      "state and docs/vcu-reverse-and-backup.md flags the 52-is-reverse attribution as its own weakest link. Plus " +
+      "the function the tile actually calls, over nine frames: seven real ones, and two synthetic because a pair in " +
+      'NEITHER table is by construction one the bike has never sent — which is the branch the "never captured" ' +
+      "sentinel lives in. The table selector is anchored on header rows and fails on zero matches as loudly as on " +
+      "two, because one that silently matches nothing makes every assertion above it pass vacuously",
+  },
+  {
     script: "scripts/check-vehicle-status.ts",
     covers:
       "0x101 VCU_VEHICLE_STS, replayed from fourteen real frames: the parked 60/62 the engineering menu shows, " +
