@@ -420,7 +420,12 @@ function describeList(list) {
 function StoredList(snapshot) {
   const list = snapshot.stored;
   if (list.state !== "codes" || list.codes.length === 0) {
-    return div();
+    // `null`, not `div()`: this is a grid item of the group above now, so an empty div
+    // is a second row and pays the 0.5 rem gap for it — 8 px of dead space under the
+    // summary on a refused read and on a bike with a clean history. van's add() skips a
+    // null child (`child != _undefined`), which is why the "show all" button below can be
+    // one too.
+    return null;
   }
   const freezeFrame = snapshot.freezeFrame && snapshot.freezeFrame.raw !== 0 ? snapshot.freezeFrame.obdCode : null;
   const ranked = [...list.codes].sort((left, right) => rank(left, freezeFrame) - rank(right, freezeFrame));
