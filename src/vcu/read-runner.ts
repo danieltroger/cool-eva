@@ -1,7 +1,7 @@
 import type { RawChannel } from "socketcan";
 import type { FrameArrival } from "../can/frame-arrival.ts";
 import { ageMs, latestValue } from "../can/signals.ts";
-import { acquireBus, type BusLease } from "./bus-lease.ts";
+import { acquireBus, busHeldBy, type BusLease } from "./bus-lease.ts";
 import { evaluateServiceGate, sampleServiceGate, type ServiceGateVerdict } from "./service-gate.ts";
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
@@ -371,6 +371,18 @@ function checkBusFreeRefusals(
   if (!verdict.safe) {
     return { ok: false, reason: `the bike is not safe to service — ${verdict.blockers.join("; ")}` };
   }
+  // ⚠️ The CROSS-FILE lease, and it has to be asked HERE rather than left to
+  // `checkPreconditions`. Since a one-shot read parks the OBD poller first, a probe
+  // pressed while the trouble-code clear holds the bus would otherwise spend the park
+  // wait — up to 6 s — and come back blaming the poller, for a bus that was never going
+  // to be free. `busHeldBy` costs nothing and names who has it.
+  const holder = busHeldBy();
+  if (holder !== null) {
+    // ⚠️ Word for word what `checkPreconditions` says when `acquireBus` refuses below,
+    // because it is the same refusal found earlier — two wordings for one condition is
+    // what makes a journal ungreppable.
+    return { ok: false, reason: `${holder} is using the bus — one thing at a time` };
+  }
   return { ok: true, channel };
 }
 
@@ -683,7 +695,12 @@ export function tallyOf(rows: VcuParameterRow[]): VcuReadTally {
   const byStatus = { ...ZERO_BY_STATUS };
   const perMicro = new Map<VcuMicro, { micro: VcuMicro; read: number; failed: number }>();
   for (const row of rows) {
-    byStatus[row.status] += 1;
+    // ⚠️ `?? 0` for a row that came off DISK, not for the union. `ZERO_BY_STATUS` seeds
+    // every status this build knows, and its type is what keeps that exhaustive — but
+    // `sweep.partial.jsonl` is `JSON.parse(...) as VcuParameterRow` (./snapshot-store.ts),
+    // so a row written by an older build can carry a status this one retired, and `+= 1`
+    // on a missing key puts NaN on the phone.
+    byStatus[row.status] = (byStatus[row.status] ?? 0) + 1;
     const entry = perMicro.get(row.micro) ?? { micro: row.micro, read: 0, failed: 0 };
     if (row.status === "read") {
       entry.read += 1;

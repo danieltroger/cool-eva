@@ -185,9 +185,14 @@ export class ExtendedIsoTpReassembler {
    * instead — which since #223 means a parameter read timing out as `first-reply`, the
    * stage that RETRIES, putting a second `22` on a micro mid-ISO-TP-abort.
    *
-   * ⚠️ A Consecutive Frame with no First Frame is deliberately NOT routed here: that
-   * one really can be a straggler from a transfer somebody else is following, and
-   * abandoning on it would let a late frame kill a healthy exchange.
+   * ⚠️ TWO branches are deliberately NOT routed here, so the rule is narrower than
+   * "anything addressed to us that this framing does not define": it is "a frame whose
+   * SHAPE says it was meant to be part of this transfer, and is malformed". A Consecutive
+   * Frame with no First Frame carries no service byte and no identifier, so nothing in it
+   * can say which transfer it belongs to; an undefined PCI (`0x4`-`0xF`) is likelier to be
+   * a corrupt or foreign frame than a piece of ours. Abandoning on either would let one
+   * stray frame kill a healthy exchange — the mirror of the failure the sequence check
+   * exists to prevent.
    */
   #malformed(reason: string): ExtendedIsoTpResult {
     this.reset();
