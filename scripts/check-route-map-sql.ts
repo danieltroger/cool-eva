@@ -135,6 +135,21 @@ function databaseWith(rows: Row[]): Database.Database {
 }
 
 /**
+ * The evidence a charge session is detected from: ten minutes of mains current.
+ *
+ * Four fixtures needed this and each grew its own copy of the loop. It is not decoration —
+ * the detector wants > 0.5 A and a span over the 5-minute HAVING, so a fixture that gets it
+ * wrong silently produces no session at all and every assertion about the pin vanishes with it.
+ */
+function chargeEvidence(startTs: number, sessionId: number | null): Row[] {
+  const rows: Row[] = [];
+  for (let offset = 0; offset < 600_000; offset += 10_000) {
+    rows.push({ key: "mains_a", ts: startTs + offset, value: 12, sessionId });
+  }
+  return rows;
+}
+
+/**
  * A parked bike logging fixes up to plug-in, then a charge.
  *
  * `driftDeg` is the ordinary metre-scale wander between samples; the archive's own p99.9
@@ -190,9 +205,7 @@ function chargeStopRows(options: {
       sessionId: options.sessionId,
     });
   }
-  for (let offset = 0; offset < 600_000; offset += 10_000) {
-    rows.push({ key: "mains_a", ts: startTs + offset, value: 12, sessionId: options.sessionId });
-  }
+  rows.push(...chargeEvidence(startTs, options.sessionId));
   rows.push({ key: "residual_energy_wh", ts: startTs - 1000, value: 1000, sessionId: options.sessionId });
   rows.push({ key: "residual_energy_wh", ts: startTs + 590_000, value: 4000, sessionId: options.sessionId });
   rows.push({ key: "soc", ts: startTs - 1000, value: 30, sessionId: options.sessionId });
@@ -283,9 +296,7 @@ const forwardStart = quietUntil + 100;
 // cannot — the whole point of looking forward.
 forwardOnly.push({ key: "gps_lat", ts: quietUntil + SAMPLE_MS, value: LATITUDE, sessionId: 1 });
 forwardOnly.push({ key: "gps_lon", ts: quietUntil + SAMPLE_MS, value: LONGITUDE, sessionId: 1 });
-for (let offset = 0; offset < 600_000; offset += 10_000) {
-  forwardOnly.push({ key: "mains_a", ts: forwardStart + offset, value: 12, sessionId: 1 });
-}
+forwardOnly.push(...chargeEvidence(forwardStart, 1));
 const forwardOnlyPins = pins(databaseWith(forwardOnly), forwardStart);
 check(
   "the shipped query inherits it — the row before is 10 s away, so only the one after objects",
@@ -371,9 +382,7 @@ const carriedFixTs = BASE + 20 * SAMPLE_MS + 6 * 3_600_000;
 carried.push({ key: "gps_lat", ts: carriedFixTs, value: LATITUDE + 3, sessionId: 1 });
 carried.push({ key: "gps_lon", ts: carriedFixTs, value: LONGITUDE + 3, sessionId: 1 });
 const carriedStart = carriedFixTs + 2000;
-for (let offset = 0; offset < 600_000; offset += 10_000) {
-  carried.push({ key: "mains_a", ts: carriedStart + offset, value: 12, sessionId: 1 });
-}
+carried.push(...chargeEvidence(carriedStart, 1));
 const carriedPins = pins(databaseWith(carried), carriedStart);
 check(
   "the fix at the charger is kept, three degrees from the ride and six hours later",
@@ -400,9 +409,7 @@ for (let index = 0; index < 20; index += 1) {
   interleaved.push({ key: "gps_lon", ts, value: LONGITUDE + 3, sessionId: 2 });
 }
 const interleavedStart = BASE + 19 * SAMPLE_MS + 200;
-for (let offset = 0; offset < 600_000; offset += 10_000) {
-  interleaved.push({ key: "mains_a", ts: interleavedStart + offset, value: 12, sessionId: 2 });
-}
+interleaved.push(...chargeEvidence(interleavedStart, 2));
 const interleavedPins = pins(databaseWith(interleaved), interleavedStart);
 check(
   "⚠️  boot 2's own last fix is inherited, not rejected because boot 1 was 3° away at the same ts",
