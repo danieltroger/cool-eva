@@ -2,8 +2,12 @@ import { spawn } from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-// `npm test` — runs every self-check in the repo, in order, and exits non-zero if any
-// of them does. A runner, not a framework: the checks predate it and are top-level
+// `npm test` — runs every self-check that needs nothing but Node, in order, and exits
+// non-zero if any of them does. ⚠️ ONE is deliberately not here: scripts/check-phone-width.ts
+// opens a browser to measure the rendered dashboard, which would put a second runtime in
+// front of a suite whose claim is that it runs anywhere. It is not skipped, it is moved —
+// `npm run check:phone-width`, and its own step in .github/workflows/test.yml.
+// docs/diagnostics-and-checks.md §11.2 and §11.8. A runner, not a framework: the checks predate it and are top-level
 // scripts that report failure with `process.exit(1)`, so each gets its OWN PROCESS.
 // Imported into one, the first failure would take the runner down and leave every later
 // check unreported — the opposite of what a red build should tell you.

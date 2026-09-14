@@ -32,4 +32,4 @@ jobs:
       # 390x844 and measures it; this image ships Chrome, and the check goes RED rather than
       # skipping when it cannot find one, so a runner that stops shipping a browser is a
       # broken build and not a silent hole.
-      - run: node --experimental-strip-types scripts/check-phone-width.ts
+      - run: npm run check:phone-width

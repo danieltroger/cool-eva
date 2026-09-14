@@ -62,17 +62,15 @@ export interface HeadlessPage {
 }
 
 /**
- * Starts a browser, opens one page at `viewport`, and hands back the handle the rest of
- * this module takes. Throws when no browser can be found — see findBrowser().
+ * Starts `browserPath`, opens one page at `viewport`, and hands back the handle the rest of
+ * this module takes.
+ *
+ * ⚠️ The binary is a PARAMETER rather than resolved here, so the caller that prints which
+ * browser it is measuring in prints the one that actually ran. findBrowser() called twice
+ * can answer twice — $CHROME_PATH set between the two, a PATH entry appearing — and a log
+ * line naming a browser nothing opened is the kind of evidence this repo throws away.
  */
-export async function openHeadlessPage(viewport: Viewport): Promise<HeadlessPage> {
-  const browserPath = await findBrowser();
-  if (browserPath === null) {
-    throw new Error(
-      `no browser found. Tried $CHROME_PATH and ${BROWSER_CANDIDATES.join(", ")} — ` +
-        `install one or set CHROME_PATH to it`
-    );
-  }
+export async function openHeadlessPage(viewport: Viewport, browserPath: string): Promise<HeadlessPage> {
   const userDataDir = await mkdtemp(join(tmpdir(), "cool-eva-headless-"));
   const browser = launchBrowser(browserPath, userDataDir);
   const connection = await connectTo(await devToolsUrl(browser, browserPath));
@@ -225,10 +223,13 @@ async function devToolsUrl(browser: ChildProcess, browserPath: string): Promise<
     stderr.setEncoding("utf8");
     stderr.on("data", (chunk: string) => {
       seen += chunk;
-      const found = /ws:\/\/[^\s]+/.exec(seen);
+      // ⚠️ Anchored on the END OF THE LINE, not on `ws://…` alone: stderr arrives in chunks
+      // that can split anywhere, and a bare URL match would happily return half an endpoint
+      // — which connects to nothing and fails 20 s later as a launch timeout.
+      const found = /DevTools listening on (ws:\/\/\S+)\r?\n/.exec(seen);
       if (found !== null) {
         clearTimeout(timer);
-        resolve(found[0]);
+        resolve(found[1]);
       }
     });
   });

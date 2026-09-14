@@ -147,7 +147,7 @@ console.log(
   `\nmeasuring ${previewFile} at ${PHONE.width}x${PHONE.height} DPR ${PHONE.deviceScaleFactor} in ${browserPath}`
 );
 
-const page = await openHeadlessPage(PHONE);
+const page = await openHeadlessPage(PHONE, browserPath);
 try {
   await sweepTabs(page, previewFile);
 } finally {

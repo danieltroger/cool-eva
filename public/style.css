@@ -218,11 +218,11 @@ body {
 /* ---------- layout ---------- */
 
 /* The two-column grid every tab lays its tiles out in. ⚠️ `1fr` and not `minmax(0, 1fr)`,
-   and that is a measurement rather than a preference: a DIRECT tile holding something
-   unbreakable really does push these tracks out — one long token takes them to
-   `2733px 10.59px`. #253 was not that shape, and these tracks read `183px 183px` all the
-   way through it. `.tile { min-width: 0 }` below covers both shapes, so nothing is left
-   for a track minimum to do here. docs/dashboard-decisions.md. */
+   and that is a measurement rather than a preference. Take `min-width: 0` off `.tile` below
+   and a DIRECT tile holding one unbreakable token really does push these tracks out — to
+   `2733px 10.59px`. #253 was not that shape, and these tracks read `183px 183px` all the way
+   through it. With that line in place both shapes come back to `183px 183px`, so there is
+   nothing left for a track minimum to do here. docs/dashboard-decisions.md. */
 .view {
   display: grid;
   gap: 0.5rem;
