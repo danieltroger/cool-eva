@@ -6,7 +6,7 @@ import { evaluateServiceGate, sampleServiceGate, type ServiceGateVerdict } from 
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
 import { describeMeasurement, startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
-import { holdObdPoller } from "../can/obd.ts";
+import { withObdPollerHold } from "../can/obd-hold.ts";
 import { parameterTable, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
 
@@ -459,23 +459,9 @@ export interface OneShotBusModule<T = unknown> {
  *
  * The file is past the ~400 guideline and splitting it is its own migration. The seam,
  * so the next person does not have to find it: `OneShotBusModule`,
- * `runOneShotBusModule`, `PreparedResource`, `startWatchdog` and `startGateWatchdog`
+ * `runOneShotBusModule`, `runHeldOneShot`, `startWatchdog` and `startGateWatchdog`
  * are ~130 self-contained lines that already take the context as a parameter.
  */
-/**
- * Parks the 2 Hz OBD poller for one one-shot read, as a `PreparedResource`.
- *
- * One sentence for one condition, so a journal can be grepped on it: the two call sites
- * had written it twice with different tails, which is the divergence `runOneShotBusModule`
- * was factored to prevent.
- */
-async function parkObdPoller(what: string): Promise<PreparedResource> {
-  const hold = await holdObdPoller(what);
-  return hold
-    ? { ok: true, release: hold.release }
-    : { ok: false, reason: `the OBD poller would not go quiet — ${what} needs the bus to itself` };
-}
-
 async function runOneShotBusModule<T>(
   context: RunnerContext,
   what: string,
@@ -488,21 +474,36 @@ async function runOneShotBusModule<T>(
   if (!free.ok) {
     return free;
   }
-  // ⚠️ UNCONDITIONAL, and not a per-caller closure any more. Both one-shot reads want
-  // the poller quiet and for one reason — a reply that spans frames is abandoned by the
-  // VCU if a request lands mid-transfer (../can/obd.ts) — so the hold belongs to the
-  // function that already owns "hold before lease, both released in a `finally`" rather
-  // than being restated at each call site with its own wording. A SWEEP does not come
-  // through here at all; why it does not park is argued at `start`.
-  const prepared = await parkObdPoller(what);
-  if (!prepared.ok) {
-    return { ok: false, reason: prepared.reason };
-  }
+  // ⚠️ UNCONDITIONAL, and through ../can/obd-hold.ts's wrapper rather than a park helper
+  // of our own. Both one-shot reads want the poller quiet for one reason — a reply that
+  // spans frames is abandoned by the VCU if a request lands mid-transfer (../can/obd.ts)
+  // — and #233 landed `withObdPollerHold` for exactly that, with one refusal sentence and
+  // the release in its own `finally`. A second helper here would be the third wording of
+  // one condition, which is what both of them were written to stop. A SWEEP does not come
+  // through this function at all; why it does not park is argued at `start`.
+  //
+  // The double `ok` is flattened on the way out: the wrapper reports whether the HOLD was
+  // granted, the body whether the READ succeeded, and a caller wants one answer.
+  const held = await withObdPollerHold(what, () => runHeldOneShot(context, what, start));
+  return held.ok ? held.result : held;
+}
+
+/**
+ * One one-shot read, with the poller already parked and the lease still to take.
+ *
+ * Split from `runOneShotBusModule` only so the hold can wrap it: everything here runs
+ * inside `withObdPollerHold`'s `finally`, so the poller is released on every path out of
+ * it, including a throw.
+ */
+async function runHeldOneShot<T>(
+  context: RunnerContext,
+  what: string,
+  start: (channel: RawChannel) => OneShotBusModule<T>
+): Promise<{ ok: true; result: T } | { ok: false; reason: string }> {
   // The lease comes after the hold, so the poller is already quiet before a session is
   // opened — the ordering the lifetime read's own header argues for.
   const ready = checkPreconditions(context, what);
   if (!ready.ok) {
-    prepared.release();
     return { ok: false, reason: ready.reason };
   }
   const watchdog = startWatchdog(reason => context.oneShot?.module.abort(reason));
@@ -523,12 +524,8 @@ async function runOneShotBusModule<T>(
     clearInterval(watchdog);
     context.oneShot = null;
     ready.lease.release();
-    prepared.release();
   }
 }
-
-/** Something held for the duration of a read — today, the parked OBD poller. */
-type PreparedResource = { ok: true; release: () => void } | { ok: false; reason: string };
 
 function cancel(context: RunnerContext): boolean {
   if (!context.sweep) {
