@@ -72,7 +72,7 @@ function boundsOf(key: string): [number, number] | null {
   if (!signal) {
     return null;
   }
-  return boundsFor(signal.key, signal.unit, signal.group);
+  return boundsFor(key, signal.unit, signal.group);
 }
 
 function accepts(key: string, value: number): boolean {
@@ -101,10 +101,9 @@ for (const hex of [...OBSERVED_B0_FRAMES, ALL_BITS_201]) {
   const flags = decoded.filter(value => FLAG_KEYS.includes(value.key));
   const provenance = hex === ALL_BITS_201 ? " (⚠️ SYNTHETIC)" : "";
   check(`${hex}${provenance} decodes to all fifteen flags`, flags.length === FLAG_KEYS.length);
-  const rejected = flags.filter(value => !accepts(value.key, value.value));
   check(
     `…and the gate accepts every one of them — a bound that rejected a real frame would be drawn as a dead sensor`,
-    rejected.length === 0
+    flags.every(value => accepts(value.key, value.value))
   );
 }
 
