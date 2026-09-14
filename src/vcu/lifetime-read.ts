@@ -1,6 +1,7 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { RawChannel } from "socketcan";
 import type { ArrivalLatency, FrameArrival } from "../can/frame-arrival.ts";
+import { decodeFreezeFrameResponse, isNoStoredRecordReply } from "../diagnostics/freeze-frame.ts";
 import { LIFETIME_COMPONENTS } from "../diagnostics/lifetime-stats.ts";
 import { createVcuKwpClient, type VcuMultiFrameOutcome } from "./kwp-client.ts";
 import { toHex } from "./multiframe-codec.ts";
@@ -159,19 +160,44 @@ function latencyOf(outcome: VcuMultiFrameOutcome): ArrivalLatency | null {
  * carrying a negative answer, and filing it as a payload made it count as one of the two
  * components answering: enough to overwrite a good lifetime.json with two refusals. The
  * bytes are kept regardless, because a refused run still has to leave a trace.
+ *
+ * ⚠️ NOR IS A POSITIVE REPLY ABOUT SOMEBODY ELSE. Every VCU reply lands on 0x7E0 with no
+ * request tag, so an answer to another question is a thing that happens here — and until
+ * #226 this filed any positive reply as an answer and left the echo to be noticed later,
+ * by the decoder, in the consumer. At two components that was a small exposure; at ~30
+ * sequential requests it is not, and the count this returns feeds a store rule that
+ * decides whether a good file is replaced. The echo is checked HERE so there is one
+ * definition of "answered" — the drift `answeredCount`'s own comment is a monument to.
+ *
+ * ⚠️ `57 00` IS an answer. It is the VCU saying it has no record for that component
+ * (../diagnostics/freeze-frame.ts `isNoStoredRecordReply`), which is a reading rather
+ * than a failure; counting it as one would make a wholly successful read look partial
+ * and could block a store that should happen.
  */
-function toStoredReply(component: number, outcome: VcuMultiFrameOutcome): StoredLifetimeReply {
+export function toStoredReply(component: number, outcome: VcuMultiFrameOutcome): StoredLifetimeReply {
   if (outcome.status !== "reply") {
     return { component, payloadHex: null, failure: outcome.status };
   }
+  const payloadHex = toHex(outcome.payload);
   if (outcome.reply.kind === "positive") {
-    return { component, payloadHex: toHex(outcome.payload), failure: null };
+    if (isNoStoredRecordReply(outcome.payload)) {
+      return { component, payloadHex, failure: null };
+    }
+    const decoded = decodeFreezeFrameResponse(outcome.payload, component);
+    if (decoded.kind === "frame") {
+      return { component, payloadHex, failure: null };
+    }
+    const failure =
+      decoded.kind === "component-mismatch"
+        ? `component-mismatch: asked ${decoded.requested}, answered ${decoded.received}`
+        : `unrecognised: ${"reason" in decoded ? decoded.reason : decoded.kind}`;
+    return { component, payloadHex, failure };
   }
   const failure =
     outcome.reply.kind === "refused"
       ? `refused: ${outcome.reply.description} (NRC 0x${outcome.reply.negativeResponseCode.toString(16).padStart(2, "0")})`
       : `unrecognised: ${outcome.reply.reason}`;
-  return { component, payloadHex: toHex(outcome.payload), failure };
+  return { component, payloadHex, failure };
 }
 
 async function readBothComponents(

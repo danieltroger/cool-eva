@@ -6,6 +6,7 @@ import { evaluateServiceGate, sampleServiceGate, type ServiceGateVerdict } from 
 import { startParameterSweep, type RunningParameterSweep } from "./sweep.ts";
 import { startProbe, type VcuProbeReading, type VcuProbeRequest } from "./probe.ts";
 import { describeMeasurement, startLifetimeRead, type LifetimeReadResult } from "./lifetime-read.ts";
+import { describeFreezeFrameRead, startFreezeFrameRead, type FreezeFrameReadResult } from "./freeze-frame-read.ts";
 import { withObdPollerHold } from "../can/obd-hold.ts";
 import { parameterTable, type VcuMicro } from "./param-table.ts";
 import type { VcuParameterRow } from "./snapshot.ts";
@@ -95,6 +96,17 @@ export interface VcuReadRunner {
    */
   readLifetimeStatistics: () => Promise<LifetimeReadOutcomeOrRefusal>;
   /**
+   * Reads EVERY stored freeze frame — the `0x18` list, then `0x17` per component — behind
+   * the same gate, the same single-flight and the same poller hold as the two above.
+   *
+   * ⚠️ The one read here that is not a fixed amount of work: the bike says how many
+   * components there are. It is bounded by a deadline rather than by the list, because the
+   * poller hold's cap is enforced by the poller and overrunning it resumes the 2 Hz loop
+   * underneath a transfer in flight. ./freeze-frame-read.ts. Resolves with a refusal
+   * rather than throwing.
+   */
+  readFreezeFrames: () => Promise<FreezeFrameReadOutcomeOrRefusal>;
+  /**
    * Feed CAN frames here; true when consumed. A no-op unless a sweep or a one-shot
    * module is running, so the service's frame router pays two null checks per
    * OBD-range frame and nothing at all the rest of the time.
@@ -114,6 +126,11 @@ export type LifetimeReadOutcomeOrRefusal = { ok: true; result: LifetimeReadResul
 
 /** A probe's answer, or the reason there is not one. Never throws into an HTTP handler. */
 export type VcuProbeOutcomeOrRefusal = { ok: true; reading: VcuProbeReading } | { ok: false; reason: string };
+
+/** A freeze-frame read's result, or the reason there is not one. */
+export type FreezeFrameReadOutcomeOrRefusal =
+  | { ok: true; result: FreezeFrameReadResult }
+  | { ok: false; reason: string };
 
 export interface VcuReadRunnerOptions {
   /**
@@ -221,6 +238,7 @@ export function createVcuReadRunner(options: VcuReadRunnerOptions): VcuReadRunne
     gate: () => readGate(),
     probe: request => runProbe(context, request),
     readLifetimeStatistics: () => runLifetimeRead(context),
+    readFreezeFrames: () => runFreezeFrameRead(context),
     // Whichever is running gets the frame; neither running means it was not ours.
     handleCanFrame: (id, data, arrival) =>
       (context.sweep ?? context.oneShot?.module)?.handleFrame(id, data, arrival) ?? false,
@@ -441,6 +459,23 @@ async function runLifetimeRead(context: RunnerContext): Promise<LifetimeReadOutc
   const outcome = await runOneShotBusModule(context, what, channel => startLifetimeRead({ channel }));
   if (outcome.ok) {
     console.log(`vcu-read: lifetime statistics — ${describeMeasurement(outcome.result)}`);
+  }
+  return outcome;
+}
+
+/**
+ * Every stored freeze frame, with the poller parked around it.
+ *
+ * ⚠️ It goes through `runOneShotBusModule` like the other two despite being ~30 exchanges
+ * rather than one or two. That is deliberate: what the gate is about is that nothing
+ * transmits while the motorcycle can move, and "short" was never the property. The
+ * difference in length is handled by the read's own deadline, not by a different gate.
+ */
+async function runFreezeFrameRead(context: RunnerContext): Promise<FreezeFrameReadOutcomeOrRefusal> {
+  const what = "a freeze-frame read";
+  const outcome = await runOneShotBusModule(context, what, channel => startFreezeFrameRead({ channel }));
+  if (outcome.ok) {
+    console.log(`vcu-read: ${describeFreezeFrameRead(outcome.result)}`);
   }
   return outcome;
 }

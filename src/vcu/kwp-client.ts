@@ -333,6 +333,33 @@ const DEFAULT_MULTI_FRAME: Required<VcuMultiFrameOptions> = {
 };
 
 /**
+ * The longest ONE multi-frame read can take, session open included, in ms.
+ *
+ * Derived here rather than restated by the caller, because a caller that copies these
+ * numbers and then watches one of them change is exactly how a deadline stops bounding
+ * anything. ../vcu/freeze-frame-read.ts budgets ~30 sequential reads against it.
+ *
+ * Worst case for `attempts` attempts at one read:
+ *
+ *   open       `responseTimeoutMs` + `paceMs`                        — 310 ms
+ *   × attempts `firstReplyTimeoutMs` + `transferTimeoutMs` + `paceMs` — 710 ms each
+ *
+ * ⚠️ ONE session open, not one per attempt, and that is not an oversight. `openSession`
+ * stamps `lastExchangeAt` (see it below), so `ensureSession` returns early while the
+ * session is younger than `SESSION_IDLE_LIMIT_MS` — and a single attempt cannot exceed
+ * 710 ms, which is well inside 1500. A component's second attempt always reuses the
+ * session its first one opened.
+ *
+ * ⚠️ It is the worst case for the DEFAULTS. A caller passing its own `VcuMultiFrameOptions`
+ * is not described by this number and must not budget against it.
+ */
+export function worstCaseMultiFrameReadMs(attempts: number): number {
+  const open = DEFAULT_RESPONSE_TIMEOUT_MS + DEFAULT_PACE_MS;
+  const perAttempt = DEFAULT_MULTI_FRAME.firstReplyTimeoutMs + DEFAULT_MULTI_FRAME.transferTimeoutMs + DEFAULT_PACE_MS;
+  return open + attempts * perAttempt;
+}
+
+/**
  * The one exchange in flight, of whichever kind.
  *
  * ONE slot, not one per kind. Two nullable fields and an `if` per entry point is

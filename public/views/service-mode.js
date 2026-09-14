@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 import { LifetimeReadButton, refreshLifetimeRead } from "./lifetime-read.js";
+import { FreezeFrameReadButton, refreshFreezeFrameRead } from "./freeze-frame-read.js";
 import { serviceRefusal } from "../lib/service-gate-caption.js";
 import { monotonicNow, since } from "../lib/clock.js";
 import { ageInWords, duration } from "../lib/format.js";
@@ -67,6 +68,7 @@ export function ServiceMode() {
     ProgressNote(),
     ExportButton(),
     LifetimeReadButton(() => state.val),
+    FreezeFrameReadButton(() => state.val),
     div(
       { class: "action-note" },
       a({ href: "/params.html", style: `color:${MUTED}` }, "Open the full parameter table →")
@@ -370,6 +372,7 @@ export function refreshServiceMode(isOpen) {
   sheetIsOpen = isOpen;
   armed.val = "";
   refreshLifetimeRead();
+  refreshFreezeFrameRead();
   void request("GET");
   // The write section keeps its own state and its own endpoint, so it is refreshed
   // alongside rather than folded in — and its refresh DISARMS every button it has,

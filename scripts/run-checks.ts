@@ -146,6 +146,20 @@ const CHECKS: SelfCheck[] = [
       "dash's own measured 4.2-10.1 ms",
   },
   {
+    script: "scripts/check-freeze-frame-values.ts",
+    covers:
+      "the whole-bike freeze-frame read and what is shown from it: that a 0x18 list carrying padding, a component " +
+      "outside 1…63 and a duplicate is filtered BEFORE anything is asked — one bad record must cost that record " +
+      "and not the components already read — that a positive reply echoing another component is filed as a " +
+      "failure rather than counted as an answer, that the deadline stops the read while a whole worst-case " +
+      "component still fits inside the OBD poller's hold and that no shipping call site can inject the clock it " +
+      "is measured on, that a 0x18 which fails asks nothing and stores nothing, that the store refuses to lose a " +
+      "component the bike still lists while still accepting a genuinely shorter list and a genuinely empty one " +
+      "(and refusing a garbled list that merely looks empty), that all 34 committed replies decode with their " +
+      "cycles-since-stored byte placed, and that none of the 211 captured field slots is drawn as a fault while a " +
+      "0xFFFF sentinel still is",
+  },
+  {
     script: "scripts/check-clear-dtcs.ts",
     covers:
       'OBD Mode 04 and the read-back that is the only thing separating "the bike said 44" from "the bike erased ' +

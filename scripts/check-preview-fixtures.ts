@@ -60,6 +60,13 @@ const OVERLAYS: { key: string; as: string; from: string | null; name: string | n
   { key: "funGate", as: "FunGate", from: "src/fan/fun.ts", name: "FunGate" },
   { key: "chargeAutoReason", as: "ChargeAutoReason", from: "src/charge/auto-curve.ts", name: "ChargeAutoReason" },
   { key: "commandedAmps", as: "number | null", from: null, name: null },
+  // Scene INPUTS rather than server payloads: the template turns each pair into a
+  // /stored-dtcs row by looking the code up in the real /dtc-table, and into an
+  // /expected-faults entry. No `from`, because there is no server type to mirror — what
+  // must not rot is the SHAPE, since a three-element tuple here would silently produce a
+  // code line about a component nobody named.
+  { key: "storedComponents", as: "[component: number, symptom: number][]", from: null, name: null },
+  { key: "expectedFaults", as: "[component: number, symptom: number][]", from: null, name: null },
 ];
 
 /** Scene keys that are not a payload, so carry nothing for a type to check. */

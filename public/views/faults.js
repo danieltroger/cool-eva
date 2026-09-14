@@ -6,6 +6,8 @@ import { monotonicNow } from "../lib/clock.js";
 import { ringFor } from "../lib/ring.js";
 import { Fact, SectionLabel } from "../lib/tiles.js";
 import * as colors from "../lib/colors.js";
+import { RecordedValues, hasRecordedValues, loadRecordedValues } from "./recorded-values.js";
+import { ExpectedToggle, expectedNote, faultKey, isExpected, loadExpectedFaults } from "../lib/expected-faults.js";
 
 const { button, div, span } = van.tags;
 
@@ -119,13 +121,15 @@ let storedFetchedAt = /** @type {number | null} */ (null);
 /** @typedef {import("../../src/http/fault-infokeys.ts").FaultInfokeysPayload} FaultInfokeysPayload */
 
 /**
- * @typedef {{ key: string, active: boolean, lastSeenMs: number | null,
+ * @typedef {{ key: string, codeKey: string, active: boolean, lastSeenMs: number | null,
  *   firings: number, row: DtcTableRow | null }} FaultRow
  */
 
 export function FaultsView() {
   void loadTable();
   void loadInfokeys();
+  void loadRecordedValues();
+  void loadExpectedFaults();
   void refreshStoredCodes();
   return div(
     { class: "view" },
@@ -205,8 +209,16 @@ function headlineValue() {
 function headlineCaption() {
   const state = headlineState();
   switch (state.kind) {
-    case "active":
-      return state.count === 1 ? "fault active now" : "faults active now";
+    case "active": {
+      // ⚠️ The hero NUMBER still counts every active fault. It is the one figure on this tab
+      // meant to be read at a glance, and making it mean "active, minus the ones you ticked"
+      // would change what it has always said. The split is a CAPTION concern, so it is
+      // counted here rather than carried on a union member `headlineColor` and
+      // `headlineValue` would both have had to ignore.
+      const noun = state.count === 1 ? "fault active now" : "faults active now";
+      const expected = collectFaults().filter(fault => fault.active && isExpected(fault.codeKey)).length;
+      return expected === 0 ? noun : `${noun} · ${expected} of them expected`;
+    }
     case "recent":
       return "not active now — but seen this session";
     case "unknown":
@@ -226,12 +238,19 @@ function headlineCaption() {
 function FaultCard(fault) {
   const accent = fault.active ? colors.BAD : colors.MUTED;
   const row = fault.row;
+  const key = fault.codeKey;
   return div(
     { class: "tile span2", style: `border-left:3px solid ${accent}` },
     div(
       { class: "label" },
       span({ style: `color:${accent}` }, row ? row.obdCode : rawLabel(fault.key)),
-      span({ style: `color:${colors.MUTED}` }, fault.active ? " · active" : ` · ${describeLastSeen(fault.lastSeenMs)}`)
+      // ⚠️ Its own binding, and the ONLY thing on this card that reads the tick. The card
+      // itself must stay put — see collectFaults.
+      span({ style: `color:${colors.MUTED}` }, () => {
+        void chartTick.val;
+        return fault.active ? " · active" : ` · ${describeLastSeen(historyOf(fault.key, monotonicNow()).lastSeenMs)}`;
+      }),
+      () => (isExpected(key) ? span({ style: `color:${colors.MUTED}` }, " · expected") : span())
     ),
     div(
       { class: "sub", style: `color:${colors.CALM};font-size:0.95rem;margin-top:0.25rem` },
@@ -243,7 +262,10 @@ function FaultCard(fault) {
       `component ${componentOf(fault.key)} · symptom ${symptomOf(fault.key)}` +
         (row ? ` · warning lamp: ${milText(row.illuminatesMil)}` : "") +
         (fault.firings > 1 ? ` · ${fault.firings}× this session` : "")
-    )
+    ),
+    // A plain button here, unlike on a stored code line: a card is not itself a control,
+    // so there is nothing to nest inside.
+    ExpectedToggle(key)
   );
 }
 
@@ -406,7 +428,11 @@ function StoredList(snapshot) {
 
   return div(
     { class: "tile span2" },
-    div({ class: "label" }, "Set in the bike's history"),
+    // ⚠️ The count is labelled with the population it belongs to. This is the OBD mode-03
+    // STORED list; the hero above counts the ACTIVE one, and they always disagree — 41
+    // against 0 or 1 on this bike. One number called "expected" with no list named would
+    // be read as belonging to whichever the reader was looking at.
+    div({ class: "label" }, () => `Set in the bike's history${expectedNote(ranked)}`),
     () =>
       div(
         ...(storedExpanded.val ? ranked : ranked.slice(0, STORED_PREVIEW_LIMIT)).map(row => CodeLine(row, freezeFrame))
@@ -471,12 +497,16 @@ function rank(row, freezeFrame) {
  */
 function CodeLine(row, freezeFrame) {
   const isFreezeFrame = row.obdCode === freezeFrame;
+  // ⚠️ The accent stays on the LAMP, and "expected" does not touch it. All five codes this
+  // bike's owner calls expected have `illuminatesMil: false` and so already render MUTED —
+  // so muting them changes nothing — while muting a code whose lamp bit is true, or
+  // unknown, would destroy the three-way distinction `milText` and `rank` keep on purpose.
   const accent = isFreezeFrame ? colors.BAD : row.illuminatesMil ? colors.WARN : colors.MUTED;
   const note = isFreezeFrame ? " · freeze frame" : row.illuminatesMil ? " · lamp" : "";
   // Null for a code Energica's table does not list: with no (component, symptom)
   // there is no shortlist to look up, and the OBD code is not a usable key —
   // U0182 is filed under two components. The line then just does not open.
-  const key = row.component === null || row.symptom === null ? null : `${row.component}/${row.symptom}`;
+  const key = row.component === null || row.symptom === null ? null : faultKey(row.component, row.symptom);
   return div(
     div(
       {
@@ -507,11 +537,11 @@ function CodeLine(row, freezeFrame) {
       span({ class: "code-line-id", style: `color:${accent}` }, row.obdCode),
       span(
         { class: "code-line-text", style: `color:${row.description ? colors.CALM : colors.MUTED}` },
-        (row.description ?? "not in Energica's code table") + note
+        () => (row.description ?? "not in Energica's code table") + note + (isExpected(key) ? " · expected" : "")
       ),
       key === null ? null : span({ class: "code-line-more" }, () => (openShortlist.val === key ? "▴" : "▾"))
     ),
-    () => (key !== null && openShortlist.val === key ? Shortlist(key) : div())
+    () => (key !== null && openShortlist.val === key ? OpenedCode(key) : div())
   );
 }
 
@@ -527,13 +557,30 @@ function toggleShortlist(key) {
  * Energica's own shortlist for one code: the telemetry the manufacturer's service
  * tool shows when this fault is selected.
  *
- * This is NOT what the bike recorded. It is the list of fields a freeze frame for
- * this code would contain — the question "what should I go and measure", answered
- * offline, with no bus traffic at all. The values themselves need a `0x17` read,
- * which nothing here does yet; the caption says so rather than letting six field
- * names imply readings.
+ * ⚠️ THIS IS NOT WHAT THE BIKE RECORDED. It is the list of fields a record for this code
+ * WOULD contain — "what should I go and measure", answered offline with no bus traffic.
+ * The values are ./recorded-values.js, rendered above it.
  * @param {string} key
  */
+function OpenedCode(key) {
+  // ⚠️ ABOVE every early return in `Shortlist`, and that is not cosmetic. It returns early
+  // on three conditions, and (60,0) P1052 — which IS on this bike's 0x18 list — has an
+  // EMPTY shortlist, so the one code whose record carries nothing but its age would have
+  // been the one code whose age never reached the screen, and it could not be marked
+  // expected either. A failed /fault-infokeys hit the same wall: `infokeys.val` stays null
+  // for the session, which silently disabled every recorded value even though
+  // /freeze-frames had answered.
+  //
+  // ⚠️ And the "is there a reading?" gate lives HERE rather than inside `Shortlist`, for the
+  // same reason. Inside, it sat below those three returns — so P1052 rendered "Energica
+  // records no fields for this code" from `Shortlist` AND the identical sentence from the
+  // record block, twice in one opened code. Here it is one policy line next to the comment
+  // that justifies it, `Shortlist` goes back to the shape it had, and the "Loading Energica's
+  // field list…" note stops appearing under a reading that has already arrived.
+  return div(RecordedValues(key), () => (hasRecordedValues(key) ? div() : Shortlist(key)), ExpectedToggle(key));
+}
+
+/** @param {string} key */
 function Shortlist(key) {
   const payload = infokeys.val;
   if (!payload) {
@@ -553,7 +600,7 @@ function Shortlist(key) {
   }
   return div(
     { class: "code-fields" },
-    div({ style: `color:${colors.MUTED}` }, "Energica's freeze-frame fields for this code:"),
+    div({ style: `color:${colors.MUTED}` }, "Energica's fields for this code:"),
     ...ids.map(id => {
       const field = payload.fields[String(id)];
       // A dangling id cannot happen — all 944 references resolve, and
@@ -604,13 +651,23 @@ function Footnote() {
 /**
  * Every code seen since the page opened, active ones first, then most recent.
  *
- * Reads chartTick so it re-evaluates on the render tick rather than only when a
- * signal changes: "last seen 4 min ago" has to keep counting up while nothing is
- * arriving, which is precisely the state this view is for.
+ * ⚠️ It does NOT read chartTick, and that changed with #226. It used to, so that
+ * "last seen 4 min ago" would count up — but that put every fault card, and since
+ * #226 a real `<button>` inside one, into a subtree VanJS `replaceWith`s twice a
+ * second. A finger down at t and up at t+120 ms can then land on an element that
+ * no longer exists: exactly the failure `StoredCodes` above is bound off the tick
+ * to avoid, where its own comment records the "show all" button being "a different
+ * element by the time a thumb reached it".
+ *
+ * The counting-up now happens where it belongs — inside the one line that has to do
+ * it (`FaultCard`'s age caption), which is the same shape `StoredSummary`'s "Last
+ * read" already uses. The LIST still refreshes without the tick: src/ws.ts
+ * re-broadcasts the whole snapshot every 5 s, so every `dtc_*` signal is written
+ * again on that cadence and this re-runs then — which is far inside RECENT_MS's 30
+ * minutes, the only deadline the membership of this list actually has.
  * @returns {FaultRow[]}
  */
 function collectFaults() {
-  void chartTick.val;
   const now = monotonicNow();
   const codes = table.val;
   /** @type {FaultRow[]} */
@@ -633,12 +690,35 @@ function collectFaults() {
     if (!active && lastSeenMs !== null && lastSeenMs > RECENT_MS) {
       continue;
     }
-    faults.push({ key, active, lastSeenMs, firings, row: codes ? (codes[key] ?? null) : null });
+    // ⚠️ The `component/symptom` key is computed ONCE here rather than re-split out of the
+    // signal key at each use. It was being rebuilt four times per card — twice inside the
+    // sort comparator, i.e. per comparison — and `lib/expected-faults.js` calls itself "the
+    // one place this key is spelled".
+    faults.push({
+      key,
+      codeKey: faultKey(componentOf(key), symptomOf(key)),
+      active,
+      lastSeenMs,
+      firings,
+      row: codes ? (codes[key] ?? null) : null,
+    });
   }
 
+  // ⚠️ Expected sorts LAST, and only here — in the active list. A handful of cards fit on
+  // the screen at once, so nothing falls off the end, and a code the owner has not marked
+  // becomes the first card, which is the whole point of the list. The STORED list is not
+  // re-ranked: it holds 41 codes behind a six-row preview (STORED_PREVIEW_LIMIT), so
+  // sorting five expected codes last there would push all five out of the default view —
+  // hiding them, which this feature must never do — and demoting them below ~36 unlisted
+  // peers in a history that only grows would bury them without surfacing anything.
   return faults.sort((left, right) => {
     if (left.active !== right.active) {
       return left.active ? -1 : 1;
+    }
+    const leftExpected = isExpected(left.codeKey);
+    const rightExpected = isExpected(right.codeKey);
+    if (leftExpected !== rightExpected) {
+      return leftExpected ? 1 : -1;
     }
     return (left.lastSeenMs ?? Infinity) - (right.lastSeenMs ?? Infinity);
   });

@@ -14,6 +14,9 @@ import { handleVcuParamsEndpoint } from "./http/vcu-params.ts";
 import { handleVcuBackupEndpoint } from "./http/vcu-backup.ts";
 import { handleLifetimeReadEndpoint } from "./http/lifetime-read.ts";
 import { handleLifetimeStatsEndpoint } from "./http/lifetime-stats.ts";
+import { handleFreezeFramesEndpoint } from "./http/freeze-frames.ts";
+import { handleFreezeFrameReadEndpoint } from "./http/freeze-frame-read.ts";
+import { handleExpectedFaultsEndpoint } from "./http/expected-faults.ts";
 import { handleVcuReadEndpoint } from "./http/vcu-read.ts";
 import { handleVcuProbeEndpoint } from "./http/vcu-probe.ts";
 import { handleVcuWriteEndpoint } from "./http/vcu-write.ts";
@@ -519,6 +522,29 @@ const server = createServer(async (req, res) => {
       directory: VCU_PARAM_DIR,
       enabled: SERVICE_MODE_ENABLED,
     });
+    return;
+  }
+  // What the VCU recorded when each stored code set, as last read. A file, not a bus
+  // read — the same reader/writer split /lifetime-stats makes, and this handler takes no
+  // `req` for the same reason.
+  if (url.pathname === "/freeze-frames") {
+    await handleFreezeFramesEndpoint(res, VCU_PARAM_DIR);
+    return;
+  }
+  // …and the read that fills it, which DOES put frames on the bus: the 0x18 list, then
+  // 0x17 per component, bounded by its own deadline inside the poller hold.
+  if (url.pathname === "/freeze-frame-read") {
+    await handleFreezeFrameReadEndpoint(req, res, {
+      runner: vcuReadRunner,
+      directory: VCU_PARAM_DIR,
+      enabled: SERVICE_MODE_ENABLED,
+    });
+    return;
+  }
+  // Which codes this bike is expected to have. A file and a rendering preference — no bus,
+  // no gate; an expected code is still read, still counted and still shown.
+  if (url.pathname === "/expected-faults") {
+    await handleExpectedFaultsEndpoint(req, res, url, VCU_PARAM_DIR);
     return;
   }
   // Service mode. One of the endpoints that can put a frame on the bike's bus — the

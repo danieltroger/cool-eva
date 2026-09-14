@@ -283,6 +283,10 @@ const BY_KEY = {
   // The DC-DC's own u16 tops out at 65 535 mA; this bike's converter is nowhere near
   // 60 A, so anything above that is a decode failure rather than a load.
   "psu_12v_load_ma": [0, 60_000],
+  // ⚠️ The three above are also what a FREEZE FRAME's `P_V12`, `P_12VLP` and `P_I12` are
+  // — the same rails, read by the same VCU, through a different service. ./infokey-bounds.js
+  // aliases them HERE rather than restating the numbers, so the reasoning that justifies
+  // them is the paragraph above rather than a copy of it.
   // 0x0A0 wheel speeds. Same 0…300 as speed_kmh and gps_speed_kmh. The field is a u16
   // at 0.05625 km/h per count, so a botched decode reaches 3686 km/h and is caught.
   "wheel_speed_front_kmh": [0, 300],

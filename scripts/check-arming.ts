@@ -2,6 +2,7 @@ import { readFile, readdir } from "fs/promises";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
+import { ARMED_KEY as FREEZE_FRAME_READ_KEY } from "../public/views/freeze-frame-read.js";
 import { ARMED_KEY as LIFETIME_READ_KEY } from "../public/views/lifetime-read.js";
 import { IRREVERSIBLE, refreshVcuWrite } from "../public/views/vcu-write.js";
 import { fetchChargeWriteStatus, writeStatus } from "../public/lib/charge-write.js";
@@ -49,6 +50,7 @@ const EXPORTED_KEYS = new Map([
   ["public/views/charge-current.js", CHARGE_CURRENT_KEY],
   ["public/views/charge-stop.js", CHARGE_STOP_KEY],
   ["public/views/lifetime-read.js", LIFETIME_READ_KEY],
+  ["public/views/freeze-frame-read.js", FREEZE_FRAME_READ_KEY],
 ]);
 
 // ⚠️ DISCOVERED, never listed. §7 reads the firing sites out of these files, and a list here
@@ -257,6 +259,7 @@ const EXPECTED_SITES = [
   // it had two taps of its own with no dwell and no key-repeat refusal, and §3's scan
   // used to be scoped away from this file for that reason. Importing arming.js for the
   // lifetime read brought the sweep with it, which is the migration this check forced.
+  "freeze-frame-read.js → performFreezeFrameRead",
   "lifetime-read.js → performLifetimeRead",
   "service-mode.js → performSweep",
   "vcu-write.js → performAction",

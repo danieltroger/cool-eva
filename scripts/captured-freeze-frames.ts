@@ -260,3 +260,35 @@ export function capturedFreezeFramePayload(entry: CapturedFreezeFrame): Uint8Arr
   }
   return result.payload;
 }
+
+/**
+ * Component 62's real reply with `P_I12` overwritten to `FF FF`. **Constructed, not captured.**
+ *
+ * ⚠️ The one fixture in this file that is not off the wire, and it has to be: every `mA`
+ * infokey is a `uint16_t` and `BY_UNIT["mA"]` is [-100 000, 100 000], so no captured reply
+ * can carry a value that rule rejects — the sentinel a bounds gate exists to catch is exactly
+ * the thing the captures cannot supply. `public/lib/infokey-bounds.js` aliases `P_I12` to
+ * `psu_12v_load_ma` [0, 60 000] for that reason, and this is what kills the mutation that
+ * drops the alias.
+ *
+ * ⚠️ ONE builder, shared by the check and the preview. Both were doing the same two byte
+ * pokes, only one with a length guard — so a shortlist change would have thrown in one place
+ * and silently poisoned two different bytes in the other, with the sentinel assertion still
+ * passing on the wrong field.
+ */
+export function componentSixtyTwoWithSentinel(): Uint8Array {
+  const entry = CAPTURED_FREEZE_FRAMES.find(candidate => candidate.component === 62);
+  if (!entry) {
+    throw new Error("captured-freeze-frames: the 2026-08-08 captures no longer hold component 62");
+  }
+  const payload = capturedFreezeFramePayload(entry);
+  // `57 <count> <hi> <lo> <status>` then VEHICLE_SUBSTATE(1) RealSpd_x10(2) P_V12(2) P_I12(2),
+  // then the trailing byte. Asserted rather than assumed.
+  if (payload.length !== 5 + 7 + 1) {
+    throw new Error(`captured-freeze-frames: component 62's reply is ${payload.length} bytes, expected 13`);
+  }
+  const sentinel = Uint8Array.from(payload);
+  sentinel[10] = 0xff;
+  sentinel[11] = 0xff;
+  return sentinel;
+}

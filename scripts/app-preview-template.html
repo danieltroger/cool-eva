@@ -584,6 +584,42 @@ __MODULES__
           },
           gate: gateOf(SERVER.refusedGate),
         },
+        faults: {
+          // The Faults tab with something to show. ⚠️ The stored list is built from the REAL
+          // /dtc-table below rather than typed here, so a preview can never name a code
+          // differently from the Pi — the failure src/http/dtc-table.ts's own header warns
+          // about, on the one tab whose job is naming codes.
+          //
+          // The five: three the freeze-frame fixture has records for (34 position lights,
+          // 39 low beam, 44 the water pump), one listed with no record to give (54), and one
+          // the VCU's list does not mention at all (35) — which is the state most stored
+          // codes are actually in, and the one a screenshot must not omit.
+          // ⚠️ `dtc_count` is PID 01's STORED count and must equal the mode-03 list built below,
+          // or the tab draws its own "they should agree" warning at its own fixture. The two
+          // are different questions and the preview has to answer both consistently.
+          signals: {
+            "dtc_0044_0": [1, "", "diag"],
+            "dtc_0039_0": [1, "", "diag"],
+            // Three, because PARKED_SIGNALS already carries dtc_0002_0 and this scene adds two:
+            // the hub's active count has to match the cards the tab draws from those signals.
+            "dtc_list_count": [3, "", "diag"],
+            "dtc_count": [7, "", "diag"],
+            "mil_on": [0, "", "diag"],
+          },
+          storedComponents: [
+            [34, 0],
+            [35, 0],
+            [39, 0],
+            [44, 0],
+            [54, 11],
+            [60, 0],
+            [62, 0],
+          ],
+          expectedFaults: [
+            [34, 0],
+            [39, 0],
+          ],
+        },
         riding: {
           // Both halves of the power bar hatch here, which is the case lib/svg.js's derateSpans()
           // and lib/power-limits.js exist for and which no parked fixture can reach: 210 A at
@@ -639,6 +675,9 @@ __MODULES__
 
       /** Everything the bike is broadcasting right now. Patches write here, so a snapshot carries them. */
       const LIVE = Object.assign({}, PARKED_SIGNALS, SCENE.signals);
+
+      /** The owner's expected-fault list, as a Pi would hold it. Written by the toggle below. */
+      const EXPECTED_FAULTS = new Set((SCENE.expectedFaults ?? []).map(([component, symptom]) => `${component}/${symptom}`));
 
       /**
        * What the cooling fan is doing, in the shape src/http/fan.ts answers with.
@@ -1193,14 +1232,76 @@ __MODULES__
         // old stub did, was strictly better than answering in the wrong shape.
         if (path === "/stored-dtcs") {
           const notAsked = { state: "not-asked", reason: "preview — no bike behind this page" };
+          // ⚠️ Scene-dependent since #226, and `not-asked` is still the DEFAULT rather than an
+          // empty list: `codes: []` is the shape reserved for "the bike answered with zero
+          // codes", which is the invented answer src/diagnostics/stored-codes.ts exists to
+          // refuse. A scene that wants code lines says which codes; every other scene keeps
+          // saying it never asked.
+          if (!SCENE.storedComponents) {
+            return json({
+              stored: notAsked,
+              pending: notAsked,
+              permanent: notAsked,
+              freezeFrame: null,
+              readAt: null,
+              ageMs: null,
+            });
+          }
+          const codes = SCENE.storedComponents.map(([component, symptom]) => {
+            const row = __TABLES["/dtc-table"].codes[`dtc_${String(component).padStart(4, "0")}_${symptom}`];
+            if (!row) {
+              throw new Error(`preview: the faults scene names ${component}/${symptom}, which /dtc-table does not list`);
+            }
+            return { raw: 0, obdCode: row.obdCode, component, symptom, name: row.name, description: row.description, illuminatesMil: row.illuminatesMil };
+          });
           return json({
-            stored: notAsked,
+            stored: { state: "codes", codes, declaredCount: codes.length, truncated: false },
             pending: notAsked,
             permanent: notAsked,
-            freezeFrame: null,
-            readAt: null,
-            ageMs: null,
+            // PID 02's freeze-frame DTC — the OTHER thing on this tab called a freeze frame,
+            // and deliberately present so a screenshot shows both it and the KWP records
+            // without the two reading as one feature.
+            freezeFrame: { raw: 0x2c00, obdCode: codes[0].obdCode, component: codes[0].component, symptom: codes[0].symptom, name: codes[0].name, description: codes[0].description, illuminatesMil: codes[0].illuminatesMil },
+            readAt: Date.now(),
+            ageMs: 4200,
           });
+        }
+        // The owner's expected-fault list. Mutable, because the control on the Faults tab is
+        // a toggle and a preview where tapping it does nothing is a preview of the wrong page.
+        if (path === "/expected-faults") {
+          if (method === "POST") {
+            const key = `${url.searchParams.get("component")}/${url.searchParams.get("symptom")}`;
+            if (url.searchParams.get("expected") === "1") {
+              EXPECTED_FAULTS.add(key);
+            } else {
+              EXPECTED_FAULTS.delete(key);
+            }
+          }
+          return json({
+            expected: {
+              entries: [...EXPECTED_FAULTS].map(key => {
+                const [component, symptom] = key.split("/").map(Number);
+                return { component, symptom };
+              }),
+              updatedAt: EXPECTED_FAULTS.size === 0 ? null : Date.now(),
+            },
+            message: null,
+          });
+        }
+        // The gated read itself. Refused, like every other bus-touching control in here:
+        // there is no motorcycle behind this page, and a stub that answered "read 5 of 5"
+        // would be a preview of a bike rather than of the dashboard.
+        if (path === "/freeze-frame-read") {
+          return json(
+            {
+              summary: null,
+              answered: null,
+              listed: null,
+              message: "no bike behind this page — this preview cannot reach a bus",
+              gate: GATE,
+            },
+            409
+          );
         }
         if (path === "/vcu-params") {
           // The real union is {state: "never-read" | "snapshot" | "unreadable"}.

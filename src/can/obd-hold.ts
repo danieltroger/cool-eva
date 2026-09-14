@@ -25,6 +25,13 @@ export interface ObdPollerHold {
  * bounded by the transport's own first-reply and transfer timeouts, plus the session
  * opens — comfortably inside ten seconds. Past that, something is wrong with the read
  * and telemetry matters more.
+ *
+ * ⚠️ THE LONGEST HOLDER IS NO LONGER THAT READ. Since #226 a freeze-frame read asks about
+ * every component the bike lists — ~30 exchanges — and it is bounded by a deadline DERIVED
+ * from this constant rather than by a fixed amount of work (src/vcu/freeze-frame-read.ts,
+ * `FREEZE_FRAME_READ_BUDGET_MS = MAX_HOLD_MS − 3000`). So raising this number lengthens
+ * that read too, and the relationship that keeps the two safe is asserted in
+ * scripts/check-freeze-frame-values.ts §8 rather than merely intended here.
  */
 export const MAX_HOLD_MS = 15_000;
 

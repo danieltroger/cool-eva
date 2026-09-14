@@ -85,9 +85,40 @@ export const FREEZE_FRAME_TRAILING_BYTES = 1;
  */
 const CANDIDATE_HEADER_BYTES: readonly number[] = [FREEZE_FRAME_HEADER_BYTES, 4];
 
-/** The VCU's component numbers, per ./dtc-table.ts. Anything outside is a caller bug. */
-const MIN_COMPONENT = 1;
-const MAX_COMPONENT = 63;
+/**
+ * The VCU's component numbers, per ./dtc-table.ts. Anything outside is a caller bug.
+ *
+ * ⚠️ Exported since #226 so the caller that walks a `0x18` list can drop an illegal
+ * record BEFORE asking about it. `decodeStoredDtcList` returns a full 16-bit code and
+ * deliberately keeps padding, so a garbled list reaches `encodeRequestPayload`'s throw —
+ * which rejects the whole read and takes every component already read with it. A caller
+ * filtering on its own copy of "1…63" is how those two numbers drift apart.
+ */
+export const MIN_COMPONENT = 1;
+export const MAX_COMPONENT = 63;
+
+/**
+ * Whether a positive reply is the VCU's "no stored record for that component".
+ *
+ * `57 00` — the service byte and a record count of zero, and nothing else. Captured
+ * from this bike on 2026-09-08 for components 36 and 54 (scripts/captured-lifetime-reads.ts
+ * `CAPTURED_EXCHANGE_54`), where it is the ordinary answer rather than a fault.
+ *
+ * ⚠️ A PREDICATE BESIDE THE DECODER, NOT A SIXTH `FreezeFrameResponse` MEMBER.
+ * `decodeFreezeFrameResponse` rightly files these two bytes as `unrecognised` — they are
+ * shorter than the header, so nothing in them can be read as a frame — and that judgement
+ * is load-bearing elsewhere. Callers that can act on "there is no record" ask here first.
+ *
+ * ⚠️ EXACTLY TWO BYTES, and not "recordCount is 0". A reply of five bytes or more whose
+ * `recordCount` is zero is a DIFFERENT and more interesting claim — see `FreezeFrame`'s
+ * own note on that field: a bike answering 0 there is telling us the header reading is
+ * wrong, and folding it in here would delete that signal.
+ */
+export function isNoStoredRecordReply(payload: Uint8Array): boolean {
+  return (
+    payload.length === 2 && payload[0] === SERVICE_READ_DTC_INFORMATION + POSITIVE_RESPONSE_OFFSET && payload[1] === 0
+  );
+}
 
 /**
  * Everything this module is permitted to ask. ONE MEMBER, ON PURPOSE — `0x17` is a
@@ -264,6 +295,20 @@ export interface FreezeFrame {
    */
   trailingHex: string;
   /**
+   * The trailing byte as a number — CYCLES SINCE THE RECORD WAS STORED — or null.
+   *
+   * Null rather than 0 whenever the byte cannot be identified: an unknown shortlist
+   * leaves the whole body trailing, a truncated frame ends mid-field, and two or more
+   * trailing bytes mean a field is missing from the shortlist. In each of those the
+   * LAST byte is still readable and would still be a number, which is exactly why this
+   * is null instead — a count nobody can place is worse than no count.
+   *
+   * ⚠️ "Cycle" is at least one of a key-off/key-on and a VCU reset; the read that
+   * settled the counter could not separate them. Not an OBD aging counter.
+   * docs/freeze-frame.md, docs/diagnostics-and-checks.md §11.3.1.
+   */
+  cyclesSinceStored: number | null;
+  /**
    * Which of the candidate header lengths this reply's LENGTH is consistent with,
    * given the fault's shortlist. The tie-breaker for the one thing about the wire
    * format that is genuinely unresolved.
@@ -404,6 +449,7 @@ export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponen
     shortlistKnown: shortlist !== null,
     truncated: false,
     trailingHex: "",
+    cyclesSinceStored: null,
     headerBytesThatFit: shortlist ? headerBytesThatFit(payload.length, freezeFrameFieldBytes(shortlist)) : [],
     rawHex,
   };
@@ -416,9 +462,15 @@ export function decodeFreezeFrameResponse(payload: Uint8Array, requestedComponen
   }
 
   const { values, consumed, truncated } = readFields(body, shortlist);
+  const trailing = body.subarray(consumed);
   frame.values = values;
   frame.truncated = truncated;
-  frame.trailingHex = toHex(body.subarray(consumed));
+  frame.trailingHex = toHex(trailing);
+  // Only when the byte is where the layout says it is. See the field's own note for
+  // why every other shape is null rather than "the last byte, probably".
+  if (!truncated && trailing.length === FREEZE_FRAME_TRAILING_BYTES) {
+    frame.cyclesSinceStored = trailing[0];
+  }
   return { kind: "frame", frame };
 }
 

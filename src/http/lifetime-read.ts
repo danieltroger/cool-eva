@@ -97,8 +97,14 @@ export async function handleLifetimeReadEndpoint(
   });
 }
 
-/** The components that did not answer, by name and reason, or null when they all did. */
-function describeFailures(replies: readonly StoredLifetimeReply[]): string | null {
+/**
+ * The components that did not answer, by name and reason, or null when they all did.
+ *
+ * ⚠️ Exported since #226: ./freeze-frame-read.ts asks the same question of the same type and
+ * had its own copy, with the parameter weakened to an inline shape — so a change to what a
+ * failure looks like would have reached one of the two sentences and not the other.
+ */
+export function describeFailures(replies: readonly StoredLifetimeReply[]): string | null {
   const failed = replies.filter(reply => reply.failure !== null);
   if (failed.length === 0) {
     return null;

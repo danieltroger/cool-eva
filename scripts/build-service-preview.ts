@@ -9,6 +9,14 @@ import { HOW_TO_READ, HOW_TO_READ_WITH_SERVICE_STOPPED } from "../src/vcu/lifeti
 import { decodeFreezeFrameResponse } from "../src/diagnostics/freeze-frame.ts";
 import { summariseLifetimeStatistics } from "../src/diagnostics/lifetime-stats.ts";
 import { LIFETIME_READ_PAYLOADS } from "./captured-lifetime-reads.ts";
+import {
+  CAPTURED_FREEZE_FRAMES,
+  capturedFreezeFramePayload,
+  componentSixtyTwoWithSentinel,
+} from "./captured-freeze-frames.ts";
+import { toHex } from "../src/vcu/multiframe-codec.ts";
+import { HOW_TO_READ as HOW_TO_READ_FREEZE_FRAMES } from "../src/vcu/freeze-frame-store.ts";
+import type { FreezeFramesResponse } from "../src/http/freeze-frames.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 
 // Builds a single self-contained HTML file showing the service sheet with no Pi on the
@@ -54,6 +62,71 @@ function buildLifetimePreview(): LifetimeStatsResponse {
     howToReadWithServiceStopped: HOW_TO_READ_WITH_SERVICE_STOPPED,
   };
 }
+
+/**
+ * The `/freeze-frames` reading the preview serves, decoded from the committed captures.
+ *
+ * ⚠️ Real bytes off this motorcycle, not invented ones — the same argument
+ * `buildLifetimePreview` makes. Component 44 is `P0A07`, the water-pump code, whose
+ * `ai_WaterPumpCurrent_In = 0 mA` and three IGBT legs agreeing at 34.9 °C are the single
+ * sharpest decoded reply in the archive, and the one a screenshot should show.
+ *
+ * ⚠️ Component 62 is CONSTRUCTED and is the only one here that is: its real reply with
+ * `P_I12` overwritten to `FF FF`. `BY_UNIT["mA"]` is [-100 000, 100 000] and every mA
+ * infokey is a `uint16_t`, so no captured reply can carry a value that rule rejects — the
+ * sentinel a bounds gate exists to catch is exactly the thing the captures cannot supply.
+ * Labelled here rather than passed off as a reading.
+ *
+ * ⚠️ `readAt` is when the bike was actually read — 13:18 CEST on 2026-09-08 — so the age on
+ * screen grows rather than being a frozen "just now".
+ */
+function buildFreezeFramesPreview(): FreezeFramesResponse {
+  const replies = [
+    ...CAPTURED_FREEZE_FRAMES.filter(entry => PREVIEW_COMPONENTS.has(entry.component)).map(entry => ({
+      component: entry.component,
+      payloadHex: toHex(capturedFreezeFramePayload(entry)),
+      failure: null,
+    })),
+    { component: 62, payloadHex: toHex(componentSixtyTwoWithSentinel()), failure: null },
+    // On the list, and the VCU had no record to give. The fourth UI state, from the real
+    // two-byte reply captured on 2026-09-08.
+    { component: 54, payloadHex: "57 00", failure: null },
+  ];
+  const components = replies.map(reply => reply.component);
+  return {
+    reading: {
+      readAt: Date.UTC(2026, 8, 8, 11, 18, 49),
+      source: "read-freeze-frame.ts",
+      completion: "complete",
+      components,
+      records: replies.map(reply => ({
+        component: reply.component,
+        response: decodeFreezeFrameResponse(parseHexFrame(reply.payloadHex), reply.component),
+        failure: reply.failure,
+      })),
+      list: {
+        declaredCount: components.length,
+        parsed: components.length,
+        padding: 0,
+        outOfRange: 0,
+        duplicate: 0,
+        truncated: false,
+        trailingHex: "",
+      },
+    },
+    howToRead: HOW_TO_READ_FREEZE_FRAMES,
+  };
+}
+
+/**
+ * The components the preview shows — one per state a screenshot has to prove.
+ *
+ * ⚠️ 60 is `P1052`, whose shortlist is EMPTY in Energica's own data and whose record is
+ * therefore nothing but its "cycles since stored" byte. It is the code that proved the
+ * recorded values had to render above `Shortlist`'s early returns, so it belongs in the
+ * scene the dashboard gate looks at.
+ */
+const PREVIEW_COMPONENTS = new Set([34, 39, 44, 51, 60]);
 
 /** Resolve a module-relative specifier to a key rooted at `public/`. */
 function resolveSpecifier(fromKey: string, specifier: string): string {
@@ -218,6 +291,10 @@ const tables = JSON.stringify({
   // including the two the decoder refuses to scale, which are the whole point of
   // looking at it. scripts/captured-lifetime-reads.ts.
   "/lifetime-stats": buildLifetimePreview(),
+  // The Faults tab's recorded values, decoded from the committed captures. Served in every
+  // scene rather than only the faults one: the tab is reachable from all of them, and a
+  // reading is a FILE — it does not depend on what the bike is doing right now.
+  "/freeze-frames": buildFreezeFramesPreview(),
 });
 
 // Numbers and prose the Pi owns, handed to the fixtures rather than re-typed beside them. Its own

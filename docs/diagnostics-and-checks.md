@@ -156,6 +156,8 @@ The journal signature is taken over the **codes**, not the summary line. `descri
 
 ## 5. Freeze frames over KWP `0x17`
 
+Since #226 the service reads these per-code records itself and the Faults tab shows the values — the read's own budget inside the OBD poller hold, the store's clobber rule, the four UI states and the bounds findings are in [`docs/freeze-frame.md`](freeze-frame.md). This section stays the protocol's provenance.
+
 `src/diagnostics/freeze-frame.ts`. Pure — bytes in, values out, no socket and no clock — so the whole thing is exercised from a laptop against constructed payloads (`scripts/check-freeze-frame.ts`).
 
 ### 5.1 The request is proven, and so, now, is the response layout
@@ -298,14 +300,17 @@ A multi-frame reply does not arrive unless the tester answers the First Frame wi
 
 `GET` how the current or last sweep is going and whether the bike may be serviced; `POST` start one (refused, not queued, if one is already running); `DELETE` ask a running one to stop, keeping what it has.
 
-**⚠️ This endpoint causes traffic on the bike's bus**, and it is one of four that can:
+**⚠️ This endpoint causes traffic on the bike's bus**, and it is one of five that can:
 
-| endpoint              | what it puts on the bus                                                      |
-| --------------------- | ---------------------------------------------------------------------------- |
-| `POST /vcu-read`      | a parameter sweep — up to 277 reads, each one request frame                  |
-| `POST /vcu-probe`     | one identifier, any bank, any target                                         |
-| `POST /vcu-write`     | the only one that CHANGES anything — its own switch, `SERVICE_WRITE_ENABLED` |
-| `POST /lifetime-read` | components 51 and 52's freeze frames, and it parks the OBD poller to do it   |
+| endpoint | what it puts on the bus |
+| --- | --- |
+| `POST /vcu-read` | a parameter sweep — up to 277 reads, each one request frame |
+| `POST /vcu-probe` | one identifier, any bank, any target |
+| `POST /vcu-write` | the only one that CHANGES anything — its own switch, `SERVICE_WRITE_ENABLED` |
+| `POST /lifetime-read` | components 51 and 52's freeze frames, and it parks the OBD poller to do it |
+| `POST /freeze-frame-read` | `0x18`, then `0x17` per listed component — ~30 exchanges, and it parks the poller for up to 12 s |
+
+⚠️ The fifth landed with #226, which is the event the warning below was written in anticipation of. It is also the longest bus-touching action here and the only one whose length the BIKE decides, so it carries its own deadline rather than a fixed amount of work — [`docs/freeze-frame.md`](freeze-frame.md).
 
 ⚠️ **This list is the one place that count lives.** It used to be stated as "the only path from an HTTP request to a CAN frame" in this file, in `src/http/vcu-read.ts` and in `src/index.ts`, and it had been false in all three since `/vcu-probe` landed. A count repeated in four files rots; a pointer to one table does not. What stands between the two is `src/vcu/service-gate.ts`: a POST is refused unless the bike is PROVED stationary and out of drive, and a sweep already running is put out the moment that stops being true. The gate is on the wire so the page can say why the button is unavailable rather than leaving it to fail.
 

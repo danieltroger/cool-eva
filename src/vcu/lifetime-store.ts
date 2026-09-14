@@ -181,8 +181,29 @@ export function answeredCount(replies: readonly StoredLifetimeReply[]): number {
  * a service stop and a trip to the garage.
  */
 async function archive(directory: string, read: StoredLifetimeRead): Promise<void> {
-  const stamp = new Date(read.readAt).toISOString().replace(/:/g, "-");
-  await replaceFileDurably(join(directory, `lifetime-${stamp}.json`), `${JSON.stringify(read, null, 2)}\n`);
+  await archiveRead(directory, "lifetime", read.readAt, serialiseRead(read));
+}
+
+/**
+ * One run's own copy, named by when it was taken. Shared with ./freeze-frame-store.ts.
+ *
+ * ⚠️ The stamp's `:` → `-` is not cosmetic: a colon is legal on ext4 and hostile everywhere
+ * a Pi's files end up being copied to. Written once so the two stores cannot disagree about
+ * what an archive is called.
+ */
+export async function archiveRead(
+  directory: string,
+  prefix: string,
+  readAt: number,
+  serialised: string
+): Promise<void> {
+  const stamp = new Date(readAt).toISOString().replace(/:/g, "-");
+  await replaceFileDurably(join(directory, `${prefix}-${stamp}.json`), serialised);
+}
+
+/** One read as the bytes both files get. Serialised once — ./snapshot-store.ts's own shape. */
+export function serialiseRead(read: unknown): string {
+  return `${JSON.stringify(read, null, 2)}\n`;
 }
 
 /** The file as it sits on disk, undecoded. For a caller that wants the bytes rather than the reading. */
@@ -214,8 +235,15 @@ export async function loadStoredRead(directory: string): Promise<StoredLifetimeR
   }
 }
 
-/** Whether one element of `replies` is the shape this module wrote. */
-function isStoredReply(reply: unknown): reply is StoredLifetimeReply {
+/**
+ * Whether one element of `replies` is the shape this module wrote.
+ *
+ * ⚠️ Exported since #226 because ./freeze-frame-store.ts validates the SAME type — it
+ * imports `StoredLifetimeReply` from here — and had its own byte-identical copy. A shared
+ * type with an unshared validator is the worst of both: adding a field type-checks
+ * everywhere while one of the two guards goes on passing junk into a decoder.
+ */
+export function isStoredReply(reply: unknown): reply is StoredLifetimeReply {
   if (typeof reply !== "object" || reply === null) {
     return false;
   }
