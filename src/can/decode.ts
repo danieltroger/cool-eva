@@ -287,8 +287,8 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // real transitions rather than one parked sample. key_on stayed 1 throughout both, so
     // it rests on the parked sample alone — a key-off capture is what would confirm it.
     //
-    // b0's low bits and b3 are decoded below, both added 2026-08-16 — see the
-    // comments on `handlebarSwitches` and `vehicleFlagsByte3` further down this case.
+    // b0's low bits and b3 are decoded in vcu-digitals.ts, both added 2026-08-16 — see
+    // the comments on `handlebarSwitches` and `vehicleFlagsByte3` there.
     case 0x102: {
       if (data.length < 3) return [];
       const handlebar = data[0];
@@ -416,7 +416,7 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
         // bit 1, cruise ON/OFF (right pod, front). ✅ CONFIRMED by what it causes: the
         // two presses in the ORIGINAL corpus (2026-08-04 18:04:42.270 for 0.877 s at
         // 88 km/h, and 19:45:47.924 for 0.920 s at 39 km/h) BOTH brought 0x102 b3 bit 1
-        // — the cruise-armed state, see vehicleFlagsByte3() — up 0.53 s later.
+        // — the cruise-armed state, see vehicleFlagsByte3() in vcu-digitals.ts — up 0.53 s later.
         //
         // ⚠️ "Exactly twice" was the 14-capture corpus. The whole archive has 36 presses,
         // 0.465-1.125 s, every one above 3 km/h; the arming claim rests on the two that

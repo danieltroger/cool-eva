@@ -577,8 +577,8 @@ export const SIGNALS: SignalDef[] = [
   { key: "fast_dc_contactor", unit: "", group: "charge", source: "stream" },
   // 0x102 b3 bit5 — `V_LIEDOWN_DETECTED`, the VCU's own fall flag. ✅ Confirmed against
   // this bike on 2026-09-14: one transition in the 60 s around the fall, 0.669 s after
-  // the roll peak and 0.551 s BEFORE the VCU cut the drive. src/can/decode.ts has the
-  // timing.
+  // the roll peak and 0.551 s BEFORE the VCU cut the drive. src/can/vcu-digitals.ts has
+  // the timing.
   //
   // Group "controls" rather than "drive" or a new group of its own, and that is the
   // load-bearing part of this line: `controls` is a BOOLEAN_GROUP in public/lib/bounds.js,
@@ -659,7 +659,7 @@ export const SIGNALS: SignalDef[] = [
   // The blinkers are the LAMP outputs (b2 bits 2/3), deliberately: "is my indicator on" is
   // a question about the lamp. The b0 indicator SWITCHES are real and their sides are known
   // (bit 3 right, bit 4 left), but decoding them would put four tiles on screen for two
-  // indicators — decode.ts carries the evidence for whenever that changes.
+  // indicators — vcu-digitals.ts carries the evidence for whenever that changes.
 
   // `front_brake` and `rear_brake` are two keys because they are two circuits, and merging
   // them would hide which lever is in use. ⚠️ They are on the OUTPUT byte, so strictly they
@@ -704,7 +704,7 @@ export const SIGNALS: SignalDef[] = [
   //
   // ⚠️ `mag_good` costs ~2 258 rows/h on its own, 97 % of this batch, because it has 47 020
   // rising edges. The other four are ~1 row per boot each: they are 0 (or, for dsb_control,
-  // 1) in all but a handful of the archive's 15 006 856 frames. See src/can/decode.ts.
+  // 1) in all but a handful of the archive's 15 006 856 frames. See src/can/vcu-digitals.ts.
   { key: "dsb_control", unit: "", group: "diag", source: "stream" }, // b3 bit2 V_DSB_CTRL
   { key: "imd_disable", unit: "", group: "diag", source: "stream" }, // b3 bit3 V_IMD_DISABLE
   { key: "winter_storage", unit: "", group: "diag", source: "stream" }, // b3 bit4 V_WINTER_STORAGE

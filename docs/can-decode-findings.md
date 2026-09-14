@@ -418,7 +418,7 @@ What is there now and was not here: the frame is decoded (`src/can/vehicle-statu
 
 ## 0x102 — body, lights, vehicle state and attitude
 
-`src/can/decode.ts` (bytes 0-3) and `src/can/attitude.ts` (bytes 4-7). 100 Hz.
+`src/can/decode.ts` (byte 0 bit 6, bytes 1-2), `src/can/vcu-digitals.ts` (byte 0's other low bits, byte 3) and `src/can/attitude.ts` (bytes 4-7). 100 Hz.
 
 > 🚨 **Read this before quoting a number from this section.** Much of what is below was measured over **1 103 000 frames in 14 captures**, and the archive is now **15 006 856 frames in 97 files** — 13.6× more. In three days of 2026-09 that difference falsified three claims that had shipped as settled: `V_DSB_CTRL` "never once clear" (it is clear in 279), `fast_dc_contactor` "set in exactly one interval in the whole corpus" (11 rising edges), and `cruise_active` "never moved otherwise" (35 rising edges). None of them was wrong when written. **A count here without its corpus beside it is not a measurement**, and the habit that keeps catching these is re-running the sweep rather than re-reading the sentence.
 
