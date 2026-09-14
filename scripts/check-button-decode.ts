@@ -521,7 +521,7 @@ for (const key of BUTTONS_GROUP_KEYS) {
 // The same gate, for the 1/0 signals this frame carries that are NOT in the buttons
 // group. Checked separately and by name because they get there by a different route:
 // `controls` is a BOOLEAN_GROUP, while `fast_dc_contactor` sits in `charge` alongside
-// real measurements and needs its own BY_KEY entry. Raised in review, where it turned
+// real measurements and needs bounds of its own. Raised in review, where it turned
 // out to be the one flag added here that had fallen through both routes and was
 // rendering unbounded.
 for (const key of [

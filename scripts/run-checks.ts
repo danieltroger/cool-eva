@@ -547,7 +547,7 @@ const CHECKS: SelfCheck[] = [
   {
     script: "scripts/check-flag-bounds.ts",
     covers:
-      "the eighteen signals #227 took off check-all-view-tiles.ts's KNOWN_UNGATED list, and WHICH bound each got " +
+      "the signals whose bound is a claim about their DECODER rather than about the bike, and WHICH bound each got " +
       "— which §5's ratchet cannot say, since it only asks whether a signal reaches some rule: that the fifteen " +
       "BMS flags are 0…1 and accept both real readings while rejecting the masked byte a future decoder could " +
       "return, replayed through four 0x201 frames including one synthetic all-bits one because no captured frame " +

@@ -36,7 +36,7 @@ export const SIGNALS: SignalDef[] = [
   // in-bounds reading, or absent.
   // Codes rather than text because a signal is a number; the words are the dashboard's.
   // ⚠️ All five have a BLANK unit in a group that is not a BOOLEAN_GROUP, which is the
-  // combination bounds.js renders ungated — so each is named in its BY_KEY, and
+  // combination bounds.js renders ungated — so each declares its own bounds, and
   // scripts/check-fan-curve.ts goes red if a new enum member outgrows its bound.
   { key: "fan_auto_mode", unit: "", group: "fan", source: "sensor", onDemand: true, bounds: [0, 2] },
   // Whose *off* the fan is in, and why it ended — FAN_OFF_STATE in src/fan/gesture-runner.ts:
@@ -936,7 +936,7 @@ export const SIGNALS: SignalDef[] = [
   // to 0/1 would be rejected as a dead sensor on every frame where anything is set, and the
   // broken-out booleans go in "diag" precisely because it IS a BOOLEAN_GROUP and they
   // inherit the 0/1 gate with no per-key bounds entry. The two numbers join the raw word:
-  // they need a BY_KEY bound either way, and "diag" would reject them outright.
+  // they need bounds of their own either way, and "diag" would reject them outright.
   { key: "limp_pack_res", unit: "", group: "vcu", source: "stream", bounds: FIELD_U16 }, // b4-5 LE V_LIMP_PACK_RES
   { key: "limp_module_word", unit: "", group: "vcu", source: "stream", bounds: FIELD_U16 }, // b6-7 LE V_LIMP_MODULE_STS
   // ⚠️ The raw byte contains three keys above it — `drive_vsm_b3` is `& 3`, `limp_mode_status`

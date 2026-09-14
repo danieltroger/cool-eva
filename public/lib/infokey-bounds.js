@@ -10,9 +10,12 @@ import { boundsFor } from "./bounds.js";
 // anything private: the aliases below map to signal keys and the lookup goes through
 // `boundsFor`, which is exported.
 //
-// ⚠️ The NUMBERS stay in bounds.js, beside the paragraph that justifies them. Three of
-// these fields are the same physical rails the 0x501 monitor publishes, read through KWP
-// `0x17` instead, and a second set of limits for one quantity is how the two stop agreeing.
+// ⚠️ The NUMBERS are not restated here. Three of these fields are the same physical rails
+// the 0x501 monitor publishes, read through KWP `0x17` instead, and a second set of limits
+// for one quantity is how the two stop agreeing — so the aliases below map to signal keys
+// and the lookup goes through `boundsFor`. Since #227 those numbers are declared beside
+// their signals in src/can/registry.ts and generated into ./generated-bounds.js; the
+// reasoning is docs/signal-bounds.md.
 
 /**
  * Freeze-frame field name → the signal key whose bound already describes that quantity.

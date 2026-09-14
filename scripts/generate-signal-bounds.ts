@@ -60,7 +60,7 @@ const checkOnly = process.argv.includes("--check");
 const rendered = await renderSignalBounds();
 
 // Every signal must reach SOME rule, or say why it cannot. This is the ratchet that
-// replaces KNOWN_UNGATED in check-all-view-tiles.ts §5: a new signal added with neither a
+// replaced the hand-maintained KNOWN_UNGATED list in check-all-view-tiles.ts: a new signal with neither a
 // bound nor a reason fails here, rather than rendering whatever arrives on the ALL page.
 for (const signal of SIGNALS) {
   const viaFallback = fallbackBoundsFor(signal.key, signal.unit, signal.group);

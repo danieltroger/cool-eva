@@ -51,7 +51,7 @@ export const SPEED_GATE_OFF_KMH = 93;
  * The fastest `speed_can_kmh` this treats as a road speed.
  *
  * ⚠️ Not decoration. `speed_can_kmh` is the only one of the three inputs that public/lib
- * /bounds.js does NOT gate — it has no BY_KEY entry and "km/h" is not in BY_UNIT — and a
+ * /bounds.js does NOT gate — it declares no bounds and "km/h" is not in BY_UNIT — and a
  * garbage high reading is the one that fails DANGEROUSLY here, by holding the fan off
  * over a hot pack. Anything past this is read as no speed at all, which opens the gate.
  */
