@@ -415,14 +415,22 @@ for (const [path, what, marker] of DISARMS) {
   check(`${what} disarms`, body !== "" && body.includes('armed.val = ""'));
 }
 
+// ⚠️ Two hops since #107 split the payload: the `<select>`'s handler is `selectTarget()` and
+// nothing else — extracted so the round trip that fetches the new parameter's notes has one home —
+// and that is where forgetSelection() is called. Both hops are asserted, because a handler that
+// stopped calling selectTarget and a selectTarget that stopped forgetting are the same bug: a
+// button armed against one parameter still armed against the next.
 const selectHandler = enclosingArrowBody(
   sourceOf("public/views/vcu-write.js"),
-  "selected.val = /** @type {HTMLSelectElement} */ (event.target).value;"
+  "selectTarget(/** @type {HTMLSelectElement} */ (event.target).value);"
 );
+const selectTargetBody = declarationBody(sourceOf("public/views/vcu-write.js"), "export function selectTarget(name)");
 const forgetSelectionBody = declarationBody(sourceOf("public/views/vcu-write.js"), "function forgetSelection()");
 check(
   "choosing a different parameter disarms, through the forgetSelection() the sheet-open reset also calls",
-  selectHandler.includes("forgetSelection()") && forgetSelectionBody.includes('armed.val = ""')
+  selectHandler.includes("selectTarget(") &&
+    selectTargetBody.includes("forgetSelection()") &&
+    forgetSelectionBody.includes('armed.val = ""')
 );
 
 // --- 9. the same gate with PRODUCTION's clock --------------------------------
