@@ -135,6 +135,27 @@ check(
 check("…and the position reaches the log", latestValue("waypoint_lat") === 45.374038);
 stopCounting();
 
+// --- 2b. Half a sample is not a sample ----------------------------------------------
+
+console.log("\n2b. one axis refreshed on its own does not corroborate anything");
+
+// ⚠️ A RAIL, NOT A FIX, and said so rather than left to look like a measured case:
+// src/gps/decode.ts pushes gps_lat and gps_lon into one array and records them together,
+// so the two marks never diverge on this bike. If a future transport ever emits half a
+// fix, the OLDER of the two marks is the one that tells the truth about the pair — taking
+// the newer would let a refreshed latitude vouch for a longitude nothing had re-seen.
+const halfSample = await boot("half-sample");
+sample(45.3, 14.3);
+await settle();
+record("gps_lat", 45.3);
+await settle();
+const halfWitnessed = halfSample.waypoint.saveWaypointNow();
+check(
+  `a latitude refreshed alone leaves the fix uncorroborated (${halfWitnessed.message})`,
+  !halfWitnessed.saved && halfWitnessed.refusal === WAYPOINT_REFUSAL.FIX_UNCORROBORATED
+);
+halfSample.stop();
+
 // --- 3. A fix that a later fix superseded ------------------------------------------
 
 console.log("\n3. a fix with a predecessor is the shipped gate's business, not this one");
