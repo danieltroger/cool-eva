@@ -78,6 +78,33 @@ async function heartbeat(signals: Record<string, number>): Promise<void> {
   await deliver(signals, HEARTBEAT_MS);
 }
 
+/**
+ * Every `new URLSearchParams({…})` literal in a source file.
+ *
+ * ⚠️ Brace-MATCHED rather than `[^}]*`: a `${value}` inside a template literal closes that class
+ * early, so the regex version silently matched nothing in the one file whose query is built that
+ * way — and the mutation that dropped `list` from it passed.
+ */
+function urlSearchParamsLiterals(text: string): string[] {
+  const found: string[] = [];
+  const opener = "new URLSearchParams({";
+  for (let at = text.indexOf(opener); at >= 0; at = text.indexOf(opener, at + 1)) {
+    let depth = 0;
+    for (let cursor = at + opener.length - 1; cursor < text.length; cursor += 1) {
+      if (text[cursor] === "{") {
+        depth += 1;
+      } else if (text[cursor] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          found.push(text.slice(at, cursor + 1));
+          break;
+        }
+      }
+    }
+  }
+  return found;
+}
+
 function check(what: string, condition: boolean): void {
   if (condition) {
     console.log(`  ✓ ${what}`);
@@ -207,12 +234,12 @@ serverTime.val = clock;
 await flush();
 // ⚠️ ALL of them, not the last: two requests hang here (see §5a's count), and releasing one would
 // leave the other pending for the rest of the run.
-const hung: (() => void)[] = [];
+const hung: { land: () => void; drop: () => void }[] = [];
 globalThis.fetch = (async (input: string) => {
   fetches += 1;
   requested.push(String(input));
-  await new Promise<void>(resolve => {
-    hung.push(resolve);
+  await new Promise<void>((resolve, reject) => {
+    hung.push({ land: resolve, drop: () => reject(new Error("preview: the Pi never answered")) });
   });
   return new Response(JSON.stringify({ status: { enabled: true, chargeAck: null }, result: null, message: null }));
 }) as unknown as typeof fetch;
@@ -243,14 +270,19 @@ check("§5a a new session asks at once rather than waiting behind the old one's 
 // ⚠️ And the OLD session's request, settling late, must not clear the flag the new one is holding.
 // Released alone, with the new session's own request still hanging: a retry window then passes and
 // nothing new may be sent, because the request in flight is still in flight.
+// ⚠️ It must FAIL, not land: a request that lands sets writeStatus, and the derive then returns at
+// the "do we hold a status" guard before the in-flight flag is ever consulted — so a version of
+// this that released it successfully asserted nothing about the flag, and said so in green.
 const abandoned = hung.shift();
-abandoned?.();
+console.warn = () => {};
+abandoned?.drop();
 await flush();
+console.warn = realWarn;
 fetches = 0;
 await deliver({ charge_manager_state: DC_SESSION }, STATUS_RETRY_MS);
 check("§5a and a request abandoned by the last session cannot clear the flag under it", fetches === 0);
-for (const release of hung) {
-  release();
+for (const request of hung) {
+  request.land();
 }
 await flush();
 // Back to a Pi that answers, for the sections below.
@@ -304,7 +336,7 @@ for (const entry of await readdir(new URL("../public", import.meta.url), { recur
   // ⚠️ Per URLSearchParams LITERAL, not a file-wide count: `declared < built` was satisfied by a
   // stray `list: "0"` anywhere in the file, including inside a comment.
   if (!drawsThePicker) {
-    for (const [params] of text.matchAll(/new URLSearchParams\(\{[^}]*\}\)/g)) {
+    for (const params of urlSearchParamsLiterals(text)) {
       if (!params.includes("list:")) {
         missing.push(`${entry}: ${params.replace(/\s+/g, " ").slice(0, 60)} sets no list`);
       }
