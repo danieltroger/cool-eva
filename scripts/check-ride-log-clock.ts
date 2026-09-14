@@ -1,10 +1,20 @@
-import { createDecipheriv, createPublicKey, diffieHellman, generateKeyPair, hkdf } from "crypto";
+import { execFile } from "child_process";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createPublicKey,
+  diffieHellman,
+  generateKeyPair,
+  hkdf,
+  randomBytes,
+} from "crypto";
 import type { KeyObject } from "crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
-import { gunzip } from "zlib";
+import { gunzip, gzip } from "zlib";
+import Database from "better-sqlite3";
 import { defineSignals, record } from "../src/can/signals.ts";
 import { monotonicNow, since } from "../src/monotonic.ts";
 import { appendReading, closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "../src/storage/encrypted-log.ts";
@@ -35,6 +45,8 @@ import type { ClockTrust } from "../src/gps/clock.ts";
 // mutation that removes the behaviour fails by timing out, which is slow but never flaky.
 
 const gunzipAsync = promisify(gunzip);
+const gzipAsync = promisify(gzip);
+const execFileAsync = promisify(execFile);
 const hkdfAsync = promisify(hkdf);
 const generateKeyPairAsync = promisify(generateKeyPair);
 
@@ -411,9 +423,7 @@ async function checkTrustReachesTheDatabase(): Promise<void> {
   await closeEncryptedLog();
 
   const outputPath = join(workDir, "decrypted.db");
-  const { execFile } = await import("child_process");
-  const run = promisify(execFile);
-  const decrypted = await run(
+  const decrypted = await execFileAsync(
     process.execPath,
     [
       "--experimental-strip-types",
@@ -430,7 +440,6 @@ async function checkTrustReachesTheDatabase(): Promise<void> {
   );
   check("and points at the file that holds them", decrypted.stderr.includes("rides-boot-"));
 
-  const { default: Database } = await import("better-sqlite3");
   const db = new Database(outputPath, { readonly: true });
   try {
     const rows = db
@@ -615,8 +624,6 @@ async function openAll(path: string): Promise<OpenedSegment[]> {
 
 /** Seals a segment with an arbitrary header, so §4 can build the v2 shape the Pi used to write. */
 async function sealByHand(header: SegmentHeader, rows: [number, string, number, number][]): Promise<Buffer> {
-  const { gzip } = await import("zlib");
-  const gzipAsync = promisify(gzip);
   const body = [JSON.stringify(header), ...rows.map(row => JSON.stringify(row))].join("\n");
   const compressed = await gzipAsync(Buffer.from(body, "utf-8"));
 
@@ -633,7 +640,6 @@ async function sealByHand(header: SegmentHeader, rows: [number, string, number, 
   const derived = Buffer.from(
     await hkdfAsync("sha256", shared, Buffer.concat([ephemeralRaw, recipientPublicRaw!]), HKDF_INFO, 32)
   );
-  const { createCipheriv, randomBytes } = await import("crypto");
   const nonce = randomBytes(NONCE_BYTES);
   const lengthField = Buffer.alloc(LENGTH_BYTES);
   lengthField.writeUInt32LE(compressed.length, 0);
