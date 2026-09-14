@@ -158,24 +158,9 @@ console.log(`${Object.keys(MUST_NOT_LATCH).length} outputs, states and measureme
 //    the same change gated) and `speed_can_kmh` (whose `speed_kmh` sibling IS gated) are the
 //    obvious ones. docs/dashboard-decisions.md §"The ungated signals" has the list and the why.
 const KNOWN_UNGATED = new Set([
-  // Flag words and raw state bytes, where a 0/1 or numeric bound would reject the real value.
-  "bms_state_discharge",
-  "bms_state_charge",
-  "bms_state_balancing",
-  "bms_state_trickle",
-  "bms_state_idle",
-  "bms_state_charge_complete",
-  "bms_state_maintenance",
+  // Flag WORDS and raw state bytes, where a 0/1 or numeric bound would reject the real value.
   "bms_error_flags",
   "bms_warning_flags",
-  "bms_err_cell_overvoltage",
-  "bms_err_cell_undervoltage",
-  "bms_err_over_temp",
-  "bms_err_leak_detected",
-  "bms_err_leak_detect_failed",
-  "bms_err_contactor",
-  "bms_warn_low_soc",
-  "bms_warn_balancing_required",
   "lmu_comm_warnings",
   "bms_io_state",
   "iso_test_1",
@@ -211,6 +196,27 @@ const KNOWN_UNGATED = new Set([
   "bms_uptime_min",
   "gps_epoch_s",
   // ⚠️ These are the ones a future change should FIX rather than inherit.
+  //
+  // The fourteen `bms_state_*` / `bms_err_*` / `bms_warn_*` below are genuine 1/0 flags —
+  // `bit()` or `? 1 : 0` in src/can/decode-bms.ts — so a [0, 1] bound rejects nothing and
+  // they only want a BY_KEY line or a BOOLEAN_GROUP. They sat under "a 0/1 bound would
+  // reject the real value" above until the #234 re-review pointed out that it is false of
+  // them; they are the cheapest fourteen on this list.
+  "bms_state_discharge",
+  "bms_state_charge",
+  "bms_state_balancing",
+  "bms_state_trickle",
+  "bms_state_idle",
+  "bms_state_charge_complete",
+  "bms_state_maintenance",
+  "bms_err_cell_overvoltage",
+  "bms_err_cell_undervoltage",
+  "bms_err_over_temp",
+  "bms_err_leak_detected",
+  "bms_err_leak_detect_failed",
+  "bms_err_contactor",
+  "bms_warn_low_soc",
+  "bms_warn_balancing_required",
   "vehicle_state",
   "vehicle_substate",
   "speed_can_kmh",

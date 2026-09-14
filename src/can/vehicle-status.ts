@@ -10,7 +10,7 @@
 // beside the hub's `odometer_km` — one key with two writers flaps between them, and keeping
 // them apart is what lets a ride say whether the two agree. They mostly do: the CAN byte
 // produces every substate the BLE path has logged except 0, and every state except 0 and 4 —
-// 4 rows of 816, which read as that path's partial-frame sentinels. docs/can-0x101.md.
+// 7 rows of 816 in all, which read as that path's partial-frame sentinels. docs/can-0x101.md.
 //
 // What the bytes mean, how the state/substate bands work, and what is still open:
 // docs/can-0x101.md.
@@ -64,9 +64,9 @@ export function decodeVehicleStatusFrame(data: Buffer): DecodedValue[] {
     // Read UNSIGNED: b5 is 0 in every frame on record so the two readings are
     // indistinguishable here, and an unsigned read cannot turn a wrong-endian value into a
     // plausible negative. ⚠️ No unit — the database carries no scaling factors (§A.4), and
-    // 75…154 is only PLAUSIBLE for this pack's milliohms. 🟡 `limp_module_status` is 0 in all
+    // 75…154 is only PLAUSIBLE for this pack's milliohms. 🟡 `limp_module_word` is 0 in all
     // 15 006 844 archive frames and all 1 184 096 September ones.
     { key: "limp_pack_res", value: u16le(data[4], data[5]) },
-    { key: "limp_module_status", value: u16le(data[6], data[7]) },
+    { key: "limp_module_word", value: u16le(data[6], data[7]) },
   ];
 }

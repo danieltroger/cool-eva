@@ -148,7 +148,7 @@ export class BleTelemetryDecoder {
         // since (src/can/vehicle-status.ts). The CAN keys carry `_can` so these two keep
         // their history and the two transports can be compared rather than merged. ⚠️ They
         // do NOT agree completely: this path has logged `vehicle_state` 4 and 0, and
-        // `vehicle_substate` 0, which the CAN byte never produces — 4 rows of 816.
+        // `vehicle_substate` 0, which the CAN byte never produces — 7 rows of 816.
         return [
           { key: "vehicle_state", value: frame[3] },
           { key: "vehicle_substate", value: frame[4] },

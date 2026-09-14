@@ -556,7 +556,7 @@ The remaining 53 started nothing: 47 changed no lamp at all and 6 stopped one, w
 
 **Do not "fix" this from the third-party file** — that file was already caught calling the high beam `charging`.
 
-**They stay undecoded because nothing reads them:** the dashboard's buttons section was given the LAMPS (`blinker_left` / `blinker_right`, b2 bits 2/3) on 2026-08-19, since what a rider means by "is my indicator on" is the lamp and not the thumb. Two more keys would put four tiles on screen for two indicators. If something ever wants the switches — telling a failed bulb from a missed press is the obvious one — they are `bit(handlebar, 3)` for right and `bit(handlebar, 4)` for left, and the measurement above is the evidence.
+⚠️ **They stayed undecoded until 2026-09-14, because nothing read them:** the dashboard's buttons section was given the LAMPS (`blinker_left` / `blinker_right`, b2 bits 2/3) on 2026-08-19, since what a rider means by "is my indicator on" is the lamp and not the thumb. Two more keys would put four tiles on screen for two indicators. If something ever wants the switches — telling a failed bulb from a missed press is the obvious one — they are `bit(handlebar, 3)` for right and `bit(handlebar, 4)` for left, and the measurement above is the evidence.
 
 #### bit 5 — the indicator-cancel press
 

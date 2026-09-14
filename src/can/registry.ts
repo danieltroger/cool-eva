@@ -931,7 +931,7 @@ export const SIGNALS: SignalDef[] = [
   // inherit the 0/1 gate with no per-key bounds entry. The two numbers join the raw word:
   // they need a BY_KEY bound either way, and "diag" would reject them outright.
   { key: "limp_pack_res", unit: "", group: "vcu", source: "stream" }, // b4-5 LE V_LIMP_PACK_RES
-  { key: "limp_module_status", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
+  { key: "limp_module_word", unit: "", group: "vcu", source: "stream" }, // b6-7 LE V_LIMP_MODULE_STS
   // ⚠️ The raw byte contains three keys above it — `drive_vsm_b3` is `& 3`, `limp_mode_status`
   // bit 2, `limp_res_valid` bit 3 — which is the shape `brake` was REMOVED for ("this log stores
   // measured bits rather than derived combinations"). It is kept for the reason 0x100 keeps

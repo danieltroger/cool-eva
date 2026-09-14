@@ -673,7 +673,8 @@ function contactorAndCruise(byte3: number): DecodedValue[] {
 // so long: you have to be changing the current while capturing. 0x120, its truncated request
 // twin, stays out — no ceiling, and it is the id this project transmits the RTC sync on.
 //
-// 0x400 is the one entry that costs something: the highest-frame-rate ID on this bus, ~100 RX
+// ⚠️ 0x400 WAS the one entry that costs something, and since 2026-09-14 it is one of two:
+// 0x101 joined at the same 100 Hz. It is the highest-frame-rate ID on this bus, ~100 RX
 // wakeups a second on a Pi Zero, carrying a payload that changed six times in 1 099 357
 // frames. Worth it only because the buttons cannot be read any other way.
 

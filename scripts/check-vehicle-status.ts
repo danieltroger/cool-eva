@@ -9,8 +9,11 @@ import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 //   node --experimental-strip-types scripts/check-vehicle-status.ts
 //
 // Every frame below is REAL, copied byte for byte with its timestamp out of the candump
-// archive or out of evidence/captures/. None is hand-written: a hand-written fixture only
-// proves the decoder agrees with whoever wrote it.
+// archive or out of evidence/captures/, except the one marked ⚠️ SYNTHETIC. A hand-written
+// fixture only proves the decoder agrees with whoever wrote it, which is why that one is
+// marked, counted separately in the success line, and used only where nothing real can do
+// the job: `limp_module_word` is 0 in every frame on record, so no captured frame can tell
+// bytes 6-7 from 4-5 or little-endian from big.
 //
 // This file stays narrow on purpose. scripts/check-can-decoders.ts already walks every
 // registry entry, asks bounds.js which signals are 0/1 gated and fails a deadband on one,
@@ -40,7 +43,7 @@ const CASES: FrameCase[] = [
       limp_res_valid: 0,
       vehicle_status_flags: 4,
       limp_pack_res: 100,
-      limp_module_status: 0,
+      limp_module_word: 0,
     },
   },
   {
@@ -122,7 +125,7 @@ const CASES: FrameCase[] = [
     expect: { vehicle_substate_can: 43, vehicle_state_can: 40, drive_vsm: 4, limp_pack_res: 98 },
   },
   {
-    what: "⚠️ SYNTHETIC — a frame the bus has never produced, and the only thing that can pin the two 16-bit fields. `limp_module_status` is 0 in all 15 006 844 archive frames and all 1 184 096 September ones, and `limp_pack_res`'s high byte is 0 in every one of them, so NO real frame distinguishes bytes 4-5 from 6-7, or little-endian from big. Distinct non-zero values in all four bytes do. ⚠️ It proves the decoder self-consistent and nothing whatever about the bike: b3 = 0xFF asserts every byte-3 field at once, which no frame on record carries",
+    what: "⚠️ SYNTHETIC — a frame the bus has never produced, and the only thing that can pin the two 16-bit fields. `limp_module_word` is 0 in all 15 006 844 archive frames and all 1 184 096 September ones, and `limp_pack_res`'s high byte is 0 in every one of them, so NO real frame distinguishes bytes 4-5 from 6-7, or little-endian from big. Distinct non-zero values in all four bytes do. ⚠️ It proves the decoder self-consistent and nothing whatever about the bike: b3 = 0xFF asserts every byte-3 field at once, which no frame on record carries",
     hex: "2B 28 06 FF 34 12 78 56",
     expect: {
       vehicle_substate_can: 43,
@@ -133,7 +136,7 @@ const CASES: FrameCase[] = [
       limp_res_valid: 1,
       vehicle_status_flags: 0xff,
       limp_pack_res: 0x1234,
-      limp_module_status: 0x5678,
+      limp_module_word: 0x5678,
     },
   },
 ];
@@ -234,7 +237,7 @@ console.log(`  ${ARCHIVE_SUBSTATES.length} archive substates and ${ARCHIVE_STATE
 //    scripts/check-can-decoders.ts cannot catch that: it only walks signals that ARE gated,
 //    so an ungated one is invisible to it from both ends. Asserted here by name.
 // ⚠️ ALL of them, not the flags only. `drive_vsm`, `vehicle_status_flags` and
-// `limp_module_status` live in `drive`/`vcu` with a blank unit, so deleting their BY_KEY lines
+// `limp_module_word` live in `drive`/`vcu` with a blank unit, so deleting their BY_KEY lines
 // would leave them rendering whatever arrives with nothing red — byte for byte the
 // moving/rolling_backwards bug two lines below. Asserting the OUTCOME of boundsFor rather than the
 // route is what survives someone moving a key to a different group.
@@ -245,7 +248,7 @@ for (const key of [
   "drive_vsm_b3",
   "vehicle_status_flags",
   "limp_pack_res",
-  "limp_module_status",
+  "limp_module_word",
   "moving",
   "rolling_backwards",
   "limp_mode_status",

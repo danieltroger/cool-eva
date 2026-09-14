@@ -128,7 +128,7 @@ const BY_KEY = {
   "drive_vsm_b3": [0, 3],
   "vehicle_status_flags": [0, 255],
   "limp_pack_res": [0, 65_535],
-  "limp_module_status": [0, 65_535],
+  "limp_module_word": [0, 65_535],
   // 🚨 `moving` is a 0/1 flag that rendered COMPLETELY UNGATED until 2026-09-14 — blank unit,
   // group `drive`, in neither table, so boundsFor() ran off the end and returned null. The
   // combination this file's header warns about, on the tab a rider reads, and the shape of
