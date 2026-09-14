@@ -1,13 +1,13 @@
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 import type { IncomingMessage } from "http";
-import { readFile, readdir, mkdtemp } from "fs/promises";
+import { readFile, readdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CAN_RESTART_HEADER, CAN_RESTART_HEADER_VALUE, handleCanRestartEndpoint } from "../src/http/can-restart.ts";
 import { UPDATE_HEADER, UPDATE_HEADER_VALUE, handleUpdateEndpoint } from "../src/http/update.ts";
-import { FAN_HEADER_VALUE } from "../src/http/fan.ts";
-import { recordingResponse } from "./recording-response.ts";
+import { recordingResponse, postRequest } from "./recording-response.ts";
+import { declarationBody, withoutCommentLines } from "./source-blocks.ts";
 
 // The header that stands in front of /update and /can-restart — the menu sheet's two
 // Pi-maintenance actions, which had no guard at all until #150.
@@ -68,9 +68,15 @@ console.log(`   values in src/http/: ${headerValues.map(entry => `${entry.file}=
 // fan, vcu-write, vcu-read, charge-auto, and this PR's two.
 check("the header-value constants were found at all", headerValues.length >= 6);
 check(
-  `⚠️  no two of the ${headerValues.length} endpoints share a value — a caller built for one cannot reach another`,
+  `⚠️  no two of the ${headerValues.length} DECLARATIONS share a value — a caller built for one endpoint cannot ` +
+    "reach another that declares its own",
   new Set(headerValues.map(entry => entry.value)).size === headerValues.length
 );
+// ⚠️ DECLARATIONS, and the noun is the whole of it. Three ROUTES answer to `service-mode`:
+// /vcu-read declares it, and /lifetime-read and /vcu-probe import that same constant deliberately
+// — one service session, three ways in. This scan sees declaration SITES, so it is blind to
+// sharing-by-import and must not be read as "no two routes share". docs/wifi-hardening.md's route
+// table is where that is written down truthfully.
 
 // ⚠️ THE OTHER HALF OF THE BARRIER, and until #240 it was claimed in four places and held in
 // none. The header comparison stops the cross-origin `<form>`, which cannot set a header. What
@@ -84,10 +90,20 @@ check(
   "src/index.ts was read at all — an empty string would pass the one below in silence",
   routing.includes("createServer(")
 );
+// ⚠️ The test is "no CORS header is ever WRITTEN", not "the token OPTIONS never appears". A
+// preflight succeeds only if the reply carries Access-Control-Allow-Origin and -Allow-Headers, so
+// an explicit `OPTIONS → 405` would be a STRONGER refusal than having no branch at all — a check
+// that banned the word would forbid the better implementation. Comment lines go first for the same
+// reason: fan.ts and can-restart.ts explain this in prose, and the file where that sentence belongs
+// most must not be the one file it cannot be written in. Handlers are scanned too — the property is
+// about every reply this server sends, and src/index.ts is not the only place one is written.
+const corsWriters = [["src/index.ts", routing] as const, ...(await httpSources())].filter(([, source]) =>
+  withoutCommentLines(source).includes("Access-Control-")
+);
 check(
-  "⚠️  …and it answers no preflight: no OPTIONS branch and no Access-Control-* header anywhere in " +
-    "the routing, which is what makes a custom header name a barrier rather than a formality",
-  !/["']OPTIONS["']/.test(routing) && !routing.includes("Access-Control-")
+  "⚠️  …and no CORS header is written in the routing or in any handler — the half of the barrier " +
+    "that stops a cross-origin fetch, whose preflight this server never answers",
+  corsWriters.length === 0
 );
 
 // --- 2. /can-restart, against a real server on loopback -----------------------
@@ -119,7 +135,12 @@ try {
   const wrongValue = await post("/can-restart", { [CAN_RESTART_HEADER]: "not-it" });
   check("a POST carrying the WRONG value is refused too, so the name alone is not the key", wrongValue.status === 403);
 
-  const fanValue = await post("/can-restart", { [CAN_RESTART_HEADER]: FAN_HEADER_VALUE });
+  // Off the scrape, not off an import: `import { FAN_HEADER_VALUE } from "../src/http/fan.ts"`
+  // drags the fan controller, the PWM driver and the encrypted log — crypto and zlib with them —
+  // into this process to read five characters, and §1 already has the value on disk.
+  const fanHeaderValue = headerValues.find(entry => entry.file === "fan")?.value ?? "";
+  check("the fan's value was scraped at all, so the refusal below is of a real value", fanHeaderValue === "fan");
+  const fanValue = await post("/can-restart", { [CAN_RESTART_HEADER]: fanHeaderValue });
   check("…including the fan's value, which is a caller aimed at another endpoint", fanValue.status === 403);
 
   const updateValue = await post("/can-restart", { [CAN_RESTART_HEADER]: UPDATE_HEADER_VALUE });
@@ -175,55 +196,60 @@ console.log("\n3. /update: the same door, in front of a sudo git pull and a rest
 // Not a repo, so even a build with the guard deleted cannot complete a pull — and it is
 // the SUCCESS path that arms the restart. Nothing here can reach `systemctl`.
 const notARepo = await mkdtemp(join(tmpdir(), "cool-eva-headers-check-"));
-
-const noHeader = recordingResponse();
-await handleUpdateEndpoint(postRequest(), noHeader.res, notARepo);
-check("⚠️  a POST with NO header is refused with 403", noHeader.statusCode === 403);
-check("…and armed no restart", noHeader.finishListeners === 0);
-check(
-  "…and never reached git: the body is the refusal, not a pull's output",
-  noHeader.body.includes(UPDATE_HEADER) && !noHeader.body.includes("fatal:")
-);
-
-const wrongHeader = recordingResponse();
-await handleUpdateEndpoint(postRequest({ [UPDATE_HEADER]: "not-it" }), wrongHeader.res, notARepo);
-check("a POST carrying the wrong value is refused too", wrongHeader.statusCode === 403);
-
-const canRestartValue = recordingResponse();
-await handleUpdateEndpoint(postRequest({ [UPDATE_HEADER]: CAN_RESTART_HEADER_VALUE }), canRestartValue.res, notARepo);
-check("⚠️  …including /can-restart's value, the neighbour on the same sheet", canRestartValue.statusCode === 403);
-
-const withHeader = recordingResponse();
-await handleUpdateEndpoint(postRequest({ [UPDATE_HEADER]: UPDATE_HEADER_VALUE }), withHeader.res, notARepo);
-check(
-  "⚠️  a POST carrying the header gets past the guard and reaches git — 500 in a directory that is " +
-    "not a repo, so the guard is shown to refuse SOME requests rather than all of them",
-  withHeader.statusCode === 500
-);
-check("…and still armed no restart, because the pull did not succeed", withHeader.finishListeners === 0);
-
-// --- 4. the dashboard's half of the wire -------------------------------------
-//
-// ⚠️ Scoped to ONE FUNCTION BODY EACH, not to the file. Both literals live in
-// public/views/pi-actions.js, so a file-wide search still finds both after they have been
-// SWAPPED between the two fetches — while every POST the dashboard makes answers 403 and
-// the rider is told only that the request failed.
-
-console.log("\n4. the page's end, pinned inside the function that sends it");
-
-const page = await readFile(new URL("../public/views/pi-actions.js", import.meta.url), "utf8");
-
-for (const [name, path, value] of [
-  ["performUpdate", "/update", UPDATE_HEADER_VALUE],
-  ["performCanRestart", "/can-restart", CAN_RESTART_HEADER_VALUE],
-] as const) {
-  const body = declarationBody(page, `async function ${name}(`);
-  check(`${name}() was found at all — a pattern matching nothing would pass the two below in silence`, body !== "");
-  check(`${name}() posts to ${path}`, body.includes(`fetch("${path}"`));
+try {
+  const noHeader = recordingResponse();
+  await handleUpdateEndpoint(postRequest(), noHeader.res, notARepo);
+  check("⚠️  a POST with NO header is refused with 403", noHeader.statusCode === 403);
+  check("…and armed no restart", noHeader.finishListeners === 0);
   check(
-    `⚠️  …and sends "X-Cool-Eva": "${value}" from inside that same body`,
-    body.includes(`"X-Cool-Eva": "${value}"`)
+    "…and never reached git: the body is the refusal, not a pull's output",
+    noHeader.body.includes(UPDATE_HEADER) && !noHeader.body.includes("fatal:")
   );
+
+  const wrongHeader = recordingResponse();
+  await handleUpdateEndpoint(postRequest({ [UPDATE_HEADER]: "not-it" }), wrongHeader.res, notARepo);
+  check("a POST carrying the wrong value is refused too", wrongHeader.statusCode === 403);
+
+  const canRestartValue = recordingResponse();
+  await handleUpdateEndpoint(postRequest({ [UPDATE_HEADER]: CAN_RESTART_HEADER_VALUE }), canRestartValue.res, notARepo);
+  check("⚠️  …including /can-restart's value, the neighbour on the same sheet", canRestartValue.statusCode === 403);
+
+  const withHeader = recordingResponse();
+  await handleUpdateEndpoint(postRequest({ [UPDATE_HEADER]: UPDATE_HEADER_VALUE }), withHeader.res, notARepo);
+  check(
+    "⚠️  a POST carrying the header gets past the guard and reaches git — 500 in a directory that is " +
+      "not a repo, so the guard is shown to refuse SOME requests rather than all of them",
+    withHeader.statusCode === 500
+  );
+  check("…and still armed no restart, because the pull did not succeed", withHeader.finishListeners === 0);
+
+  // --- 4. the dashboard's half of the wire -------------------------------------
+  //
+  // ⚠️ Scoped to ONE FUNCTION BODY EACH, not to the file. Both literals live in
+  // public/views/pi-actions.js, so a file-wide search still finds both after they have been
+  // SWAPPED between the two fetches — while every POST the dashboard makes answers 403 and
+  // the rider is told only that the request failed.
+
+  console.log("\n4. the page's end, pinned inside the function that sends it");
+
+  const page = await readFile(new URL("../public/views/pi-actions.js", import.meta.url), "utf8");
+
+  for (const [name, path, value] of [
+    ["performUpdate", "/update", UPDATE_HEADER_VALUE],
+    ["performCanRestart", "/can-restart", CAN_RESTART_HEADER_VALUE],
+  ] as const) {
+    const body = declarationBody(page, `async function ${name}(`);
+    check(`${name}() was found at all — a pattern matching nothing would pass the two below in silence`, body !== "");
+    check(`${name}() posts to ${path}`, body.includes(`fetch("${path}"`));
+    check(
+      `⚠️  …and sends "X-Cool-Eva": "${value}" from inside that same body`,
+      body.includes(`"X-Cool-Eva": "${value}"`)
+    );
+  }
+} finally {
+  // check-update-endpoint.ts cleans its checkout up the same way. Without this every `npm test`
+  // leaves a directory behind in the system temp dir — twenty of them after one afternoon.
+  await rm(notARepo, { recursive: true, force: true });
 }
 
 console.log("");
@@ -278,48 +304,26 @@ async function postDuplicateHeader(): Promise<{ status: number; body: string }> 
   return { status: response.status, body: await response.text() };
 }
 
-/** A POST with whatever headers, for the handlers §3 calls directly rather than over a socket. */
-function postRequest(headers: Record<string, string> = {}): IncomingMessage {
-  return { method: "POST", headers } as unknown as IncomingMessage;
-}
-
 /**
  * Every `export const …_HEADER_VALUE = "…"` in src/http/, read off the files rather than
  * listed here: a list would be the one place a seventh endpoint could fail to appear, and
  * an endpoint that quietly copied a neighbour's value is exactly what §1 is looking for.
  */
 async function exportedHeaderValues(): Promise<{ file: string; value: string }[]> {
-  const directory = new URL("../src/http/", import.meta.url);
   const found: { file: string; value: string }[] = [];
-  for (const entry of (await readdir(directory)).sort()) {
-    if (!entry.endsWith(".ts")) {
-      continue;
-    }
-    const source = await readFile(new URL(entry, directory), "utf8");
+  for (const [file, source] of await httpSources()) {
     for (const match of source.matchAll(/^export const \w*HEADER_VALUE = "([^"]+)";$/gm)) {
-      found.push({ file: entry.replace(".ts", ""), value: match[1] });
+      found.push({ file: file.replace("src/http/", "").replace(".ts", ""), value: match[1] });
     }
   }
   return found;
 }
 
-/** The body of a named function declaration, or "" if it is not there at all. */
-function declarationBody(source: string, declaration: string): string {
-  const at = source.indexOf(declaration);
-  if (at === -1) {
-    return "";
-  }
-  const start = source.indexOf("{", at);
-  let depth = 0;
-  for (let index = start; index < source.length; index += 1) {
-    if (source[index] === "{") {
-      depth += 1;
-    } else if (source[index] === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return source.slice(start, index + 1);
-      }
-    }
-  }
-  return "";
+/** Every handler in src/http/, read once and concurrently — the reads have nothing to do with each other. */
+async function httpSources(): Promise<(readonly [string, string])[]> {
+  const directory = new URL("../src/http/", import.meta.url);
+  const entries = (await readdir(directory)).filter(entry => entry.endsWith(".ts")).sort();
+  return await Promise.all(
+    entries.map(async entry => [`src/http/${entry}`, await readFile(new URL(entry, directory), "utf8")] as const)
+  );
 }

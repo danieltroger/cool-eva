@@ -5,10 +5,13 @@ import { arm, armDwellElapsed, armed, refuseKeyRepeat } from "../lib/arming.js";
 
 const { button, div } = van.tags;
 
-// The two controls on the dashboard that act on THE PI rather than on the motorcycle:
-// its CAN interface, and its own checkout and unit. Split out of ./sheet.js when they
-// gained the arming gate — the sheet is a composition file, and these two are a
-// responsibility of their own.
+// The two controls that MAINTAIN THE PI AS A COMPUTER: its CAN interface, and its own
+// checkout and systemd unit. Split out of ./sheet.js when they gained the arming gate —
+// the sheet is a composition file, and these two are a responsibility of their own.
+//
+// ⚠️ Not "the controls that act on the Pi": the waypoint and the ride-log download act on
+// the Pi too (they write and read its log) and deliberately stayed behind. The line is
+// maintenance of the machine, not use of it.
 //
 // Both are grey-tier `.action`, not amber `.action.writes`: amber on this sheet means
 // "this touches the bike", and neither of these does. Why they arm anyway, and why the

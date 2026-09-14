@@ -5,14 +5,10 @@ import { CAN_BITRATE_HZ } from "./link-config.ts";
 const execFileAsync = promisify(execFile);
 
 // The dashboard's "CAN bus restart" button, one layer down: two `ip link` commands and
-// nothing else. It touches the Pi's own interface and never the bike's bus at the frame
-// level, which is why it is a POST rather than a write path.
+// nothing else, on the Pi's own interface rather than on the bike's bus.
 //
-// ⚠️ ITS OWN MODULE, split out of ./socket.ts, because that file imports `socketcan` — a
-// Linux-only native build carried as an optionalDependency. Anything that reached this
-// function through ./socket.ts dragged that binding in with it, so src/http/can-restart.ts
-// could not be exercised at all on a Mac and its guard could not be checked off the Pi.
-// Shelling out to `ip` needs no native module; opening a raw channel does. docs/wifi-hardening.md.
+// ⚠️ Its own module because ./socket.ts imports `socketcan`, a Linux-only native build, and
+// reaching this through that file dragged the binding along — docs/wifi-hardening.md.
 
 /**
  * No `down` first, unlike bringUpCan(): this is pressed precisely because the link is

@@ -53,7 +53,7 @@ Fixed before this track began, in #87 (`bc2b100`), and recorded here because a f
 
 They stayed **grey**, not amber: `.action.writes` on this sheet means "this touches the motorcycle", and neither of these does. The tap count and the tier are separate channels — the sweep is the precedent, arming while grey. The argument lives in `docs/dashboard-decisions.md` § "The menu sheet".
 
-`public/views/pi-actions.js` is new and holds both, split out of `views/sheet.js` for CLAUDE.md's ~400-line rule and because "the controls that act on the Pi itself" is a responsibility of its own.
+`public/views/pi-actions.js` is new and holds both, split out of `views/sheet.js` for CLAUDE.md's ~400-line rule and because maintaining the Pi **as a computer** — its CAN interface, its checkout, its systemd unit — is a responsibility of its own. Not "the controls that act on the Pi": the waypoint and the ride-log download act on the Pi too, and stayed in the sheet. The line is maintenance of the machine, not use of it.
 
 `src/can/restart.ts` is also new, and is a pure move of `restartCanLink` out of `src/can/socket.ts`. That file imports `socketcan`, a Linux-only native build carried as an optional dependency — so anything reaching the restart through it dragged that binding along, and `src/http/can-restart.ts` could not be loaded on a Mac at all. Shelling out to `ip` needs no native module; opening a raw channel does.
 

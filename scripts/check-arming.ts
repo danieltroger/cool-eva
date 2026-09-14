@@ -1,4 +1,5 @@
 import { readFile, readdir } from "fs/promises";
+import { blockAt, declarationBody } from "./source-blocks.ts";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
 import { ARMED_KEY as CHARGE_CURRENT_KEY } from "../public/views/charge-current.js";
 import { ARMED_KEY as CHARGE_STOP_KEY } from "../public/views/charge-stop.js";
@@ -212,9 +213,9 @@ check(
 // landing under an already-armed button has to take the arming with it. ⚠️ views/pi-actions.js's
 // two fetch no status OF THEIR OWN — nothing about `git pull` or `ip link` is asked first — so
 // none of these refreshes is theirs. What is tied to their own lifecycle is openSheet(), asserted
-// at the end of this section. (Other modules' refreshes still disarm them: one key, one dashboard.) Armed AFTER the call and before its
-// answer, which is the ordering that matters — a button armed against 75 must not fire against
-// the 80 the refresh brought with it.
+// at the end of this section. (Other modules' refreshes still disarm them: one key, one
+// dashboard.) Armed AFTER the call and before its answer, which is the ordering that matters —
+// a button armed against 75 must not fire against the 80 the refresh brought with it.
 
 console.log("\n6. a refresh landing under an armed button");
 
@@ -241,11 +242,11 @@ try {
   globalThis.fetch = realFetch;
 }
 
-// ⚠️ Read rather than run: openSheet() mounts a sheet and needs a DOM. It is the ONLY thing
-// that disarms views/pi-actions.js's two — they fetch no status, so §6's refresh path cannot
-// reach them — and without it, re-opening the sheet would find a half-confirmed Update waiting
-// for its second tap. ⚠️ It is also why views/sheet.js imports the gate at all now that the
-// buttons live elsewhere: drop this line and sourceOf() below throws instead of going red.
+// ⚠️ Read rather than run: openSheet() mounts a sheet and needs a DOM. It is the only disarm
+// views/pi-actions.js's two do not get through another module's internals — refreshServiceMode()
+// disarms first thing and openSheet() calls it, which is precisely why the explicit line is worth
+// asserting: that one moves and this one does not. ⚠️ It is also why views/sheet.js imports the
+// gate at all now the buttons live elsewhere: drop it and sourceOf() throws instead of going red.
 check(
   "⚠️  re-opening the menu sheet disarms — the only disarm tied to the two Pi actions' own lifecycle",
   declarationBody(sourceOf("public/views/sheet.js"), "export function openSheet()").includes('armed.val = ""')
@@ -309,7 +310,7 @@ for (const site of SITES) {
   // holds, while Stop fires on a SINGLE tap and its caption never says "Tap again". The two are
   // co-visible for the whole of a live charge and one file is a copy of the other, so that
   // mis-scoping is one wrong constant away — a likelier edit than dropping the test altogether.
-  const refusedKey = keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]);
+  const refusedKey = refusedKeyOf(site);
   const armedKey = keyOf(site.file, armedWith(armingBranch, sourceOf(site.file)));
   check(
     `${where}: ⚠️  the key it refuses on is the key its own first tap arms — ${refusedKey}`,
@@ -341,7 +342,7 @@ for (const site of SITES) {
 // control's key `let` instead of `const` would drop it out of the comparison below and re-open the
 // hole this section exists for — one keyword, and the count floor only catches it while the margin
 // happens to be zero.
-const refusedKeys = SITES.map(site => keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]));
+const refusedKeys = SITES.map(refusedKeyOf);
 const resolvedKeys = refusedKeys.filter(key => !key.startsWith("<"));
 console.log(`   keys the sites refuse on: ${refusedKeys.join(", ")}`);
 const unresolved = refusedKeys.filter(key => key.startsWith("<"));
@@ -581,6 +582,14 @@ function firingSites(file: string, source: string): FiringSite[] {
   });
 }
 
+/**
+ * The key one firing site refuses a tap on. Spelled once: §7 asks it per site and §7b asks it of
+ * all eleven, and a regex that lived in both places would be widened in one of them.
+ */
+function refusedKeyOf(site: FiringSite): string {
+  return keyOf(site.file, site.body.match(/armed\.val !== (\w+|"[^"]*")/)?.[1]);
+}
+
 function shortName(site: FiringSite): string {
   return `${site.file.replace("public/views/", "")} → ${site.name}`;
 }
@@ -673,39 +682,12 @@ function refusedBranch(body: string): string {
   return block === null ? "" : body.slice(block.start + 1, block.end).trim();
 }
 
-/** The `{ … }` starting at or after `from`, brace-matched. */
-function blockAt(source: string, from: number): { start: number; end: number } | null {
-  const start = source.indexOf("{", from);
-  if (start === -1) {
-    return null;
-  }
-  let depth = 0;
-  for (let index = start; index < source.length; index += 1) {
-    if (source[index] === "{") {
-      depth += 1;
-    } else if (source[index] === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return { start, end: index };
-      }
-    }
-  }
-  return null;
-}
-
 /** The body of the arrow function `marker` sits in, or "" if it is not there at all. */
 function enclosingArrowBody(source: string, marker: string): string {
   const at = source.indexOf(marker);
   const arrow = at === -1 ? -1 : source.lastIndexOf("=> {", at);
   const block = arrow === -1 ? null : blockAt(source, arrow);
   return block === null || block.end < at ? "" : source.slice(block.start, block.end + 1);
-}
-
-/** The body of a named function declaration, or "" if it is not there at all. */
-function declarationBody(source: string, declaration: string): string {
-  const at = source.indexOf(declaration);
-  const block = at === -1 ? null : blockAt(source, at);
-  return block === null ? "" : source.slice(block.start, block.end + 1);
 }
 
 /**

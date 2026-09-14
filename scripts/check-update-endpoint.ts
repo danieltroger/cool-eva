@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { UpdateReply } from "../src/http/update.ts";
-import { recordingResponse, type RecordingResponse } from "./recording-response.ts";
+import { postRequest, recordingResponse, type RecordingResponse } from "./recording-response.ts";
 import {
   PULL_ARGS,
   asOwnerCommand,
@@ -57,8 +57,8 @@ function check(what: string, condition: boolean) {
  * deleted guard leaves this file green on purpose, because one check per property is what
  * makes a red line say which property went.
  */
-function postRequest(): IncomingMessage {
-  return { method: "POST", headers: { [UPDATE_HEADER]: UPDATE_HEADER_VALUE } } as unknown as IncomingMessage;
+function guardedPost(): IncomingMessage {
+  return postRequest({ [UPDATE_HEADER]: UPDATE_HEADER_VALUE });
 }
 
 function parseReply(recorded: RecordingResponse): UpdateReply {
@@ -91,7 +91,7 @@ try {
   await run("git", ["-C", upstream, ...GIT_IDENTITY, "commit", "-m", "second"]);
 
   const pulled = recordingResponse();
-  await handleUpdateEndpoint(postRequest(), pulled.res, checkout);
+  await handleUpdateEndpoint(guardedPost(), pulled.res, checkout);
   const pulledReply = parseReply(pulled);
   check("a successful pull answers 200", pulled.statusCode === 200);
   check("and says ok", pulledReply.ok === true);
@@ -107,7 +107,7 @@ try {
 
   await run("git", ["-C", checkout, "remote", "set-url", "origin", join(workDir, "no-repo-here")]);
   const failed = recordingResponse();
-  await handleUpdateEndpoint(postRequest(), failed.res, checkout);
+  await handleUpdateEndpoint(guardedPost(), failed.res, checkout);
   const failedReply = parseReply(failed);
   check("a failed pull answers 500", failed.statusCode === 500);
   check("and says not-ok, which is what paints the note red", failedReply.ok === false);
@@ -278,7 +278,7 @@ try {
   await run("git", ["-C", checkout, ...GIT_IDENTITY, "commit", "-m", "local divergence"]);
 
   const diverged = recordingResponse();
-  await handleUpdateEndpoint(postRequest(), diverged.res, checkout);
+  await handleUpdateEndpoint(guardedPost(), diverged.res, checkout);
   const divergedReply = parseReply(diverged);
   check("a diverged checkout is refused rather than merged", diverged.statusCode === 500);
   check("and says so in git's words", /Not possible to fast-forward|diverg/i.test(divergedReply.message));

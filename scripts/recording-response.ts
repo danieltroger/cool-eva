@@ -1,4 +1,4 @@
-import type { ServerResponse } from "http";
+import type { IncomingMessage, ServerResponse } from "http";
 
 // A ServerResponse that records what a handler wrote instead of writing it, and — the
 // part that matters — NEVER EMITS "finish".
@@ -54,4 +54,12 @@ export function recordingResponse(): RecordingResponse {
     },
   } as unknown as ServerResponse;
   return recorded;
+}
+
+/**
+ * The request half of the same pair. Here rather than in either check because both call it
+ * with recordingResponse() in the same expression, and it was written twice before this.
+ */
+export function postRequest(headers: Record<string, string> = {}): IncomingMessage {
+  return { method: "POST", headers } as unknown as IncomingMessage;
 }
