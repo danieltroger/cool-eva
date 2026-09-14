@@ -27,9 +27,3 @@ jobs:
       # only runs checks that replay committed fixtures. See its header for what is
       # deliberately left out.
       - run: npm test
-      # The one check that opens a browser, and so the one that is not in `npm test` —
-      # docs/diagnostics-and-checks.md §11.2 and §11.8. It renders the dashboard preview at
-      # 390x844 and measures it; this image ships Chrome, and the check goes RED rather than
-      # skipping when it cannot find one, so a runner that stops shipping a browser is a
-      # broken build and not a silent hole.
-      - run: npm run check:phone-width

@@ -3,20 +3,21 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 // `npm test` — runs every self-check that needs nothing but Node, in order, and exits
-// non-zero if any of them does. ⚠️ ONE is deliberately not here: scripts/check-phone-width.ts
-// opens a browser to measure the rendered dashboard, which would put a second runtime in
-// front of a suite whose claim is that it runs anywhere. It is not skipped, it is moved —
-// `npm run check:phone-width`, and its own step in .github/workflows/test.yml.
-// docs/diagnostics-and-checks.md §11.2 and §11.8. A runner, not a framework: the checks predate it and are top-level
+// non-zero if any of them does.
+//
+// A runner, not a framework: the checks predate it and are top-level
 // scripts that report failure with `process.exit(1)`, so each gets its OWN PROCESS.
 // Imported into one, the first failure would take the runner down and leave every later
 // check unreported — the opposite of what a red build should tell you.
 //
 // ⚠️ Only checks that pass or fail on their own, with no bike and no local-only files,
-// belong here. The rest of scripts/ is left out on purpose, and one exclusion matters
-// more than the others: scripts/read-freeze-frame.ts TALKS TO THE BIKE. It is the only
-// thing in the repo that opens a socket outside the service, so it must never appear in
-// CHECKS. Which others are out, and why each: docs/diagnostics-and-checks.md §11.2.
+// belong here. The rest of scripts/ is left out on purpose, and two exclusions matter
+// more than the others. scripts/read-freeze-frame.ts TALKS TO THE BIKE — the only thing
+// in the repo that opens a socket outside the service, so it must never appear in CHECKS.
+// And scripts/check-phone-width.ts needs a BROWSER, which is a second runtime in front of
+// a suite whose claim is that it runs anywhere; it is not skipped but moved, to
+// `npm run check:phone-width` and its own CI job. Which others are out, and why each:
+// docs/diagnostics-and-checks.md §11.2.
 //
 // ⚠️ Nothing below opens a CAN socket, and CHECK_TIMEOUT_MS is the guard against that
 // quietly changing: a check that DID reach for hardware would mostly not fail — it

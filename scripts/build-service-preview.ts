@@ -18,6 +18,7 @@ import { toHex } from "../src/vcu/multiframe-codec.ts";
 import { HOW_TO_READ as HOW_TO_READ_FREEZE_FRAMES } from "../src/vcu/freeze-frame-store.ts";
 import type { FreezeFramesResponse } from "../src/http/freeze-frames.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
+import { sceneNamesIn } from "./preview-scenes.ts";
 
 // Builds a single self-contained HTML file showing the service sheet with no Pi on the
 // other end. The point is being able to look at a design change before riding out to the
@@ -324,11 +325,7 @@ console.log(
   // to anyone who has not opened the template. ⚠️ Both templates, since #190 gave the
   // annotated sheet its own — printing only the whole-dashboard one meant a reviewer
   // screenshotted the default parked sheet and never saw the refusal it had just added.
-  const scenes = /const SCENES = \{([\s\S]*?)\n      \};/.exec(html);
-  const names = [...(scenes?.[1].matchAll(/^        (\w+): \{/gm) ?? [])].map(match => match[1]);
-  if (names.length === 0) {
-    throw new Error("build-service-preview: the template declares no scenes, or SCENES changed shape");
-  }
+  const names = sceneNamesIn(html, "build-service-preview");
   console.log(
     `  ${names.map(name => `?scene=${name}`).join(" · ")} (${names[0]} is the default) — file://${out}?scene=${names[1] ?? names[0]}`
   );

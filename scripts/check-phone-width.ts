@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { TABS } from "../public/lib/router.js";
+import { sceneNamesIn } from "./preview-scenes.ts";
 import {
   closePage,
   evaluateOnPage,
@@ -19,10 +20,10 @@ import {
 //
 //   node --experimental-strip-types scripts/check-phone-width.ts
 //
-// ⚠️ Deliberately NOT in scripts/run-checks.ts. It needs a browser, and `npm test`'s claim
-// is that it runs anywhere with no bike and two devDependencies — docs/diagnostics-and-checks.md
-// §11.2 and §11.6, which is also where the trade is argued. It runs as its own step in
-// .github/workflows/test.yml, on an image that ships Chrome, so every PR is still gated on it.
+// ⚠️ Deliberately NOT in scripts/run-checks.ts. It needs a browser, and `npm test`'s claim is
+// that it runs anywhere with no bike and two devDependencies — docs/diagnostics-and-checks.md
+// §11.2 and §11.8, which is where that trade is argued. `npm run check:phone-width`, and its
+// own CI job in .github/workflows/dashboard.yml, on an image that ships Chrome.
 //
 // What it was written for (#253): at 390x844 the Faults tab reported body.scrollWidth 449
 // against a 390 px client width. The page scrolled sideways, and in the light theme the
@@ -36,8 +37,8 @@ import {
 // what it would eat is `· freeze frame · expected`, the two suffixes that say why a row
 // matters on the one screen meant to be read carefully.
 //
-// Not covered: the other four scenes (only `faults` has stored-code rows), the themes —
-// nothing here depends on the palette — and anything vertical, which is #183.
+// What it deliberately does not cover — both themes, WebKit, the menu sheet, anything
+// vertical — is listed once, in docs/diagnostics-and-checks.md §11.8.
 
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -65,18 +66,18 @@ interface Measurement {
 /** Read in the page. `getAttribute` rather than `className`: an SVG's is not a string. */
 const MEASURE = `(() => {
   const clientWidth = document.documentElement.clientWidth;
-  const widest = [...document.querySelectorAll("*")]
-    .map(element => ({
-      name: element.tagName + "." + (element.getAttribute("class") ?? ""),
-      right: element.getBoundingClientRect().right,
-    }))
-    .sort((first, second) => second.right - first.right)[0];
+  const widest = [...document.querySelectorAll("*")].reduce((furthest, element) => {
+    const right = element.getBoundingClientRect().right;
+    return furthest === null || right > furthest.right
+      ? { name: element.tagName + "." + (element.getAttribute("class") ?? ""), right }
+      : furthest;
+  }, null);
   return {
     hash: location.hash,
     innerWidth: window.innerWidth,
     clientWidth,
     bodyScrollWidth: document.body.scrollWidth,
-    widest: widest === undefined ? "nothing" : widest.name + " right=" + Math.round(widest.right),
+    widest: widest === null ? "nothing" : widest.name + " right=" + Math.round(widest.right),
     rows: [...document.querySelectorAll(".code-line-text")].map(element => ({
       text: element.textContent,
       clipped: element.scrollWidth > element.clientWidth + 0.5,
@@ -143,15 +144,24 @@ await run(
     cwd: ROOT,
   }
 );
+// Read out of the built page rather than listed here, so a scene added to the template is
+// swept without anyone remembering to add it — the same call build-service-preview.ts makes.
+const SCENES = sceneNamesIn(await readFile(previewFile, "utf8"), "check-phone-width");
 console.log(
-  `\nmeasuring ${previewFile} at ${PHONE.width}x${PHONE.height} DPR ${PHONE.deviceScaleFactor} in ${browserPath}`
+  `\nmeasuring ${previewFile} at ${PHONE.width}x${PHONE.height} DPR ${PHONE.deviceScaleFactor} in ${browserPath}\n` +
+    `  ${SCENES.length} scenes x ${TABS.length} tabs: ${SCENES.join(", ")}`
 );
 
-const page = await openHeadlessPage(PHONE, browserPath);
+// The page is opened INSIDE the try: a launch that throws half-way has already made a
+// profile directory and this one, and neither should outlive the run.
+let page: HeadlessPage | null = null;
 try {
-  await sweepTabs(page, previewFile);
+  page = await openHeadlessPage(PHONE, browserPath);
+  await sweep(page, previewFile);
 } finally {
-  await closePage(page);
+  if (page !== null) {
+    await closePage(page);
+  }
   await rm(workspace, { recursive: true, force: true });
 }
 
@@ -159,49 +169,72 @@ if (failures > 0) {
   console.error(`\n✗ ${failures} check${failures === 1 ? "" : "s"} failed`);
   process.exit(1);
 }
-console.log(`\n✓ every tab fits a ${PHONE.width} px phone, and the longest stored-code row is readable in full`);
+console.log(
+  `\n✓ ${SCENES.length * TABS.length} scene/tab combinations fit a ${PHONE.width} px phone, ` +
+    "and the longest stored-code row is readable in full"
+);
 
 /**
- * Every tab of the faults scene, one page load each.
+ * Every tab of every scene, one real page load each.
  *
- * A load rather than a hash flip, because the two are not the same test: a flip measures
- * whatever the previous tab left behind if the render is a frame late, and this is the
- * cheap way to be certain the measurement belongs to the tab it is filed under.
+ * ⚠️ `&tab=` is inert — the template reads only `scene` — and it is there to make each URL
+ * differ OUTSIDE the fragment. A fragment-only navigation is a same-document navigation:
+ * the page is not reloaded, `readyState` is already `complete`, the wait below does not
+ * wait, and what gets measured is the previous tab's DOM if the re-render is a frame late.
+ * Proved rather than assumed: a marker set on `window` survives `#faults` → `#ride` and is
+ * gone when the query string changes.
+ *
+ * All five scenes, because four of the five tabs render almost nothing off the parked bike
+ * the `faults` scene inherits — no charge session, no refusal, no derate hatching — and a
+ * width guard blind to the panels it is guarding is the failure the preview template's own
+ * header warns about.
  */
-async function sweepTabs(page: HeadlessPage, previewFile: string) {
-  // An empty bar would sweep nothing and exit 0 — the one shape of this check that could
-  // pass without measuring anything. scripts/check-tab-routing.ts owns the names themselves.
+async function sweep(page: HeadlessPage, previewFile: string) {
+  // An empty bar or an empty scene list would sweep nothing and exit 0 — the one shape of
+  // this check that could pass without measuring anything. scripts/check-tab-routing.ts owns
+  // the tab names themselves.
   check(`there are tabs to sweep (${TABS.length})`, TABS.length > 0);
-  for (const tab of TABS) {
-    await gotoPage(page, `file://${previewFile}?scene=faults#${tab.name}`);
-    await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${tab.name} tab to render`);
-    const measured = asMeasurement(await evaluateOnPage(page, MEASURE));
-    console.log(
-      `\n${tab.name}: body.scrollWidth ${measured.bodyScrollWidth} · innerWidth ${measured.innerWidth} · ` +
-        `widest ${measured.widest}`
-    );
-    // ⚠️ The bike is allowed to move the screen (lib/view-rules.js), and a measurement of
-    // the tab it moved to, filed under the tab that was asked for, is worse than no
-    // measurement. Nothing in the parked faults scene should spend a move; if one does,
-    // this says so rather than quietly reporting the wrong tab's width.
-    check(`${tab.name} is the tab that rendered`, measured.hash === `#${tab.name}`);
-    // documentElement.clientWidth is the viewport itself: if emulation had not taken, or a
-    // scrollbar were eating 15 px, every width below would be measured against the wrong page.
-    check(`${tab.name} is being measured at ${PHONE.width} px`, measured.clientWidth === PHONE.width);
-    check(
-      `${tab.name} does not scroll sideways (${measured.bodyScrollWidth} ≤ ${measured.clientWidth})`,
-      measured.bodyScrollWidth <= measured.clientWidth
-    );
-    // The layout viewport EXPANDS to fit a page that overflows, so this witnesses the same
-    // defect from the other side: 449 before #253, on a viewport asked for at 390.
-    check(
-      `${tab.name} did not widen the layout viewport (innerWidth ${measured.innerWidth})`,
-      measured.innerWidth === PHONE.width
-    );
-    if (tab.name === "faults") {
-      checkStoredCodeRows(measured);
-      checkTileIsSizedByThePhone(asTileWidths(await evaluateOnPage(page, PROBE)));
+  check(`there are scenes to sweep (${SCENES.length})`, SCENES.length > 0);
+  for (const scene of SCENES) {
+    for (const tab of TABS) {
+      await measureTab(page, previewFile, scene, tab.name);
     }
+  }
+}
+
+async function measureTab(page: HeadlessPage, previewFile: string, scene: string, tab: string) {
+  const where = `${scene}/${tab}`;
+  await gotoPage(page, `file://${previewFile}?scene=${scene}&tab=${tab}#${tab}`);
+  await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${where} tab to render`);
+  const measured = asMeasurement(await evaluateOnPage(page, MEASURE));
+  console.log(
+    `\n${where}: body.scrollWidth ${measured.bodyScrollWidth} · innerWidth ${measured.innerWidth} · ` +
+      `widest ${measured.widest}`
+  );
+  // ⚠️ The bike is allowed to move the screen (lib/view-rules.js) — plugging in takes you
+  // to Charge — and a measurement of the tab it moved to, filed under the tab that was
+  // asked for, is worse than no measurement. This says so instead.
+  check(`${where} is the tab that rendered`, measured.hash === `#${tab}`);
+  // documentElement.clientWidth is the viewport itself: if emulation had not taken, or a
+  // scrollbar were eating 15 px, every width below would be measured against the wrong page.
+  check(`${where} is being measured at ${PHONE.width} px`, measured.clientWidth === PHONE.width);
+  check(
+    `${where} does not scroll sideways (${measured.bodyScrollWidth} ≤ ${measured.clientWidth})`,
+    measured.bodyScrollWidth <= measured.clientWidth
+  );
+  // The layout viewport EXPANDS to fit a page that overflows, so this witnesses the same
+  // defect from the other side: 449 before #253, on a viewport asked for at 390.
+  check(
+    `${where} did not widen the layout viewport (innerWidth ${measured.innerWidth})`,
+    measured.innerWidth === PHONE.width
+  );
+  if (scene === "faults" && tab === "faults") {
+    checkStoredCodeRows(measured);
+    const probed = asTileWidths(await evaluateOnPage(page, PROBE));
+    check(
+      `content that cannot wrap does not widen the stored-codes tile (${probed.tile} ≤ ${probed.viewport})`,
+      probed.tile <= probed.viewport
+    );
   }
 }
 
@@ -221,19 +254,8 @@ function checkStoredCodeRows(measured: Measurement) {
   }
 }
 
-/** What the probe above is for: the tile is sized by the viewport, not by what is in it. */
-function checkTileIsSizedByThePhone(widths: { tile: number; viewport: number }) {
-  check(
-    `content that cannot wrap does not widen the stored-codes tile (${widths.tile} ≤ ${widths.viewport})`,
-    widths.tile <= widths.viewport
-  );
-}
-
 function asTileWidths(value: unknown): { tile: number; viewport: number } {
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`the probe answered with ${JSON.stringify(value)} rather than two widths`);
-  }
-  const fields = value as Record<string, unknown>;
+  const fields = fieldsOf(value, "the probe's answer");
   if (typeof fields.tile !== "number" || typeof fields.viewport !== "number") {
     throw new Error(`the probe answered with an incomplete pair of widths: ${JSON.stringify(value)}`);
   }
@@ -242,10 +264,7 @@ function asTileWidths(value: unknown): { tile: number; viewport: number } {
 
 /** Throws rather than narrows: a selector that stopped matching must not read as a pass. */
 function asMeasurement(value: unknown): Measurement {
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`the page answered with ${JSON.stringify(value)} rather than a measurement`);
-  }
-  const fields = value as Record<string, unknown>;
+  const fields = fieldsOf(value, "the page's measurement");
   const rows = fields.rows;
   if (
     typeof fields.hash !== "string" ||
@@ -267,11 +286,16 @@ function asMeasurement(value: unknown): Measurement {
   };
 }
 
-function asRow(value: unknown): { text: string; clipped: boolean } {
+/** The one shape every reply from the page has to have before anything is read out of it. */
+function fieldsOf(value: unknown, what: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
-    throw new Error(`a stored-code row came back as ${JSON.stringify(value)}`);
+    throw new Error(`${what} came back as ${JSON.stringify(value)} rather than an object`);
   }
-  const fields = value as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
+
+function asRow(value: unknown): { text: string; clipped: boolean } {
+  const fields = fieldsOf(value, "a stored-code row");
   if (typeof fields.text !== "string" || typeof fields.clipped !== "boolean") {
     throw new Error(`a stored-code row came back malformed: ${JSON.stringify(value)}`);
   }

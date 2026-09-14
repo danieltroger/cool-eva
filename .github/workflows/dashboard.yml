@@ -1,0 +1,36 @@
+name: Dashboard
+
+# The dashboard measured in a real browser at phone width. Its own workflow, for the same
+# reason prettier and typecheck have theirs: the Test job's own comment says "no can0 and no
+# bike, which is the point", and a browser is neither. Separate also means a red `npm test`
+# does not hide this result — a PR that breaks both would otherwise need two round trips.
+#
+# ⚠️ This is the one check that is NOT in `npm test`, and it is not skipped when a browser is
+# missing — it fails. docs/diagnostics-and-checks.md §11.2 and §11.8 argue the trade; the
+# runner image ships Chrome, so a runner that stops shipping one is a broken build rather
+# than a silent hole.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  phone-width:
+    runs-on: ubuntu-latest
+    # The ceiling scripts/run-checks.ts provides for every other check (CHECK_TIMEOUT_MS):
+    # a browser that never answers must be a red build, not an Actions job running to the
+    # six-hour default. The measured run is about 30 s.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check:phone-width
