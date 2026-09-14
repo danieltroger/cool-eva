@@ -226,6 +226,16 @@ for (let window = 0; window < 4; window += 1) {
   await deliver({ charge_manager_state: DC_SESSION }, STATUS_RETRY_MS);
 }
 check("§5a four retry windows pass with them still hanging, and nothing joins them", fetches === 2);
+// ⚠️ The session ENDS while both are still hanging, which is the case the in-flight flag has to
+// survive: their `finally` runs later and must not clear a flag the next session is relying on —
+// and the next session must not wait behind a request that belonged to the last one.
+clock += 20_000;
+phoneNow += 20_000;
+serverTime.val = clock;
+await flush();
+fetches = 0;
+await deliver({ charge_manager_state: DC_SESSION });
+check("§5a a new session asks at once rather than waiting behind the old one's hung request", fetches >= 1);
 for (const release of hung) {
   release();
 }

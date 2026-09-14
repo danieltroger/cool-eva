@@ -80,8 +80,6 @@ let listingHeldFor = /** @type {{ tableType: number | null } | null} */ (null);
  * counter, same reason, as views/charge-auto.js's `latestRead`.
  */
 let latestStatusRead = 0;
-/** How many times one fetchStatus() may re-ask before it is a loop rather than a correction. */
-const MAX_STATUS_REASKS = 3;
 /** Which allowlist entry the form is on. Empty until the section has loaded. */
 const selected = van.state("");
 /**
@@ -2424,15 +2422,7 @@ export function parameterListing() {
  * `clock.iso` and must not wipe a parameter reading somebody took thirty seconds ago;
  * `refreshVcuWrite` is the sheet-opening reset and deliberately does both.
  */
-export async function fetchStatus(withListing = false, depth = 0) {
-  if (depth > MAX_STATUS_REASKS) {
-    // ⚠️ Unreachable from a Pi whose parameter table is settled — it takes a tableType that
-    // ALTERNATES between replies — which is exactly why it is loud rather than a silent return.
-    // Left to recurse this is an unbounded request loop on a phone strapped to a handlebar.
-    message.val = "the Pi keeps naming a different parameter table — reopen the sheet";
-    console.warn(`vcu-write: gave up re-asking for the status after ${depth} rounds`);
-    return false;
-  }
+export async function fetchStatus(withListing = false) {
   const query = new URLSearchParams();
   if (selected.val !== "") {
     query.set("detail", selected.val);
@@ -2466,7 +2456,9 @@ export async function fetchStatus(withListing = false, depth = 0) {
     armed.val = "";
     state.val = payload;
     if (adoptListing(payload)) {
-      return await fetchStatus(true, depth + 1);
+      // ⚠️ One hop, always: adoptListing clears `listingHeldFor` when it says yes, and with nothing
+      // held it cannot say yes again — so a Pi renaming its table on every reply still terminates.
+      return await fetchStatus(true);
     }
     if (selected.val === "" && listing.val.length > 0) {
       selected.val = listing.val[0].name;
@@ -2477,7 +2469,7 @@ export async function fetchStatus(withListing = false, depth = 0) {
       // it. Either way this reply describes a different parameter, so ask again for the one the
       // form is on. It cannot recur: a re-entry only fires when the selection moves during ITS own
       // request, and nothing below moves it.
-      return await fetchStatus(false, depth + 1);
+      return await fetchStatus();
     }
     return true;
   } catch (error) {

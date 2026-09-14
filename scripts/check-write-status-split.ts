@@ -319,6 +319,44 @@ check(
   /if \(\s*refreshed &&/.test(armBody) && armBody.indexOf("refreshed") < armBody.indexOf('arm("write")')
 );
 
+// ── §5d a Pi that renames its table on every reply still terminates ───────────────────
+//
+// ⚠️ ONE hop by construction, not by a counter: adoptListing clears `listingHeldFor` when it asks
+// for the names again, and with nothing held it cannot ask twice. This drives the worst case a
+// server can present — a different tableType every reply — and asserts the request count rather
+// than trusting that reading.
+let flip = 0;
+asked.length = 0;
+globalThis.fetch = (async (input: string) => {
+  asked.push(String(input));
+  flip += 1;
+  return new Response(
+    JSON.stringify({
+      status: {
+        enabled: true,
+        targets: null,
+        detail: null,
+        tableGate: { tableType: 30000 + flip },
+        clock: { trustworthy: true, iso: "2026-09-14T00:00:00.000Z" },
+        recent: [],
+      },
+      result: null,
+      message: null,
+    }),
+    { headers: { "content-type": "application/json" } }
+  );
+}) as unknown as typeof fetch;
+await fetchStatus();
+check(`§5d a table that changes on every reply costs two requests, not a loop (${asked.length})`, asked.length === 2);
+
+// ── §5e send() is in the same queue and under the same re-ask rule ────────────────────
+//
+// Structural, like §5b's: send() is reached only from a button press. A POST answers the same
+// payload, so a picker change while one is in flight lands a detail for the parameter the form has
+// left — the stuck sheet of §4, through the one path §4 does not cover.
+check("§5e send() applies its status only while it is the newest read", sendBody.includes("read === latestStatusRead"));
+check("§5e and re-asks when the selection moved under it", sendBody.includes("selected.val !== askedFor"));
+
 // ── §6 the seams stay seams ───────────────────────────────────────────────────────────
 //
 // ⚠️ The WHOLE of public/, not a list of files somebody has to remember to extend — a hard-coded
