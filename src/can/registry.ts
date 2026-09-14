@@ -324,6 +324,11 @@ export const SIGNALS: SignalDef[] = [
   { key: "charge_cmd_a", unit: "A", group: "charge", source: "sensor", onDemand: true, bounds: [0, 127] },
   { key: "charge_cmd_ack", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: [0, 6] },
   { key: "charge_cmd_ack_ms", unit: "ms", group: "charge", source: "sensor", onDemand: true, bounds: [0, 60000] },
+  // ⚠️ Which settle a verdict belongs to, wrapped to a byte — the EDGE the two above cannot give.
+  // Because record() logs on change, two commands settling to the same verdict write nothing, and
+  // the charge tab used to poll /vcu-write every heartbeat for the whole charge to notice (#207).
+  // Only inequality is ever asked of it; src/charge/ack-watch.ts says why it is not the send.
+  { key: "charge_cmd_ack_seq", unit: "", group: "charge", source: "sensor", onDemand: true, bounds: FIELD_U8 },
   // The automatic charge-current controller (src/charge/auto.ts, src/charge/auto-curve.ts).
   // `charge_auto_reason` is the CHARGE_AUTO_REASON enum, so a ride log says not just what it
   // commanded but why — a stop that ends at the floor and one that never had a usable rate look
@@ -971,7 +976,7 @@ export const SIGNALS: SignalDef[] = [
   // value: two identical refusals in a row would write one row and raise one change.
   // The code is WAYPOINT_REFUSAL in src/gps/waypoint.ts; the words are the dashboard's.
   { key: "waypoint_refused_seq", unit: "", group: "waypoint", source: "sensor", onDemand: true, unbounded: "counter" },
-  { key: "waypoint_refusal", unit: "", group: "waypoint", source: "sensor", onDemand: true, bounds: [1, 7] },
+  { key: "waypoint_refusal", unit: "", group: "waypoint", source: "sensor", onDemand: true, bounds: [1, 8] },
 
   ...perLmuSignals(),
 ];

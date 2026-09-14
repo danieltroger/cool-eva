@@ -1,11 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "http";
-import type { ServiceWriteRequest, ServiceWriteResult, VcuWriteRunner, VcuWriteStatus } from "../vcu/write-runner.ts";
+import type {
+  ServiceWriteRequest,
+  ServiceWriteResult,
+  VcuWriteRunner,
+  VcuWriteStatus,
+  WriteStatusRequest,
+} from "../vcu/write-runner.ts";
 
 // /vcu-write — service mode's WRITE surface.
 //
 //   GET   the allowlist, the gate, whether this Pi's clock is fit to copy, and the
 //         last few lines of the audit journal. Touches nothing.
 //   POST  do exactly one thing to the motorcycle.
+//
+// Both answer the same payload, and two read-only query parameters say how much of it to build:
+// `detail=NAME` for one target in full, `list=0` when the caller holds the 269 names already.
+// Neither reaches parseWriteRequest. Why: see parseStatusRequest at the bottom.
 //
 // ⚠️ This is the second endpoint in this repo that causes traffic on the bike's bus,
 // and the FIRST that changes anything. /vcu-read and /vcu-probe are read-only by
@@ -19,19 +29,14 @@ import type { ServiceWriteRequest, ServiceWriteResult, VcuWriteRunner, VcuWriteS
 // reads cannot reach a write by accident, including a script of the owner's own
 // written before this endpoint existed.
 //
-// ⚠️ Several actions additionally require the caller to say what it thinks it is doing,
-// because `curl` can reach this endpoint and the UI's two taps cannot follow it there:
-//
-//   set-service-point  confirm=set-service-point
-//   clear-dtcs         confirm=clear-dtcs
-//   sync-clock         confirm=<the UTC minute the caller displayed, ISO>
-//   charge-current     amps=<whole amps>  confirm=charge-current-<amps>
-//   charge-stop        confirm=charge-stop
-//   reset-vcu          confirm=reset-vcu
-//
-// The clock one is not ceremony — it is the server-side half of "Is it <date and
-// time>?", so a page left open since this morning cannot sync this morning's time.
-// Why a header at all, and the rest of the argument: docs/diagnostics-and-checks.md §7.2–7.3.
+// ⚠️ Several actions additionally require the caller to say what it thinks it is doing, because
+// `curl` can reach this endpoint and the UI's two taps cannot follow it there: set-service-point,
+// clear-dtcs, charge-stop and reset-vcu each want their own name as `confirm=`, charge-current
+// wants `confirm=charge-current-<amps>`, and sync-clock wants the UTC minute the caller displayed.
+// That last is not ceremony — it is the server-side half of "Is it <date and time>?", so a page
+// left open since this morning cannot sync this morning's time. Every token is spelled out in
+// parseWriteRequest below, which is the only thing that compares them.
+// Why a header at all, and the rest: docs/diagnostics-and-checks.md §7.2–7.3.
 
 /** The header, and the value that is not the read path's. */
 export const SERVICE_WRITE_HEADER = "x-cool-eva";
@@ -60,7 +65,7 @@ export async function handleVcuWriteEndpoint(
     // Deliberately NOT behind the header. Reading what may be written, what the gate
     // says and what was done last week is how the page explains why a button is
     // unavailable, and none of it goes near the bike.
-    await respond(res, 200, options, null, null);
+    await respond(res, 200, options, url, null, null);
     return;
   }
   if (req.method !== "POST") {
@@ -80,13 +85,13 @@ export async function handleVcuWriteEndpoint(
   if (!parsed.ok) {
     // 400, not 409: the request itself is wrong and re-sending it unchanged will
     // always be wrong. 409 is for a busy bus or a bike that may not be serviced.
-    await respond(res, 400, options, null, parsed.reason);
+    await respond(res, 400, options, url, null, parsed.reason);
     return;
   }
 
   const answer = await options.runner.perform(parsed.request);
   if (!answer.ok) {
-    await respond(res, 409, options, null, answer.reason);
+    await respond(res, 409, options, url, null, answer.reason);
     return;
   }
   // 200 even when the bike refused, and even for a read-back mismatch. Those are
@@ -94,7 +99,7 @@ export async function handleVcuWriteEndpoint(
   // take — and turning them into HTTP errors would collapse the distinction the
   // codec works hardest to keep. `result.succeeded` is where the page reads the
   // verdict from.
-  await respond(res, 200, options, answer.result, null);
+  await respond(res, 200, options, url, answer.result, null);
 }
 
 /**
@@ -301,14 +306,32 @@ function parseNumber(raw: string | null): number | null {
   return Number.isInteger(value) ? value : null;
 }
 
+/**
+ * What the caller asked to be told, from the query. Pure.
+ *
+ * `detail=NAME` asks for everything about one target; `list=0` says the caller already holds the
+ * 269-name listing. ⚠️ The listing is the DEFAULT, and deliberately: forgetting `list=0` costs
+ * 14 397 bytes, while an opt-in listing a caller forgot would render a bike with nothing writable.
+ * The two failure directions are not the same size. docs/dashboard-decisions.md §"Why the write
+ * status is a list plus one detail".
+ */
+export function parseStatusRequest(params: URLSearchParams): WriteStatusRequest {
+  return { detailFor: params.get("detail"), includeList: params.get("list") !== "0" };
+}
+
 async function respond(
   res: ServerResponse,
   statusCode: number,
   options: VcuWriteEndpointOptions,
+  url: URL,
   result: ServiceWriteResult | null,
   message: string | null
 ): Promise<void> {
-  const payload: VcuWriteResponse = { status: await options.runner.status(), result, message };
+  const payload: VcuWriteResponse = {
+    status: await options.runner.status(parseStatusRequest(url.searchParams)),
+    result,
+    message,
+  };
   const body = Buffer.from(JSON.stringify(payload), "utf-8");
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",

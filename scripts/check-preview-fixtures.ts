@@ -40,6 +40,20 @@ const ROOT = join(HERE, "..");
  */
 const FIXTURES = [
   { constant: "WRITE_STATUS", type: "VcuWriteStatus", from: "src/vcu/write-runner.ts" },
+  // ⚠️ The five FULL summaries the `detail=` branch serves out of. Named here rather than left
+  // inline for the reason the header gives: a reply built inside the stubbed fetch is what this
+  // table cannot reach, and after #107 the detail is the half of the payload that carries the
+  // warnings somebody reads before pressing a button.
+  {
+    constant: "TARGETS",
+    type: "WriteTargetSummary[]",
+    // ⚠️ An ARRAY fixture, so both halves need saying separately: `WriteTargetSummary[]` is not an
+    // importable name, and `{ [K in keyof T[]]: unknown }` maps over `length` and `push` rather
+    // than over the fields — a presence test that cannot fail. Per ELEMENT is the one that can.
+    importName: "WriteTargetSummary",
+    presence: "{ [K in keyof WriteTargetSummary]: unknown }[]",
+    from: "src/vcu/write-runner.ts",
+  },
   { constant: "STATUS", type: "StatusPayload", from: "src/http/status.ts" },
   { constant: "READ_STATE", type: "VcuReadResponse", from: "src/http/vcu-read.ts" },
   { constant: "FAN", type: "FanReply", from: "src/http/fan.ts" },
@@ -237,7 +251,7 @@ async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsThe
 
   const imports = new Map<string, Set<string>>();
   for (const fixture of present) {
-    addImport(imports, fixture.from, fixture.type);
+    addImport(imports, fixture.from, fixture.importName ?? fixture.type);
   }
   // SERVER is a placeholder the builder substitutes, so the fixtures are checked against the REAL
   // object it will inject — which is also what makes `SERVER.fanReason.DC_SESSION` a typo the
@@ -253,9 +267,8 @@ async function checkFixtureTypes(source: ts.SourceFile, label: string, mountsThe
     // alone, since a widened copy has lost the literal types the first assignment checks.
     lines.push(`const ${fixture.constant}: ${fixture.type} = ${literal};`);
     lines.push(`const __wide_${fixture.constant} = ${literal};`);
-    lines.push(
-      `const __has_${fixture.constant}: { [K in keyof ${fixture.type}]: unknown } = __wide_${fixture.constant};`
-    );
+    const presence = fixture.presence ?? `{ [K in keyof ${fixture.type}]: unknown }`;
+    lines.push(`const __has_${fixture.constant}: ${presence} = __wide_${fixture.constant};`);
   }
   lines.push(...sceneAssertions(source, declarations, imports, label));
 

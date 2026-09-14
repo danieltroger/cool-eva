@@ -204,9 +204,10 @@ function DownloadButton() {
     // No caption under the button. The file count that used to sit here is still
     // in the status payload (`log.files`) and still correct — it was dropped for
     // screen space, not because it was wrong. The two facts it carried are worth
-    // knowing and live in the code that owns them: one `.celog` is a whole day of
-    // segments, so the count moves once a day rather than as you ride
-    // (src/http/status.ts); and the log is unreadable without the laptop's
+    // knowing and live in the code that owns them: a `.celog` holds hundreds or
+    // thousands of segments, so the count moves a few times a day rather than as you
+    // ride — a day file plus whatever was sealed before the clock could be believed
+    // (src/http/status.ts, docs/ride-log-clock.md); and the log is unreadable without the laptop's
     // private key, but /dl authenticates nobody, so the ciphertext is pullable by
     // anyone on that wifi (src/http/download.ts, and README "What this does and
     // doesn't hide").

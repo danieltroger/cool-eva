@@ -160,6 +160,20 @@ interface PendingCommand {
 
 let pending: PendingCommand | null = null;
 let latest: ChargeAckState | null = null;
+/**
+ * How many verdicts have settled in this process, wrapped to a byte. Recorded as
+ * `charge_cmd_ack_seq` so every settle is one EDGE on the bus the page listens to.
+ *
+ * ⚠️ Not bookkeeping — it is the whole of what lets the charge tab stop polling. `record()` logs
+ * only on CHANGE, so two commands settling to the same verdict move `charge_cmd_ack` not at all:
+ * the automatic controller stepping 32 → 30 → 28 A settles `took` three times and writes once, and
+ * a page guarding on the verdict would keep the first command's sentence on screen for the rest of
+ * the charge. Nothing else the page can see says "a verdict settled" — the send is not it, because
+ * two thirds of the commands on this bike come from src/charge/auto.ts and the page never sent
+ * them. Wrapped rather than unbounded so it has a real plausibility range (public/lib/bounds.js);
+ * only inequality is ever asked of it. #207.
+ */
+let settles = 0;
 let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** A beat past the window, so the timer never fires on a verdict that is still legitimately open. */
@@ -225,6 +239,8 @@ function settle(command: PendingCommand, supersededAtMs: number | null): void {
   });
   latest = stateFor(command.amps, verdict);
   record("charge_cmd_ack", CHARGE_ACK_CODE[verdict.kind]);
+  settles = (settles + 1) & 0xff;
+  record("charge_cmd_ack_seq", settles);
   if (verdict.kind === "took") {
     record("charge_cmd_ack_ms", verdict.latencyMs);
   }

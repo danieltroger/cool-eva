@@ -54,26 +54,38 @@ onChargeSessionEnd(forgetCommand);
 export const ARMED_KEY = "charge-current";
 
 // The Pi records its verdict as `charge_cmd_ack`, which reaches the page over the WebSocket the
-// instant it settles. So the verdict arrives for free and this fetches ONCE, for the phrasing.
-// ⚠️ It used to poll /vcu-write every 2 s for 14 s. That payload re-reads the whole parameter
-// sweep and the entire append-only audit journal per request (#107), on the event loop serving the
-// 10 Hz WebSocket mid-charge — up to nine of them per command, to learn something already pushed.
+// instant it settles. So the verdict arrives for free and this fetches once per settle, for the
+// phrasing — `chargeAck`'s sentence is built on the Pi and is not in any signal.
+// ⚠️ It used to poll /vcu-write every 2 s for 14 s, and then — unguarded — every heartbeat for the
+// whole charge (#207). That payload re-read the parameter sweep and the entire append-only audit
+// journal per request, on the event loop serving the 10 Hz WebSocket and the CAN RX handler.
 //
-// ⚠️ CHARGE_ACK_WAITING is declared ABOVE this derive, not below it. van.derive runs its body
-// once immediately, so with the constant underneath, a store that already held `charge_cmd_ack`
-// at import time threw `Cannot access 'CHARGE_ACK_WAITING' before initialization` and took the
-// charge tab with it. Today app.js imports every view before connect(), so the store is always
-// empty here and the temporal dead zone is unreachable by luck rather than by design — the
-// design preview, which seeds before it mounts, hit it on the first DC fixture ever rendered.
+// ⚠️ Guarded on the VALUE (docs/dashboard-decisions.md §"A guarded derive…"), and on
+// `charge_cmd_ack_seq` rather than on the verdict. The verdict cannot carry this: two commands
+// settling to the same code move it not at all, and the automatic controller does exactly that
+// three times in a row while nobody is touching the phone. src/charge/ack-watch.ts says why.
 
-/** `CHARGE_ACK_CODE.waiting` — the one code that means the window is still open. */
-const CHARGE_ACK_WAITING = 0;
-
+let lastSettle = /** @type {number | null} */ (null);
 van.derive(() => {
-  const verdict = valueOf("charge_cmd_ack");
-  if (verdict !== null && verdict !== CHARGE_ACK_WAITING && sessionLive.val) {
-    void fetchChargeWriteStatus();
+  const settle = valueOf("charge_cmd_ack_seq");
+  if (!sessionLive.val || settle === null) {
+    // Forgotten rather than consumed — trap #2. A session that ends, or a phone that has not seen
+    // a settle yet, holds no answer, so the next one is news whatever its number.
+    lastSettle = null;
+    return;
   }
+  if (settle === lastSettle) {
+    return;
+  }
+  lastSettle = settle;
+  void fetchChargeWriteStatus().then(landed => {
+    // ⚠️ Trap #2 on the failing path, the same one charge-write.js has: the guard was taken on the
+    // assumption this would land, so a request that did not must give it back or the verdict this
+    // settle exists to phrase is lost until the next command. Only if nothing newer has claimed it.
+    if (!landed && lastSettle === settle) {
+      lastSettle = null;
+    }
+  });
 });
 
 /**
@@ -332,6 +344,9 @@ async function performChargeCurrent() {
     return;
   }
   const query = new URLSearchParams({
+    // No parameter picker on this tab, so the 269-name listing is 14 393 bytes of nothing it can
+    // use — on the reply to a command, over garage wifi. See lib/charge-write.js.
+    list: "0",
     action: "charge-current",
     amps: String(value),
     // The confirm carries the amps, so a page showing one value cannot POST another. Built

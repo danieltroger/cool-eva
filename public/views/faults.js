@@ -338,7 +338,7 @@ function StoredCodes() {
         storedError.val ? `Stored codes unavailable (${storedError.val}).` : "reading the bike's stored codes…"
       );
     }
-    return div(StoredSummary(snapshot), StoredList(snapshot));
+    return div({ class: "tile-group" }, StoredSummary(snapshot), StoredList(snapshot));
   });
 }
 
@@ -420,35 +420,49 @@ function describeList(list) {
 function StoredList(snapshot) {
   const list = snapshot.stored;
   if (list.state !== "codes" || list.codes.length === 0) {
-    return div();
+    // `null`, not `div()`: this is a grid item of the group above now, so an empty div
+    // is a second row and pays the 0.5 rem gap for it — 8 px of dead space under the
+    // summary on a refused read and on a bike with a clean history. van's add() skips a
+    // null child (`child != _undefined`), which is why the "show all" button below can be
+    // one too.
+    return null;
   }
   const freezeFrame = snapshot.freezeFrame && snapshot.freezeFrame.raw !== 0 ? snapshot.freezeFrame.obdCode : null;
   const ranked = [...list.codes].sort((left, right) => rank(left, freezeFrame) - rank(right, freezeFrame));
   const hidden = Math.max(0, ranked.length - STORED_PREVIEW_LIMIT);
 
   return div(
-    { class: "tile span2" },
+    { class: "tile-group" },
     // ⚠️ The count is labelled with the population it belongs to. This is the OBD mode-03
     // STORED list; the hero above counts the ACTIVE one, and they always disagree — 41
     // against 0 or 1 on this bike. One number called "expected" with no list named would
     // be read as belonging to whichever the reader was looking at.
-    div({ class: "label" }, () => `Set in the bike's history${expectedNote(ranked)}`),
-    () =>
-      div(
-        ...(storedExpanded.val ? ranked : ranked.slice(0, STORED_PREVIEW_LIMIT)).map(row => CodeLine(row, freezeFrame))
-      ),
-    hidden === 0
-      ? null
-      : button(
-          {
-            class: "code-toggle",
-            onclick: () => {
-              storedExpanded.val = !storedExpanded.val;
-            },
-          },
-          () => (storedExpanded.val ? "show fewer" : `show all ${ranked.length}`)
+    //
+    // Outside the tile, like every other heading on this screen. Bound rather than
+    // interpolated: marking a code expected changes the count, and a plain string
+    // would leave the heading showing the number from before the tap.
+    SectionLabel(() => `Set in the bike's history${expectedNote(ranked)}`),
+    div(
+      { class: "tile span2" },
+      () =>
+        div(
+          ...(storedExpanded.val ? ranked : ranked.slice(0, STORED_PREVIEW_LIMIT)).map(row =>
+            CodeLine(row, freezeFrame)
+          )
         ),
-    div({ class: "sub", style: `color:${colors.MUTED}` }, describeFreezeFrame(snapshot, freezeFrame))
+      hidden === 0
+        ? null
+        : button(
+            {
+              class: "code-toggle",
+              onclick: () => {
+                storedExpanded.val = !storedExpanded.val;
+              },
+            },
+            () => (storedExpanded.val ? "show fewer" : `show all ${ranked.length}`)
+          ),
+      div({ class: "sub", style: `color:${colors.MUTED}` }, describeFreezeFrame(snapshot, freezeFrame))
+    )
   );
 }
 

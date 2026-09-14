@@ -23,6 +23,12 @@ import { appendDurably } from "../storage/durable.ts";
 
 const AUDIT_FILE = "service-writes.jsonl";
 
+/** The three ways a line can be unreadable. A closed union so a typo cannot open a fourth key. */
+type JournalInjury = "hole" | "hole-recovered" | "hole-torn" | "damaged";
+
+/** Which damaged lines have already been named. See warnOnceAbout at the bottom. */
+const reportedDamage = new Set<string>();
+
 /** What kind of change was attempted. A closed union so the file cannot grow shapes nothing reads. */
 export type AuditAction =
   | "parameter-write"
@@ -112,7 +118,9 @@ export async function appendAuditRecord(directory: string, record: AuditRecord):
  *
  * `limit` exists because this file only grows and the page shows a handful. Read
  * whole and sliced rather than seeked backwards: at one line per deliberate change to
- * a motorcycle, it will be kilobytes in a decade.
+ * a motorcycle, it will be kilobytes in a decade. Measured 2026-09-14: 94 records in
+ * 29 562 bytes, 0.134 ms to read and parse. What a tail read would cost, and why the
+ * arithmetic says not to: docs/power-cuts.md §3.
  */
 export async function recentAuditRecords(directory: string, limit: number): Promise<AuditRecord[]> {
   let text: string;
@@ -132,34 +140,150 @@ export async function recentAuditRecords(directory: string, limit: number): Prom
     if (line.trim().length === 0) {
       continue;
     }
-    if (line.replace(/\0/g, "").trim().length === 0) {
-      // A HOLE, not a parse failure. A power cut mid-append leaves the block allocated and
-      // the write lost, so the line comes back as NUL bytes (docs/power-cuts.md). U+0000 is
-      // not JS whitespace, so the trim above does not catch it and this reached JSON.parse —
-      // which threw a stack trace on every GET and POST to /vcu-write, complaining about a
-      // line whose NULs its own message renders as spaces.
-      //
-      // ⚠️ Still a WARNING, and deliberately so: a torn tail is a process that was killed,
-      // a hole is a DAMAGED FILE, and the level is the only thing carrying that difference
-      // (check-power-cut-durability.ts §3). What changes is that it names the injury and
-      // carries no stack trace. Nothing is recovered — these bytes are not a record — and
-      // #164 stops NEW holes without repairing the file that already has one.
-      console.warn(
-        `vcu-write: ${AUDIT_FILE} line ${position + 1} is ${line.length} NUL bytes — a record lost to a power cut, not a parse error`
-      );
-      continue;
-    }
-    try {
-      records.push(JSON.parse(line) as AuditRecord);
-    } catch (err) {
-      // Only the last line can be a torn append. Anywhere else is a damaged file, and
-      // quietly skipping it would lower the count of what was done to this bike.
-      if (position === lines.length - 1) {
-        console.log(`vcu-write: ${AUDIT_FILE} ends mid-record — something was killed while writing it`);
-        continue;
-      }
-      console.warn(`vcu-write: ${AUDIT_FILE} line ${position + 1} is not valid JSON:`, err);
+    const record = readJournalLine(directory, line, position + 1, position === lines.length - 1);
+    if (record) {
+      records.push(record);
     }
   }
   return records.reverse().slice(0, limit);
+}
+
+/**
+ * One line, as a record or as a reported injury.
+ *
+ * ⚠️ The NUL branches come FIRST, so a damaged line at the end of the file is still damage. A
+ * hole is a wounded file and a torn tail is a process that was killed; only position tells the
+ * second from an intact record, and NULs say the first outright wherever they sit (§4 of
+ * scripts/check-write-audit.ts has held that for the all-NUL trailing line since #172).
+ */
+function readJournalLine(directory: string, line: string, lineNumber: number, isLastLine: boolean): AuditRecord | null {
+  if (line.replace(/\0/g, "").trim().length === 0) {
+    // A HOLE, not a parse failure. A power cut mid-append leaves the block allocated and the
+    // write lost, so the line comes back as NUL bytes (docs/power-cuts.md). U+0000 is not JS
+    // whitespace, so the trim above does not catch it. Nothing is recovered — these bytes are
+    // not a record — and #164 stops NEW holes without repairing the file that already has one.
+    warnOnceAbout(
+      directory,
+      lineNumber,
+      line.length,
+      "hole",
+      `vcu-write: ${AUDIT_FILE} line ${lineNumber} is ${line.length} NUL bytes — a record lost to a power cut, not a parse error`
+    );
+    return null;
+  }
+  const holeBytes = leadingNulBytes(line);
+  if (holeBytes > 0) {
+    return readAfterHole(directory, line, lineNumber, holeBytes);
+  }
+  try {
+    return JSON.parse(line) as AuditRecord;
+  } catch (err) {
+    // Only the last line can be a torn append. Anywhere else is a damaged file, and
+    // quietly skipping it would lower the count of what was done to this bike.
+    if (isLastLine) {
+      console.log(`vcu-write: ${AUDIT_FILE} ends mid-record — something was killed while writing it`);
+      return null;
+    }
+    warnOnceAbout(
+      directory,
+      lineNumber,
+      line.length,
+      "damaged",
+      `vcu-write: ${AUDIT_FILE} line ${lineNumber} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return null;
+  }
+}
+
+/**
+ * A line whose leading NULs are followed by something. The hole ate the record that was there;
+ * what comes after it is the NEXT record, which the lost newline glued onto this line.
+ *
+ * ⚠️ The tail is KEPT when it parses, and that is not optimism. A record truncated at the front
+ * cannot parse — across this bike's whole journal, none of 28 933 possible front-truncations
+ * parses to any JSON value, because no record carries a `{` after position 0 — so a tail that
+ * parses is a tail whose hole ended on a record boundary. Skipping it would lower the count of
+ * what was done to this bike, which is the one thing this file must not do: the 2026-09-09 line
+ * 15 is an ECUReset of both micros. docs/power-cuts.md §2.
+ */
+function readAfterHole(directory: string, line: string, lineNumber: number, holeBytes: number): AuditRecord | null {
+  const tail = line.slice(holeBytes);
+  const recovered = recordFromSalvagedBytes(tail);
+  if (recovered) {
+    warnOnceAbout(
+      directory,
+      lineNumber,
+      line.length,
+      "hole-recovered",
+      `vcu-write: ${AUDIT_FILE} line ${lineNumber} lost ${holeBytes} bytes to a power cut — the ${tail.length} bytes after the hole are a whole record and are kept`
+    );
+    return recovered;
+  }
+  warnOnceAbout(
+    directory,
+    lineNumber,
+    line.length,
+    "hole-torn",
+    `vcu-write: ${AUDIT_FILE} line ${lineNumber} is ${holeBytes} NUL bytes then ${tail.length} bytes that are not a record — a power cut tore this one, not a parse error`
+  );
+  return null;
+}
+
+/** How many NUL bytes the line opens with. Only a CONTIGUOUS leading run counts — see the fence. */
+function leadingNulBytes(line: string): number {
+  const run = /^\0+/.exec(line);
+  return run ? run[0].length : 0;
+}
+
+/**
+ * Salvaged bytes as a record, or null.
+ *
+ * ⚠️ A stricter bar than an ordinary line gets: `at`, `action` and `status` are the three fields
+ * every record has and the page renders, so a fragment that happens to parse without them is not
+ * a record of anything.
+ */
+function recordFromSalvagedBytes(text: string): AuditRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Not swallowed — the caller says which line it was and what it did with it. This function
+    // only answers "are these bytes a record", and "no" is one of the two answers it exists for.
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return null;
+  }
+  const candidate = parsed as Partial<AuditRecord>;
+  if (typeof candidate.at !== "number" || typeof candidate.action !== "string") {
+    return null;
+  }
+  if (typeof candidate.status !== "string") {
+    return null;
+  }
+  return candidate as AuditRecord;
+}
+
+/**
+ * Says a line is damaged, once per process.
+ *
+ * ⚠️ The dashboard polls /vcu-write, so "per read" is dozens of times a minute — which is how a
+ * torn record after a hole came to print a stack trace per request (#189). Keyed per file, line
+ * and shape: this journal is only ever APPENDED to, so an existing line cannot change under the
+ * key, and a different injury still gets its own line. A torn LAST line is deliberately not in
+ * here: it is routine rather than damage, and the next append turns it into a mid-file line.
+ */
+function warnOnceAbout(
+  directory: string,
+  lineNumber: number,
+  length: number,
+  kind: JournalInjury,
+  message: string
+): void {
+  const key = `${directory}|${lineNumber}|${length}|${kind}`;
+  if (reportedDamage.has(key)) {
+    return;
+  }
+  reportedDamage.add(key);
+  console.warn(`${message} — said once per process`);
 }

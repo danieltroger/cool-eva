@@ -3,6 +3,7 @@
 import van from "../vendor/van-1.6.1.js";
 import { isStale, valueOf } from "./store.js";
 import { armed } from "./arming.js";
+import { monotonicNow, since } from "./clock.js";
 
 // The session/status machinery the charge-tab write controls share — charge-current.js sets a
 // current, charge-stop.js ends the charge, and both need the SAME answers: is a charge live, is
@@ -28,6 +29,17 @@ import { armed } from "./arming.js";
  * check-charge-write-visibility.ts §2 asserts this stays above the heartbeat.
  */
 export const CHARGE_SESSION_MAX_AGE_MS = 12_000;
+
+/**
+ * How long a failed status fetch waits before the derive below may try again.
+ *
+ * ⚠️ A LITERAL, not `HEARTBEAT_MS`, so the check that asserts it clears one heartbeat is an
+ * assertion that can fail — the same reason CHARGE_SESSION_MAX_AGE_MS above is a literal 12 000.
+ * ⚠️ And pacing is not decoration: that derive subscribes to serverTime on purpose, so it runs on
+ * every WebSocket message — ~10 a second mid-charge, not one per heartbeat. Retrying on each of
+ * them would ask an unreachable Pi ten times a second, which is worse than the bug below.
+ */
+export const STATUS_RETRY_MS = 5000;
 
 /** charge_manager_state (0x610 b7) settled values: 0x02 AC, 0x23 DC. */
 const CHARGE_MANAGER_STATE_AC = 0x02;
@@ -103,26 +115,58 @@ export function onChargeSessionEnd(listener) {
 // one place allowed to: it feeds the sessionLive STATE, and the controls' renders read that state
 // — so no render subscribes to serverTime and no <input> is recreated under it. Cheap per tick (an
 // equality check); the fetch fires only on the session edge.
+//
+// ⚠️ THE FETCH IS RETRIED: a failure at the session edge used to hide the write controls for the
+// WHOLE charge. The guard on "do we hold a status" is `writeStatus` itself, read with `rawVal`
+// because this derive assigns it after an await, outside VanJS's dependency capture. Why it must
+// also be PACED: docs/dashboard-decisions.md §"The fourth trap".
 let lastLive = false;
+/** When the last session-start fetch was STARTED, so a failing Pi is asked once per heartbeat. */
+let statusAskedAt = /** @type {number | null} */ (null);
+/** ⚠️ Paced from the START of a request, so without this a request that HANGS stacks another every
+ * STATUS_RETRY_MS — twelve a minute at the far end of a garage. `fetch` has no timeout of its own. */
+let statusInFlight = false;
 van.derive(() => {
   const type = liveChargeType();
   const live = type !== null;
   chargeType.val = type;
   sessionLive.val = live;
-  if (live === lastLive) {
-    return;
-  }
-  lastLive = live;
-  if (live) {
-    void fetchChargeWriteStatus();
-  } else {
-    // A charge that ended tells us nothing about the next one's gate, and a stale "enabled" left
-    // on screen would render a control against a session that is over.
-    applyWriteStatus(null);
-    for (const listener of sessionEndListeners) {
-      listener();
+  if (live !== lastLive) {
+    lastLive = live;
+    if (!live) {
+      // A charge that ended tells us nothing about the next one's gate, and a stale "enabled" left
+      // on screen would render a control against a session that is over.
+      statusAskedAt = null;
+      // A request still in flight belongs to the session that just ended; the next one must not
+      // wait behind it. Its own `finally` is a no-op after this.
+      statusInFlight = false;
+      applyWriteStatus(null);
+      for (const listener of sessionEndListeners) {
+        listener();
+      }
+      return;
     }
   }
+  // A live session with no status held: the opening fetch, or a retry of one that failed. An
+  // answer of `enabled: false` still counts as held — the Pi replied, and that is not a failure.
+  if (!live || writeStatus.rawVal !== null) {
+    return;
+  }
+  if (statusInFlight || (statusAskedAt !== null && since(statusAskedAt) < STATUS_RETRY_MS)) {
+    return;
+  }
+  const mark = monotonicNow();
+  statusAskedAt = mark;
+  statusInFlight = true;
+  void fetchChargeWriteStatus().finally(() => {
+    // ⚠️ Only if it is still OURS. A request abandoned by a session that ended, or superseded by a
+    // newer attempt, settles later and would otherwise clear a flag a live request is relying on —
+    // one extra concurrent request to a Pi that is already not answering. Same shape as the
+    // settle guard's `lastSettle === settle`.
+    if (statusAskedAt === mark) {
+      statusInFlight = false;
+    }
+  });
 });
 
 /**
@@ -188,18 +232,29 @@ export function applyWriteStatus(payload) {
   chargeAck.val = payload?.status?.chargeAck ?? null;
 }
 
-/** GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike. */
+/**
+ * GETs the enabled flag (and the rest of the status). Read-only; touches nothing on the bike.
+ *
+ * ⚠️ `list=0`. This tab has no parameter picker, so the 269-name listing is 14 397 bytes of
+ * nothing it can use — and this is the call `armChargeCurrent()` makes before every arm, which is
+ * the gesture #107 exists to shrink. 21 115 bytes against 6 722.
+ *
+ * @returns whether an answer landed. The caller's guard must be forgotten when it did not, or a
+ *   single dropped request costs the verdict this was fetched to phrase.
+ */
 export async function fetchChargeWriteStatus() {
   try {
-    const response = await fetch("/vcu-write", { cache: "no-store" });
+    const response = await fetch("/vcu-write?list=0", { cache: "no-store" });
     const payload = /** @type {VcuWriteResponse} */ (await response.json());
     // Disarmed before the new status lands: writes switched off across the refresh must not
     // leave a primed button behind.
     armed.val = "";
     applyWriteStatus(payload);
+    return true;
   } catch (error) {
     // Loud, but not fatal to the read-only screen: a failed status fetch simply leaves the
     // controls hidden (their render requires enabled === true), which is the safe direction.
     console.warn("charge-write: status fetch failed", error);
+    return false;
   }
 }

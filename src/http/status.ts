@@ -34,6 +34,8 @@ export interface StatusPayload {
    * `files` is a count of `.celog` FILES, not of the segments sealed into them.
    * See measureLog() — the two differ by orders of magnitude, and the field was
    * called `segments` until the dashboard caption built on that name went wrong.
+   *
+   * ⚠️ Nor is it one file per day any more — see measureLog().
    */
   log: { files: number; bytes: number; enabled: boolean };
   /** Live-vs-total signal counts per group, e.g. `{ battery: [16, 16] }`. */
@@ -60,12 +62,11 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
 /**
  * Counts the `.celog` files in `directory` and adds their sizes up.
  *
- * ⚠️ **Files, not segments**, and the gap is not small: `storage/encrypted-log.ts`
- * seals a segment on a timer (every 30 s by default) and **appends** each one to
- * `rides-<YYYY-MM-DD>.celog`, so one file is one calendar day's worth of segments —
- * hundreds or thousands of them. `scripts/decrypt-log.ts` counts the real thing, by
- * walking the framing inside each file. This used to return the same number under
- * the name `segments`, and the dashboard printed it as "N sealed segments".
+ * ⚠️ **Files, not segments**, and the gap is not small: `storage/encrypted-log.ts` appends
+ * hundreds or thousands of segments to each one. `scripts/decrypt-log.ts` counts the real
+ * thing. This used to return the same number under the name `segments`, and the dashboard
+ * printed it as "N sealed segments". Nor is it one file per day since #188 — a boot writes
+ * `rides-boot-<session>.celog` until its clock is worth believing: docs/ride-log-clock.md §2.
  *
  * Counting segments here would mean walking every file's framing on each /status
  * poll, for a number the download button has no use for. So the cheap answer stays

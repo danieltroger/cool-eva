@@ -47,7 +47,15 @@ if (candumpLine && !/\s-D(\s|$)/.test(candumpLine)) {
 // that used to mark a gap, so candump's own "can0: interface down" on stderr becomes the
 // only evidence IN THE FILE that one happened — and the file is what gets archived, not
 // the journal. docs/charge-manager.md's E2 reading turns on exactly this kind of evidence.
-if (candumpLine && !candumpLine.includes("2>&1")) {
+// The redirect moved off the candump line onto the brace group when the header echo was
+// added (#188), so it is found by what it DOES rather than by which line it is on — a test
+// pinned to the exec line would have gone green the day the redirect stopped covering it.
+const redirectLine = script.split("\n").find(line => /^\}?\s*>\s*"\$OUTPUT"/.test(line.trimStart()));
+if (!redirectLine) {
+  failures.push('nothing in capture.sh redirects to "$OUTPUT" any more — the capture would go to the journal');
+}
+
+if (redirectLine && !redirectLine.includes("2>&1")) {
   failures.push(
     "the candump redirect has lost 2>&1. With -D that removes the only in-band record of an " +
       "interface bounce, leaving a silently gappy capture — see docs/can-capture.md"
@@ -71,8 +79,62 @@ if (candumpLine && !/\btimeout\s+28800\b/.test(candumpLine)) {
   );
 }
 
-if (candumpLine && !/>\s*"\$OUTPUT"/.test(candumpLine)) {
-  failures.push(`the candump output no longer goes to "$OUTPUT": ${candumpLine.trim()}`);
+// The exec has to sit INSIDE the group the redirect covers, or candump writes to the
+// journal while the header line is the only thing in the file.
+const redirectIndex = redirectLine ? script.indexOf(redirectLine) : -1;
+const groupIndex = script.indexOf('{\n  echo "# boot');
+if (candumpLine && redirectIndex >= 0) {
+  const candumpIndex = script.indexOf(candumpLine);
+  if (!(groupIndex >= 0 && groupIndex < candumpIndex && candumpIndex < redirectIndex)) {
+    failures.push('the candump exec is no longer inside the group redirected to "$OUTPUT"');
+  }
+}
+
+// ⚠️ The boot id and the uptime go INSIDE the file as well as into its name. The archive
+// travels to the laptop; the journal stays on a card that gets reflashed, so anything not in
+// the file is lost — the same argument that keeps 2>&1. replay-capture.ts counts a line it
+// cannot parse as framesSkipped, so it costs a reader nothing.
+if (!/^\s*echo "# boot \$BOOT_ID uptime \$UPTIME"/m.test(script)) {
+  failures.push("capture.sh no longer writes the boot id and uptime into the capture file itself");
+}
+
+// The Pi has no RTC, so uptime is the only monotonic thing it has and it is what orders two
+// captures from one boot when the clock steps between them.
+if (!script.includes("/proc/uptime")) {
+  failures.push("capture.sh no longer reads /proc/uptime — nothing in the name would survive a clock step");
+}
+if (!/OUTPUT="[^"]*\$UPTIME/.test(script)) {
+  failures.push("the capture filename no longer carries $UPTIME — a mid-boot clock step reorders the files");
+}
+
+// ⚠️ The DATE stays first, and that is a decision rather than an accident — argued from six
+// boots, which is every boot in the archive with more than one capture. docs/ride-log-clock.md §5.
+
+// ⚠️ And the reduction script that reads this archive has to accept the name this script
+// writes. It did not: the filename regex in evidence/keyoff/capture-figures.py predated the
+// uptime field, and a non-match there is a silent `continue`, so every capture written from
+// this change on would have dropped out of every figure in docs/power-cuts.md §7 with no
+// error at all. The two live in different languages and nothing else pairs them.
+const reductionSource = await readFile(new URL("../evidence/keyoff/capture-figures.py", import.meta.url), "utf-8");
+const namePattern2 = /^NAME = re\.compile\(r"(.+)"\)$/m.exec(reductionSource)?.[1];
+if (!namePattern2) {
+  failures.push("evidence/keyoff/capture-figures.py no longer declares a NAME regex to check the filename against");
+} else {
+  const sample = "capture-20260914-120000-7ce067a7-00001234.log";
+  const legacy = "capture-20260808-211445-2b4b0868.log";
+  if (!new RegExp(namePattern2).test(sample)) {
+    failures.push(`evidence/keyoff/capture-figures.py cannot parse the name capture.sh now writes (${sample})`);
+  }
+  if (!new RegExp(namePattern2).test(legacy)) {
+    failures.push(`evidence/keyoff/capture-figures.py can no longer parse the archive's existing names (${legacy})`);
+  }
+}
+const namePattern = /OUTPUT="\$DIRECTORY\/capture-\$\(date [^)]*\)-\$BOOT_ID-\$UPTIME\.log"/;
+if (!namePattern.test(script)) {
+  failures.push(
+    "the capture filename is no longer <date>-<bootid>-<uptime>: the date leads so a plain `ls` stays " +
+      "chronological, and the uptime trails so a clock step cannot reorder one boot's files"
+  );
 }
 
 // ⚠️ Never a tmpfs. `docs/pi-agent-brief.md` states the rail — "never capture to /tmp, it

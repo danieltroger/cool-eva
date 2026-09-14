@@ -1,6 +1,6 @@
 # Power cuts
 
-The Pi loses power with the bike. Every ride, no exceptions — there is no key-off warning on the bus and no battery behind the 5 V rail. `tune2fs` counted 607 mounts since 2025-12-04, about 2.2 boots a day, essentially all of them unclean, and this boot's `dmesg` still shows `orphan cleanup on readonly fs`.
+The Pi loses power with the bike. Every ride, no exceptions, and there is no battery behind the 5 V rail. ⚠️ This paragraph used to say there was _no key-off warning on the bus_ either. **There is** — parking announces itself 10 s to 7 minutes ahead, and §7 is what that is worth. `tune2fs` counted 607 mounts since 2025-12-04, about 2.2 boots a day, essentially all of them unclean, and this boot's `dmesg` still shows `orphan cleanup on readonly fs`.
 
 This file is what that costs, what the code now does about it, and — the part that matters most — **what it still does not do**. Issues [#158](https://github.com/danieltroger/cool-eva/issues/158) and [#57](https://github.com/danieltroger/cool-eva/issues/57).
 
@@ -30,6 +30,32 @@ That is not a hypothesis. It is what the ride log looks like.
 
 ⚠️ **A fixed writer does not repair a file that is already holed.** That 1710-NUL line is still on the Pi, and it is line 11 of a file the dashboard reads on _every_ GET and POST to `/vcu-write`. U+0000 is not JS whitespace, so `trim()` did not catch it and `JSON.parse` threw once per request. `recentAuditRecords` treats a NUL-only line as blank and names it once instead (#154, `scripts/check-write-audit.ts`) — nothing is recovered, because 1710 NUL bytes are not a record.
 
+### ⚠️ The holed line is not the shape it was reported as, and reading it as one loses a record (#189, 2026-09-14)
+
+Both the issue that reported this and the brief that scheduled the fix described the injury as "NULs followed by a torn JSON tail", with the prescribed fix being to skip it. It is not a torn tail. Measured on a copy pulled off the Pi on 2026-09-14 (29 562 bytes, 94 records):
+
+```
+line 15: 429 characters — bytes 0…214 all NUL (a contiguous prefix), then 214 bytes that parse:
+{"at":1788949247772,"clockTrustworthy":true,"action":"reset-vcu","status":"reset","after":null,
+ "note":"both VCU micros restarted (A9: accepted (positive 51); A8: accepted (positive 51))",
+ "runningVersion":"754dfa2"}
+
+line 14: at=1788869836774  read-service-stamp
+line 16: at=1788950222964  charge-current
+```
+
+The tail's stamp sits between its neighbours', so those bytes are the record that belongs there. **The hole is the record _before_ it**, whose block was allocated and never written back — taking its own trailing newline with it, which is what glued the next record onto the same line. So the shape a power cut leaves here is `hole + intact neighbour`, not `hole + fragment`, and the reader that skipped line 15 was **throwing away a complete record of an ECUReset on both VCU micros** while printing a `SyntaxError` and a stack trace on every request.
+
+**The tail is now kept when it parses, and that is not optimism.** A record truncated at the front cannot parse. Across this whole journal, of the 28 933 possible front-truncations of its 94 records, **none parses to any JSON value** — no record carries a `{` after position 0, because `before`/`after` are scalars by type and no `note` contains a brace. So on this corpus "the NUL-stripped tail parses" is exact rather than heuristic: it means the hole ended on a record boundary. Salvaged bytes still face a stricter bar than an ordinary line — an `at` that is a number and an `action` that is a string, the two fields the sheet renders — because a fragment that happens to parse is not thereby a record.
+
+⚠️ **A NUL anywhere but a contiguous leading run is still an ordinary damaged line.** That is the fence, and `scripts/check-write-audit.ts` §5c is red on any reader that switches on `line.includes("\0")` instead: a line with NULs in the _middle_ is not a power-cut prefix, and treating it as one would be the "skip anything that will not parse" widening this whole area exists to prevent.
+
+**Each injury is named once per process, not once per read.** The dashboard polls `/vcu-write`, so "once per read" is dozens of lines a minute about one damaged line — which is what #189 was actually reporting. The key is per file, line number, length and injury kind; an append-only journal cannot change an existing line under that key, and a _different_ injury still gets its own line (asserted, so the dedupe cannot quietly degenerate into "once ever"). A torn **last** line is deliberately excluded: it is routine rather than damage, and the next append turns it into a mid-file line the key then covers. Where a holed line is _also_ the last one, the NUL prefix wins and it is reported as damage — same precedence as the all-NUL trailing line has had since #172.
+
+⚠️ **One line of the table above does not describe this copy.** In it, line 15 is the **only** NUL-bearing line — line 11 is an ordinary `rtc-sync` record — so the 1710-NUL line #154 found is not in the journal as it stands on 2026-09-14. Whether it was compacted, whether that count came from a different copy, or whether the file was replaced is not established here, and this note says only what these bytes say. Both readers handle both shapes either way.
+
+**Known gap, stated rather than left implicit:** the warning goes to the Pi's journal, and the sheet shows its twelve lines with no sign that one is missing. Telling the _page_ a record was lost would change `recentAuditRecords`' signature and ripple into the payload and the sheet, which is a different change from "stop printing a stack trace per request". Not done here.
+
 Each mid-file hole marks one power cut.
 
 The writes this Pi makes, and what each was doing before this change — none of them flushed (`snapshot-store.ts` owns two of them, and `lifetime-store.ts` was added after and is listed here for the same reason):
@@ -47,7 +73,13 @@ The writes this Pi makes, and what each was doing before this change — none of
 
 > ⚠️ #158 cites the audit journal's append at `write-audit.ts:110-116`. Those lines are the **reader's** catch block; the append was at `:82-87` **as of `dd8acac`**, which is the commit #158 was counting lines in. The claim was right, the citation was not — and since a callout about a wrong citation had better not become one, note that line numbers in this file are stated against the commit named beside them.
 
-`SIGTERM` (`src/index.ts:498`) already seals the ride log before stopping the fan — but it never runs on a power cut, and nothing on the bus warns of one: `key_on` has never read 0, `vcu_12v_power_good` reads 0 in every frame, and `psu_12v_mv` (0x501, 10 Hz) simply stops.
+`SIGTERM` (`src/index.ts:498`) already seals the ride log before stopping the fan — but it never runs on a power cut.
+
+> ⚠️ **Two of the three facts this paragraph used to give for "nothing on the bus warns of one" are false, and they are why #57 item 1 sat closed for months.** Kept rather than rewritten away, because the shape of the error is the useful part: all three were _true of the captures that had been looked at_.
+>
+> - ❌ _"`key_on` has never read 0."_ It reads **0 in 89 rows** of `rides.db` against 184 at 1, and there are **20 observed 1→0 edges across 14** archive captures. 🟡 It is still not a power-fail signal, and it does not settle what the bit means — §7.
+> - ❌ _"`vcu_12v_power_good` reads 0 in every frame."_ It reads **1 in 129 of 131 rows** and 0 in exactly two. The resting value was written down inverted. One of the two zeros is a **300 ms blip** with the bike riding on for 30 944 more readings; the other lands 40 ms after a key-off in a session that ends 1.413 s later. n=1, not n=2.
+> - ✅ _"`psu_12v_mv` (0x501, 10 Hz) simply stops."_ Right, and re-checked: the last reading of all **128** sessions that carry it is **12 661–12 784 mV**. The rail does not sag. It stops.
 
 ## 3. What the code does now
 
@@ -59,6 +91,12 @@ The writes this Pi makes, and what each was doing before this change — none of
 | `replaceFileDurably(path, data)` | tmp → flush → `rename()` → flush directory. A reader sees the whole old file or the whole new one |
 | `syncDirectory(dir)` | an entry created or removed in `dir` survives a cut |
 | `syncFilesystems()` | `sync(1)` as a child process (spawned, stdio ignored), before the service restart |
+
+### Why the reader still reads the whole journal
+
+`recentAuditRecords` reads the file whole and slices, and #207 asked whether it should read only the tail — it is on the event loop that also serves the 10 Hz WebSocket and the CAN RX handler. Measured 2026-09-14 over the real 29 562-byte, 94-record journal, 200 iterations: **0.134 ms** per read-and-parse, against `status()`'s 0.628 ms with a full sweep on disk. Roughly 1.3 ms scaled to a Pi Zero.
+
+Against that, a tail read costs three things. The reader stops seeing damage outside the window, so the line-15 hole above goes invisible the moment the file outgrows it — taking the recovery with it. Line numbers stop being line numbers, so a warning can no longer name the line somebody would `sed -n '15p'`. And "the count of what was done to this bike" becomes "the count in the last N bytes". `write-audit.ts` already made this call — _"at one line per deliberate change to a motorcycle, it will be kilobytes in a decade"_ — and 94 records after a year says it was right. A `stat`-gated cache would cost nothing in correctness and still buys ~0.1 ms on a path #207 itself takes from twelve requests a minute to roughly none, so that is not here either.
 
 `fdatasync` rather than `fsync` on the file: it flushes the data plus the metadata needed to _retrieve_ it, which for a size-extending write is `i_size` and the block map — exactly the metadata whose absence is the hole. It is the minimal correct primitive, **not** a faster one; on ext4 an append dirties `i_size` and forces the journal commit either way.
 
@@ -97,7 +135,7 @@ So the bound is a timer raced against the child, and stopping the wait is all it
 
 A hardening change that lets someone believe the problem is gone has done harm. It is not gone.
 
-1. **Up to 30 s of readings that were never written.** They are still in `encrypted-log.ts`'s `buffered[]` at the cut. That is the designed segment interval and this change does not touch it.
+1. **Up to 30 s of readings that were never written.** They are still in `encrypted-log.ts`'s `buffered[]` at the cut. That is the designed segment interval and #158 did not touch it. ⚠️ **Partly closed since**: §7's park seal empties that buffer when the bike parks, which is 10 s to 7 minutes before the power goes — but only on the boots that park, which is about half of them.
 2. **The one write in flight**, if the cut lands between the `write()` and the `datasync()`. The window shrinks from ~30 s of writeback delay to the duration of one flush; it does not become zero.
 3. **A whole sweep's resume rows**, by the deliberate decision above.
 4. **A cut during the `git pull` itself** — half-fetched objects, a stale `index.lock`. Unchanged. `deployHint` in `src/http/update.ts` already names that one and tells the rider to delete the lock.
@@ -138,7 +176,107 @@ Everything here is out of scope for the code change and belongs to someone with 
 | --- | --- |
 | persistent journald (`Storage=volatile` today, so there is **no post-mortem log at all**) and sysctl writeback drop-ins | Pi config, not repo code. Needs Daniel's go-ahead. |
 | service-level `WatchdogSec` | Separate track. The hardware watchdog (`RuntimeWatchdogSec=1m`) is already on. |
-| `data=journal` — journals file _contents_, the general answer to §4.5 | Needs a USB-TTL adapter in hand before changing mount options on a machine reachable only over wifi. |
-| key-off rail measurement; a supercapacitor UPS with a power-fail GPIO | Hardware. It is the only thing that would close §4.1, since it buys the seconds a clean shutdown needs. |
+| `data=journal` — journals file _contents_, the general answer to §4.5 | Needs a USB-TTL adapter in hand before changing mount options on a machine reachable only over wifi. **Measured and recommended against in §8**, with the exact sequence if Daniel wants it anyway. |
+| key-off rail measurement; a supercapacitor UPS with a power-fail GPIO | Hardware. ⚠️ It is no longer the _only_ thing that would close §4.1: the park seal in §7 closes it for the roughly half of boots that park, which a UPS would close for all of them. |
 
 Already right, and worth not re-litigating: `fsck.repair=yes` is in `cmdline.txt`, the hardware watchdog is on, `unattended-upgrades` is not installed, `/tmp` is tmpfs, and the serial console is enabled.
+
+## 7. What the bus actually says at key-off, and the seal that answers it
+
+Issue [#57](https://github.com/danieltroger/cool-eva/issues/57) item 1 guessed _"If the CAN bus signals key-off we may get 1–2 s of warning."_ The warning is real and it is much larger than that — but it is not key-off.
+
+**Corpus.** Every candump-format log in `~/Documents/cool-eva-archive`: 255 files, 16 GB, 97 carrying frames, 98 distinct boot ids. A capture name carries the boot id, so every file of a boot **except the last** ended because `candump` restarted while the Pi was still alive (pre-`-D`, #185). Only the **80 last-of-boot captures** ended when the Pi did, and every figure below is measured on those. Reductions: `evidence/keyoff/`, whose `figures.txt` is the generated source of every number here.
+
+⚠️ **The corpus is six days old and narrow.** 78 of the 80 terminal captures fall in 2026-08-02…08-10, 22 of them on one day. Sixteen park measurements are not sixteen independent weeks.
+
+### ❌ `key_on` is not a power-loss predictor
+
+It appears before only **9 of the 80** boot-terminal captures, and where it does the bus keeps transmitting for **0.014 s to 2 996 s** afterwards (7 gap-free). In `rides.db` it fires 18 times across 14 sessions and **17 of the 18** are followed by 988 to 1 633 226 more readings. Acting on it would flush at a moment unrelated to the cut.
+
+🟡 That also means the bit is **not confirmed to mean "the key is off"**, which `src/can/decode.ts` had listed as an open question. It moves, and its resting value is 1. What it names is still open, and a bit that clears while the bike runs for fifty minutes is evidence against the obvious reading rather than for it.
+
+### ✅ Entering the parked state is a predictor, and a generous one
+
+`0x101` b1 → 60, through the one-frame `60/63` edge `docs/can-0x101.md` identifies:
+
+|  | n | lead to the last frame of the boot |
+| --- | --- | --- |
+| **observed park entries**, every one at `60/63` | **16** | **10.03 – 442.11 s, median 64.39 s** |
+| captures that opened with the bike already parked (`60/62`) — file lengths, **not** park measurements | 12 | 30.98 – 393.36 s |
+
+**Not one is under 10 s.** Five are under 30 s.
+
+⚠️ The second row is not a narrower cut of the first; it is the population the first row has to exclude. An earlier version of this table reported 28 entries at a median of 93.03 s by counting both together — a capture that _opened_ on a parked bike scores as an entry only because nothing was watching before the file began, and its "lead" is just how long the file is.
+
+**It is a lower bound twice over**, which is the direction that makes it safe to build on: the capture stops when the _bus_ goes quiet, which can only be at or before the Pi's death; and whatever the cut cost the file's tail moves the measured end earlier, never later. Independently, the three captures that record a complete shutdown walk end **0.000 / 0.184 / 1.367 s** after its last 0x101 substate change — `capture-20260802-203750-7ce067a7.log` (`1/2`), `capture-20260809-211759-1956320f.log` (`20/22`) and `capture-20260802-185513-563dd217.log` (`20/33`) — so on those the file ends essentially where the bus stopped. (Measured from the last **substate** change; from the entry into state 1 the same two files read 1.52 and 1.55 s. Two further captures enter state 20 and then reach `60/62`, so entering state 20 is not itself terminal.)
+
+⚠️ **The gap rule is not hiding a short lead**, which is the obvious way this could be biased: 14 park intervals are refused for spanning a clock discontinuity, and the smallest raw lead among them is **248.99 s**.
+
+### What the seal covers, and what it does not
+
+`src/storage/seal-on-park.ts` seals the ride log on an observed entry into state 60. What it protects, measured on `rides.db`: the 30 s before the last park of each session holds **23 to 6 879 readings, median 527** across 40 sessions — the arrival, the final SOC, the last fix before the bike is left. (Under-counted: that uses the sparse BLE `vehicle_state`; `0x101` at 100 Hz catches every park.)
+
+⚠️ **It covers about half the boots.** The last `0x101` state across the 80 terminal captures is 60 in 35, **100 (DC charging) in 20**, **80 (blocking fault) in 14**, 40 in 5, 20 in 5 and 1 in 1 — and **38 of 80 never show state 60 at all**. A boot that ends while charging or in a fault gets nothing from this.
+
+❌ **Entering state 80 was measured as a second trigger and rejected.** 13 observed entries, lead **0.38 – 1 847.70 s**, eleven of them under 11 s. The minimum is too short to rely on and it is a fault state the bike recovers from, so it would fire when nothing is ending.
+
+⚠️ **Unverified on the bike.** `vehicle_state_can` exists only because `0x101` entered `STREAM_IDS` on 2026-09-14 (`084b3e2`), which has never run on the Pi — and `docs/can-0x101.md` notes it adds ~100 RX wakeups and ~900 `record()` calls a second on a Pi Zero. The trigger inherits both.
+
+### ❌ Why there is no `sync` here
+
+`sync(1)` cannot reach what is still lost. §4.1's readings were **never written** — they are in `buffered[]` — and `sync` flushes writes, not intentions. Sealing is the only thing that converts them, which is why the answer to #57 item 1 is a seal and not a flush.
+
+For the one other file being written continuously — the `candump` capture, which nobody fsyncs — the tail a cut costs is small: **83 of the 232 non-empty archive files end exactly on a 4096-byte boundary** (72 of those mid-line) and only **12 carry a trailing NUL run at all, of 20–1 527 bytes**. Call it ≤ ~5.6 kB, about 0.08 s of frames. And a `sync` at park cannot protect the 10–442 s of writing that happens _after_ it.
+
+## 8. `data=journal`: the sequence, and why not to run it
+
+🔥 **#158's fsync work held.** All **61** NUL runs of ≥ 64 bytes in the 322.3 MB `/dl` dump of 2026-09-13 lie at or below byte **122 320 758**. Decrypted 3 MB slices date bytes 104 M / 109 M / 117.2 M to **2026-09-07**, 122.4 M to **2026-09-08**, 200 M to **2026-09-10** and 300 M to **2026-09-13**. Every hole is in data written on or before 2026-09-08 — the day #158 merged as `a55b273` — and the ~200 MB written since, covering **80 boots**, carries none. The 09-07 region holds runs of exactly 1306 and 3398 bytes, the two endpoints §2's table gives for that file.
+
+⚠️ **`data=journal` really would kill the mechanism §1 blames**, and this file previously declined to say so. From `fs/ext4/super.c`, `ext4_check_journal_data_mode()` at :5057, read rather than relayed:
+
+```c
+	if (test_opt(sb, DATA_FLAGS) == EXT4_MOUNT_JOURNAL_DATA) {
+		printk_once(KERN_WARNING "EXT4-fs: Warning: mounting with "
+			    "data=journal disables delayed allocation, "
+			    "dioread_nolock, O_DIRECT and fast_commit support!\n");
+		…
+		if (test_opt2(sb, EXPLICIT_DELALLOC)) {
+			ext4_msg(sb, KERN_ERR, "can't mount with "
+				 "both data=journal and delalloc");
+			return -EINVAL;
+		}
+		…
+		if (test_opt(sb, DELALLOC))
+			clear_opt(sb, DELALLOC);
+```
+
+**So the recommendation is still against it, but for a different reason than "it would not help".** It would. What it buys _now_ is the ≤ ~5.6 kB of unfsynced capture tail per cut from §7, because everything else the Pi writes is already flushed and has taken no hole in 80 boots. The price is every byte written to the card twice, on the one device that carries all of this. If the capture corpus later turns out to be losing something that matters, this is the lever — and it is Daniel's call, not a lane's.
+
+⚠️ Two hazards, in the order they bite:
+
+1. **It cannot be applied by `remount`, and `/etc/fstab` will not do it for the root filesystem** — which systemd applies by remounting. `ext4_check_opt_consistency()` (super.c:2789): `if ((ctx->spec & EXT4_SPEC_DATAJ) && is_remount) { … ext4_msg(NULL, KERN_ERR, "Cannot change data mode " "on remount"); return -EINVAL; }`. It needs `rootflags=data=journal` in `cmdline.txt` and a reboot.
+2. 🚨 **An EXPLICIT `delalloc` beside it is `-EINVAL` at mount** — a root mount that fails, i.e. a Pi that does not come back, in a garage, over wifi. An _implicit_ delalloc (the default) is silently cleared by the `clear_opt` above and is safe. So the word is what kills the boot, and `/proc/mounts` shows **effective** options and cannot tell you whether anyone wrote it down.
+
+**The sequence, for the coordinator, at the bike, with a USB-TTL serial console attached — and only on Daniel's GO:**
+
+```sh
+# 0. Rule the -EINVAL out. BOTH must come back empty; if either prints, stop.
+grep -o 'delalloc' /proc/cmdline
+grep ' / ' /etc/fstab | grep -o 'delalloc'
+
+# 1. Back up the file you are about to make unbootable-able.
+sudo cp /boot/firmware/cmdline.txt /boot/firmware/cmdline.txt.before-data-journal
+
+# 2. cmdline.txt is ONE line. Append, do not add a newline.
+sudo sed -i '1s|$| rootflags=data=journal|' /boot/firmware/cmdline.txt
+cat /boot/firmware/cmdline.txt          # read it back before rebooting
+
+# 3. Reboot with the serial console open, and watch for the two messages above.
+sudo reboot
+
+# 4. Afterwards, from the serial console or ssh:
+grep -o 'data=journal' /proc/mounts     # expect one hit for /
+dmesg | grep -i 'EXT4-fs.*data=journal' # expect the delayed-allocation warning
+```
+
+To undo: `sudo cp /boot/firmware/cmdline.txt.before-data-journal /boot/firmware/cmdline.txt && sudo reboot`. If it does not boot, the serial console is the only way in, which is why §6 defers this behind having the adapter in hand.

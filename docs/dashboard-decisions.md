@@ -272,6 +272,30 @@ The answer is not a third mechanism, and reaching for one is the mistake to avoi
 
 `scripts/check-charge-auto-live.ts` holds all three, without a browser: it drives the real view against the real store and asserts on the text the tile's binding renders.
 
+#### The fourth trap: a guard is only as good as the edge underneath it (#207)
+
+`views/charge-current.js` had this derive with **no** value guard at all, so the charge tab re-fetched `/vcu-write` on every heartbeat for a whole charge — and that endpoint re-read the parameter sweep and the entire audit journal per request, on the event loop serving the 10 Hz WebSocket and the CAN RX handler. Measured with a counting `fetch` stub: five heartbeats that changed nothing cost five fetches.
+
+Adding the value guard to `charge_cmd_ack` looks like the fix and **is a worse bug**. `record()` logs only on CHANGE (`src/can/signals.ts`), so two commands settling to the same verdict move that signal not at all:
+
+- the automatic controller ticks every 60 s — six times the 10 s ack window, so consecutive commands never supersede — and `stepTo` returns _hold_ on an equal step, so it walks 32 → 30 → 28 A settling `took` three times;
+- `charge_cmd_ack` is written once, by the first;
+- a guard on the verdict then returns for the rest of the charge, leaving the first command's sentence on screen while the bike is at 28 A.
+
+⚠️ **And no page-side mechanism can fix it**, which is the part worth remembering. A timer armed by the page's own POST was tried on paper and cannot see those settles: `noteChargeCommandSent` is called for every origin (`write-runner.ts`), so most of the settles on this bike belong to commands the rider never sent from the phone.
+
+So the Pi records the settle instead of the page inferring it: **`charge_cmd_ack_seq`**, a per-process counter wrapped to a byte, written next to the verdict in `settle()`. Every settle is one edge, whatever the verdict says and whoever commanded it, and the page guards on that alone.
+
+An alternative was considered and rejected, recorded here so it is not "simplified" in later: `record()` refreshes `liveState` — including `ts` — _before_ the change gate, so `charge_cmd_ack`'s **timestamp** already moves on every settle. It is rejected because it is up to 5 s late (a ts-only change produces no patch, so it rides the next heartbeat), because it needs a new `tsOf()` in `store.js`'s public API, and because it rests the wake-up on a quiet exception to a function documented as logging only on change.
+
+**The retry, which is the same trap on the failing path.** `lib/charge-write.js` consumed its `lastLive` guard before an async `fetchChargeWriteStatus()` that swallows its own error, so a status fetch failing at session start left `writesOn` false — the write controls simply never appeared — for the whole charge. It recovered only by accident, through the poll above, so fixing the poll alone would have exposed it. The guard on "do we hold a status" is now `writeStatus` itself rather than a flag that can drift from it, read with `rawVal` because the derive assigns it after an `await`, outside VanJS's dependency capture.
+
+⚠️ **That retry has to be paced, and the reason is a rate nobody guesses right.** This derive subscribes to `serverTime` on purpose — the cable coming out is a staleness event with no value change — so it runs on **every WebSocket message, ~10 a second** mid-charge, not once per heartbeat. Forgetting the guard on failure without pacing would ask an unreachable Pi ten times a second. `STATUS_RETRY_MS` is a literal 5 000 rather than `HEARTBEAT_MS` itself, so the check asserting it clears one heartbeat is an assertion that can fail.
+
+⚠️ **One consequence to know about rather than discover.** `fetchChargeWriteStatus()` disarms, deliberately (`check-arming.ts` guards that rule for all nine controls). So every wake-up here also disarms whatever was armed. The fix makes that **rarer but better aimed**: before, an armed button was disarmed roughly twelve times a minute for the whole charge; now it happens at most once per command — but within ~10 s of one, which is exactly when a rider might be arming the next. The rate falls and the conditional probability rises, and the honest summary is that this is a smaller version of a problem that has not gone away. `scripts/check-charge-write-polling.ts` asserts the wake-up still disarms, so nobody "fixes" it by quietly exempting this path.
+
+One further duplicate, accepted: a session opening costs **two** fetches — the session edge asking for the gate, and the settle guard meeting the number on the bus for the first time. Both are right on their own and merging them would couple two files; it is two requests per plug-in against twelve a minute.
+
 ### The button tile's three readouts — `views/all.js`
 
 `ButtonTile` is the same card as `RawTile`, but built to be watched rather than read. Which signals reach it is `lib/latched.js`'s question — the whole `buttons` group plus the keys named there — and `views/all.js` asks it per KEY, not per group. Three readouts, in decreasing order of how much you should trust them:
@@ -825,6 +849,48 @@ Three states, three appearances. "A micro never answered" must not render identi
 ---
 
 ## Service mode: writing — `views/vcu-write.js`
+
+### Why the write status is a list plus one detail
+
+`GET /vcu-write` used to answer every allowlist entry in full: purpose, four warnings, bounds, unit text and the swept value, for all 269. Measured 2026-09-14 with a full sweep on disk and the real audit journal:
+
+|                            | bytes                |
+| -------------------------- | -------------------- |
+| the whole payload          | 256 582              |
+| …of which `targets[]`      | **249 878 — 97.4 %** |
+| the journal's twelve lines | 3 768                |
+| everything else            | 6 706                |
+
+That is not a page-load cost. `armWrite()` fetches this **before every arm**, and that refresh is load-bearing — it is what raises `busy`, which is the double-tap guard on controls that change the motorcycle. So it was a 250 KiB round trip inserted into the arming gesture, on garage wifi, on a Pi Zero, with the rider standing at the bike waiting for a button to go live.
+
+The dropdown needs a name (and a micro) for all 269; everything else is needed only for the one target selected. So the payload splits, on the same endpoint, with two read-only query parameters:
+
+- **`detail=NAME`** — everything about one target. `summariseTarget` runs once instead of 269 times, which also takes `sweptValueOf`'s linear `rows.find` over 277 rows from 269 passes to one.
+- **`list=0`** — the caller already holds the 269 names. `targets` then answers **`null`**, which means _not asked for_ and never _nothing is writable_; the page keeps the listing in its own state and replaces it only from a response that carries one.
+
+⚠️ The listing is the **default**. Forgetting `list=0` costs 14 397 bytes; an opt-in listing that a caller forgot would render a bike with nothing writable. The two failure directions are not the same size.
+
+| call site                                   | before  | after                       |
+| ------------------------------------------- | ------- | --------------------------- |
+| sheet open, no selection yet (two requests) | 256 582 | 21 120 + 8 102 = **29 222** |
+| sheet open, selection held                  | 256 582 | **22 495** (worst 23 171)   |
+| `<select>` change                           | **0**   | **8 102** (worst 8 778)     |
+| pre-arm refresh — the gesture this is about | 256 582 | **8 102**, −96.8 %          |
+| irreversible-fold re-poll                   | 256 582 | **8 102**                   |
+| every POST reply                            | 256 582 | **8 102**                   |
+| charge tab status fetch — `list=0`          | 256 582 | **6 727**, −97.4 %          |
+
+(±5 bytes across measurements is `runningVersion`'s commit label, which changes with the checkout — not the payload.)
+
+The selection change going from nothing to 8 102 bytes is a real new cost, taken deliberately: the purpose, the warnings and the range are the safety text for the parameter about to be written and must be on screen the moment the selection lands. The alternative is shipping all 269 of them on every request.
+
+⚠️ **Two reads are ordered, and the order is load-bearing twice over.** A `latestStatusRead` counter drops a reply a newer read has superseded, the way `views/charge-auto.js` does — the `<select>` starts a request on every change, so two can be in flight and the older carries a detail for a parameter the form has left. The second half is less obvious: **a superseded reply applies nothing**, so `armWrite()`'s before/after comparison would compare the same untouched state, find it unchanged, and arm on the value the tap started with rather than on the Pi's answer now. `fetchStatus()` therefore reports whether it applied, and `armWrite()` refuses to arm when it did not. Opening the red fold or changing the picker during that round trip is enough to reach it, and `busy` disables neither.
+
+⚠️ **`selectedTarget()` is the dangerous part of this change**, and it is why `scripts/check-write-status-split.ts` exists. It used to `find` in an array whose entries carried their own names; it is now one object the Pi hands over, arriving a round trip after the selection moves. It decides `control.kind` — which chooses `action=bit` over `action=parameter` — and `onBike()`, which becomes the compare-and-swap `expected=`. **A detail whose name is not the current selection's is refused**, or a stale one produces a perfectly coherent write against the wrong parameter.
+
+⚠️ A second staleness path, less obvious: `writeTargets()` is derived from the ACTIVE parameter table, and a sweep finishing selects a new one (`src/vcu/snapshot-store.ts`) — from this very sheet, which is where sweeps are started. So the cached listing carries the `tableGate.tableType` it was fetched under, and a response naming a different one discards it and asks again with the list.
+
+The 269-option native `<select>` remains the mis-tap hazard #107's "Related" describes; grouping or a search field is a redesign of the control that selects what gets written, wants its own dashboard gate, and is still open on that issue.
 
 ### ⚠️ Nothing on this page decides anything
 

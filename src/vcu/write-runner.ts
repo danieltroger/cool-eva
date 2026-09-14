@@ -187,8 +187,8 @@ export interface VcuWriteRunner {
   perform: (request: ServiceWriteRequest) => Promise<ServiceWriteAnswer>;
   /** Feed CAN frames here; true when consumed. A no-op unless an action is in flight. */
   handleCanFrame: (id: number, data: Buffer) => boolean;
-  /** What the page needs to render the section without a second request. */
-  status: () => Promise<VcuWriteStatus>;
+  /** What the page needs to render the section: the gate, the journal, and what it asked for. */
+  status: (request: WriteStatusRequest) => Promise<VcuWriteStatus>;
   /** Aborts anything in flight, for shutdown. */
   stop: () => void;
 }
@@ -227,12 +227,41 @@ export interface VcuWriteStatus {
   tableGate: TableGateVerdict;
   /** Whether this Pi's clock may be copied into the bike, and why not when it may not. */
   clock: PiClockVerdict;
-  /** The allowlist, so the page's list cannot drift from the codec's. */
-  targets: WriteTargetSummary[];
+  /**
+   * The allowlist as a list of names, so the page's dropdown cannot drift from the codec's —
+   * or **null when the caller said it already has one** (`list=0`).
+   *
+   * ⚠️ Null means NOT ASKED FOR, never "nothing is writable". A caller that treats the two
+   * the same renders a bike with no writable parameters, which is why the page keeps its own
+   * copy and only ever replaces it from a response that carries one.
+   *
+   * Everything else about a target — purpose, warnings, bounds, the swept value — is in
+   * `detail`, for the ONE target the caller named. All 269 of those together were 249 878 of
+   * a 256 582-byte payload, fetched again before every arm: docs/dashboard-decisions.md
+   * §"Why the write status is a list plus one detail".
+   */
+  targets: WriteTargetListing[] | null;
+  /** Everything about the one target the caller named in `detail=`, or null when it named none. */
+  detail: WriteTargetSummary | null;
   /** The last few journal lines, newest first. */
   recent: AuditRecord[];
   /** What has the bus, or null. */
   busHeldBy: string | null;
+}
+
+/** One allowlist entry as the DROPDOWN needs it. The three fields a picker and a probe read use. */
+export interface WriteTargetListing {
+  name: string;
+  index: number;
+  micro: string;
+}
+
+/** What the page must ask for, and what it already holds. */
+export interface WriteStatusRequest {
+  /** The target to describe in full, or null for none. An unknown name answers `detail: null`. */
+  detailFor: string | null;
+  /** False when the caller already holds the listing. See `VcuWriteStatus.targets`. */
+  includeList: boolean;
 }
 
 /** One allowlist entry as the page shows it. Everything a person needs before pressing a button. */
@@ -381,16 +410,22 @@ export function createVcuWriteRunner(options: VcuWriteRunnerOptions): VcuWriteRu
   return {
     perform: request => perform(context, request),
     handleCanFrame: (id, data) => context.running?.handleFrame(id, data) ?? false,
-    status: () => status(context),
+    status: request => status(context, request),
     stop: () => context.running?.abort("the service is shutting down"),
   };
 }
 
-async function status(context: WriteContext): Promise<VcuWriteStatus> {
+async function status(context: WriteContext, request: WriteStatusRequest): Promise<VcuWriteStatus> {
   // ONE read of the last sweep for both things it is asked: whether the bike has named
   // its parameter table, and what it holds for each writable parameter. Two reads could
   // straddle a sweep finishing and describe two different files on the same screen.
   const sweep = await context.latestSweep();
+  // ⚠️ ONE summariseTarget, for the target the caller named — not 269. That is the whole of
+  // #107: the page needs a name per entry to fill a dropdown and everything else for the one
+  // entry it is on, and sending all of it made the arming gesture a 250 KiB round trip. It
+  // also takes sweptValueOf's linear find over 277 rows from 269 passes to one.
+  const named =
+    request.detailFor === null ? null : (writeTargets().find(target => target.name === request.detailFor) ?? null);
   return {
     enabled: context.enabled,
     runningVersion: await readRunningVersion(),
@@ -398,21 +433,25 @@ async function status(context: WriteContext): Promise<VcuWriteStatus> {
     gate: context.gate(),
     tableGate: evaluateTableGate(sweep?.report ?? null),
     clock: readPiClock(),
-    targets: writeTargets().map(target => summariseTarget(target, sweep?.snapshot ?? null)),
+    targets: request.includeList ? writeTargets().map(listTarget) : null,
+    detail: named === null ? null : summariseTarget(named, sweep?.snapshot ?? null),
     recent: await recentAuditRecords(context.directory, RECENT_AUDIT_LINES),
     busHeldBy: busHeldBy(),
   };
 }
 
-/**
- * The clock check, sampled here and DECIDED in ./service-actions.ts.
- *
- * Same split as the safety gate's, and for the same reason: every branch of the
- * decision stays reachable from a laptop. `ageMs` is the monotonic age from
- * src/can/signals.ts and never a `Date.now()` difference — a backwards clock step
- * would otherwise make a stale GPS reading look fresh, which on this particular
- * decision means vouching for a clock with evidence from an hour ago.
- */
+/** One dropdown entry. `micro` and `index` ride along because a probe read addresses by both. */
+function listTarget(target: WriteTarget): WriteTargetListing {
+  return {
+    name: target.name,
+    index: target.index,
+    // Straight off params.ecf, which is also where the frame's address comes from — so the page
+    // cannot show a different micro from the one that gets written to. The allowlist asserts at
+    // load that its index and name agree with that table.
+    micro: parameterAtIndex(target.index)?.micro ?? "?",
+  };
+}
+
 function summariseTarget(target: WriteTarget, sweep: VcuParameterSnapshot | null): WriteTargetSummary {
   return {
     name: target.name,

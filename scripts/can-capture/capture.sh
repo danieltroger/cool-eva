@@ -39,7 +39,16 @@ if ! command -v candump >/dev/null 2>&1; then
 fi
 
 BOOT_ID=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
-OUTPUT="$DIRECTORY/capture-$(date +%Y%m%d-%H%M%S)-$BOOT_ID.log"
+# Whole seconds of uptime. The Pi has no RTC, so this is the ONLY monotonic thing it has:
+# `date` below can be years out at this point and has been (#188 — two .celog files and a
+# capture named for 2060). Padded to 8 digits so it sorts as a number rather than a string,
+# and 8 rather than 6 so the padding has no expiry date the bike can outlive.
+UPTIME=$(printf %08d "$(cut -d. -f1 /proc/uptime)")
+# Date FIRST, uptime appended. The uptime fixes what the date cannot — a clock that steps
+# mid-boot — while leading with the boot id instead would cost a chronological `ls` over the
+# whole archive to fix a hazard that has not fired in the six boots that could show it.
+# ⚠️ The MTIME is still whatever the clock says. docs/ride-log-clock.md §5.
+OUTPUT="$DIRECTORY/capture-$(date +%Y%m%d-%H%M%S)-$BOOT_ID-$UPTIME.log"
 
 echo "capturing to $OUTPUT"
 # stdbuf -oL: line-buffered, so a hard power cut costs at most the current line.
@@ -53,4 +62,11 @@ echo "capturing to $OUTPUT"
 # ⚠️ 2>&1 is deliberate and must stay. -D removes the file boundary that used to
 # mark a gap, so candump's own "can0: interface down" line is the only evidence
 # IN THE FILE that one happened; the journal does not travel with the archive.
-exec stdbuf -oL timeout 28800 candump -D -tA can0 > "$OUTPUT" 2>&1
+#
+# The `echo` puts the boot id and uptime INSIDE the file, for the reason 2>&1 is here: the
+# archive travels to the laptop, the journal stays on a card that gets reflashed.
+# replay-capture.ts counts an unparseable line as `framesSkipped`, so it costs a reader nothing.
+{
+  echo "# boot $BOOT_ID uptime $UPTIME"
+  exec stdbuf -oL timeout 28800 candump -D -tA can0
+} > "$OUTPUT" 2>&1

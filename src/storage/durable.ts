@@ -36,7 +36,7 @@ const counters: DurabilityCounters = { flushes: 0, directorySyncs: 0 };
  *
  * Creates the file when it is absent and flushes the DIRECTORY when it did: the entry is
  * metadata of the parent, so without that a cut can leave the data written and the file
- * itself gone — the "first .celog of a day" case.
+ * itself gone — the "first .celog of a day" case, and since #188 the first of a boot too.
  */
 export async function appendDurably(path: string, data: Buffer | string): Promise<void> {
   const handle = await openForAppend(path);

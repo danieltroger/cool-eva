@@ -284,8 +284,13 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // b1 comes from the .xdbc and matched a parked bike on 2026-08-02; the garage lap that
     // afternoon then caught energized, go_request, go, stand_up, ignition_button,
     // throttle_on and moving all toggling with the rider's actions, so those are ✅ against
-    // real transitions rather than one parked sample. key_on stayed 1 throughout both, so
-    // it rests on the parked sample alone — a key-off capture is what would confirm it.
+    // real transitions rather than one parked sample.
+    //
+    // 🟡 key_on MOVES — 20 observed 1→0 edges across 14 archive captures and 89 rows at 0 in
+    // rides.db, against a comment here that said it had never been seen to. But it is NOT
+    // confirmed to mean "the key is off": 17 of 18 edges in the log are followed by up to
+    // 1 633 226 more readings, and the bus transmits for up to 2 996 s after one. The bit is
+    // real and its resting value is 1; what it names is still open. docs/power-cuts.md §7.
     //
     // b0's low bits and b3 are decoded in vcu-digitals.ts, both added 2026-08-16.
     case 0x102: {

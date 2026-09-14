@@ -4,6 +4,9 @@ import { boundsFor } from "../public/lib/bounds.js";
 import { SIGNALS } from "../src/can/registry.ts";
 import { REQUIRED_CONSISTENT_READINGS } from "../src/gps/clock-gate.ts";
 import { defineSignals, latestValue, record, snapshot } from "../src/can/signals.ts";
+import { MIN_FIX_INTERVAL_MS } from "../src/gps/fix-plausibility.ts";
+import { monotonicNow, since } from "../src/monotonic.ts";
+import { startWaypointFixTracking } from "../src/gps/waypoint.ts";
 import { systemClockTrust, syncSystemClockFromGps } from "../src/gps/clock.ts";
 import type { WaypointReply } from "../src/http/waypoint.ts";
 import { handleWaypointEndpoint } from "../src/http/waypoint.ts";
@@ -54,8 +57,49 @@ async function ask(): Promise<WaypointReply> {
   return (await response.json()) as WaypointReply;
 }
 
-/** A fix, straight into liveState, exactly as the GPS decoders put one there. */
-function stageFix(latitude: number, longitude: number) {
+// ⚠️ FIX TRACKING RUNS HERE SINCE #178, and it changes what this file is. Until then the
+// endpoint was exercised with `latestFix` permanently null — a state the Pi is never in,
+// because src/index.ts starts the tracker at boot — and the corroboration gate refuses
+// that state by design. So the tracker is started and every staged fix is followed by a
+// second sample, which is what the hub really sends ~550 ms later.
+const fixes = startWaypointFixTracking();
+
+/** When the last DIFFERENT position was staged — see the guard in stageFix(). */
+let lastDifferentStageAt = monotonicNow();
+let lastStaged = "";
+
+/**
+ * A fix, straight into liveState, exactly as the GPS decoders put one there — then a
+ * second sample carrying the same position, which is what #178's gate asks for.
+ *
+ * ⚠️ THE `await` IS LOAD-BEARING. onFixChanged() runs from a queueMicrotask, so without it
+ * the tracker has not yet seen the first sample when the second arrives, `latestFix.at` is
+ * stamped after both, and the second sample corroborates nothing. The check would then be
+ * red for a reason that has nothing to do with the endpoint.
+ *
+ * ⚠️ And the second record() is deliberately the SAME position: equal values are inside the
+ * 3 m deadband, so nothing is logged, no change fires, and `precedingFix` stays null — which
+ * is precisely the "first fix of a run, seen twice" state the gate is about.
+ */
+async function stageFix(latitude: number, longitude: number) {
+  const staged = `${latitude},${longitude}`;
+  if (staged !== lastStaged) {
+    // ⚠️ Starting the tracker put the JUMP gate in a file whose fixtures teleport between
+    // continents. It only judges pairs at least MIN_FIX_INTERVAL_MS apart, and these are
+    // staged microseconds apart — but on a stalled machine that stops being true, and the
+    // symptom would be an unrelated FIX_IMPLAUSIBLE. Said out loud rather than left to be
+    // debugged: this is the fixture's problem, never the endpoint's.
+    const gap = since(lastDifferentStageAt);
+    check(
+      `staged fixes stay inside the jump gate's ${MIN_FIX_INTERVAL_MS} ms floor (${Math.round(gap)} ms)`,
+      gap < MIN_FIX_INTERVAL_MS
+    );
+    lastDifferentStageAt = monotonicNow();
+    lastStaged = staged;
+  }
+  record("gps_lat", latitude);
+  record("gps_lon", longitude);
+  await Promise.resolve();
   record("gps_lat", latitude);
   record("gps_lon", longitude);
 }
@@ -100,7 +144,7 @@ const noFix = await ask();
 check("with no fix at all, nothing is saved", !noFix.saved);
 check("…and the sentence says which of the five reasons it was", noFix.message.includes("No GPS fix yet"));
 
-stageFix(45.374038, 14.321478);
+await stageFix(45.374038, 14.321478);
 
 // The clock branch. Skipped rather than failed if the operator has claimed the clock,
 // because GPS_TIME_SYNC=0 makes this refusal structurally unreachable — see the header.
@@ -161,24 +205,24 @@ check(
 
 console.log("\n4. a fix that is not a position on Earth");
 
-stageFix(200, 14.321478);
+await stageFix(200, 14.321478);
 const badLatitude = await ask();
 check("a latitude of 200 is refused", !badLatitude.saved);
 check("…and the sentence names the reason and the numbers", badLatitude.message.includes("not a real position"));
 check("…and nothing was recorded: the count has not moved", latestValue("waypoint_seq") === 1);
 
-stageFix(45.374038, 999);
+await stageFix(45.374038, 999);
 const badLongitude = await ask();
 check("a longitude of 999 is refused too", !badLongitude.saved);
 check("…and still nothing was recorded", latestValue("waypoint_seq") === 1);
 
-stageFix(-90, -180);
+await stageFix(-90, -180);
 const corners = await ask();
 check("the corners of the planet are positions, and save", corners.saved && corners.sequence === 2);
 
 // A refusal must not have eaten a sequence number, which is the kind of off-by-one a
 // counter shared between a refusal path and a save path invites.
-stageFix(45.374038, 14.321478);
+await stageFix(45.374038, 14.321478);
 const afterRefusals = await ask();
 check("the sequence counts saves, not attempts", afterRefusals.sequence === 3);
 
@@ -195,7 +239,7 @@ check("no Accept header still gets text/plain", (spoken.headers.get("content-typ
 check("…with 200, so Siri speaks it", spoken.status === 200);
 check("…and one line, ending in a newline", spokenBody.endsWith("\n") && spokenBody.trim().split("\n").length === 1);
 
-stageFix(200, 14.321478);
+await stageFix(200, 14.321478);
 const spokenRefusal = await fetch(`${base}/waypoint`);
 const spokenRefusalBody = await spokenRefusal.text();
 check("a refusal is 200 as well, or it is never heard", spokenRefusal.status === 200);
@@ -205,6 +249,7 @@ const html = await fetch(`${base}/waypoint`, { headers: { Accept: "text/html" } 
 check("any other Accept is Siri's contract, not the dashboard's", (await html.text()).includes("not a real position"));
 
 server.close();
+fixes.stop();
 
 // Two of the five sentences are not asserted here. A fix older than FIX_MAX_AGE_MS takes
 // a 31-second wait, because its age comes from a monotonic mark taken inside record() —

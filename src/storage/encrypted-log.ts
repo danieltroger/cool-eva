@@ -5,6 +5,8 @@ import { join } from "path";
 import { promisify } from "util";
 import { gzip } from "zlib";
 import { appendDurably } from "./durable.ts";
+import { splitByTrust } from "./trust-runs.ts";
+import type { ClockTrust } from "../gps/clock.ts";
 import type { SignalSource } from "../db.ts";
 
 // Write-only ride log: the Pi holds ONLY a public key, so it can append history
@@ -53,6 +55,14 @@ export interface EncryptedLogOptions {
   publicKeyPath: string;
   /** Directory for the .celog segment files. */
   directory: string;
+  /**
+   * How much the system clock may be trusted right now.
+   *
+   * Injected rather than imported so this module keeps no dependency on ../gps/, and
+   * REQUIRED rather than defaulted so a caller that forgets it is a type error instead of a
+   * log that silently claims every reading was written under a good clock.
+   */
+  clockTrust: () => ClockTrust;
   /** How often to seal and append a segment. A crash costs at most this much. */
   segmentIntervalMs?: number;
 }
@@ -62,6 +72,8 @@ interface Reading {
   key: string;
   value: number;
   seq: number;
+  /** What the clock was worth when `ts` was taken — see ./trust-runs.ts for why per reading. */
+  trust: ClockTrust;
 }
 
 /**
@@ -99,6 +111,7 @@ interface SignalMeta {
 let recipientPublicKey: KeyObject | null = null;
 let recipientPublicRaw: Buffer | null = null;
 let logDirectory = "";
+let readClockTrust: (() => ClockTrust) | null = null;
 let buffered: Reading[] = [];
 const signalMeta = new Map<string, SignalMeta>();
 let segmentTimer: ReturnType<typeof setInterval> | undefined;
@@ -136,6 +149,7 @@ export async function initEncryptedLog(options: EncryptedLogOptions): Promise<bo
   recipientPublicKey = publicKey;
   recipientPublicRaw = publicRaw;
   logDirectory = options.directory;
+  readClockTrust = options.clockTrust;
 
   const intervalMs = options.segmentIntervalMs ?? 30_000;
   segmentTimer = setInterval(() => {
@@ -155,11 +169,13 @@ export function appendReading(
   group: string,
   source: SignalSource
 ): void {
-  if (!recipientPublicKey) {
+  if (!recipientPublicKey || !readClockTrust) {
     return;
   }
   signalMeta.set(key, { unit, group, source });
-  buffered.push({ ts, key, value, seq: nextSequence });
+  // Sampled HERE, beside the `ts` it describes, and not when the segment is sealed: the two
+  // can be 30 s apart and the clock usually steps inside that window. ./trust-runs.ts.
+  buffered.push({ ts, key, value, seq: nextSequence, trust: readClockTrust() });
   nextSequence += 1;
 
   if (buffered.length > MAX_BUFFERED_READINGS) {
@@ -172,8 +188,18 @@ export function appendReading(
   }
 }
 
-/** Seal whatever is buffered right now. Safe to call at any time. */
+/**
+ * Seals everything buffered right now, and does not return until it is on the card.
+ *
+ * ⚠️ TWO passes, and the second is not belt-and-braces. `sealPendingSegment` returns the seal
+ * ALREADY IN FLIGHT rather than starting a new one, so a single call landing mid-seal would
+ * return that promise and leave every reading queued since it began still in the buffer —
+ * at a park, the approach to the parking spot; at `/dl`, the tail of the ride you pulled the
+ * phone out for. Every caller wants "everything", so the contract is here rather than
+ * hand-copied at each site. scripts/check-ride-log-clock.ts §7.
+ */
 export async function flushEncryptedLog(): Promise<void> {
+  await sealPendingSegment();
   await sealPendingSegment();
 }
 
@@ -182,11 +208,10 @@ export async function closeEncryptedLog(): Promise<void> {
     clearInterval(segmentTimer);
     segmentTimer = undefined;
   }
-  // Two passes: the first awaits a periodic seal that may already be running
-  // (returning early there would let process.exit() kill it mid-append), the
+  // The two passes flushEncryptedLog() documents: the first awaits a periodic seal that may
+  // already be running (returning early would let process.exit() kill it mid-append), the
   // second seals whatever was buffered while that one ran.
-  await sealPendingSegment();
-  await sealPendingSegment();
+  await flushEncryptedLog();
 }
 
 function sealPendingSegment(): Promise<void> {
@@ -198,14 +223,41 @@ function sealPendingSegment(): Promise<void> {
   }
   const readings = buffered;
   buffered = [];
-  activeSeal = sealSegment(readings, recipientPublicKey, recipientPublicRaw).finally(() => {
+  activeSeal = sealRuns(readings, recipientPublicKey, recipientPublicRaw).finally(() => {
     activeSeal = null;
   });
   return activeSeal;
 }
 
 /**
- * Seals one segment and appends it.
+ * Seals the buffer, one segment per run of equal clock trust, and appends each in order.
+ *
+ * ⚠️ The retry lives HERE rather than inside sealSegment because a failure now has runs
+ * behind it. On a failure at run k, run k AND every run not yet sealed go back to the front
+ * of the buffer in order, and the loop stops — so nothing interleaves and nothing is
+ * reordered. `seq` means a reordered re-queue would still be recoverable, which is exactly
+ * why it is worth not doing.
+ *
+ * ⚠️ When it was the FLUSH that failed the bytes are probably on the card already, so the
+ * retry appends them a second time. Duplicate rows beat lost ones and the decoder has
+ * `session` + `seq` to spot them, but nothing dedupes: docs/power-cuts.md.
+ */
+async function sealRuns(readings: Reading[], publicKey: KeyObject, publicRaw: Buffer): Promise<void> {
+  const runs = splitByTrust(readings, reading => reading.trust);
+  for (let index = 0; index < runs.length; index += 1) {
+    try {
+      await sealSegment(runs[index].readings, runs[index].trust, publicKey, publicRaw);
+    } catch (error) {
+      const unsealed = runs.slice(index).flatMap(run => run.readings);
+      buffered = unsealed.concat(buffered);
+      console.error(`ride-log: failed to seal segment ${index + 1} of ${runs.length}, will retry:`, error);
+      return;
+    }
+  }
+}
+
+/**
+ * Seals one segment and appends it. Throws on failure; sealRuns owns the retry.
  *
  * Body is a JSON header line naming the signals in this segment, then one
  * `[ts, key, value, seq]` array per line. gzip collapses the repeated keys to almost
@@ -213,55 +265,68 @@ function sealPendingSegment(): Promise<void> {
  * data that cannot be re-collected.
  *
  * v1 lines were `[ts, key, value]` with a `{ v: 1, signals }` header; the fourth
- * element and `session` were added 2026-08-16, and both are backward AND forward
- * compatible by construction, so nothing needs migrating and old and new segments can
- * share a directory. The version is bumped anyway: nothing reads it today, but a
- * segment that says what shape it is costs one integer and this is the only copy of
- * the data. docs/diagnostics-and-checks.md §9.3.
+ * element and `session` were added 2026-08-16, and `trust` in v3 on 2026-09-14. All are
+ * backward AND forward compatible by construction, so nothing needs migrating and segments
+ * of every version can share a directory — scripts/decrypt-log.ts never reads `v` at all.
+ * The version is bumped anyway, because a segment that says what shape it is costs one
+ * integer and this is the only copy of the data. docs/diagnostics-and-checks.md §9.3.
  */
-async function sealSegment(readings: Reading[], publicKey: KeyObject, publicRaw: Buffer): Promise<void> {
-  try {
-    const signals: Record<string, [string, string, SignalSource]> = {};
-    for (const key of new Set(readings.map(reading => reading.key))) {
-      const meta = signalMeta.get(key);
-      if (meta) {
-        signals[key] = [meta.unit, meta.group, meta.source];
-      }
+async function sealSegment(
+  readings: Reading[],
+  trust: ClockTrust,
+  publicKey: KeyObject,
+  publicRaw: Buffer
+): Promise<void> {
+  const signals: Record<string, [string, string, SignalSource]> = {};
+  for (const key of new Set(readings.map(reading => reading.key))) {
+    const meta = signalMeta.get(key);
+    if (meta) {
+      signals[key] = [meta.unit, meta.group, meta.source];
     }
-    const lines = [JSON.stringify({ v: 2, session: sessionId, signals })];
-    for (const reading of readings) {
-      lines.push(JSON.stringify([reading.ts, reading.key, reading.value, reading.seq]));
-    }
-    const compressed = await gzipAsync(Buffer.from(lines.join("\n"), "utf-8"));
-
-    const ephemeral = await generateKeyPairAsync("x25519", {});
-    const sharedSecret = diffieHellman({ privateKey: ephemeral.privateKey, publicKey });
-    const ephemeralRaw = ephemeral.publicKey.export({ type: "spki", format: "der" }).subarray(-EPHEMERAL_KEY_BYTES);
-
-    const salt = Buffer.concat([ephemeralRaw, publicRaw]);
-    const derived = Buffer.from(await hkdfAsync("sha256", sharedSecret, salt, HKDF_INFO, 32));
-    const nonce = randomBytes(NONCE_BYTES);
-
-    const lengthField = Buffer.alloc(LENGTH_BYTES);
-    lengthField.writeUInt32LE(compressed.length, 0);
-    const header = Buffer.concat([MAGIC, ephemeralRaw, nonce, lengthField]);
-
-    const cipher = createCipheriv("aes-256-gcm", derived, nonce);
-    cipher.setAAD(header);
-    const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
-
-    await appendDurably(segmentPathFor(new Date()), Buffer.concat([header, ciphertext, cipher.getAuthTag()]));
-  } catch (error) {
-    // Put the readings back so the next tick retries rather than dropping data.
-    //
-    // ⚠️ When it was the FLUSH that failed the bytes are probably on the card already, so
-    // the retry appends them a second time. Duplicate rows beat lost ones and the decoder
-    // has `session` + `seq` to spot them, but nothing dedupes: docs/power-cuts.md.
-    buffered = readings.concat(buffered);
-    console.error("ride-log: failed to seal segment, will retry:", error);
   }
+  const lines = [JSON.stringify({ v: 3, session: sessionId, trust, signals })];
+  for (const reading of readings) {
+    lines.push(JSON.stringify([reading.ts, reading.key, reading.value, reading.seq]));
+  }
+  const compressed = await gzipAsync(Buffer.from(lines.join("\n"), "utf-8"));
+
+  const ephemeral = await generateKeyPairAsync("x25519", {});
+  const sharedSecret = diffieHellman({ privateKey: ephemeral.privateKey, publicKey });
+  const ephemeralRaw = ephemeral.publicKey.export({ type: "spki", format: "der" }).subarray(-EPHEMERAL_KEY_BYTES);
+
+  const salt = Buffer.concat([ephemeralRaw, publicRaw]);
+  const derived = Buffer.from(await hkdfAsync("sha256", sharedSecret, salt, HKDF_INFO, 32));
+  const nonce = randomBytes(NONCE_BYTES);
+
+  const lengthField = Buffer.alloc(LENGTH_BYTES);
+  lengthField.writeUInt32LE(compressed.length, 0);
+  const header = Buffer.concat([MAGIC, ephemeralRaw, nonce, lengthField]);
+
+  const cipher = createCipheriv("aes-256-gcm", derived, nonce);
+  cipher.setAAD(header);
+  const ciphertext = Buffer.concat([cipher.update(compressed), cipher.final()]);
+
+  await appendDurably(segmentPathFor(new Date(), trust), Buffer.concat([header, ciphertext, cipher.getAuthTag()]));
 }
 
-function segmentPathFor(when: Date): string {
+/**
+ * Where a segment goes: the day file once the clock is worth believing, a file named for
+ * this run of the process until then.
+ *
+ * ⚠️ The day name is `new Date()`, so it must not be reached on an unconfirmed clock — that
+ * is how `rides-2060-08-08.celog` and `rides-2060-02-16.celog` came to exist, holding real
+ * day-one riding under a date 34 years out. The file NAME is the only part of this log
+ * visible without the private key, which is the state every `ls`, every gather script and
+ * every person at the bike is in, so it must not assert a date nothing supports (#188).
+ *
+ * The session id rather than the kernel boot id: it is already sealed into every segment
+ * header and is already deliberately not a timestamp, so the name and the contents agree
+ * with no second source of truth. The "monotonic sequence" that orders them is `seq`, which
+ * is on every row already. docs/ride-log-clock.md — including what this costs.
+ */
+function segmentPathFor(when: Date, trust: ClockTrust): string {
+  if (trust !== "satellite-backed") {
+    return join(logDirectory, `rides-boot-${sessionId}.celog`);
+  }
   return join(logDirectory, `rides-${when.toISOString().slice(0, 10)}.celog`);
 }

@@ -62,6 +62,7 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "charge_cmd_a": [0, 127],
   "charge_cmd_ack": [0, 6],
   "charge_cmd_ack_ms": [0, 60000],
+  "charge_cmd_ack_seq": [0, 255],
   "charge_auto_mode": [0, 1],
   "charge_auto_reason": [0, 13],
   "charge_auto_target_a": [0, 127],
@@ -123,5 +124,5 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "vehicle_status_flags": [0, 255],
   "waypoint_lat": [-90, 90],
   "waypoint_lon": [-180, 180],
-  "waypoint_refusal": [1, 7],
+  "waypoint_refusal": [1, 8],
 });

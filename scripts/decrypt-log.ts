@@ -39,6 +39,11 @@ interface DecodedRecord {
   /** Undefined for v1 segments, sealed before the write-order counter existed. */
   session?: string;
   seq?: number;
+  /**
+   * What the Pi's clock was worth when `ts` was taken, from the v3 segment header.
+   * Undefined for v1/v2 segments — unknown, which is not the same as good.
+   */
+  clockTrust?: string;
 }
 
 interface SignalMeta {
@@ -53,6 +58,12 @@ interface FileResult {
   segments: number;
   skipped: number;
 }
+
+/**
+ * What the clock was worth, as the segment headers reported it. `undefined` collapses to
+ * "unrecorded" so a v1/v2 file is counted rather than quietly read as trustworthy.
+ */
+const UNRECORDED = "unrecorded";
 
 async function main(): Promise<void> {
   const { inputs, outputPath, force } = parseArgs(process.argv.slice(2));
@@ -89,6 +100,7 @@ async function main(): Promise<void> {
   let totalRecords = 0;
   let totalSegments = 0;
   let totalSkipped = 0;
+  const suspectByFile = new Map<string, Map<string, number>>();
   for (const file of files) {
     const result = await decryptFile(file, privateKey!, recipientPublicRaw);
     for (const record of result.records) {
@@ -104,10 +116,15 @@ async function main(): Promise<void> {
         sealed?.group ?? fallback?.group ?? "misc",
         sealed?.source ?? fallback?.source ?? "stream",
         record.session,
-        record.seq
+        record.seq,
+        record.clockTrust
       );
     }
     flushNow();
+    const suspect = countSuspectReadings(result.records);
+    if (suspect.size > 0) {
+      suspectByFile.set(basename(file), suspect);
+    }
     totalRecords += result.records.length;
     totalSegments += result.segments;
     totalSkipped += result.skipped;
@@ -119,6 +136,7 @@ async function main(): Promise<void> {
 
   closeDb();
   console.log(`\n${totalRecords} readings from ${totalSegments} segments → ${resolve(outputPath)}`);
+  reportClockTrust(suspectByFile);
   if (totalSkipped > 0) {
     console.error(`\n${totalSkipped} segment(s) could not be decrypted — that data is lost, the rest is intact.`);
     process.exit(2);
@@ -285,6 +303,10 @@ function readBody(body: string, records: DecodedRecord[], meta: Map<string, Sign
   // a day's worth of segments and a reboot mid-day starts a new session in the same
   // file. Undefined until a header says otherwise, which is what a v1 segment does.
   let session: string | undefined;
+  // Same treatment for the clock the readings were stamped under (v3+). Tracked per
+  // segment rather than per file because the Pi's clock steps mid-boot: that is the whole
+  // subject, and a file holds segments from either side of the step.
+  let clockTrust: string | undefined;
   for (const line of body.split("\n")) {
     if (line.length === 0) {
       continue;
@@ -294,16 +316,80 @@ function readBody(body: string, records: DecodedRecord[], meta: Map<string, Sign
       // Four elements since v2; a v1 line has three and leaves seq undefined, which
       // is stored as NULL rather than guessed at.
       const [ts, key, value, seq] = parsed as [number, string, number, number?];
-      records.push({ ts, key, value, session, seq });
+      records.push({ ts, key, value, session, seq, clockTrust });
       continue;
     }
     // Segment header: the signal definitions for the readings that follow, and from
     // v2 the session that wrote them.
-    const header = parsed as { session?: string; signals?: Record<string, [string, string, SignalSource]> };
+    const header = parsed as {
+      session?: string;
+      trust?: string;
+      signals?: Record<string, [string, string, SignalSource]>;
+    };
     session = header.session;
+    clockTrust = header.trust;
     for (const [key, [unit, group, source]] of Object.entries(header.signals ?? {})) {
       meta.set(key, { unit, group, source });
     }
+  }
+}
+
+/**
+ * How many readings in this file were sealed under a clock that could not be believed.
+ *
+ * Keyed on the header's own word, so a state added later is counted rather than dropped.
+ */
+function countSuspectReadings(records: DecodedRecord[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const trust = record.clockTrust ?? UNRECORDED;
+    if (trust === "satellite-backed") {
+      continue;
+    }
+    counts.set(trust, (counts.get(trust) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Says which readings carry a timestamp nothing supports, and how to recover the real one.
+ *
+ * ⚠️ Reports rather than repairs. `ts` stays exactly as the Pi wrote it: forcing timestamps
+ * to agree would recover ordering by destroying time, which src/storage/encrypted-log.ts
+ * argues at length and is why `seq` exists. The offset IS recoverable — `gps_epoch_s` is
+ * logged raw against each row's own wrong stamp — and the recipe is in
+ * docs/ride-log-clock.md, validated on 40 of 40 stepped sessions to within 1.54 s.
+ */
+function reportClockTrust(suspectByFile: Map<string, Map<string, number>>): void {
+  if (suspectByFile.size === 0) {
+    return;
+  }
+  let unrecorded = 0;
+  let untrusted = 0;
+  for (const counts of suspectByFile.values()) {
+    for (const [trust, count] of counts) {
+      if (trust === UNRECORDED) {
+        unrecorded += count;
+      } else {
+        untrusted += count;
+      }
+    }
+  }
+  if (untrusted > 0) {
+    console.warn(`\n⚠️  ${untrusted} reading(s) were sealed while the Pi's clock could not be trusted.`);
+  }
+  if (unrecorded > 0) {
+    // ⚠️ Not folded into the line above. Every segment sealed before 2026-09-14 predates the
+    // field, so on the existing archive that count is in the millions — and a warning that
+    // fires on the whole corpus is one nobody reads by the third run. Unknown is not the same
+    // as good, but it is not the same as bad either.
+    console.warn(`\n${unrecorded} further reading(s) predate the clock-trust field — nothing is known either way.`);
+  }
+  console.warn("   Their `ts` is whatever the clock said and is NOT corrected here; `seq` still orders them.");
+  console.warn("   Recovering the real time: docs/ride-log-clock.md. In rides.db: reading.clock_trust.");
+  for (const [file, counts] of suspectByFile) {
+    const detail = [...counts].map(([trust, count]) => `${count} ${trust}`).join(", ");
+    console.warn(`   ${file}: ${detail}`);
   }
 }
 

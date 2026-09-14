@@ -50,11 +50,12 @@ import { frameArrival } from "./can/frame-arrival.ts";
 import { configurePackTemperature, resolvePackTemperatures } from "./can/pack-temperature.ts";
 import { holdObdPoller, initObd, isObdResponse, handleResponse, startObdPoller } from "./can/obd.ts";
 import { ELOCK_RESP_ID, isElockResponse, handleElockResponse, readKeysPairedOnce } from "./can/elock.ts";
-import { syncSystemClockFromGps } from "./gps/clock.ts";
+import { syncSystemClockFromGps, systemClockTrust } from "./gps/clock.ts";
 import { GPS_CAN_ID } from "./can/gps.ts";
 import { handleHubMirrorFrame } from "./can/hub-mirror.ts";
 import { setupWs } from "./ws.ts";
 import { closeEncryptedLog, flushEncryptedLog, initEncryptedLog } from "./storage/encrypted-log.ts";
+import { startSealOnPark } from "./storage/seal-on-park.ts";
 import { startBleClient, type BleClient } from "./ble/client.ts";
 import type { RawChannel } from "socketcan";
 
@@ -137,10 +138,17 @@ console.log(
 // persisted at all, so say so loudly rather than silently logging into a void.
 let rideLogEnabled = false;
 try {
-  rideLogEnabled = await initEncryptedLog({ publicKeyPath: RIDE_LOG_PUBKEY, directory: RIDE_LOG_DIR });
+  rideLogEnabled = await initEncryptedLog({
+    publicKeyPath: RIDE_LOG_PUBKEY,
+    directory: RIDE_LOG_DIR,
+    clockTrust: systemClockTrust,
+  });
 } catch (err) {
   console.error("ride-log: init failed:", err);
 }
+// Parking is the only warning this bus gives before the power goes, and it is worth
+// 10-442 s. ./storage/seal-on-park.ts, docs/power-cuts.md §7.
+const stopSealOnPark = startSealOnPark();
 if (!rideLogEnabled) {
   console.warn("=".repeat(72));
   console.warn("ride-log: NO PUBLIC KEY — nothing is being persisted. The live dashboard");
@@ -659,6 +667,9 @@ async function shutdown(): Promise<void> {
   // and it would cost it out of this call's budget. A lost ride-log segment is
   // unrecoverable; a fan left spinning has the config.txt `gpio=` lines and a five-second
   // `Restart=on-failure` behind it.
+  // Before closeEncryptedLog, so a park landing mid-shutdown cannot start a seal against a
+  // log that is already being closed.
+  stopSealOnPark();
   await closeEncryptedLog();
   // ⚠️ Everything that can command the fan stops BEFORE the bridge is idled — the
   // gestures, then the curve. A hold or a tick landing after the bridge has been idled
