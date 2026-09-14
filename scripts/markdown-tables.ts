@@ -1,23 +1,24 @@
-/**
- * Every markdown table in a document, fenced code blocks skipped.
- *
- * Split out of scripts/check-vehicle-state-labels.ts when that file grew past 400 lines, and
- * kept general: nothing here knows what a 0x101 state is. Cells are stripped of backticks and
- * bold markers, so `**60**` and `` `60` `` both read as 60 — a table that changes emphasis has
- * not changed meaning, and a check that goes red over a pair of asterisks trains people to
- * stop reading it.
- */
+/** One parsed table. ⚠️ `header` cells are lower-cased; `selectTable`'s predicates rely on it. */
 export interface MarkdownTable {
   header: string[];
   rows: string[][];
 }
 
-/** @param source the whole document */
+/**
+ * Every markdown table in a document, fenced code blocks skipped.
+ *
+ * Split out of scripts/check-vehicle-state-labels.ts to keep one responsibility per file:
+ * nothing here knows what a 0x101 state is. Cells are stripped of backticks and bold markers,
+ * so `**60**` and `` `60` `` both read as 60 — a table that changes emphasis has not changed
+ * meaning, and a check that goes red over a pair of asterisks trains people to stop reading it.
+ * @param source the whole document
+ */
 export function markdownTables(source: string): MarkdownTable[] {
   const found: MarkdownTable[] = [];
   let fenced = false;
   let current: string[][] = [];
-  for (const line of source.split("\n")) {
+  // The trailing "" flushes a table that ends at end of file, so the flush is written once.
+  for (const line of [...source.split("\n"), ""]) {
     if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
       continue;
@@ -33,9 +34,6 @@ export function markdownTables(source: string): MarkdownTable[] {
       pushTable(found, current);
       current = [];
     }
-  }
-  if (current.length > 0) {
-    pushTable(found, current);
   }
   return found;
 }

@@ -2,18 +2,22 @@ import { readFile } from "node:fs/promises";
 import { SIGNALS } from "../src/can/registry.ts";
 import {
   LATCHING_SUBSTATES,
-  STATE_KEY,
-  SUBSTATE_KEY,
-  labelFor,
   NEVER_CAPTURED,
   PAIR_LABELS,
+  STATE_KEY,
   STATE_LABELS,
+  SUBSTATE_KEY,
   UNLABELLED,
-  pairLabel,
-  stateLabel,
+  labelFor,
 } from "../public/lib/state-labels.js";
+// parseHexBytes and not a Number.parseInt map: a typo yields NaN, Buffer.from stores 0, and
+// the probe then asserts against a frame nobody captured. scripts/check-vehicle-status.ts
+// carries the same warning at its own fixture parser, which is where this one was copied from.
+import { parseHexBytes } from "./captured-vcu-records.ts";
 import { decodeVehicleStatusFrame } from "../src/can/vehicle-status.ts";
 import { markdownTables, selectTable } from "./markdown-tables.ts";
+import { BEHAVIOUR } from "./captured-0x101-label-frames.ts";
+import type { Probe } from "./captured-0x101-label-frames.ts";
 
 // Whether the words the ALL page prints under the two 0x101 tiles still match the document
 // they were copied from.
@@ -56,117 +60,23 @@ const MUST_LABEL: Record<string, string> = {
  * 🚨 …and the counts, hard-coded for the same reason.
  *
  * A row count read out of the parse is a budget derived from the thing under test: it moves
- * with the document and can never fire. If a table is reorganised these are what go red, and
- * they are the only thing standing between a regex that silently matches nothing and seven
- * assertions passing vacuously.
+ * with the document and can never fire. These are read from the DOCUMENT and tested against
+ * the JS, which is the other way round.
+ *
+ * ⚠️ Honest about what each one buys, because an earlier version of this comment claimed more.
+ * `VOCABULARY_*` is the one that catches something nothing else does: a row whose phrase is
+ * `—` is skipped by both arms of B, so deleting one is invisible to A-D. The band counts can
+ * only fire when both sides were changed together — they are a speed bump that makes a human
+ * acknowledge the vocabulary changed size, not a second opinion on the document.
  */
 const BAND_PAIRS = 35;
 const BAND_STATES = 6;
-const VOCABULARY_ROWS = 17;
+const VOCABULARY_PAIR_ROWS = 14;
+const VOCABULARY_LATCHED_ROWS = 3;
 const STATE_VOCABULARY_ROWS = 1;
 
 /** No label may name a gear: reverse is `rolling_backwards` on 0x104, not a 0x101 state. */
 const FORBIDDEN_IN_A_PHRASE = /revers|gear|forward|neutral/i;
-
-interface Probe {
-  what: string;
-  hex: string;
-  tile: "state" | "substate";
-  expect: string;
-  documented: boolean;
-  synthetic?: true;
-}
-
-/**
- * Frames through the real decoder and the real label functions.
- *
- * ⚠️ Real bytes wherever a real frame can reach the branch, because a label pinned to a frame
- * the bike sent cannot be argued with. Two branches no capture can ever reach are marked
- * `synthetic` — the convention scripts/check-vehicle-status.ts already uses — and they are the
- * newest code in the file: a pair in NEITHER table is by construction one the bike has never
- * sent, and it is the branch the "never captured" sentinel lives in.
- */
-const BEHAVIOUR: Probe[] = [
-  {
-    what: "parked",
-    hex: "3E 3C 04 04 64 00 00 00",
-    tile: "substate",
-    expect: "parked",
-    documented: true,
-  },
-  {
-    what: "🔥 substate 150, bit 7 set — the branch that proves the latching map is consulted AT ALL. 150 is in no band, so a pairs-only lookup calls a documented start-up step uncaptured. ⚠️ It does not pin the ORDER: a pairs-first version falling through here behaves identically, which the mutation suite established by having that reordering survive",
-    hex: "96 28 04 04 64 00 00 00",
-    tile: "substate",
-    expect: "drive-enable step",
-    documented: true,
-  },
-  {
-    what: '🔥 substate 143, the LOWEST bit-7 value — the boundary. `substate >= 128` widened to `>= 144` leaves every table agreeing and renders this documented drive-enable step as "never captured" in the fault ink; 150 does not catch it. 2026-08-02 21:05:01.386245, capture-20260802-210358-346ecdd5.log',
-    hex: "8F 28 04 04 64 00 00 00",
-    tile: "substate",
-    expect: "drive-enable step",
-    documented: true,
-  },
-  {
-    what: '🔥 the state tile over a pair that HAS a phrase — pins that the pair wins over the state fallback. Drop stateLabel()\'s early return and this reads "charging", which is what the DC screenshot would have stopped saying',
-    hex: "68 64 04 14 4B 00 00 00",
-    tile: "state",
-    expect: "DC charging",
-    documented: true,
-  },
-  {
-    what: "riding",
-    hex: "2B 28 06 44 72 00 00 00",
-    tile: "substate",
-    expect: "riding",
-    documented: true,
-  },
-  {
-    what: "park assist — and ⚠️ NOT a direction: 52 and 53 both read the same phrase",
-    hex: "34 28 06 0C 4B 00 00 00",
-    tile: "substate",
-    expect: "park assist",
-    documented: true,
-  },
-  {
-    what: "the blocking fault",
-    hex: "53 50 04 14 55 00 00 00",
-    tile: "substate",
-    expect: "blocking fault",
-    documented: true,
-  },
-  {
-    what: "state 1 / substate 3 — documented, and nobody knows what it is",
-    hex: "03 01 04 14 64 00 00 00",
-    tile: "substate",
-    expect: UNLABELLED,
-    documented: true,
-  },
-  {
-    what: "the state tile over a state whose own meaning is measured but whose substate's is not",
-    hex: "66 64 04 14 64 00 00 00",
-    tile: "state",
-    expect: "charging",
-    documented: true,
-  },
-  {
-    what: "SYNTHETIC — a pair in NEITHER table. No capture can carry one by definition, and this is the branch the sentinel lives in",
-    hex: "2B 64 04 14 64 00 00 00",
-    tile: "substate",
-    expect: NEVER_CAPTURED,
-    documented: false,
-    synthetic: true,
-  },
-  {
-    what: "SYNTHETIC — a bit-7 substate that is in no table either",
-    hex: "91 64 04 14 64 00 00 00",
-    tile: "substate",
-    expect: NEVER_CAPTURED,
-    documented: false,
-    synthetic: true,
-  },
-];
 
 const failures: string[] = [];
 const text = await readFile(DOC, "utf-8");
@@ -225,16 +135,22 @@ const vocabulary = selectTable(
   failures
 );
 const documentedPhrases = new Map<string, string | null>();
+const documentedLatched = new Map<number, string | null>();
 for (const row of vocabulary?.rows ?? []) {
-  documentedPhrases.set(
-    row[0] === "latched" ? `latched/${row[1]}` : `${row[0]}/${row[1]}`,
-    row[2] === "—" ? null : row[2]
-  );
+  const phrase = row[2] === "—" ? null : row[2];
+  if (row[0] === "latched") {
+    documentedLatched.set(Number(row[1]), phrase);
+  } else {
+    documentedPhrases.set(`${row[0]}/${row[1]}`, phrase);
+  }
 }
-if (documentedPhrases.size !== VOCABULARY_ROWS) {
+// Counted separately, which is strictly stronger than one total: a row moving from the pair
+// half to the latched half keeps a combined count at 17 and would go unnoticed.
+if (documentedPhrases.size !== VOCABULARY_PAIR_ROWS || documentedLatched.size !== VOCABULARY_LATCHED_ROWS) {
   failures.push(
-    `the vocabulary table parsed as ${documentedPhrases.size} rows against the ${VOCABULARY_ROWS} this check is ` +
-      `written for — raise the count here in the same commit that adds or removes one`
+    `the vocabulary table parsed as ${documentedPhrases.size} pair rows and ${documentedLatched.size} latched ` +
+      `ones, against the ${VOCABULARY_PAIR_ROWS} and ${VOCABULARY_LATCHED_ROWS} this check is written for — raise ` +
+      `the counts here in the same commit that adds or removes a row`
   );
 }
 
@@ -281,10 +197,9 @@ for (const [pair, phrase] of PAIR_LABELS) {
     failures.push(`${pair} is "${phrase}" in public/lib/state-labels.js and "${documented}" in docs/can-0x101.md`);
   }
 }
-for (const [key, phrase] of documentedPhrases) {
-  // Guarded like assertion A's second arm: a vocabulary table that failed to parse reports
-  // that once, rather than sixteen times as a missing row.
-  if (!vocabulary || key.startsWith("latched/")) continue;
+// Guarded once rather than per iteration: a vocabulary table that failed to select reports
+// that once, rather than sixteen times over as a missing row.
+for (const [key, phrase] of vocabulary ? documentedPhrases : []) {
   const mapped = PAIR_LABELS.get(key);
   if (mapped === undefined) {
     failures.push(
@@ -298,9 +213,8 @@ for (const [key, phrase] of documentedPhrases) {
 }
 
 // C. The three bit-7 substates, which belong to no band and so cannot be covered by A.
-for (const [substate, phrase] of LATCHING_SUBSTATES) {
-  if (!vocabulary) break;
-  const documented = documentedPhrases.get(`latched/${substate}`);
+for (const [substate, phrase] of vocabulary ? LATCHING_SUBSTATES : []) {
+  const documented = documentedLatched.get(substate);
   if (documented === undefined) {
     failures.push(
       `public/lib/state-labels.js carries latching substate ${substate} with no row in the vocabulary table`
@@ -311,10 +225,11 @@ for (const [substate, phrase] of LATCHING_SUBSTATES) {
     );
   }
 }
-for (const key of documentedPhrases.keys()) {
-  if (!key.startsWith("latched/")) continue;
-  if (!LATCHING_SUBSTATES.has(Number(key.slice("latched/".length)))) {
-    failures.push(`the vocabulary table has a latched row for ${key}, which public/lib/state-labels.js does not carry`);
+for (const substate of documentedLatched.keys()) {
+  if (!LATCHING_SUBSTATES.has(substate)) {
+    failures.push(
+      `the vocabulary table has a latched row for substate ${substate}, which public/lib/state-labels.js does not carry`
+    );
   }
 }
 
@@ -345,7 +260,7 @@ for (const phrase of [...PAIR_LABELS.values(), ...LATCHING_SUBSTATES.values(), .
   }
 }
 
-// F. The four identified pairs still carry a phrase.
+// F. The identified pairs still carry a phrase.
 for (const [pair, why] of Object.entries(MUST_LABEL)) {
   if (!PAIR_LABELS.get(pair)) {
     failures.push(`${pair} has no phrase in public/lib/state-labels.js, and it is ${why}`);
@@ -355,13 +270,10 @@ for (const [pair, why] of Object.entries(MUST_LABEL)) {
 // G. The function the tile actually calls, over frames the bike really sent.
 for (const probe of BEHAVIOUR) {
   const decoded = new Map(
-    decodeVehicleStatusFrame(Buffer.from(probe.hex.split(" ").map(byte => parseInt(byte, 16)))).map(value => [
-      value.key,
-      value.value,
-    ])
+    decodeVehicleStatusFrame(Buffer.from(parseHexBytes(probe.hex))).map(value => [value.key, value.value])
   );
-  const state = decoded.get("vehicle_state_can");
-  const substate = decoded.get("vehicle_substate_can");
+  const state = decoded.get(STATE_KEY);
+  const substate = decoded.get(SUBSTATE_KEY);
   if (state === undefined || substate === undefined) {
     failures.push(`${probe.what}: the frame did not decode to a state and a substate`);
     continue;
@@ -377,8 +289,24 @@ for (const probe of BEHAVIOUR) {
   if (got.text !== probe.expect) {
     failures.push(`${probe.what}: ${state}/${substate} renders "${got.text}" and should render "${probe.expect}"`);
   }
-  if (got.documented !== probe.documented) {
-    failures.push(`${probe.what}: ${state}/${substate} is documented=${got.documented}, expected ${probe.documented}`);
+  // Derived from the hand-written `expect`, not from the function under test, so it still
+  // fires if words() flips the flag — and eleven table fields that could only ever be written
+  // one way stop being maintained by hand.
+  const documented = probe.expect !== NEVER_CAPTURED;
+  if (got.documented !== documented) {
+    failures.push(`${probe.what}: ${state}/${substate} is documented=${got.documented}, expected ${documented}`);
+  }
+}
+
+// H. The two keys the label line renders under, pinned against the registry. A rename there
+//    that missed public/lib/state-labels.js makes the line silently disappear — the failure
+//    scripts/check-all-view-tiles.ts guards against for public/lib/latched.js's keys.
+for (const key of [STATE_KEY, SUBSTATE_KEY]) {
+  if (!SIGNALS.some(signal => signal.key === key)) {
+    failures.push(
+      `public/lib/state-labels.js labels "${key}", which src/can/registry.ts does not define — the ALL page would ` +
+        `render no label line at all, and nothing else would say so`
+    );
   }
 }
 
@@ -386,7 +314,7 @@ console.log(
   `${documentedPairs.size} pairs and ${documentedPhrases.size} vocabulary rows read out of docs/can-0x101.md`
 );
 console.log(
-  `${BEHAVIOUR.length} frames run through pairLabel()/stateLabel(); ${BEHAVIOUR.filter(probe => probe.synthetic).length} of them synthetic`
+  `${BEHAVIOUR.length} frames run through labelFor(); ${BEHAVIOUR.filter(probe => probe.synthetic).length} of them synthetic`
 );
 
 if (failures.length > 0) {

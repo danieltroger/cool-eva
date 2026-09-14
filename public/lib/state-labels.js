@@ -44,6 +44,18 @@ export function labelFor(key, pair) {
 }
 
 /**
+ * Whether this signal gets a label line at all.
+ *
+ * A named predicate rather than two key comparisons in the view — ./latched.js exports
+ * `getsLatchedTile()` for the same reason, so the key names live on one side of the seam.
+ * @param {string} key
+ * @returns {boolean}
+ */
+export function hasStateVocabulary(key) {
+  return key === STATE_KEY || key === SUBSTATE_KEY;
+}
+
+/**
  * The two signals this vocabulary is about.
  *
  * Named as constants so scripts/check-vehicle-state-labels.ts can assert them against
@@ -56,18 +68,15 @@ export const SUBSTATE_KEY = "vehicle_substate_can";
 /**
  * What to print under `vehicle_substate_can`, given both halves of the pair.
  *
- * ⚠️ A substate with bit 7 set belongs to no state band at all — the state latches at its
- * previous value while it is present — so `40/150` is absent from the band table by
- * construction and a lookup that consulted only the pairs would call every start-up step
- * uncaptured. Consulting LATCHING_SUBSTATES is what matters, not the order: the pair table
- * cannot contain a bit-7 key (the check asserts it against the band table), so a pairs-first
- * version that fell through here would behave identically. The mutation suite found that out
- * by proposing the reordering and having it survive.
+ * ⚠️ A substate with bit 7 set belongs to no state band, so it is looked up on the substate
+ * alone: `40/150` is absent from the band table by construction. Why the ORDER of the two
+ * lookups is not what matters — and how the mutation suite established that — is in
+ * docs/can-0x101.md §"The vocabulary the dashboard renders".
  * @param {number} state
  * @param {number} substate
  * @returns {StateWords}
  */
-export function pairLabel(state, substate) {
+function pairLabel(state, substate) {
   if (substate >= 128) {
     return words(LATCHING_SUBSTATES.get(substate));
   }
@@ -90,7 +99,7 @@ export function pairLabel(state, substate) {
  * @param {number} substate
  * @returns {StateWords}
  */
-export function stateLabel(state, substate) {
+function stateLabel(state, substate) {
   const pair = pairLabel(state, substate);
   if (pair.text !== UNLABELLED) {
     return pair;
