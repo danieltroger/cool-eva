@@ -100,15 +100,10 @@ export function waypointEventsOf(log: WaypointLog): WaypointEvent[] {
  * waypoint of the ride — the list failing at its one job while its counters stayed
  * correct. A save is a place you cannot go back to; a refusal is news.
  *
- * ⚠️ At the extreme that inverts: with the cap reached and every held event a save, the only
- * refusal in the log is the one just pushed, and it is what goes. That is the same rule
- * rather than an exception to it — saves win — but the phone will say "dropped its oldest
- * refusals" about a press made a second ago. It needs 50 saves in one boot against 97 ever.
- *
- * Eviction removes an element and so leaves the relative order of the rest, which is the
- * property the whole design rests on: the array is in FIRE order, and nothing downstream
- * sorts it. `at` is wall clock on a Pi that steps its own clock from GPS (../gps/clock.ts),
- * so a sort by time would scramble every event either side of a step.
+ * Eviction removes an element and so leaves the relative order of the rest: the array is in
+ * FIRE order, nothing downstream sorts it, and `at` is wall clock on a Pi that steps its own
+ * from GPS (../gps/clock.ts). The extreme where the rule's own wording inverts, and what the
+ * phone says then: docs/waypoints.md §"What the list can and cannot be short of".
  */
 function append(log: WaypointLog, event: WaypointEvent): void {
   log.events.push(event);

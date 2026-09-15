@@ -735,11 +735,11 @@ body {
    sheet at 390 px, with the check's 145-character unbreakable token in a row: `.sheet-body`
    scrollWidth 969 without this line and 390 with it, while the row's own box reads 355 and
    its right edge 372 in every one of those, `min-width: 0` or `auto`. So the ROW box can
-   never witness this and the scroll
-   container is what does — which is what check-phone-width.ts asserts, with that token as
-   its probe. Nothing the list holds today is such a token (a coordinate has a space in it
-   and every WAYPOINT_REFUSAL_TEXT sentence breaks at spaces); Energica's identifiers are,
-   which is the same call `.code-field` makes. */
+   never witness this and the scroll container is what does — which is what
+   check-phone-width.ts asserts, with that token as its probe. Nothing the list holds today
+   is such a token (a coordinate has a space in it and every WAYPOINT_REFUSAL_TEXT sentence
+   breaks at spaces); Energica's identifiers are, which is the same call `.code-field`
+   makes. */
 .waypoint-list {
   padding: 0.1rem 0.2rem 0;
 }
@@ -784,7 +784,8 @@ body {
 }
 
 /* The two lines under the list: what the counts are, and that the bike keeps none of
-   this past a restart. Same size and colour as .sheet-heading-note next to it. */
+   this past a restart. --sub at the rows' own 0.62rem, NOT .sheet-heading-note's 0.74rem:
+   that one is a section's subtitle and these are a footnote to the list above them. */
 .waypoint-note {
   font-size: 0.62rem;
   color: var(--sub);

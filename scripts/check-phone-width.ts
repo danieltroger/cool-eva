@@ -115,6 +115,15 @@ const PROBE = `(() => {
   return widths;
 })()`;
 
+interface SheetMeasurement {
+  open: boolean;
+  clientWidth: number;
+  bodyScrollWidth: number;
+  bodyClientWidth: number;
+  widestRowRight: number;
+  rows: string[];
+}
+
 /**
  * The menu sheet, measured from INSIDE itself.
  *
@@ -409,14 +418,7 @@ function asProbeWidths(value: unknown, field: "tile" | "sheet"): { measured: num
 }
 
 /** Throws rather than narrows, for the reason asMeasurement() does. */
-function asSheetMeasurement(value: unknown): {
-  open: boolean;
-  clientWidth: number;
-  bodyScrollWidth: number;
-  bodyClientWidth: number;
-  widestRowRight: number;
-  rows: string[];
-} {
+function asSheetMeasurement(value: unknown): SheetMeasurement {
   const fields = fieldsOf(value, "the sheet's measurement");
   const rows = fields.rows;
   if (
