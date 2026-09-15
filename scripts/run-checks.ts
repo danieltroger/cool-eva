@@ -338,11 +338,13 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-cluster-frames.ts",
     covers:
       "the two frames the instrument cluster puts on this bus that we decode — 0x412's range estimate and 0x410's " +
-      "type-3 drive triple — replayed from real captures of 2026-08-02, 2026-08-09 and 2026-09-15: the little-endian " +
-      "byte order of all four fields (each has a fixture whose two bytes differ, so a big-endian mutant cannot pass), " +
-      "the signed torque against a captured regen frame, the sub-type gate, that 0x412 reaches STREAM_IDS and both " +
-      "decoders reach decodeFrame, and that all four new signals reach a bounds rule with the highest values ever " +
-      "measured inside it and an absurd one outside",
+      "type-3 drive triple — replayed from real captures of 2026-08-02, 2026-08-09, 2026-09-13 and 2026-09-15: the " +
+      "little-endian byte order of all four fields (each has a fixture whose two bytes differ, so a big-endian mutant " +
+      "cannot pass), the signed torque against a captured regen frame asserted on a literal rather than recomputed, " +
+      "the TYPE byte tested against the real seed frame (whose sub-index is also 0xFF, so only byte 0 can reject it) " +
+      "and the length guard against a truncated type-3 frame, that 0x412 reaches STREAM_IDS, that BOTH readers " +
+      "survive on 0x410 — the GPS one included — and that the BLE and CAN decoders of the shared type-3 unpacking " +
+      "still agree on one frame, which is the only place in this suite any BLE path is exercised at all",
   },
   {
     script: "scripts/check-brake-lane.ts",

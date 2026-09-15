@@ -14,7 +14,8 @@ import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 // ✅ EVERY FRAME BELOW IS REAL except ONE, which says so on its own line. A hand-written
 // frame only proves the decoder agrees with whoever wrote it. ⚠️ An earlier version of this
 // header claimed all of them were captured while three were composed from a per-byte census
-// — real bytes, never that arrangement. Provenance is on each case; grep the named file.
+// — real bytes, never that arrangement (it was two of them, not three). Provenance is on
+// each case; grep the named file.
 //
 // ⚠️ The endianness cases are the point of this file. 0x412 b2-b3 and 0x410 type 3's
 // three fields are all little-endian pairs, and a big-endian mutant produces a plausible
@@ -52,13 +53,17 @@ console.log("§1 0x412 — the cluster's range estimate");
 
 // `00 00 4F 00 …` is all 180 frames of obd-garage/captures/2026-08-02_bms_90s.log, where the
 // hub's own type-2 range slot reads 0x004F in the same file. `03 06 40 00 …` is the 25 s
-// parked-on-AC capture of 2026-09-15 (evidence/, gitignored). The third is the 2026-08-09
-// riding archive, and it is the one that pins the byte order: 0x0142 = 322 one way, 0x4201 =
-// 16 897 the other, and only one of those is a range.
+// parked-on-AC capture of 2026-09-15 (evidence/, gitignored).
+//
+// ⚠️ The third is NOT in ~/Documents/cool-eva-archive, which stops at 2026-08-09. It is
+// `dedupe-capture-20260913-103237-4a07e1c7.txt` (160 occurrences), a per-boot extract in
+// another session's scratchpad — `COUNT (timestamp) ID payload` rows, not candump lines, and
+// no raw 2026-09-13 capture exists under ~/Documents at all. It is the one that pins the byte
+// order: 0x0142 = 322 one way, 0x4201 = 16 897 the other, and only one of those is a range.
 const RANGE_FIXTURES: [string, number, string][] = [
   ["00 00 4F 00 31 42 08 00", 79, "2026-08-02 parked, hub type-2 says 79 in the same file"],
   ["03 06 40 00 31 42 0A 00", 64, "2026-09-15 parked on AC, SOC 50 %"],
-  ["00 00 42 01 31 42 04 00", 322, "2026-09-13, 160 frames, the archive maximum — HIGH BYTE SET, pins little-endian"],
+  ["00 00 42 01 31 42 04 00", 322, "dedupe-capture-20260913-103237, 160 frames, the per-boot maximum — HIGH BYTE SET"],
 ];
 for (const [hex, expected, why] of RANGE_FIXTURES) {
   const got = valueOf(decodeClusterRangeFrame(frameOf(hex)), "range_can_km");
@@ -81,7 +86,7 @@ const OUTPUT_FIXTURES: [string, number, number, number, string][] = [
   ["03 FF 3E 00 C4 09 0F 00", 62, 2500, 15, "cruising — rpm high byte 0x09 set, pins little-endian"],
   ["03 FF 36 00 66 08 FE FF", 54, 2150, -2, "REGEN — b7 = 0xFF, torque must go negative"],
   ["03 FF 00 00 00 00 00 00", 0, 0, 0, "stationary"],
-  ["03 FF AA 00 86 1A 40 00", 170, 6790, 64, "the fastest frame in the capture"],
+  ["03 FF AA 00 86 1A 40 00", 170, 6790, 64, "among the fastest in the capture — 170 km/h at 6 790 rpm"],
 ];
 for (const [hex, speed, rpm, torque, why] of OUTPUT_FIXTURES) {
   const values = decodeHubOutputFrame(frameOf(hex));
@@ -173,16 +178,22 @@ for (const key of ["range_can_km", "dash_speed_kmh", "motor_torque_can_nm", "mot
 }
 
 // The highest values actually measured must survive the gate, or a working bike reads as a
-// broken sensor. 322 km of range and 194 km/h of dash speed are both from the archive; the
+// broken sensor. 194 km/h of dash speed is from ~/Documents/cool-eva-archive; 322 km of range
+// is from the 2026-09-13 per-boot extract named in §1, NOT from that archive. The
 // out-of-range pair is what proves the gate is switched on for these keys at all.
 const rangeSignal = SIGNALS.find(entry => entry.key === "range_can_km");
 const speedSignal = SIGNALS.find(entry => entry.key === "dash_speed_kmh");
 if (rangeSignal && speedSignal) {
   check("range_can_km 322 is plausible", isPlausible("range_can_km", 322, rangeSignal.unit, rangeSignal.group));
   check("dash_speed_kmh 194 is plausible", isPlausible("dash_speed_kmh", 194, speedSignal.unit, speedSignal.group));
+  // ⚠️ READ the sibling's ceiling, do not restate it. Hard-coding 400 here passed while
+  // `speed_can_kmh` was mutated to [0, 500] — the assertion named a relationship and checked
+  // a constant.
+  const sibling = SIGNALS.find(entry => entry.key === "speed_can_kmh");
+  const siblingCeiling = sibling ? boundsFor(sibling.key, sibling.unit, sibling.group)?.[1] : undefined;
   check(
     "dash_speed_kmh is bounded no tighter than speed_can_kmh, which reads LOWER than it",
-    isPlausible("dash_speed_kmh", 400, speedSignal.unit, speedSignal.group)
+    siblingCeiling !== undefined && isPlausible("dash_speed_kmh", siblingCeiling, speedSignal.unit, speedSignal.group)
   );
   check(
     "range_can_km 5000 is REJECTED, so the gate is on",
