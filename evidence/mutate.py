@@ -77,8 +77,10 @@ MUTANTS = [
     ("N7", "a leftover staging file no longer stops the next import", "scripts/ride-import.ts",
      "if (orphanedStaging.length > 0) {", "if (orphanedStaging.length > 1000) {",
      "scripts/check-import-ride-log.ts"),
-    ("N8", "journal_mode left in WAL", "scripts/ride-import.ts",
-     '  staging.pragma("journal_mode = DELETE");\n', "", "scripts/check-import-ride-log.ts"),
+    ("N8", "journal_mode left in WAL", "scripts/route-track.ts",
+     'journalMode: String(db.pragma("journal_mode = DELETE", { simple: true }))',
+     'journalMode: String(db.pragma("journal_mode", { simple: true }))',
+     "scripts/check-import-ride-log.ts"),
 ]
 
 
