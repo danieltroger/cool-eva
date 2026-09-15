@@ -19,6 +19,21 @@ Why it was worth doing. Measured 2026-09-15 against a copy of the 2026-09-12 arc
 
 `F` is `A` wrapped in a `COUNT(*)`, so before this the same six-CTE pipeline over 35 M readings ran **twice per load** and was 65 % of the dashboard's SQL. ⚠️ Those are warm-cache numbers on a laptop that had just been hammering the file; on a genuinely cold page cache the same A measures ~5 s and, unhelpfully for this table, so does `H` (Rides, 4 597 ms cold against 669 ms warm). **`H` is untouched by this change** — it counts raw `gps_lat` rows and never used this pipeline — and it is the next candidate.
 
+### What it is worth in the browser, which is the number that matters
+
+SQL times are not what Daniel waits for. Measured 2026-09-15 in a headless Chrome against Grafana 11.3.0 in Docker (`docker-compose.yml`'s pinned image), the same 2.5 GB database both ways, `now-90d → now`, cache-bypassing reload, three runs each. "Painted" is instrumented rather than eyeballed: a script installed before any page script polls `requestAnimationFrame` and records the first frame where the geomap's OpenLayers canvas has real pixels in it **and** every `/api/ds/query` has already returned.
+
+|                            | before                                   | after                                |
+| -------------------------- | ---------------------------------------- | ------------------------------------ |
+| time to a **painted map**  | 12 306 / 12 178 / 11 818 ms → **12.2 s** | 4 103 / 4 179 / 4 154 ms → **4.2 s** |
+| last query response        | 11 020 / 10 895 / 10 522 ms → **10.9 s** | 2 875 / 2 955 / 2 957 ms → **3.0 s** |
+| slowest two panel requests | **9.4–10.5 s**                           | 2.1–2.4 s                            |
+| DOMContentLoaded           | ~350 ms                                  | ~370 ms                              |
+
+**12.2 s → 4.2 s to a map you can look at**, and the two ten-second requests are gone. What is left is the charge-session and Rides panels, which this change does not touch.
+
+⚠️ The 11 243-point render is **not** the bottleneck at this size: the gap between the last query returning and the canvas painting is ~1.2 s either way, before and after, on a layer that styles every point as its own OpenLayers feature. That budget is what [Thinning](#thinning) exists to protect and it is still doing its job — the archive is 180 563 points at the time of this measurement, well past the ~68 000 at which the layer was measured to stop painting entirely.
+
 What it costs: **146 150 points, built in 4.8 s, 4 575 232 B on disk** (~31 B a point), rebuilt from scratch on every import rather than appended to. An incremental build would have to reason about which points a new fix un-spikes; a full rebuild is five seconds beside a twenty-minute decrypt.
 
 `ts` is the rowid, so the panel's `WHERE ts BETWEEN` is a `SEARCH route_track USING INTEGER PRIMARY KEY` range scan. The **per-second collapse is enforced by a unique index on `ts / 1000`**, not by that primary key: `ts` is milliseconds, so two rows in one second are two perfectly legal rowids and a constraint there could never fire.
@@ -63,9 +78,24 @@ The despiker removes 43 of the 146 193, so essentially all of these are drawn to
 
 `PRAGMA journal_mode = DELETE`, set by the import step as its last act on the finished database. `grafana/README.md` §"`rides.db` is in WAL mode, and that silently blanks panels" measured the datasource erroring **3 of 85** queries over a WAL file and **0 of 85** over a rollback one, with a variable rate that reached 32 in one round, and named "the decrypt step that produces the file Grafana reads" as where to set it. That step now exists. The same section's warning is satisfied by construction: DELETE is wrong for a file a logger is appending to (53 of 85 there), and this one is static by the time the pragma runs.
 
-### If the table is missing
+### If the table is missing — measured, because guessing at this was wrong twice
 
-A rebuild that skips the materialiser leaves no `route_track` at all, because `scripts/decrypt-log.ts` refuses an existing `--out` and therefore always starts from a fresh file. `scripts/import-ride-log.ts --materialise-only <db>` is the one-command repair, and `info.route_track_built_at` records when the table was last built.
+A rebuild that skips the materialiser leaves no `route_track` at all: `scripts/decrypt-log.ts` refuses an existing `--out`, so a rebuild always starts from a fresh file and there is no stale-table state to be in.
+
+Dropped the table from a real 2.5 GB archive and reloaded the dashboard, 2026-09-15:
+
+- **exactly two panels** show a "Panel status" error badge in their header — _Route and charge stops_ and _GPS points mapped_, which are the two that read the table;
+- the datasource returns `SQL logic error: no such table: route_track (1)` with `"status": 500`;
+- the map **still draws**: basemap tiles, charge-stop pins and waypoint stars are all there, and only the track is absent. Distance, Charge stops and Energy charged are unaffected.
+
+⚠️ So it is neither the silent blank `grafana/README.md` warns about under §"`rides.db` is in WAL mode" nor a page that refuses to load. It is a badge on a map that otherwise looks finished — which is exactly the shape that gets missed, so it is worth knowing that the repair is one command and takes four seconds:
+
+```bash
+node --experimental-strip-types scripts/import-ride-log.ts --materialise-only rides.db
+# route_track: 180 563 points in 4 247 ms
+```
+
+`info.route_track_built_at` records when the table was last built, and the import prints it for the database it is about to replace.
 
 ## Reconstructing a track from two independent signals
 
