@@ -329,6 +329,20 @@ console.log("── §2b nothing in src/ injects the deadline's clock ──");
     offenders.length === 0,
     `a production call site injects the deadline's clock or budget, which defeats it: ${offenders.join("; ")}`
   );
+  // ⚠️ THE POSITIVE CONTROL, added with #126. The assertion above expects ZERO matches, so
+  // it passes just as happily when the walk returned nothing or when `startFreezeFrameRead`
+  // has been renamed out from under the pattern — an assertion that cannot fail is this
+  // repo's recurring bug, and it was sitting in the guard against another one.
+  const scanned = entries.filter(entry => entry.endsWith(".ts"));
+  check(
+    scanned.length >= 50 && scanned.some(entry => entry.replaceAll("\\", "/").endsWith("vcu/read-runner.ts")),
+    `the walk should have read the source at all, saw ${scanned.length} .ts files under src/`
+  );
+  const selfText = await readFile(new URL(import.meta.url), "utf8");
+  check(
+    [...selfText.matchAll(/startFreezeFrameRead\(\{[^}]*\}/g)].some(match => /\bnow\b|\bbudgetMs\b/.test(match[0])),
+    "the pattern should still match an injecting call — run over THIS file, where there is one, it finds none"
+  );
   console.log("  the seam exists for this file and for nothing that ships");
 }
 

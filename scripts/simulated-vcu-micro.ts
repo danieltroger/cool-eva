@@ -44,8 +44,6 @@ export interface SimulatedMicro {
   silentIndices?: number[];
   /** Indices that answer `7F 22 <nrc>`. */
   refusedIndices?: number[];
-  /** How long the session survives without traffic. The bike's is ~2500 ms. */
-  sessionIdleMs?: number;
   /** Component number → the whole `0x17` reply payload, service byte included. */
   freezeFrames?: Map<number, Uint8Array>;
   /** The whole `0x18` reply payload, service byte included. */
@@ -99,6 +97,16 @@ export interface SimulatedUpload {
 export interface SimulatedBus {
   /** Hand this to createVcuKwpClient, and wire its onMessage to the client. */
   channel: RawChannel;
+  /**
+   * Expires this micro's session now, as its idle timer would have.
+   *
+   * ⚠️ Said rather than SLEPT toward, which is the whole point: a check that sleeps past
+   * the micro's window has to land inside the client's 1500 ms one as well, so a stalled
+   * laptop changes the request count and the check goes red over nothing (#126). The
+   * client is not told, which is the situation being modelled — a session that lapsed
+   * while the tester still believed it was open.
+   */
+  expireSession: (target: VcuTarget) => void;
   /** Every request payload the bus carried, as "A9 22 11 02". The read-only assertions read this. */
   sentRequests: string[];
   /** Every frame the tester put on the bus, as "A8 30 FF 00". Flow control shows up here and nowhere else. */
@@ -171,7 +179,12 @@ export function simulateVcuMicros(micros: SimulatedMicro[]): SimulatedBus {
     setRxFilters(_filters: RxFilter | RxFilter[]): void {},
     disableLoopback(): void {},
   };
-  return { channel, sentRequests, sentFrames };
+  return {
+    channel,
+    sentRequests,
+    sentFrames,
+    expireSession: target => void sessionOpenedAt.delete(addressOf({ target })),
+  };
 }
 
 interface BusContext {
@@ -264,7 +277,9 @@ function handleRequestPayload(context: BusContext, payload: Uint8Array): void {
 function respond(context: BusContext, payload: Uint8Array): Uint8Array | null {
   const { micro, sessionOpenedAt } = context;
   const openedAt = sessionOpenedAt.get(addressOf(micro));
-  const sessionOpen = openedAt !== undefined && since(openedAt) < (micro.sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS);
+  // A per-micro override lived here until #126. It existed so one check could sleep a
+  // session out; `expireSession()` says it instead, and nothing else ever set it.
+  const sessionOpen = openedAt !== undefined && since(openedAt) < DEFAULT_SESSION_IDLE_MS;
 
   if (payload[0] === SERVICE_START_SESSION) {
     sessionOpenedAt.set(addressOf(micro), monotonicNow());
@@ -444,7 +459,8 @@ function conversationFor(context: BusContext): Conversation {
 }
 
 /** Byte 0 of a request addressed to this stand-in. The real mapping lives in param-codec.ts. */
-function addressOf(micro: SimulatedMicro): number {
+/** Takes the target rather than a whole micro, so a caller holding only a name can ask. */
+function addressOf(micro: Pick<SimulatedMicro, "target">): number {
   return { A8: 0xa8, A9: 0xa9 }[micro.target];
 }
 
