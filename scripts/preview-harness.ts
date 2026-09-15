@@ -59,6 +59,25 @@ export const PAGE_CONTRACT = [
   "pageFetch",
 ];
 
+/**
+ * Whether a preview page's source mounts the WHOLE dashboard, rather than a chosen set of panels.
+ *
+ * ⚠️ One definition, because it is a text match on a call whose `imp` is now DEFINED in shared
+ * code (preview-harness-browser.js's instantiate()). Renaming that would make every hand-written
+ * copy of this spelling quietly answer "no" — and in check-preview-fixtures.ts a "no" switches
+ * OFF both the endpoint-coverage rule and the fixture-presence rule, with every run still green.
+ * check-preview-harness.ts holds the harness parts to never containing it, for the same reason
+ * pointing the other way: a part that merely mentioned it would make the annotated sheet answer
+ * for the dashboard's eighteen endpoints.
+ */
+export function mountsTheWholeDashboard(source: string): boolean {
+  // ⚠️ `(?:__)?`, not `__?`. The second means "an underscore, optionally followed by another",
+  // so it never matches the bare `imp("app.js")` the whole-dashboard template actually writes —
+  // a mutation test caught it surviving. The bundler rewrites the call to `__imp` inside a
+  // module, so both spellings have to count.
+  return /(?:__)?imp\("app\.js"\)/.test(source);
+}
+
 /** Each part's file name and source, in evaluation order. */
 export async function harnessParts(): Promise<{ file: string; source: string }[]> {
   return Promise.all(HARNESS_PARTS.map(async file => ({ file, source: await readFile(join(HERE, file), "utf8") })));

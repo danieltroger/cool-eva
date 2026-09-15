@@ -326,7 +326,9 @@
        * own, and why the spelling matches the whole-dashboard template: preview-harness.ts.
        */
       const SCENES = {
-        parked: { gate: { safe: true, blockers: [], chargingEvidence: null, checks: [] } },
+        // No `gate`: parked IS the harness's default, and restating it here is a second copy
+        // that a change to the default would leave behind. A scene states a DELTA or nothing.
+        parked: {},
         charging: { gate: {
           safe: true,
           blockers: [],

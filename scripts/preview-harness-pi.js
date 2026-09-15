@@ -244,22 +244,22 @@ function pushPatch(readings) {
   Object.assign(LIVE, readings);
   // Through deliver(), so a patch cannot reach a socket the page has already closed — the
   // guard the heartbeat below carries, which this used to go around.
+  // One payload for every socket, the way src/ws.ts's broadcastTo() stringifies once and sends
+  // the same body to each client — so the sheet's six panels cannot see six different `ts`.
+  const payload = message("patch", readings);
   for (const socket of liveSockets) {
-    socket.deliver(message("patch", readings));
+    socket.deliver(payload);
   }
 }
 
 /**
  * The Pi's end of the WebSocket: a snapshot on connect, and one every HEARTBEAT_MS after.
  *
- * ⚠️ The heartbeat is not decoration. It is what src/ws.ts does, and lib/connection.js
- * declares a link dead after SILENCE_LIMIT_MS of quiet — so a stub that sent one snapshot
- * and stopped had the header flapping live → offline → live for ever, and isStaleWith()
- * calls EVERY signal stale while the link is down. Measured on the old fixture: the page
- * read `offline` in 20 of 60 samples, with dimmed tiles in exactly those 20. One screenshot
- * in three off the instrument this project gates dashboard merges with was a photograph of
- * a dropout. It is also what keeps the DC scene mounted at all: lib/charge-write.js drops
- * the whole charge control set when charge_manager_state ages past 12 s.
+ * ⚠️ The heartbeat is not decoration. It is what src/ws.ts does, and lib/connection.js declares
+ * a link dead after SILENCE_LIMIT_MS of quiet — so a stub that sends one snapshot and stops has
+ * the header flapping live → offline → live for ever, with every tile stale in between. What
+ * that measured, and why it also keeps the DC scene mounted at all:
+ * docs/diagnostics-and-checks.md §11.7.
  */
 window.WebSocket = class PreviewWebSocket {
   constructor(url) {

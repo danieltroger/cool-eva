@@ -2,7 +2,7 @@ import ts from "typescript";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HARNESS_PARTS, HARNESS_PLACEHOLDER, PAGE_CONTRACT, harnessParts } from "./preview-harness.ts";
+import { HARNESS_PLACEHOLDER, PAGE_CONTRACT, harnessParts, mountsTheWholeDashboard } from "./preview-harness.ts";
 
 // That the two preview pages still share ONE harness, rather than two copies drifting apart.
 //
@@ -17,30 +17,28 @@ import { HARNESS_PARTS, HARNESS_PLACEHOLDER, PAGE_CONTRACT, harnessParts } from 
 // After the merge, a name declared in both templates IS a copy, and a name a template declares
 // that the harness already declares IS a copy — so this needs no threshold and no judgement.
 
+/** One top-level declaration: its name, whether a second copy would be SILENT, and where it is. */
+interface Declaration {
+  name: string;
+  silent: boolean;
+  at: number;
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = ["app-preview-template.html", "service-preview-template.html"];
 
 /**
- * Literal strings no harness part may contain.
+ * Every builder-placeholder-shaped token, which no harness part may spell.
  *
- * ⚠️ Asserted at the SOURCE rather than left to the build, because it fails silently either way:
- * check-preview-fixtures.ts decides which contract a page is held to by searching its source for
- * the dashboard's entry import, so a harness that merely MENTIONED it in a comment would make the
- * annotated sheet answer for eighteen endpoints it does not serve — and pass, wrongly, if it did.
- */
-const FORBIDDEN = [
-  { text: 'imp("app.js")', why: "check-preview-fixtures.ts reads it as the page mounting the whole dashboard" },
-];
-
-/**
- * ⚠️ EVERY `__UPPERCASE__` token, not just the harness's own placeholder.
+ * `String.replace` substitutes only the first occurrence, so a second copy of one ships into
+ * the generated page as a live identifier.
  *
- * `String.replace` substitutes only the first occurrence, so a second copy of any of them
- * ships into the generated page as a live identifier. The builder's `required` list catches
- * one that is MISSING from a template; check-service-preview.ts:64 sweeps the built output
- * for survivors. Neither can see a second copy written into a harness part, which is what
- * this is: a stray `__SERVER_FACTS__` there got past the first spelling of this rule, which
- * named two literals rather than the shape.
+ * ⚠️ This is an EARLIER message, not the only one — measured, because the first version of this
+ * comment claimed the built-output sweep could not see it, which is false. The builder
+ * substitutes the harness LAST, so a token inside a part is injected verbatim and lands in the
+ * output, where check-service-preview.ts's `__[A-Z][A-Z_]*__` sweep flags it by name. What this
+ * buys is the file it is in and a failure without a build; what it cost to find out is a
+ * sentence that told the next reader a working guard was broken.
  */
 const PLACEHOLDER_SHAPE = /__[A-Z][A-Z_]*__/g;
 
@@ -49,15 +47,18 @@ const failures: string[] = [];
 console.log("\n──── scripts/check-preview-harness.ts ──────────────────────────────────────────");
 console.log("     that the two preview templates share one harness rather than two copies of it");
 
-const parts = await harnessParts();
+const parts = (await harnessParts()).map(part => ({
+  ...part,
+  declarations: declarationsIn(parse(part.source, part.file)),
+}));
 const harnessNames = new Map<string, string>();
 for (const part of parts) {
-  for (const name of declaredNames(part.source, part.file)) {
+  for (const { name } of part.declarations) {
     harnessNames.set(name, part.file);
   }
 }
 
-const templateNames = new Map<string, Map<string, string>>();
+const templateNames = new Map<string, Set<string>>();
 for (const file of TEMPLATES) {
   const html = await readFile(join(HERE, file), "utf8");
   const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
@@ -69,11 +70,24 @@ for (const file of TEMPLATES) {
     failures.push(`${file}: no harness placeholder, so this page carries a harness of its own`);
     continue;
   }
-  const names = new Map<string, string>();
-  for (const name of declaredNames(blocks[0], file)) {
-    names.set(name, file);
+  // ⚠️ Positions, not just names. The contract is an ORDER — preview-harness.ts says so — and a
+  // template that declares SCENES BELOW the placeholder satisfies every membership test while
+  // rendering a blank page, because the harness reads it at evaluation time and hits the
+  // temporal dead zone. Nothing else in npm test can see that: check-preview-fixtures.ts looks
+  // declarations up by name, and check-service-preview.ts parses the page without running it.
+  const placeholderAt = blocks[0].indexOf(HARNESS_PLACEHOLDER);
+  const declarations = declarationsIn(parse(blocks[0], file));
+  templateNames.set(file, new Set(declarations.map(declaration => declaration.name)));
+  for (const { name, at } of declarations) {
+    // `pageFetch` is the one contract name that may sit below: it is a hoisted function
+    // declaration, and the harness reaches it only at call time.
+    if (PAGE_CONTRACT.includes(name) && name !== "pageFetch" && at > placeholderAt) {
+      failures.push(
+        `${file}: ${name} is declared BELOW the harness, which reads it as it is evaluated — the ` +
+          "page would render blank. Move it above the placeholder."
+      );
+    }
   }
-  templateNames.set(file, names);
 }
 
 // ── A. every contract name, in both templates ────────────────────────────────
@@ -101,8 +115,9 @@ if (first && second) {
     if (second.has(name) && !PAGE_CONTRACT.includes(name)) {
       failures.push(
         `both templates declare ${name} — one copy will be improved and the other will not, which is ` +
-          "what this harness was extracted to end. Move it into a scripts/preview-harness-*.js part, " +
-          `or give the two pages' versions different names if they are genuinely different things`
+          "what this harness was extracted to end. Move it into a scripts/preview-harness-*.js part " +
+          "if nothing above the placeholder uses it, add it to PAGE_CONTRACT if every page must have " +
+          "its own, or give the two versions different names if they are genuinely different things"
       );
     }
   }
@@ -110,9 +125,15 @@ if (first && second) {
 
 // ── C. no template declares a name the harness already declares ──────────────
 //
-// The template-versus-harness direction, which is how a fixture comes BACK: someone needs a
-// tweaked TARGETS on one page, pastes it into that template, and it shadows the shared one for
-// that page alone. B cannot see it, because only one template has it.
+// The template-versus-harness direction, which is how a copy comes BACK: someone needs a tweaked
+// fixture on one page and pastes it into that template. B cannot see it, because only one
+// template has it.
+//
+// ⚠️ Be honest about what this buys. For a `const` — which is every fixture — the concatenated
+// script is an early SyntaxError, so `new Script()` in check-service-preview.ts catches it
+// anyway; C's value there is a message that names the file and the shadowed part instead of a
+// line number. For the SILENT subset — a `function` or a `window.x =` written by both a template
+// and a part — C is the only thing that looks at all.
 for (const [file, names] of templateNames) {
   for (const name of names.keys()) {
     const part = harnessNames.get(name);
@@ -136,7 +157,7 @@ for (const [file, names] of templateNames) {
 // behind this paragraph is in docs/diagnostics-and-checks.md §11.9.
 const seen = new Map<string, string>();
 for (const part of parts) {
-  for (const name of silentlyDuplicatedNames(part.source, part.file)) {
+  for (const { name } of part.declarations.filter(declaration => declaration.silent)) {
     const earlier = seen.get(name);
     if (earlier !== undefined) {
       // ⚠️ No `earlier !== part.file` guard. Twice in ONE part is the same silent
@@ -153,10 +174,14 @@ for (const part of parts) {
 
 // ── what a harness part may not spell ────────────────────────────────────────
 for (const part of parts) {
-  for (const { text, why } of FORBIDDEN) {
-    if (part.source.includes(text)) {
-      failures.push(`${part.file} contains ${JSON.stringify(text)} — ${why}`);
-    }
+  // ⚠️ The same test check-preview-fixtures.ts uses to decide which contract a page is held to,
+  // imported rather than re-spelled. A harness part that merely MENTIONED that call — a comment is
+  // enough — would make the annotated sheet answer for the dashboard's endpoints, and pass.
+  if (mountsTheWholeDashboard(part.source)) {
+    failures.push(
+      `${part.file} names the call that mounts the whole dashboard — check-preview-fixtures.ts ` +
+        "reads that as the PAGE doing so, and would hold the annotated sheet to the dashboard's contract"
+    );
   }
   for (const [token] of part.source.matchAll(PLACEHOLDER_SHAPE)) {
     failures.push(
@@ -174,13 +199,16 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `  ${HARNESS_PARTS.length} harness parts, ${harnessNames.size} shared names, ` +
+  `  ${parts.length} harness parts, ${harnessNames.size} shared names, ` +
     `${PAGE_CONTRACT.length} declared by each page`
 );
 console.log("\n✓ one harness, two pages: no name is written twice");
 
 /**
- * Every name a block of harness JavaScript declares at the top level.
+ * Every name a block of harness JavaScript declares at the top level, and whether redeclaring it
+ * would be SILENT — a `function`, a `var`, or a `window.x =` assignment, the three a second copy
+ * does not throw on. Rules A-C want every name, rule D wants the silent ones, and it is ONE walk
+ * because two walkers is how the blind spot below comes to be fixed in only one of them.
  *
  * ⚠️ NOT `check-preview-fixtures.ts`'s `topLevelDeclarations`, which collects `VariableStatement`
  * alone because it is looking for object literals to type-check. `settle` and `pageFetch` are
@@ -193,49 +221,34 @@ console.log("\n✓ one harness, two pages: no name is written twice");
  * unseen. Written down rather than handled: walking binding patterns is real complexity for a
  * form this code does not use, and the first one to appear can add it.
  */
-function declaredNames(source: string, label: string): string[] {
-  const parsed = ts.createSourceFile(label, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
-  const names: string[] = [];
+function declarationsIn(parsed: ts.SourceFile): Declaration[] {
+  const found: Declaration[] = [];
   for (const statement of parsed.statements) {
     if (ts.isVariableStatement(statement)) {
+      // `var` survives a redeclaration; `const` and `let` throw at parse.
+      const silent = (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0;
       for (const declaration of statement.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name)) {
-          names.push(declaration.name.text);
+          found.push({ name: declaration.name.text, silent, at: statement.getStart(parsed) });
         }
       }
-    } else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
-      names.push(statement.name.text);
+    } else if (ts.isFunctionDeclaration(statement) && statement.name) {
+      found.push({ name: statement.name.text, silent: true, at: statement.getStart(parsed) });
+    } else if (ts.isClassDeclaration(statement) && statement.name) {
+      found.push({ name: statement.name.text, silent: false, at: statement.getStart(parsed) });
     } else {
       const assigned = windowPropertyAssigned(statement);
       if (assigned !== null) {
-        names.push(assigned);
+        found.push({ name: assigned, silent: true, at: statement.getStart(parsed) });
       }
     }
   }
-  return names;
+  return found;
 }
 
-/** The subset of `declaredNames` whose redeclaration does not throw: functions, `var`, `window.x`. */
-function silentlyDuplicatedNames(source: string, label: string): string[] {
-  const parsed = ts.createSourceFile(label, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
-  const names: string[] = [];
-  for (const statement of parsed.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name) {
-      names.push(statement.name.text);
-    } else if (ts.isVariableStatement(statement) && !(statement.declarationList.flags & ts.NodeFlags.BlockScoped)) {
-      for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name)) {
-          names.push(declaration.name.text);
-        }
-      }
-    } else {
-      const assigned = windowPropertyAssigned(statement);
-      if (assigned !== null) {
-        names.push(assigned);
-      }
-    }
-  }
-  return names;
+/** One parse per block. ⚠️ `setParentNodes` off: nothing here reads `.parent` or calls `.getText()`. */
+function parse(source: string, label: string): ts.SourceFile {
+  return ts.createSourceFile(label, source, ts.ScriptTarget.ESNext, false, ts.ScriptKind.JS);
 }
 
 /** `window.fetch = …` at the top level, as the name `window.fetch`, or null for anything else. */

@@ -25,11 +25,12 @@ const SWEPT_AT = NOW - 17 * MINUTE;
 /**
  * Which bike this preview is standing in for, chosen with `?scene=` in the URL.
  *
- * ⚠️ A query string and not a control on the page: this file's claim is that what you see is
- * what the bike serves, and chrome of its own weakens that for every screenshot taken through
- * it. `SCENES` itself is the page's — the two pages stand in for different bikes — but the
- * SPELLING is shared, because two vocabularies for one bike is how a state gets added to one
- * page and never exists in the other, and it is what scripts/preview-scenes.ts greps for.
+ * ⚠️ A query string, and neither the hash nor a control on the page. The hash is the app's tab
+ * router and the preview hands `location.hash` straight to it; a control of the page's own would
+ * weaken this file's whole claim, which is that what you see is what the bike serves. `SCENES` is
+ * each page's — the two stand in for different bikes — but the SPELLING is shared, because two
+ * vocabularies for one bike is how a state gets added to one page and never exists in the other,
+ * and it is what scripts/preview-scenes.ts greps for.
  */
 const WANTED_SCENE = new URLSearchParams(window.location.search).get("scene");
 // ⚠️ hasOwn, not a bare lookup: `?scene=constructor` would otherwise select a function.
@@ -46,10 +47,10 @@ const SCENE = SCENES[SCENE_NAME];
  * dead zone and the fixtures are built as this file is evaluated, so putting it beside the
  * scene that mutates it rendered a blank page.
  *
- * A plain literal, and it has to stay one, because each page applies its scene by MUTATING it
- * rather than by building a different one. Why that is what check-preview-fixtures.ts needs,
- * and what the per-scene patching cost before one object served every fixture:
- * docs/diagnostics-and-checks.md §11.9.
+ * A plain literal, and it has to stay one: check-preview-fixtures.ts splices this declaration
+ * into WRITE_STATUS, READ_STATE and LIFETIME_READ to type-check them, which needs a literal —
+ * and all three capture the same REFERENCE, which is why each page applies its scene by mutating
+ * this object rather than by building a different one. docs/diagnostics-and-checks.md §11.9.
  */
 const GATE = { safe: true, blockers: [], chargingEvidence: null, checks: [] };
 

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { serverFacts } from "./preview-server-facts.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { pathsAnsweredBy, pathsFetchedByTheDashboard, pathsServedFromTables } from "./preview-endpoints.ts";
-import { HARNESS_PLACEHOLDER, previewHarnessSource } from "./preview-harness.ts";
+import { HARNESS_PLACEHOLDER, mountsTheWholeDashboard, previewHarnessSource } from "./preview-harness.ts";
 
 // Whether the design preview's fixtures still describe the bike the Pi describes.
 //
@@ -118,8 +118,9 @@ for (const templatePath of templates) {
   // ⚠️ The app template mounts the whole dashboard, so every endpoint public/ fetches is reachable
   // in it; the annotated sheet mounts a chosen set of panels, which is a different contract. Read
   // off the source rather than the filename — the distinction check-service-preview.ts already
-  // draws — so a renamed or copied template is judged by what it does.
-  const mountsTheApp = /__imp\("app\.js"\)|imp\("app\.js"\)/.test(harness);
+  // draws — so a renamed or copied template is judged by what it does. The test itself lives in
+  // preview-harness.ts, beside the shared code that now defines the `imp` it looks for.
+  const mountsTheApp = mountsTheWholeDashboard(harness);
 
   await checkFixtureTypes(source, label, mountsTheApp);
   checkReadings(source, label);
