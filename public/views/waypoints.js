@@ -41,13 +41,16 @@ export function WaypointList(status) {
     // written up in views/trip-stats.js §Waypoints.
     const payload = status.val;
     const showAll = expanded.val;
-    const rows = waypointRows(payload?.waypointEvents);
-    const shown = showAll ? rows : rows.slice(0, PREVIEW_LIMIT);
+    const events = Array.isArray(payload?.waypointEvents) ? payload.waypointEvents : [];
+    // Sliced BEFORE the rows are built, not after: the bike may serve fifty and this draws
+    // six, and each row costs two bounds tests, a toLocaleTimeString and an age. The events
+    // arrive oldest-first, so the newest are at the end; waypointRows() does the reversing.
+    const shown = waypointRows(showAll ? events : events.slice(-PREVIEW_LIMIT));
     return div(
       ...shown.map(Row),
       // Mirrors views/faults.js: no toggle at all when there is nothing behind it, rather
       // than a "show all 2" that does nothing anyone can see.
-      rows.length <= PREVIEW_LIMIT
+      events.length <= PREVIEW_LIMIT
         ? null
         : button(
             {
@@ -56,14 +59,14 @@ export function WaypointList(status) {
                 expanded.val = !expanded.val;
               },
             },
-            showAll ? "show fewer" : `show all ${rows.length}`
+            showAll ? "show fewer" : `show all ${events.length}`
           ),
       div(
         { class: "waypoint-note" },
         payload === null
           ? "Asking the bike…"
           : waypointListSummary({
-              events: payload.waypointEvents,
+              events,
               savedTotal: payload.waypoints,
               refusedTotal: payload.waypointsRefused,
               rowsShown: shown.length,

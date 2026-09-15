@@ -155,6 +155,8 @@ Three ways it can hold fewer rows than the ride had, and each one is named on sc
 | the bike dropped refusals | `MAX_EVENTS` is 50, and a cold boot with no fix can be asked as fast as a thumb moves | `· the bike dropped its oldest refusals` |
 | the bike dropped saves | only reachable once 50 saves are in one boot; the archive holds 97 **ever** | `· the bike kept only the newest N saves` |
 
+⚠️ **`/status` now carries coordinates rather than a count**, and it authenticates nobody on the bike's own wifi — the same tier as `/dl`. The live position is already there on the same wifi (`gps_lat` / `gps_lon` over the WebSocket), so what this adds is **where you stopped** rather than where you are. Worth knowing before it is served anywhere less private than a bike's hotspot; `docs/wifi-hardening.md` is the file that argues that boundary.
+
 `waypoints` and `waypointsRefused` in the payload are the true totals and are never capped, which is what makes those three sentences possible at all. A refusal the Pi could not date — `clockTrustworthy: false`, sampled from `systemClockTrust()` at the refusal — shows **"at an unknown time"** rather than a time of day off a clock the Pi itself disowns: the gates fire in order, so a press at a cold boot answers `NO_FIX` long before the clock gate is reached and the refusal CODE cannot stand in for the flag.
 
 ## The refusals, and what the rider hears

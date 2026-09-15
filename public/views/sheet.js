@@ -273,27 +273,31 @@ function UnitsToggle() {
 }
 
 /**
- * Starts watching `waypoint_seq` so a waypoint saved on the BARS while the sheet is open
- * lands in the list without reopening it.
+ * Starts watching the two waypoint counters, so a press made on the BARS while the sheet is
+ * open lands in the list without reopening it — a save AND a refusal, since `refuse()` in
+ * src/gps/waypoint.ts moves only its own counter and "did my press land?" is the question
+ * the list is for.
  *
  * ⚠️ Call at module top level, from app.js, never from inside a view or a binding — a
  * derive created inside one is pinned to that render's DOM node and dropped, silently, at
  * the next re-render. lib/announce.js §installAnnouncements has the mechanism.
  *
- * The phone's own button does not need this: WaypointButton() below refreshes /status
- * itself the moment its reply lands. This is the other door, and the one nothing on this
- * screen asked for.
+ * The phone's own button does not need this for a SAVE: WaypointButton() below refreshes
+ * /status the moment its reply lands. Its refusals come through here with the bars'.
  */
 export function installWaypointRefresh() {
   let memory = blankWaypointMemory();
   van.derive(() => {
-    // Read first, always — the rule views/trip-stats.js §Waypoints measured. And the fold
-    // is what keeps this off the 5 s heartbeat: lib/waypoint-list.js §shouldRefreshOnWaypoint.
-    const sequence = valueOf("waypoint_seq");
+    // Both read before anything is decided — VanJS re-collects a binding's dependencies
+    // from the reads its LAST run made, so a run that returned above one of these would
+    // leave the refresh deaf to it. views/trip-stats.js §Waypoints measured that.
+    const counters = { saved: valueOf("waypoint_seq"), refused: valueOf("waypoint_refused_seq") };
     // rawVal: whether the sheet is open is SAMPLED, not reacted to. Subscribing here would
     // re-run this derive on every open and close for a question it only asks in passing —
-    // lib/store.js §peek.
-    const decision = shouldRefreshOnWaypoint(memory, sequence, sheetOpen.rawVal);
+    // lib/store.js §peek. ⚠️ A sheet left open THROUGH a service restart keeps the previous
+    // boot's rows until it is reopened, exactly as the tile above it does and for the same
+    // reason — views/trip-stats.js says it there.
+    const decision = shouldRefreshOnWaypoint(memory, counters, sheetOpen.rawVal);
     memory = decision.memory;
     if (decision.refresh) {
       void refreshStatus();

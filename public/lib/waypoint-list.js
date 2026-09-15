@@ -35,10 +35,8 @@ import { WAYPOINT_REFUSAL_TEXT, foldAnnouncement } from "./announce.js";
  * array is in FIRE order by construction (src/gps/waypoint-log.ts), which is the order a
  * rider means by "newest".
  *
- * ⚠️ Never throws, whatever the payload holds. A binding that throws does not show an
- * error: VanJS catches it, logs to the console and keeps the DOM the last run returned
- * (`runAndCaptureDeps`, vendor/van-1.6.1.js), so the list would silently freeze at
- * whatever it last drew.
+ * ⚠️ Never throws, whatever the payload holds: VanJS catches a throw inside a binding and
+ * keeps the DOM the last run returned, so the list would freeze rather than show an error.
  *
  * @param {WaypointEvent[] | undefined} events
  * @returns {WaypointRow[]}
@@ -65,6 +63,11 @@ export function waypointRows(events) {
  * @param {number} counts.rowsShown how many rows are on screen right now
  */
 export function waypointListSummary({ events, savedTotal, refusedTotal, rowsShown }) {
+  if (!Number.isFinite(savedTotal) || !Number.isFinite(refusedTotal)) {
+    // Said rather than rendered as "undefined saved": a payload missing its counts is the
+    // phone and the Pi disagreeing about the shape, and the rows above may be short.
+    return "The bike did not say how many waypoints it has.";
+  }
   if (savedTotal === 0 && refusedTotal === 0) {
     return "No waypoints since the bike last started.";
   }
@@ -88,41 +91,43 @@ export function waypointListSummary({ events, savedTotal, refusedTotal, rowsShow
 export const WAYPOINT_HISTORY_NOTE =
   "The bike forgets these when it restarts — earlier rides are in the ride log, not here.";
 
-/** A memory that has heard nothing yet. See foldAnnouncement() for what `baselined` is for. */
+/**
+ * What the refresh remembers of BOTH counters. See foldAnnouncement() for `baselined`.
+ * @typedef {{ value: number | null, baselined: boolean }} CounterMemory
+ * @typedef {{ saved: CounterMemory, refused: CounterMemory }} WaypointMemory
+ */
+
+/** A memory that has heard nothing yet. @returns {WaypointMemory} */
 export function blankWaypointMemory() {
-  return /** @type {{ value: number | null, baselined: boolean }} */ ({ value: null, baselined: false });
+  return { saved: { value: null, baselined: false }, refused: { value: null, baselined: false } };
 }
 
 /**
- * Whether a `waypoint_seq` reading means the list should be fetched again.
+ * Whether the list should be fetched again.
  *
- * ⚠️ IT FOLDS ON THE VALUE, and that is not tidiness. src/ws.ts heartbeats a FULL snapshot
- * every 5 s and ./store.js parses each message fresh, so every signal's state is assigned a
- * NEW OBJECT on every heartbeat and VanJS schedules on identity — a derive watching this
- * signal re-runs every five seconds, forever, once the boot's first waypoint is saved.
- * Unfolded, that is a /status per heartbeat, and /status walks the ride-log directory and
- * stats every file in it (src/http/status.ts) on a Pi Zero that is also serving the socket.
- * ⚠️ Reading valueOf() instead of `.val` does NOT dodge it: the dependency is registered by
- * the `val` getter before the number is ever looked at.
+ * ⚠️ BOTH COUNTERS, as ./announce.js folds them: a refusal moves only its own — `refuse()`
+ * in src/gps/waypoint.ts never touches `waypoint_seq` — and "did my press land?" is the
+ * question this list is for.
  *
- * ⚠️ AND IT DOES NOT RE-BASELINE ON A DROPPED LINK, unlike announceWaypoints() three files
- * away. That reset is right for a banner — a waypoint saved while the page was hidden is
- * news from before we were listening, and announcing it would be a lie about when. It is
- * exactly wrong here: a save made while the page was hidden is the whole reason this list
- * exists, so the reconnect must be allowed to notice it and go and fetch it.
+ * ⚠️ It folds on the VALUE rather than on the re-run, and it does NOT re-baseline on a
+ * dropped link where the banner does. Both mechanisms, and what each costs if reversed:
+ * docs/dashboard-decisions.md §"The waypoint list".
  *
- * The memory advances whether or not anything is fetched, so a save made with the sheet
- * shut is remembered rather than re-announcing itself the moment the sheet opens — which
- * openSheet() has already refreshed for.
- *
- * @param {{ value: number | null, baselined: boolean }} memory
- * @param {number | null} sequence `waypoint_seq`, as the store holds it
+ * @param {WaypointMemory} memory
+ * @param {{ saved: number | null, refused: number | null }} counters `waypoint_seq`, `waypoint_refused_seq`
  * @param {boolean} sheetIsOpen sampled, never subscribed — see ./store.js §peek
- * @returns {{ memory: { value: number | null, baselined: boolean }, refresh: boolean }}
+ * @returns {{ memory: WaypointMemory, refresh: boolean }}
  */
-export function shouldRefreshOnWaypoint(memory, sequence, sheetIsOpen) {
-  const folded = foldAnnouncement(memory, sequence);
-  return { memory: folded.state, refresh: folded.announce && sheetIsOpen };
+export function shouldRefreshOnWaypoint(memory, counters, sheetIsOpen) {
+  const saved = foldAnnouncement(memory.saved, counters.saved);
+  const refused = foldAnnouncement(memory.refused, counters.refused);
+  return {
+    // Advanced whether or not anything is fetched, so a press made with the sheet shut is
+    // remembered rather than re-announcing itself the moment it opens — which openSheet()
+    // has already refreshed for.
+    memory: { saved: saved.state, refused: refused.state },
+    refresh: (saved.announce || refused.announce) && sheetIsOpen,
+  };
 }
 
 /**

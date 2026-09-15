@@ -732,9 +732,10 @@ body {
    ITEM whose implicit track was sized by its content, so flooring it widened the page,
    while a `.waypoint-row` is a block inside a block — its width comes from its containing
    block whatever it holds, and its content simply overflows. Measured in the rendered
-   sheet at 390 px, with a 148-character unbreakable token in a row: `.sheet-body`
-   scrollWidth 969 without this line and 390 with it, and the row's own box reads 372 in
-   both, `min-width: 0` or `auto`. So the ROW box can never witness this and the scroll
+   sheet at 390 px, with the check's 145-character unbreakable token in a row: `.sheet-body`
+   scrollWidth 969 without this line and 390 with it, while the row's own box reads 355 and
+   its right edge 372 in every one of those, `min-width: 0` or `auto`. So the ROW box can
+   never witness this and the scroll
    container is what does — which is what check-phone-width.ts asserts, with that token as
    its probe. Nothing the list holds today is such a token (a coordinate has a space in it
    and every WAYPOINT_REFUSAL_TEXT sentence breaks at spaces); Energica's identifiers are,
@@ -752,10 +753,13 @@ body {
   padding-bottom: 0.4rem;
 }
 
-/* Fixed, so the positions form a readable column and a `refused` row does not shunt
-   the text of the one above it sideways. */
+/* A column, so the positions line up and a `refused` row does not shunt the text of the one
+   above it sideways — but `0 1`, not `0 0`: this is the one box in the row the wrap above
+   does not cover, and a phone with text zoom, or a `#1234`, would otherwise push it out into
+   the same sheet scrollWidth check-phone-width.ts measures. */
 .waypoint-mark {
-  flex: 0 0 3.4rem;
+  flex: 0 1 3.4rem;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
   color: var(--label);
 }

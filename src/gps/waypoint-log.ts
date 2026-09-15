@@ -86,7 +86,7 @@ export function recordRefusedWaypoint(
   append(log, { outcome: "refused", refusal, at, clockTrustworthy });
 }
 
-/** A copy, so a caller cannot edit the bike's memory of where it has been. */
+/** A copy of the ARRAY, so a caller cannot add to or reorder the bike's own log. */
 export function waypointEventsOf(log: WaypointLog): WaypointEvent[] {
   return [...log.events];
 }
@@ -99,6 +99,11 @@ export function waypointEventsOf(log: WaypointLog): WaypointEvent[] {
  * thumb moves, and an unconditional "drop the oldest" would then evict every saved
  * waypoint of the ride — the list failing at its one job while its counters stayed
  * correct. A save is a place you cannot go back to; a refusal is news.
+ *
+ * ⚠️ At the extreme that inverts: with the cap reached and every held event a save, the only
+ * refusal in the log is the one just pushed, and it is what goes. That is the same rule
+ * rather than an exception to it — saves win — but the phone will say "dropped its oldest
+ * refusals" about a press made a second ago. It needs 50 saves in one boot against 97 ever.
  *
  * Eviction removes an element and so leaves the relative order of the rest, which is the
  * property the whole design rests on: the array is in FIRE order, and nothing downstream

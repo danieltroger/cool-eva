@@ -190,6 +190,8 @@ const cold = await promisify(execFile)(
      fixes.stop();
      console.log(JSON.stringify({ outcome, events: waypointEventsOf(waypointLog) }));`,
   ],
+  // `undefined` really does unset it: Node drops undefined values when it builds the child's
+  // environment, rather than passing the string "undefined".
   { cwd: ROOT, env: { ...process.env, GPS_TIME_SYNC: undefined } }
 );
 const coldEvents = (JSON.parse(cold.stdout.trim()) as { outcome: { refusal?: number }; events: WaypointEvent[] })
@@ -253,6 +255,20 @@ check(
     .join() === "2,3"
 );
 
+// ⚠️ The shape that inverts the rule's own wording: a log with no refusal in it yet takes
+// one, and the only refusal present is the arrival. Saves still win — which is the rule —
+// but it is worth pinning, because the obvious "fix" is to evict the oldest save instead.
+const savesThenRefusal = createWaypointLog(2);
+recordSavedWaypoint(savesThenRefusal, 1, 51.4779, -0.0015, 1000);
+recordSavedWaypoint(savesThenRefusal, 2, 51.4779, -0.0015, 1100);
+recordRefusedWaypoint(savesThenRefusal, 6, 1200, true);
+check(
+  "a refusal arriving at a log full of saves is what gives way, and both saves stay",
+  waypointEventsOf(savesThenRefusal)
+    .map(event => (event.outcome === "saved" ? `#${event.sequence}` : "refused"))
+    .join() === "#1,#2"
+);
+
 const full = createWaypointLog();
 for (let index = 1; index <= MAX_EVENTS; index += 1) {
   recordSavedWaypoint(full, index, 51.477912345678, -0.001512345678, 1_760_000_000_000 + index);
@@ -296,29 +312,48 @@ check(
 
 console.log("\n4. a new waypoint refreshes the list; a heartbeat carrying the same one does not");
 
+/** One reading of the pair, the way the derive in views/sheet.js takes them. */
+function counters(saved: number | null, refused: number | null) {
+  return { saved, refused };
+}
+
 let memory = blankWaypointMemory();
-const first = shouldRefreshOnWaypoint(memory, null, true);
+const first = shouldRefreshOnWaypoint(memory, counters(null, null), true);
 memory = first.memory;
 check("nothing has arrived yet, so nothing is fetched", first.refresh === false);
-const arrived = shouldRefreshOnWaypoint(memory, 1, true);
+const arrived = shouldRefreshOnWaypoint(memory, counters(1, null), true);
 memory = arrived.memory;
 check("the boot's FIRST waypoint is news, not a baseline", arrived.refresh);
-const heartbeat = shouldRefreshOnWaypoint(memory, 1, true);
+const heartbeat = shouldRefreshOnWaypoint(memory, counters(1, null), true);
 memory = heartbeat.memory;
 check("the same sequence arriving again fetches nothing", heartbeat.refresh === false);
 
+// ⚠️ THE CASE THE LIST IS FOR. A refusal moves `waypoint_refused_seq` and NOTHING else —
+// src/gps/waypoint.ts's refuse() never touches `waypoint_seq` — so a refresh folded on the
+// save counter alone leaves the rider holding the switch, seeing one toast go by, and
+// finding the list underneath still claiming the older count.
+const refusedPress = shouldRefreshOnWaypoint(memory, counters(1, 1), true);
+memory = refusedPress.memory;
+check("⚠️  a press the bike REFUSED, with the sheet open, is fetched", refusedPress.refresh);
+const refusedAgain = shouldRefreshOnWaypoint(memory, counters(1, 1), true);
+memory = refusedAgain.memory;
+check("…and the heartbeat behind it is not", refusedAgain.refresh === false);
+
 // The sheet is shut: nothing is fetched, but the memory must still move — or the first
 // heartbeat after the sheet opens fires a fetch openSheet() has already made redundant.
-const whileShut = shouldRefreshOnWaypoint(memory, 2, false);
+const whileShut = shouldRefreshOnWaypoint(memory, counters(2, 1), false);
 memory = whileShut.memory;
 check("a waypoint saved with the sheet shut fetches nothing", whileShut.refresh === false);
-const afterOpening = shouldRefreshOnWaypoint(memory, 2, true);
+const afterOpening = shouldRefreshOnWaypoint(memory, counters(2, 1), true);
 memory = afterOpening.memory;
 check(
   "…and is not re-fetched by the next heartbeat once it opens — the memory moved anyway",
   afterOpening.refresh === false
 );
-check("a third waypoint, with the sheet open, is fetched", shouldRefreshOnWaypoint(memory, 3, true).refresh);
+check(
+  "a third waypoint, with the sheet open, is fetched",
+  shouldRefreshOnWaypoint(memory, counters(3, 1), true).refresh
+);
 
 // --- 5. a position the gate rejects is shown as a fault, never dropped -------
 
@@ -328,7 +363,7 @@ const outOfRange = waypointRows([saved(7, 1_760_000_000_000, 91, -0.0015)])[0];
 check("the row is still there — not silently dropped", outOfRange.mark === "#7");
 check("…marked as a fault", outOfRange.fault);
 check("…showing the value the bike sent rather than a clamped one", outOfRange.text.includes("91.000000"));
-check("…and still saying when it happened", outOfRange.when.includes("·"));
+check("…and still saying when it happened, to the minute", /^\d{2}:\d{2} · /.test(outOfRange.when));
 const longitudeOut = waypointRows([saved(8, 1_760_000_000_000, 51.4779, 181)])[0];
 check("longitude is gated too, not only latitude", longitudeOut.fault && longitudeOut.text.includes("181.000000"));
 const inRange = waypointRows([saved(9, 1_760_000_000_000)])[0];
@@ -390,7 +425,7 @@ console.log("\n7. the payload the sheet fetches");
 const recorded = recordingResponse();
 await handleStatusEndpoint(recorded.res, join(ROOT, "no-such-ride-log-directory"), false);
 const payload = JSON.parse(recorded.body) as StatusPayload;
-check("it carries the events, oldest first", payload.waypointEvents.length === waypointEventsOf(waypointLog).length);
+check("it carries every event the log holds", payload.waypointEvents.length === waypointEventsOf(waypointLog).length);
 check(
   "…the same ones the log holds, in the same order",
   JSON.stringify(payload.waypointEvents) === JSON.stringify(waypointEventsOf(waypointLog))
@@ -423,6 +458,10 @@ check(
   installer.includes("sheetOpen.rawVal") && !installer.includes("sheetOpen.val")
 );
 check("…and folds rather than fetching on every re-run", installer.includes("shouldRefreshOnWaypoint("));
+check(
+  "⚠️  it watches BOTH counters — a refusal moves only its own, and is the press this list is for",
+  installer.includes('valueOf("waypoint_seq")') && installer.includes('valueOf("waypoint_refused_seq")')
+);
 check(
   "app.js installs it once, beside the announcements and not from inside a view",
   appSource.includes("installWaypointRefresh();")

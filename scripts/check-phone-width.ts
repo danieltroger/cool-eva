@@ -168,7 +168,7 @@ const ROW_PROBE = `(() => {
   const probe = document.createElement("span");
   probe.textContent = "a" + "WaterPumpCurrentInEnergicaIdentifier".repeat(4);
   target.append(probe);
-  const widths = { row: body.scrollWidth, viewport: body.clientWidth };
+  const widths = { sheet: body.scrollWidth, viewport: body.clientWidth };
   probe.remove();
   return widths;
 })()`;
@@ -285,6 +285,9 @@ async function sweep(page: HeadlessPage, previewFile: string) {
  */
 async function measureSheet(page: HeadlessPage, previewFile: string, scene: string) {
   const where = `${scene}/sheet`;
+  // `&sheet=1` is inert, exactly like `&tab=` above — the template reads only `scene`, and
+  // its whole job is to make this URL differ outside the fragment so the page really reloads.
+  // The CLICK below is what opens the sheet.
   await gotoPage(page, `file://${previewFile}?scene=${scene}&sheet=1#ride`);
   await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${where} page to render`);
   await evaluateOnPage(page, `document.querySelector(".header .menu").click()`);
@@ -333,10 +336,10 @@ async function measureSheet(page: HeadlessPage, previewFile: string, scene: stri
     `the fixture still carries the longest refusal sentence ("${LONGEST_REFUSAL.slice(0, 32)}…")`,
     measured.rows.some(row => row.includes(LONGEST_REFUSAL))
   );
-  const probed = asTileWidths(await evaluateOnPage(page, ROW_PROBE));
+  const probed = asProbeWidths(await evaluateOnPage(page, ROW_PROBE), "sheet");
   check(
-    `an unbreakable name in a row does not scroll the sheet sideways (${probed.row} ≤ ${probed.viewport})`,
-    probed.row <= probed.viewport
+    `an unbreakable name in a row does not scroll the sheet sideways (${probed.measured} ≤ ${probed.viewport})`,
+    probed.measured <= probed.viewport
   );
 }
 
@@ -368,10 +371,10 @@ async function measureTab(page: HeadlessPage, previewFile: string, scene: string
   );
   if (scene === "faults" && tab === "faults") {
     checkStoredCodeRows(measured);
-    const probed = asTileWidths(await evaluateOnPage(page, PROBE));
+    const probed = asProbeWidths(await evaluateOnPage(page, PROBE), "tile");
     check(
-      `content that cannot wrap does not widen the stored-codes tile (${probed.tile} ≤ ${probed.viewport})`,
-      probed.tile <= probed.viewport
+      `content that cannot wrap does not widen the stored-codes tile (${probed.measured} ≤ ${probed.viewport})`,
+      probed.measured <= probed.viewport
     );
   }
 }
@@ -392,16 +395,17 @@ function checkStoredCodeRows(measured: Measurement) {
   }
 }
 
-function asTileWidths(value: unknown): { tile: number; row: number; viewport: number } {
+/**
+ * ⚠️ Named per probe rather than shared. One shape carrying both would let a probe that
+ * answered with the wrong field pass by reading the other one's number.
+ * @param field which box this probe measured
+ */
+function asProbeWidths(value: unknown, field: "tile" | "sheet"): { measured: number; viewport: number } {
   const fields = fieldsOf(value, "the probe's answer");
-  // One of the two boxes, never neither: the tile probe answers `tile`, the waypoint row's
-  // answers `row`, and a probe that answered with nothing measurable must throw rather than
-  // compare `undefined` against a viewport and pass.
-  const box = typeof fields.tile === "number" ? fields.tile : fields.row;
-  if (typeof box !== "number" || typeof fields.viewport !== "number") {
-    throw new Error(`the probe answered with an incomplete pair of widths: ${JSON.stringify(value)}`);
+  if (typeof fields[field] !== "number" || typeof fields.viewport !== "number") {
+    throw new Error(`the ${field} probe answered with an incomplete pair of widths: ${JSON.stringify(value)}`);
   }
-  return { tile: box, row: box, viewport: fields.viewport };
+  return { measured: fields[field], viewport: fields.viewport };
 }
 
 /** Throws rather than narrows, for the reason asMeasurement() does. */
