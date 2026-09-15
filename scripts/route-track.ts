@@ -1,4 +1,6 @@
 import type Database from "better-sqlite3";
+import { boundsFor } from "../public/lib/bounds.js";
+import { monotonicNow, since } from "../src/monotonic.ts";
 
 // The route map's track, computed once at import time instead of on every dashboard load.
 //
@@ -36,21 +38,34 @@ export const ROUTE_TRACK_BUILT_AT = "route_track_built_at";
  * whole archive costs ~5 s, which is nothing beside the decrypt it follows.
  */
 export function buildRouteTrack(db: Database.Database): RouteTrackBuild {
-  const startedAt = process.hrtime.bigint();
+  const startedAt = monotonicNow();
   const builtAt = new Date().toISOString();
   let rows = 0;
   const rebuild = db.transaction(() => {
     db.exec("DROP TABLE IF EXISTS route_track");
     db.exec(CREATE_TABLE_SQL);
     db.exec(CREATE_SECOND_INDEX_SQL);
-    rows = db.prepare(INSERT_SQL).run().changes;
+    rows = db.prepare(ROUTE_TRACK_INSERT_SQL).run().changes;
     db.prepare(
       "INSERT INTO info (key, value, ts) VALUES (?, ?, ?) " +
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value, ts = excluded.ts"
     ).run(ROUTE_TRACK_BUILT_AT, builtAt, Date.now());
   });
   rebuild();
-  return { rows, ms: Number(process.hrtime.bigint() - startedAt) / 1e6, builtAt };
+  return { rows, ms: since(startedAt), builtAt };
+}
+
+/**
+ * Builds the track and leaves the file in the journal mode Grafana's datasource wants.
+ *
+ * ⚠️ `journal_mode = DELETE` is set LAST and only on a file nothing is writing.
+ * grafana/README.md §"`rides.db` is in WAL mode, and that silently blanks panels" measured the
+ * datasource erroring 3 of 85 queries over a WAL file against 0 of 85 over a rollback one —
+ * and 53 of 85 the other way when a writer is live, which is why this is laptop-side only.
+ */
+export function materialiseRouteTrack(db: Database.Database): RouteTrackBuild & { journalMode: string } {
+  const built = buildRouteTrack(db);
+  return { ...built, journalMode: String(db.pragma("journal_mode = DELETE", { simple: true })) };
 }
 
 /** When this database's track was last built, or null if it has never been. */
@@ -82,7 +97,23 @@ const CREATE_TABLE_SQL = `CREATE TABLE route_track (
 // thing the build fails on rather than a thing the query is trusted to have done.
 const CREATE_SECOND_INDEX_SQL = `CREATE UNIQUE INDEX route_track_second ON route_track (ts / 1000)`;
 
-const INSERT_SQL = `INSERT INTO route_track (ts, lat, lon, speed)
+/**
+ * The declared range for `gps_speed_kmh`, read rather than restated.
+ *
+ * ⚠️ The dashboard had to hardcode `BETWEEN 0 AND 300` — JSON cannot import — and this file
+ * inherited the literal along with a comment claiming it was the declared range. It is now
+ * actually that: src/can/registry.ts declares the pair and #227 made
+ * public/lib/generated-bounds.js a checked copy of it. It THROWS rather than falling back to
+ * the old literal: a gate that keeps working on a number nothing declares any more is the
+ * failure this whole indirection exists to remove.
+ */
+const SPEED_BOUNDS = boundsFor("gps_speed_kmh", "km/h", "gps");
+if (SPEED_BOUNDS === null || SPEED_BOUNDS === undefined) {
+  throw new Error("gps_speed_kmh has no declared bounds — the track's speed gate has nothing to read");
+}
+const [SPEED_MIN, SPEED_MAX] = SPEED_BOUNDS;
+
+export const ROUTE_TRACK_INSERT_SQL = `INSERT INTO route_track (ts, lat, lon, speed)
 -- gps_lat and gps_lon are SEPARATE log-on-change signals with independent deadbands: they
 -- share a millisecond when a fix moves both, and a heading that moves one logs only that one.
 -- An inner join on equal ts drops ~17.5 % of the track, so each is carried forward onto the
@@ -92,9 +123,9 @@ WITH raw AS (
   SELECT r.ts AS ts,
          MAX(CASE WHEN s.key = 'gps_lat'       THEN r.value END) AS lat,
          MAX(CASE WHEN s.key = 'gps_lon'       THEN r.value END) AS lon,
-         -- Gated to public/lib/bounds.js's declared range for this signal: out of range
-         -- becomes NULL (no colour), never a clamped value that looks plausible.
-         MAX(CASE WHEN s.key = 'gps_speed_kmh' AND r.value BETWEEN 0 AND 300
+         -- The range src/can/registry.ts declares for this signal, read at build time rather
+         -- than restated: out of range becomes NULL (no colour), never a clamped value.
+         MAX(CASE WHEN s.key = 'gps_speed_kmh' AND r.value BETWEEN ${SPEED_MIN} AND ${SPEED_MAX}
                   THEN r.value END) AS speed
   FROM reading r JOIN signal s ON s.id = r.signal_id
   WHERE s.key IN ('gps_lat', 'gps_lon', 'gps_speed_kmh')

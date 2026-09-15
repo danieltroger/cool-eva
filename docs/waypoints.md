@@ -342,6 +342,27 @@ node --experimental-strip-types scripts/import-ride-log.ts ~/…/ride-logs/<dump
 
 Decrypt into a staging file, re-run this recovery over it, materialise the route map's track, and only then replace `rides.db` — the old one is kept beside it as `rides.db.bak-replaced-<runId>`. Nothing touches the live database until the new one is complete, which matters because the decrypt is a multi-minute operation that can run out of heap: measured 2026-09-15, the whole import took **3 min 55 s** for 26 input files and 45 921 309 readings, and the decrypt alone died with a V8 heap OOM at 8 GB before 24 GB carried it. `README.md` §Grafana has the recipe and which files to point it at; `docs/route-map.md` §"Materialised once, not per load" has the map half.
 
+### ⚠️ The swap, and the WAL that replays into a stranger
+
+The step's whole safety argument is that the live database is not touched until the new one is complete — and that argument was **switched off in one branch**, found by the diff review on #274 and reproduced before it was fixed.
+
+SQLite does not check that a journal belongs to the database it finds beside it: it replays a WAL whose checksums chain from its own header. So `rides.db-wal` sitting next to a _different_ inode that has just taken the name `rides.db` silently replaces it. `rm rides.db` produces exactly that state, because it takes the database and leaves the siblings — and "delete it and rebuild" is a move this repo teaches, since `decrypt-log.ts` refuses an existing `--out`.
+
+Measured with an orphan 57 KB WAL from an unrelated database and no `rides.db`:
+
+```
+route_track: 500 points in 2 ms, journal_mode = delete
+ok=true  refusal=null                      <- reported success, exit 0
+tables now: [{"name":"reading"}]           <- five tables went in
+reading rows now: {"n":2}                  <- the donor's two rows
+```
+
+⚠️ **`journal_mode = DELETE` does not immunise the file**, which is the counter-intuitive half: a database whose header says rollback replayed the alien WAL just as a WAL-header one did. Measured both ways.
+
+So the sibling probe runs whether or not `<out>` exists. With a database there, its siblings follow it to `.bak-replaced-<runId>`; with only siblings there, they go to `.bak-orphan-<runId>` and the import says so out loud. `-journal` is in the same set — a rollback-mode database is what this step produces, and a writer that dies mid-transaction leaves that file rather than a `-wal`. ⚠️ Whether SQLite replays a stranded `-journal` into a foreign database was **not** measured; it is the same hazard class, and moving it costs one array entry.
+
+A sibling that vanishes between the probe and the rename is the _good_ case — the connection holding it closed cleanly — so those renames tolerate `ENOENT`. The database moves never do, and a swap that fails part-way says where the complete file is instead of throwing.
+
 **Which window it recovers over, and why it is not "everything".** `scripts/recover-waypoints.ts` pins `BEAT_MS_ON_THE_RECOVERY_DAYS = 100` and `LEGACY_HOLD_MS = 1000` as historical facts, and `fireInstant()` places every point with them. #197 (`9b6970a`) set the beat to 50 ms and the threshold to 500 ms at **2026-09-10T21:55:06Z**, so the import commits up to that instant by default and no further: past it the recovery would be modelling a machine that no longer exists. The deploy to the Pi is later than the commit, so the cut-off errs towards judging too little. ⚠️ **And the step prints what fell outside it** — a whole-archive dry run precedes the commit — because a cut-off that drops a waypoint without saying so is the failure this page exists about.
 
 **What the first run writes, measured 2026-09-15** on a copy with the recovered rows deleted, which is what a rebuild produces: `76 holds / 56 already live / 5 refused / **15 RECOVERABLE**` — the 8 of 2026-09-07, the 4 of 2026-09-09 that #211 could not commit, and **3 on 2026-09-10** (15:43, 17:44, 18:30, the last of which held 1030 ms and cleared even the old threshold). All 15 are reversible with the one `DELETE` the script prints.

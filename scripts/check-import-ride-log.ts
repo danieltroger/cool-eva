@@ -1,9 +1,16 @@
 import Database from "better-sqlite3";
-import { access, mkdtemp, readdir, rm, writeFile } from "fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { commitRecovered } from "./recover-waypoints-commit.ts";
-import { judgeCoverage, planSwap, runImport, type ImportOptions, type SpawnedStages } from "./ride-import.ts";
+import {
+  judgeCoverage,
+  pathExists,
+  planSwap,
+  runImport,
+  type ImportOptions,
+  type SpawnedStages,
+} from "./ride-import.ts";
 
 // The import step's ORCHESTRATION — which is the only part of it that moves gigabytes around,
 // and was the only part with nothing testing it.
@@ -43,19 +50,21 @@ const clean = await importInto("clean", { decryptCode: 0, dryCode: 0, commitCode
 check(
   "a clean run swaps the new database in and keeps the old one as .bak-replaced-…",
   clean.outcome.ok &&
-    clean.outcome.replacedPath !== null &&
-    (await exists(clean.outcome.replacedPath ?? "")) &&
-    !(await exists(clean.outcome.stagingPath))
+    clean.outcome.asidePath !== null &&
+    (await pathExists(clean.outcome.asidePath)) &&
+    !(await pathExists(clean.outcome.stagingPath))
 );
 check(
   "the finished file is in rollback journal mode, which is what the datasource wants",
   journalModeOf(clean.outPath) === "delete"
 );
-check("the materialised track came with it", clean.outcome.track !== null && clean.outcome.track.rows === FIXTURE_ROWS);
+check(
+  "the materialised track is in the file that took the name, not just in the one that was built",
+  trackRowsIn(clean.outPath) === FIXTURE_ROWS
+);
 
-// ⚠️ decrypt-log.ts exits 2 for "N segments could not be decrypted, the rest is intact", and a
-// real dump has some — 63 in the 2026-09-13 file. Treating that as fatal would make the normal
-// case unimportable, so this is the branch that must NOT abort.
+// ⚠️ decrypt-log.ts exits 2 for "N segments could not be decrypted, the rest is intact" — 63 in
+// the 2026-09-13 dump — so this is the branch that must NOT abort.
 const partial = await importInto("partial", { decryptCode: 2, dryCode: 0, commitCode: 0 });
 check(
   "exit 2 from the decrypt carries on, and says the archive lost segments",
@@ -73,8 +82,8 @@ for (const [label, fakes] of [
     !run.outcome.ok &&
       run.outcome.refusal !== null &&
       (await readingsIn(run.outPath)) === run.originalRows &&
-      run.outcome.replacedPath === null &&
-      (fakes.decryptCode === 1 || (await exists(run.outcome.stagingPath)))
+      run.outcome.asidePath === null &&
+      (fakes.decryptCode === 1 || (await pathExists(run.outcome.stagingPath)))
   );
 }
 
@@ -83,7 +92,9 @@ console.log("\n2. the refusals that protect the archive");
 const shrunk = await importInto("shrink", { decryptCode: 0, dryCode: 0, commitCode: 0, rows: 2, shift: 60_000 });
 check(
   "an import covering LESS than the database it replaces is refused",
-  !shrunk.outcome.ok && /covers LESS/.test(shrunk.outcome.refusal ?? "") && (await exists(shrunk.outcome.stagingPath))
+  !shrunk.outcome.ok &&
+    /covers LESS/.test(shrunk.outcome.refusal ?? "") &&
+    (await pathExists(shrunk.outcome.stagingPath))
 );
 
 const allowed = await importInto(
@@ -118,10 +129,8 @@ check(
     (occupiedOutcome.refusal ?? "").includes("import-2026-01-01T00-00-00-000Z")
 );
 
-// ⚠️ THE CASE THAT DESTROYED A FINISHED IMPORT, end to end. `rm rides.db` takes the database
-// and leaves its siblings; the swap used to look at them only when `<out>` still existed, so
-// the new file took the name and SQLite replayed the stale WAL over it. Measured before the
-// fix: 500 points built, and the result was a different database's rows, reported as success.
+// ⚠️ THE CASE THAT DESTROYED A FINISHED IMPORT, end to end — `rm rides.db` leaves the siblings
+// and the stale WAL was replayed over the new file. docs/waypoints.md §"The swap, and the WAL that replays into a stranger".
 const orphan = await importInto("orphan", { decryptCode: 0, dryCode: 0, commitCode: 0 }, false, async outPath => {
   await rm(outPath);
   await writeFile(`${outPath}-wal`, Buffer.alloc(4096));
@@ -129,10 +138,10 @@ const orphan = await importInto("orphan", { decryptCode: 0, dryCode: 0, commitCo
 check(
   "an orphan -wal beside NO database is moved aside, and the database the import built survives",
   orphan.outcome.ok &&
-    orphan.outcome.replacedPath !== null &&
-    orphan.outcome.replacedPath.includes(".bak-orphan-") &&
-    (await exists(`${orphan.outcome.replacedPath}-wal`)) &&
-    !(await exists(`${orphan.outPath}-wal`)) &&
+    orphan.outcome.asidePath !== null &&
+    orphan.outcome.asidePath.includes(".bak-orphan-") &&
+    (await pathExists(`${orphan.outcome.asidePath}-wal`)) &&
+    !(await pathExists(`${orphan.outPath}-wal`)) &&
     trackRowsIn(orphan.outPath) === FIXTURE_ROWS
 );
 
@@ -150,8 +159,7 @@ const moves = planSwap("/tmp/rides.db", "/tmp/rides.db.import-x", "/tmp/rides.db
   outSiblings: ["-wal", "-shm"],
   stagingSiblings: [],
 });
-// ⚠️ SQLite does not check that a WAL belongs to the database it finds it beside. Leaving
-// rides.db-wal behind while a different inode becomes rides.db is silent corruption.
+// ⚠️ A WAL left beside a different inode that takes the name is silent corruption.
 check(
   "the outgoing database's -wal and -shm move WITH it, before the new file takes its name",
   moves.length === 4 &&
@@ -171,10 +179,8 @@ check(
     stagingSiblings: [],
   }).length === 1
 );
-// ⚠️ THE CASE THAT DESTROYED A FINISHED IMPORT. `rm rides.db` takes the database and leaves
-// the siblings; the swap then renamed the new file into that name and SQLite replayed the old
-// WAL over it. Measured before the fix: 500 points built, and the file came back as a
-// different database's two rows with no route_track, reported as success.
+// ⚠️ The structural half of the same case: with no database at `<out>`, the siblings must
+// still move. docs/waypoints.md §"The swap, and the WAL that replays into a stranger".
 const orphanMoves = planSwap("/tmp/rides.db", "/tmp/rides.db.import-x", "/tmp/rides.db.bak-orphan-x", {
   outDb: false,
   outSiblings: ["-wal", "-shm"],
@@ -351,7 +357,7 @@ function trackRowsIn(path: string): number {
 }
 
 async function readingsIn(path: string): Promise<number> {
-  if (!(await exists(path))) {
+  if (!(await pathExists(path))) {
     return -1;
   }
   const db = new Database(path, { readonly: true });
@@ -359,20 +365,5 @@ async function readingsIn(path: string): Promise<number> {
     return (db.prepare("SELECT COUNT(*) AS n FROM reading").get() as { n: number }).n;
   } finally {
     db.close();
-  }
-}
-
-async function exists(path: string): Promise<boolean> {
-  if (path === "") {
-    return false;
-  }
-  try {
-    await access(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw error;
   }
 }

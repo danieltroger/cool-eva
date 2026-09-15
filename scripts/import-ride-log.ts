@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import { spawn } from "child_process";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import { buildRouteTrack } from "./route-track.ts";
+import { LEGACY_BEAT_ERA_END_MS } from "../src/gps/recover-era.ts";
+import { materialiseRouteTrack } from "./route-track.ts";
 import { pathExists, readTrackAge, runImport, type ImportOptions, type SpawnedStages } from "./ride-import.ts";
 
 // One command for "the bike has new rides in it": decrypt the sealed log, put back the
@@ -11,23 +12,14 @@ import { pathExists, readTrackAge, runImport, type ImportOptions, type SpawnedSt
 //   node --experimental-strip-types scripts/import-ride-log.ts ~/…/ride-logs --out rides.db
 //   node --experimental-strip-types scripts/import-ride-log.ts --materialise-only rides.db
 //
-// ⚠️ Measured at 3 min 55 s for 26 inputs and 45 921 309 readings: ~113 s to decrypt and
-// judge, ~118 s for the recovery's commit (it copies and checksums the whole database), and
-// 1.7 s to materialise. It scales with the ARCHIVE, not with what is new. README.md
+// ⚠️ Measured on 26 inputs and 45 921 309 readings: 113 s to decrypt and judge the whole
+// archive, 118 s for the recovery's commit (it copies and checksums the whole database), 1.7 s
+// to materialise — 3 min 53 s from start to the end of the build. The coverage survey and the
+// swap follow and were not timed separately; the survey is a covering-index scan of every
+// reading, measured at 8.8 s standalone on a colder file. Budget four minutes and know that it
+// scales with the ARCHIVE, not with what is new. README.md
 // §Grafana has the recipe and which files to point it at; scripts/ride-import.ts has the
 // order and the refusals; docs/waypoints.md §"Not losing the ride log" has why it exists.
-
-/**
- * The instant the bike stopped running the beat `recover-waypoints.ts` models.
- *
- * ⚠️ Its `BEAT_MS_ON_THE_RECOVERY_DAYS = 100` and `LEGACY_HOLD_MS = 1000` are historical
- * FACTS about days already ridden, not policy, and `fireInstant()` places a point with both.
- * #197 (`9b6970a`) set the beat to 50 ms and the threshold to 500 ms at this instant, so a
- * hold judged after it would be placed by a machine that no longer exists. The DEPLOY to the
- * Pi is later than the commit, so this errs towards judging too little rather than too much —
- * and the step reports every hold it left outside the window instead of dropping it quietly.
- */
-const LEGACY_BEAT_ERA_END_ISO = "2026-09-10T21:55:06Z";
 
 /**
  * Heap for the decrypt, which is the one stage that can run out of it.
@@ -90,8 +82,15 @@ async function main(): Promise<void> {
   if (outcome.before !== null && outcome.after !== null) {
     console.log(`  readings ${outcome.before.readings} → ${outcome.after.readings}`);
   }
-  if (outcome.replacedPath !== null) {
-    console.log(`  the database it replaced is at ${outcome.replacedPath} — delete it once Grafana looks right`);
+  if (outcome.asidePath !== null) {
+    // ⚠️ Two different things end up at that path and only one of them is a replacement: with
+    // no database at `--out`, only stranded siblings were moved. `before` is exactly "there
+    // was a database", so it is what picks the sentence.
+    console.log(
+      outcome.before !== null
+        ? `  the database it replaced is at ${outcome.asidePath} — delete it once Grafana looks right`
+        : `  stranded journal files were moved to ${outcome.asidePath}* — they belonged to no database`
+    );
   }
   if (outcome.unreadableSegments) {
     console.log("  ⚠️ some segments could not be decrypted (see the decrypt step above); that data is lost");
@@ -135,11 +134,9 @@ function runNode(nodeFlags: string[], script: string, args: string[]): Promise<n
 /**
  * For "I decrypted by hand, now make the map fast" — the only stage safe to re-run alone.
  *
- * ⚠️ It also leaves the file in rollback journal mode, for the reason the full step does
- * (grafana/README.md §"`rides.db` is in WAL mode, and that silently blanks panels"). That is
- * right for a laptop-side archive Grafana reads and WRONG for a database something is
- * appending to — the same section measures 53 of 85 queries failing in that case — so this is
- * not a command to point at a Pi's live file.
+ * ⚠️ It also leaves the file in rollback journal mode — right for a laptop-side archive
+ * Grafana reads, wrong for one something is appending to, so never point it at a live file.
+ * The measurement is above `materialiseRouteTrack` in scripts/route-track.ts.
  */
 async function materialiseOnly(dbPath: string): Promise<void> {
   const path = resolve(dbPath);
@@ -149,11 +146,10 @@ async function materialiseOnly(dbPath: string): Promise<void> {
     fail(`${path} does not exist — --materialise-only works on a database you already have`);
   }
   const db = new Database(path);
-  const built = buildRouteTrack(db);
-  const mode = db.pragma("journal_mode = DELETE", { simple: true });
+  const built = materialiseRouteTrack(db);
   db.close();
   console.log(`route_track: ${built.rows} points in ${built.ms.toFixed(0)} ms, built ${built.builtAt}`);
-  console.log(`journal_mode is now ${String(mode)}`);
+  console.log(`journal_mode is now ${built.journalMode}`);
 }
 
 function parseArguments(argv: string[]): Options {
@@ -162,7 +158,8 @@ function parseArguments(argv: string[]): Options {
     outPath: "rides.db",
     heapMb: DEFAULT_HEAP_MB,
     recoverFromMs: 0,
-    recoverToMs: Date.parse(LEGACY_BEAT_ERA_END_ISO),
+    // The era's own end, beside the two constants that define it — src/gps/recover-era.ts.
+    recoverToMs: LEGACY_BEAT_ERA_END_MS,
     allowShrink: false,
     materialiseOnly: null,
   };

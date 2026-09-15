@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { readdir, rename, rm, stat } from "fs/promises";
 import { basename, dirname } from "path";
-import { buildRouteTrack, routeTrackBuiltAt, type RouteTrackBuild } from "./route-track.ts";
+import { materialiseRouteTrack, routeTrackBuiltAt } from "./route-track.ts";
 
 // The import itself, with the two child processes injected so scripts/check-import-ride-log.ts
 // can drive every branch without a 20-minute decrypt. scripts/import-ride-log.ts is the CLI
@@ -36,7 +36,7 @@ export interface ImportOptions {
 }
 
 /** What the archive covers, for the guard that refuses to replace it with less. */
-export interface ArchiveSurvey {
+interface ArchiveSurvey {
   readings: number;
   minTs: number | null;
   maxTs: number | null;
@@ -47,11 +47,11 @@ export interface ImportOutcome {
   /** Why it stopped, or null when it finished. */
   refusal: string | null;
   stagingPath: string;
-  replacedPath: string | null;
+  /** Where the outgoing database, or a set of stranded siblings, was moved. */
+  asidePath: string | null;
   unreadableSegments: boolean;
   before: ArchiveSurvey | null;
   after: ArchiveSurvey | null;
-  track: RouteTrackBuild | null;
 }
 
 /**
@@ -66,11 +66,10 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
     ok: false,
     refusal: null,
     stagingPath,
-    replacedPath: null,
+    asidePath: null,
     unreadableSegments: false,
     before: null,
     after: null,
-    track: null,
   };
   const orphanedStaging = await leftoverStagingFiles(options.outPath);
   if (orphanedStaging.length > 0) {
@@ -123,16 +122,10 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
 
   console.log("\n──── 4/4 materialise the route track");
   const staging = new Database(stagingPath);
-  outcome.track = buildRouteTrack(staging);
+  const track = materialiseRouteTrack(staging);
   outcome.after = surveyArchive(staging);
-  // ⚠️ LAST, and on the staging copy only. grafana/README.md §"rides.db is in WAL mode, and
-  // that silently blanks panels" measured the datasource blanking 3 of 85 queries over a WAL
-  // file against 0 of 85 over a rollback one, and names this step as where to set it. The
-  // same section measures DELETE as the wrong mode for a file a logger is appending to — 53
-  // of 85 — which is why it is set here, on a static file, and never on the Pi's.
-  staging.pragma("journal_mode = DELETE");
   staging.close();
-  console.log(`route_track: ${outcome.track.rows} points in ${outcome.track.ms.toFixed(0)} ms, journal_mode = delete`);
+  console.log(`route_track: ${track.rows} points in ${track.ms.toFixed(0)} ms, journal_mode = ${track.journalMode}`);
 
   const outDbPresent = await pathExists(options.outPath);
   if (outDbPresent) {
@@ -152,25 +145,22 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
     }
   }
 
-  // ⚠️ PROBED WHETHER OR NOT `<out>` ITSELF IS THERE, and that is the whole of this block. An
-  // orphan `<out>-wal` — what `rm rides.db` leaves, since it takes only the database — is
-  // replayed into whatever next takes that name, so it silently REPLACES the database this
-  // step just built with the remains of a different one. Measured: a 500-point import came
-  // back as the donor's two rows and no route_track, reported as success. `journal_mode =
-  // DELETE` does not immunise the file; that was measured too.
+  // ⚠️ PROBED WHETHER OR NOT `<out>` ITSELF IS THERE: an orphan `<out>-wal` is replayed into
+  // whatever next takes that name, so it silently replaces the database this step just built.
+  // Measured, both halves, in docs/waypoints.md §"The swap, and the WAL that replays into a stranger".
   const outSiblings = await siblingsOf(options.outPath);
   const stagingSiblings = await siblingsOf(stagingPath);
   if (outDbPresent) {
-    outcome.replacedPath = `${options.outPath}.bak-replaced-${options.runId}`;
+    outcome.asidePath = `${options.outPath}.bak-replaced-${options.runId}`;
   } else if (outSiblings.length > 0) {
-    outcome.replacedPath = `${options.outPath}.bak-orphan-${options.runId}`;
+    outcome.asidePath = `${options.outPath}.bak-orphan-${options.runId}`;
     console.log(
       `⚠️  ${outSiblings.map(suffix => options.outPath + suffix).join(", ")} sit beside no database — ` +
-        `moving them to ${outcome.replacedPath}* rather than letting them be replayed into the new one`
+        `moving them to ${outcome.asidePath}* rather than letting them be replayed into the new one`
     );
   }
 
-  const plan = planSwap(options.outPath, stagingPath, outcome.replacedPath, {
+  const plan = planSwap(options.outPath, stagingPath, outcome.asidePath, {
     outDb: outDbPresent,
     outSiblings,
     stagingSiblings,
@@ -189,10 +179,8 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
 /**
  * The renames, in order, tolerating a sibling that disappeared under us.
  *
- * ⚠️ A `-wal` can be removed by the connection that was holding it between the probe and the
- * rename, and that is the GOOD case — there is nothing left to strand. Treating it as a fault
- * left no database at `<out>` at all and an unhandled ENOENT where the message saying where the
- * finished file went should have been. The database moves themselves are never optional.
+ * ⚠️ A vanished sibling is the GOOD case — the connection holding it closed cleanly. Treating
+ * it as a fault left no database at `<out>` at all. The database moves are never optional.
  */
 async function applySwap(plan: SwapMove[]): Promise<string | null> {
   for (const move of plan) {
@@ -214,11 +202,8 @@ async function applySwap(plan: SwapMove[]): Promise<string | null> {
  * Which files move where, and in which order.
  *
  * ⚠️ THE SIBLINGS MOVE WITH THEIR DATABASE — and, when there is no database left, they move
- * anyway. SQLite does not check that a journal belongs to the file it finds it beside: it
- * replays a WAL whose checksums chain from its own header, so `rides.db-wal` left next to a
- * different inode that has just taken the name `rides.db` silently replaces it. Measured on
- * this code: a 500-point import came back as a donor database's two rows, reported as success.
- * `journal_mode = DELETE` does not immunise the file against it.
+ * anyway, because SQLite does not check that a journal belongs to the file it finds it beside.
+ * docs/waypoints.md §"The swap, and the WAL that replays into a stranger" has the measurement.
  */
 export function planSwap(
   outPath: string,
@@ -245,11 +230,8 @@ export function planSwap(
 /**
  * Every file SQLite will read from beside a database of this name.
  *
- * ⚠️ `-journal` is in the set although this step's own output never has one: a rollback-mode
- * database is exactly what it produces, and a writer that dies mid-transaction leaves that
- * file rather than a `-wal`. Whether SQLite replays a stranded `-journal` into a foreign
- * database has NOT been measured here — it is the same hazard class as the WAL, and moving it
- * costs one array entry, which is cheaper than being right about it.
+ * ⚠️ `-journal` is in the set on the same argument as `-wal` and WITHOUT the measurement —
+ * docs/waypoints.md §"The swap, and the WAL that replays into a stranger" says which half is which.
  */
 const SIBLING_SUFFIXES = ["-wal", "-shm", "-journal"];
 
@@ -266,16 +248,24 @@ async function siblingsOf(dbPath: string): Promise<string[]> {
 
 /** Staging files any earlier run left beside `<out>`, which are multi-GB and easy to forget. */
 async function leftoverStagingFiles(outPath: string): Promise<{ path: string; bytes: number }[]> {
-  const directory = dirname(outPath);
-  const prefix = `${basename(outPath)}.import-`;
   const found: { path: string; bytes: number }[] = [];
-  for (const entry of await readdir(directory)) {
-    if (entry.startsWith(prefix)) {
-      const path = `${directory}/${entry}`;
-      found.push({ path, bytes: (await sizeOf(path)) ?? 0 });
-    }
+  for (const path of await pathsStartingWith(outPath, ".import-")) {
+    found.push({ path, bytes: (await sizeOf(path)) ?? 0 });
   }
   return found;
+}
+
+/** Everything in `path`'s directory whose name is `path`'s plus this suffix. */
+async function pathsStartingWith(path: string, suffix: string): Promise<string[]> {
+  const directory = dirname(path);
+  const prefix = `${basename(path)}${suffix}`;
+  const matches: string[] = [];
+  for (const entry of await readdir(directory)) {
+    if (entry.startsWith(prefix)) {
+      matches.push(`${directory}/${entry}`);
+    }
+  }
+  return matches;
 }
 
 /**
@@ -305,7 +295,7 @@ export function judgeCoverage(before: ArchiveSurvey, after: ArchiveSurvey, allow
 }
 
 /** Rows and span, excluding the 2060 rows every dashboard excludes by name. */
-export function surveyArchive(db: Database.Database): ArchiveSurvey {
+function surveyArchive(db: Database.Database): ArchiveSurvey {
   const row = db
     .prepare("SELECT COUNT(*) AS readings, MIN(ts) AS minTs, MAX(ts) AS maxTs FROM reading WHERE ts < 2000000000000")
     .get() as ArchiveSurvey;
@@ -314,18 +304,18 @@ export function surveyArchive(db: Database.Database): ArchiveSurvey {
 
 /** When `dbPath`'s track was last built, for the line the import prints before replacing it. */
 export function readTrackAge(dbPath: string): string | null {
-  const db = new Database(dbPath, { readonly: true });
-  try {
-    return routeTrackBuiltAt(db);
-  } finally {
-    db.close();
-  }
+  return readOnly(dbPath, routeTrackBuiltAt);
 }
 
 function surveyExisting(dbPath: string): ArchiveSurvey {
+  return readOnly(dbPath, surveyArchive);
+}
+
+/** Opens read-only, reads, and closes even when the read throws. */
+function readOnly<T>(dbPath: string, read: (db: Database.Database) => T): T {
   const db = new Database(dbPath, { readonly: true });
   try {
-    return surveyArchive(db);
+    return read(db);
   } finally {
     db.close();
   }
@@ -340,19 +330,14 @@ function surveyExisting(dbPath: string): ArchiveSurvey {
  * matching it was created by the stage that just ran.
  */
 async function removeRecoveryBackups(stagingPath: string): Promise<string[]> {
-  const directory = dirname(stagingPath);
-  const prefix = `${basename(stagingPath)}.bak-`;
   const removed: string[] = [];
-  for (const entry of await readdir(directory)) {
-    if (entry.startsWith(prefix)) {
-      const path = `${directory}/${entry}`;
-      const bytes = await sizeOf(path);
-      // force, because a backup that vanished between the listing and here is already gone —
-      // and throwing over it AFTER a successful commit would be the worst possible moment.
-      await rm(path, { force: true });
-      removed.push(path);
-      console.log(`removed the recovery's backup of the staging file: ${path} (${bytes} bytes)`);
-    }
+  for (const path of await pathsStartingWith(stagingPath, ".bak-")) {
+    const bytes = await sizeOf(path);
+    // force, because a backup that vanished between the listing and here is already gone — and
+    // throwing over it AFTER a successful commit would be the worst possible moment.
+    await rm(path, { force: true });
+    removed.push(path);
+    console.log(`removed the recovery's backup of the staging file: ${path} (${bytes} bytes)`);
   }
   return removed;
 }

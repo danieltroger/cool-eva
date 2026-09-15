@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { readFile } from "fs/promises";
-import { buildRouteTrack, ROUTE_TRACK_BUILT_AT } from "./route-track.ts";
+import { boundsFor } from "../public/lib/bounds.js";
+import { ROUTE_TRACK_INSERT_SQL, buildRouteTrack, routeTrackBuiltAt } from "./route-track.ts";
 
 // The materialised route track, built by the code that ships and then read by the DASHBOARD'S
 // OWN SQL, which is lifted out of grafana/dashboards/route-map.json rather than restated here.
@@ -133,6 +134,18 @@ check(
     !speedTrack.some(point => point.speed === 999)
 );
 
+// ⚠️ This cannot catch the bound MOVING — both sides read the same declaration, by design.
+// What it catches is the literal coming back: the SQL carried a hand-written `BETWEEN 0 AND
+// 300` for as long as it lived in dashboard JSON, which cannot import, and inherited it into
+// TypeScript along with a comment claiming it was the declared range.
+const declaredSpeed = boundsFor("gps_speed_kmh", "km/h", "gps");
+check(
+  `the speed gate is built from the declared bound (${declaredSpeed?.join("…")}), not a literal`,
+  declaredSpeed !== null &&
+    declaredSpeed !== undefined &&
+    ROUTE_TRACK_INSERT_SQL.includes(`BETWEEN ${declaredSpeed[0]} AND ${declaredSpeed[1]}`)
+);
+
 console.log("\n2. the collapse is enforced, not merely performed");
 
 const enforced = databaseWith(straightTrack(3));
@@ -149,17 +162,11 @@ try {
 // legal rowids — an assertion that could never fire. The unique index on `ts / 1000` can.
 check("a second point inside an existing second is refused by route_track_second", secondRejected);
 
-const stamped = enforced.prepare("SELECT value FROM info WHERE key = ?").get(ROUTE_TRACK_BUILT_AT) as
-  | { value: string }
-  | undefined;
-const firstStamp = stamped?.value ?? "";
+const firstStamp = routeTrackBuiltAt(enforced);
 const rebuilt = buildRouteTrack(enforced);
-const restamped = enforced.prepare("SELECT value FROM info WHERE key = ?").get(ROUTE_TRACK_BUILT_AT) as {
-  value: string;
-};
 check(
   "the build stamps info.route_track_built_at and a rebuild refreshes it",
-  firstStamp.length > 0 && restamped.value === rebuilt.builtAt && rebuilt.rows === 3
+  firstStamp !== null && routeTrackBuiltAt(enforced) === rebuilt.builtAt && rebuilt.rows === 3
 );
 
 console.log("\n3. what the dashboard actually runs");
