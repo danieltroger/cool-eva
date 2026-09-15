@@ -32,9 +32,9 @@ SQL times are not what Daniel waits for. Measured 2026-09-15 in a headless Chrom
 
 **12.2 s → 4.2 s to a map you can look at**, and the two ten-second requests are gone. What is left is the charge-session and Rides panels, which this change does not touch.
 
-⚠️ The 11 243-point render is **not** the bottleneck at this size: the gap between the last query returning and the canvas painting is ~1.2 s either way, before and after, on a layer that styles every point as its own OpenLayers feature. That budget is what [Thinning](#thinning) exists to protect and it is still doing its job — the archive is 180 563 points at the time of this measurement, well past the ~68 000 at which the layer was measured to stop painting entirely.
+⚠️ The 11 243-point render is **not** the bottleneck at this size: the gap between the last query returning and the canvas painting is ~1.2 s either way, before and after, on a layer that styles every point as its own OpenLayers feature. That budget is what [Thinning](#thinning) exists to protect and it is still doing its job — **180 563** points in the imported 2026-09-15 archive this browser run used (the SQL table above is the older 2026-09-12 one, at 146 150), both well past the ~68 000 at which the layer was measured to stop painting entirely.
 
-What it costs: **146 150 points, built in 4.8 s, 4 575 232 B on disk** (~31 B a point), rebuilt from scratch on every import rather than appended to. An incremental build would have to reason about which points a new fix un-spikes; a full rebuild is five seconds beside a twenty-minute decrypt.
+What it costs, on the 2026-09-12 archive (`dbstat`): **146 150 points, built in 4.8 s, 7 258 112 B on disk** — 4 575 232 B of table plus 2 682 880 B for the `ts / 1000` unique index below, so ~50 B a point, not the ~31 B the table alone suggests. Rebuilt from scratch on every import rather than appended to. An incremental build would have to reason about which points a new fix un-spikes; a full rebuild is five seconds beside a twenty-minute decrypt.
 
 `ts` is the rowid, so the panel's `WHERE ts BETWEEN` is a `SEARCH route_track USING INTEGER PRIMARY KEY` range scan. The **per-second collapse is enforced by a unique index on `ts / 1000`**, not by that primary key: `ts` is milliseconds, so two rows in one second are two perfectly legal rowids and a constraint there could never fire.
 
@@ -80,7 +80,9 @@ The despiker removes 43 of the 146 193, so essentially all of these are drawn to
 
 ### If the table is missing — measured, because guessing at this was wrong twice
 
-A rebuild that skips the materialiser leaves no `route_track` at all: `scripts/decrypt-log.ts` refuses an existing `--out`, so a rebuild always starts from a fresh file and there is no stale-table state to be in.
+A rebuild that skips the materialiser leaves no `route_track` at all, because `scripts/decrypt-log.ts` refuses an existing `--out` and therefore starts from a fresh file.
+
+⚠️ **`--force` is the exception, and it is the bad one.** It appends into the existing file instead, so the table survives — **stale**, describing an archive that has since grown — and `initDb` puts the database back into WAL on the way through. Measured 2026-09-15 on a small archive: before, `route_track` 1 point / 308 readings / `journal_mode=delete`; after `decrypt-log.ts --out <same file> --force`, `route_track` **still 1 point** while `reading` had doubled to 616, and `journal_mode=wal`. So that path has no error badge at all — an out-of-date track drawn as if it were current, plus the panel blanking `grafana/README.md` measures at 3 of 85 queries. `info.route_track_built_at` is the only tell, and nothing on that path reads it. Re-run `--materialise-only` after any `--force`.
 
 Dropped the table from a real 2.5 GB archive and reloaded the dashboard, 2026-09-15:
 

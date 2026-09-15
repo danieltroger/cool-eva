@@ -1,10 +1,9 @@
 import Database from "better-sqlite3";
 import { spawn } from "child_process";
-import { access } from "fs/promises";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { buildRouteTrack } from "./route-track.ts";
-import { readTrackAge, runImport, type ImportOptions, type SpawnedStages } from "./ride-import.ts";
+import { pathExists, readTrackAge, runImport, type ImportOptions, type SpawnedStages } from "./ride-import.ts";
 
 // One command for "the bike has new rides in it": decrypt the sealed log, put back the
 // waypoints a rebuild would otherwise drop, and materialise the map's track.
@@ -54,12 +53,12 @@ interface Options {
 async function main(): Promise<void> {
   const options = parseArguments(process.argv.slice(2));
   if (options.materialiseOnly !== null) {
-    materialiseOnly(options.materialiseOnly);
+    await materialiseOnly(options.materialiseOnly);
     return;
   }
 
   const outPath = resolve(options.outPath);
-  const previousTrack = (await exists(outPath)) ? readTrackAge(outPath) : null;
+  const previousTrack = (await pathExists(outPath)) ? readTrackAge(outPath) : null;
   console.log(`importing ${options.inputs.length} input(s) → ${outPath}`);
   console.log(
     previousTrack === null
@@ -133,13 +132,28 @@ function runNode(nodeFlags: string[], script: string, args: string[]): Promise<n
   });
 }
 
-/** For "I decrypted by hand, now make the map fast" — the only stage that is safe to re-run alone. */
-function materialiseOnly(dbPath: string): void {
-  const db = new Database(resolve(dbPath));
+/**
+ * For "I decrypted by hand, now make the map fast" — the only stage safe to re-run alone.
+ *
+ * ⚠️ It also leaves the file in rollback journal mode, for the reason the full step does
+ * (grafana/README.md §"`rides.db` is in WAL mode, and that silently blanks panels"). That is
+ * right for a laptop-side archive Grafana reads and WRONG for a database something is
+ * appending to — the same section measures 53 of 85 queries failing in that case — so this is
+ * not a command to point at a Pi's live file.
+ */
+async function materialiseOnly(dbPath: string): Promise<void> {
+  const path = resolve(dbPath);
+  if (!(await pathExists(path))) {
+    // better-sqlite3 would CREATE it, so a mistyped path otherwise leaves an empty database
+    // behind and then fails on `no such table: reading`.
+    fail(`${path} does not exist — --materialise-only works on a database you already have`);
+  }
+  const db = new Database(path);
   const built = buildRouteTrack(db);
-  db.pragma("journal_mode = DELETE");
+  const mode = db.pragma("journal_mode = DELETE", { simple: true });
   db.close();
   console.log(`route_track: ${built.rows} points in ${built.ms.toFixed(0)} ms, built ${built.builtAt}`);
+  console.log(`journal_mode is now ${String(mode)}`);
 }
 
 function parseArguments(argv: string[]): Options {
@@ -181,7 +195,13 @@ function applyFlag(options: Options, flag: string, value: string): void {
   if (flag === "--out") {
     options.outPath = value;
   } else if (flag === "--heap-mb") {
-    options.heapMb = Number(value);
+    // Unvalidated, `--heap-mb 24gb` reached the child as --max-old-space-size=NaN, which node
+    // refuses outright — and the OOM hint then suggested --heap-mb NaN.
+    const megabytes = Number(value);
+    if (!Number.isInteger(megabytes) || megabytes < 512) {
+      fail(`--heap-mb needs a whole number of megabytes, at least 512, not ${value}`);
+    }
+    options.heapMb = megabytes;
   } else if (flag === "--recover-from") {
     options.recoverFromMs = parseInstant(flag, value);
   } else if (flag === "--recover-to") {
@@ -199,18 +219,6 @@ function parseInstant(flag: string, value: string): number {
     fail(`${flag} needs an ISO instant, not ${value}`);
   }
   return ms;
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
 }
 
 function fail(message: string): never {

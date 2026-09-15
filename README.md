@@ -361,7 +361,7 @@ RIDE_LOG_PRIVATE_KEY=~/Documents/cool-eva/ride-log-key.private.pem \
   node --experimental-strip-types scripts/decrypt-log.ts ~/Downloads/cool-eva-2026-08-01.celog
 ```
 
-That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged.
+That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it — with one exception since the route map's track was materialised: its map panel and its "GPS points mapped" tile read a `route_track` table that only the import step builds, and both show an error badge until `scripts/import-ride-log.ts --materialise-only <db>` has been run against the file. ⚠️ And a `--force` decrypt into a database that already has that table leaves it **stale** rather than absent, which looks like nothing at all — `docs/route-map.md` §"If the table is missing" has the measurement.
 
 > ⚠️ Decrypting **refuses** an existing `--out` — delete it, choose another name, or pass `--force`, which **appends** and will happily store a second copy of everything the file already holds. Point it at a fresh file rather than at an existing archive you care about, and use `scripts/import-ride-log.ts` (§Grafana) when the archive you care about is the one being replaced. The Grafana datasource reads `/repo/rides.db`, which is why the walkthrough above uses that name. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
 

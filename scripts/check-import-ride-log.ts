@@ -102,14 +102,38 @@ check(
 );
 
 const occupied = join(workspace, "occupied.db");
-await writeFile(`${occupied}.import-run-1`, "not a database");
+schemaInto(occupied, FIXTURE_ROWS, 0);
+await writeFile(`${occupied}.import-2026-01-01T00-00-00-000Z`, "2.5 GB, in spirit");
 const occupiedOutcome = await runImport(
-  optionsFor(occupied, "run-1", false),
+  optionsFor(occupied, "a-different-run-id", false),
   fakeStages({ decryptCode: 0, dryCode: 0, commitCode: 0 })
 );
+// ⚠️ Globbed rather than compared against this run's own staging path. `runId` is a fresh ISO
+// instant, so a guard on THIS name could never fire from the CLI — an assertion that cannot
+// fail. The real hazard is the multi-GB file an earlier REFUSAL left, under a different name.
 check(
-  "a staging file left by an earlier import stops the next one before it does anything",
-  !occupiedOutcome.ok && /already exists/.test(occupiedOutcome.refusal ?? "")
+  "a staging file from an EARLIER run — a different runId — stops the next one before it does anything",
+  !occupiedOutcome.ok &&
+    /an earlier import left 1 staging file/.test(occupiedOutcome.refusal ?? "") &&
+    (occupiedOutcome.refusal ?? "").includes("import-2026-01-01T00-00-00-000Z")
+);
+
+// ⚠️ THE CASE THAT DESTROYED A FINISHED IMPORT, end to end. `rm rides.db` takes the database
+// and leaves its siblings; the swap used to look at them only when `<out>` still existed, so
+// the new file took the name and SQLite replayed the stale WAL over it. Measured before the
+// fix: 500 points built, and the result was a different database's rows, reported as success.
+const orphan = await importInto("orphan", { decryptCode: 0, dryCode: 0, commitCode: 0 }, false, async outPath => {
+  await rm(outPath);
+  await writeFile(`${outPath}-wal`, Buffer.alloc(4096));
+});
+check(
+  "an orphan -wal beside NO database is moved aside, and the database the import built survives",
+  orphan.outcome.ok &&
+    orphan.outcome.replacedPath !== null &&
+    orphan.outcome.replacedPath.includes(".bak-orphan-") &&
+    (await exists(`${orphan.outcome.replacedPath}-wal`)) &&
+    !(await exists(`${orphan.outPath}-wal`)) &&
+    trackRowsIn(orphan.outPath) === FIXTURE_ROWS
 );
 
 console.log("\n3. the file shuffling itself");
@@ -122,30 +146,56 @@ check(
 );
 
 const moves = planSwap("/tmp/rides.db", "/tmp/rides.db.import-x", "/tmp/rides.db.bak-replaced-x", {
-  outWal: true,
-  outShm: true,
-  stagingWal: false,
-  stagingShm: false,
+  outDb: true,
+  outSiblings: ["-wal", "-shm"],
+  stagingSiblings: [],
 });
 // ⚠️ SQLite does not check that a WAL belongs to the database it finds it beside. Leaving
 // rides.db-wal behind while a different inode becomes rides.db is silent corruption.
 check(
   "the outgoing database's -wal and -shm move WITH it, before the new file takes its name",
   moves.length === 4 &&
-    moves[0][0] === "/tmp/rides.db" &&
-    moves[1][0] === "/tmp/rides.db-wal" &&
-    moves[1][1] === "/tmp/rides.db.bak-replaced-x-wal" &&
-    moves[2][0] === "/tmp/rides.db-shm" &&
-    moves[3][1] === "/tmp/rides.db"
+    moves[0].from === "/tmp/rides.db" &&
+    moves[0].optional === false &&
+    moves[1].from === "/tmp/rides.db-wal" &&
+    moves[1].to === "/tmp/rides.db.bak-replaced-x-wal" &&
+    moves[1].optional === true &&
+    moves[2].from === "/tmp/rides.db-shm" &&
+    moves[3].to === "/tmp/rides.db"
 );
 check(
-  "a first import, with nothing to replace, is a single move",
+  "a first import, with nothing to replace and nothing stranded, is a single move",
   planSwap("/tmp/rides.db", "/tmp/rides.db.import-x", null, {
-    outWal: false,
-    outShm: false,
-    stagingWal: false,
-    stagingShm: false,
+    outDb: false,
+    outSiblings: [],
+    stagingSiblings: [],
   }).length === 1
+);
+// ⚠️ THE CASE THAT DESTROYED A FINISHED IMPORT. `rm rides.db` takes the database and leaves
+// the siblings; the swap then renamed the new file into that name and SQLite replayed the old
+// WAL over it. Measured before the fix: 500 points built, and the file came back as a
+// different database's two rows with no route_track, reported as success.
+const orphanMoves = planSwap("/tmp/rides.db", "/tmp/rides.db.import-x", "/tmp/rides.db.bak-orphan-x", {
+  outDb: false,
+  outSiblings: ["-wal", "-shm"],
+  stagingSiblings: [],
+});
+check(
+  "siblings beside NO database are moved aside too, before the new file takes the name",
+  orphanMoves.length === 3 &&
+    orphanMoves[0].from === "/tmp/rides.db-wal" &&
+    orphanMoves[0].to === "/tmp/rides.db.bak-orphan-x-wal" &&
+    orphanMoves[1].from === "/tmp/rides.db-shm" &&
+    orphanMoves[2].from === "/tmp/rides.db.import-x" &&
+    orphanMoves[2].to === "/tmp/rides.db"
+);
+check(
+  "-journal is in the sibling set, since a rollback-mode database is what this step produces",
+  planSwap("/tmp/rides.db", "/tmp/rides.db.import-x", "/tmp/aside", {
+    outDb: true,
+    outSiblings: ["-journal"],
+    stagingSiblings: [],
+  }).some(move => move.from === "/tmp/rides.db-journal" && move.to === "/tmp/aside-journal")
 );
 
 const wide = { readings: 10, minTs: 100, maxTs: 900 };
@@ -281,6 +331,20 @@ function journalModeOf(path: string): string {
   const db = new Database(path, { readonly: true });
   try {
     return String((db.pragma("journal_mode", { simple: true }) as string).toLowerCase());
+  } finally {
+    db.close();
+  }
+}
+
+/** What the panel would draw from this file — 0 when the table is not there at all. */
+function trackRowsIn(path: string): number {
+  const db = new Database(path, { readonly: true });
+  try {
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'route_track'").get();
+    if (table === undefined) {
+      return 0;
+    }
+    return (db.prepare("SELECT COUNT(*) AS n FROM route_track").get() as { n: number }).n;
   } finally {
     db.close();
   }

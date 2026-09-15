@@ -13,6 +13,13 @@ import { buildRouteTrack, routeTrackBuiltAt, type RouteTrackBuild } from "./rout
 // rides.db before a long, OOM-prone operation — which is exactly how 2026-09-13 lost the
 // recovered waypoints. docs/waypoints.md §"Not losing the ride log".
 
+/** One rename the swap performs. `optional` marks a sibling that may legitimately vanish. */
+export interface SwapMove {
+  from: string;
+  to: string;
+  optional: boolean;
+}
+
 /** The two stages that run as their own process, so a check can stand in for them. */
 export interface SpawnedStages {
   decrypt(inputs: string[], outPath: string): Promise<number>;
@@ -65,8 +72,16 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
     after: null,
     track: null,
   };
-  if (await pathExists(stagingPath)) {
-    outcome.refusal = `${stagingPath} already exists — an earlier import stopped here; move it aside first`;
+  const orphanedStaging = await leftoverStagingFiles(options.outPath);
+  if (orphanedStaging.length > 0) {
+    // ⚠️ Globbed, not compared against this run's own path. `runId` is a fresh ISO instant, so
+    // two runs cannot collide and a guard on THIS name could never fire — an assertion that
+    // cannot fail. What is real is the multi-GB file every refusal deliberately leaves behind,
+    // which nothing else ever mentions again.
+    outcome.refusal =
+      `an earlier import left ${orphanedStaging.length} staging file(s) beside ${options.outPath}:\n` +
+      orphanedStaging.map(file => `     ${file.path} (${file.bytes} bytes)`).join("\n") +
+      "\n   Look at them, then delete or move them aside and re-run.";
     return outcome;
   }
 
@@ -96,7 +111,12 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
   );
   const commitCode = await stages.recover(stagingPath, options.recoverFromMs, options.recoverToMs, true);
   if (commitCode !== 0) {
-    outcome.refusal = `the recovery's commit exited ${commitCode} — ${stagingPath} left in place`;
+    // Its backup of the staging file is stranded too — it is taken BEFORE the write — and it is
+    // the same size again, so the refusal names both rather than only the one.
+    const stranded = await removeRecoveryBackups(stagingPath);
+    outcome.refusal =
+      `the recovery's commit exited ${commitCode} — ${stagingPath} left in place` +
+      (stranded.length > 0 ? `, and its backup ${stranded.join(", ")} removed` : "");
     return outcome;
   }
   await removeRecoveryBackups(stagingPath);
@@ -114,7 +134,8 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
   staging.close();
   console.log(`route_track: ${outcome.track.rows} points in ${outcome.track.ms.toFixed(0)} ms, journal_mode = delete`);
 
-  if (await pathExists(options.outPath)) {
+  const outDbPresent = await pathExists(options.outPath);
+  if (outDbPresent) {
     const before = surveyExisting(options.outPath);
     outcome.before = before;
     const shrink = judgeCoverage(before, outcome.after, options.allowShrink);
@@ -129,56 +150,132 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
         `Close it and re-run; ${stagingPath} is complete and left in place`;
       return outcome;
     }
+  }
+
+  // ⚠️ PROBED WHETHER OR NOT `<out>` ITSELF IS THERE, and that is the whole of this block. An
+  // orphan `<out>-wal` — what `rm rides.db` leaves, since it takes only the database — is
+  // replayed into whatever next takes that name, so it silently REPLACES the database this
+  // step just built with the remains of a different one. Measured: a 500-point import came
+  // back as the donor's two rows and no route_track, reported as success. `journal_mode =
+  // DELETE` does not immunise the file; that was measured too.
+  const outSiblings = await siblingsOf(options.outPath);
+  const stagingSiblings = await siblingsOf(stagingPath);
+  if (outDbPresent) {
     outcome.replacedPath = `${options.outPath}.bak-replaced-${options.runId}`;
+  } else if (outSiblings.length > 0) {
+    outcome.replacedPath = `${options.outPath}.bak-orphan-${options.runId}`;
+    console.log(
+      `⚠️  ${outSiblings.map(suffix => options.outPath + suffix).join(", ")} sit beside no database — ` +
+        `moving them to ${outcome.replacedPath}* rather than letting them be replayed into the new one`
+    );
   }
 
   const plan = planSwap(options.outPath, stagingPath, outcome.replacedPath, {
-    outWal: (await sizeOf(`${options.outPath}-wal`)) !== null,
-    outShm: (await sizeOf(`${options.outPath}-shm`)) !== null,
-    stagingWal: (await sizeOf(`${stagingPath}-wal`)) !== null,
-    stagingShm: (await sizeOf(`${stagingPath}-shm`)) !== null,
+    outDb: outDbPresent,
+    outSiblings,
+    stagingSiblings,
   });
-  for (const [from, to] of plan) {
-    await rename(from, to);
+  const failure = await applySwap(plan);
+  if (failure !== null) {
+    outcome.refusal =
+      `${failure} — ⚠️ the swap was interrupted part-way. The COMPLETE database is at ${stagingPath}; ` +
+      `rename it to ${options.outPath} by hand once you have looked at what is there`;
+    return outcome;
   }
   outcome.ok = true;
   return outcome;
 }
 
 /**
+ * The renames, in order, tolerating a sibling that disappeared under us.
+ *
+ * ⚠️ A `-wal` can be removed by the connection that was holding it between the probe and the
+ * rename, and that is the GOOD case — there is nothing left to strand. Treating it as a fault
+ * left no database at `<out>` at all and an unhandled ENOENT where the message saying where the
+ * finished file went should have been. The database moves themselves are never optional.
+ */
+async function applySwap(plan: SwapMove[]): Promise<string | null> {
+  for (const move of plan) {
+    try {
+      await rename(move.from, move.to);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (move.optional && code === "ENOENT") {
+        console.log(`${move.from} was gone by the time the swap reached it — nothing to move`);
+        continue;
+      }
+      return `renaming ${move.from} → ${move.to} failed: ${(error as Error).message}`;
+    }
+  }
+  return null;
+}
+
+/**
  * Which files move where, and in which order.
  *
- * ⚠️ THE `-wal`/`-shm` SIBLINGS MOVE WITH THEIR DATABASE, and that is the whole reason this
- * is a function rather than two `rename` calls. SQLite does not check that a WAL belongs to
- * the file it finds it beside — it replays frames whose checksums chain from the WAL header —
- * so leaving `rides.db-wal` behind while a different inode becomes `rides.db` is silent
- * corruption of the file the import just spent twenty minutes building. Renaming them to the
- * outgoing database's own new name keeps each pair together and recoverable.
+ * ⚠️ THE SIBLINGS MOVE WITH THEIR DATABASE — and, when there is no database left, they move
+ * anyway. SQLite does not check that a journal belongs to the file it finds it beside: it
+ * replays a WAL whose checksums chain from its own header, so `rides.db-wal` left next to a
+ * different inode that has just taken the name `rides.db` silently replaces it. Measured on
+ * this code: a 500-point import came back as a donor database's two rows, reported as success.
+ * `journal_mode = DELETE` does not immunise the file against it.
  */
 export function planSwap(
   outPath: string,
   stagingPath: string,
-  replacedPath: string | null,
-  present: { outWal: boolean; outShm: boolean; stagingWal: boolean; stagingShm: boolean }
-): [string, string][] {
-  const moves: [string, string][] = [];
-  if (replacedPath !== null) {
-    moves.push([outPath, replacedPath]);
-    if (present.outWal) {
-      moves.push([`${outPath}-wal`, `${replacedPath}-wal`]);
+  asidePath: string | null,
+  present: { outDb: boolean; outSiblings: string[]; stagingSiblings: string[] }
+): SwapMove[] {
+  const moves: SwapMove[] = [];
+  if (asidePath !== null) {
+    if (present.outDb) {
+      moves.push({ from: outPath, to: asidePath, optional: false });
     }
-    if (present.outShm) {
-      moves.push([`${outPath}-shm`, `${replacedPath}-shm`]);
+    for (const suffix of present.outSiblings) {
+      moves.push({ from: `${outPath}${suffix}`, to: `${asidePath}${suffix}`, optional: true });
     }
   }
-  moves.push([stagingPath, outPath]);
-  if (present.stagingWal) {
-    moves.push([`${stagingPath}-wal`, `${outPath}-wal`]);
-  }
-  if (present.stagingShm) {
-    moves.push([`${stagingPath}-shm`, `${outPath}-shm`]);
+  moves.push({ from: stagingPath, to: outPath, optional: false });
+  for (const suffix of present.stagingSiblings) {
+    moves.push({ from: `${stagingPath}${suffix}`, to: `${outPath}${suffix}`, optional: true });
   }
   return moves;
+}
+
+/**
+ * Every file SQLite will read from beside a database of this name.
+ *
+ * ⚠️ `-journal` is in the set although this step's own output never has one: a rollback-mode
+ * database is exactly what it produces, and a writer that dies mid-transaction leaves that
+ * file rather than a `-wal`. Whether SQLite replays a stranded `-journal` into a foreign
+ * database has NOT been measured here — it is the same hazard class as the WAL, and moving it
+ * costs one array entry, which is cheaper than being right about it.
+ */
+const SIBLING_SUFFIXES = ["-wal", "-shm", "-journal"];
+
+/** Which of those exist right now, as suffixes. */
+async function siblingsOf(dbPath: string): Promise<string[]> {
+  const present: string[] = [];
+  for (const suffix of SIBLING_SUFFIXES) {
+    if (await pathExists(`${dbPath}${suffix}`)) {
+      present.push(suffix);
+    }
+  }
+  return present;
+}
+
+/** Staging files any earlier run left beside `<out>`, which are multi-GB and easy to forget. */
+async function leftoverStagingFiles(outPath: string): Promise<{ path: string; bytes: number }[]> {
+  const directory = dirname(outPath);
+  const prefix = `${basename(outPath)}.import-`;
+  const found: { path: string; bytes: number }[] = [];
+  for (const entry of await readdir(directory)) {
+    if (entry.startsWith(prefix)) {
+      const path = `${directory}/${entry}`;
+      found.push({ path, bytes: (await sizeOf(path)) ?? 0 });
+    }
+  }
+  return found;
 }
 
 /**
@@ -242,17 +339,22 @@ function surveyExisting(dbPath: string): ArchiveSurvey {
  * minutes ago and is about to rename. The staging prefix is unique per run, so anything
  * matching it was created by the stage that just ran.
  */
-async function removeRecoveryBackups(stagingPath: string): Promise<void> {
+async function removeRecoveryBackups(stagingPath: string): Promise<string[]> {
   const directory = dirname(stagingPath);
   const prefix = `${basename(stagingPath)}.bak-`;
+  const removed: string[] = [];
   for (const entry of await readdir(directory)) {
     if (entry.startsWith(prefix)) {
       const path = `${directory}/${entry}`;
       const bytes = await sizeOf(path);
-      await rm(path);
+      // force, because a backup that vanished between the listing and here is already gone —
+      // and throwing over it AFTER a successful commit would be the worst possible moment.
+      await rm(path, { force: true });
+      removed.push(path);
       console.log(`removed the recovery's backup of the staging file: ${path} (${bytes} bytes)`);
     }
   }
+  return removed;
 }
 
 function isoOf(ts: number | null): string {
@@ -270,6 +372,6 @@ async function sizeOf(path: string): Promise<number | null> {
   }
 }
 
-async function pathExists(path: string): Promise<boolean> {
+export async function pathExists(path: string): Promise<boolean> {
   return (await sizeOf(path)) !== null;
 }
