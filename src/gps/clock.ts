@@ -54,7 +54,8 @@ export type ClockTrust = "satellite-backed" | "never-synced" | "contested";
 
 /**
  * Whether anything may stamp a record with the system clock and be believed later.
- * src/http/waypoint.ts refuses to save a waypoint unless this says "satellite-backed".
+ * src/gps/waypoint.ts refuses to save a waypoint unless this says "satellite-backed",
+ * and stamps a REFUSAL with this answer so the phone knows whether to print its time.
  *
  * ⚠️ Deliberately NOT derived from the `gps_epoch_s` signal, which is the obvious way
  * and is wrong: that signal is recorded RAW, refused frames included, so one corrupt

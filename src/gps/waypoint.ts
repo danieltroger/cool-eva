@@ -9,6 +9,7 @@ import {
   type Fix,
 } from "./fix-plausibility.ts";
 import { systemClockTrust } from "./clock.ts";
+import { recordRefusedWaypoint, recordSavedWaypoint, waypointLog } from "./waypoint-log.ts";
 
 // Stamping "I am here, now" into the ride log, for both things that ask: GET /waypoint
 // (../http/waypoint.ts, which Siri and the dashboard button reach) and a long press of
@@ -260,6 +261,10 @@ export function saveWaypointNow(): WaypointOutcome {
   record("waypoint_seq", waypointCount, now);
   record("waypoint_lat", latitude, now);
   record("waypoint_lon", longitude, now);
+  // ⚠️ The same `now` as the three signals, so a row in the list and a row in the ride log
+  // are the same moment. The list is the ONLY copy of the earlier ones: the signals hold
+  // the newest and nothing else. ./waypoint-log.ts.
+  recordSavedWaypoint(waypointLog, waypointCount, latitude, longitude, now);
   console.log(`waypoint: #${waypointCount} at ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
   return { saved: true, message: `Waypoint ${waypointCount} saved.`, sequence: waypointCount };
 }
@@ -283,6 +288,11 @@ export function waypointHoldGesture(): HoldGesture {
 /** How many waypoints this boot — for /status. */
 export function waypointsSaved(): number {
   return waypointCount;
+}
+
+/** …and how many presses were refused. Both counters outlive ./waypoint-log.ts's cap. */
+export function waypointsRefused(): number {
+  return refusedCount;
 }
 
 /**
@@ -333,6 +343,11 @@ function refuse(refusal: WaypointRefusal, message: string, reason: string): Wayp
   refusedCount += 1;
   record("waypoint_refused_seq", refusedCount);
   record("waypoint_refusal", refusal);
+  // ⚠️ The trust is sampled HERE rather than left to be inferred from the code: the gates
+  // fire in order, so a press at a cold boot answers NO_FIX long before the clock gate is
+  // reached, and the phone would otherwise print a time of day off a clock the Pi does not
+  // believe. ./waypoint-log.ts §clockTrustworthy.
+  recordRefusedWaypoint(waypointLog, refusal, Date.now(), systemClockTrust() === "satellite-backed");
   console.warn(`waypoint: refused, ${reason}`);
   return { saved: false, message, refusal };
 }

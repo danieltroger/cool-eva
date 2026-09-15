@@ -720,6 +720,67 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The waypoint list under the trip stats: what this boot kept, and what it refused.
+
+   ON THE SHEET'S OWN BACKGROUND, not on tiles, and that is the contrast note at the top of
+   this file being obeyed rather than a layout preference: --bad measures 6.9:1 on --bg and
+   only 5.3:1 on --tile, and both a refused row's mark and an out-of-range position are
+   drawn in it.
+
+   `min-width: 0` on the body is #253's lesson at flex scale — a flex item's automatic
+   minimum is its content, so without it a row can floor itself wider than the phone and
+   the sheet scrolls sideways. `overflow-wrap` is deliberately NOT set: nothing a row can
+   hold is an unbreakable token (a coordinate has a space in it, and every sentence in
+   WAYPOINT_REFUSAL_TEXT breaks at spaces), so it would be a rule no mutant could justify.
+   check-phone-width.ts probes the box with a synthetic one instead. */
+.waypoint-list {
+  padding: 0.1rem 0.2rem 0;
+}
+
+.waypoint-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  padding-bottom: 0.4rem;
+}
+
+/* Fixed, so the positions form a readable column and a `refused` row does not shunt
+   the text of the one above it sideways. */
+.waypoint-mark {
+  flex: 0 0 3.4rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+}
+
+.waypoint-mark.refused {
+  color: var(--bad);
+}
+
+.waypoint-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.waypoint-fault {
+  color: var(--bad);
+}
+
+.waypoint-when {
+  font-size: 0.62rem;
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two lines under the list: what the counts are, and that the bike keeps none of
+   this past a restart. Same size and colour as .sheet-heading-note next to it. */
+.waypoint-note {
+  font-size: 0.62rem;
+  color: var(--sub);
+  padding: 0.15rem 0 0;
+}
+
 /* ---------- the sheet's three risk tiers ---------- */
 
 /* Every control in this sheet used to be the same grey rectangle, which meant

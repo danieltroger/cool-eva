@@ -920,6 +920,26 @@ const CHECKS: SelfCheck[] = [
       "no behavioural assertion can notice the clause going missing from them",
   },
   {
+    script: "scripts/check-waypoint-list.ts",
+    covers:
+      "the menu sheet's waypoint list — every waypoint saved this boot and every press refused, which the " +
+      "phone could not show before because the bike threw the events away and kept only a counter. ⚠️ What this " +
+      "guards is that the list cannot quietly be SHORT, since every way it loses a place is silent: the cap " +
+      "evicts the oldest REFUSAL and reaches a save only when there is none left to drop (fifty refusals at a " +
+      "no-fix cold boot would otherwise evict the whole ride while the counters stayed correct), the rows are " +
+      "the served order REVERSED and never sorted by `at` — which is wall clock on a Pi that steps its own — and " +
+      "both truncations, the bike's cap and the view's six-row preview, are named in the sentence under the list " +
+      "rather than left to be noticed. Then the refresh: /status is fetched again when `waypoint_seq` CHANGES, " +
+      "folded on the value because src/ws.ts heartbeats a full snapshot every 5 s and store.js assigns a freshly " +
+      "parsed object each time, so an unfolded derive would walk the ride-log directory every five seconds " +
+      "forever; the memory advances with the sheet shut so opening it does not fetch twice; and the derive is " +
+      "read off its own source for the two facts a pure function cannot see — module scope, and `sheetOpen.rawVal` " +
+      "rather than `.val`. Plus a coordinate out of bounds SHOWN as a fault with its row intact rather than " +
+      'dropped or clamped (both axes), a refusal the Pi could not date saying "at an unknown time" instead of ' +
+      "printing one off a clock it disowns, and every WAYPOINT_REFUSAL code worded from announce.js's own map so " +
+      "a row and the banner that appeared when it happened cannot say different things",
+  },
+  {
     script: "scripts/check-waypoint-corroboration.ts",
     covers:
       "the gate that refuses the FIRST fix of a run until a later sample has agreed with it (#178). " +

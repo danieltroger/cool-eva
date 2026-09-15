@@ -11,8 +11,10 @@ import { CanRestartButton, UpdateButton } from "./pi-actions.js";
 import { ServiceMode, refreshServiceMode } from "./service-mode.js";
 import { FanControl, refreshFanStatus } from "./fan.js";
 import { TripStats } from "./trip-stats.js";
+import { WaypointList, collapseWaypointList } from "./waypoints.js";
+import { blankWaypointMemory, shouldRefreshOnWaypoint } from "../lib/waypoint-list.js";
 
-const { button, div, h2 } = van.tags;
+const { button, div, h2, h3 } = van.tags;
 
 // The sheet behind the header button: trip summary, waypoints, and the two actions
 // that used to require typing a URL on a phone.
@@ -40,6 +42,10 @@ export function openSheet() {
   // in ./pi-actions.js are this file's to reset, not another module's to reset for it.
   // scripts/check-arming.ts asserts this line, and reads this file only because of it.
   armed.val = "";
+  // Same rule, same reason: a section this sheet expanded stays expanded across opens
+  // unless somebody shuts it, and a waypoint list left open pushes every control on this
+  // sheet down by however long the ride was. ./waypoints.js says it there too.
+  collapseWaypointList();
   void refreshStatus();
   void refreshFanStatus();
   refreshServiceMode(() => sheetOpen.val);
@@ -83,6 +89,12 @@ export function Sheet() {
       UnitsToggle(),
       h2({ class: "sheet-heading" }, "This session"),
       TripStats(status),
+      // h3 inside "This session", not a sixth h2: the list is what the Waypoints tile
+      // above it counts, and a top-level heading would leave "This session" meaning the
+      // stats grid alone. The levels are the accessible hierarchy, not paint — see the
+      // note at the top of this file.
+      h3({ class: "sheet-title" }, "Waypoints"),
+      WaypointList(status),
       // No subtitle here, deliberately. Three sections carrying a one-line "what can
       // this do to the bike" was one sentence too many for a single bit of
       // information: all four controls in this one are in the grey tier, which says the
@@ -258,6 +270,35 @@ function UnitsToggle() {
       )
     )
   );
+}
+
+/**
+ * Starts watching `waypoint_seq` so a waypoint saved on the BARS while the sheet is open
+ * lands in the list without reopening it.
+ *
+ * ⚠️ Call at module top level, from app.js, never from inside a view or a binding — a
+ * derive created inside one is pinned to that render's DOM node and dropped, silently, at
+ * the next re-render. lib/announce.js §installAnnouncements has the mechanism.
+ *
+ * The phone's own button does not need this: WaypointButton() below refreshes /status
+ * itself the moment its reply lands. This is the other door, and the one nothing on this
+ * screen asked for.
+ */
+export function installWaypointRefresh() {
+  let memory = blankWaypointMemory();
+  van.derive(() => {
+    // Read first, always — the rule views/trip-stats.js §Waypoints measured. And the fold
+    // is what keeps this off the 5 s heartbeat: lib/waypoint-list.js §shouldRefreshOnWaypoint.
+    const sequence = valueOf("waypoint_seq");
+    // rawVal: whether the sheet is open is SAMPLED, not reacted to. Subscribing here would
+    // re-run this derive on every open and close for a question it only asks in passing —
+    // lib/store.js §peek.
+    const decision = shouldRefreshOnWaypoint(memory, sequence, sheetOpen.rawVal);
+    memory = decision.memory;
+    if (decision.refresh) {
+      void refreshStatus();
+    }
+  });
 }
 
 /** Refreshes /status while the sheet is open, and once at startup for the log size. */

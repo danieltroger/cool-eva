@@ -952,7 +952,17 @@ The dashboard has no build step and no VDOM, and until #253 nothing in this repo
 
 **What it does not cover:** both themes (nothing here depends on the palette — that is what the gate's screenshots are for), Safari and WebKit, which is where Daniel actually reads this and which has caught a rendering difference before (#191), and anything vertical, which is #183.
 
-⚠️ **And one surface it cannot see at all, which is worth knowing before trusting a green run.** `.sheet` is `position: fixed; inset: 0`, so a fixed subtree contributes nothing to the document's scrollable overflow — `body.scrollWidth` and `innerWidth` can never witness a menu sheet that is too wide. That is not a small gap: the sheet is where `style.css` worries about 390 px most (`.action-note.output`, `views/vcu-write.js`'s note about "pushing a 390 px sheet sideways", the 269-option select). Closing it means opening the sheet from the check and asserting on `.sheet-body` — not done, deliberately out of #253's scope, and written here so the next reader does not mistake the ✓ for one that covers it.
+**The menu sheet, which the tab sweep above cannot see at all.** `.sheet` is `position: fixed; inset: 0`, so a fixed subtree contributes nothing to the document's scrollable overflow: `body.scrollWidth` and `innerWidth` can never witness a menu sheet that is too wide, and every assertion in the sweep is green over one. That gap stood, named, from #253 until the waypoint list — a list of coordinates and sentences, on exactly that surface — made it worth closing.
+
+It is closed the only way it can be: **from inside the sheet**, on ONE scene (it is the same sheet behind all five), with four measurements and a probe.
+
+- ⚠️ **The `.menu` click is an assertion, not a convenience.** `.sheet` is `visibility: hidden`, not `display: none`, so the sheet and every row in it have full layout boxes whether or not anything opened it — all four measurements pass on a sheet nobody opened. So `open` is checked first, off `.sheet.open`.
+- ⚠️ **`.sheet-body`'s BOX cannot fail and is not asserted.** It is `width: 100%` inside `position: fixed; inset: 0`, so its border box _is_ the viewport whatever it holds — an assertion derived from the thing under test. What is asserted is **`scrollWidth ≤ clientWidth`**, the same question the body half asks, because `overflow-y: auto` makes `overflow-x` compute to `auto` and that is where a too-wide row goes to hide.
+- **The widest `.waypoint-row`'s right edge against the viewport**, as the second witness from outside the scroll container: an overflowing child keeps its real laid-out box even when the box holding it scrolls.
+- **The longest refusal sentence, pinned by its text** — the same argument `LONGEST_ROW` makes for the Faults tab. Four short coordinates fit trivially; at 74 characters `FIX_IMPLAUSIBLE`'s sentence is the row that decides. It is older than the six the list previews, so the check **expands the list first**, which is also how it asserts the preview is real: the row count must go up.
+- **And a synthetic probe**, for the same reason the stored-codes tile gets one. Nothing a waypoint row can really hold is an unbreakable token — a coordinate has a space in it and every sentence in `WAYPOINT_REFUSAL_TEXT` breaks at spaces — so no fixture can falsify `.waypoint-body { min-width: 0 }`. The probe puts content in a row that cannot wrap and asks whether the ROW is still the phone's width.
+
+What is still not covered here: `.action-note.output`, `views/vcu-write.js`'s 269-option select, and the rest of what the sheet holds. The door is open now — the measurement is one selector each.
 
 ## 12. Extracting Energica's VCU parameter tables
 

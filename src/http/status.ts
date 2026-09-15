@@ -3,7 +3,8 @@ import { join } from "path";
 import type { ServerResponse } from "http";
 import { ageMs, snapshot, type SignalDef } from "../can/signals.ts";
 import { SIGNALS } from "../can/registry.ts";
-import { waypointsSaved } from "../gps/waypoint.ts";
+import { waypointsRefused, waypointsSaved } from "../gps/waypoint.ts";
+import { waypointEventsOf, waypointLog, type WaypointEvent } from "../gps/waypoint-log.ts";
 
 // GET /status — what can be asked about the bike that is not telemetry.
 //
@@ -30,6 +31,19 @@ const ON_DEMAND_ONLY = onDemandOnlyGroups(SIGNALS);
 export interface StatusPayload {
   uptimeSeconds: number;
   waypoints: number;
+  /** Presses this boot that were refused. Counted separately: a refusal saves nothing. */
+  waypointsRefused: number;
+  /**
+   * What the two counts above are made of, oldest first — the dashboard's waypoint list.
+   *
+   * ⚠️ Capped, and the counts are not: `MAX_EVENTS` in ../gps/waypoint-log.ts is what a
+   * boot keeps, so `waypointEvents.length` can be less than `waypoints + waypointsRefused`
+   * and the list on the phone says which is missing. Served here rather than over the
+   * WebSocket because that carries the LATEST value of each signal and nothing before it,
+   * and because the phone's socket is closed for every moment the page is hidden
+   * (public/lib/connection.js) — which is most of a ride.
+   */
+  waypointEvents: WaypointEvent[];
   /**
    * `files` is a count of `.celog` FILES, not of the segments sealed into them.
    * See measureLog() — the two differ by orders of magnitude, and the field was
@@ -46,6 +60,8 @@ export async function handleStatusEndpoint(res: ServerResponse, directory: strin
   const payload: StatusPayload = {
     uptimeSeconds: Math.round(process.uptime()),
     waypoints: waypointsSaved(),
+    waypointsRefused: waypointsRefused(),
+    waypointEvents: waypointEventsOf(waypointLog),
     log: { ...(await measureLog(directory)), enabled: logEnabled },
     groups: summariseGroups(),
   };

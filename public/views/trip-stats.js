@@ -21,9 +21,14 @@ const { div } = van.tags;
  * it already holds and never drops a key the snapshot omits, so a service restart leaves
  * the previous boot's waypoint in the page looking current — and `waypoint_*` are
  * on-demand signals, absent from every snapshot until one is saved. /status carries the
- * count for THIS boot (waypointsSaved() in src/http/waypoint.ts) and the sheet refreshes
+ * count for THIS boot (waypointsSaved() in src/gps/waypoint.ts) and the sheet refreshes
  * it whenever it opens, which is the only way this tile is ever looked at. A sheet left
  * open THROUGH a restart still shows the old one until it is reopened.
+ *
+ * The LIST under this tile does not share the problem and is worth knowing about before
+ * changing this one: it is drawn from /status alone (views/waypoints.js), so it has no
+ * opinion of its own to disagree with. This tile stays because a glance wants the last
+ * position, not a list.
  *
  * @param {import("../vendor/van-1.6.1.js").State<StatusPayload | null>} status
  *   the sheet's /status state, refreshed each time the sheet opens. Passed in rather than

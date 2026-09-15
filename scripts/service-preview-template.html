@@ -596,6 +596,40 @@
       const STATUS = {
         uptimeSeconds: 4173,
         waypoints: 4,
+        waypointsRefused: 4,
+        // The four saves and two refusals the signals above describe, in FIRE order, as
+        // src/gps/waypoint-log.ts keeps them — this is what the sheet's waypoint list
+        // draws, and the newest of each has to agree with `waypoint_seq` and
+        // `waypoint_refusal` in PARKED_SIGNALS or the preview shows a tile arguing with
+        // the list beneath it.
+        //
+        // ⚠️ ALL FOUR SAVES CARRY THE SAME COORDINATE, which is a constraint rather than a
+        // shape the bike favours: Greenwich is the one fixture position this repo allows
+        // (docs/route-map.md §"No coordinates anywhere") and a second would be a second
+        // invented place. Two saves at one position is real — it is what a standstill
+        // does; four is the fixture being honest about having one point to spend.
+        //
+        // ⚠️ The code-6 refusal is pinned BY ITS TEXT in scripts/check-phone-width.ts: at
+        // 74 characters it is the longest sentence in WAYPOINT_REFUSAL_TEXT, so it is the
+        // row that decides whether this list fits a 390 px phone. Dropping it from here
+        // turns that check vacuous, which is why the check goes red when it is missing.
+        // It is also the one with `clockTrustworthy: false` — a cold boot refuses on the
+        // fix long before it ever asks about the clock, and that row must show
+        // "at an unknown time" rather than a time of day off a clock the Pi disowns.
+        //
+        // ⚠️ EIGHT of them against a six-row preview, so the "show all 8" toggle and the
+        // sentence that says the list is short are both on screen in the design gate. A
+        // fixture that fits exactly would leave the toggle unrendered and unlooked-at.
+        waypointEvents: [
+          { outcome: "saved", sequence: 1, latitudeDeg: 51.4779, longitudeDeg: -0.0015, at: NOW - 95 * MINUTE },
+          { outcome: "refused", refusal: 6, at: NOW - 51 * MINUTE, clockTrustworthy: false },
+          { outcome: "saved", sequence: 2, latitudeDeg: 51.4779, longitudeDeg: -0.0015, at: NOW - 47 * MINUTE },
+          { outcome: "refused", refusal: 3, at: NOW - 39 * MINUTE, clockTrustworthy: true },
+          { outcome: "saved", sequence: 3, latitudeDeg: 51.4779, longitudeDeg: -0.0015, at: NOW - 22 * MINUTE },
+          { outcome: "refused", refusal: 1, at: NOW - 14 * MINUTE, clockTrustworthy: true },
+          { outcome: "saved", sequence: 4, latitudeDeg: 51.4779, longitudeDeg: -0.0015, at: NOW - 6 * MINUTE },
+          { outcome: "refused", refusal: 8, at: NOW - 3 * MINUTE, clockTrustworthy: true },
+        ],
         log: { files: 13, bytes: 4812442, enabled: true },
         groups: {
           battery: [17, 46],

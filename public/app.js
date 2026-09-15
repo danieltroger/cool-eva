@@ -11,7 +11,7 @@ import { HypermileView } from "./views/hypermile.js";
 import { ChargeView } from "./views/charge.js";
 import { AllView } from "./views/all.js";
 import { FaultsView } from "./views/faults.js";
-import { Sheet, hasTroubleCodes, openSheet, refreshStatus } from "./views/sheet.js";
+import { Sheet, hasTroubleCodes, installWaypointRefresh, openSheet, refreshStatus } from "./views/sheet.js";
 import { monotonicNow } from "./lib/clock.js";
 import { TABS, advanceTab, currentTab, peekTab, showTab, startRouting } from "./lib/router.js";
 import { Toast } from "./lib/toast.js";
@@ -267,6 +267,9 @@ installHandlebarGestures({ onNextTab: advanceTab });
 // the fan cycle and the waypoint hold are recognised on the Pi now, so this page finds out
 // about them the way it finds out about anything else on the bus, and says so.
 installAnnouncements();
+// And the same story once more: a waypoint saved on the bars is news to this page too, so
+// the sheet's list goes and asks the bike for it rather than waiting to be reopened.
+installWaypointRefresh();
 // Before connect(), so the first paint is already in the right theme when the phone's
 // own setting is the one that decides it. The bike's flag can only arrive later.
 startTheming();
