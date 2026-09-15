@@ -23,7 +23,7 @@ import {
   waypointListSummary,
   waypointRows,
 } from "../public/lib/waypoint-list.js";
-import { declarationBody } from "./source-blocks.ts";
+import { blockAt, declarationBody } from "./source-blocks.ts";
 import { recordingResponse } from "./recording-response.ts";
 
 // The menu sheet's waypoint list: what the bike remembers of this boot, and what the phone
@@ -417,6 +417,15 @@ check(
   "the list says where the history is not, whatever the counts are",
   WAYPOINT_HISTORY_NOTE.includes("restarts") && WAYPOINT_HISTORY_NOTE.includes("ride log")
 );
+check(
+  'a payload with no counts says so, rather than rendering "undefined saved"',
+  waypointListSummary({
+    events: plain,
+    savedTotal: undefined as unknown as number,
+    refusedTotal: undefined as unknown as number,
+    rowsShown: 3,
+  }) === "The bike did not say how many waypoints it has."
+);
 
 // --- 7. /status really carries them -----------------------------------------
 
@@ -466,6 +475,21 @@ check(
   "app.js installs it once, beside the announcements and not from inside a view",
   appSource.includes("installWaypointRefresh();")
 );
+
+// ⚠️ And the preview's own /waypoint, in BOTH templates. It stands in for the Pi, so a
+// handler that bumps `STATUS.waypoints` without appending the event makes one tap in the
+// design gate render "the bike kept only the newest N saves" — a truncation that never
+// happened, on the screen a human is looking at to decide whether this ships.
+for (const template of ["scripts/app-preview-template.html", "scripts/service-preview-template.html"]) {
+  const templateSource = await readFile(join(ROOT, template), "utf8");
+  const at = templateSource.indexOf('if (path === "/waypoint")');
+  const block = at === -1 ? null : blockAt(templateSource, at);
+  const handler = block === null ? "" : templateSource.slice(block.start, block.end + 1);
+  check(
+    `${template}'s /waypoint appends the event, not just the count`,
+    handler.includes("STATUS.waypoints += 1") && handler.includes("STATUS.waypointEvents.push(")
+  );
+}
 
 if (failures > 0) {
   console.error(`\n✗ ${failures} check${failures === 1 ? "" : "s"} failed`);
