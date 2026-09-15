@@ -1,4 +1,4 @@
-// The preview harness, part 2 of 3: the bike it is standing in for.
+// The preview harness, part 2 of 4: the bike it is standing in for.
 //
 // Every named fixture the two preview pages serve, plus the scene the URL selected and the
 // live signal table patches are written into. The contract and the injection order are in
@@ -42,21 +42,14 @@ if (WANTED_SCENE !== null && WANTED_SCENE !== SCENE_NAME) {
 const SCENE = SCENES[SCENE_NAME];
 
 /**
- * ⚠️ ONE gate object, referenced from every fixture that carries one, which is why it is
- * declared ABOVE them: `const` has a temporal dead zone and the fixtures are built as this
- * file is evaluated, so putting it beside the scene that mutates it rendered a blank page.
+ * ⚠️ ONE gate object, declared ABOVE every fixture that references it: `const` has a temporal
+ * dead zone and the fixtures are built as this file is evaluated, so putting it beside the
+ * scene that mutates it rendered a blank page.
  *
- * A plain literal, and it has to stay one. scripts/check-preview-fixtures.ts splices this
- * declaration into WRITE_STATUS to type-check it, and the per-scene gate is checked
- * separately as a `Partial<ServiceGateVerdict>` through that file's OVERLAYS table — which
- * is the arrangement that works only while the page applies its scene by MUTATING this
- * object rather than by building a different one. Each template does that itself, below the
- * harness, as one block with its other scene overlays.
- *
- * The scene overlay used to patch two of the five gate literals, so `?scene=refused`
- * showed a refused write panel above a lifetime panel and probe answers still claiming
- * the bike was fine: two opinions from one bike on one screen, in the instrument that
- * gates dashboard merges. Mutated in place by the page, since the fixtures hold a reference.
+ * A plain literal, and it has to stay one, because each page applies its scene by MUTATING it
+ * rather than by building a different one. Why that is what check-preview-fixtures.ts needs,
+ * and what the per-scene patching cost before one object served every fixture:
+ * docs/diagnostics-and-checks.md §11.9.
  */
 const GATE = { safe: true, blockers: [], chargingEvidence: null, checks: [] };
 
@@ -356,19 +349,5 @@ const PARKED_SIGNALS = {
   "dtc_count": [2, "", "diag"],
 };
 
-/**
- * Which bike this preview is standing in for, chosen with `?scene=` in the URL.
- *
- * ⚠️ A query string and not the hash: the hash is the app's tab router, and the preview
- * hands `location.hash` straight to it. A control on the page was the alternative and was
- * rejected — this file's claim is that what you see is what the bike serves, and chrome of
- * its own weakens that for every screenshot taken through it.
- *
- * Parked is the fixture this file has always shown, value for value, so a screenshot taken
- * before the scenes existed still matches. The other two exist because the panels added
- * over the last week — the DC set-current control, #176's stand-down, the power bar's
- * derate hatching — render NOTHING off a parked bike, and a design gate blind to the panel
- * it is gating is not a gate.
- */
 /** Everything the bike is broadcasting right now. Patches write here, so a snapshot carries them. */
 const LIVE = Object.assign({}, PARKED_SIGNALS, SCENE.signals);

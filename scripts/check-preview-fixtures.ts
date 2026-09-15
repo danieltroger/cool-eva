@@ -235,9 +235,14 @@ async function harnessSource(html: string): Promise<string | null> {
   if (blocks.length !== 1) {
     return null;
   }
-  return blocks[0].includes(HARNESS_PLACEHOLDER)
-    ? blocks[0].replace(HARNESS_PLACEHOLDER, await previewHarnessSource())
-    : blocks[0];
+  if (!blocks[0].includes(HARNESS_PLACEHOLDER)) {
+    return blocks[0];
+  }
+  // A function replacement, exactly as build-service-preview.ts does it: a `$&` or `$1` in the
+  // harness would otherwise be read as a replacement pattern here and not there, so this check
+  // would be reading a source that differs from the one that ships.
+  const harness = await previewHarnessSource();
+  return blocks[0].replace(HARNESS_PLACEHOLDER, () => harness);
 }
 
 /**

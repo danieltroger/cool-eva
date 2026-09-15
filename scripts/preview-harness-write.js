@@ -10,15 +10,6 @@
 // scripts/preview-harness-browser.js's header.
 
 /** Advances a sweep started from the preview, one poll at a time. */
-/** One WebSocket message, in the shape src/ws.ts broadcasts. */
-function message(type, readings) {
-  const at = Date.now();
-  const signals = {};
-  for (const [key, reading] of Object.entries(readings)) {
-    signals[key] = { value: reading[0], unit: reading[1], group: reading[2], ts: reading[3] ?? at };
-  }
-  return { type, ts: at, signals };
-}
 function stepSweep() {
   const run = READ_STATE.run;
   if (run.phase !== "running") {
@@ -195,15 +186,6 @@ function serviceWrite(query) {
   }
   return null;
 }
-
-/**
- * What a fan command does to the driver's state.
- *
- * ⚠️ The query spelling is NOT the mode. views/fan.js sends `mode=auto`, and `FanMode` holds
- * "automatic" — src/http/fan.ts's parseFanRequest() maps it, and accepts "play" for fun for
- * the same reason. Storing the raw word put a value in the reply that the type cannot hold,
- * and it stayed there for every later GET.
- */
 
 /**
  * The status payload for one request, sliced the way src/http/vcu-write.ts slices it:

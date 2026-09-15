@@ -82,6 +82,20 @@ __CSS__
         chargingEvidence: verdict.chargingEvidence,
       });
 
+      /**
+       * Which bike this preview is standing in for, chosen with `?scene=` in the URL.
+       *
+       * ⚠️ A query string and not the hash: the hash is the app's tab router, and the preview
+       * hands `location.hash` straight to it. A control on the page was the alternative and was
+       * rejected — this file's claim is that what you see is what the bike serves, and chrome of
+       * its own weakens that for every screenshot taken through it.
+       *
+       * Parked is the fixture this file has always shown, value for value, so a screenshot taken
+       * before the scenes existed still matches. The other two exist because the panels added
+       * over the last week — the DC set-current control, #176's stand-down, the power bar's
+       * derate hatching — render NOTHING off a parked bike, and a design gate blind to the panel
+       * it is gating is not a gate.
+       */
       const SCENES = {
         parked: { signals: {} },
         dc: {

@@ -1,7 +1,7 @@
-// The preview harness, part 1 of 3: the browser this page is standing in.
+// The preview harness, part 1 of 4: the browser this page is standing in.
 //
 // Injected verbatim into both preview templates by scripts/build-service-preview.ts, which
-// substitutes its placeholder for these three files joined in the order
+// substitutes its placeholder for these four files joined in the order
 // scripts/preview-harness.ts declares. ONE script scope, so that order is the whole of the
 // temporal-dead-zone contract — and so is what each template must declare above the
 // placeholder. Both are named in preview-harness.ts; read it before moving anything here.
@@ -9,14 +9,15 @@
 // Why one harness at all, and what the two hand-kept copies had drifted into by the time
 // they were merged: docs/diagnostics-and-checks.md §11.9.
 //
-// ⚠️ Three strings may not appear anywhere in these files, and scripts/check-preview-harness.ts
-// fails the build if one does. The placeholder's own name (HARNESS between two pairs of
-// underscores, deliberately not spelled here) — String.replace substitutes only the FIRST
-// occurrence, so a second copy would be left live in the generated page. Any other token of
-// that shape, for the same reason. And the expression that imports the dashboard's entry
-// module: check-preview-fixtures.ts decides which contract a page is held to by searching
-// the built source for it, so a harness that merely MENTIONED it would make the annotated
-// sheet answer for endpoints it does not serve.
+// ⚠️ Two kinds of string may not appear anywhere in these files, and
+// scripts/check-preview-harness.ts fails the build if one does. First, any token shaped like a
+// builder placeholder — an upper-case name wrapped in a pair of underscores on each side, which
+// this sentence deliberately does not spell, because writing one here IS the mistake: String
+// .replace substitutes only the first occurrence, so a second copy is left live in the generated
+// page. Second, the expression that imports the dashboard's entry module — check-preview-
+// fixtures.ts decides which contract a page is held to by searching the built source for it, so a
+// harness that merely MENTIONED it would make the annotated sheet answer for endpoints it does
+// not serve.
 
 // The file may be opened straight off a disk, where nothing has set a viewport and
 // iOS would lay it out at 980 px and shrink it. Idempotent: a host that already

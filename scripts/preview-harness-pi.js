@@ -32,6 +32,16 @@ function json(body, status = 200) {
   });
 }
 
+/** One WebSocket message, in the shape src/ws.ts broadcasts. */
+function message(type, readings) {
+  const at = Date.now();
+  const signals = {};
+  for (const [key, reading] of Object.entries(readings)) {
+    signals[key] = { value: reading[0], unit: reading[1], group: reading[2], ts: reading[3] ?? at };
+  }
+  return { type, ts: at, signals };
+}
+
 window.fetch = function previewFetch(input, init) {
   const request = typeof input === "string" ? input : input && input.url ? input.url : String(input);
   const url = new URL(request, "http://eva.local/");
@@ -212,7 +222,6 @@ window.fetch = function previewFetch(input, init) {
   return Promise.reject(new Error(`preview: nothing serves ${path}`));
 };
 
-/** The socket the page is holding, so a stubbed action can patch it as the Pi would. */
 /**
  * Every socket the page is holding, so a stubbed action can patch them as the Pi would.
  *

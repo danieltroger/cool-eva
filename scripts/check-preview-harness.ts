@@ -21,20 +21,28 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES = ["app-preview-template.html", "service-preview-template.html"];
 
 /**
- * Strings no harness part may contain, and what each would silently do.
+ * Literal strings no harness part may contain.
  *
- * ⚠️ Both fail SILENTLY rather than loudly, which is the whole reason they are asserted at the
- * source instead of being left to the build. `String.replace` substitutes only the first
- * occurrence, so a second copy of the placeholder ships as a live token in the generated page —
- * check-service-preview.ts sweeps the built output for that, but only after a build. And
+ * ⚠️ Asserted at the SOURCE rather than left to the build, because it fails silently either way:
  * check-preview-fixtures.ts decides which contract a page is held to by searching its source for
- * the dashboard's entry import, so a harness that merely MENTIONED it in a comment would make
- * the annotated sheet answer for eighteen endpoints it does not serve.
+ * the dashboard's entry import, so a harness that merely MENTIONED it in a comment would make the
+ * annotated sheet answer for eighteen endpoints it does not serve — and pass, wrongly, if it did.
  */
 const FORBIDDEN = [
-  { text: HARNESS_PLACEHOLDER, why: "the builder substitutes only the first, so a second ships as a live token" },
   { text: 'imp("app.js")', why: "check-preview-fixtures.ts reads it as the page mounting the whole dashboard" },
 ];
+
+/**
+ * ⚠️ EVERY `__UPPERCASE__` token, not just the harness's own placeholder.
+ *
+ * `String.replace` substitutes only the first occurrence, so a second copy of any of them
+ * ships into the generated page as a live identifier. The builder's `required` list catches
+ * one that is MISSING from a template; check-service-preview.ts:64 sweeps the built output
+ * for survivors. Neither can see a second copy written into a harness part, which is what
+ * this is: a stray `__SERVER_FACTS__` there got past the first spelling of this rule, which
+ * named two literals rather than the shape.
+ */
+const PLACEHOLDER_SHAPE = /__[A-Z][A-Z_]*__/g;
 
 const failures: string[] = [];
 
@@ -130,22 +138,31 @@ const seen = new Map<string, string>();
 for (const part of parts) {
   for (const name of silentlyDuplicatedNames(part.source, part.file)) {
     const earlier = seen.get(name);
-    if (earlier !== undefined && earlier !== part.file) {
+    if (earlier !== undefined) {
+      // ⚠️ No `earlier !== part.file` guard. Twice in ONE part is the same silent
+      // redeclaration as once in each, and the first spelling of this rule let it through.
+      const where = earlier === part.file ? `twice in ${part.file}` : `in both ${earlier} and ${part.file}`;
       failures.push(
-        `${name} is declared in both ${earlier} and ${part.file} — the parts are one script, and this ` +
-          "kind of redeclaration is silent: the later one wins and nothing says so"
+        `${name} is declared ${where} — the parts are one script, and this kind of ` +
+          "redeclaration is silent: the later one wins and nothing says so"
       );
     }
     seen.set(name, part.file);
   }
 }
 
-// ── the two strings a harness part may not contain ───────────────────────────
+// ── what a harness part may not spell ────────────────────────────────────────
 for (const part of parts) {
   for (const { text, why } of FORBIDDEN) {
     if (part.source.includes(text)) {
       failures.push(`${part.file} contains ${JSON.stringify(text)} — ${why}`);
     }
+  }
+  for (const [token] of part.source.matchAll(PLACEHOLDER_SHAPE)) {
+    failures.push(
+      `${part.file} contains ${token} — a harness part may not spell a builder placeholder, because ` +
+        "String.replace substitutes only the first occurrence and a second copy ships live into the page"
+    );
   }
 }
 
@@ -169,6 +186,12 @@ console.log("\n✓ one harness, two pages: no name is written twice");
  * alone because it is looking for object literals to type-check. `settle` and `pageFetch` are
  * function declarations, so reusing it here would have made rule B blind to the exact copy this
  * file is named after — an assertion that cannot fail, which is this repo's recurring bug.
+ *
+ * ⚠️ Known blind spot: a destructuring declaration (`const { a, b } = …`) binds names this does
+ * not collect, because its `name` is a BindingPattern rather than an Identifier. Nothing in the
+ * harness or either template writes one today, and a copy introduced through one would go
+ * unseen. Written down rather than handled: walking binding patterns is real complexity for a
+ * form this code does not use, and the first one to appear can add it.
  */
 function declaredNames(source: string, label: string): string[] {
   const parsed = ts.createSourceFile(label, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);

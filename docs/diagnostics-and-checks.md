@@ -914,7 +914,7 @@ The shipped fixture is a parked bike, and every panel added over the week of 202
 
 The heartbeat re-stamps each reading's `ts` as it goes out, which is what `record()` does on the Pi for anything whose frame keeps arriving (`src/can/signals.ts` — `liveState` is refreshed on EVERY frame; only the logging and the change patch are change-gated). ⚠️ **Except the waypoint trio, which keeps the moment it was saved**, because `views/trip-stats.js` prints that time — re-stamping it walks the Waypoints tile's clock forward by five seconds every five seconds. And patches are written into the live map before they are sent, so a snapshot carries them: without that, tapping "Save waypoint here" moved the tile to #5 and the next reconnect put it back to #4.
 
-The annotated sheet deliberately has no heartbeat: its panels render neither the link dot nor any `.stale` tile, and a five-second re-render would only add flake to close-up assertions that run against a settled DOM.
+⚠️ **Amended 2026-09-15 (#170).** This paragraph used to say the annotated sheet deliberately has no heartbeat, because its panels render neither the link dot nor any `.stale` tile and a five-second re-render would only add flake to close-up assertions. **The sheet now shares the heartbeat**, because it shares the harness — and the flake argument turned out to be wrong rather than merely superseded: `settle()` polls a DOM predicate on `requestAnimationFrame`, and the assertion after an `await settle(...)` runs synchronously when that resumes on a **microtask**, which a `setInterval` callback (a macrotask) cannot interleave with. What the sheet had instead was worse than a re-render: with a one-shot socket per panel and `SILENCE_LIMIT_MS` at 12 s, each of its six panels was churning a link roughly every 14 s. §11.9 has the rest.
 
 #### Two things the scenes found on their first run
 
@@ -984,14 +984,16 @@ Two things stayed in the templates on purpose. `gateOf` is a `const` arrow used 
 
 **What `check-preview-harness.ts` asserts, and the parse matrix behind rule D.** After the merge a name declared by both templates is a copy by definition, and so is a name a template declares that the harness already declares — so the check needs no threshold: every contract name is declared by both pages, nothing else is, no template shadows a harness name, and nothing is declared twice across the harness parts. That last rule is narrowed to the redeclarations that are **silent**, measured under `new Script()` on the non-strict script the builder emits:
 
-| written twice at the top level                  | `new Script()`                                          |
-| ----------------------------------------------- | ------------------------------------------------------- |
-| `const` / `let` / `class`, and every mixed pair | **throws** — `Identifier 'x' has already been declared` |
-| `function`                                      | **parses**, and the second one wins                     |
-| `var`                                           | **parses**                                              |
-| `window.fetch = …`                              | **parses**, and the second one wins                     |
+| written twice at the top level | `new Script()` |
+| --- | --- |
+| `const` / `let` / `class` | **throws** — `Identifier 'x' has already been declared` |
+| any mixed pair involving one of those three — `var` then `const` included | **throws** |
+| `function` twice, `var` twice, or `var` and `function` in either order | **parses**, and the last one wins |
+| `window.fetch = …` twice | **parses**, and the last one wins |
 
-So `check-service-preview.ts`'s `new Script()` already owns the first row with a better message, and rule D covers the rest — which includes `window.fetch` and `window.WebSocket`, the two most load-bearing names in the harness. The check also refuses two strings in any harness part: the placeholder's own name (the builder substitutes only the first occurrence, so a second would ship live into the generated page) and the dashboard's entry import (`check-preview-fixtures.ts` decides which contract a page is held to by searching for it, so a harness that merely mentioned it in a comment would make the sheet answer for eighteen endpoints it does not serve).
+The middle rows are worth reading twice: `var` is silent against another `var` or a `function` and **loud** against a `const`, so "is `var` covered by rule D" has no single answer. A mutant planting `var NOW` against the harness's `const NOW` is killed by `new Script()` rather than by rule D — which looks like a hole in rule D and is not one; the mutant that does exercise it plants a `var` over a `function` in another part.
+
+So `check-service-preview.ts`'s `new Script()` owns the first two rows with a better message, and rule D covers the rest — which includes `window.fetch` and `window.WebSocket`, the two most load-bearing names in the harness. Rule D also fires on a name declared twice **inside one part**, which is the same silent redeclaration and which its first spelling let through. The check further refuses, in any harness part, the dashboard's entry import (`check-preview-fixtures.ts` decides which contract a page is held to by searching for it, so a harness that merely mentioned it in a comment would make the sheet answer for eighteen endpoints it does not serve) and **any** token shaped like a builder placeholder — not merely the harness's own, since `String.replace` substitutes only the first occurrence and a second copy of any of them ships live into the page.
 
 **Left undone, deliberately.** `check-service-preview.ts`'s `panelsArray()` is a bracket-matched slice of source that re-implements `scripts/source-blocks.ts`'s brace-matched `blockAt()`; sharing them means taking the delimiter pair as a parameter, which is a different file and a different risk. Worth writing down once rather than rediscovering per copy: **neither skips string literals or comments**, so a bracket or brace inside prose truncates the slice. For `panelsArray` that fails red — the panel count comes up short — which is the safe direction.
 
