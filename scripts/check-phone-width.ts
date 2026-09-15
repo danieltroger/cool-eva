@@ -288,19 +288,28 @@ async function measureSheet(page: HeadlessPage, previewFile: string, scene: stri
   await gotoPage(page, `file://${previewFile}?scene=${scene}&sheet=1#ride`);
   await waitOnPage(page, `document.querySelectorAll(".view > *").length > 0`, `the ${where} page to render`);
   await evaluateOnPage(page, `document.querySelector(".header .menu").click()`);
-  await waitOnPage(page, `document.querySelectorAll(".sheet.open .waypoint-row").length > 0`, `the ${where} to open`);
+  // ⚠️ Waited on WITHOUT `.sheet.open`, deliberately. The rows are in the DOM whether or not
+  // anything opened the sheet, so waiting on the open class would turn the assertion below
+  // into a timeout with a vaguer reason — and the point of that assertion is to name what
+  // went wrong when every width still reads fine on a sheet nobody can see.
+  await waitOnPage(page, `document.querySelectorAll(".waypoint-row").length > 0`, `the ${where} to render its list`);
   const collapsed = asSheetMeasurement(await evaluateOnPage(page, SHEET));
   check(`${where} really opened — every width below is measured on a hidden sheet otherwise`, collapsed.open);
   // ⚠️ Measured EXPANDED, because the row that decides this — the longest refusal sentence —
   // is older than the six the list previews, and a check that never opened the list would
-  // report a clean ✓ for the rows nobody had measured. Expanding is also the assertion that
-  // the preview is real: a toggle that showed everything already would not move the count.
-  await evaluateOnPage(page, `document.querySelector(".waypoint-list .code-toggle").click()`);
-  await waitOnPage(
-    page,
-    `document.querySelectorAll(".sheet.open .waypoint-row").length > ${collapsed.rows.length}`,
-    `the ${where}'s waypoint list to expand past its ${collapsed.rows.length}-row preview`
-  );
+  // report a clean ✓ for the rows nobody had measured. The toggle is asserted rather than
+  // assumed: it is also what says the preview is real, and clicking a `null` would fail
+  // this run with a stack trace instead of a sentence.
+  const toggles = await evaluateOnPage(page, `document.querySelectorAll(".waypoint-list .code-toggle").length`);
+  check(`${where}'s list previews fewer rows than the bike served — there is a "show all" to press`, toggles === 1);
+  if (toggles === 1) {
+    await evaluateOnPage(page, `document.querySelector(".waypoint-list .code-toggle").click()`);
+    await waitOnPage(
+      page,
+      `document.querySelectorAll(".waypoint-row").length > ${collapsed.rows.length}`,
+      `the ${where}'s waypoint list to expand past its ${collapsed.rows.length}-row preview`
+    );
+  }
   const measured = asSheetMeasurement(await evaluateOnPage(page, SHEET));
   console.log(
     `\n${where}: sheet-body.scrollWidth ${measured.bodyScrollWidth} · clientWidth ${measured.bodyClientWidth} · ` +
@@ -308,7 +317,7 @@ async function measureSheet(page: HeadlessPage, previewFile: string, scene: stri
       `${measured.rows.length} shown`
   );
   check(
-    `${where}'s list previews fewer rows than the bike served (${collapsed.rows.length} of ${measured.rows.length})`,
+    `${where} really did expand (${collapsed.rows.length} rows previewed, ${measured.rows.length} shown)`,
     collapsed.rows.length < measured.rows.length
   );
   check(`${where} is being measured at ${PHONE.width} px`, measured.clientWidth === PHONE.width);
