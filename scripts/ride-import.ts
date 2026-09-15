@@ -167,9 +167,14 @@ export async function runImport(options: ImportOptions, stages: SpawnedStages): 
   });
   const failure = await applySwap(plan);
   if (failure !== null) {
+    // Where the finished database ended up depends on how far the plan got: `staging → out` is
+    // the second-to-last move, so a failure after it leaves the complete file already in place
+    // under the right name. Naming the staging path unconditionally would send whoever is
+    // reading this in a panic to a file that is no longer there.
+    const complete = (await pathExists(stagingPath)) ? stagingPath : options.outPath;
     outcome.refusal =
-      `${failure} — ⚠️ the swap was interrupted part-way. The COMPLETE database is at ${stagingPath}; ` +
-      `rename it to ${options.outPath} by hand once you have looked at what is there`;
+      `${failure} — ⚠️ the swap was interrupted part-way. The COMPLETE database is at ${complete}` +
+      (complete === stagingPath ? `; rename it to ${options.outPath} by hand once you have looked at it` : "");
     return outcome;
   }
   outcome.ok = true;
@@ -260,7 +265,18 @@ async function pathsStartingWith(path: string, suffix: string): Promise<string[]
   const directory = dirname(path);
   const prefix = `${basename(path)}${suffix}`;
   const matches: string[] = [];
-  for (const entry of await readdir(directory)) {
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // The scan runs before anything else, so a mistyped --out used to die here with a raw
+      // stack trace instead of the sentence naming the directory.
+      throw new Error(`${directory} does not exist — --out names a file in a directory that does`);
+    }
+    throw error;
+  }
+  for (const entry of entries) {
     if (entry.startsWith(prefix)) {
       matches.push(`${directory}/${entry}`);
     }

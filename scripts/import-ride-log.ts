@@ -223,4 +223,15 @@ function fail(message: string): never {
   process.exit(2);
 }
 
-await main();
+// ⚠️ A CLI, not a library: a throw from any stage should read as a sentence, not as a stack
+// trace with the message buried three frames up. The stack still goes to stderr when the cause
+// is not one of ours, because an unexpected fault is exactly when it is wanted.
+try {
+  await main();
+} catch (error) {
+  console.error(`\n✗ ${(error as Error).message}`);
+  if (!(error instanceof Error) || error.stack === undefined) {
+    console.error(String(error));
+  }
+  process.exitCode = 1;
+}
