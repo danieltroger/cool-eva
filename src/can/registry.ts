@@ -415,10 +415,14 @@ export const SIGNALS: SignalDef[] = [
   { key: "keys_paired", unit: "", group: "security", source: "poll", unbounded: "index" }, // E-LOCK 0x791 `21 99`, once at startup
 
   // --- Connectivity Hub (CAN 0x410 and/or Bluetooth) -----------------------
-  // Pushed by the hub, never polled. GPS arrives on both transports — the hub
-  // mirrors its BLE framing onto CAN 0x410 at ~1.8 Hz (src/can/gps.ts) — while
-  // torque/power and the odometer are Bluetooth-only, with no CAN frame and no
-  // OBD PID (01A6 is unsupported by Energica) carrying them.
+  // Pushed, never polled. GPS arrives on both transports — the same records are on
+  // CAN 0x410 at ~1.8 Hz (src/can/gps.ts), which the INSTRUMENT CLUSTER transmits and
+  // the hub carries over Bluetooth (docs/can-0x410.md).
+  //
+  // 🚨 "torque/power and the odometer are Bluetooth-only, with no CAN frame" stood here
+  // until #224 and was half false: torque and power are CAN 0x410 sub-type 3 and are
+  // decoded as `motor_torque_can_nm` / `motor_power_can_kw` below. The odometer still
+  // has no CAN frame of the hub's, and no OBD PID (01A6 is unsupported by Energica).
   //
   // lat/lon deadband ≈ 3 m: parked GPS jitters in the 5th decimal and would
   // otherwise log continuously, while any real movement blows straight past it.
@@ -445,6 +449,19 @@ export const SIGNALS: SignalDef[] = [
   { key: "motor_torque_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_power_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
 
+  // The same two off CAN 0x410 sub-type 3, and one field neither transport decoded
+  // before. `_can` keeps them comparable with the Bluetooth pair above rather than
+  // merging them, the way odometer_can_km is kept apart from odometer_km.
+  //
+  // 🟡 `dash_speed_kmh` is NOT `speed_can_kmh`. It is the same geared driveline speed
+  // through a different divisor — ~40.26 against 42.0, a median ratio of 1.0433 over
+  // 42 705 paired samples — which puts it ~8 % above GPS, where a legal speedometer
+  // sits. Whether it is literally the number on the dash is UNCONFIRMED and one glance
+  // at the speedo against the phone settles it. docs/can-0x410.md.
+  { key: "dash_speed_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5, bounds: [0, 300] },
+  { key: "motor_torque_can_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
+  { key: "motor_power_can_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
+
   { key: "odometer_km", unit: "km", group: "drive", source: "stream", unbounded: "counter" },
   { key: "trip_km", unit: "km", group: "drive", source: "stream", unbounded: "counter" },
 
@@ -453,6 +470,10 @@ export const SIGNALS: SignalDef[] = [
   { key: "vehicle_substate", unit: "", group: "drive", source: "stream", bounds: FIELD_U8 },
 
   { key: "range_km", unit: "km", group: "energy", source: "stream", bounds: [0, 500] },
+  // The cluster's own range estimate, CAN 0x412 b2-b3 at 2 Hz — the same quantity
+  // `range_km` carries over Bluetooth, and the only one of the two that survives the
+  // BLE link being down. Same bound, so the two are directly comparable.
+  { key: "range_can_km", unit: "km", group: "energy", source: "stream", bounds: [0, 500] },
   {
     key: "avg_consumption_wh_km",
     unit: "Wh/km",

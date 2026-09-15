@@ -364,10 +364,10 @@ if (CAN_ENABLED) {
         handleElockResponse(data);
         return;
       }
-      // 0x410 is the hub's whole message stream on one id, so it has two readers and
-      // must NOT return here: the diagnostics list is picked off below, and the frame
-      // then carries on to decodeFrame, which is where the GPS multiplex (~1.8 Hz) is
-      // decoded. Returning early would silently take CAN GPS out.
+      // 0x410 is a whole message stream on one id, so it has three readers and must NOT
+      // return here: the diagnostics list is picked off below, and the frame then carries
+      // on to decodeFrame, which is where the GPS multiplex (~1.8 Hz) and sub-type 3's
+      // drive triple are decoded. Returning early would silently take CAN GPS out.
       if (msg.id === GPS_CAN_ID) {
         handleHubMirrorFrame(data);
       }

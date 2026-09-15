@@ -335,6 +335,16 @@ const CHECKS: SelfCheck[] = [
       'vehicle states and the brake-pressure measurement do NOT, since that tile says "PRESSED" and "3 presses"',
   },
   {
+    script: "scripts/check-cluster-frames.ts",
+    covers:
+      "the two frames the instrument cluster puts on this bus that we decode — 0x412's range estimate and 0x410's " +
+      "type-3 drive triple — replayed from real captures of 2026-08-02, 2026-08-09 and 2026-09-15: the little-endian " +
+      "byte order of all four fields (each has a fixture whose two bytes differ, so a big-endian mutant cannot pass), " +
+      "the signed torque against a captured regen frame, the sub-type gate, that 0x412 reaches STREAM_IDS and both " +
+      "decoders reach decodeFrame, and that all four new signals reach a bounds rule with the highest values ever " +
+      "measured inside it and an absurd one outside",
+  },
+  {
     script: "scripts/check-brake-lane.ts",
     covers:
       "the ride-summary dashboard's Brake lane, run out of the dashboard JSON against a database built by the real " +

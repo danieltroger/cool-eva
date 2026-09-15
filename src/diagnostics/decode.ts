@@ -4,7 +4,8 @@ import { formatObdDtc, lookupByComponentSymptom, lookupByObdCode, type DtcTableE
 // bike's currently-ACTIVE fault list, not stored history (mode 03 is that; see
 // ./obd-dtc.ts). Pure: bytes in, values out, no I/O and no clock reads, so it can
 // be replayed from a capture. The same 8-byte message arrives over Bluetooth and
-// over CAN 0x410, where the hub mirrors it, and this decoder serves both — see
+// over CAN 0x410, which the instrument cluster transmits (docs/can-0x410.md), and this
+// decoder serves both — see
 // src/ble/client.ts and src/can/hub-mirror.ts.
 //
 // Layout, from CommParser.java's `case DIAGNOSTICS:` branch — an unfinished stub

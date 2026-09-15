@@ -5,7 +5,7 @@ import type { DiagnosticCode, DiagnosticReport } from "./decode.ts";
 // Turns a decoded diagnostics list into logged signals. Kept out of decode.ts so
 // that decoder stays pure and replayable; this is the side-effecting half.
 //
-// Both transports (Bluetooth and the CAN 0x410 mirror) funnel through here and
+// Both transports (Bluetooth and CAN 0x410, which the cluster transmits) funnel here and
 // share the "which codes were present last time" state on purpose: they carry
 // the same list, so the second one to arrive is a free cross-check that costs
 // nothing — record() only writes a row when a value actually changes.

@@ -18,11 +18,13 @@
 
 import { FRAME_SIZE, GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
 import { SuppressedFixWatcher } from "../gps/fix-watch.ts";
+import { decodeHubOutput, isHubOutputFrame } from "../hub/output.ts";
 
-// The GPS sub-frames are byte-identical on CAN 0x410, so their bit unpacking lives
-// in ../gps/decode.ts and is shared with src/can/gps.ts rather than duplicated. The
-// record size comes from there for the same reason: it is the hub's framing, not
-// this transport's.
+// The GPS sub-frames are byte-identical on CAN 0x410 — which the instrument cluster
+// transmits, not the hub (docs/can-0x410.md) — so their bit unpacking lives in
+// ../gps/decode.ts and is shared with src/can/gps.ts rather than duplicated. The record
+// size comes from there for the same reason: it is the protocol's framing, not this
+// transport's.
 export type { DecodedValue };
 
 // Message types (CommParser constants). Only read-only types are handled here —
@@ -141,7 +143,13 @@ export class BleTelemetryDecoder {
     switch (frame[1]) {
       case 0x00:
         // SOC (frame[2]) and battery temp (frame[7]) duplicate CAN 0x200 at 20 Hz,
-        // so they're skipped. The range estimate is not on CAN at all.
+        // so they're skipped.
+        //
+        // 🚨 "The range estimate is not on CAN at all" stood here until #224 and was FALSE:
+        // it is CAN 0x412 b2-b3, from the same cluster variable that fills this frame's own
+        // range slot, and it is decoded as `range_can_km` (src/can/cluster-range.ts). That
+        // those two SOC and temperature slots agree with the BMS's own 0x200 is what tested
+        // the cluster fills this message faithfully — docs/can-0x412.md.
         //
         // 🚨 "…and the vehicle state machine [is] not on CAN at all" stood here until
         // 2026-09-14 and was FALSE. It is CAN 0x101 `VCU_VEHICLE_STS` at 100 Hz, decoded
@@ -166,15 +174,17 @@ export class BleTelemetryDecoder {
     }
   }
 
+  // The unpacking is ../hub/output.ts, shared with the CAN 0x410 reader that decodes
+  // the byte-identical record off the bus. Only the keys differ: this transport keeps
+  // the bare names and CAN's carries `_can`, so the two stay comparable.
   #decodeOutput(frame: Uint8Array): DecodedValue[] {
-    if (frame[1] !== 0xff) {
+    if (!isHubOutputFrame(frame)) {
       return [];
     }
-    const revolutionsPerMinute = signed16(frame[5], frame[4]);
-    const torqueNm = signed16(frame[7], frame[6]);
+    const output = decodeHubOutput(frame);
     return [
-      { key: "motor_torque_nm", value: torqueNm },
-      { key: "motor_power_kw", value: (torqueNm * 2 * Math.PI * revolutionsPerMinute) / 60000 },
+      { key: "motor_torque_nm", value: output.torqueNm },
+      { key: "motor_power_kw", value: output.powerKw },
     ];
   }
 

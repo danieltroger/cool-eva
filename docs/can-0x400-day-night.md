@@ -112,3 +112,30 @@ Archive-wide: 94 transitions, median run 130.1 s dark / 190.3 s light, shortest 
 ## 6. Reproducing any of it
 
 The archive is not in the repo, so none of the above is a CI check — it is provenance. `scripts/check-button-decode.ts` pins what the _decoder_ does with the byte, including that a `b5` with its low bits alive (which has never occurred) still reads bit 7 alone. The scans behind §2–§4 are single-pass `awk` over the candump files; macOS ships the one-true-awk, so they use a hex lookup table rather than `strtonum`, and a full pass over the ~14 GB takes a few minutes at `xargs -P 6`.
+
+---
+
+## ⚠️ The cluster firmware's `0x400` packer contradicts this bus
+
+Added 2026-09-15 from the COBO cluster disassembly (#224). **No decoder changes** — everything above is measured off the bus and stands on its own. This is a provenance problem, not a decode problem.
+
+The packer at `0x000526A8`-`0x0005278C` builds `0x400` from a shadow block at `r13-0x7460 … -0x7468`, whose single writer is `0x000729E0`. What it writes, against the archive:
+
+| wire byte | the firmware writes | the bus, **2 108 672 frames** over 5 boots |
+| --- | --- | --- |
+| b0 | a **rolling counter, `0 … 0x1D` then reset** (`0x72A44`-`0x72A54`) | `0x02` — **one distinct value** |
+| b1 | `0x6F` (low half of `li r0, 0xb6f`) | `0x01` — one distinct value |
+| b2 | `0x0B` | the buttons: `00`/`04`/`02`/`06`/`01` |
+| b3 | `0xEC` (the `.040` build writes `0xE9`) | `0x00` |
+| b4 | `0x00` | `0x00` ✓ |
+| b5 bit 7 | a variable, `-0x779e & 1` | `0x80`/`0x00` ✓ — the flag this document is about |
+| b5 bits 0-6 | a variable | always 0 |
+| b6-b7 | a variable u16 | always 0 |
+
+Four of eight bytes disagree, and **a 0-29 counter reading `0x02` in 2.1 million frames is a much harder contradiction than two constants differing**. All three firmware images are structurally identical here; only the literal differs (`0xEC` against `0xE9`, which look like build numbers). So **none of the three builds we hold produces what this bus carries.**
+
+❌ **"The cluster's `0x400` is switched off by configuration" — considered and REFUTED.** Each of the cluster's eight transmits is gated on its own byte, which looks like an enable flag; it is not. The scheduler **clears** the byte after a successful send and reloads a period (`0x0005279C` for `0x400`, `0x00052CD4` for `0x412`), so it is a transmit-request latch that a producer sets. It cannot express "this frame is disabled on this bike".
+
+That leaves the two candidates #224 started with, unresolved: the bike runs a **fourth build**, or **`0x400` on this bus is not the cluster's at all**. The 2026-09-15 probe of the cluster's diagnostic channel ([can-0x7c4.md](can-0x7c4.md)) is a mild point against the fourth build — the running dispatcher matches ours exactly — but all three images share that dispatcher, so it does not settle it.
+
+⚠️ Consequently, treat the firmware's b5 bit 7 as **weak corroboration of this document's flag, not confirmation**. If `0x400` here is another node's frame, a one-bit day/night flag landing at the same bit position is a coincidence. What holds the flag up is the 14 069 994-frame census above, which does not depend on the firmware at all.

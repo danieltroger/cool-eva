@@ -1,13 +1,15 @@
-// GPS on CAN id 0x410. The Connectivity Hub puts its BLE telemetry framing on the
-// bus verbatim — the same 8-byte records, byte 0 = message type, byte 1 = sub-index
-// — so the shared decoder in src/gps/decode.ts reads them unchanged.
+// GPS on CAN id 0x410. The frames carry the Connectivity-Hub telemetry framing
+// verbatim — the same 8-byte records, byte 0 = message type, byte 1 = sub-index — so
+// the shared decoder in src/gps/decode.ts reads them unchanged.
+//
+// 🚨 The INSTRUMENT CLUSTER transmits this id; the hub reaches it over UART and is the
+// Bluetooth transport for these records, not their author. docs/can-0x410.md.
 //
 // Measured over 40 s parked (2026-08-02): 72 × `1A 00`, 72 × `1A 01`, 72 × `1A FE`
 // (~1.8 Hz each), 73 × `00 FF` seed heartbeat, plus the vehicle-status (02) and
 // odometer (04) replies our own BLE client asks for every 10 s.
 //
-// This is the hub's own broadcast, not a mirror of whatever it happens to be
-// sending a connected phone: with the cool-eva service stopped and therefore no
+// It is a real broadcast, not a copy of whatever is being sent to a connected phone: with the cool-eva service stopped and therefore no
 // BLE session at all, 30 s of the same capture still carried 58 × `1A 00`, 58 ×
 // `1A 01`, 58 × `1A FE` and 59 × `00 FF`. Position on CAN does not depend on the
 // Bluetooth link being up, which is the whole point of reading it here.

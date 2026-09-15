@@ -369,7 +369,7 @@ The bike keeps several completely different fault records, and the Faults tab sh
 
 |  | What it is | How many, right now | Where from |
 | --- | --- | --- | --- |
-| **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity Hub message type 25, over Bluetooth and mirrored onto CAN `0x410` |
+| **Active** | What the bike says is wrong _at this moment_. It flickers — one code was present on 2 of 8 consecutive polls at a standstill | 0-1 | Connectivity-Hub message type 25, over Bluetooth and on CAN `0x410`, which the instrument cluster transmits |
 | **Stored** | Everything that has _ever_ been wrong and not been cleared. It only climbs | **39** | OBD-II **mode 03**, over ISO-TP |
 | **Pending / permanent** | Would be OBD-II modes 07 and 0A | — | **no response.** See below |
 | **Freeze frames** | The conditions the bike recorded _at the moment_ one specific code latched | not read yet | KWP `0x17` on the A8 micro. Decoder, tables and transport are in, and the wire format is verified against 29 captured replies. See [Freeze frames](#freeze-frames) |

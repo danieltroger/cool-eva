@@ -77,7 +77,7 @@ export class GpsMessageDecoder {
   emittedFixes = 0;
 
   decode(frame: Uint8Array): DecodedValue[] {
-    // CAN 0x410 multiplexes the hub's whole message set onto one id, so the type
+    // CAN 0x410 multiplexes the cluster's whole hub-protocol message set onto one id, so the type
     // check is load-bearing there, not just belt-and-braces as it is over BLE.
     if (frame.length < FRAME_SIZE || frame[0] !== GPS_MESSAGE_TYPE) {
       return [];

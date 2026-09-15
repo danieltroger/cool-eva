@@ -82,7 +82,7 @@ These rows were swapped on 2026-08-15 and the swap was **wrong**; it was reverte
 The same 8-byte message reaches us over two transports and one decoder serves both (`src/ble/client.ts`, `src/can/hub-mirror.ts`):
 
 - **Bluetooth** — the hub's notify characteristic, in reply to `04 11 25 FF`
-- **CAN `0x410`** — the hub mirrors every one of its Bluetooth messages onto the VDB bus with byte 0 = type and byte 1 = sub-index. Confirmed in `obd-garage/captures/2026-08-02_bms_90s.log`: `1A 00`/`1A 01`/`1A FE` GPS, `02 xx` vehicle status, `04 xx` odometer, `00 FF` seed.
+- **CAN `0x410`** — the whole hub message set is on the VDB bus with byte 0 = type and byte 1 = sub-index. ⚠️ The **instrument cluster** transmits it, not the hub (`docs/can-0x410.md`). Confirmed in `obd-garage/captures/2026-08-02_bms_90s.log`: `1A 00`/`1A 01`/`1A FE` GPS, `02 xx` vehicle status, `04 xx` odometer, `00 FF` seed.
 
 Layout, from `CommParser.java`'s `case DIAGNOSTICS:` branch — an unfinished stub that decodes two codes per message and then throws them away:
 

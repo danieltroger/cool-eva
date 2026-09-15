@@ -34,7 +34,9 @@ import {
   decodeThrottleSensorFrame,
 } from "./drive.ts";
 import { type DecodedValue, bit, bitFieldLe, i16le, u16le } from "./frame.ts";
+import { CLUSTER_RANGE_CAN_ID, decodeClusterRangeFrame } from "./cluster-range.ts";
 import { decodeGpsCanFrame, GPS_CAN_ID } from "./gps.ts";
+import { decodeHubOutputFrame } from "./hub-output.ts";
 import { PSU_CAN_ID, decodePsuFrame } from "./psu.ts";
 import { handlebarSwitches, vehicleFlagsByte3 } from "./vcu-digitals.ts";
 import { VCU_FLAGS_CAN_ID, decodeVcuFlagsFrame } from "./vcu-flags.ts";
@@ -380,8 +382,20 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
     // all-zero in the garage, so the coordinates themselves are still BLE-verified
     // only. (The old note that b4 here is a high-beam switch was reading one byte of
     // this multiplex; 0x102 is the real lights frame and already supersedes it.)
+    //
+    // 🚨 The emitter is the INSTRUMENT CLUSTER, not the hub. The hub reaches it over
+    // UART and is the BLE transport for these records, not their author — and the
+    // cluster SYNTHESISES them from its own variables rather than forwarding bytes,
+    // so the CAN copy and the BLE copy can disagree. docs/can-0x410.md.
+    //
+    // Two readers: the GPS multiplex, and type 3's drive triple. Neither returns
+    // early — a frame is one or the other and each ignores what is not its own.
     case GPS_CAN_ID:
-      return decodeGpsCanFrame(data);
+      return [...decodeGpsCanFrame(data), ...decodeHubOutputFrame(data)];
+
+    // 0x412 — the cluster's range estimate at 2 Hz. docs/can-0x412.md.
+    case CLUSTER_RANGE_CAN_ID:
+      return decodeClusterRangeFrame(data);
 
     // 0x480 — E-LOCK / keyless status (10 Hz, present key-on/parked). b2-5 LE
     // uint32 = ID of the key fob currently present; it matches slot 1 of the 3
@@ -521,6 +535,7 @@ const VEHICLE_STREAM_IDS = [
   0x306,
   0x400,
   GPS_CAN_ID,
+  CLUSTER_RANGE_CAN_ID,
   0x480,
   PSU_CAN_ID,
   // The charge-manager group. Four of the five are silent unless a charge cable is live,
