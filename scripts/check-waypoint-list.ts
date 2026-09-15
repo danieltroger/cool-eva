@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SIGNALS } from "../src/can/registry.ts";
@@ -153,6 +155,59 @@ check(
 check("…and it consumed no sequence number", waypointsSaved() === savesBeforeRefusal);
 check("both counters see it", waypointsRefused() === 1 && waypointsSaved() === 1);
 fixes.stop();
+
+// --- 1b. a refusal the Pi could not date, through the real clock gate ---------
+//
+// ⚠️ ITS OWN PROCESS, and that is the only way this can be asserted at all: SYNC_ENABLED is
+// read in src/gps/clock.ts at import time, so a process that set GPS_TIME_SYNC=0 to make the
+// saves above possible can never reach "never-synced" afterwards. A child without it can,
+// and it is the pairing that matters — CLOCK_NEVER_SYNCED and a `clockTrustworthy: false`
+// stamped from the same gate, on the same event, so the phone knows not to print a time.
+//
+// The fix is staged exactly as above, because the clock gate is LAST: without a corroborated
+// fresh fix this refuses for NO_FIX and never reaches the question.
+
+console.log("\n1b. a cold boot's refusal carries the Pi's own verdict on its clock");
+
+const cold = await promisify(execFile)(
+  process.execPath,
+  [
+    "--experimental-strip-types",
+    "--input-type=module",
+    "-e",
+    `import { SIGNALS } from "./src/can/registry.ts";
+     import { defineSignals, record } from "./src/can/signals.ts";
+     import { saveWaypointNow, startWaypointFixTracking } from "./src/gps/waypoint.ts";
+     import { waypointEventsOf, waypointLog } from "./src/gps/waypoint-log.ts";
+     defineSignals(SIGNALS);
+     const fixes = startWaypointFixTracking();
+     record("gps_lat", 51.4779);
+     record("gps_lon", -0.0015);
+     await Promise.resolve();
+     record("gps_lat", 51.4779);
+     record("gps_lon", -0.0015);
+     const outcome = saveWaypointNow();
+     fixes.stop();
+     console.log(JSON.stringify({ outcome, events: waypointEventsOf(waypointLog) }));`,
+  ],
+  { cwd: ROOT, env: { ...process.env, GPS_TIME_SYNC: undefined } }
+);
+const coldEvents = (JSON.parse(cold.stdout.trim()) as { outcome: { refusal?: number }; events: WaypointEvent[] })
+  .events;
+const coldRefusal = coldEvents[coldEvents.length - 1];
+check("a bike whose clock has never synced refuses the save", coldRefusal?.outcome === "refused");
+check(
+  "…for the clock, which is the last gate and so the one being asked about",
+  coldRefusal?.outcome === "refused" && coldRefusal.refusal === WAYPOINT_REFUSAL.CLOCK_NEVER_SYNCED
+);
+check(
+  "⚠️  …and the event says the clock was not to be believed, which is what stops the phone printing a time of day",
+  coldRefusal?.outcome === "refused" && coldRefusal.clockTrustworthy === false
+);
+check(
+  "…while this process, which owns its own clock, stamps the opposite",
+  refusedEvent.outcome === "refused" && refusedEvent.clockTrustworthy === true
+);
 
 // --- 2. the cap evicts refusals before it ever evicts a place ----------------
 //
