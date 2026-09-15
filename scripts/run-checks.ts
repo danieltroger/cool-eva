@@ -344,7 +344,10 @@ const CHECKS: SelfCheck[] = [
       "the TYPE byte tested against the real seed frame (whose sub-index is also 0xFF, so only byte 0 can reject it) " +
       "and the length guard against a truncated type-3 frame, that 0x412 reaches STREAM_IDS, that BOTH readers " +
       "survive on 0x410 — the GPS one included — and that the BLE and CAN decoders of the shared type-3 unpacking " +
-      "still agree on one frame, which is the only place in this suite any BLE path is exercised at all",
+      "still agree on one frame, which is the only place in this suite any BLE path is exercised at all; plus the " +
+      "dashboard's plausibility gate on all four new signals — the highest value ever measured inside each bound, " +
+      "an absurd one rejected, and dash_speed_kmh bounded no tighter than the speed_can_kmh it reads HIGHER than, " +
+      "by reading that sibling's ceiling rather than restating it",
   },
   {
     script: "scripts/check-brake-lane.ts",
