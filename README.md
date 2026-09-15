@@ -35,7 +35,9 @@ sudo nmcli device wifi connect "<your hotspot SSID>" password "<password>"
 sudo nmcli connection modify "<your hotspot SSID>" connection.autoconnect yes
 ```
 
-On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix.
+On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone 12 or later, Apple's own fix is Settings → Personal Hotspot → **Maximize Compatibility** — which Apple notes costs some hotspot speed and Wi-Fi security.
+
+To add a **second** network later (home Wi-Fi, an Airbnb) while you are sshed in over the first, use `nmcli connection add` rather than `nmcli device wifi connect` — the latter activates what it creates and drops the session you are typing into. Exact command: [INSTALL.md §8](INSTALL.md).
 
 **3. Install Node 24.** Raspberry Pi OS's `apt` Node is far too old — the app is TypeScript run directly, which needs `--experimental-strip-types` (Node 22.6.0 at the very oldest; 24 is what this is tested on).
 
@@ -47,13 +49,15 @@ node --version   # must be v22.6 or newer
 
 **4. Clone and install.**
 
+⚠️ **Give the Pi more swap first.** `npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`), which takes **several minutes** on a Pi Zero 2 W and wants more than the stock 512 MB — without it the build is OOM-killed and it looks like a crash rather than a memory problem. About 3 GB. How, for both Bookworm and Trixie: [INSTALL.md §2.5](INSTALL.md).
+
 ```bash
 git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva
 cd ~/cool-eva
 npm install
 ```
 
-`npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`). On a Pi Zero 2 W that takes **several minutes** and wants swap enabled — if it gets killed, that's memory, not a bug.
+Nothing else to do for those compiles: the repo ships an `.npmrc` allowlisting the four packages with install scripts, because **npm 12 and newer refuse to run them** otherwise and you get a tree with no `.node` files. Version boundaries, how to tell whether your modules actually built, and the measurements: [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md).
 
 **5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
 
