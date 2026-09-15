@@ -920,6 +920,48 @@ const CHECKS: SelfCheck[] = [
       "no behavioural assertion can notice the clause going missing from them",
   },
   {
+    script: "scripts/check-route-track.ts",
+    covers:
+      "the route map's TRACK, which is no longer rebuilt on every dashboard load: " +
+      "scripts/route-track.ts materialises it into `route_track` at import time and the panel reads " +
+      "that table (5 152 ms \u2192 78 ms for the map, 4 474 ms \u2192 66 ms for the tile that counts " +
+      "it). The rules did not change, so this check runs the SHIPPED build against fixtures for each " +
+      "of them \u2014 a latitude logged alone paired with the longitude carried onto it, two fixes 1 ms " +
+      "apart collapsed to the last of their second, a lone excursion between two AGREEING neighbours " +
+      "rejected while the parked jitter that the 220 m floor saves is kept, a row stamped 2060 never " +
+      "reaching the table, and an out-of-range speed stored as NULL rather than clamped \u2014 and then " +
+      "reads the result back through the dashboard's own SQL, lifted out of route-map.json rather " +
+      "than restated. \u26a0 The assertion the whole change rests on is the one a careless fixture " +
+      "cannot make: a fix inserted into `reading` AFTER the build is not drawn, because every other " +
+      "assertion here would pass just as well if the panel still carried the six-CTE pipeline over " +
+      "the readings. Also that F contains A verbatim so the count cannot drift from the map, that " +
+      "the 12 000-point render budget still binds and still derives its stride from the window, and " +
+      "that `route_track_second` \u2014 a unique index on `ts / 1000`, because the INTEGER PRIMARY KEY on " +
+      "a MILLISECOND column could never fire \u2014 makes the per-second collapse a thing the build " +
+      "fails on rather than a thing the query is trusted to have done",
+  },
+  {
+    script: "scripts/check-import-ride-log.ts",
+    covers:
+      "the orchestration of `scripts/import-ride-log.ts` \u2014 decrypt, re-run the waypoint recovery, " +
+      "materialise the track, and only then replace the live database \u2014 which is the only part of " +
+      "that step that moves gigabytes and was the only part nothing tested. The two child processes " +
+      "are injected, so every branch runs here in milliseconds against real but tiny SQLite files: " +
+      'decrypt exit 2 CARRYING ON, because "N segments could not be decrypted, the rest is intact" is ' +
+      "the normal case on a real dump and treating it as fatal would make the archive unimportable; " +
+      "any other non-zero code from any stage refusing WITHOUT a swap and leaving the staging file on " +
+      "disk; a staging file from an earlier run stopping the next one before it does anything; an " +
+      "import that covers fewer readings or a shorter span than the database it would replace being " +
+      "refused unless --allow-shrink says so; a non-empty `<out>-wal` stopping the swap because " +
+      "something still has that database open; and the `-wal`/`-shm` siblings moving WITH their " +
+      "database, since SQLite never checks that a WAL belongs to the file it finds it beside and a " +
+      "stranded one is silent corruption of the file the import just spent twenty minutes building. " +
+      "Plus the finished file being left in rollback journal mode, which is what the datasource " +
+      "wants (grafana/README.md measured WAL blanking 3 of 85 panel queries), and the one assertion " +
+      "that holds `commitRecovered` to refusing an empty verdict set \u2014 the precondition the " +
+      'step\'s "nothing to commit" no-op depends on, which nothing held it to before',
+  },
+  {
     script: "scripts/check-waypoint-corroboration.ts",
     covers:
       "the gate that refuses the FIRST fix of a run until a later sample has agreed with it (#178). " +

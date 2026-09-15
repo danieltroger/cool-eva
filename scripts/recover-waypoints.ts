@@ -52,6 +52,16 @@ const BEAT_MS_ON_THE_RECOVERY_DAYS = 100;
  */
 const LEGACY_HOLD_MS = 1000;
 
+/**
+ * What `--to` means when it is not given: everything.
+ *
+ * ⚠️ Not `Number.MAX_SAFE_INTEGER`, which is past the largest value `Date` can render — the
+ * report printed the window before printing anything else, so omitting `--to` did all 30 s of
+ * judging and then died with `RangeError: Invalid time value`. A year nothing is stamped with
+ * bounds the query exactly as well and survives `toISOString()`.
+ */
+const NO_UPPER_BOUND_MS = Date.parse("9999-12-31T23:59:59Z");
+
 interface Options {
   dbPath: string;
   fromMs: number;
@@ -94,6 +104,13 @@ async function main(): Promise<void> {
   }
   if (!options.commit) {
     console.log("\n⚠️  DRY RUN — nothing was written. Pass --commit to insert, after reading the report above.");
+    return;
+  }
+  if (recovered.length === 0) {
+    // ⚠️ A no-op, not a failure. commitRecovered() throws on an empty set — right for a
+    // direct call, wrong for the import step, which re-runs this over a window whose points
+    // are already live and would otherwise report a rebuilt archive as a hard failure.
+    console.log("\n⚠️  nothing to commit — no recoverable holds in this window. The database is unchanged.");
     return;
   }
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
@@ -281,7 +298,7 @@ function parseArguments(argv: string[]): Options {
   return {
     dbPath: resolve(dbPath),
     fromMs: from === null ? 0 : Date.parse(from),
-    toMs: to === null ? Number.MAX_SAFE_INTEGER : Date.parse(to),
+    toMs: to === null ? NO_UPPER_BOUND_MS : Date.parse(to),
     holdMs: hold === null ? WAYPOINT_HOLD_MS : Number(hold),
     commit: argv.includes("--commit"),
     gpxPath: read("--gpx"),
