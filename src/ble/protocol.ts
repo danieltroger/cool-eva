@@ -19,6 +19,7 @@
 import { FRAME_SIZE, GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
 import { SuppressedFixWatcher } from "../gps/fix-watch.ts";
 import { HUB_OUTPUT_TYPE, decodeHubOutput, isHubOutputFrame } from "../hub/output.ts";
+import { i16le } from "../can/frame.ts";
 
 // The GPS sub-frames are byte-identical on CAN 0x410 — which the instrument cluster
 // transmits, not the hub (docs/can-0x410.md) — so their bit unpacking lives in
@@ -34,7 +35,7 @@ export type { DecodedValue };
 const TYPE_SEED = 0;
 const TYPE_MATCH_ATTEMPT = 1;
 const TYPE_VEHICLE_STATUS = 2;
-
+// 3 is HUB_OUTPUT_TYPE, declared in ../hub/output.ts because CAN decodes it too.
 const TYPE_ODOMETER = 4;
 
 /**
@@ -101,10 +102,6 @@ export class FrameReassembler {
   }
 }
 
-function signed16(high: number, low: number): number {
-  return ((high << 24) >> 16) | (low & 0xff) | 0;
-}
-
 function unsigned32(byte3: number, byte2: number, byte1: number, byte0: number): number {
   return ((byte3 << 24) | (byte2 << 16) | (byte1 << 8) | byte0) >>> 0;
 }
@@ -164,8 +161,8 @@ export class BleTelemetryDecoder {
         ];
       case 0x01:
         return [
-          { key: "avg_consumption_wh_km", value: signed16(frame[5], frame[4]) / 10 },
-          { key: "km_per_kwh", value: signed16(frame[7], frame[6]) / 100 },
+          { key: "avg_consumption_wh_km", value: i16le(frame[4], frame[5]) / 10 },
+          { key: "km_per_kwh", value: i16le(frame[6], frame[7]) / 100 },
         ];
       case 0x02:
         return [{ key: "kwh_per_100km", value: ((frame[3] << 8) | frame[2]) / 100 }];

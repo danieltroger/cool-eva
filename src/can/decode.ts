@@ -374,22 +374,16 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return values;
     }
 
-    // 0x410 — the Connectivity-Hub message set on one id, in the same framing it uses
-    // over BLE (b0 = message type, b1 = sub-index). Carries the GPS multiplex at ~1.8 Hz
-    // unsolicited, which is the whole reason position no longer depends on the Bluetooth
-    // link. Decoded in gps.ts because a fix spans three sub-frames. ✅ framing and rate
-    // confirmed on the bus; the payload is all-zero in the garage, so the coordinates
-    // themselves are still BLE-verified
-    // only. (The old note that b4 here is a high-beam switch was reading one byte of
-    // this multiplex; 0x102 is the real lights frame and already supersedes it.)
+    // 0x410 — the Connectivity-Hub message set on one id (b0 = type, b1 = sub-index),
+    // carrying the GPS multiplex at ~1.8 Hz unsolicited, which is why position no longer
+    // depends on the Bluetooth link. Two pure readers, and neither returns early because a
+    // frame is one or the other: GPS in gps.ts, where a fix spans three sub-frames, and
+    // type 3's drive triple in hub-output.ts.
     //
-    // 🚨 The emitter is the INSTRUMENT CLUSTER, not the hub. The hub reaches it over
-    // UART and is the BLE transport for these records, not their author — and the
-    // cluster SYNTHESISES them from its own variables rather than forwarding bytes,
-    // so the CAN copy and the BLE copy can disagree. docs/can-0x410.md.
-    //
-    // Two readers: the GPS multiplex, and type 3's drive triple. Neither returns
-    // early — a frame is one or the other and each ignores what is not its own.
+    // 🚨 The INSTRUMENT CLUSTER transmits this id, not the hub, and SYNTHESISES each record
+    // from its own variables rather than forwarding it — so the CAN and BLE copies of one
+    // message type can disagree. Evidence, rates and the superseded b4 note:
+    // docs/can-0x410.md and docs/can-decode-findings.md § "0x410".
     case GPS_CAN_ID:
       return [...decodeGpsCanFrame(data), ...decodeHubOutputFrame(data)];
 

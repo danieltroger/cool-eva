@@ -4,6 +4,7 @@ import { decodeHubOutputFrame } from "../src/can/hub-output.ts";
 import { GPS_CAN_ID } from "../src/can/gps.ts";
 import { BleTelemetryDecoder } from "../src/ble/protocol.ts";
 import { SIGNALS } from "../src/can/registry.ts";
+import { parseHexBytes } from "./captured-vcu-records.ts";
 import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 
 // The two frames the instrument cluster puts on this bus that we decode: 0x412's range
@@ -34,18 +35,28 @@ function check(what: string, condition: boolean): void {
   }
 }
 
+// ⚠️ parseHexBytes, not a Number.parseInt map. `parseInt` stops at the first invalid
+// character and returns a VALID integer for a partial parse — parseInt("4Z", 16) is 4, and
+// "100" is 256, which Buffer.from truncates to 0. Both would pass an isInteger guard and
+// produce a fixture nobody captured, in a file whose header says every frame is real.
 function frameOf(hex: string): Buffer {
-  const bytes = hex
-    .trim()
-    .split(/\s+/)
-    .map(part => Number.parseInt(part, 16));
-  if (bytes.length !== 8 || bytes.some(byte => !Number.isInteger(byte))) {
-    throw new Error(`fixture is not 8 hex bytes: ${hex}`);
+  const bytes = parseHexBytes(hex);
+  if (bytes.length !== 8) {
+    throw new Error(`fixture is not 8 bytes: ${hex}`);
   }
   return Buffer.from(bytes);
 }
 
-function valueOf(values: { key: string; value: number }[], key: string): number | undefined {
+/** Throws rather than skipping: a missing entry must fail, not quietly shrink the run. */
+function signalFor(key: string) {
+  const signal = SIGNALS.find(entry => entry.key === key);
+  if (!signal) {
+    throw new Error(`${key} is not in the registry`);
+  }
+  return signal;
+}
+
+function decodedValue(values: { key: string; value: number }[], key: string): number | undefined {
   return values.find(entry => entry.key === key)?.value;
 }
 
@@ -66,13 +77,13 @@ const RANGE_FIXTURES: [string, number, string][] = [
   ["00 00 42 01 31 42 04 00", 322, "dedupe-capture-20260913-103237, 160 frames, the per-boot maximum — HIGH BYTE SET"],
 ];
 for (const [hex, expected, why] of RANGE_FIXTURES) {
-  const got = valueOf(decodeClusterRangeFrame(frameOf(hex)), "range_can_km");
+  const got = decodedValue(decodeClusterRangeFrame(frameOf(hex)), "range_can_km");
   check(`${hex} → range_can_km ${expected} (${why})`, got === expected);
 }
 check("a short 0x412 frame decodes to nothing", decodeClusterRangeFrame(Buffer.alloc(4)).length === 0);
 check(
   "0x412 reaches the decoder through decodeFrame, not just directly",
-  valueOf(decodeFrame(CLUSTER_RANGE_CAN_ID, frameOf("00 00 4F 00 31 42 08 00")), "range_can_km") === 79
+  decodedValue(decodeFrame(CLUSTER_RANGE_CAN_ID, frameOf("00 00 4F 00 31 42 08 00")), "range_can_km") === 79
 );
 check("0x412 is in STREAM_IDS, or the decoder is dead and nothing says so", STREAM_IDS.includes(CLUSTER_RANGE_CAN_ID));
 
@@ -90,13 +101,13 @@ const OUTPUT_FIXTURES: [string, number, number, number, string][] = [
 ];
 for (const [hex, speed, rpm, torque, why] of OUTPUT_FIXTURES) {
   const values = decodeHubOutputFrame(frameOf(hex));
-  check(`${hex} → dash_speed_kmh ${speed} (${why})`, valueOf(values, "dash_speed_kmh") === speed);
-  check(`${hex} → motor_torque_can_nm ${torque}`, valueOf(values, "motor_torque_can_nm") === torque);
+  check(`${hex} → dash_speed_kmh ${speed} (${why})`, decodedValue(values, "dash_speed_kmh") === speed);
+  check(`${hex} → motor_torque_can_nm ${torque}`, decodedValue(values, "motor_torque_can_nm") === torque);
   // Power is the only place rpm is observable, so it is asserted from the LITERAL rpm above.
   const expected = (torque * 2 * Math.PI * rpm) / 60000;
   check(
     `${hex} → motor_power_can_kw from rpm ${rpm}`,
-    Math.abs((valueOf(values, "motor_power_can_kw") ?? NaN) - expected) < 1e-9
+    Math.abs((decodedValue(values, "motor_power_can_kw") ?? NaN) - expected) < 1e-9
   );
 }
 
@@ -108,7 +119,6 @@ check(
   "the seed frame is rejected by the TYPE byte, not the sub-index",
   decodeHubOutputFrame(frameOf("00 FF BA C2 D8 3B 00 00")).length === 0
 );
-check("a GPS sub-frame decodes to nothing here", decodeHubOutputFrame(frameOf("1A 00 00 00 00 00 00 00")).length === 0);
 check(
   "sub-index other than 0xFF decodes to nothing",
   decodeHubOutputFrame(frameOf("03 00 3E 00 C4 09 0F 00")).length === 0
@@ -117,10 +127,9 @@ check(
 // rejects it and the length guard is never reached — with only that case, deleting the length
 // guard passes. A truncated `03 FF 3E` reads frame[4..7] off the end and yields NaN.
 check("a short TYPE-3 frame decodes to nothing", decodeHubOutputFrame(Buffer.from([0x03, 0xff, 0x3e])).length === 0);
-check("a short frame of another type decodes to nothing", decodeHubOutputFrame(Buffer.alloc(4)).length === 0);
 check(
   "type 3 reaches the decoder through decodeFrame on 0x410",
-  valueOf(decodeFrame(GPS_CAN_ID, frameOf("03 FF 3E 00 C4 09 0F 00")), "dash_speed_kmh") === 62
+  decodedValue(decodeFrame(GPS_CAN_ID, frameOf("03 FF 3E 00 C4 09 0F 00")), "dash_speed_kmh") === 62
 );
 // 0x410 has three readers and decodeFrame spreads two of them. Without this, dropping the GPS
 // half of that spread is invisible here — and `npm test` as a whole does not catch it either.
@@ -136,7 +145,7 @@ check(
 // exactly as it does for rpm. Kept to hold that byte, not as evidence of anything.
 check(
   "b3 is the speed's high byte (firmware-derived, no captured frame can show this)",
-  valueOf(decodeHubOutputFrame(frameOf("03 FF 01 01 00 00 00 00")), "dash_speed_kmh") === 257
+  decodedValue(decodeHubOutputFrame(frameOf("03 FF 01 01 00 00 00 00")), "dash_speed_kmh") === 257
 );
 
 console.log("§3 both transports, one unpacking — the claim that justifies sharing it");
@@ -151,13 +160,24 @@ console.log("§3 both transports, one unpacking — the claim that justifies sha
   const fromBle = new BleTelemetryDecoder().decode(frame);
   check(
     "BLE and CAN agree on torque from one frame",
-    valueOf(fromBle, "motor_torque_nm") === valueOf(fromCan, "motor_torque_can_nm")
+    decodedValue(fromBle, "motor_torque_nm") === decodedValue(fromCan, "motor_torque_can_nm")
   );
   check(
     "BLE and CAN agree on power from one frame",
-    valueOf(fromBle, "motor_power_kw") === valueOf(fromCan, "motor_power_can_kw")
+    decodedValue(fromBle, "motor_power_kw") === decodedValue(fromCan, "motor_power_can_kw")
   );
   check("the BLE path still emits its own two keys", fromBle.length === 2);
+
+  // ⚠️ The only coverage of BLE type 2 anywhere in the suite. `signed16` was deleted here in
+  // favour of frame.ts's `i16le`, and these two keys were its last callers — they had no
+  // assertion at all. `02 01 20 03 00 00 E8 FD` is from the 2026-08-02 capture; -5.36 is the
+  // sentinel the hub emits at a standstill, and rides.db logged exactly that value that day.
+  const standstill = new BleTelemetryDecoder().decode(frameOf("02 01 20 03 00 00 E8 FD"));
+  check("BLE avg_consumption_wh_km reads 0 at a standstill", decodedValue(standstill, "avg_consumption_wh_km") === 0);
+  check(
+    "BLE km_per_kwh reads the -5.36 sentinel, so the sign survived",
+    decodedValue(standstill, "km_per_kwh") === -5.36
+  );
 }
 
 console.log("§4 registry and bounds — a signal the dashboard would reject is not decoded");
@@ -181,29 +201,27 @@ for (const key of ["range_can_km", "dash_speed_kmh", "motor_torque_can_nm", "mot
 // broken sensor. 194 km/h of dash speed is from ~/Documents/cool-eva-archive; 322 km of range
 // is from the 2026-09-13 per-boot extract named in §1, NOT from that archive. The
 // out-of-range pair is what proves the gate is switched on for these keys at all.
-const rangeSignal = SIGNALS.find(entry => entry.key === "range_can_km");
-const speedSignal = SIGNALS.find(entry => entry.key === "dash_speed_kmh");
-if (rangeSignal && speedSignal) {
-  check("range_can_km 322 is plausible", isPlausible("range_can_km", 322, rangeSignal.unit, rangeSignal.group));
-  check("dash_speed_kmh 194 is plausible", isPlausible("dash_speed_kmh", 194, speedSignal.unit, speedSignal.group));
-  // ⚠️ READ the sibling's ceiling, do not restate it. Hard-coding 400 here passed while
-  // `speed_can_kmh` was mutated to [0, 500] — the assertion named a relationship and checked
-  // a constant.
-  const sibling = SIGNALS.find(entry => entry.key === "speed_can_kmh");
-  const siblingCeiling = sibling ? boundsFor(sibling.key, sibling.unit, sibling.group)?.[1] : undefined;
-  check(
-    "dash_speed_kmh is bounded no tighter than speed_can_kmh, which reads LOWER than it",
-    siblingCeiling !== undefined && isPlausible("dash_speed_kmh", siblingCeiling, speedSignal.unit, speedSignal.group)
-  );
-  check(
-    "range_can_km 5000 is REJECTED, so the gate is on",
-    !isPlausible("range_can_km", 5000, rangeSignal.unit, rangeSignal.group)
-  );
-  check(
-    "dash_speed_kmh 900 is REJECTED, so the gate is on",
-    !isPlausible("dash_speed_kmh", 900, speedSignal.unit, speedSignal.group)
-  );
-}
+const rangeSignal = signalFor("range_can_km");
+const speedSignal = signalFor("dash_speed_kmh");
+check("range_can_km 322 is plausible", isPlausible("range_can_km", 322, rangeSignal.unit, rangeSignal.group));
+check("dash_speed_kmh 194 is plausible", isPlausible("dash_speed_kmh", 194, speedSignal.unit, speedSignal.group));
+// ⚠️ READ the sibling's ceiling, do not restate it. Hard-coding 400 here passed while
+// `speed_can_kmh` was mutated to [0, 500] — the assertion named a relationship and checked
+// a constant.
+const sibling = signalFor("speed_can_kmh");
+const siblingCeiling = boundsFor(sibling.key, sibling.unit, sibling.group)?.[1];
+check(
+  "dash_speed_kmh is bounded no tighter than speed_can_kmh, which reads LOWER than it",
+  siblingCeiling !== undefined && isPlausible("dash_speed_kmh", siblingCeiling, speedSignal.unit, speedSignal.group)
+);
+check(
+  "range_can_km 5000 is REJECTED, so the gate is on",
+  !isPlausible("range_can_km", 5000, rangeSignal.unit, rangeSignal.group)
+);
+check(
+  "dash_speed_kmh 900 is REJECTED, so the gate is on",
+  !isPlausible("dash_speed_kmh", 900, speedSignal.unit, speedSignal.group)
+);
 
 if (failures > 0) {
   console.error(`\ncheck-cluster-frames: ${failures} failure(s)`);

@@ -1,4 +1,4 @@
-import { type DecodedValue } from "./frame.ts";
+import { type DecodedValue, u16le } from "./frame.ts";
 
 // CAN 0x412 — the instrument cluster's range estimate, 2 Hz.
 //
@@ -15,5 +15,5 @@ export function decodeClusterRangeFrame(data: Buffer): DecodedValue[] {
   if (data.length < 8) {
     return [];
   }
-  return [{ key: "range_can_km", value: data.readUInt16LE(2) }];
+  return [{ key: "range_can_km", value: u16le(data[2], data[3]) }];
 }

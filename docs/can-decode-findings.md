@@ -1306,7 +1306,7 @@ Re-measured 2026-09-08 over **14 069 994 frames across 97 candump captures** —
 
 That makes it **a second, passive way to read anything the hub sends** — including a diagnostics list, which only appears once something has asked for it over Bluetooth. Useful precisely because it needs no BLE connection of its own: the hub accepts one at a time and the service already holds it, so `candump can0,410:7ff` is the way to watch a reply arrive without disturbing anything.
 
-**Three readers now, not two.** `hub-mirror.ts` takes the diagnostics types, `gps.ts` the GPS multiplex, and `hub-output.ts` sub-type 3's drive triple — which was Bluetooth-only until #224 and is not. Types 2 and 4 stay undecoded: they are rare and duplicate `0x101` and `0x104` at 100 Hz. The id constant is `GPS_CAN_ID` over in `gps.ts` rather than being declared again; `src/index.ts` hands every 0x410 frame to the mirror, which is why its dispatch deliberately does not return after calling it.
+**Three readers now, not two** — `hub-mirror.ts` the diagnostics types, `gps.ts` the GPS multiplex, `hub-output.ts` sub-type 3's drive triple, which was Bluetooth-only until #224 and is not. Why they are split that way, why types 2 and 4 stay undecoded, and why `src/index.ts`'s dispatch must not return early: [can-0x410.md](can-0x410.md).
 
 ✅ Framing and rate (~1.8 Hz unsolicited for the GPS multiplex) confirmed on the bus; the payload is all-zero in the garage, so the coordinates themselves are still BLE-verified only. (The old note that b4 here is a high-beam switch was reading one byte of this multiplex; 0x102 is the real lights frame and supersedes it.)
 

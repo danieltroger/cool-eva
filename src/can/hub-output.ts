@@ -11,7 +11,7 @@ import { decodeHubOutput, isHubOutputFrame } from "../hub/output.ts";
 
 /** Decodes one 0x410 frame's type-3 payload; every other sub-type decodes to nothing. */
 export function decodeHubOutputFrame(data: Buffer): DecodedValue[] {
-  if (data.length < 8 || !isHubOutputFrame(data)) {
+  if (!isHubOutputFrame(data)) {
     return [];
   }
   const output = decodeHubOutput(data);
