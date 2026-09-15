@@ -727,12 +727,18 @@ body {
    only 5.3:1 on --tile, and both a refused row's mark and an out-of-range position are
    drawn in it.
 
-   `min-width: 0` on the body is #253's lesson at flex scale — a flex item's automatic
-   minimum is its content, so without it a row can floor itself wider than the phone and
-   the sheet scrolls sideways. `overflow-wrap` is deliberately NOT set: nothing a row can
-   hold is an unbreakable token (a coordinate has a space in it, and every sentence in
-   WAYPOINT_REFUSAL_TEXT breaks at spaces), so it would be a rule no mutant could justify.
-   check-phone-width.ts probes the box with a synthetic one instead. */
+   ⚠️ `overflow-wrap: anywhere`, and NOT #253's `min-width: 0`, which was tried here first
+   and measured to do nothing at all. The two are not the same shape: `.tile` is a GRID
+   ITEM whose implicit track was sized by its content, so flooring it widened the page,
+   while a `.waypoint-row` is a block inside a block — its width comes from its containing
+   block whatever it holds, and its content simply overflows. Measured in the rendered
+   sheet at 390 px, with a 148-character unbreakable token in a row: `.sheet-body`
+   scrollWidth 969 without this line and 390 with it, and the row's own box reads 372 in
+   both, `min-width: 0` or `auto`. So the ROW box can never witness this and the scroll
+   container is what does — which is what check-phone-width.ts asserts, with that token as
+   its probe. Nothing the list holds today is such a token (a coordinate has a space in it
+   and every WAYPOINT_REFUSAL_TEXT sentence breaks at spaces); Energica's identifiers are,
+   which is the same call `.code-field` makes. */
 .waypoint-list {
   padding: 0.1rem 0.2rem 0;
 }
@@ -760,7 +766,7 @@ body {
 
 .waypoint-body {
   flex: 1 1 auto;
-  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .waypoint-fault {

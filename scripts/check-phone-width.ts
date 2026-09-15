@@ -147,27 +147,28 @@ const SHEET = `(() => {
 })()`;
 
 /**
- * The same synthetic-probe argument the stored-codes tile gets, for the row.
+ * The same synthetic-probe argument the stored-codes tile gets, for the sheet.
  *
  * Nothing a waypoint row can really hold is an unbreakable token — a coordinate has a space
  * in it and every refusal sentence breaks at spaces — so no fixture can falsify
- * `.waypoint-body { min-width: 0 }`. This puts content in a row that cannot wrap and asks
- * whether the ROW is still the phone's width, or whether its content has been allowed to
- * set it.
+ * `.waypoint-body { overflow-wrap: anywhere }`. Energica's identifiers are exactly that
+ * shape, which is why the rule is there and why the probe uses one.
+ *
+ * ⚠️ It measures the SCROLL CONTAINER, not the row. A row is a block inside a block, so its
+ * box is its containing block's width whatever it holds — 372 px with or without the rule,
+ * which is an assertion that cannot fail. The overflow is visible one level up: 969 px of
+ * `.sheet-body` scrollWidth without the rule against 390 with it, measured.
  */
 const ROW_PROBE = `(() => {
-  const row = document.querySelector(".waypoint-row .waypoint-body");
-  if (row === null) {
+  const body = document.querySelector(".sheet-body");
+  const target = document.querySelector(".waypoint-row .waypoint-body");
+  if (body === null || target === null) {
     throw new Error("no waypoint row to probe");
   }
   const probe = document.createElement("span");
-  probe.style.whiteSpace = "nowrap";
-  probe.textContent = "unbreakable ".repeat(40).replaceAll(" ", "-");
-  row.append(probe);
-  const widths = {
-    row: Math.round(/** @type {HTMLElement} */ (row.closest(".waypoint-row")).getBoundingClientRect().width),
-    viewport: document.documentElement.clientWidth,
-  };
+  probe.textContent = "a" + "WaterPumpCurrentInEnergicaIdentifier".repeat(4);
+  target.append(probe);
+  const widths = { row: body.scrollWidth, viewport: body.clientWidth };
   probe.remove();
   return widths;
 })()`;
@@ -325,7 +326,7 @@ async function measureSheet(page: HeadlessPage, previewFile: string, scene: stri
   );
   const probed = asTileWidths(await evaluateOnPage(page, ROW_PROBE));
   check(
-    `content that cannot wrap does not widen a waypoint row (${probed.row} ≤ ${probed.viewport})`,
+    `an unbreakable name in a row does not scroll the sheet sideways (${probed.row} ≤ ${probed.viewport})`,
     probed.row <= probed.viewport
   );
 }
