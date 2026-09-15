@@ -754,12 +754,19 @@ body {
 }
 
 /* A column, so the positions line up and a `refused` row does not shunt the text of the one
-   above it sideways — but `0 1`, not `0 0`: this is the one box in the row the wrap above
-   does not cover, and a phone with text zoom, or a `#1234`, would otherwise push it out into
-   the same sheet scrollWidth check-phone-width.ts measures. */
+   above it sideways.
+
+   ⚠️ `0 0`, and NOT the `0 1` + `overflow-wrap: anywhere` a review asked for — measured in
+   the rendered sheet, that regresses the row it was meant to protect. A flex item's shrink
+   share is proportional to its BASE size, and the body's base is the whole unwrapped
+   sentence, so on the one row that takes two lines the mark yields with it: 54 px → 37, and
+   `anywhere` then breaks "refused" into "refuse / d". The hazard it was for does not exist
+   either — with the mark pinned at 3.4 rem, a `#1234567890` overflows into the body's space
+   and `.sheet-body.scrollWidth` still reads 390. It would overlap that row's text, which is
+   the cost of a mark this repo has no way to produce (the sequence restarts every boot and
+   the archive holds 97 waypoints ever). */
 .waypoint-mark {
-  flex: 0 1 3.4rem;
-  overflow-wrap: anywhere;
+  flex: 0 0 3.4rem;
   font-variant-numeric: tabular-nums;
   color: var(--label);
 }
