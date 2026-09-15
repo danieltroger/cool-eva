@@ -320,6 +320,10 @@ function armRealTimer(state: RealHostState, callback: () => unknown, delayMs: nu
     void Promise.resolve(callback()).then(
       () => finishOne(state),
       error => {
+        // Counted, not only logged: the order this scenario recorded may well still match,
+        // and a run that ends green with one line on stderr is what a harness grepping
+        // stdout reads as a pass.
+        failures += 1;
         console.error("check-virtual-clock: a scenario callback threw on the real host —", error);
         finishOne(state);
       }

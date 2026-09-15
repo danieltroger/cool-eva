@@ -1,5 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { callsSeam, scanForSeamCalls } from "./seam-scan.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 import {
   FAN_REASON_TEXT,
@@ -755,46 +754,31 @@ await controller.stop();
 // that never expires — the gate defeated outright, by one extra argument. This check is
 // the only caller allowed to pass one, and this check is not among the files scanned.
 //
-// The two assertions below the offender count are the POSITIVE CONTROL, and they are why
-// this is a check rather than a comment: a scan whose expected answer is zero passes just
-// as happily when its pattern has rotted, when the directory walk returned nothing, or
-// when the function has been renamed. So the same pattern is also run over this file,
-// where it MUST find the call above. scripts/check-freeze-frame-values.ts §2b is the same
-// guard on the same class of seam.
+// The two assertions below the offender count are the POSITIVE CONTROL: a scan expecting
+// zero matches passes just as happily when its walk read nothing or its pattern rotted.
+// Why the pattern is built from the symbol rather than written out, and why comments are
+// stripped first: scripts/seam-scan.ts.
 
 console.log("\n10b. the arrival seam is reachable from checks and from nothing that ships");
 
-const SIGNALS_MODULE = "can/signals.ts";
-const seamPattern = /\brecordArrival\(/g;
-const sourceRoot = join(import.meta.dirname, "..", "src");
-const sourceFiles = (await readdir(sourceRoot, { recursive: true })).filter(entry => entry.endsWith(".ts"));
-const seamOffenders: string[] = [];
-for (const entry of sourceFiles) {
-  // Skipped by PATH, not by trying to tell a call from the definition in a regex: the two
-  // differ only by the words in front of them, and that is the kind of pattern that rots.
-  if (entry.replaceAll("\\", "/").endsWith(SIGNALS_MODULE)) {
-    continue;
-  }
-  if (seamPattern.test(await readFile(join(sourceRoot, entry), "utf8"))) {
-    seamOffenders.push(`src/${entry}`);
-  }
-  seamPattern.lastIndex = 0;
-}
-for (const offender of seamOffenders) {
-  console.error(`      ${offender}`);
+const seamScan = await scanForSeamCalls(new URL("../src", import.meta.url), recordArrival, {
+  skip: ["can/signals.ts"],
+});
+for (const offender of seamScan.offenders) {
+  console.error(`      src/${offender}`);
 }
 check(
-  `⚠️  none of the ${sourceFiles.length} .ts files under src/ calls recordArrival() — a backdated mark defeats every ` +
-    "freshness gate built on ageMs()",
-  seamOffenders.length === 0
+  `⚠️  none of the ${seamScan.filesRead} .ts files under src/ calls ${recordArrival.name}() — a backdated mark ` +
+    "defeats every freshness gate built on ageMs()",
+  seamScan.offenders.length === 0
 );
 check(
   "…the walk found the source at all, so the count above is a scan rather than an empty list",
-  sourceFiles.length >= 50 && sourceFiles.some(entry => entry.replaceAll("\\", "/").endsWith(SIGNALS_MODULE))
+  seamScan.filesRead >= 50
 );
 check(
-  "…and the pattern still matches a real call — run over THIS file, where there is one, it finds it",
-  seamPattern.test(await readFile(new URL(import.meta.url), "utf8"))
+  "…and the pattern still recognises a call, asked of a literal rather than of this file's own prose",
+  callsSeam(`${recordArrival.name}("k", 1, 2, 3)`, recordArrival) && !callsSeam("nothing here", recordArrival)
 );
 
 // --- 11. A tick that throws does not take the loop with it -------------------

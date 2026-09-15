@@ -458,8 +458,10 @@ function conversationFor(context: BusContext): Conversation {
   return created;
 }
 
-/** Byte 0 of a request addressed to this stand-in. The real mapping lives in param-codec.ts. */
-/** Takes the target rather than a whole micro, so a caller holding only a name can ask. */
+/**
+ * Byte 0 of a request addressed to this stand-in. The real mapping lives in param-codec.ts.
+ * Takes the target rather than a whole micro, so a caller holding only a name can ask.
+ */
 function addressOf(micro: Pick<SimulatedMicro, "target">): number {
   return { A8: 0xa8, A9: 0xa9 }[micro.target];
 }

@@ -1,3 +1,4 @@
+import { withoutLineComments } from "./seam-scan.ts";
 import { readFile, readdir } from "fs/promises";
 import { blockAt, declarationBody } from "./source-blocks.ts";
 import { ARM_DWELL_MS, arm, armDwellElapsed, armed, refuseKeyRepeat } from "../public/lib/arming.js";
@@ -659,34 +660,6 @@ function armedWith(armingBranch: string, source: string): string | undefined {
   return declarationBody(source, `function ${helper[1]}(`)
     .match(/\barm\(([^),]*)/)?.[1]
     .trim();
-}
-
-/**
- * `source` with its `//` comments removed. Quote-aware only far enough to leave a `//` inside a
- * string alone, and per line, so an unterminated quote cannot swallow the rest of a file.
- */
-function withoutLineComments(source: string): string {
-  return source
-    .split("\n")
-    .map(line => {
-      let quote = "";
-      for (let index = 0; index < line.length; index += 1) {
-        const character = line[index];
-        if (quote !== "") {
-          if (character === "\\") {
-            index += 1;
-          } else if (character === quote) {
-            quote = "";
-          }
-        } else if (character === '"' || character === "'" || character === "`") {
-          quote = character;
-        } else if (character === "/" && line[index + 1] === "/") {
-          return line.slice(0, index);
-        }
-      }
-      return line;
-    })
-    .join("\n");
 }
 
 /** What a firing site does with a tap the dwell refused, trimmed so it can be compared whole. */

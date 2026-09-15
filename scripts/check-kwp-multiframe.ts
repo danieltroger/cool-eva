@@ -784,15 +784,19 @@ interface WarningCapture {
  * ⚠️ The observable this file's flow-control assertions actually rest on. Whether a stale
  * timer fired is a COUNT — it either called that function or it did not — while the frame
  * spacing it corrupts is a duration that a loaded laptop can stretch either way. The
- * warning is the only console.warn in src/vcu/multiframe-transfer.ts, so matching on the
- * function's own name is exact rather than a guess at its wording.
+ * warning is the only console.warn in src/vcu/multiframe-transfer.ts, and it names the
+ * function that emitted it, so this matches on that rather than on its wording.
  */
 function captureFlowControlWarnings(): WarningCapture {
   const warnings: string[] = [];
   const realWarn = console.warn;
   console.warn = (...args: unknown[]) => {
     const line = args.map(String).join(" ");
-    if (line.includes("sent no flow control")) {
+    // The FUNCTION NAME, which the warning quotes in its "See … for why" clause, and not its
+    // opening words: a reworded warning would silently stop matching and leave §2's count
+    // assertion vacuous, while a renamed function takes this string with it in any rename
+    // that touches the call site at all.
+    if (line.includes("onRequestFlowControlTimeout")) {
       warnings.push(line);
       return;
     }
