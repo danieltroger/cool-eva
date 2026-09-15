@@ -246,6 +246,10 @@ function fakeStages(fakes: Fakes): SpawnedStages {
 /** src/db.ts's schema with `rows` GPS fixes a second apart, starting `shift` ms after BASE. */
 function schemaInto(path: string, rows: number, shift: number): void {
   const db = new Database(path);
+  // ⚠️ WAL, because that is what src/db.ts:51 leaves behind and therefore what the decrypt
+  // hands this step. A fixture in SQLite's default rollback mode would make the import's
+  // `journal_mode = DELETE` untestable: it would already be true before the step ran.
+  db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE signal (id INTEGER PRIMARY KEY, key TEXT UNIQUE, unit TEXT, grp TEXT, source TEXT);
     CREATE TABLE session (id INTEGER PRIMARY KEY, uid TEXT UNIQUE);
