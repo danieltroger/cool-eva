@@ -12,7 +12,9 @@ import { readTrackAge, runImport, type ImportOptions, type SpawnedStages } from 
 //   node --experimental-strip-types scripts/import-ride-log.ts ~/…/ride-logs --out rides.db
 //   node --experimental-strip-types scripts/import-ride-log.ts --materialise-only rides.db
 //
-// ⚠️ Takes about twenty minutes on a full /dl dump, most of it the decrypt. README.md
+// ⚠️ Measured at 3 min 55 s for 26 inputs and 45 921 309 readings: ~113 s to decrypt and
+// judge, ~118 s for the recovery's commit (it copies and checksums the whole database), and
+// 1.7 s to materialise. It scales with the ARCHIVE, not with what is new. README.md
 // §Grafana has the recipe and which files to point it at; scripts/ride-import.ts has the
 // order and the refusals; docs/waypoints.md §"Not losing the ride log" has why it exists.
 
@@ -28,8 +30,16 @@ import { readTrackAge, runImport, type ImportOptions, type SpawnedStages } from 
  */
 const LEGACY_BEAT_ERA_END_ISO = "2026-09-10T21:55:06Z";
 
-/** Enough heap for a /dl dump: decrypt-log.ts holds one file's readings in a single array. */
-const DEFAULT_HEAP_MB = 8192;
+/**
+ * Heap for the decrypt, which is the one stage that can run out of it.
+ *
+ * ⚠️ `decrypt-log.ts` holds ONE FILE'S readings in a single array, and a /dl dump is every day
+ * file concatenated — so this scales with the archive, not with what is new. The 2026-09-13
+ * dump rebuilds to 39 258 150 readings and dies at 8 GB; 24 GB carried it. It is a ceiling
+ * and not a reservation, so a machine with less simply fails where it would have failed
+ * anyway. Pass --heap-mb when a future dump outgrows this, and see docs/dc-taper.md.
+ */
+const DEFAULT_HEAP_MB = 24576;
 
 interface Options {
   inputs: string[];
@@ -69,6 +79,11 @@ async function main(): Promise<void> {
 
   if (!outcome.ok) {
     console.error(`\n✗ REFUSED — ${outcome.refusal}`);
+    if (outcome.refusal?.includes("decrypt exited -1") === true) {
+      // -1 is a signalled child, and on this stage it is nearly always V8 aborting on a heap
+      // it could not grow. The message the child printed scrolls past inside a stack trace.
+      console.error(`   A signalled decrypt is usually a V8 heap OOM. Retry with --heap-mb ${options.heapMb * 2}.`);
+    }
     process.exitCode = 1;
     return;
   }

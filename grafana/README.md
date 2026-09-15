@@ -78,7 +78,7 @@ The DB stores a row only when a signal changes by more than its per-signal deadb
 
 **A stat tile bounded by `r.ts BETWEEN $__from AND $__to` reads "No data"** whenever the signal has not changed inside the window — which for a healthy fault flag is most windows, and looks identical to the logger being down. Drop the lower bound (`r.ts <= $__to`) and the tile shows the held value.
 
-**Carry-forward joins need seeding from before `$__from`.** Two signals logged independently never share a timestamp, so pairing them means holding the last known value of each. If the hold only sees rows inside the window, zooming to a stretch where just one of the pair happened to log leaves the other NULL and every derived panel blanks at once.
+**Carry-forward joins need seeding from before `$__from`.** Two signals logged independently never share a timestamp, so pairing them means holding the last known value of each. If the hold only sees rows inside the window, zooming to a stretch where just one of the pair happened to log leaves the other NULL and every derived panel blanks at once. (The route map's track used to be the worked example of this and no longer is: it is built once over the whole archive by `scripts/route-track.ts`, so it has no window to seed. Every other carry-forward in the repo still does — and `docs/route-map.md` §"Materialised once, not per load" measures what dropping the seed changed about the points drawn.)
 
 **Seed a timeseries at _both_ ends.** The left seed alone does not draw. Grafana pins the x scale to the dashboard time range, so a sample from before `$__from` is clipped out of the plot area, and `stepAfter` builds segments between consecutive points rather than extending past the last one — one off-screen point has nothing to pair with, so the panel goes from "No data" to an empty plot, which reads as a rendering bug rather than a data gap. Emit the last known value a second time, restamped at `$__to`:
 
@@ -127,7 +127,7 @@ Measured, 17 panel queries × 5 concurrent rounds:
 
 So roughly **one panel per dashboard load** comes back blank, and a different one each time. Per this file's own argument in §"Every query has to be run" — _"a panel that renders 'No data' is indistinguishable from a broken bike"_ — that is the worst shape a failure can take here: it looks like a finding.
 
-`PRAGMA journal_mode=DELETE` on the database Grafana reads fixes it. The decrypt step that produces the file Grafana reads is the natural place to set it.
+`PRAGMA journal_mode=DELETE` on the database Grafana reads fixes it. The decrypt step that produces the file Grafana reads is the natural place to set it — and since 2026-09 it does: `scripts/import-ride-log.ts` sets it as its last act on the finished database, after the track is materialised and before the file is swapped into place.
 
 ⚠️ **Do that on the COPY, never on `rides.db`, and the reason is not the obvious one.** Switching journal mode takes an exclusive lock, which is a nuisance; the real problem is that DELETE serialises every reader against the writer. Measured on the same harness, 5 readers plus one live writer: the WAL copy errored **0 of 85**, the DELETE copy **53 of 85**. WAL exists precisely to prevent that, and `rides.db` has a logger appending to it. DELETE is right only for a static file nothing is writing.
 

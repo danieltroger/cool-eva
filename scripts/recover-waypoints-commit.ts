@@ -9,9 +9,15 @@ import { RECOVERY_OUTCOME, type RecoveryVerdict } from "../src/gps/recover-holds
 //
 // ⚠️ THIS FILE IS THE REASON THE SCRIPT IS SAFE, and the order of the steps is the whole
 // argument: back up and VERIFY the copy before opening a writable handle; checksum every
-// pre-existing signal before and after; refuse on any mismatch. `rides.db` is the only copy
-// of 2026-09-07 on this laptop — there is no .celog for that day here — so a bad write is
-// not recoverable from the logs. docs/waypoints.md §"Recovering the holds the phone dropped".
+// pre-existing signal before and after; refuse on any mismatch.
+//
+// ⚠️ It used to say the apparatus was needed because `rides.db` was the only copy of
+// 2026-09-07 — no .celog for that day on the laptop. That was measured to be false in
+// 2026-09: the cumulative dumps reach back to 2026-08-02, and a database rebuilt from them
+// alone holds MORE of 09-07 than the one that predates them. What survives is the narrower
+// reason, and it is enough: a bad write here still costs the run that produced it, and the
+// recovered rows themselves are derived and come back only because scripts/import-ride-log.ts
+// re-runs this. docs/waypoints.md §"Not losing the ride log".
 
 /** Signals the recovery writes. Everything else must checksum identically before and after. */
 const WRITTEN_KEYS = ["waypoint_seq", "waypoint_lat", "waypoint_lon"];

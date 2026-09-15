@@ -326,7 +326,25 @@ Distinct `waypoint_recovered_*` keys were the first design and were dropped: bot
 
 `rides.db` is backed up and the copy verified by **size and md5** before a writable handle is opened at all; every pre-existing signal is checksummed before and after, **inside the transaction**, so a mismatch rolls the write back rather than reporting it once it is too late. ⚠️ It did not always: the first version checked after the transaction had committed _and_ after the handle had closed, which left a bad write in place and swallowed the undo statement the caller prints only on success. The three signals the recovery writes are checked too — they must have grown by **exactly** the number of waypoints claimed — where the first version skipped them entirely and echoed the caller's own count back as if it had verified it. A count would not do — it catches an added or deleted row and **misses a modified one**. SQLite has no `md5()`, so the checksum streams the rows and hashes them in JS.
 
-⚠️ Two things worth knowing before running this: `rides.db.bak-20260816-155629` and `rides.db.bak-20260908` are **both 269 234 176 bytes and both dated 16 August**, against a live file of 755 228 672 — the second is misnamed and neither is current. And there is **no 2026-09-07 `.celog` on the laptop**, so `rides.db` is the only copy of the day being recovered: rows inserted into it do not survive a rebuild from logs, because the logs for that day are not here.
+⚠️ One thing worth knowing before running this: `rides.db.bak-20260816-155629` and `rides.db.bak-20260908` are **both 269 234 176 bytes and both dated 16 August** — the second is misnamed and neither is current (the live file was 755 228 672 bytes when that was written and is 1 768 480 768 today).
+
+### ⚠️ Correction: the laptop does have the logs, and the rows are lost anyway
+
+This section used to say there was **no 2026-09-07 `.celog` on the laptop**, so `rides.db` was the only copy of the day being recovered. `scripts/recover-waypoints-commit.ts` said the same thing, as the justification for its whole backup-and-checksum apparatus. **Both were false**, and the research on #212 is what established it: the cumulative `/dl` dumps reach back to **2026-08-02**, and a database rebuilt from them alone holds _more_ 09-07 data than the one that predates them — 35 377 `gps_lat` rows against 35 368.
+
+⚠️ **The conclusion survives, for a different reason than it gave.** Rows inserted into `rides.db` still do not survive a rebuild — not because the day's source is missing, but because **nothing re-derives them**. The recovered waypoints are derived, they live only in that file, and a decrypt starts from an empty one. Demonstrated on 2026-09-13: the file went 50 sessions → 129 and the `recovered-192-…` session was simply gone.
+
+### The import step, which is what now puts them back
+
+```bash
+node --experimental-strip-types scripts/import-ride-log.ts ~/…/ride-logs/<dump>.celog <newer day files> --out rides.db
+```
+
+Decrypt into a staging file, re-run this recovery over it, materialise the route map's track, and only then replace `rides.db` — the old one is kept beside it as `rides.db.bak-replaced-<runId>`. Nothing touches the live database until the new one is complete, which matters because the decrypt is a multi-minute operation that can run out of heap: measured 2026-09-15, the whole import took **3 min 55 s** for 26 input files and 45 921 309 readings, and the decrypt alone died with a V8 heap OOM at 8 GB before 24 GB carried it. `README.md` §Grafana has the recipe and which files to point it at; `docs/route-map.md` §"Materialised once, not per load" has the map half.
+
+**Which window it recovers over, and why it is not "everything".** `scripts/recover-waypoints.ts` pins `BEAT_MS_ON_THE_RECOVERY_DAYS = 100` and `LEGACY_HOLD_MS = 1000` as historical facts, and `fireInstant()` places every point with them. #197 (`9b6970a`) set the beat to 50 ms and the threshold to 500 ms at **2026-09-10T21:55:06Z**, so the import commits up to that instant by default and no further: past it the recovery would be modelling a machine that no longer exists. The deploy to the Pi is later than the commit, so the cut-off errs towards judging too little. ⚠️ **And the step prints what fell outside it** — a whole-archive dry run precedes the commit — because a cut-off that drops a waypoint without saying so is the failure this page exists about.
+
+**What the first run writes, measured 2026-09-15** on a copy with the recovered rows deleted, which is what a rebuild produces: `76 holds / 56 already live / 5 refused / **15 RECOVERABLE**` — the 8 of 2026-09-07, the 4 of 2026-09-09 that #211 could not commit, and **3 on 2026-09-10** (15:43, 17:44, 18:30, the last of which held 1030 ms and cleared even the old threshold). All 15 are reversible with the one `DELETE` the script prints.
 
 ## An open question worth not losing
 
