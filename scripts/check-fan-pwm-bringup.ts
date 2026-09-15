@@ -1,14 +1,16 @@
+import { promisify } from "util";
 import { redirectsServed } from "./fan-io-fence.ts";
+import { exportedChipName, pinIndex, sequenceFrom, writeIndex } from "./simulated-pwm-log.ts";
 import {
   clearPinFailures,
-  drivePin,
+  coldPi,
+  execFile,
   failPinWrite,
   installSimulatedSysfs,
   isBraked,
   resetSimulatedSysfs,
   simulatedSysfs,
   writeFile,
-  type SimulatedSeed,
 } from "./simulated-pwm-sysfs.ts";
 
 // How src/fan/pwm.ts brings the hardware PWM up, checked with no Pi.
@@ -41,32 +43,6 @@ function check(what: string, condition: boolean) {
     console.error(`  ✗ ${what}`);
     failures += 1;
   }
-}
-
-/** A Zero 2 W's tree: one chip, one channel, an SoC `.pwm` device link, nothing exported. */
-function coldPi(overrides: Partial<SimulatedSeed> = {}): SimulatedSeed {
-  return {
-    chips: { pwmchip0: { channelCount: 1, deviceLink: "../../devices/platform/soc/3f20c000.pwm" } },
-    exportedOn: null,
-    periodNs: 0,
-    dutyNs: 0,
-    outputEnabled: false,
-    bridgeLive: false,
-    ...overrides,
-  };
-}
-
-/** Where a write to `name` sits in the call log, or −1. */
-function writeAt(name: string, value?: string): number {
-  return simulatedSysfs().calls.findIndex(
-    call => call.kind === "write" && call.target.endsWith(`/${name}`) && (value === undefined || call.value === value)
-  );
-}
-
-function pinAt(gpio: number, level: string): number {
-  return simulatedSysfs().calls.findIndex(
-    call => call.kind === "pinctrl" && call.target === `GPIO${gpio}` && call.value === level
-  );
 }
 
 // --- 1. The invariant checker itself -----------------------------------------
@@ -110,8 +86,11 @@ await writeFile("/sys/class/pwm/pwmchip0/export", "0");
 await writeFile(`${CHANNEL}/period`, "50000");
 await writeFile(`${CHANNEL}/duty_cycle`, "50000");
 await writeFile(`${CHANNEL}/enable`, "1");
-await drivePin("17", "dh");
-await drivePin("27", "dh");
+// ⚠️ Through promisify(execFile), which is the entry src/fan/pwm.ts itself takes — so the
+// arming below goes through the same argument validation a real bring-up does.
+const runPinctrl = promisify(execFile);
+await runPinctrl("pinctrl", ["set", "17", "op", "dh"]);
+await runPinctrl("pinctrl", ["set", "27", "op", "dh"]);
 check("a bridge driving at full duty records no violation", simulatedSysfs().violations.length === 0);
 await writeFile(`${CHANNEL}/duty_cycle`, "0");
 check(
@@ -148,7 +127,7 @@ check(
 check("bring-up succeeded", preferred.fault === null && preferred.configured);
 check(
   "⚠️  the chip whose device is an SoC .pwm block wins over the LOWER-numbered one",
-  writeAt("export") >= 0 && simulatedSysfs().calls[writeAt("export")].target.includes("pwmchip2")
+  exportedChipName() === "pwmchip2"
 );
 await preferred.stop();
 
@@ -177,7 +156,7 @@ console.warn = realWarn;
 check("a tree where no chip names a .pwm block still comes up", guessed.fault === null);
 check(
   "⚠️  …on the LOWEST-NUMBERED usable chip, sorted numerically — pwmchip2 before pwmchip12",
-  writeAt("export") >= 0 && simulatedSysfs().calls[writeAt("export")].target.endsWith("pwmchip2/export")
+  exportedChipName() === "pwmchip2"
 );
 check(
   `⚠️  …and it WARNS rather than picking silently (${warnings.length} line)`,
@@ -201,7 +180,7 @@ check(
 check("…and the driver reports itself configured-but-faulted, which is what the phone renders", noChip.configured);
 
 // A kernel with no PWM class at all — no overlay line, or it never applied.
-resetSimulatedSysfs(coldPi({ classDirMissing: true }));
+resetSimulatedSysfs(coldPi({ chips: null }));
 const noClassDir = await startFanControl({ enabled: true });
 check("a kernel with no /sys/class/pwm at all does not come up either", noClassDir.fault !== null);
 check(
@@ -222,15 +201,15 @@ check(`the section reached the simulator (${simulatedSysfs().calls.length} calls
 check("bring-up succeeded", cold.fault === null);
 check(
   "⚠️  the period was written BEFORE the duty — the other order is EINVAL on every boot, for ever",
-  writeAt("period") >= 0 && writeAt("period") < writeAt("duty_cycle")
+  writeIndex("period") >= 0 && writeIndex("period") < writeIndex("duty_cycle")
 );
 check(
   "⚠️  both enables were dropped before ANY of it, because a restart can begin under a live bridge",
-  pinAt(17, "dl") >= 0 && pinAt(27, "dl") >= 0 && pinAt(17, "dl") < writeAt("export")
+  pinIndex(17, "dl") >= 0 && pinIndex(27, "dl") >= 0 && pinIndex(17, "dl") < writeIndex("export")
 );
-check("the channel was exported", writeAt("export", "0") >= 0);
-check(`the period is the shipped ${PWM_PERIOD_NS} ns`, writeAt("period", String(PWM_PERIOD_NS)) >= 0);
-check("the PWM output was left disabled", writeAt("enable", "0") >= 0);
+check("the channel was exported", writeIndex("export", "0") >= 0);
+check(`the period is the shipped ${PWM_PERIOD_NS} ns`, writeIndex("period", String(PWM_PERIOD_NS)) >= 0);
+check("the PWM output was left disabled", writeIndex("enable", "0") >= 0);
 check(
   "⚠️  bring-up leaves a bridge in standby that has been asked to do nothing: pins LOW, output off, duty 0",
   !simulatedSysfs().pin17High &&
@@ -251,30 +230,24 @@ await cold.stop();
 
 console.log("\n4. a restart that finds the bridge still live");
 
-const LIVE_BRIDGE: SimulatedSeed = {
-  chips: { pwmchip0: { channelCount: 1, deviceLink: "../../devices/platform/soc/3f20c000.pwm" } },
-  exportedOn: "pwmchip0",
-  periodNs: 50_000,
-  dutyNs: 25_000,
-  outputEnabled: true,
-  bridgeLive: true,
-};
-resetSimulatedSysfs(LIVE_BRIDGE);
+resetSimulatedSysfs(
+  coldPi({ exportedOn: "pwmchip0", periodNs: 50_000, dutyNs: 25_000, outputEnabled: true, bridgeLive: true })
+);
 const restarted = await startFanControl({ enabled: true });
 check(`the section reached the simulator (${simulatedSysfs().calls.length} calls)`, simulatedSysfs().calls.length > 0);
 check("bring-up succeeded over an already-exported channel", restarted.fault === null);
 check(
   "⚠️  THE ENABLES WENT LOW FIRST, ahead of every read and every write",
-  pinAt(17, "dl") === 0 && pinAt(27, "dl") === 1
+  pinIndex(17, "dl") === 0 && pinIndex(27, "dl") === 1
 );
 check(
   "⚠️  …so no braked state was constructed, which is what this ordering is for",
   simulatedSysfs().violations.length === 0
 );
-check("the re-export's EBUSY was tolerated rather than fatal", writeAt("export") >= 0 && restarted.fault === null);
+check("the re-export's EBUSY was tolerated rather than fatal", writeIndex("export") >= 0 && restarted.fault === null);
 check(
   "the duty was zeroed and the period re-ASSERTED — the write, not the seeded value it matches",
-  simulatedSysfs().dutyNs === 0 && writeAt("period", String(PWM_PERIOD_NS)) >= 0
+  simulatedSysfs().dutyNs === 0 && writeIndex("period", String(PWM_PERIOD_NS)) >= 0
 );
 await restarted.stop();
 
@@ -289,14 +262,9 @@ await restarted.stop();
 
 console.log("\n5. a channel something else left exported at 1 ms");
 
-resetSimulatedSysfs({
-  chips: { pwmchip0: { channelCount: 1, deviceLink: "../../devices/platform/soc/3f20c000.pwm" } },
-  exportedOn: "pwmchip0",
-  periodNs: 1_000_000,
-  dutyNs: 500_000,
-  outputEnabled: true,
-  bridgeLive: true,
-});
+resetSimulatedSysfs(
+  coldPi({ exportedOn: "pwmchip0", periodNs: 1_000_000, dutyNs: 500_000, outputEnabled: true, bridgeLive: true })
+);
 const shrunk = await startFanControl({ enabled: true });
 check(`the section reached the simulator (${simulatedSysfs().calls.length} calls)`, simulatedSysfs().calls.length > 0);
 check(
@@ -305,9 +273,9 @@ check(
 );
 check(
   "⚠️  …because the duty was zeroed BEFORE the period shrank — the other order is EINVAL on both kernels",
-  writeAt("duty_cycle") >= 0 && writeAt("duty_cycle") < writeAt("period")
+  writeIndex("duty_cycle") >= 0 && writeIndex("duty_cycle") < writeIndex("period")
 );
-check("and it still went enables-first", pinAt(17, "dl") === 0 && simulatedSysfs().violations.length === 0);
+check("and it still went enables-first", pinIndex(17, "dl") === 0 && simulatedSysfs().violations.length === 0);
 await shrunk.stop();
 
 // --- 6. The channel that is there but unreadable -------------------------------
@@ -334,7 +302,7 @@ resetSimulatedSysfs(coldPi());
 // ⚠️ WITH the errno, or src/fan/pwm.ts takes its generic arm and the branch this section
 // exists for — the one naming `raspi-utils` and the config.txt standby backstop — is never
 // reached. A bare Error(message) passed here for exactly that reason.
-failPinWrite(17, "dl", "spawn pinctrl ENOENT", "ENOENT");
+failPinWrite(17, "spawn pinctrl ENOENT", "ENOENT");
 const noPinctrl = await startFanControl({ enabled: true });
 clearPinFailures();
 check(`the section reached the simulator (${simulatedSysfs().calls.length} calls)`, simulatedSysfs().calls.length > 0);

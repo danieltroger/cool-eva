@@ -1,12 +1,13 @@
 import { redirectsServed } from "./fan-io-fence.ts";
+import { callCount, pinIndex, sequenceFrom, writeIndex } from "./simulated-pwm-log.ts";
 import {
   clearPinFailures,
+  coldPi,
   failPinWrite,
   holdPinWrite,
   installSimulatedSysfs,
   resetSimulatedSysfs,
   simulatedSysfs,
-  type SimulatedSeed,
 } from "./simulated-pwm-sysfs.ts";
 
 // The order the cooling-fan bridge is brought up and taken down in, checked with no Pi.
@@ -47,42 +48,6 @@ function check(what: string, condition: boolean) {
   }
 }
 
-function coldPi(): SimulatedSeed {
-  return {
-    chips: { pwmchip0: { channelCount: 1, deviceLink: "../../devices/platform/soc/3f20c000.pwm" } },
-    exportedOn: null,
-    periodNs: 0,
-    dutyNs: 0,
-    outputEnabled: false,
-    bridgeLive: false,
-  };
-}
-
-/** The call log from `since` on, as a string, so a failed assertion prints what happened. */
-function sequence(since: number): string {
-  return simulatedSysfs()
-    .calls.slice(since)
-    .map(call =>
-      call.kind === "pinctrl" ? `${call.target}=${call.value}` : `${call.target.split("/").pop()}=${call.value}`
-    )
-    .join(" → ");
-}
-
-function indexFrom(since: number, predicate: (target: string, value: string | null) => boolean): number {
-  const found = simulatedSysfs()
-    .calls.slice(since)
-    .findIndex(call => predicate(call.target, call.value));
-  return found;
-}
-
-function writeFrom(since: number, name: string, value: string): number {
-  return indexFrom(since, (target, written) => target.endsWith(`/${name}`) && written === value);
-}
-
-function pinFrom(since: number, gpio: number, level: string): number {
-  return indexFrom(since, (target, written) => target === `GPIO${gpio}` && written === level);
-}
-
 async function settle(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -110,17 +75,17 @@ check(
     simulatedSysfs().dutyNs === 0
 );
 
-const kickFrom = simulatedSysfs().calls.length;
+const kickFrom = callCount();
 const startOutcome = await starting.setDutyPercent(MIN_RUNNING_DUTY_PERCENT);
 check(`commanding ${MIN_RUNNING_DUTY_PERCENT} % is accepted (${startOutcome.message})`, startOutcome.ok);
-check(`the command reached the simulator`, simulatedSysfs().calls.length > kickFrom);
+check(`the command reached the simulator`, callCount() > kickFrom);
 
-const kickDutyAt = writeFrom(kickFrom, "duty_cycle", String(dutyToNanoseconds(100)));
-const outputUpAt = writeFrom(kickFrom, "enable", "1");
-const firstEnableAt = pinFrom(kickFrom, 17, "dh");
-const secondEnableAt = pinFrom(kickFrom, 27, "dh");
+const kickDutyAt = writeIndex("duty_cycle", String(dutyToNanoseconds(100)), kickFrom);
+const outputUpAt = writeIndex("enable", "1", kickFrom);
+const firstEnableAt = pinIndex(17, "dh", kickFrom);
+const secondEnableAt = pinIndex(27, "dh", kickFrom);
 
-console.log(`     sequence: ${sequence(kickFrom)}`);
+console.log(`     sequence: ${sequenceFrom(kickFrom)}`);
 check("the kick's full duty was written, not the commanded duty", kickDutyAt >= 0);
 check("⚠️  the duty was written BEFORE the output was enabled", kickDutyAt >= 0 && kickDutyAt < outputUpAt);
 check("⚠️  the output was enabled BEFORE either enable went HIGH", outputUpAt >= 0 && outputUpAt < firstEnableAt);
@@ -139,33 +104,30 @@ check(
 
 console.log("\n2. going back to standby");
 
-const stopFrom = simulatedSysfs().calls.length;
+const stopFrom = callCount();
 const stopOutcome = await starting.setDutyPercent(0);
 check(`commanding 0 % is accepted (${stopOutcome.message})`, stopOutcome.ok);
 
-const bridgeDownAt = pinFrom(stopFrom, 17, "dl");
-const secondDownAt = pinFrom(stopFrom, 27, "dl");
-const outputDownAt = writeFrom(stopFrom, "enable", "0");
-const zeroDutyAt = writeFrom(stopFrom, "duty_cycle", "0");
+const firstDownAt = pinIndex(17, "dl", stopFrom);
+const secondDownAt = pinIndex(27, "dl", stopFrom);
+const outputDownAt = writeIndex("enable", "0", stopFrom);
+const zeroDutyAt = writeIndex("duty_cycle", "0", stopFrom);
 
-console.log(`     sequence: ${sequence(stopFrom)}`);
-check("the enables were dropped", bridgeDownAt >= 0 && secondDownAt >= 0);
-check(
-  "⚠️  BOTH enables were dropped BEFORE the output was",
-  bridgeDownAt < outputDownAt && secondDownAt < outputDownAt
-);
+console.log(`     sequence: ${sequenceFrom(stopFrom)}`);
+check("the enables were dropped", firstDownAt >= 0 && secondDownAt >= 0);
+check("⚠️  BOTH enables were dropped BEFORE the output was", firstDownAt < outputDownAt && secondDownAt < outputDownAt);
 check("⚠️  and before the duty was zeroed", secondDownAt >= 0 && secondDownAt < zeroDutyAt);
 check("⚠️  so the rotor was never braked on the way down", simulatedSysfs().violations.length === 0);
 check("the driver reports standby", !starting.state().driverEnabled && starting.state().dutyPercent === 0);
 check("…and so does the hardware", !simulatedSysfs().outputEnabled && simulatedSysfs().dutyNs === 0);
 
 // stop() is the shutdown path and must obey the same order.
-const shutdownFrom = simulatedSysfs().calls.length;
+const shutdownFrom = callCount();
 await starting.stop();
-console.log(`     stop() sequence: ${sequence(shutdownFrom)}`);
+console.log(`     stop() sequence: ${sequenceFrom(shutdownFrom)}`);
 check(
   "stop() drops the enables before the output too",
-  pinFrom(shutdownFrom, 17, "dl") >= 0 && pinFrom(shutdownFrom, 17, "dl") < writeFrom(shutdownFrom, "enable", "0")
+  pinIndex(17, "dl", shutdownFrom) >= 0 && pinIndex(17, "dl", shutdownFrom) < writeIndex("enable", "0", shutdownFrom)
 );
 
 // --- 3. When the enables CANNOT be dropped -----------------------------------
@@ -188,17 +150,20 @@ const stuck = await startFanControl({ enabled: true });
 await stuck.setDutyPercent(MIN_RUNNING_DUTY_PERCENT);
 check("(setting up) the fan is mid-kick, which is what the 100 % below is", stuck.state().phase === "kick-start");
 
-const secondPinFrom = simulatedSysfs().calls.length;
-failPinWrite(27, "dl", "could not drive GPIO27 dl: pinctrl exited 1");
+const secondPinFrom = callCount();
+failPinWrite(27, "could not drive GPIO27 dl: pinctrl exited 1");
 const refusedSecond = await stuck.setDutyPercent(0);
-console.log(`     GPIO27 fails: ${sequence(secondPinFrom) || "(nothing)"}`);
+console.log(`     GPIO27 fails: ${sequenceFrom(secondPinFrom) || "(nothing)"}`);
 check("the failure is reported rather than swallowed", !refusedSecond.ok);
 check(
   `the message names the bridge (${refusedSecond.message.slice(0, 60)}…)`,
   /IBT-2|enable/i.test(refusedSecond.message)
 );
-check("⚠️  the PWM output was NOT dropped while an enable was still HIGH", writeFrom(secondPinFrom, "enable", "0") < 0);
-check("⚠️  and the duty was NOT zeroed", writeFrom(secondPinFrom, "duty_cycle", "0") < 0);
+check(
+  "⚠️  the PWM output was NOT dropped while an enable was still HIGH",
+  writeIndex("enable", "0", secondPinFrom) < 0
+);
+check("⚠️  and the duty was NOT zeroed", writeIndex("duty_cycle", "0", secondPinFrom) < 0);
 // ⚠️ `phase` is "idle" here even though the bridge is not: goIdle() sets it unconditionally
 // so the next command re-drives the whole bring-up from a known start. It is
 // `driverEnabled` that stays true, and that is what the dashboard renders as a fault.
@@ -210,13 +175,13 @@ check(
 // A retry once pinctrl works must still complete the teardown — the refusal is a hold,
 // not a latch.
 clearPinFailures();
-const retryFrom = simulatedSysfs().calls.length;
+const retryFrom = callCount();
 const retried = await stuck.setDutyPercent(0);
-console.log(`     retry sequence: ${sequence(retryFrom)}`);
+console.log(`     retry sequence: ${sequenceFrom(retryFrom)}`);
 check(`a retry once pinctrl works completes the stop (${retried.message.slice(0, 50)}…)`, retried.ok);
 check(
   "and it still went enables-first",
-  pinFrom(retryFrom, 17, "dl") >= 0 && pinFrom(retryFrom, 17, "dl") < writeFrom(retryFrom, "enable", "0")
+  pinIndex(17, "dl", retryFrom) >= 0 && pinIndex(17, "dl", retryFrom) < writeIndex("enable", "0", retryFrom)
 );
 check("the bridge really is in standby afterwards", !simulatedSysfs().pin17High && !simulatedSysfs().pin27High);
 await stuck.stop();
@@ -234,10 +199,10 @@ check(
     simulatedSysfs().outputEnabled &&
     half.state().phase === "kick-start"
 );
-const firstPinFrom = simulatedSysfs().calls.length;
-failPinWrite(17, "dl", "could not drive GPIO17 dl: pinctrl exited 1");
+const firstPinFrom = callCount();
+failPinWrite(17, "could not drive GPIO17 dl: pinctrl exited 1");
 const refusedFirst = await half.setDutyPercent(0);
-console.log(`     GPIO17 fails: ${sequence(firstPinFrom) || "(nothing)"}`);
+console.log(`     GPIO17 fails: ${sequenceFrom(firstPinFrom) || "(nothing)"}`);
 check("a failure on the FIRST enable is reported too", !refusedFirst.ok);
 check(
   "⚠️  both enables are still HIGH here — and the PWM was left driving rather than zeroed",
@@ -284,9 +249,9 @@ check(
 check("the enables stayed HIGH across the drop-out", simulatedSysfs().pin17High && simulatedSysfs().pin27High);
 check("and nothing was braked getting there", simulatedSysfs().violations.length === 0);
 
-const movedFrom = simulatedSysfs().calls.length;
+const movedFrom = callCount();
 const moved = await running.setDutyPercent(70);
-console.log(`     post-kick move: ${sequence(movedFrom)}`);
+console.log(`     post-kick move: ${sequenceFrom(movedFrom)}`);
 check(`a duty change while running is accepted (${moved.message})`, moved.ok);
 check("it reached the register", simulatedSysfs().dutyNs === dutyToNanoseconds(70));
 check(
@@ -310,21 +275,36 @@ console.log("\n5. a stop that lands inside a kick-start");
 
 resetSimulatedSysfs(coldPi());
 const racing = await startFanControl({ enabled: true });
-const raceFrom = simulatedSysfs().calls.length;
-const release = holdPinWrite(17, "dh");
-// Neither is awaited before the release: with runExclusively the stop is QUEUED behind the
-// held kick, so awaiting it here would deadlock rather than fail an assertion.
+const raceFrom = callCount();
+const held = holdPinWrite(17, "dh");
+// ⚠️ NOT awaited: with runExclusively the stop is QUEUED behind the held kick, so awaiting
+// the kick here would deadlock rather than fail an assertion.
 const kicking = racing.setDutyPercent(50);
-await settle(30);
+// ⚠️ AND THE STOP IS NOT ISSUED UNTIL THE KICK HAS REACHED THE GATE. Two sleeps used to
+// stand in for this, and a release landing before the write arrived would have made the
+// gate a no-op: the commands never overlap, the section passes having raced nothing, and
+// the runExclusively mutant survives — the exact shape of the bug 970aa50 fixed elsewhere
+// in this file. Raced against a deadline so a gate that is never reached is a RED
+// assertion rather than a 120 s "no verdict".
+const engaged = await Promise.race([held.engaged.then(() => true), settle(500).then(() => false)]);
+// ⚠️ NOT asserted on phase: beginKickStart() sets "kick-start" only AFTER setBridgeEnabled()
+// resolves, and that is precisely what is parked — so mid-flight the phase is still "idle".
+// The log is what says where we are: the duty and the output are already written.
+check(
+  "(setting up) the kick is parked mid-flight, with the duty and output up and GPIO17 in the air",
+  engaged && writeIndex("enable", "1", raceFrom) >= 0 && pinIndex(17, "dh", raceFrom) >= 0
+);
 const stopping = racing.setDutyPercent(0);
-await settle(30);
-release();
+// Long enough for the UNSERIALISED variant to run its whole teardown, which awaits nothing
+// but resolved promises. With runExclusively nothing happens here at all.
+await settle(5);
+held.release();
 await kicking;
 await stopping;
-console.log(`     sequence: ${sequence(raceFrom)}`);
+console.log(`     sequence: ${sequenceFrom(raceFrom)}`);
 check(
   "⚠️  the kick finished before the stop started — the commands did not interleave",
-  pinFrom(raceFrom, 27, "dh") >= 0 && pinFrom(raceFrom, 27, "dh") < pinFrom(raceFrom, 17, "dl")
+  pinIndex(27, "dh", raceFrom) >= 0 && pinIndex(27, "dh", raceFrom) < pinIndex(17, "dl", raceFrom)
 );
 check(
   "⚠️  …so the stop never re-raised the enables over a duty it had already zeroed",
