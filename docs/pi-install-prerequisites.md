@@ -1,6 +1,6 @@
 # Two things a fresh Pi needs before `npm install` works
 
-The native modules (`better-sqlite3`, `socketcan`, `spi-device`) are compiled on the Pi at install time, and on a small Pi that build has two ways to not happen: it runs out of memory, or npm declines to run it at all. This file is the research behind the two steps `INSTALL.md` §2.5 and §4 tell you to take — the version boundaries, the traps, and what was measured versus what was reported. `README.md` and `INSTALL.md` carry the instructions; this carries the why.
+The native modules (`better-sqlite3`, `socketcan`, `spi-device`) are compiled on the Pi at install time, and on a small Pi that build has two ways to not happen: it runs out of memory, or npm declines to run it at all. This file is the research behind the two steps `INSTALL.md` §2.5 and §4 tell you to take — the version boundaries, the traps, and what was measured versus what was reported.
 
 ## Where the report came from, and what is actually established
 
@@ -18,7 +18,7 @@ Issue #136 is a note from **another Energica owner, relayed through a WhatsApp g
 | That **3 GB specifically** was needed | ❌ not verified — unknown Pi, unknown RAM |
 | That their build was **blocked by npm** rather than OOM-killed | ❌ not verified, and easy to confuse — see below |
 
-That last row is the one to keep in mind. On npm 11.16–11.19 the install prints a loud warning about install scripts **and builds them anyway**. An owner who saw that warning, then hit an unrelated OOM kill, would reasonably report both fixes together. Both steps are worth taking; only one of them may have been the cause.
+On npm 11.16–11.19 the install prints a loud warning about install scripts **and builds them anyway**. An owner who saw that warning, then hit an unrelated OOM kill, would reasonably report both fixes together. Both steps are worth taking; only one of them may have been the cause.
 
 ## 1. npm's install-script policy
 
@@ -117,13 +117,6 @@ From `package-lock.json`, `hasInstallScript: true` is exactly:
 
 The build is memory-hungry and a Pi Zero 2 W has 512 MB. Too little swap and it is OOM-killed — which looks like a crash, not a memory problem.
 
-**Which swap manager you have depends on the OS**, and they share no configuration:
-
-```sh
-ls /etc/dphys-swapfile   # exists → Bookworm route (dphys-swapfile)
-ls /etc/rpi/swap.conf    # exists → Trixie route (rpi-swap)
-```
-
 Raspberry Pi OS **Bookworm** installs `dphys-swapfile`; **Trixie** installs `rpi-swap`, which declares `Provides/Conflicts/Replaces: dphys-swapfile` (pi-gen's `bookworm` branch lists the former in `stage2/01-sys-tweaks/00-packages`, `master` lists the latter).
 
 ### Bookworm — and the trap that silently halves your swap
@@ -141,7 +134,7 @@ if [ "${CONF_MAXSWAP}" != "" ] ; then
     CONF_SWAPSIZE="${CONF_MAXSWAP}"
 ```
 
-So **both** variables have to be set. `CONF_MAXDISK_PCT` (default 50) clamps again to half the free space and says so on stdout, which is worth reading on a small card. The image ships `CONF_SWAPSIZE=512` — patched in by pi-gen's `bookworm` branch (`stage2/01-sys-tweaks/00-patches/02-swap.diff`); the package's own `/etc/dphys-swapfile` has every value commented out.
+So **both** variables have to be set. The image ships `CONF_SWAPSIZE=512` — patched in by pi-gen's `bookworm` branch (`stage2/01-sys-tweaks/00-patches/02-swap.diff`); the package's own `/etc/dphys-swapfile` has every value commented out.
 
 `dphys-swapfile setup` calls `swapoff` itself before resizing, so the leading `swapoff` in the usual recipe is belt-and-braces rather than required.
 
@@ -149,13 +142,13 @@ So **both** variables have to be set. `CONF_MAXDISK_PCT` (default 50) clamps aga
 
 ⚠️ Line numbers below are for **rpi-swap 1.2.1**, the version on the bike. They move between releases: the config mapping is at l.309-310 in 1.2.1 and l.355-356 in 1.2.4. Check your version with `dpkg -l rpi-swap`.
 
-The default `Mechanism=auto` resolves to **`zram+file`** — compressed RAM swap with the file used only as writeback storage — so a plain swap file needs `Mechanism=swapfile` stated explicitly. The recipe is `swap.conf(5)`'s own Example 1 with the size changed, and the man page is emphatic that a **reboot** is required (`daemon-reload` regenerates units but will not restart swap).
+The recipe is `swap.conf(5)`'s own Example 1 with the size changed, and the man page is emphatic that a **reboot** is required (`daemon-reload` regenerates units but will not restart swap).
 
 ✅ Here `MaxSizeMiB` does **not** clamp `FixedSizeMiB` — the opposite of Bookworm. `rpi-desired-swap-size` guards its whole computation on `CONF_SWAPSIZE` being unset or non-numeric, so a valid integer skips both clamps and is echoed unchanged; the generator maps `File::FixedSizeMiB` → `CONF_SWAPSIZE` and `File::MaxSizeMiB` → `CONF_MAXSWAP` (l.309-310, 1.2.1). `swap.conf(5)` agrees independently: `FixedSizeMiB` _"overrides the RamMultiplier calculation and is used directly"_.
 
 ### ⚠️ What the bike's Pi is in, and why the recipe above does not apply to it as written
 
-Recorded because it is surprising, and because the obvious ways out of it are destructive. Measured by read-only probe, 2026-09-15: Trixie, `rpi-swap 1.2.1`, `/etc/rpi/swap.conf` entirely at defaults, **`rpi-resize-swap-file.service` masked**, and 2048 MiB of swap active from a hand-written `/etc/fstab` line (`/var/swap none swap sw,pri=10 0 0`). `rpi-swap`'s own `dev-zram0.swap` is loaded but inactive with `disksize 0`.
+Measured by read-only probe, 2026-09-15: Trixie, `rpi-swap 1.2.1`, `/etc/rpi/swap.conf` entirely at defaults, **`rpi-resize-swap-file.service` masked**, and 2048 MiB of swap active from a hand-written `/etc/fstab` line (`/var/swap none swap sw,pri=10 0 0`). `rpi-swap`'s own `dev-zram0.swap` is loaded but inactive with `disksize 0`.
 
 The drop-in recipe does not apply here for two reasons, in this order:
 
@@ -179,8 +172,6 @@ Two safe ways out, both reasoned from the package source and **not executed on t
 
 - **Bookworm** clamps and tells you. `CONF_MAXDISK_PCT` (default 50) is applied to `CONF_SWAPSIZE` whether it was computed or given, and `sbin/dphys-swapfile` prints `restricting to 50% of remaining disk size: …MBytes` when it bites. You get a smaller swap file than you asked for, and a line saying so.
 - **Trixie does not clamp `FixedSizeMiB` at all.** `MaxDiskPercent` and `MaxSizeMiB` both live inside `rpi-desired-swap-size`'s `if [ -z "${CONF_SWAPSIZE}" ] || ! [ … -eq … ]` guard (l.38, 1.2.1), which a valid integer skips entirely. So `rpi-resize-swap-file` runs `fallocate --posix --length 3072M`, that fails for want of space, and `set -e` (l.3) aborts the service. The generated `var-swap.swap` carries `Requires=rpi-resize-swap-file.service`, so **the Pi boots with no swap at all** — worse than before the change, and the OOM kill that §2.5 exists to prevent happens anyway. `df -h /var` before, `swapon --show` after.
-
-Otherwise the cost is ordinary: real space on the SD card and real write wear, needed only while the native modules compile. Turning it back down afterwards is reasonable.
 
 ## 3. Joining a second Wi-Fi network without leaving the one you are on
 

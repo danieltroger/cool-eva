@@ -76,7 +76,7 @@ sudo apt-get install -y build-essential python3 git
 
 ## 2.5. Swap — do this before the install, not after it
 
-Those three modules are compiled on the Pi, and the compile is memory-hungry. A Pi Zero 2 W has 512 MB and Raspberry Pi OS gives it 512 MB of swap, which is not reliably enough: the build gets OOM-killed, and what you see is a crash rather than anything that says "memory". #136 reports 3 GB as what worked. ⚠️ That figure is one owner's report on unknown hardware, not a measurement — the _mechanism_ is what is established, so treat 3072 as a generous number rather than a threshold.
+Those three modules are compiled on the Pi, and the compile is memory-hungry. A Pi Zero 2 W has 512 MB and Raspberry Pi OS gives it 512 MB of swap, which is not reliably enough: the build gets OOM-killed, and what you see is a crash rather than anything that says "memory". #136 reports 3 GB as what worked. ⚠️ Treat 3072 as a generous number rather than a threshold: it is one owner's report on unknown hardware.
 
 **Which manager you have depends on the OS.** They share no configuration:
 
@@ -162,13 +162,13 @@ npm install             # builds better-sqlite3 + socketcan + spi-device (~4 min
 ls node_modules/socketcan/build/Release/can.node
 ```
 
-**Nothing extra is needed to let those compiles run**, and it is worth knowing why. npm has an allowlist for install-time lifecycle scripts, and on this project those scripts _are_ the native builds: **npm 12 and newer refuse to run them** unless they are allowlisted, leaving a tree with no `.node` files and a service that dies on `require`. npm 11.16–11.19 only warn and build anyway; npm 11.15 and older have no policy at all. The repo therefore **ships an `.npmrc`** with the four names, which is correct on all three bands and covers CI's `npm ci` as well as your install. ⚠️ Its one cost: on npm older than 11.16.0 the key does not exist yet, so every npm command in this directory prints a cosmetic `npm warn Unknown project config "allow-scripts"`. Harmless — that band runs the scripts regardless.
+**Nothing extra is needed to let those compiles run.** npm has an allowlist for install-time lifecycle scripts, and on this project those scripts _are_ the native builds: **npm 12 and newer refuse to run them** unless they are allowlisted, leaving a tree with no `.node` files and a service that dies on `require`. The repo therefore **ships an `.npmrc`** with the four names. ⚠️ Its one cost: on npm older than 11.16.0 the key does not exist yet, so every npm command in this directory prints a cosmetic `npm warn Unknown project config "allow-scripts"`. Harmless — that band runs the scripts regardless.
 
-⚠️ **You already have an `.npmrc` here?** `git pull` refuses to overwrite an untracked file, **even one whose contents are identical** — so the dashboard's Update button will abort with "would be overwritten by merge" until you `rm .npmrc` (or merge your own lines into the committed one and commit them). This bites anyone who created one by hand before it shipped.
+⚠️ **You already have an `.npmrc` here?** `git pull` refuses to overwrite an untracked file, **even one whose contents are identical** — so the dashboard's Update button will abort with "would be overwritten by merge" until you `rm .npmrc` (or merge your own lines into the committed one and commit them).
 
 ⚠️ **Did the modules build?** npm warns either way and the difference is the phrase, not the tense: "install scripts **not yet covered** by allowScripts" — they **ran**, nothing is wrong. "install scripts **blocked** because they are not covered" — they did **not**.
 
-**If the modules did not build** — an install from a checkout predating the `.npmrc` — the packages are already on disk, so once this checkout has the `.npmrc` one command fixes it. A second `npm install` would say `up to date` and run nothing; `npm rebuild` is what runs the skipped builds:
+**If the modules did not build** — an install from a checkout predating the `.npmrc` — one command fixes it. A second `npm install` would say `up to date` and run nothing; `npm rebuild` is what runs the skipped builds:
 
 ```sh
 npm rebuild
@@ -269,7 +269,7 @@ sudo hostnamectl set-hostname cool-eva
 sudo apt-get install -y avahi-daemon
 ```
 
-Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone 12 or later, Settings → Personal Hotspot → **Maximize Compatibility** is Apple's own fix (at some cost to hotspot speed and Wi-Fi security, per Apple's footnote).
+Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging.
 
 **Adding a second network (home Wi-Fi, an Airbnb) while sshed in over the first.** Don't use `nmcli device wifi connect` for this: it activates what it creates, which drops the session you are typing into. `nmcli connection add` only creates:
 
@@ -281,7 +281,7 @@ sudo nmcli connection modify "<ssid>" connection.autoconnect yes   # once you're
 
 ⚠️ The password is on the command line, so it lands in your shell history and is briefly visible in `ps`. Prefix the command with a space if your shell is set to skip those, or clear it from the history afterwards.
 
-Adding with `autoconnect no` and flipping it afterwards makes "it won't switch under me" a configured fact. `wpa-psk` is WPA2; a WPA3-only network wants `sae`. See [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §3.
+`wpa-psk` is WPA2; a WPA3-only network wants `sae`. See [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §3.
 
 Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (cooling-fan duty and mode — only with `FAN_ENABLED=1`, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
 
