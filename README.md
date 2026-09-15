@@ -35,7 +35,9 @@ sudo nmcli device wifi connect "<your hotspot SSID>" password "<password>"
 sudo nmcli connection modify "<your hotspot SSID>" connection.autoconnect yes
 ```
 
-On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix.
+On iOS you have to **open Settings → Personal Hotspot and leave it on screen for ~20 s** at the start of a ride, or the phone won't accept the join. That is an iOS behaviour, not something this app can fix. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — Apple's own advice for a stubborn hotspot is to turn on Maximize Compatibility.
+
+To add a **second** network later (home Wi-Fi, an Airbnb) while you are sshed in over the first, use `nmcli connection add` rather than `nmcli device wifi connect` — the latter activates what it creates and drops the session you are typing into. Exact command: [INSTALL.md §8](INSTALL.md).
 
 **3. Install Node 24.** Raspberry Pi OS's `apt` Node is far too old — the app is TypeScript run directly, which needs `--experimental-strip-types` (Node 22.6.0 at the very oldest; 24 is what this is tested on).
 
@@ -50,10 +52,13 @@ node --version   # must be v22.6 or newer
 ```bash
 git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva
 cd ~/cool-eva
+printf 'allow-scripts=better-sqlite3,socketcan,spi-device,usocket\n' >> .npmrc
 npm install
 ```
 
-`npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`). On a Pi Zero 2 W that takes **several minutes** and wants swap enabled — if it gets killed, that's memory, not a bug.
+`npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`). On a Pi Zero 2 W that takes **several minutes** and needs more swap than the stock 512 MB — **set swap up first**, or the build is OOM-killed and it looks like a crash rather than a memory problem. How much and how, for both Bookworm and Trixie (they share no configuration, and on Bookworm one setting silently halves the other): [INSTALL.md §2.5](INSTALL.md).
+
+The `.npmrc` line lets those compiles run. npm ≥ 12 **blocks** install scripts that aren't allowlisted — which on this project means no `.node` files and a service that dies on `require` — while npm 11.16–11.19 only warn and build anyway. That one line is correct on every npm; ⚠️ if you already installed without it, `npm approve-scripts` needs a `npm rebuild` after it, because a second `npm install` runs nothing. Version boundaries and the measurements: [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md).
 
 **5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
 
