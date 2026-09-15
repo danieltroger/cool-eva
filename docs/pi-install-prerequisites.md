@@ -57,27 +57,36 @@ npm error code ENOMATCH
 npm error No installed packages match: better-sqlite3, socketcan, spi-device, usocket
 ```
 
-So the ordering in #136 — after `git clone`, before `npm install` — cannot work with that command. A project `.npmrc` can, because it is config rather than a command:
+So the ordering in #136 — after `git clone`, before `npm install` — cannot work with that command. A project **`.npmrc` can**, because it is config rather than a command, and that is what this repo ships at its root:
 
-```sh
-printf 'allow-scripts=better-sqlite3,socketcan,spi-device,usocket\n' >> .npmrc
+```
+allow-scripts=better-sqlite3,socketcan,spi-device,usocket
 ```
 
-npm reads it as an allowScripts source (`lib/utils/resolve-allow-scripts.js`; the list is comma-split by `@npmcli/config/lib/parse-allow-scripts-list.js`), and one `npm install` then builds everything. Bare names match any version, so a dependency bump never invalidates it. Names that match nothing in the tree are harmless, which is what makes one list correct on Linux and macOS alike.
+npm reads it as an allowScripts source (`lib/utils/resolve-allow-scripts.js`; the list is comma-split by `@npmcli/config/lib/parse-allow-scripts-list.js`), and one `npm install` then builds everything. Bare names match any version, so a dependency bump never invalidates it — the thing that makes this better than `package.json#allowScripts`, which pins. Names that match nothing in the tree are harmless, which is what makes one list correct on Linux and macOS alike.
 
-It is the one instruction that is correct on every npm, at the cost of one cosmetic warning on the oldest band:
+It is the one arrangement that is correct on every npm, at the cost of one cosmetic warning on the oldest band:
 
-| npm | without `.npmrc` | with it |
+| npm | without the `.npmrc` | with it |
 | --- | --- | --- |
-| ≤ 11.15.0 | scripts run | scripts run, **plus** `npm warn Unknown project config "allow-scripts"` on every npm command — the key does not exist before 11.16.0 |
+| ≤ 11.15.0 | scripts run | scripts run, **plus** `npm warn Unknown project config "allow-scripts"` on every npm command in this directory — the key does not exist before 11.16.0 |
 | 11.16.0 – 11.19.1 | scripts run, warning | scripts run, no warning |
 | ≥ 12.0.0 | **scripts blocked** | scripts run, no warning |
 
-Two notes on the file itself: `>>` rather than `>`, because a reader may already have registry config in an `.npmrc`; and `.npmrc` is not in this repo's `.gitignore`, so it shows up as untracked in a directory the deploy instructions tell you to `git pull` in. It is deliberately **not** committed — the bike's own Pi runs npm 11.9.0, where the line would only add that warning. Revisit when a Node release bundles npm 12.
+**Why committed rather than typed on each Pi** (decided 2026-09-15, having first been left out): the cost ages out and the benefit does not. That warning only exists below npm 11.16.0, so it disappears the moment a machine's Node is updated — the bike's Pi runs npm 11.9.0 today and will print it until then. The breakage it prevents is permanent until someone commits the line, and it is not only on the Pi: `.github/workflows/{test,typecheck,prettier,dashboard}.yml` all run `npm ci` on `node-version: 24`, and `test.yml` says in its own comment that this is where the native build happens.
 
-### If you already ran `npm install`
+⚠️ **`npm ci` is gated exactly like `npm install`** — it is not a way round the policy. Measured on npm 12.0.2 against a lockfile:
 
-The packages are on disk, so the command from #136 now works:
+|                      | `bin/esbuild` after `npm ci`                                       |
+| -------------------- | ------------------------------------------------------------------ |
+| without the `.npmrc` | 9 294 B, `node script text` — **blocked**, `had … blocked` warning |
+| with it              | 9 800 610 B, `Mach-O 64-bit executable` — built, silent            |
+
+So the day `setup-node`'s Node 24 line carries npm 12, a repo without this file goes red in CI and ships a broken Pi at the same moment. The file is one line and nobody ever edits it locally, so it carries none of the `--ff-only` exposure that a modified `package.json` does.
+
+### If you installed from a checkout that predates the `.npmrc`
+
+The packages are on disk, so the command from #136 now works — though pulling the `.npmrc` is the better fix, for the reason in the second ⚠️ below:
 
 ```sh
 npm approve-scripts better-sqlite3 socketcan spi-device usocket   # or: npm approve-scripts --all
@@ -86,11 +95,7 @@ npm rebuild
 
 ⚠️ **`npm rebuild` is not optional.** A second `npm install` reports `up to date` and runs nothing — the tree is already reified, so there is no install step left to hang the scripts off.
 
-⚠️ `approve-scripts` writes into **`package.json`**, version-pinned: `"allowScripts": { "better-sqlite3@12.8.0": true }`. Two consequences. It is a tracked file, so the dashboard's Update button — `git pull --ff-only` (`PULL_ARGS`, `src/http/update.ts`) — refuses with "local changes would be overwritten" on any incoming commit that touches `package.json`, which a version-range change does. And `package.json#allowScripts` **silently supersedes `.npmrc`**: precedence is CLI > `package.json` > `.npmrc`, and the lower layer gets only a `log.warn`. A checkout that has both ends up ignoring the `.npmrc` entirely.
-
-### This is a CI deadline too
-
-`.github/workflows/{test,typecheck,prettier,dashboard}.yml` all run `npm ci` on `node-version: 24`, and `test.yml` says in its own comment that this is where the native build happens. The day `setup-node`'s 24 line carries npm 12, that build stops and the suite goes red in CI as well as on the bike. Committing the `.npmrc` line is what would prevent it.
+⚠️ `approve-scripts` writes into **`package.json`**, version-pinned: `"allowScripts": { "better-sqlite3@12.8.0": true }`. Two consequences, and together they are why pulling the `.npmrc` is the better fix. It is a tracked file, so the dashboard's Update button — `git pull --ff-only` (`PULL_ARGS`, `src/http/update.ts`) — refuses with "local changes would be overwritten" on any incoming commit that touches `package.json`, which a version-range change does. And `package.json#allowScripts` **silently supersedes the repo's `.npmrc`** from then on: precedence is CLI > `package.json` > `.npmrc`, and the lower layer gets only a `log.warn`. So a Pi that ran `approve-scripts` once is pinned to the versions it had that day, and the committed allowlist stops applying to it.
 
 ### The four packages, and why it is four and not three
 

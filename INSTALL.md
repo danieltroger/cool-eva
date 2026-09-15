@@ -146,28 +146,24 @@ cd /home/pi/cool-eva
 ```sh
 cd /home/pi/cool-eva
 rm -f package-lock.json # IMPORTANT — see note below
-
-# Let the four packages that have install scripts run them. See note below.
-printf 'allow-scripts=better-sqlite3,socketcan,spi-device,usocket\n' >> .npmrc
-
 npm install             # builds better-sqlite3 + socketcan + spi-device (~4 min)
 
 # Verify the Linux-only native CAN module actually built:
 ls node_modules/socketcan/build/Release/can.node
 ```
 
-**WHY the `.npmrc` line:** npm has an allowlist for install-time lifecycle scripts, and on this project those scripts _are_ the native builds. **npm 12 and newer refuse to run them** unless they are allowlisted, leaving a tree with no `.node` files and a service that dies on `require`. npm 11.16–11.19 only warn and build anyway; npm 11.15 and older have no policy at all. The line above is the one instruction that is correct on all three — its only cost is a cosmetic `Unknown project config "allow-scripts"` warning on npm older than 11.16.0, where the key does not exist yet. Use `>>`, not `>`, if you already have an `.npmrc`.
+**Nothing extra is needed to let those compiles run**, and it is worth knowing why. npm has an allowlist for install-time lifecycle scripts, and on this project those scripts _are_ the native builds: **npm 12 and newer refuse to run them** unless they are allowlisted, leaving a tree with no `.node` files and a service that dies on `require`. npm 11.16–11.19 only warn and build anyway; npm 11.15 and older have no policy at all. The repo therefore **ships an `.npmrc`** with the four names, which is correct on all three bands and covers CI's `npm ci` as well as your install. ⚠️ Its one cost: on npm older than 11.16.0 the key does not exist yet, so every npm command in this directory prints a cosmetic `npm warn Unknown project config "allow-scripts"`. Harmless — that band runs the scripts regardless.
 
 ⚠️ **Did the modules build?** Read the tense in npm's warning. "N packages **has** install scripts **not yet covered**" — they ran, nothing is wrong. "N package **had** install scripts **blocked**" — they did not.
 
-**If you already ran `npm install`** without the allowlist, the packages are on disk, so the command from #136 works now — but a second `npm install` says `up to date` and runs nothing, so the rebuild is not optional:
+**If you already installed from a checkout without that `.npmrc`** and the modules did not build, the packages are on disk, so the command from #136 works now — but a second `npm install` says `up to date` and runs nothing, so the rebuild is not optional:
 
 ```sh
 npm approve-scripts better-sqlite3 socketcan spi-device usocket   # or: --all
 npm rebuild
 ```
 
-⚠️ That writes a version-pinned `allowScripts` into `package.json`, which is tracked — so the dashboard's Update button (`git pull --ff-only`) will refuse on any commit that changes a dependency range, and `package.json#allowScripts` silently supersedes the `.npmrc` from then on. The version boundaries, the measurements behind them and why the `.npmrc` is not committed are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §1.
+⚠️ Prefer `git pull` to pick up the `.npmrc` instead, because `approve-scripts` writes a version-pinned `allowScripts` into `package.json`, which is tracked — so the dashboard's Update button (`git pull --ff-only`) will refuse on any commit that changes a dependency range, and `package.json#allowScripts` then **silently supersedes** the repo's `.npmrc` for good. The version boundaries and the measurements behind them are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §1.
 
 **WHY rm the lockfile:** `package-lock.json` is committed but generated on macOS, where socketcan (a Linux-only optionalDependency) is skipped. Installing on the Pi against that lockfile prunes the real native build and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan --force` will not fix it — it insists it's already up to date. The reliable fix is `rm package-lock.json && npm install` on the Pi.
 

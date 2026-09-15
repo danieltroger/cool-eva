@@ -52,13 +52,12 @@ node --version   # must be v22.6 or newer
 ```bash
 git clone https://github.com/<your-fork>/cool-eva.git ~/cool-eva
 cd ~/cool-eva
-printf 'allow-scripts=better-sqlite3,socketcan,spi-device,usocket\n' >> .npmrc
 npm install
 ```
 
 `npm install` compiles three native modules (`better-sqlite3`, `socketcan`, `spi-device`). On a Pi Zero 2 W that takes **several minutes** and needs more swap than the stock 512 MB — **set swap up first**, or the build is OOM-killed and it looks like a crash rather than a memory problem. How much and how, for both Bookworm and Trixie (they share no configuration, and on Bookworm one setting silently halves the other): [INSTALL.md §2.5](INSTALL.md).
 
-The `.npmrc` line lets those compiles run. npm ≥ 12 **blocks** install scripts that aren't allowlisted — which on this project means no `.node` files and a service that dies on `require` — while npm 11.16–11.19 only warn and build anyway. That one line is correct on every npm; ⚠️ if you already installed without it, `npm approve-scripts` needs a `npm rebuild` after it, because a second `npm install` runs nothing. Version boundaries and the measurements: [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md).
+Nothing else to do for those compiles: the repo ships an `.npmrc` allowlisting the four packages with install scripts, because **npm 12 and newer refuse to run them** otherwise and you get a tree with no `.node` files. ⚠️ If you installed with an older checkout and hit that, `npm approve-scripts` needs an `npm rebuild` after it — a second `npm install` runs nothing. Version boundaries and the measurements: [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md).
 
 **5. Only if you have the coolant probes: enable SPI.** `sudo raspi-config` → Interface Options → SPI → Yes, then reboot. **Don't enable it if you have no probes wired**: with SPI on and nothing attached the reads succeed and return −242 °C forever. The app notices and retires the probe after a minute, but it's noise you don't need.
 
