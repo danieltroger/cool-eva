@@ -2,6 +2,7 @@ import { decodeFrame, STREAM_IDS } from "../src/can/decode.ts";
 import { CLUSTER_RANGE_CAN_ID, decodeClusterRangeFrame } from "../src/can/cluster-range.ts";
 import { decodeHubOutputFrame } from "../src/can/hub-output.ts";
 import { GPS_CAN_ID } from "../src/can/gps.ts";
+import { BleTelemetryDecoder } from "../src/ble/protocol.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 
@@ -10,8 +11,10 @@ import { boundsFor, isPlausible } from "../public/lib/bounds.js";
 //
 //   node --experimental-strip-types scripts/check-cluster-frames.ts
 //
-// ✅ EVERY FRAME BELOW IS REAL. None is hand-written — a hand-written frame only proves
-// the decoder agrees with whoever wrote the fixture. Provenance per case in FIXTURES.
+// ✅ EVERY FRAME BELOW IS REAL except ONE, which says so on its own line. A hand-written
+// frame only proves the decoder agrees with whoever wrote it. ⚠️ An earlier version of this
+// header claimed all of them were captured while three were composed from a per-byte census
+// — real bytes, never that arrangement. Provenance is on each case; grep the named file.
 //
 // ⚠️ The endianness cases are the point of this file. 0x412 b2-b3 and 0x410 type 3's
 // three fields are all little-endian pairs, and a big-endian mutant produces a plausible
@@ -55,7 +58,7 @@ console.log("§1 0x412 — the cluster's range estimate");
 const RANGE_FIXTURES: [string, number, string][] = [
   ["00 00 4F 00 31 42 08 00", 79, "2026-08-02 parked, hub type-2 says 79 in the same file"],
   ["03 06 40 00 31 42 0A 00", 64, "2026-09-15 parked on AC, SOC 50 %"],
-  ["00 00 42 01 31 42 04 00", 322, "2026-09-13 riding — HIGH BYTE SET, pins little-endian"],
+  ["00 00 42 01 31 42 04 00", 322, "2026-09-13, 160 frames, the archive maximum — HIGH BYTE SET, pins little-endian"],
 ];
 for (const [hex, expected, why] of RANGE_FIXTURES) {
   const got = valueOf(decodeClusterRangeFrame(frameOf(hex)), "range_can_km");
@@ -70,66 +73,103 @@ check("0x412 is in STREAM_IDS, or the decoder is dead and nothing says so", STRE
 
 console.log("§2 0x410 type 3 — the drive triple");
 
-// All four from capture-20260809-161310-edcdcf23.log (43 417 type-3 frames). The regen case
-// carries b7 = 0xFF, which is what makes the torque read signed rather than assumed so.
-const OUTPUT_FIXTURES: [string, number, number, string][] = [
-  ["03 FF 6E 00 B0 04 10 00", 110, 1200, "cruising — rpm high byte set, pins little-endian"],
-  ["03 FF 00 00 00 00 00 00", 0, 0, "stationary"],
-  ["03 FF AB 00 C4 04 2C FF", 171, 1220, "REGEN — b7 = 0xFF, torque must go negative"],
+// All four verbatim from capture-20260809-161310-edcdcf23.log (43 417 type-3 frames);
+// `grep -F` any of them in that file. Torque is asserted against a LITERAL, not recomputed
+// from the decoded value: an earlier version checked power against `torque x rpm` using the
+// torque it had just decoded, so any scale error cancelled and the assertion could not fail.
+const OUTPUT_FIXTURES: [string, number, number, number, string][] = [
+  ["03 FF 3E 00 C4 09 0F 00", 62, 2500, 15, "cruising — rpm high byte 0x09 set, pins little-endian"],
+  ["03 FF 36 00 66 08 FE FF", 54, 2150, -2, "REGEN — b7 = 0xFF, torque must go negative"],
+  ["03 FF 00 00 00 00 00 00", 0, 0, 0, "stationary"],
+  ["03 FF AA 00 86 1A 40 00", 170, 6790, 64, "the fastest frame in the capture"],
 ];
-for (const [hex, speed, rpm, why] of OUTPUT_FIXTURES) {
+for (const [hex, speed, rpm, torque, why] of OUTPUT_FIXTURES) {
   const values = decodeHubOutputFrame(frameOf(hex));
-  const torque = valueOf(values, "motor_torque_can_nm") ?? 0;
-  const power = valueOf(values, "motor_power_can_kw") ?? 0;
   check(`${hex} → dash_speed_kmh ${speed} (${why})`, valueOf(values, "dash_speed_kmh") === speed);
-  // Power is torque × rpm, so it pins the rpm field without asserting on a key we do not log.
-  const expectedPower = (torque * 2 * Math.PI * rpm) / 60000;
-  check(`${hex} → motor_power_can_kw from rpm ${rpm}`, Math.abs(power - expectedPower) < 1e-9);
+  check(`${hex} → motor_torque_can_nm ${torque}`, valueOf(values, "motor_torque_can_nm") === torque);
+  // Power is the only place rpm is observable, so it is asserted from the LITERAL rpm above.
+  const expected = (torque * 2 * Math.PI * rpm) / 60000;
+  check(
+    `${hex} → motor_power_can_kw from rpm ${rpm}`,
+    Math.abs((valueOf(values, "motor_power_can_kw") ?? NaN) - expected) < 1e-9
+  );
 }
+
+// ⚠️ THE TYPE BYTE NEEDS ITS OWN CASE. `1A 00 …` is rejected by the sub-index test alone, so
+// with only that fixture a decoder that stopped checking byte 0 would pass. This is the real
+// seed frame from 2026-08-02: b1 IS 0xFF, so ONLY the type test can reject it — and read as a
+// drive triple it yields 49 850 km/h.
 check(
-  "regen torque is negative, not 0xFF2C read unsigned",
-  (valueOf(decodeHubOutputFrame(frameOf("03 FF AB 00 C4 04 2C FF")), "motor_torque_can_nm") ?? 0) < 0
+  "the seed frame is rejected by the TYPE byte, not the sub-index",
+  decodeHubOutputFrame(frameOf("00 FF BA C2 D8 3B 00 00")).length === 0
 );
-check(
-  "a non-type-3 0x410 frame decodes to nothing here",
-  decodeHubOutputFrame(frameOf("1A 00 11 22 33 44 55 66")).length === 0
-);
+check("a GPS sub-frame decodes to nothing here", decodeHubOutputFrame(frameOf("1A 00 00 00 00 00 00 00")).length === 0);
 check(
   "sub-index other than 0xFF decodes to nothing",
-  decodeHubOutputFrame(frameOf("03 00 6E 00 B0 04 10 00")).length === 0
+  decodeHubOutputFrame(frameOf("03 00 3E 00 C4 09 0F 00")).length === 0
 );
+// ⚠️ The short frame must be a TYPE-3 one. `Buffer.alloc(4)` is all zeros, so the type test
+// rejects it and the length guard is never reached — with only that case, deleting the length
+// guard passes. A truncated `03 FF 3E` reads frame[4..7] off the end and yields NaN.
+check("a short TYPE-3 frame decodes to nothing", decodeHubOutputFrame(Buffer.from([0x03, 0xff, 0x3e])).length === 0);
+check("a short frame of another type decodes to nothing", decodeHubOutputFrame(Buffer.alloc(4)).length === 0);
 check(
   "type 3 reaches the decoder through decodeFrame on 0x410",
-  valueOf(decodeFrame(GPS_CAN_ID, frameOf("03 FF 6E 00 B0 04 10 00")), "dash_speed_kmh") === 110
+  valueOf(decodeFrame(GPS_CAN_ID, frameOf("03 FF 3E 00 C4 09 0F 00")), "dash_speed_kmh") === 62
+);
+// 0x410 has three readers and decodeFrame spreads two of them. Without this, dropping the GPS
+// half of that spread is invisible here — and `npm test` as a whole does not catch it either.
+check(
+  "the GPS reader SURVIVES on 0x410 — this id has more than one decoder",
+  decodeFrame(GPS_CAN_ID, frameOf("1A 01 00 00 00 00 00 00")).some(entry => entry.key === "gps_fix")
 );
 
-// ⚠️ NOT A CAPTURED FRAME, and the only one in this file that is not. b3 is 0x00 in all
-// 43 417 type-3 frames of the 2026-08-09 archive — the bike cannot go fast enough to set it —
-// so no real frame can tell a u16 speed from a u8 one. The width comes from the firmware
-// instead: the packer at 0x6262C/0x62638 writes b2 and b3 from the two halves of ONE source
-// variable, exactly as it does for rpm. Without this case, a decoder that read b2 alone would
-// pass every other assertion here; it is kept to hold that byte, not as evidence of anything.
+// ⚠️ NOT A CAPTURED FRAME, and the only one in this file that is not. b3 is 0x00 in all 43 417
+// type-3 frames of the 2026-08-09 archive — the bike cannot go fast enough to set it — so no
+// real frame can tell a u16 speed from a u8 one. The width comes from the firmware instead:
+// the packer at 0x6262C/0x62638 writes b2 and b3 from the two halves of ONE source variable,
+// exactly as it does for rpm. Kept to hold that byte, not as evidence of anything.
 check(
   "b3 is the speed's high byte (firmware-derived, no captured frame can show this)",
   valueOf(decodeHubOutputFrame(frameOf("03 FF 01 01 00 00 00 00")), "dash_speed_kmh") === 257
 );
 
-console.log("§3 registry and bounds — a signal the dashboard would reject is not decoded");
+console.log("§3 both transports, one unpacking — the claim that justifies sharing it");
+
+// src/hub/output.ts exists so the CAN reader and the BLE reader cannot drift apart. Nothing
+// enforced that until this section: `npm test` exercises no BLE path at all, so the shared
+// module could have been rewired wrongly on the Bluetooth side and every other check here
+// would still pass. One real frame, both decoders, same numbers.
+{
+  const frame = frameOf("03 FF 36 00 66 08 FE FF");
+  const fromCan = decodeHubOutputFrame(frame);
+  const fromBle = new BleTelemetryDecoder().decode(frame);
+  check(
+    "BLE and CAN agree on torque from one frame",
+    valueOf(fromBle, "motor_torque_nm") === valueOf(fromCan, "motor_torque_can_nm")
+  );
+  check(
+    "BLE and CAN agree on power from one frame",
+    valueOf(fromBle, "motor_power_kw") === valueOf(fromCan, "motor_power_can_kw")
+  );
+  check("the BLE path still emits its own two keys", fromBle.length === 2);
+}
+
+console.log("§4 registry and bounds — a signal the dashboard would reject is not decoded");
 
 // ⚠️ `boundsFor` and `isPlausible` take (key, unit, group). An earlier draft of this file
 // called them with one argument; `boundsFor` then returned null, `isPlausible` returned true
 // for everything, and both assertions below passed against a signal with no bounds at all.
 // They are only worth having with the registry's own unit and group threaded through.
 for (const key of ["range_can_km", "dash_speed_kmh", "motor_torque_can_nm", "motor_power_can_kw"]) {
-  const signal = SIGNALS.find(entry => entry.key === key);
-  check(`${key} is in the registry`, signal !== undefined);
-  if (!signal) {
-    continue;
-  }
-  // The generator's own rule, not a stricter one: a signal may declare bounds, declare why it
-  // has none, or reach a fallback rule by unit and group. What it may not do is arrive ungated.
-  const reachesARule = boundsFor(signal.key, signal.unit, signal.group) !== null;
-  check(`${key} reaches a bounds rule or says why not`, reachesARule || signal.unbounded !== undefined);
+  // Only that the key EXISTS. Whether it is gated is the generator's repo-wide ratchet
+  // (scripts/generate-signal-bounds.ts, "all 522 signals reach a rule or say why not"), and
+  // restating it for four of them here was duplication. What the ratchet cannot see is a
+  // decoder emitting a key the registry has never heard of — it iterates SIGNALS, not output.
+  check(
+    `${key} is in the registry`,
+    SIGNALS.some(entry => entry.key === key)
+  );
 }
 
 // The highest values actually measured must survive the gate, or a working bike reads as a
@@ -140,6 +180,10 @@ const speedSignal = SIGNALS.find(entry => entry.key === "dash_speed_kmh");
 if (rangeSignal && speedSignal) {
   check("range_can_km 322 is plausible", isPlausible("range_can_km", 322, rangeSignal.unit, rangeSignal.group));
   check("dash_speed_kmh 194 is plausible", isPlausible("dash_speed_kmh", 194, speedSignal.unit, speedSignal.group));
+  check(
+    "dash_speed_kmh is bounded no tighter than speed_can_kmh, which reads LOWER than it",
+    isPlausible("dash_speed_kmh", 400, speedSignal.unit, speedSignal.group)
+  );
   check(
     "range_can_km 5000 is REJECTED, so the gate is on",
     !isPlausible("range_can_km", 5000, rangeSignal.unit, rangeSignal.group)

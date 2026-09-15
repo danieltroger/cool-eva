@@ -18,7 +18,7 @@
 
 import { FRAME_SIZE, GPS_MESSAGE_TYPE, GpsMessageDecoder, type DecodedValue } from "../gps/decode.ts";
 import { SuppressedFixWatcher } from "../gps/fix-watch.ts";
-import { decodeHubOutput, isHubOutputFrame } from "../hub/output.ts";
+import { HUB_OUTPUT_TYPE, decodeHubOutput, isHubOutputFrame } from "../hub/output.ts";
 
 // The GPS sub-frames are byte-identical on CAN 0x410 — which the instrument cluster
 // transmits, not the hub (docs/can-0x410.md) — so their bit unpacking lives in
@@ -34,7 +34,7 @@ export type { DecodedValue };
 const TYPE_SEED = 0;
 const TYPE_MATCH_ATTEMPT = 1;
 const TYPE_VEHICLE_STATUS = 2;
-const TYPE_OUTPUT = 3;
+
 const TYPE_ODOMETER = 4;
 
 /**
@@ -125,7 +125,7 @@ export class BleTelemetryDecoder {
     switch (frame[0]) {
       case TYPE_VEHICLE_STATUS:
         return this.#decodeVehicleStatus(frame);
-      case TYPE_OUTPUT:
+      case HUB_OUTPUT_TYPE:
         return this.#decodeOutput(frame);
       case TYPE_ODOMETER:
         return this.#decodeOdometer(frame);

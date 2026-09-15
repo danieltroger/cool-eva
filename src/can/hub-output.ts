@@ -4,7 +4,7 @@ import { decodeHubOutput, isHubOutputFrame } from "../hub/output.ts";
 // CAN 0x410 sub-type 3 — the drive triple, off the bus instead of off Bluetooth.
 //
 // These three were Bluetooth-only until 2026-09-15 and the registry said so. They
-// are not: type 3 runs at ~8.8 Hz while the bike is moving, and it carries one
+// are not: type 3 streams at ~20 Hz while the bike is moving, and it carries one
 // field neither transport decoded before — a road speed that is NOT `speed_can_kmh`.
 // Keys carry `_can` so the two transports stay comparable rather than merged, the
 // way `odometer_can_km` does. Evidence and the speed's provenance: docs/can-0x410.md.

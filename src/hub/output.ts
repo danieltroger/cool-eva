@@ -15,7 +15,13 @@ import { i16le } from "../can/frame.ts";
 export const HUB_OUTPUT_TYPE = 3;
 
 export interface HubOutput {
-  /** b2-b3. NOT `speed_can_kmh`: a different divisor, ~+4.3 %. docs/can-0x410.md. */
+  /**
+   * b2-b3. NOT `speed_can_kmh`: a different divisor, ~+4.3 %. docs/can-0x410.md.
+   *
+   * Only the CAN caller logs it, as `dash_speed_kmh`. The BLE caller decodes it and
+   * drops it on purpose — one producer writing one key down two transports is the
+   * thing this project keeps apart, and BLE already has no key for it.
+   */
   speedKmh: number;
   revolutionsPerMinute: number;
   torqueNm: number;

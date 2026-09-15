@@ -458,7 +458,7 @@ export const SIGNALS: SignalDef[] = [
   // 42 705 paired samples — which puts it ~8 % above GPS, where a legal speedometer
   // sits. Whether it is literally the number on the dash is UNCONFIRMED and one glance
   // at the speedo against the phone settles it. docs/can-0x410.md.
-  { key: "dash_speed_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5, bounds: [0, 300] },
+  { key: "dash_speed_kmh", unit: "km/h", group: "drive", source: "stream", deadband: 0.5, bounds: [0, 400] },
   { key: "motor_torque_can_nm", unit: "Nm", group: "drive", source: "stream", deadband: 0.5 },
   { key: "motor_power_can_kw", unit: "kW", group: "drive", source: "stream", deadband: 0.05 },
 

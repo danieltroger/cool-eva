@@ -12,7 +12,7 @@ The bike answers three different questions about faults, and conflating them has
 
 | Channel | Question | On this bike | Decoder |
 | --- | --- | --- | --- |
-| Connectivity Hub type 25 (`0x19`), mirrored to CAN `0x410` | what is ACTIVE right now | 0 or 1 entries, and it flickers | `src/diagnostics/decode.ts` |
+| Connectivity-Hub type 25 (`0x19`), also on CAN `0x410` (which the cluster transmits) | what is ACTIVE right now | 0 or 1 entries, and it flickers | `src/diagnostics/decode.ts` |
 | OBD-II mode 03 | what is STORED | 39 entries, stable | `src/diagnostics/obd-dtc.ts` |
 | KWP `0x17` freeze frame | the conditions when ONE code latched | one record per component | `src/diagnostics/freeze-frame.ts` |
 

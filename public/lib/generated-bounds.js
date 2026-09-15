@@ -87,7 +87,7 @@ export const SIGNAL_BOUNDS = Object.assign(Object.create(null), {
   "gps_course_deg": [0, 360],
   "gps_satellites": [0, 31],
   "gps_fix": [0, 3],
-  "dash_speed_kmh": [0, 300],
+  "dash_speed_kmh": [0, 400],
   "vehicle_state": [0, 255],
   "vehicle_substate": [0, 255],
   "range_km": [0, 500],

@@ -16,11 +16,14 @@ import {
   type DecodedValue,
 } from "./protocol.ts";
 
-// BLE link to the Energica Connectivity Hub ("Energica BT"), which owns the
-// bike's GPS receiver. Position also reaches us over CAN 0x410 (src/can/gps.ts,
-// added 2026-08-02), so this link is no longer the only source of it — but motor
-// torque/power (message type 3) is pushed over Bluetooth only and appears on no
-// CAN frame we know of, which is why the link stays.
+// BLE link to the Energica Connectivity Hub ("Energica BT"). Position reaches us over
+// CAN 0x410 as well (src/can/gps.ts, added 2026-08-02), and since #224 so does motor
+// torque/power — message type 3 is on that id too (src/can/hub-output.ts).
+//
+// 🚨 "torque/power … appears on no CAN frame we know of, which is why the link stays"
+// stood here until #224 and is no longer a reason to keep it. What the Bluetooth link
+// still carries alone is the odometer, the trip figures, and the type-25 active-fault
+// list — which cannot be REQUESTED over CAN at all (docs/can-0x7c4.md, #58).
 
 const SERVICE_UUID = "14839ac5-7d7f-415d-9a43-167340cf233a";
 const NOTIFY_CHARACTERISTIC_UUID = "0734594b-a8e8-4b1b-a6b2-cd5243059a58";

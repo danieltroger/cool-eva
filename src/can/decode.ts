@@ -374,12 +374,12 @@ export function decodeFrame(id: number, data: Buffer): DecodedValue[] {
       return values;
     }
 
-    // 0x410 — the Connectivity Hub's own message stream, mirrored onto CAN with the
-    // same framing it uses over BLE (b0 = message type, b1 = sub-index). Carries the
-    // GPS multiplex at ~1.8 Hz unsolicited, which is the whole reason position no
-    // longer depends on the Bluetooth link. Decoded in gps.ts because a fix spans
-    // three sub-frames. ✅ framing and rate confirmed on the bus; the payload is
-    // all-zero in the garage, so the coordinates themselves are still BLE-verified
+    // 0x410 — the Connectivity-Hub message set on one id, in the same framing it uses
+    // over BLE (b0 = message type, b1 = sub-index). Carries the GPS multiplex at ~1.8 Hz
+    // unsolicited, which is the whole reason position no longer depends on the Bluetooth
+    // link. Decoded in gps.ts because a fix spans three sub-frames. ✅ framing and rate
+    // confirmed on the bus; the payload is all-zero in the garage, so the coordinates
+    // themselves are still BLE-verified
     // only. (The old note that b4 here is a high-beam switch was reading one byte of
     // this multiplex; 0x102 is the real lights frame and already supersedes it.)
     //
