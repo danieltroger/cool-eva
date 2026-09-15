@@ -183,8 +183,19 @@ export function simulateVcuMicros(micros: SimulatedMicro[]): SimulatedBus {
     channel,
     sentRequests,
     sentFrames,
-    expireSession: target => void sessionOpenedAt.delete(addressOf({ target })),
+    expireSession: target => expireSession(sessionOpenedAt, target),
   };
+}
+
+/**
+ * ⚠️ Throws rather than shrugging when there was no session to expire. A check that expires
+ * one it never opened would otherwise go on to measure a recovery path it never set up —
+ * green, and about nothing.
+ */
+function expireSession(sessionOpenedAt: Map<number, number>, target: VcuTarget): void {
+  if (!sessionOpenedAt.delete(addressOf({ target }))) {
+    throw new Error(`simulated bus: asked to expire a ${target} session that was never opened`);
+  }
 }
 
 interface BusContext {
@@ -277,8 +288,6 @@ function handleRequestPayload(context: BusContext, payload: Uint8Array): void {
 function respond(context: BusContext, payload: Uint8Array): Uint8Array | null {
   const { micro, sessionOpenedAt } = context;
   const openedAt = sessionOpenedAt.get(addressOf(micro));
-  // A per-micro override lived here until #126. It existed so one check could sleep a
-  // session out; `expireSession()` says it instead, and nothing else ever set it.
   const sessionOpen = openedAt !== undefined && since(openedAt) < DEFAULT_SESSION_IDLE_MS;
 
   if (payload[0] === SERVICE_START_SESSION) {
@@ -460,7 +469,6 @@ function conversationFor(context: BusContext): Conversation {
 
 /**
  * Byte 0 of a request addressed to this stand-in. The real mapping lives in param-codec.ts.
- * Takes the target rather than a whole micro, so a caller holding only a name can ask.
  */
 function addressOf(micro: Pick<SimulatedMicro, "target">): number {
   return { A8: 0xa8, A9: 0xa9 }[micro.target];

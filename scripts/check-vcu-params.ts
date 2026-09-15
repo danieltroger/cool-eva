@@ -2892,9 +2892,7 @@ async function checkTransport(): Promise<void> {
   );
 
   // The session lapses while the client's own 1500 ms idle limit still thinks it is open,
-  // so recovery has to come from the retry. This was a 700 ms sleep that had to land
-  // between the two windows; saying it instead makes the count below depend on the retry
-  // logic and not on the laptop (#126).
+  // so recovery has to come from the retry.
   //
   // ⚠️ One real-time condition survives and is worth knowing when this goes red: the ping
   // stamps `lastExchangeAt`, and the read must follow it inside SESSION_IDLE_LIMIT_MS

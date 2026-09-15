@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { callsSeam, scanForSeamCalls } from "./seam-scan.ts";
+import { MINIMUM_SOURCE_FILES_SCANNED, callsSeam, scanForSeamCalls } from "./seam-scan.ts";
 import { MAX_HOLD_MS } from "../src/can/obd-hold.ts";
 import { frameArrival } from "../src/can/frame-arrival.ts";
 import {
@@ -328,7 +328,7 @@ console.log("── §2b nothing in src/ injects the deadline's clock ──");
     `a production call site injects the deadline's clock or budget, which defeats it: ${scan.offenders.join("; ")}`
   );
   check(
-    scan.filesRead >= 50,
+    scan.filesRead >= MINIMUM_SOURCE_FILES_SCANNED,
     `the walk should have read the source at all, saw ${scan.filesRead} .ts files under src/`
   );
   check(

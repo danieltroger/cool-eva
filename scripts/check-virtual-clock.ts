@@ -15,13 +15,9 @@ import { monotonicNow, since } from "../src/monotonic.ts";
 // comparing the order of recorded events. Real timers are the oracle, so an assertion here
 // cannot be satisfied by a model and a check that are wrong in the same direction.
 //
-// ⚠️ THE ORACLE IS WAITED OUT, NEVER TIMED. Its advance() returns when every timer and
-// sleep it armed has run, not after a window — a count, which load can only make slower.
-// It ran on a window until issue #258, and two orderings could then be lost to a busy
-// laptop rather than to a bug. Each scenario is also run a THIRD time with the event loop
-// deliberately blocked, which is that failure kept as a regression test. Which orderings
-// starvation can and cannot move, and the measurements behind each one:
-// docs/diagnostics-and-checks.md §11.9.
+// ⚠️ THE ORACLE IS WAITED OUT, NEVER TIMED, and each scenario runs a third time with the
+// event loop deliberately blocked. Which orderings starvation can and cannot move, why it
+// used to matter (#258), and the measurements: docs/diagnostics-and-checks.md §11.9.
 
 let failures = 0;
 
@@ -117,14 +113,19 @@ const SCENARIOS: Record<string, Scenario> = {
  *
  * Longer than the longest delay any scenario arms up front, so EVERY pre-armed timer comes
  * due inside it and Node runs them back to back — which is the condition that inverted an
- * ordering in #258. `since()` and not two `Date.now()` reads: a busy-wait is a duration.
+ * ordering in #258, and what the assertion after the differential keeps true.
  */
 const STALL_MS = 30;
+
+/** The longest delay any scenario armed up front, which is what STALL_MS has to cover. */
+let longestPreArmedMs = 0;
 
 for (const [name, scenario] of Object.entries(SCENARIOS)) {
   const throughFakeClock = (await run(scenario, fakeClockHost())).join(" | ");
   for (const stallMs of [0, STALL_MS]) {
-    const throughRealTimers = (await run(scenario, realTimerHost(stallMs))).join(" | ");
+    const realHost: RealHostState = { outstanding: 0, releaseAdvance: null, longestPreArmedMs: 0 };
+    const throughRealTimers = (await run(scenario, realTimerHost(stallMs, realHost))).join(" | ");
+    longestPreArmedMs = Math.max(longestPreArmedMs, realHost.longestPreArmedMs);
     const same = throughRealTimers === throughFakeClock;
     const how = stallMs === 0 ? "" : ` — with the event loop blocked for ${stallMs} ms first`;
     check(`⚠️  ${name} fires in the same ORDER on both${how}`, same);
@@ -134,6 +135,15 @@ for (const [name, scenario] of Object.entries(SCENARIOS)) {
     }
   }
 }
+
+// ⚠️ MEASURED FROM THE RUN, not restated from the table above. The stalled pass only proves
+// what it claims while every pre-armed timer comes due INSIDE the stall; a sixth scenario
+// arming for longer would quietly downgrade it to a second copy of the unstalled pass, with
+// docs/diagnostics-and-checks.md §11.9 still saying otherwise.
+check(
+  `⚠️  the ${STALL_MS} ms stall still covers every delay the scenarios arm up front (longest: ${longestPreArmedMs} ms)`,
+  longestPreArmedMs > 0 && STALL_MS > longestPreArmedMs
+);
 
 // --- 2. what the fake clock does that no real one can ------------------------
 
@@ -280,6 +290,8 @@ interface RealHostState {
   outstanding: number;
   /** Resolves the advance() in flight, or null when nobody is waiting. */
   releaseAdvance: (() => void) | null;
+  /** The longest delay armed before the first advance(), so STALL_MS can be checked against it. */
+  longestPreArmedMs: number;
 }
 
 /**
@@ -291,8 +303,7 @@ interface RealHostState {
  * (#258, reproduced in `nestedArming` and `asyncCallbackAwaitingSleep` both). A count can
  * only take longer under load; it cannot come out wrong.
  */
-function realTimerHost(stallMs: number): TimerHost {
-  const state: RealHostState = { outstanding: 0, releaseAdvance: null };
+function realTimerHost(stallMs: number, state: RealHostState): TimerHost {
   const sleep = (delayMs: number) =>
     new Promise<void>(resolve => {
       state.outstanding += 1;
@@ -313,6 +324,7 @@ function realTimerHost(stallMs: number): TimerHost {
 
 function armRealTimer(state: RealHostState, callback: () => unknown, delayMs: number): void {
   state.outstanding += 1;
+  state.longestPreArmedMs = Math.max(state.longestPreArmedMs, delayMs);
   setTimeout(() => {
     // Awaited, so an async callback is outstanding until its body finishes rather than
     // until it first suspends — `asyncCallbackAwaitingSleep` would otherwise be counted

@@ -170,7 +170,10 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
  * scripts/check-fan-curve.ts §10b asserts that rather than trusting it.
  *
  * It exists because ageing a signal by SLEEPING makes a check's verdict a measured ratio
- * that load inflates. docs/diagnostics-and-checks.md §11.9, and issue #126.
+ * that load inflates. ⚠️ And it is not replaceable by backdating through `ts`:
+ * `monotonicNow() - (Date.now() - ts)` looks equivalent, needs no new export, and is a
+ * `Date.now()` difference — which ../gps/clock.ts steps with `date -u -s`, jumping every
+ * signal's age by the size of the step. docs/diagnostics-and-checks.md §11.9, issue #126.
  */
 export function recordArrival(key: string, value: number, ts: number, arrivedAtMonotonic: number): void {
   if (!Number.isFinite(value)) return;

@@ -1,4 +1,4 @@
-import { callsSeam, scanForSeamCalls } from "./seam-scan.ts";
+import { MINIMUM_SOURCE_FILES_SCANNED, callsSeam, scanForSeamCalls } from "./seam-scan.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 import {
   FAN_REASON_TEXT,
@@ -673,9 +673,6 @@ check(
 // Nothing re-records batt_temp_hi from here to the end of the manual session below, so
 // this mark is when the loop's LAST GOOD READING arrived.
 const hotReadingArrivedAt = monotonicNow();
-// Backdated rather than slept for: what the assertions below discriminate is a mark kept
-// from the reading against one refreshed per tick, and SLEEPING makes that a ratio of two
-// real durations that load inflates together. docs/diagnostics-and-checks.md §11.9.
 recordArrival("batt_temp_hi", 45, Date.now(), hotReadingArrivedAt - AGE_JUMP_MS);
 await ticks(2);
 check("a hot pack starts it again", controller.state().driverEnabled);
@@ -683,8 +680,7 @@ check("a hot pack starts it again", controller.state().driverEnabled);
 // from the manual session below, evaluate() returns before the curve runs and the slider
 // has already published NONE, and by the time automatic comes back the 46 °C reading is
 // fresh again. An age of AGE_JUMP_MS is past TEMPERATURE_FRESH_MS and inside the grace, so
-// the reading still steers — which is the state the backdating puts the loop in, made
-// visible rather than left as an unremarked side effect.
+// the reading still steers.
 check(
   `a reading ${AGE_JUMP_MS / 1000} s old still steers, and the dashboard is told it is HELD rather than live`,
   latestValue("fan_temp_input") === FAN_TEMPERATURE_INPUT.HELD &&
@@ -706,10 +702,9 @@ check("⚠️  and the curve leaves it alone afterwards — otherwise the drag w
 // same old value sits in the store, the age never grows, the grace never expires and the
 // fail-safe §5 asserts can never fire on a bike.
 //
-// A BRACKET, and both of its bounds hold at any load. The reading was handed to the store
-// already AGE_JUMP_MS old, so the age can only be that plus however long this section has
-// been running: a mark refreshed per tick reads one tick here instead, which is four
-// orders of magnitude under the floor. Why each bound is safe: docs/diagnostics-and-checks.md §11.9.
+// A BRACKET, and both of its bounds hold at any load. A mark refreshed per tick reads one
+// tick here instead, four orders of magnitude under the floor. Why each bound is safe:
+// docs/diagnostics-and-checks.md §11.9.
 const heldAgeMs = automatic.state().temperatureAgeMs;
 check(
   "⚠️  the grace clock runs from when the reading ARRIVED, not from the tick that read it",
@@ -729,11 +724,9 @@ check(
   // No older than this reading is — which is what /fan reports while the slider drives, and
   // which a loop that had NOT adopted it fails by the whole AGE_JUMP_MS the held one carries.
   //
-  // ⚠️ The mark is taken before the record() it stands for, which is what makes this exact
-  // rather than approximate: the bound is then an over-estimate by construction and needs no
-  // allowance. A "younger than the one it held" comparison used to sit here too; it compared
-  // two independently measured elapsed times, which load could invert, and it said nothing
-  // this does not. `<=` and not `<`: performance.now() is non-decreasing, not increasing.
+  // ⚠️ The mark is taken before the record() it stands for, so the bound is an over-estimate
+  // by construction and needs no allowance. `<=` and not `<`: performance.now() is
+  // non-decreasing, not increasing.
   automatic.mode() === "manual" && manualAgeMs <= since(manualReadingArrivedAt)
 );
 
@@ -749,15 +742,9 @@ await controller.stop();
 
 // --- 10b. The arrival seam is a bypass: nothing that ships may use it ---------
 //
-// ⚠️ `recordArrival(key, value, ts, monotonicNow() - 60_000)` at any call site under src/
-// hands the fan a reading that is already past its grace, or hands a freshness gate one
-// that never expires — the gate defeated outright, by one extra argument. This check is
-// the only caller allowed to pass one, and this check is not among the files scanned.
-//
-// The two assertions below the offender count are the POSITIVE CONTROL: a scan expecting
-// zero matches passes just as happily when its walk read nothing or its pattern rotted.
-// Why the pattern is built from the symbol rather than written out, and why comments are
-// stripped first: scripts/seam-scan.ts.
+// ⚠️ This check is the only caller allowed to pass an arrival mark, and this check is not
+// among the files scanned. The two assertions after the offender count are the positive
+// control; why they are shaped that way: scripts/seam-scan.ts.
 
 console.log("\n10b. the arrival seam is reachable from checks and from nothing that ships");
 
@@ -774,7 +761,7 @@ check(
 );
 check(
   "…the walk found the source at all, so the count above is a scan rather than an empty list",
-  seamScan.filesRead >= 50
+  seamScan.filesRead >= MINIMUM_SOURCE_FILES_SCANNED
 );
 check(
   "…and the pattern still recognises a call, asked of a literal rather than of this file's own prose",

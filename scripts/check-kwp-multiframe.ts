@@ -262,9 +262,8 @@ check(
   // firing mid-send calls onRequestFlowControlTimeout, which warns and sets the separation
   // time to 0 — so "it did not fire" is a COUNT, and no amount of load can change a count.
   // The gap stays as the second half, in the direction load cannot invert: a scheduler can
-  // only make two frames further apart, never closer. An UPPER bound was the obvious fix
-  // and is the wrong one — it goes red on a stalled laptop while the code is correct, and
-  // it still passes a regressed 20 ms separation that a stall pushed over the floor.
+  // only make two frames further apart, never closer. Why an upper bound is not the fix it
+  // looks like: docs/diagnostics-and-checks.md §11.9.
   const separation = transmittedAt[2] - transmittedAt[1];
   check(separation >= 35, `the micro's 40 ms separation time must be honoured, frames were ${separation} ms apart`);
   check(
