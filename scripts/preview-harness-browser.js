@@ -7,7 +7,7 @@
 // placeholder. Both are named in preview-harness.ts; read it before moving anything here.
 //
 // Why one harness at all, and what the two hand-kept copies had drifted into by the time
-// they were merged: docs/diagnostics-and-checks.md §11.9.
+// they were merged: docs/diagnostics-and-checks.md §11.10.
 //
 // ⚠️ Two kinds of string may not appear anywhere in these files, and
 // scripts/check-preview-harness.ts fails the build if one does. First, any token shaped like a
@@ -122,7 +122,7 @@ async function seed(imp, connectTheStore) {
 
   // ⚠️ The CALLER decides, because connect() is not idempotent and a second link applies
   // every heartbeat twice, for ever. A page whose entry point connects for itself passes
-  // false. docs/diagnostics-and-checks.md §11.9 has what the double link cost.
+  // false. docs/diagnostics-and-checks.md §11.10 has what the double link cost.
   if (connectTheStore) {
     store.connect();
     await new Promise(resolve => setTimeout(resolve, 0));

@@ -50,7 +50,7 @@ const SCENE = SCENES[SCENE_NAME];
  * A plain literal, and it has to stay one: check-preview-fixtures.ts splices this declaration
  * into WRITE_STATUS, READ_STATE and LIFETIME_READ to type-check them, which needs a literal —
  * and all three capture the same REFERENCE, which is why each page applies its scene by mutating
- * this object rather than by building a different one. docs/diagnostics-and-checks.md §11.9.
+ * this object rather than by building a different one. docs/diagnostics-and-checks.md §11.10.
  */
 const GATE = { safe: true, blockers: [], chargingEvidence: null, checks: [] };
 

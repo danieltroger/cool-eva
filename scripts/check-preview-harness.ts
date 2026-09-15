@@ -12,7 +12,7 @@ import { HARNESS_PLACEHOLDER, PAGE_CONTRACT, harnessParts, mountsTheWholeDashboa
 // "what am I waiting for" argument, after an unchanging timeout message hid a broken preview for
 // twelve days — and found the other still carrying that exact sentence, dead. Nothing noticed for
 // three weeks, because nothing was looking. By the time #170 merged the two harnesses there were
-// seven live disagreements between the copies; docs/diagnostics-and-checks.md §11.9 lists them.
+// seven live disagreements between the copies; docs/diagnostics-and-checks.md §11.10 lists them.
 //
 // After the merge, a name declared in both templates IS a copy, and a name a template declares
 // that the harness already declares IS a copy — so this needs no threshold and no judgement.
@@ -154,7 +154,7 @@ for (const [file, names] of templateNames) {
 // message. A second `function` declaration is legal there and the last one quietly wins, and so
 // does a second assignment to a `window.` property — which is `window.fetch` and
 // `window.WebSocket`, the two most load-bearing names in the whole harness. The parse matrix
-// behind this paragraph is in docs/diagnostics-and-checks.md §11.9.
+// behind this paragraph is in docs/diagnostics-and-checks.md §11.10.
 const seen = new Map<string, string>();
 for (const part of parts) {
   for (const { name } of part.declarations.filter(declaration => declaration.silent)) {

@@ -580,7 +580,7 @@ The checks predate the runner and were written as scripts, because that is what 
 
 **Each check gets its own process.** They are top-level scripts that do their work at import time and report failure with `process.exit(1)`. Imported into one process, the first failure would take the runner down with it and every later check would go unreported — the opposite of what a red build should tell you. Separate processes also keep their module state apart.
 
-**No bike — and no waiting for one.** Nothing in the suite opens a CAN socket. `socketcan` is imported at runtime in exactly one place, `src/can/socket.ts`, which none of these reach; everywhere else it is `import type`, which type stripping removes before Node ever sees it. That is why the suite runs on macOS and on an Actions runner, neither of which has a `can0`. `CHECK_TIMEOUT_MS` (120 s) is the guard against that quietly changing: a check that did reach for hardware would mostly not fail — it would sit waiting on a bus that is not there — so a check that stops producing a verdict is counted as one that failed. The whole suite runs in under ten seconds today — most of it `check-fan-curve.ts` waiting out a 1500 ms kick-start and two staleness windows in real time, on a tenth of a second of CPU — so the timeout is not a performance budget.
+**No bike — and no waiting for one.** Nothing in the suite opens a CAN socket. `socketcan` is imported at runtime in exactly one place, `src/can/socket.ts`, which none of these reach; everywhere else it is `import type`, which type stripping removes before Node ever sees it. That is why the suite runs on macOS and on an Actions runner, neither of which has a `can0`. `CHECK_TIMEOUT_MS` (120 s) is the guard against that quietly changing: a check that did reach for hardware would mostly not fail — it would sit waiting on a bus that is not there — so a check that stops producing a verdict is counted as one that failed. The whole suite runs in about **90 s** of wall clock on a laptop and about **16 s** of CPU — measured 2026-09-15 at 92.6 s / 16.1 s — so it is mostly checks sitting still, waiting out kick-starts and staleness windows in real time. The slowest three are `check-fan-fun.ts` at 7.9 s, `check-fan-curve.ts` at 4.0 s and `check-fan-ordering.ts` at 1.9 s, the last two each spending a real `KICK_START_MS`. ⚠️ This said "under ten seconds … on a tenth of a second of CPU" until #266, which is wrong by an order of magnitude on both — a reminder that a number in prose is only as good as the last time somebody measured it. The timeout is per check, not for the suite, and is still not a performance budget.
 
 `SelfCheck.args` carries fixed flags a script needs to be a check at all — not argument forwarding, but part of the entry, so what runs is what the `covers` line claims and cannot drift with however the suite happens to be invoked. `generate-grafana-dtc.ts` is why it exists: with no flag it REWRITES the dashboard and exits 0, which under `npm test` would be a check that silently edits a tracked file and never fails. `--check` is what makes it report instead of act.
 
@@ -603,7 +603,7 @@ Only checks that pass or fail on their own, with no bike and no local-only files
 
 `scripts/can-capture/` is neither a check nor a fixture: it is the raw-capture unit and shell script that RUN ON THE PI, tracked here since 2026-09 so git is their revert path. `scripts/check-can-capture.ts` guards them; `install.ts` is the installer, split out when `setup-service.ts` passed 400 lines with a second responsibility; and `unit.ts` holds the unit text as a pure function so both of those can drive it — `setup-service.ts` installs a service the moment it is imported, so nothing can import _it_ from a check.
 
-`captured-dtc-transfer.ts`, `captured-vcu-records.ts`, `freeze-frame-fixtures.ts` and `simulated-vcu-micro.ts` are fixtures and a test double: data and a stand-in bus, not checks. The replay scripts in `CHECKS` are what read them. `freeze-frame-fixtures.ts` is the one that is CONSTRUCTED rather than captured — what the check built on it proves is correspondingly narrower.
+`captured-dtc-transfer.ts`, `captured-vcu-records.ts`, `freeze-frame-fixtures.ts`, `simulated-vcu-micro.ts` and `simulated-pwm-sysfs.ts` are fixtures and test doubles: data, a stand-in bus and a stand-in `/sys/class/pwm`, not checks. `simulated-pwm-log.ts` reads the last one's call log, and **`fan-io-fence.ts`** is what redirects `src/fan/`'s `fs/promises` and `child_process` at it — an allow-list whose deny arm throws, so a check that runs the real `openFanPwm()` cannot reach a real `/sys/class/pwm` and drive the bike's IBT-2 when a specifier stops matching. The replay scripts in `CHECKS` are what read them. `freeze-frame-fixtures.ts` is the one that is CONSTRUCTED rather than captured — what the check built on it proves is correspondingly narrower.
 
 ### 11.3 Provenance of the fixtures
 
@@ -954,7 +954,52 @@ The dashboard has no build step and no VDOM, and until #253 nothing in this repo
 
 ⚠️ **And one surface it cannot see at all, which is worth knowing before trusting a green run.** `.sheet` is `position: fixed; inset: 0`, so a fixed subtree contributes nothing to the document's scrollable overflow — `body.scrollWidth` and `innerWidth` can never witness a menu sheet that is too wide. That is not a small gap: the sheet is where `style.css` worries about 390 px most (`.action-note.output`, `views/vcu-write.js`'s note about "pushing a 390 px sheet sideways", the 269-option select). Closing it means opening the sheet from the check and asserting on `.sheet-body` — not done, deliberately out of #253's scope, and written here so the next reader does not mistake the ✓ for one that covers it.
 
-### 11.9 One harness, two pages — what the copies had drifted into
+### 11.9 Time as an oracle: what load can and cannot move
+
+A check that measures a real duration and asserts on it can go red because the laptop was busy. `scripts/check-virtual-clock.ts` did exactly that once (#258) and did not reproduce; three more sites were recorded in #126. This is where the reasoning lives, because the useful part is not "those checks were fixed" but **which comparisons a scheduler can invert and which it cannot.**
+
+**The rule.** A stall delays things; it never makes them early. So a bound is safe when load pushes the measurement _away_ from the boundary, and unsafe when it pushes it _across_:
+
+| shape                                                         | safe? | why                                 |
+| ------------------------------------------------------------- | ----- | ----------------------------------- |
+| a lower bound on a measured duration (`separation >= 35`)     | ✅    | a stall can only make the gap wider |
+| an upper bound on one (`separation < 60`)                     | ❌    | a stall walks straight through it   |
+| two independently measured durations compared (`a < b`)       | ❌    | load inflates them unequally        |
+| a count, an ordering, or a name                               | ✅    | no amount of load changes a count   |
+| a bound read from the same clock, _after_ the value it bounds | ✅    | the bracket only widens             |
+
+That last row is what `scripts/check-fan-curve.ts` §10 uses. The reading is handed to the store already `AGE_JUMP_MS` old through `recordArrival()`, and the age it reports back is bracketed between that and `AGE_JUMP_MS + since(theSameMark)`. Both bounds hold at any stall — the lower one because the reconstruction inside `sampleTemperature()` subtracts a gap that is itself inside the interval being measured, the upper one because the bound is read after the value. What it replaced was a _ratio_ — six ticks of real time against one — which load inflates on both sides at once.
+
+**Which orderings real timers keep under starvation.** The differential in `check-virtual-clock.ts` §1 compares the fake clock against real `setTimeout`. Real timers are only an oracle when what is asked of them is scheduling-independent, so each scenario was measured with the event loop deliberately blocked (a synchronous busy-wait at the start of the run), at 5, 12, 18, 25, 30, 45 and 60 ms:
+
+| scenario | invariant? | why |
+| --- | --- | --- |
+| `sameInstantTimers` | ✅ | one due time, so insertion order decides, and a stall does not reorder insertions |
+| `promiseChainBetweenTimers` | ✅ | Node drains microtasks between two timer callbacks, whatever the delay |
+| `asyncCallbackAwaitingSleep` | ✅ | the sleep is armed _inside_ the callback, so it is due after the timer it must not block |
+| `nestedArming` at +5 | ❌ | **inverts from a 15 ms stall up**, which is derivable rather than merely measured |
+| `nestedArming` at +15 | ✅ | due at ≥ 25 against 20, by construction |
+| `zeroDelayFirst` | ✅ | `setTimeout(fn, 0)` and `setTimeout(fn, 1)` share a deadline; insertion order decides |
+
+`nestedArming` is the interesting one. A timer armed from inside a callback is due from when that callback **actually ran**, so its deadline slides with the stall while an already-armed timer's does not. With a stall of `S` the outer runs at `S`, so the nested timer is due at `S + 5` against the 20 armed up front — and it loses the moment `S + 5 ≥ 20`, i.e. **from S = 15**, the tie at exactly 15 going to the pre-armed timer because libuv orders equal deadlines by start id. Measured, that is exactly where it goes: identical at 12, 13 and 14 ms, inverted at 15 and at everything above. At +15 the nested one is due at `S + 15 ≥ 25` against 20 and no stall can reorder them, because a stall only ever pushes it further out. Which means the differential can ask the question **in one direction only** — that a nested arm does not jump _ahead_ of an earlier deadline. The other half, that it is queued by due time rather than appended, is asserted against the fake clock alone in §2, where there is no scheduler to interfere.
+
+**The second failure mode, which the ordering fix does not touch.** The oracle used to sleep `byMs + 10` and compare whatever had been recorded. A timer armed _mid-scenario_ whose deadline lands past that window is simply missing, and the comparison fails on a short list rather than a wrong one. Measured, with the loop blocked from t≈1 to t≈46 ms:
+
+```
+real (advance returned): ["outer","armed up front for 20"]
+real 50 ms later:        ["outer","armed up front for 20","armed from inside the outer"]
+```
+
+Both `nestedArming` and `asyncCallbackAwaitingSleep` lose an event this way. Pre-armed timers cannot: the oracle's own sleep is a timer too, with a later deadline, so Node runs them first however long the stall. The fix is that `advance()` waits for **what it armed** — a count that load can only make slower — rather than for a duration.
+
+**The stalled third pass.** Every scenario is then run again with the loop deliberately blocked for longer than any delay it arms, and must produce the same order. That is the reproduction above kept as a regression test: it is what would have caught #258 before it shipped, and it is what keeps the table in this section true when somebody adds a sixth scenario.
+
+**Seams, and why each one is also a bypass.** Three exist for these checks: `FreezeFrameReadOptions.now` (§5), `recordArrival()` in `src/can/signals.ts`, and `arm(key, reading)` in `public/lib/arming.js`. Each removes the machine from a measurement, and each would also switch off the thing it measures if production used it — a backdated arrival defeats every freshness gate, an injected `now` defeats a deadline, an injected reading defeats a dwell. So each is guarded by a scan asserting no shipping file calls it — and **a scan whose expected answer is zero cannot fail on its own**, so each needs a positive control as well. They do not all carry the same one, and the difference is worth knowing:
+
+- `recordArrival()` and `FreezeFrameReadOptions.now` share `scripts/seam-scan.ts`. It builds its pattern from the imported symbol, so a rename retargets it instead of leaving it behind; it strips `//` comments, so the pointer comment this repo asks you to leave at the code is not read as a call; and it reports how many files it read. Their controls assert that count and put a LITERAL through the matcher — never the check file's own text, which contains the seam's name in prose and would satisfy a self-scan even after the function had been renamed out from under it.
+- `arm(key, reading)` in `check-arming.ts` §7 is rename-proof for a different reason: its pattern matches eleven real call sites and the check asserts it found at least eight, so a rename drops that to zero and goes red. What nothing there asserts yet is that the predicate separating an injecting call from an ordinary one still recognises either — issue #271.
+
+### 11.10 One harness, two pages — what the copies had drifted into
 
 `scripts/build-service-preview.ts` builds two pages from two templates, and until #170 each carried its own copy of the harness: the fixtures, the stubbed `fetch`, the stubbed `WebSocket`, the module registry and the shims for `location`. The copy was created by `85b8643`, which made `app-preview-template.html` out of `service-preview-template.html`. It has now been merged into `scripts/preview-harness-{browser,bike,write,pi}.js`, injected at one placeholder by the builder.
 

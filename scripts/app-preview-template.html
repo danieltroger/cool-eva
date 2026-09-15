@@ -342,7 +342,7 @@ __MODULES__
       // both preview pages share. Everything ABOVE this line is what the harness needs from this
       // page, and everything below is what only this page serves; scripts/preview-harness.ts
       // names both halves. What the two hand-kept copies had drifted into before they were
-      // merged: docs/diagnostics-and-checks.md §11.9.
+      // merged: docs/diagnostics-and-checks.md §11.10.
 __HARNESS__
 
       /** The owner's expected-fault list, as a Pi would hold it. Written by the toggle below. */
@@ -663,7 +663,7 @@ __HARNESS__
       (async () => {
         const imp = instantiate();
         // false: app.js connects the store itself when it is imported below, and connect() is
-        // not idempotent. docs/diagnostics-and-checks.md §11.9.
+        // not idempotent. docs/diagnostics-and-checks.md §11.10.
         await seed(imp, false);
         imp("app.js");
         document.documentElement.dataset.previewReady = "yes";

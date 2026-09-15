@@ -64,7 +64,7 @@ That is a real hazard here rather than a theoretical one, because this fan sits 
 - **The mirror rule has a third case: a failed enable-drop.** If `setBridgeEnabled(false)` throws — a missing `pinctrl`, or `execFile` failing to fork on a 512 MB Zero 2 W under memory pressure — pressing on and dropping the output anyway _constructs_ the braked state out of the error path. So `goIdle()` drops the output only once `context.bridgeEnabled` is genuinely false, reports the failure, and leaves the fan running. A fan still spinning is strictly safer than a fan braked.
 - `openFanPwm()` pulls both enables LOW as its **first** statement, before it has even looked for the chip, because bring-up can begin under a live bridge: a `SIGKILL` leaves the enables HIGH and the unit restarts the process five seconds later (§8).
 
-The orderings are the whole safety property of `src/fan/control.ts`. If you edit that file, that is the thing not to break — and `scripts/check-fan-ordering.ts` is what notices, by driving a recording fake `FanPwm` through `startFanControl()`.
+The orderings are the whole safety property of `src/fan/control.ts`. If you edit that file, that is the thing not to break — and `scripts/check-fan-ordering.ts` is what notices, by driving the **real** `openFanPwm()` through `startFanControl()` over a simulated sysfs (`scripts/simulated-pwm-sysfs.ts`) which evaluates the braked state after **every** write and every pin change. ⚠️ It used to compare call indices instead, and `findIndex` compares _first_ occurrences: `duty=100 → output=true → bridge=true → duty=0 → bridge=true` enters the braked state and leaves it again, and passed all three ordering assertions intact (#119). The bring-up order inside `openFanPwm()` itself — which nothing guarded at all until then — is `scripts/check-fan-pwm-bringup.ts`.
 
 ## 4. The policy
 
@@ -104,6 +104,20 @@ Two consequences of the kick worth stating anyway:
 
 - The kick duty is deliberately **not** `MAX_DUTY_PERCENT`. If the cap is ever lowered to hold an average voltage (below), the kick must stay at 100 %: whatever a stiff rotor needs to break away, it needs at full torque, and the retraction above does not change that.
 - A command arriving mid-kick only moves the target. The kick runs its full length or it is not a kick, and the timer lands on whatever the target is by then. Its length is checked with `since()` from `src/monotonic.ts` rather than trusted from the timer, because this process steps its own wall clock from GPS.
+
+#### ⚠️ Negative result: `goIdle()`'s `clearKickTimer()` has no behavioural consequence
+
+Recorded because it cost a session to establish and would otherwise be re-derived. #119 listed "removing `clearKickTimer()` from `goIdle()`" as a mutation nothing catches. It is not caught **because there is nothing to catch** — the deletion changes no observable behaviour:
+
+- the stale timer fires into `finishKickStart()`, which returns early on `phase !== "kick-start"`;
+- where a **new** kick is already running, `armKickTimer()` calls `clearKickTimer()` before arming, so the stale handle is cancelled there and the new kick still ends on time;
+- a stale `finishKickStart()` with no newer kick pending cannot leave two timers behind: `context.kickTimer` is only `null` after one that has already fired. (It **can** orphan a newer one that was armed while it sat queued — that is #265, and it happens with _and_ without this call, so it is not what the mutation is about.)
+- a late `finishKickStart()` is queued behind `runExclusively()` and early-returns the same way;
+- `src/index.ts` calls `process.exit(0)` immediately after `await fanController.stop()`, so it never fires into a torn-down controller and never delays shutdown either.
+
+What is left is a `setTimeout` that outlives the command. `scripts/check-fan-ordering.ts` §6 asserts it is disarmed, by counting `"Timeout"` entries in `process.getActiveResourcesInfo()` — **a leak check, not a safety property**, and it is labelled so in the file. Do not read it as guarding the brake.
+
+Separately and not a differentiator: `finishKickStart()` sets `context.kickTimer = null` unconditionally, before its phase check, so a stale one still queued when a newer kick arms a timer orphans that handle and its own re-arm then leaves two live timers. Harmless today — the loser early-returns — and it happens with **and** without the `clearKickTimer()` call.
 
 ### Minimum running duty: 30 %
 
@@ -485,9 +499,55 @@ echo 25000 | sudo tee /sys/class/pwm/pwmchip0/pwm0/duty_cycle  # ns → 50 %
 echo 1     | sudo tee /sys/class/pwm/pwmchip0/pwm0/enable
 ```
 
-**`period` first on a channel you have just exported.** A fresh export has `period = 0`, and `__pwm_apply()` rejects _any_ `duty_cycle` write against a zero period with `EINVAL` — the check sits ahead of its "nothing changed, return 0" early return, so even `echo 0 > duty_cycle` fails. `pwm-bcm2835` defines no `.get_state`, so that zero is never refreshed from the hardware; it stays until something writes a period.
+**`period` first on a channel you have just exported.** A fresh export has `period = 0`, and on `rpi-6.6.y` the kernel rejects _any_ `duty_cycle` write against a zero period with `EINVAL` — so even `echo 0 > duty_cycle` fails. `pwm-bcm2835` defines no `.get_state`, so that zero is never refreshed from the hardware; it stays until something writes a period. Nothing in `src/fan/pwm.ts` ever unexports, so getting this wrong is not a first-boot problem — it is **a fan that is inert on every boot**, behind a service that starts normally, on a fan with no tacho.
 
-The opposite order — `duty_cycle` first — is only right when the period is _shrinking_ under a live duty, since the kernel also rejects a duty longer than the period it is written against. That case cannot arise here: `PWM_PERIOD_NS` is a constant, so a channel an earlier run left exported already holds exactly it. `src/fan/pwm.ts` reads the period it gets back from the export check (below) and picks the order from it.
+#### The kernel, quoted — and ⚠️ it is version-scoped
+
+This used to be asserted here as a paraphrase with no citation, which is how the claim below came to be stated flatly when it is true of one kernel and false of the next. `drivers/pwm/core.c` in the Raspberry Pi fork, read verbatim. ⚠️ Pinned to the commits actually read — a branch name moves, and the line numbers below stop meaning anything when it does:
+
+**`rpi-6.6.y` at `bba53a117a4a`, `core.c:496-508`** — both rejections in one condition, and it sits **ahead of** the "nothing changed, return 0" comparison, which is the part that makes `echo 0` fail too:
+
+```c
+static int __pwm_apply(struct pwm_device *pwm, const struct pwm_state *state)
+{
+	struct pwm_chip *chip;
+	int err;
+
+	if (!pwm || !state || !state->period ||
+	    state->duty_cycle > state->period)
+		return -EINVAL;
+
+	chip = pwm->chip;
+
+	if (state->period == pwm->state.period &&
+	    state->duty_cycle == pwm->state.duty_cycle &&
+```
+
+The sysfs path really does reach it: `drivers/pwm/sysfs.c:83` `duty_cycle_store` reads the current state, sets `state.duty_cycle`, and applies the whole thing — as do `period_store` and `enable_store`, so one predicate covers all three writes.
+
+**`rpi-6.12.y` at `53ee3102177a`, `core.c:144-190`** — both rejections are now gated on `enabled`, via a validity test that calls **any disabled state valid**:
+
+```c
+static bool pwm_state_valid(const struct pwm_state *state)
+{
+	/*
+	 * For a disabled state all other state description is irrelevant and
+	 * and supposed to be ignored. So also ignore any strange values and
+	 * consider the state ok.
+	 */
+	if (!state->enabled)
+		return true;
+```
+
+So on 6.12 a freshly exported channel is a _valid_ state, `echo 0 > duty_cycle` changes nothing, and it succeeds at the idempotence return. **The write order below is therefore held to 6.6, the stricter of the two** — the order has to be right on the strictest kernel the Pi may boot, and it is merely harmless on the looser one. `uname -r` says which you are on. Two traps for whoever checks this next: mainline `v6.6.87` calls the same function `pwm_apply_might_sleep` and has no `__pwm_apply` at all, and mainline `v6.12.9` carries this predicate **inverted** against its own comment (`if (state->enabled)`), where the fork does not — so checking against mainline will "correct" this section back to the wrong thing.
+
+⚠️ `pwm-bcm2835`'s own `.apply` has **not** been read. Everything above is the generic layer; what the driver does with a state the generic layer accepts is unverified here.
+
+#### Which order, and why there are two
+
+The opposite order — `duty_cycle` first — is right when the period is _shrinking_ under a live duty, since the kernel also rejects a duty longer than the period it is written against. `src/fan/pwm.ts` reads the period it gets back from the export check (below) and picks the order from it.
+
+⚠️ That branch is **zero-versus-non-zero, not ours-versus-not-ours.** This used to say the shrink case "cannot arise here, because `PWM_PERIOD_NS` is a constant". The constant is ours; the export is not. `exportChannel()` deliberately tolerates a channel _anything_ left behind, and nothing compares the period it reads back to `PWM_PERIOD_NS` — so a channel another tool exported at 1 ms, or one left by a build with a different constant, is exactly the shrink case. **Lowering `PWM_PERIOD_NS` reaches it on the next restart**, which makes it this repo's own next edit rather than a hypothetical. `scripts/check-fan-pwm-bringup.ts` §5 is the fixture, and swapping that arm to period-first goes red there.
 
 Nothing here ever unexports the channel. Re-exporting an already-exported channel returns `EBUSY`, which the code treats as the routine restart case.
 

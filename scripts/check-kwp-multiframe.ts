@@ -233,27 +233,43 @@ check(
 {
   const transmittedAt: number[] = [];
   const startedAt = monotonicNow();
-  const transfer = startMultiFrameTransfer({
-    target: "A8",
-    requestPayload: encodeMultiFrameRequestPayload({ kind: "request-upload-freeze-frame-log" }),
-    send: () => transmittedAt.push(Math.round(since(startedAt))),
-    maxPayloadBytes: 256,
-    firstReplyTimeoutMs: 60,
-    transferTimeoutMs: 60,
-    requestFlowControlTimeoutMs: 20,
-  });
-  // `30 00 28` — clear to send, unlimited block size, 40 ms separation.
-  setTimeout(() => transfer.handleFrame(Buffer.from(parseHexFrame("F1 30 00 28"))), 2);
-  const result = await transfer.finished;
+  let result: MultiFrameResult;
+  const capture = captureFlowControlWarnings();
+  try {
+    const transfer = startMultiFrameTransfer({
+      target: "A8",
+      requestPayload: encodeMultiFrameRequestPayload({ kind: "request-upload-freeze-frame-log" }),
+      send: () => transmittedAt.push(Math.round(since(startedAt))),
+      maxPayloadBytes: 256,
+      firstReplyTimeoutMs: 60,
+      transferTimeoutMs: 60,
+      requestFlowControlTimeoutMs: 20,
+    });
+    // `30 00 28` — clear to send, unlimited block size, 40 ms separation.
+    setTimeout(() => transfer.handleFrame(Buffer.from(parseHexFrame("F1 30 00 28"))), 2);
+    result = await transfer.finished;
+  } finally {
+    // finally, not a call at the end: a throw would otherwise leave console.warn
+    // monkey-patched for every later section, swallowing whatever they report.
+    capture.release();
+  }
   check(transmittedAt.length === 3, `all three request frames should go out, got ${transmittedAt.length}`);
   check(
     result.kind === "timeout" && result.stage === "first-reply",
     `and then wait for a reply, got ${describe(result)}`
   );
-  // The gap between the two consecutive frames is what the micro asked for. A
-  // stale timer firing at 20 ms would have sent the second one early.
+  // ⚠️ THE ASSERTION THAT SETTLES IT IS THE WARNING COUNT, not the gap. A stale timer
+  // firing mid-send calls onRequestFlowControlTimeout, which warns and sets the separation
+  // time to 0 — so "it did not fire" is a COUNT, and no amount of load can change a count.
+  // The gap stays as the second half, in the direction load cannot invert: a scheduler can
+  // only make two frames further apart, never closer. Why an upper bound is not the fix it
+  // looks like: docs/diagnostics-and-checks.md §11.9.
   const separation = transmittedAt[2] - transmittedAt[1];
   check(separation >= 35, `the micro's 40 ms separation time must be honoured, frames were ${separation} ms apart`);
+  check(
+    capture.warnings.length === 0,
+    `⚠️  the answered flow-control window must not fire: ${capture.warnings.join(" / ")}`
+  );
 }
 
 console.log("✓ the 0x35 request segments to the frame captured on 2026-08-08, and round-trips");
@@ -460,8 +476,25 @@ for (const sendsRequestFlowControl of [true, false]) {
   });
   bus.channel.addListener("onMessage", message => client.handleFrame(message.id, message.data));
 
-  const read = await startFreezeFrameLogRead({ client, paceMs: 1 }).finished;
+  const capture = captureFlowControlWarnings();
+  let read: Awaited<ReturnType<typeof startFreezeFrameLogRead>["finished"]>;
+  try {
+    read = await startFreezeFrameLogRead({ client, paceMs: 1 }).finished;
+  } finally {
+    capture.release();
+  }
   const label = sendsRequestFlowControl ? "with flow control" : "without flow control";
+  // ⚠️ THE POSITIVE CONTROL FOR §2, and the first assertion in this file that the
+  // no-flow-control path RAN rather than that its blocks arrived. §2 asserts this warning
+  // is absent when the micro answers; a capture that had stopped catching anything would
+  // pass that forever. Here the same capture must SEE it on the half where the micro stays
+  // silent — and must not on the half where it answers, which is §2's property again on a
+  // different path. One capture, both directions.
+  check(
+    capture.warnings.length === (sendsRequestFlowControl ? 0 : 1),
+    `${label}: the flow-control timeout should have warned ${sendsRequestFlowControl ? 0 : 1} time(s), ` +
+      `saw ${capture.warnings.length}`
+  );
   check(
     read.completion === "finished",
     `${label}: the log read should finish, got "${read.completion}" ${read.reason}`
@@ -738,6 +771,39 @@ console.log(
 );
 
 /** How a transfer ended, as one short phrase for an assertion message. */
+/** One console.warn capture in flight: what it has seen, and how to give console.warn back. */
+interface WarningCapture {
+  warnings: string[];
+  release: () => void;
+}
+
+/**
+ * Collects the one warning `onRequestFlowControlTimeout` emits, and lets everything else through.
+ *
+ * ⚠️ The observable this file's flow-control assertions actually rest on. Whether a stale
+ * timer fired is a COUNT — it either called that function or it did not — while the frame
+ * spacing it corrupts is a duration that a loaded laptop can stretch either way. The
+ * warning is the only console.warn in src/vcu/multiframe-transfer.ts, and it names the
+ * function that emitted it, so this matches on that rather than on its wording.
+ */
+function captureFlowControlWarnings(): WarningCapture {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const line = args.map(String).join(" ");
+    // The FUNCTION NAME, which the warning quotes in its "See … for why" clause, and not its
+    // opening words: a reworded warning would silently stop matching and leave §2's count
+    // assertion vacuous, while a renamed function takes this string with it in any rename
+    // that touches the call site at all.
+    if (line.includes("onRequestFlowControlTimeout")) {
+      warnings.push(line);
+      return;
+    }
+    realWarn(...args);
+  };
+  return { warnings, release: () => void (console.warn = realWarn) };
+}
+
 function describe(result: MultiFrameResult): string {
   switch (result.kind) {
     case "payload":

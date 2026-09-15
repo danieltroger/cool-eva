@@ -254,8 +254,9 @@ check(
 
 // --- 6. End to end: the gate, the throttle and the bridge ---------------------
 //
-// The recording fake scripts/check-fan-ordering.ts and scripts/check-fan-curve.ts use,
-// driven by a fake bus rather than by a curve.
+// The recording fake scripts/check-fan-curve.ts uses, driven by a fake bus rather than by
+// a curve. (scripts/check-fan-ordering.ts drives the real openFanPwm() instead, over a
+// simulated sysfs — the bridge is its subject, not fun mode's.)
 
 console.log("\n6. the loop, end to end, against a recording bridge");
 

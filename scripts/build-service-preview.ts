@@ -309,7 +309,7 @@ const serverConstants = JSON.stringify(serverFacts());
 // The harness the two templates share, read out of scripts/preview-harness*.js rather than
 // written into each of them. What the two hand-kept copies had drifted into by the time they
 // were merged, and why this is one injection rather than one parameterised template:
-// docs/diagnostics-and-checks.md §11.9.
+// docs/diagnostics-and-checks.md §11.10.
 const harness = await previewHarnessSource();
 
 const html = template

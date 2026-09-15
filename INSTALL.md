@@ -68,11 +68,68 @@ sudo apt-get install -y nodejs
 node --version # expect v24.x
 ```
 
-Build tools for the native modules (better-sqlite3, socketcan):
+Build tools for the native modules (`better-sqlite3`, `socketcan`, `spi-device`):
 
 ```sh
 sudo apt-get install -y build-essential python3 git
 ```
+
+## 2.5. Swap — do this before the install, not after it
+
+Those three modules are compiled on the Pi, and the compile is memory-hungry. A Pi Zero 2 W has 512 MB and Raspberry Pi OS gives it 512 MB of swap, which is not reliably enough: the build gets OOM-killed, and what you see is a crash rather than anything that says "memory". #136 reports 3 GB as what worked. ⚠️ Treat 3072 as a generous number rather than a threshold: it is one owner's report on unknown hardware.
+
+**Which manager you have depends on the OS.** They share no configuration:
+
+```sh
+ls /etc/dphys-swapfile   # exists → Bookworm, use dphys-swapfile below
+ls /etc/rpi/swap.conf    # exists → Trixie, use rpi-swap below
+df -h /var               # you need the full size FREE — see the Trixie warning
+```
+
+⚠️ If **both** exist, use the Trixie route: `rpi-swap` replaces `dphys-swapfile` and an in-place OS upgrade can leave the old config file behind with nothing reading it. `dpkg -l rpi-swap` settles it.
+
+**Bookworm (`dphys-swapfile`).** Edit `/etc/dphys-swapfile` and set **both** of these:
+
+```sh
+CONF_SWAPSIZE=3072
+CONF_MAXSWAP=3072
+```
+
+⚠️ **`CONF_SWAPSIZE` alone gives you 2048 MB.** `CONF_MAXSWAP` defaults to 2048 and clamps the absolute value, not just the computed one — `dphys-swapfile(8)` says "maximal computed and absolute(!) values". Then:
+
+```sh
+sudo dphys-swapfile swapoff
+sudo dphys-swapfile setup    # prints the size it settled on — read it
+sudo dphys-swapfile swapon
+cat /proc/swaps              # confirm
+```
+
+**Trixie (`rpi-swap`).** Two preconditions, then a drop-in, then a reboot — `daemon-reload` is not enough:
+
+- ⚠️ **`/var` needs the full 3 GiB free**, which `df -h /var` above tells you. Unlike Bookworm, nothing clamps `FixedSizeMiB` down to fit: `rpi-resize-swap-file` runs `fallocate --posix --length 3072M`, and if that fails the script's `set -e` aborts the service — which the generated swap unit `Requires=`. **You end up with no swap at all**, which is worse than the 512 MB you started with. Pick a size that fits, or clear space first.
+- ⚠️ **`/etc/fstab` must have no swap line for `/var/swap`.** Both `rpi-swap` and systemd's own `fstab-generator` would write a unit called `var-swap.swap` into the same directory, and which one wins is a race. Check with `grep swap /etc/fstab`.
+
+```sh
+sudo mkdir -p /etc/rpi/swap.conf.d/
+sudo tee /etc/rpi/swap.conf.d/80-use-swapfile.conf > /dev/null <<'EOF'
+[Main]
+Mechanism=swapfile
+
+[File]
+FixedSizeMiB=3072
+EOF
+sudo reboot
+
+# After the reboot — confirm. An EMPTY result means the resize failed:
+swapon --show
+systemctl status rpi-resize-swap-file.service   # read this when it is empty
+```
+
+`Mechanism=swapfile` is load-bearing: the default is `auto`, which resolves to `zram+file`, where the file is only writeback storage for compressed RAM swap.
+
+🚨 **Never use `Mechanism=none` or `Mechanism=zram` to get `rpi-swap` out of the way.** `swap.conf(5)` says of `none`: _"Any existing swap file will be removed to free up disk space."_ It means it — either setting generates a unit whose body is `ExecStart=/bin/rm -f /%I`, and **your swap file is deleted**. The bike's own Pi is in a non-default state this recipe does not apply to as written; that case, and the two safe ways out of it, are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §2.
+
+3 GB is space and SD write wear you only need while compiling — turning it back down afterwards is fine.
 
 ## 3. Get the code
 
@@ -99,11 +156,32 @@ cd /home/pi/cool-eva
 ```sh
 cd /home/pi/cool-eva
 rm -f package-lock.json # IMPORTANT — see note below
-npm install             # builds better-sqlite3 + socketcan (~4 min)
+npm install             # builds better-sqlite3 + socketcan + spi-device (~4 min)
 
 # Verify the Linux-only native CAN module actually built:
 ls node_modules/socketcan/build/Release/can.node
 ```
+
+**Nothing extra is needed to let those compiles run.** npm has an allowlist for install-time lifecycle scripts, and on this project those scripts _are_ the native builds: **npm 12 and newer refuse to run them** unless they are allowlisted, leaving a tree with no `.node` files and a service that dies on `require`. The repo therefore **ships an `.npmrc`** with the four names. ⚠️ Its one cost: on npm older than 11.16.0 the key does not exist yet, so every npm command in this directory prints a cosmetic `npm warn Unknown project config "allow-scripts"`. Harmless — that band runs the scripts regardless.
+
+⚠️ **You already have an `.npmrc` here?** `git pull` refuses to overwrite an untracked file, **even one whose contents are identical** — so the dashboard's Update button will abort with "would be overwritten by merge" until you `rm .npmrc` (or merge your own lines into the committed one and commit them).
+
+⚠️ **Did the modules build?** npm warns either way and the difference is the phrase, not the tense: "install scripts **not yet covered** by allowScripts" — they **ran**, nothing is wrong. "install scripts **blocked** because they are not covered" — they did **not**.
+
+**If the modules did not build** — an install from a checkout predating the `.npmrc` — one command fixes it. A second `npm install` would say `up to date` and run nothing; `npm rebuild` is what runs the skipped builds:
+
+```sh
+npm rebuild
+```
+
+Only if you cannot get the `.npmrc` in place, fall back to the command from #136 and then rebuild:
+
+```sh
+npm approve-scripts better-sqlite3 socketcan spi-device usocket
+npm rebuild
+```
+
+⚠️ Second choice for a reason: `approve-scripts` writes a **version-pinned** `allowScripts` into `package.json`, which is tracked. That makes the Update button (`git pull --ff-only`) refuse on any commit changing a dependency range, and `package.json#allowScripts` then **silently supersedes** the repo's `.npmrc` for good — pinning that Pi to the versions it had that day. The version boundaries and the measurements are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §1.
 
 **WHY rm the lockfile:** `package-lock.json` is committed but generated on macOS, where socketcan (a Linux-only optionalDependency) is skipped. Installing on the Pi against that lockfile prunes the real native build and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan --force` will not fix it — it insists it's already up to date. The reliable fix is `rm package-lock.json && npm install` on the Pi.
 
@@ -192,6 +270,18 @@ sudo apt-get install -y avahi-daemon
 ```
 
 Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging.
+
+**Adding a second network (home Wi-Fi, an Airbnb) while sshed in over the first.** Don't use `nmcli device wifi connect` for this: it activates what it creates, which drops the session you are typing into. `nmcli connection add` only creates:
+
+```sh
+sudo nmcli connection add type wifi ifname wlan0 con-name "<ssid>" ssid "<ssid>" \
+  wifi-sec.key-mgmt wpa-psk wifi-sec.psk "<pw>" connection.autoconnect no
+sudo nmcli connection modify "<ssid>" connection.autoconnect yes   # once you're off this link
+```
+
+⚠️ The password is on the command line, so it lands in your shell history and is briefly visible in `ps`. Prefix the command with a space if your shell is set to skip those, or clear it from the history afterwards.
+
+`wpa-psk` is WPA2; a WPA3-only network wants `sae`. See [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §3.
 
 Endpoints: `/dl` (sealed ride-log download), `/waypoint` (Siri shortcut), `/status`, `/vcu-params` + `/params.html` (last VCU-param snapshot, never touches bus), `/fan` (cooling-fan duty and mode — only with `FAN_ENABLED=1`, otherwise a 404; a POST needs `X-Cool-Eva: fan`).
 

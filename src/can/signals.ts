@@ -157,6 +157,25 @@ export function defineSignals(list: SignalDef[]): void {
 }
 
 export function record(key: string, value: number, ts: number = Date.now()): void {
+  recordArrival(key, value, ts, monotonicNow());
+}
+
+/**
+ * The same, with the arrival mark stated rather than taken now.
+ *
+ * ⚠️ A BYPASS AS MUCH AS A SEAM, and a separate entry point rather than a fourth optional
+ * argument so it cannot be reached by forgetting one: a mark placed in the past ages a
+ * reading on the spot, which defeats every freshness gate built on `ageMs()` — `freshValue()`,
+ * the fan's grace, the service gate. No production caller may use it, and
+ * scripts/check-fan-curve.ts §10b asserts that rather than trusting it.
+ *
+ * It exists because ageing a signal by SLEEPING makes a check's verdict a measured ratio
+ * that load inflates. ⚠️ And it is not replaceable by backdating through `ts`:
+ * `monotonicNow() - (Date.now() - ts)` looks equivalent, needs no new export, and is a
+ * `Date.now()` difference — which ../gps/clock.ts steps with `date -u -s`, jumping every
+ * signal's age by the size of the step. docs/diagnostics-and-checks.md §11.9, issue #126.
+ */
+export function recordArrival(key: string, value: number, ts: number, arrivedAtMonotonic: number): void {
   if (!Number.isFinite(value)) return;
   const def = defs.get(key);
   const unit = def?.unit ?? "";
@@ -164,7 +183,7 @@ export function record(key: string, value: number, ts: number = Date.now()): voi
 
   // Always refresh live state for the dashboard.
   liveState.set(key, { value, unit, group, ts });
-  lastSeenMonotonic.set(key, monotonicNow());
+  lastSeenMonotonic.set(key, arrivedAtMonotonic);
 
   // Change-detection (against last *logged* value) for the DB.
   const prev = lastLogged.get(key);

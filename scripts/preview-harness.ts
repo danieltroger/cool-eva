@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 //
 // Why there is one harness rather than two hand-kept copies, what the copies had drifted into,
 // and what each of the differences between them turned out to be:
-// docs/diagnostics-and-checks.md §11.9.
+// docs/diagnostics-and-checks.md §11.10.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
