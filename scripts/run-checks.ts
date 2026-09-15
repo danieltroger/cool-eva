@@ -531,12 +531,34 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-fan-ordering.ts",
     covers:
       "the two orderings docs/fan-control.md §3 calls the whole safety property of src/fan/control.ts, driven " +
-      "through startFanControl() with a fake FanPwm that records its call sequence: that a start from rest writes " +
-      "the duty and enables the PWM output BEFORE the IBT-2's enables go HIGH, that a stop and the shutdown path " +
-      "both drop the enables BEFORE the output and the duty, and — the case that produced the check — that an " +
-      "enable-drop which FAILS leaves the PWM driving rather than zeroing it under a live bridge, since enables " +
-      "HIGH at 0 % turns both low sides on and brakes a rotor in a 270 km/h airstream. Nothing here needs a Pi: " +
-      "the fan has no tacho, so every one of these is invisible on the bike",
+      "through startFanControl() over a SIMULATED SYSFS rather than a fake FanPwm — so the real openFanPwm() and " +
+      "the production `openPwm` default are in the path: that a start from rest writes the duty and enables the " +
+      "PWM output BEFORE the IBT-2's enables go HIGH, that a stop and the shutdown path both drop the enables " +
+      "BEFORE the output and the duty, and that an enable-drop which FAILS leaves the PWM driving rather than " +
+      "zeroing it under a live bridge — in both pin orders, since a failure on the SECOND enable leaves the " +
+      "bridge half down and only a failure on the FIRST leaves both HIGH, which is the case where pressing on " +
+      "builds the brake out of the error path. The braked state is evaluated after EVERY write and pin change " +
+      "instead of being inferred from call indices, which compared first occurrences and passed a sequence that " +
+      "entered it and left again (#119). Plus the phase machine past the kick — that the drop-out to the target " +
+      "reaches the duty_cycle REGISTER and not merely controller.state(), and that a post-kick duty change is one " +
+      "duty write with no enable and no pinctrl — that a stop landing inside a kick-start is queued rather than " +
+      "interleaved into a bridge re-raised over a zeroed duty, and that a stop mid-kick disarms the kick timer. " +
+      "Nothing here needs a Pi: the fan has no tacho, so every one of these is invisible on the bike",
+  },
+  {
+    script: "scripts/check-fan-pwm-bringup.ts",
+    covers:
+      "src/fan/pwm.ts's bring-up, which nothing guarded at all until #119 — the real openFanPwm() run against a " +
+      "simulated /sys/class/pwm and `pinctrl` that reject what rpi-6.6.y's __pwm_apply() rejects: that the period " +
+      "is written BEFORE the duty on a freshly exported channel, where period reads 0 and every duty_cycle write " +
+      "against it is EINVAL — nothing unexports, pwm-bcm2835 has no .get_state, so the other order is a fan inert " +
+      "on EVERY boot behind a service that starts clean — and the duty before the period on a channel that has to " +
+      "SHRINK, which is the arm nothing reached while every fixture held the shipped 50 000 ns; that both enables " +
+      "go LOW as the first statement, because a SIGKILL plus Restart=on-failure begins bring-up under a live " +
+      "bridge; that the chip is discovered rather than hardcoded, preferring an SoC .pwm device link and WARNING " +
+      "when it had to guess; that EBUSY on re-export is the routine restart case; and that a channel udev never " +
+      "chowned and a missing pinctrl both fail with the setup step named. §1 mutation-tests the braked-state " +
+      "checker itself, since every other section reports against it",
   },
   {
     script: "scripts/check-preview-fixtures.ts",

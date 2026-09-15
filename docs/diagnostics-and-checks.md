@@ -603,7 +603,7 @@ Only checks that pass or fail on their own, with no bike and no local-only files
 
 `scripts/can-capture/` is neither a check nor a fixture: it is the raw-capture unit and shell script that RUN ON THE PI, tracked here since 2026-09 so git is their revert path. `scripts/check-can-capture.ts` guards them; `install.ts` is the installer, split out when `setup-service.ts` passed 400 lines with a second responsibility; and `unit.ts` holds the unit text as a pure function so both of those can drive it — `setup-service.ts` installs a service the moment it is imported, so nothing can import _it_ from a check.
 
-`captured-dtc-transfer.ts`, `captured-vcu-records.ts`, `freeze-frame-fixtures.ts` and `simulated-vcu-micro.ts` are fixtures and a test double: data and a stand-in bus, not checks. The replay scripts in `CHECKS` are what read them. `freeze-frame-fixtures.ts` is the one that is CONSTRUCTED rather than captured — what the check built on it proves is correspondingly narrower.
+`captured-dtc-transfer.ts`, `captured-vcu-records.ts`, `freeze-frame-fixtures.ts`, `simulated-vcu-micro.ts` and `simulated-pwm-sysfs.ts` are fixtures and test doubles: data, a stand-in bus and a stand-in `/sys/class/pwm`, not checks. The replay scripts in `CHECKS` are what read them. `freeze-frame-fixtures.ts` is the one that is CONSTRUCTED rather than captured — what the check built on it proves is correspondingly narrower.
 
 ### 11.3 Provenance of the fixtures
 

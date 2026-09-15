@@ -47,8 +47,9 @@ import {
 // near-miss that would be wrong only sometimes, which is the worst kind.
 //
 // The last section drives the real controller through a recording FanPwm, so it also
-// covers the running-phase duty changes that issue #119 records check-fan-ordering.ts
-// never reaches.
+// covers the running-phase duty changes — at the level of what the controller BELIEVES.
+// scripts/check-fan-ordering.ts §4 covers the same drop-out at the register, which is the
+// half a state() assertion cannot see.
 
 let failures = 0;
 
@@ -498,9 +499,10 @@ check("and 0 % maps to the stop position, not to the floor", stops[dutyStopIndex
 
 // --- 10. End to end: curve → auto → control → the bridge ---------------------
 //
-// The same recording fake scripts/check-fan-ordering.ts uses, but driven by the curve
-// rather than by a slider. This is the only place `applyDuty()` — the running-phase duty
-// change — is reached at all; issue #119 records that the ordering check never gets there.
+// A recording FanPwm driven by the curve rather than by a slider. ⚠️ The assertions below
+// are on controller.state(), so a mutant that updates the bookkeeping without writing the
+// register passes here — scripts/check-fan-ordering.ts §4 is what catches that one, by
+// asserting the duty_cycle a simulated sysfs actually received.
 
 console.log("\n10. the loop, end to end, against a recording bridge");
 

@@ -62,13 +62,18 @@ export async function openFanPwm(): Promise<FanPwm> {
   const channelPath = `${chipPath}/pwm${PWM_CHANNEL}`;
   const existingPeriodNs = await exportChannel(chipPath, channelPath);
 
-  // Period FIRST on a freshly exported channel, where it reads 0: __pwm_apply() rejects
-  // every duty_cycle write against a zero period with EINVAL, ahead of its "nothing
-  // changed, return 0" early return — so even writing 0 fails. pwm-bcm2835 defines no
-  // .get_state, so nothing ever refreshes that zero from the hardware, and the export
-  // survives a restart, which makes the failure permanent rather than first-boot only.
-  // Duty first is right only when the period SHRINKS under a live duty, which cannot
-  // happen here: PWM_PERIOD_NS is a constant, so an already-exported channel holds it.
+  // Period FIRST on a freshly exported channel, where it reads 0: on rpi-6.6.y
+  // __pwm_apply() rejects every duty_cycle write against a zero period with EINVAL, ahead
+  // of its "nothing changed, return 0" early return — so even writing 0 fails.
+  // pwm-bcm2835 defines no .get_state, so nothing refreshes that zero, and nothing here
+  // unexports, which makes the failure permanent rather than first-boot only. ⚠️ Version
+  // -scoped: rpi-6.12.y gates the same rejection on `enabled` and ACCEPTS that write, so
+  // this order is held to the stricter kernel. docs/fan-control.md §5 quotes both.
+  //
+  // Duty first is right when the period SHRINKS under a live duty. That is not this
+  // service's own restart — PWM_PERIOD_NS is a constant — but nothing here compares the
+  // read-back period to it, so a channel another tool, or a build with a different
+  // constant, left exported is exactly that case. scripts/check-fan-pwm-bringup.ts §5.
   if (existingPeriodNs === 0) {
     await writeAttribute(channelPath, "period", String(PWM_PERIOD_NS));
     await writeAttribute(channelPath, "duty_cycle", "0");
