@@ -4,7 +4,7 @@
   "description": "Telemetry for a watercooled Energica Eva Ribelle: CAN/OBD-II + coolant probes → sealed ride log, live dashboard, Grafana",
   "main": "index.js",
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

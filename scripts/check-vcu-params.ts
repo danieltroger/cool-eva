@@ -2776,11 +2776,10 @@ console.log(
 /**
  * Drives the real client against a simulated A9 and A8.
  *
- * The session window is set SHORTER than the client's own idle limit on purpose, so
- * the session expires while the client still believes it is open. That is the
- * failure the real bus produces when a sweep pauses — a read that simply vanishes —
- * and the retry that recovers it is the one piece of logic here with no other way
- * to be checked short of riding to the garage.
+ * Partway through, the micro's session is expired behind the client's back, so it goes on
+ * believing the session is open. That is the failure the real bus produces when a sweep
+ * pauses — a read that simply vanishes — and the retry that recovers it is the one piece
+ * of logic here with no other way to be checked short of riding to the garage.
  */
 async function checkTransport(): Promise<void> {
   const bus = simulateVcuMicros([
@@ -2793,7 +2792,6 @@ async function checkTransport(): Promise<void> {
         [259, parseHexBytes("00 E1")],
       ]),
       silentIndices: [1],
-      sessionIdleMs: 400,
     },
     {
       target: "A8",
@@ -2893,9 +2891,15 @@ async function checkTransport(): Promise<void> {
     "interleaved reads: one must be reported as not-sent, not given the other's reply"
   );
 
-  // Long enough for the 400 ms session to lapse while the client's 1500 ms idle
-  // limit still thinks it is open, so recovery has to come from the retry.
-  await new Promise(resolve => setTimeout(resolve, 700));
+  // The session lapses while the client's own 1500 ms idle limit still thinks it is open,
+  // so recovery has to come from the retry.
+  //
+  // ⚠️ One real-time condition survives and is worth knowing when this goes red: the ping
+  // stamps `lastExchangeAt`, and the read must follow it inside SESSION_IDLE_LIMIT_MS
+  // (1500 ms, src/vcu/kwp-client.ts) or the client re-opens up front and the cost is 2
+  // rather than 3. It is two statements away, which is as wide as that budget gets.
+  await client.ping("A9");
+  bus.expireSession("A9");
   const sentBefore = bus.sentRequests.length;
   const recovered = await client.readParameter("A9", 259);
   expect(recovered.status === "read", `a silently-expired session should be recovered, got ${recovered.status}`);

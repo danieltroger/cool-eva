@@ -284,15 +284,29 @@ The whole path from a ride to a chart, on the laptop. Grafana reads a plaintext 
 # 1. park within wifi range and pull the sealed log off the bike
 curl -O http://cool-eva.local/dl        # or just open http://cool-eva.local/dl on your phone
 
-# 2. decrypt it into the file the datasource expects. Needs the PRIVATE key
-#    from step 6 of Setup, in the current directory.
-node --experimental-strip-types scripts/decrypt-log.ts cool-eva-2026-08-01.celog --out rides.db
+# 2. import it. Needs the PRIVATE key from step 6 of Setup, in the current directory.
+#    Decrypts into a staging file, puts back the waypoints a rebuild would drop, builds
+#    the route map's track, and only then replaces rides.db. Measured end to end at
+#    3 min 55 s for 26 files / 45.9 M readings / a 2.5 GB result; it scales with the
+#    archive, not with what is new, because a /dl dump contains all of it.
+node --experimental-strip-types scripts/import-ride-log.ts dl --out rides.db
 
 # 3. Grafana at http://localhost:3000 — no login, dashboards already provisioned
 docker compose up -d
 ```
 
-The datasource points at `/repo/rides.db` (`grafana/provisioning/datasources/sqlite.yml`), which is this repo's directory mounted into the container — so `rides.db` must sit at the repo root. Decrypt more `.celog` files into the same `rides.db` later and they append; every panel says **No data** until step 2 has run at least once.
+The datasource points at `/repo/rides.db` (`grafana/provisioning/datasources/sqlite.yml`), which is this repo's directory mounted into the container — so `rides.db` must sit at the repo root. Every panel says **No data** until step 2 has run at least once.
+
+**Which files to give it.** A `/dl` download is every day file concatenated at the moment you download it, so a later import is a _rebuild from all of them_, not a top-up: pass the newest dump plus the day and boot files written after it, and nothing that the dump already contains. `reading` has no uniqueness constraint — pass a dump **and** the day files inside it and every overlapping row is stored twice, silently. ⚠️ The gap in that rule, stated because nothing closes it yet: a day file written after the dump was taken also holds the earlier part of that day, so excluding it to avoid doubling loses whatever was logged between the dump and midnight.
+
+**What the step does, in order** (`scripts/import-ride-log.ts`, and `scripts/ride-import.ts` for the refusals):
+
+1. **Decrypt into `rides.db.import-<runId>`** — never over the live file, which is what makes an import that fails halfway cost nothing. `--heap-mb` (default 24576) is the V8 heap the decrypt gets; a dump that outgrows it dies with a heap OOM and the step says so.
+2. **Re-run the waypoint recovery.** Once over the whole archive, reported and writing nothing, so you can see what falls outside the window; then once more with `--commit` up to `2026-09-10T21:55:06Z`, the instant #197 changed the hold beat the recovery models. `--recover-from` / `--recover-to` override it. `docs/waypoints.md` §"Not losing the ride log".
+3. **Materialise the route map's track** into `route_track`, which is why the map now loads in well under a second. `--materialise-only <db>` runs just this stage on a database you already have. `docs/route-map.md` §"Materialised once, not per load".
+4. **Swap** — and refuse instead, leaving the staging file for you to look at, if the new database covers fewer readings or a shorter span than the one it replaces (`--allow-shrink` if you meant it), or if `rides.db-wal` is non-empty because something still has the old file open. The replaced database is kept as `rides.db.bak-replaced-<runId>`; delete it once Grafana looks right.
+
+`scripts/decrypt-log.ts` on its own is still there and still the right tool for a scratch database (`--out evidence/scratch.db`); it refuses an existing `--out` and only `--force` appends into one.
 
 Ten dashboards are provisioned from `grafana/dashboards/`, one file each:
 
@@ -351,9 +365,9 @@ RIDE_LOG_PRIVATE_KEY=~/Documents/cool-eva/ride-log-key.private.pem \
   node --experimental-strip-types scripts/decrypt-log.ts ~/Downloads/cool-eva-2026-08-01.celog
 ```
 
-That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it unchanged.
+That rebuilds an ordinary SQLite file, so Grafana and the dashboards work against it — with one exception since the route map's track was materialised: its map panel and its "GPS points mapped" tile read a `route_track` table that only the import step builds, and both show an error badge until `scripts/import-ride-log.ts --materialise-only <db>` has been run against the file. ⚠️ And a `--force` decrypt into a database that already has that table leaves it **stale** rather than absent, which looks like nothing at all — `docs/route-map.md` §"If the table is missing" has the measurement.
 
-> ⚠️ Decrypting **appends** into whatever `--out` names, so point it at a fresh file rather than at an existing archive you care about. The Grafana datasource reads `/repo/rides.db`, which is why the walkthrough above uses that name. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
+> ⚠️ Decrypting **refuses** an existing `--out` — delete it, choose another name, or pass `--force`, which **appends** and will happily store a second copy of everything the file already holds. Point it at a fresh file rather than at an existing archive you care about, and use `scripts/import-ride-log.ts` (§Grafana) when the archive you care about is the one being replaced. The Grafana datasource reads `/repo/rides.db`, which is why the walkthrough above uses that name. The sealed log is also **~10x smaller** than the equivalent SQLite (gzip before encryption, and crypto overhead is per 30-second segment rather than per row).
 
 Each segment uses a fresh ephemeral X25519 key (ECDH → HKDF-SHA256 → AES-256-GCM), so compromising the Pi cannot retroactively decrypt anything already written. Segments are independently sealed, so damage is contained: the reader resyncs on the next segment and reports what it couldn't read rather than stopping. **There is deliberately no recovery path: lose the private key and every logged ride is gone forever.** That is exactly what makes the SD card worthless to a thief.
 

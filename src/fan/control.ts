@@ -101,9 +101,12 @@ export interface FanController {
  */
 export interface FanControlOptions {
   /**
-   * How the hardware is opened. scripts/check-fan-ordering.ts passes a fake FanPwm that
-   * records its call sequence, which is the only way the two orderings below — the whole
-   * safety property of this file — can be asserted with no Pi and no bike.
+   * How the hardware is opened. ⚠️ Left at its default by scripts/check-fan-ordering.ts
+   * and scripts/check-fan-pwm-bringup.ts, which drive the REAL openFanPwm() over a
+   * simulated sysfs (scripts/simulated-pwm-sysfs.ts): that is what asserts the orderings
+   * below — the whole safety property of this file — AND ./pwm.ts's own bring-up order,
+   * with no Pi and no bike. The curve, banner, race, fun, off-ceiling and gesture checks still pass a
+   * recording FanPwm here, which is the cheaper seam when the bridge is not the subject.
    */
   openPwm?: () => Promise<FanPwm>;
   /** Overrides FAN_ENABLED, so a check needs no environment variable to reach the driver. */

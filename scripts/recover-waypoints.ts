@@ -13,6 +13,7 @@ import {
   type RecoveredPress,
   type RecoveryVerdict,
 } from "../src/gps/recover-holds.ts";
+import { BEAT_MS_ON_THE_RECOVERY_DAYS, LEGACY_BEAT_ERA_END_MS, LEGACY_HOLD_MS } from "../src/gps/recover-era.ts";
 import { WAYPOINT_HOLD_MS } from "../src/gps/waypoint.ts";
 import { commitRecovered } from "./recover-waypoints-commit.ts";
 
@@ -32,25 +33,14 @@ import { commitRecovered } from "./recover-waypoints-commit.ts";
 const LIVE_MATCH_TOLERANCE_MS = 200;
 
 /**
- * The beat in force on the days being recovered.
+ * What `--to` means when it is not given: everything.
  *
- * ⚠️ NOT imported from src/gestures/runner.ts. That constant is 50 ms today because #197
- * halved it; it was 100 ms while these rides happened, and importing it would silently
- * re-place every recovered point the next time it moves.
+ * ⚠️ Not `Number.MAX_SAFE_INTEGER`, which is past the largest value `Date` can render — the
+ * report printed the window before printing anything else, so omitting `--to` did all 30 s of
+ * judging and then died with `RangeError: Invalid time value`. A year nothing is stamped with
+ * bounds the query exactly as well and survives `toISOString()`.
  */
-const BEAT_MS_ON_THE_RECOVERY_DAYS = 100;
-
-/**
- * The waypoint threshold in force on the days being recovered, before #197 trimmed it.
- *
- * ⚠️ Also NOT imported, and the asymmetry with holdMs is deliberate. WAYPOINT_HOLD_MS is
- * live POLICY — what should be recovered today — and is imported. This is a historical FACT
- * about days already ridden, and the two shared a number once by coincidence. Importing it
- * would do more than shift points: `durationMs >= legacyHoldMs` decides WHICH COUNTERFACTUAL
- * applies, so a future trim to 400 ms would silently reclassify holds between the two
- * populations and change the argument rather than the arithmetic.
- */
-const LEGACY_HOLD_MS = 1000;
+const NO_UPPER_BOUND_MS = Date.parse("9999-12-31T23:59:59Z");
 
 interface Options {
   dbPath: string;
@@ -96,6 +86,13 @@ async function main(): Promise<void> {
     console.log("\n⚠️  DRY RUN — nothing was written. Pass --commit to insert, after reading the report above.");
     return;
   }
+  if (recovered.length === 0) {
+    // ⚠️ A no-op, not a failure. commitRecovered() throws on an empty set — right for a
+    // direct call, wrong for the import step, which re-runs this over a window whose points
+    // are already live and would otherwise report a rebuilt archive as a hard failure.
+    console.log("\n⚠️  nothing to commit — no recoverable holds in this window. The database is unchanged.");
+    return;
+  }
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const result = await commitRecovered(options.dbPath, recovered, runId);
   console.log(
@@ -118,6 +115,16 @@ function report(verdicts: RecoveryVerdict[], options: Options): void {
   const refused = verdicts.filter(verdict => verdict.outcome === RECOVERY_OUTCOME.REFUSED);
   console.log(`window ${new Date(options.fromMs).toISOString()} → ${new Date(options.toMs).toISOString()}`);
   console.log(`hold threshold ${options.holdMs} ms (the beat was ${BEAT_MS_ON_THE_RECOVERY_DAYS} ms on these days)`);
+  if (options.toMs > LEGACY_BEAT_ERA_END_MS) {
+    // ⚠️ Says so at the level that knows. `--to` defaults to everything, so a hand-run judges
+    // days the bike was no longer running this beat on — and a hold placed under a dead beat
+    // is wrong by up to one beat of riding rather than obviously broken.
+    console.warn(
+      `\n⚠️  this window reaches past ${new Date(LEGACY_BEAT_ERA_END_MS).toISOString()}, when #197 changed the ` +
+        `beat to 50 ms and the threshold to 500 ms. Holds after that instant are judged by a machine the bike ` +
+        `no longer is; scripts/import-ride-log.ts stops there for that reason.`
+    );
+  }
   console.log(`\nholds ≥ ${options.holdMs} ms: ${verdicts.length}`);
   console.log(`  already live : ${live.length}`);
   console.log(`  refused      : ${refused.length}`);
@@ -281,7 +288,7 @@ function parseArguments(argv: string[]): Options {
   return {
     dbPath: resolve(dbPath),
     fromMs: from === null ? 0 : Date.parse(from),
-    toMs: to === null ? Number.MAX_SAFE_INTEGER : Date.parse(to),
+    toMs: to === null ? NO_UPPER_BOUND_MS : Date.parse(to),
     holdMs: hold === null ? WAYPOINT_HOLD_MS : Number(hold),
     commit: argv.includes("--commit"),
     gpxPath: read("--gpx"),

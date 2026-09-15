@@ -197,11 +197,12 @@ vcu-params
 # Built by scripts/build-service-preview.ts — regenerate rather than commit
 service-sheet-preview.html
 
-# Local ride database and scratch probes — never commit (large, and full of VIN/GPS)
-rides.db
-rides.db-shm
-rides.db-wal
-rides.db.bak-*
+# Local ride database and scratch probes — never commit (large, and full of VIN/GPS).
+# Trailing glob for the same reason temperatures.db* above carries one: the suffixed copies
+# are the ones that bite. It covers -shm/-wal, the .bak-* the recovery takes before it
+# writes, and both files scripts/import-ride-log.ts names — the .import-<runId> it decrypts
+# into and the .bak-replaced-<runId> the database it replaced is moved to.
+rides.db*
 energica_probe.py
 
 # Screenshots and the built previews behind them, written by scripts/build-service-preview.ts and
@@ -262,3 +263,13 @@ evidence/*.jpg
 # replay parked here cannot break `npm run typecheck` the way one in the root does.
 evidence/*.db*
 evidence/*.ts
+
+# And then the whole directory, which until now was ignored only by the UNCOMMITTED
+# .git/info/exclude — so the rules above were the only thing standing between a fresh clone
+# and `git add -A` committing an investigation's notes. What lands here is measurements,
+# coordinates and multi-GB databases; the per-extension rules above stay because each one
+# records something that actually happened, but the default is now "not committed".
+# ⚠️ The 15 files already tracked under evidence/ stay tracked and stay diffable. What this
+# costs is `git add -f` for a NEW excerpt meant to be committed — the .txt provenance files
+# docs/can-0x101.md and docs/charge-auto.md cite are added that way from here on.
+evidence/

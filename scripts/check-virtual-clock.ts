@@ -1,4 +1,5 @@
 import { createVirtualClock } from "./virtual-clock.ts";
+import { monotonicNow, since } from "../src/monotonic.ts";
 
 // scripts/virtual-clock.ts, checked against the thing it stands in for.
 //
@@ -14,8 +15,9 @@ import { createVirtualClock } from "./virtual-clock.ts";
 // comparing the order of recorded events. Real timers are the oracle, so an assertion here
 // cannot be satisfied by a model and a check that are wrong in the same direction.
 //
-// That costs about 150 ms of real sleeping, all of it in section 1. It is the only part of
-// this file that consults a real clock, and it consults it for ORDER, never for duration.
+// ⚠️ THE ORACLE IS WAITED OUT, NEVER TIMED, and each scenario runs a third time with the
+// event loop deliberately blocked. Which orderings starvation can and cannot move, why it
+// used to matter (#258), and the measurements: docs/diagnostics-and-checks.md §11.9.
 
 let failures = 0;
 
@@ -30,9 +32,15 @@ function check(what: string, condition: boolean) {
 
 /** What a scenario is given, so the same code can be driven by either clock. */
 interface TimerHost {
-  setTimer(callback: () => void, delayMs: number): void;
+  /** `unknown` so the real host can await an async callback's promise before calling it done. */
+  setTimer(callback: () => unknown, delayMs: number): void;
   sleep(delayMs: number): Promise<void>;
-  /** Lets `byMs` of this host's time pass — stepped for the fake one, slept for the real. */
+  /**
+   * Lets this host's time pass: `byMs` of it for the fake clock, all of it for the real one,
+   * which waits for what it armed and IGNORES `byMs`. A scenario arming a timer past its own
+   * window would therefore fire on the real side and not the fake one, and read as a clock
+   * bug — none of the five below does, and a new one must not.
+   */
   advance(byMs: number): Promise<void>;
 }
 
@@ -68,10 +76,18 @@ const SCENARIOS: Record<string, Scenario> = {
     host.setTimer(() => record("second timer"), 20);
     await host.advance(30);
   },
+  /**
+   * ⚠️ 15 and not 5, and that is the only direction this can be asked in. A timer armed
+   * INSIDE a callback is due from when that callback actually ran, so a stall can only
+   * push it later — never earlier. At +15 it is due at 25 against the 20 armed up front,
+   * by construction and at any stall; at +5 the two are 15 against 20 and an 18 ms stall
+   * swaps them, which is issue #258. That a nested arm lands by DUE TIME rather than at
+   * the back of the queue is the half no oracle can be asked, and §2 asserts it instead.
+   */
   nestedArming: async (host, record) => {
     host.setTimer(() => {
       record("outer");
-      host.setTimer(() => record("armed from inside the outer"), 5);
+      host.setTimer(() => record("armed from inside the outer"), 15);
     }, 10);
     host.setTimer(() => record("armed up front for 20"), 20);
     await host.advance(40);
@@ -92,16 +108,42 @@ const SCENARIOS: Record<string, Scenario> = {
   },
 };
 
+/**
+ * Starves the event loop on purpose, the way a loaded laptop does by accident.
+ *
+ * Longer than the longest delay any scenario arms up front, so EVERY pre-armed timer comes
+ * due inside it and Node runs them back to back — which is the condition that inverted an
+ * ordering in #258, and what the assertion after the differential keeps true.
+ */
+const STALL_MS = 30;
+
+/** The longest delay any scenario armed up front, which is what STALL_MS has to cover. */
+let longestPreArmedMs = 0;
+
 for (const [name, scenario] of Object.entries(SCENARIOS)) {
-  const throughRealTimers = await run(scenario, realTimerHost());
-  const throughFakeClock = await run(scenario, fakeClockHost());
-  const same = throughRealTimers.join(" | ") === throughFakeClock.join(" | ");
-  check(`⚠️  ${name} fires in the same ORDER on both`, same);
-  if (!same) {
-    console.error(`      real: ${JSON.stringify(throughRealTimers)}`);
-    console.error(`      fake: ${JSON.stringify(throughFakeClock)}`);
+  const throughFakeClock = (await run(scenario, fakeClockHost())).join(" | ");
+  for (const stallMs of [0, STALL_MS]) {
+    const realHost: RealHostState = { outstanding: 0, releaseAdvance: null, longestPreArmedMs: 0 };
+    const throughRealTimers = (await run(scenario, realTimerHost(stallMs, realHost))).join(" | ");
+    longestPreArmedMs = Math.max(longestPreArmedMs, realHost.longestPreArmedMs);
+    const same = throughRealTimers === throughFakeClock;
+    const how = stallMs === 0 ? "" : ` — with the event loop blocked for ${stallMs} ms first`;
+    check(`⚠️  ${name} fires in the same ORDER on both${how}`, same);
+    if (!same) {
+      console.error(`      real: ${throughRealTimers}`);
+      console.error(`      fake: ${throughFakeClock}`);
+    }
   }
 }
+
+// ⚠️ MEASURED FROM THE RUN, not restated from the table above. The stalled pass only proves
+// what it claims while every pre-armed timer comes due INSIDE the stall; a sixth scenario
+// arming for longer would quietly downgrade it to a second copy of the unstalled pass, with
+// docs/diagnostics-and-checks.md §11.9 still saying otherwise.
+check(
+  `⚠️  the ${STALL_MS} ms stall still covers every delay the scenarios arm up front (longest: ${longestPreArmedMs} ms)`,
+  longestPreArmedMs > 0 && STALL_MS > longestPreArmedMs
+);
 
 // --- 2. what the fake clock does that no real one can ------------------------
 
@@ -123,6 +165,25 @@ let firedAtTheEdge = 0;
 edgeClock.setTimer(() => (firedAtTheEdge += 1), 10);
 await edgeClock.advance(10);
 check("a timer due exactly at the window's edge fires inside it, not after it", firedAtTheEdge === 1);
+
+// ⚠️ THE HALF §1 GAVE UP. A timer armed from inside a callback has to land by its DUE TIME
+// against timers already waiting, not at the back of the queue — and §1 can only ask that
+// in the direction a stall cannot move (see `nestedArming`). Here there is no stall to
+// worry about, so the clock is asked the other way round: the nested 5 ms lands BEFORE the
+// 20 ms that was armed up front, and each callback's own now() says when. A clock that
+// appended nested timers would pass every scenario in §1 and fail here.
+const nestedDueClock = createVirtualClock(0);
+const nestedDueOrder: string[] = [];
+nestedDueClock.setTimer(() => {
+  nestedDueOrder.push(`outer at ${nestedDueClock.now()}`);
+  nestedDueClock.setTimer(() => nestedDueOrder.push(`nested at ${nestedDueClock.now()}`), 5);
+}, 10);
+nestedDueClock.setTimer(() => nestedDueOrder.push(`armed up front at ${nestedDueClock.now()}`), 20);
+await nestedDueClock.advance(40);
+check(
+  "⚠️  a timer armed from inside a callback is queued by its DEADLINE, ahead of one armed earlier for later",
+  nestedDueOrder.join(" | ") === "outer at 10 | nested at 15 | armed up front at 20"
+);
 
 const alreadyDueClock = createVirtualClock(0);
 let firedWithoutMoving = 0;
@@ -216,19 +277,106 @@ async function run(scenario: Scenario, host: TimerHost): Promise<string[]> {
 
 function fakeClockHost(): TimerHost {
   const clock = createVirtualClock(10_000);
-  return { setTimer: clock.setTimer, sleep: clock.sleep, advance: clock.advance };
+  return {
+    setTimer: (callback, delayMs) => clock.setTimer(() => void callback(), delayMs),
+    sleep: clock.sleep,
+    advance: clock.advance,
+  };
+}
+
+/** What one real-timer run is still waiting for. */
+interface RealHostState {
+  /** Timers armed and sleeps started that have not finished. advance() ends when this is 0. */
+  outstanding: number;
+  /** Resolves the advance() in flight, or null when nobody is waiting. */
+  releaseAdvance: (() => void) | null;
+  /** The longest delay armed before the first advance(), so STALL_MS can be checked against it. */
+  longestPreArmedMs: number;
 }
 
 /**
- * The oracle. `advance` sleeps for real and overshoots by a margin, because the question
- * being asked is only what order the callbacks ran in — a scenario that needed the margin
- * to be tight would be the exact assertion this whole clock exists to abolish.
+ * The oracle: real setTimeout, asked only what ORDER its callbacks ran in.
+ *
+ * ⚠️ `advance` WAITS FOR WHAT IT ARMED rather than sleeping a window. It used to sleep
+ * `byMs + 10`, and a timer armed from inside a callback could then be due after the window
+ * closed — the run was simply short an event and the comparison failed on a busy laptop
+ * (#258, reproduced in `nestedArming` and `asyncCallbackAwaitingSleep` both). A count can
+ * only take longer under load; it cannot come out wrong.
  */
-function realTimerHost(): TimerHost {
-  const sleep = (delayMs: number) => new Promise<void>(resolve => void setTimeout(resolve, delayMs));
+function realTimerHost(stallMs: number, state: RealHostState): TimerHost {
+  const sleep = (delayMs: number) =>
+    new Promise<void>(resolve => {
+      state.outstanding += 1;
+      setTimeout(() => {
+        resolve();
+        finishOne(state);
+      }, delayMs);
+    });
   return {
-    setTimer: (callback, delayMs) => void setTimeout(callback, delayMs),
     sleep,
-    advance: byMs => sleep(byMs + 10),
+    setTimer: (callback, delayMs) => armRealTimer(state, callback, delayMs),
+    advance: async () => {
+      blockTheEventLoop(stallMs);
+      await waitForQuiescence(state);
+    },
   };
+}
+
+function armRealTimer(state: RealHostState, callback: () => unknown, delayMs: number): void {
+  state.outstanding += 1;
+  state.longestPreArmedMs = Math.max(state.longestPreArmedMs, delayMs);
+  setTimeout(() => {
+    // Awaited, so an async callback is outstanding until its body finishes rather than
+    // until it first suspends — `asyncCallbackAwaitingSleep` would otherwise be counted
+    // done at its first await and lose the record after it.
+    void Promise.resolve(callback()).then(
+      () => finishOne(state),
+      error => {
+        // Counted, not only logged: the order this scenario recorded may well still match,
+        // and a run that ends green with one line on stderr is what a harness grepping
+        // stdout reads as a pass.
+        failures += 1;
+        console.error("check-virtual-clock: a scenario callback threw on the real host —", error);
+        finishOne(state);
+      }
+    );
+  }, delayMs);
+}
+
+function finishOne(state: RealHostState): void {
+  state.outstanding -= 1;
+  if (state.outstanding === 0 && state.releaseAdvance !== null) {
+    const release = state.releaseAdvance;
+    state.releaseAdvance = null;
+    release();
+  }
+}
+
+/**
+ * Resolves once nothing is outstanding.
+ *
+ * ⚠️ The zero case is checked FIRST and is not a formality: waiting on a count that is
+ * already 0 waits for a decrement that will never come, and the diagnosis run-checks.ts
+ * would then print is a 120 s timeout — on the file whose own header sells that timeout as
+ * the good diagnosis. The only hang left is a timer Node never delivered, which is the
+ * failure CHECK_TIMEOUT_MS is for.
+ *
+ * The `setImmediate` is what `virtual-clock.ts`'s advance() does between timers: it lets
+ * every continuation that can already run, run, so both hosts end a scenario the same way
+ * and a record made one microtask after the last timer is not lost.
+ */
+async function waitForQuiescence(state: RealHostState): Promise<void> {
+  if (state.outstanding > 0) {
+    await new Promise<void>(resolve => {
+      state.releaseAdvance = resolve;
+    });
+  }
+  await new Promise<void>(resolve => void setImmediate(resolve));
+}
+
+function blockTheEventLoop(stallMs: number): void {
+  const startedAt = monotonicNow();
+  while (since(startedAt) < stallMs) {
+    // Deliberately nothing: the point is that no callback can run.
+  }
 }

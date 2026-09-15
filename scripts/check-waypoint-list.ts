@@ -476,20 +476,20 @@ check(
   appSource.includes("installWaypointRefresh();")
 );
 
-// ⚠️ And the preview's own /waypoint, in BOTH templates. It stands in for the Pi, so a
-// handler that bumps `STATUS.waypoints` without appending the event makes one tap in the
-// design gate render "the bike kept only the newest N saves" — a truncation that never
-// happened, on the screen a human is looking at to decide whether this ships.
-for (const template of ["scripts/app-preview-template.html", "scripts/service-preview-template.html"]) {
-  const templateSource = await readFile(join(ROOT, template), "utf8");
-  const at = templateSource.indexOf('if (path === "/waypoint")');
-  const block = at === -1 ? null : blockAt(templateSource, at);
-  const handler = block === null ? "" : templateSource.slice(block.start, block.end + 1);
-  check(
-    `${template}'s /waypoint appends the event, not just the count`,
-    handler.includes("STATUS.waypoints += 1") && handler.includes("STATUS.waypointEvents.push(")
-  );
-}
+// ⚠️ And the preview's own /waypoint. It stands in for the Pi, so a handler that bumps
+// `STATUS.waypoints` without appending the event makes one tap in the design gate render
+// "the bike kept only the newest N saves" — a truncation that never happened, on the screen
+// a human is looking at to decide whether this ships. One file since #170 put the harness in
+// scripts/preview-harness-*.js; it was two templates carrying a copy each.
+const previewHandler = "scripts/preview-harness-pi.js";
+const handlerSource = await readFile(join(ROOT, previewHandler), "utf8");
+const handlerAt = handlerSource.indexOf('if (path === "/waypoint")');
+const handlerBlock = handlerAt === -1 ? null : blockAt(handlerSource, handlerAt);
+const handler = handlerBlock === null ? "" : handlerSource.slice(handlerBlock.start, handlerBlock.end + 1);
+check(
+  `${previewHandler}'s /waypoint appends the event, not just the count`,
+  handler.includes("STATUS.waypoints += 1") && handler.includes("STATUS.waypointEvents.push(")
+);
 
 if (failures > 0) {
   console.error(`\n✗ ${failures} check${failures === 1 ? "" : "s"} failed`);

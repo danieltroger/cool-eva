@@ -1,3 +1,4 @@
+import { MINIMUM_SOURCE_FILES_SCANNED, callsSeam, scanForSeamCalls } from "./seam-scan.ts";
 import { boundsFor } from "../public/lib/bounds.js";
 import {
   FAN_REASON_TEXT,
@@ -8,7 +9,7 @@ import {
   dutyStops,
 } from "../public/lib/fan-display.js";
 import { SIGNALS } from "../src/can/registry.ts";
-import { defineSignals, latestValue, record } from "../src/can/signals.ts";
+import { defineSignals, latestValue, record, recordArrival } from "../src/can/signals.ts";
 import type { FanCommandResult, FanController, FanState } from "../src/fan/control.ts";
 import { KICK_START_MS, MIN_RUNNING_DUTY_PERCENT, startFanControl } from "../src/fan/control.ts";
 import { monotonicNow, since } from "../src/monotonic.ts";
@@ -47,8 +48,9 @@ import {
 // near-miss that would be wrong only sometimes, which is the worst kind.
 //
 // The last section drives the real controller through a recording FanPwm, so it also
-// covers the running-phase duty changes that issue #119 records check-fan-ordering.ts
-// never reaches.
+// covers the running-phase duty changes — at the level of what the controller BELIEVES.
+// scripts/check-fan-ordering.ts §4 covers the same drop-out at the register, which is the
+// half a state() assertion cannot see.
 
 let failures = 0;
 
@@ -498,9 +500,10 @@ check("and 0 % maps to the stop position, not to the floor", stops[dutyStopIndex
 
 // --- 10. End to end: curve → auto → control → the bridge ---------------------
 //
-// The same recording fake scripts/check-fan-ordering.ts uses, but driven by the curve
-// rather than by a slider. This is the only place `applyDuty()` — the running-phase duty
-// change — is reached at all; issue #119 records that the ordering check never gets there.
+// A recording FanPwm driven by the curve rather than by a slider. ⚠️ The assertions below
+// are on controller.state(), so a mutant that updates the bookkeeping without writing the
+// register passes here — scripts/check-fan-ordering.ts §4 is what catches that one, by
+// asserting the duty_cycle a simulated sysfs actually received.
 
 console.log("\n10. the loop, end to end, against a recording bridge");
 
@@ -530,6 +533,16 @@ const TICK_MS = 20;
 // they guard is a bus that has stopped talking, and reproducing one at the real 3 s and
 // 5 s would put eight seconds of sleep into every CI run.
 const STALE_MS = 400;
+
+/**
+ * How old the section below hands the loop its "last good reading".
+ *
+ * Deliberately between TEMPERATURE_FRESH_MS (5 s, so the reading reads as HELD) and
+ * TEMPERATURE_GRACE_MS (60 s, so it still steers). Its size is the whole point: it is a
+ * CHOSEN number, not a slept one, so what separates a kept mark from a per-tick refreshed
+ * one is 20 s rather than the difference between six ticks and one.
+ */
+const AGE_JUMP_MS = 20_000;
 
 // ⚠️ …which is exactly what makes the SHIPPED windows invisible below: everything from
 // here on proves the MECHANISM at 400 ms and pins nothing about 3 s. So each one is
@@ -655,12 +668,26 @@ check(
   !controller.state().driverEnabled
 );
 
-record("batt_temp_hi", 45);
+// ⚠️ ONE clock read, shared by the backdated mark below AND by the bound in the bracket
+// further down. Two reads would put a stall between them, and the bound would become a
+// measurement again — which is the whole failure this section is being rewritten out of.
+//
 // Nothing re-records batt_temp_hi from here to the end of the manual session below, so
 // this mark is when the loop's LAST GOOD READING arrived.
 const hotReadingArrivedAt = monotonicNow();
+recordArrival("batt_temp_hi", 45, Date.now(), hotReadingArrivedAt - AGE_JUMP_MS);
 await ticks(2);
 check("a hot pack starts it again", controller.state().driverEnabled);
+// ⚠️ Asserted HERE and nowhere else, because this is the only window where it is visible:
+// from the manual session below, evaluate() returns before the curve runs and the slider
+// has already published NONE, and by the time automatic comes back the 46 °C reading is
+// fresh again. An age of AGE_JUMP_MS is past TEMPERATURE_FRESH_MS and inside the grace, so
+// the reading still steers.
+check(
+  `a reading ${AGE_JUMP_MS / 1000} s old still steers, and the dashboard is told it is HELD rather than live`,
+  latestValue("fan_temp_input") === FAN_TEMPERATURE_INPUT.HELD &&
+    latestValue("fan_auto_reason") === FAN_REASON.PACK_TEMPERATURE
+);
 
 const manual = await automatic.commandManualDuty(0);
 check(`the slider takes over and stops the fan (${manual.message})`, manual.ok && automatic.mode() === "manual");
@@ -675,17 +702,15 @@ check("⚠️  and the curve leaves it alone afterwards — otherwise the drag w
 // ⚠️ The grace is measured from when the READING arrived — sampleTemperature() marks
 // `now − age`, not `now`. With the mark set to `now`, every tick refreshes it while the
 // same old value sits in the store, the age never grows, the grace never expires and the
-// fail-safe §5 asserts can never fire on a bike. Ten ticks have run against one reading
-// by now and the age has to have grown with them.
+// fail-safe §5 asserts can never fire on a bike.
+//
+// A BRACKET, and both of its bounds hold at any load. A mark refreshed per tick reads one
+// tick here instead, four orders of magnitude under the floor. Why each bound is safe:
+// docs/diagnostics-and-checks.md §11.9.
 const heldAgeMs = automatic.state().temperatureAgeMs;
-const sinceHotReading = since(hotReadingArrivedAt);
 check(
   "⚠️  the grace clock runs from when the reading ARRIVED, not from the tick that read it",
-  // The first half keeps the second from being vacuous: ten ticks have run against this
-  // one reading, so a mark refreshed per tick would read one tick here rather than ten.
-  // The 1 ms allowance is the reconstruction's own rounding — `now − age` is two clock
-  // reads, so it lands a few microseconds after the arrival it is reconstructing.
-  sinceHotReading > TICK_MS * 4 && heldAgeMs > sinceHotReading - 1
+  heldAgeMs >= AGE_JUMP_MS && heldAgeMs <= AGE_JUMP_MS + since(hotReadingArrivedAt)
 );
 
 // ⚠️ Sampling sits ABOVE the mode check in runTick's evaluate(), so a reading that
@@ -698,9 +723,13 @@ await ticks(3);
 const manualAgeMs = automatic.state().temperatureAgeMs;
 check(
   "⚠️  the loop keeps watching batt_temp_hi through a manual session",
-  // Younger than the reading it held a moment ago, so it really did adopt this one, and
-  // no older than this one is — which is what /fan reports while the slider is driving.
-  automatic.mode() === "manual" && manualAgeMs < heldAgeMs && manualAgeMs < since(manualReadingArrivedAt) + 1
+  // No older than this reading is — which is what /fan reports while the slider drives, and
+  // which a loop that had NOT adopted it fails by the whole AGE_JUMP_MS the held one carries.
+  //
+  // ⚠️ The mark is taken before the record() it stands for, so the bound is an over-estimate
+  // by construction and needs no allowance. `<=` and not `<`: performance.now() is
+  // non-decreasing, not increasing.
+  automatic.mode() === "manual" && manualAgeMs <= since(manualReadingArrivedAt)
 );
 
 const back = await automatic.setMode("automatic");
@@ -712,6 +741,34 @@ record("batt_temp_hi", 60);
 await ticks(4);
 check("a stopped loop stops ticking, so a shutdown cannot be re-commanded into", calls.length === 0);
 await controller.stop();
+
+// --- 10b. The arrival seam is a bypass: nothing that ships may use it ---------
+//
+// ⚠️ This check is the only caller allowed to pass an arrival mark, and this check is not
+// among the files scanned. The two assertions after the offender count are the positive
+// control; why they are shaped that way: scripts/seam-scan.ts.
+
+console.log("\n10b. the arrival seam is reachable from checks and from nothing that ships");
+
+const seamScan = await scanForSeamCalls(new URL("../src", import.meta.url), recordArrival, {
+  skip: ["can/signals.ts"],
+});
+for (const offender of seamScan.offenders) {
+  console.error(`      src/${offender}`);
+}
+check(
+  `⚠️  none of the ${seamScan.filesRead} .ts files under src/ calls ${recordArrival.name}() — a backdated mark ` +
+    "defeats every freshness gate built on ageMs()",
+  seamScan.offenders.length === 0
+);
+check(
+  "…the walk found the source at all, so the count above is a scan rather than an empty list",
+  seamScan.filesRead >= MINIMUM_SOURCE_FILES_SCANNED
+);
+check(
+  "…and the pattern still recognises a call, asked of a literal rather than of this file's own prose",
+  callsSeam(`${recordArrival.name}("k", 1, 2, 3)`, recordArrival) && !callsSeam("nothing here", recordArrival)
+);
 
 // --- 11. A tick that throws does not take the loop with it -------------------
 //

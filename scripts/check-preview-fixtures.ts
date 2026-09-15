@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { serverFacts } from "./preview-server-facts.ts";
 import { SIGNALS } from "../src/can/registry.ts";
 import { pathsAnsweredBy, pathsFetchedByTheDashboard, pathsServedFromTables } from "./preview-endpoints.ts";
+import { HARNESS_PLACEHOLDER, mountsTheWholeDashboard, previewHarnessSource } from "./preview-harness.ts";
 
 // Whether the design preview's fixtures still describe the bike the Pi describes.
 //
@@ -107,7 +108,7 @@ for (const templatePath of templates) {
   // its own name rather than becoming a stack of `../`.
   const inRepo = relative(ROOT, templatePath);
   const label = inRepo && !inRepo.startsWith("..") ? inRepo : templatePath;
-  const harness = harnessSource(await readFile(templatePath, "utf8"));
+  const harness = await harnessSource(await readFile(templatePath, "utf8"));
   if (harness === null) {
     failures.push(`${label}: expected exactly one <script> block to read the fixtures out of`);
     continue;
@@ -117,8 +118,9 @@ for (const templatePath of templates) {
   // ⚠️ The app template mounts the whole dashboard, so every endpoint public/ fetches is reachable
   // in it; the annotated sheet mounts a chosen set of panels, which is a different contract. Read
   // off the source rather than the filename — the distinction check-service-preview.ts already
-  // draws — so a renamed or copied template is judged by what it does.
-  const mountsTheApp = /__imp\("app\.js"\)|imp\("app\.js"\)/.test(harness);
+  // draws — so a renamed or copied template is judged by what it does. The test itself lives in
+  // preview-harness.ts, beside the shared code that now defines the `imp` it looks for.
+  const mountsTheApp = mountsTheWholeDashboard(harness);
 
   await checkFixtureTypes(source, label, mountsTheApp);
   checkReadings(source, label);
@@ -215,14 +217,33 @@ function propertyName(name: ts.PropertyName): string {
 }
 
 /**
- * The harness `<script>` — the one the fixtures live in.
+ * The harness `<script>` — the one the fixtures live in — with the shared harness spliced in.
  *
  * Both templates carry exactly one and the builder substitutes into it, so a template that grew a
  * second would need this to say which. It refuses rather than guessing.
+ *
+ * ⚠️ The splice is what keeps this check pointed at the fixtures after #170 moved most of them
+ * into scripts/preview-harness-*.js: they are still top-level `const`s of one script, but only
+ * once the builder's substitution has happened, and this file reads the TEMPLATE. Done here, on
+ * the extracted block, so the "exactly one <script>" rule above still judges the template.
+ *
+ * ⚠️ Only when the placeholder is there. A template from before #170 carries its whole harness
+ * inline and needs no splice — which is what keeps the red run in this file's header working
+ * against origin/main's template however old it is.
  */
-function harnessSource(html: string): string | null {
+async function harnessSource(html: string): Promise<string | null> {
   const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-  return blocks.length === 1 ? blocks[0] : null;
+  if (blocks.length !== 1) {
+    return null;
+  }
+  if (!blocks[0].includes(HARNESS_PLACEHOLDER)) {
+    return blocks[0];
+  }
+  // A function replacement, exactly as build-service-preview.ts does it: a `$&` or `$1` in the
+  // harness would otherwise be read as a replacement pattern here and not there, so this check
+  // would be reading a source that differs from the one that ships.
+  const harness = await previewHarnessSource();
+  return blocks[0].replace(HARNESS_PLACEHOLDER, () => harness);
 }
 
 /**

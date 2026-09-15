@@ -19,6 +19,7 @@ import { HOW_TO_READ as HOW_TO_READ_FREEZE_FRAMES } from "../src/vcu/freeze-fram
 import type { FreezeFramesResponse } from "../src/http/freeze-frames.ts";
 import { parseHexFrame } from "./captured-dtc-transfer.ts";
 import { sceneNamesIn } from "./preview-scenes.ts";
+import { HARNESS_PLACEHOLDER, previewHarnessSource } from "./preview-harness.ts";
 
 // Builds a single self-contained HTML file showing the service sheet with no Pi on the
 // other end. The point is being able to look at a design change before riding out to the
@@ -269,7 +270,9 @@ const css = await readFile(join(PUBLIC, "style.css"), "utf8");
 // ⚠️ __SERVER_FACTS__ is required of BOTH templates since #190 — the annotated sheet now
 // quotes the gate's own refusal sentences, and a missing placeholder there would leave the
 // literal token on screen rather than failing the build.
-const required = ["__CSS__", "__TABLES__", "__SERVER_FACTS__"];
+// ⚠️ And the harness placeholder is required of both since #170: a template without it builds
+// a page whose every fixture, stub and shim is missing, which parses perfectly.
+const required = ["__CSS__", "__TABLES__", "__SERVER_FACTS__", HARNESS_PLACEHOLDER];
 for (const placeholder of required) {
   if (!template.includes(placeholder)) {
     throw new Error(`build-service-preview: ${templateFile} has no ${placeholder} placeholder`);
@@ -303,11 +306,18 @@ const tables = JSON.stringify({
 // object; ./preview-server-facts.ts says why each entry is there.
 const serverConstants = JSON.stringify(serverFacts());
 
+// The harness the two templates share, read out of scripts/preview-harness*.js rather than
+// written into each of them. What the two hand-kept copies had drifted into by the time they
+// were merged, and why this is one injection rather than one parameterised template:
+// docs/diagnostics-and-checks.md §11.10.
+const harness = await previewHarnessSource();
+
 const html = template
   .replace("__CSS__", () => css)
   .replace(/__MODULES__,?/, () => modules)
   .replace("__TABLES__", () => tables)
-  .replace("__SERVER_FACTS__", () => serverConstants);
+  .replace("__SERVER_FACTS__", () => serverConstants)
+  .replace(HARNESS_PLACEHOLDER, () => harness);
 
 const out =
   process.argv.slice(2).find(argument => !argument.startsWith("--")) ?? join(HERE, "..", "service-sheet-preview.html");

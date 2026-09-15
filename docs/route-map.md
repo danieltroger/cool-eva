@@ -2,21 +2,116 @@
 
 `grafana/dashboards/route-map.json` — where the bike went, and where it charged, from the decrypted ride log. Related: `grafana/README.md` (the datasource's own traps), `docs/charge-manager.md` (what the charge signals mean), `docs/dashboard-decisions.md`.
 
-Everything below was measured against the 2026-09-07 decrypt (15 477 057 readings, 2026-08-02 → 2026-09-07), **except the charge-stop corroboration section**, which is measured against the archive as it stood on 2026-09-14 (2026-08-02 → 2026-09-12) and says so where the numbers differ. No coordinates appear in this file or in the dashboard JSON, and that is deliberate — see [No coordinates anywhere](#no-coordinates-anywhere).
+Everything below was measured against the 2026-09-07 decrypt (15 477 057 readings, 2026-08-02 → 2026-09-07), **except the charge-stop corroboration section and [Materialised once, not per load](#materialised-once-not-per-load)**, both measured against the archive as it stood later (2026-08-02 → 2026-09-12, 35 119 149 readings) and saying so where the numbers differ. ⚠️ Where an older figure and a newer one measure the same quantity, both are kept with their vintage rather than one overwriting the other: the archive grows, and a number with no date attached is the one that goes quietly wrong. No coordinates appear in this file or in the dashboard JSON, and that is deliberate — see [No coordinates anywhere](#no-coordinates-anywhere).
+
+## Materialised once, not per load
+
+**The track is no longer rebuilt when you open the dashboard.** `scripts/import-ride-log.ts` computes it over the whole archive into a `route_track` table (`ts INTEGER PRIMARY KEY, lat, lon, speed`), and the panel reads that. Everything in the three sections below — the carry-forward, the per-second collapse, the shape despiker — is unchanged; only where it runs moved, from `grafana/dashboards/route-map.json` into `scripts/route-track.ts`.
+
+Why it was worth doing. Measured 2026-09-15 against a copy of the 2026-09-12 archive, one target per fresh process, four runs each, warm page cache:
+
+| target          | panel                                 | before (first / median) | after (first / median) |
+| --------------- | ------------------------------------- | ----------------------- | ---------------------- |
+| **A**           | the track itself                      | 4 608 / **1 405 ms**    | 95 / **68 ms**         |
+| **F**           | "GPS points mapped"                   | 1 481 / **1 415 ms**    | 70 / **67 ms**         |
+| the other eight | charge stops, rides, tiles, waypoints | 1 506 ms together       | unchanged              |
+| **all ten**     |                                       | **4 326 ms**            | **1 740 ms**           |
+
+`F` is `A` wrapped in a `COUNT(*)`, so before this the same six-CTE pipeline over 35 M readings ran **twice per load** and was 65 % of the dashboard's SQL. ⚠️ Those are warm-cache numbers on a laptop that had just been hammering the file; on a genuinely cold page cache the same A measures ~5 s and, unhelpfully for this table, so does `H` (Rides, 4 597 ms cold against 669 ms warm). **`H` is untouched by this change** — it counts raw `gps_lat` rows and never used this pipeline — and it is the next candidate.
+
+### What it is worth in the browser, which is the number that matters
+
+SQL times are not what Daniel waits for. Measured 2026-09-15 in a headless Chrome against Grafana 11.3.0 in Docker (`docker-compose.yml`'s pinned image), the same 2.5 GB database both ways, `now-90d → now`, cache-bypassing reload, three runs each. "Painted" is instrumented rather than eyeballed: a script installed before any page script polls `requestAnimationFrame` and records the first frame where the geomap's OpenLayers canvas has real pixels in it **and** every `/api/ds/query` has already returned.
+
+|                            | before                                   | after                                |
+| -------------------------- | ---------------------------------------- | ------------------------------------ |
+| time to a **painted map**  | 12 306 / 12 178 / 11 818 ms → **12.2 s** | 4 103 / 4 179 / 4 154 ms → **4.2 s** |
+| last query response        | 11 020 / 10 895 / 10 522 ms → **10.9 s** | 2 875 / 2 955 / 2 957 ms → **3.0 s** |
+| slowest two panel requests | **9.4–10.5 s**                           | 2.1–2.4 s                            |
+| DOMContentLoaded           | ~350 ms                                  | ~370 ms                              |
+
+**12.2 s → 4.2 s to a map you can look at**, and the two ten-second requests are gone. What is left is the charge-session and Rides panels, which this change does not touch.
+
+⚠️ The 11 243-point render is **not** the bottleneck at this size: the gap between the last query returning and the canvas painting is ~1.2 s either way, before and after, on a layer that styles every point as its own OpenLayers feature. That budget is what [Thinning](#thinning) exists to protect and it is still doing its job — **180 563** points in the imported 2026-09-15 archive this browser run used (the SQL table above is the older 2026-09-12 one, at 146 150), both well past the ~68 000 at which the layer was measured to stop painting entirely.
+
+What it costs, on the 2026-09-12 archive (`dbstat`): **146 150 points, built in 4.8 s, 7 258 112 B on disk** — 4 575 232 B of table plus 2 682 880 B for the `ts / 1000` unique index below, so ~50 B a point, not the ~31 B the table alone suggests. Rebuilt from scratch on every import rather than appended to. An incremental build would have to reason about which points a new fix un-spikes; a full rebuild is five seconds beside a twenty-minute decrypt.
+
+`ts` is the rowid, so the panel's `WHERE ts BETWEEN` is a `SEARCH route_track USING INTEGER PRIMARY KEY` range scan. The **per-second collapse is enforced by a unique index on `ts / 1000`**, not by that primary key: `ts` is milliseconds, so two rows in one second are two perfectly legal rowids and a constraint there could never fire.
+
+### What this changes about the drawn track, measured rather than assumed
+
+Not nothing, and the honest statement is per-window. The old query reached ±10 minutes past the window's edges to seed the carry-forward and to give the despiker a neighbour on each side. A table built over the whole archive has no window at all, which cuts both ways:
+
+- **The despiker gets strictly stronger.** [Both window edges need slack](#both-window-edges-need-slack-not-just-the-lower-one) exists because a point with no successor is never tested, which used to mean the last point of _every_ window. Now the only untested points are the archive's own first and last.
+- **The carry-forward is no longer truncated**, so a window that opens more than 10 minutes after the last longitude row now draws points the old query dropped.
+
+Old query against new, same database, same ranges:
+
+| window                | old    | new    | timestamps in both |                                 |
+| --------------------- | ------ | ------ | ------------------ | ------------------------------- |
+| default `now-90d`     | 11 243 | 11 243 | 11 243             | **identical**                   |
+| whole archive + slack | 11 243 | 11 243 | 11 243             | **identical**                   |
+| 1 h mid-ride          | 2 580  | 2 580  | 2 580              | identical                       |
+| 10 min mid-ride       | 498    | 498    | 498                | identical                       |
+| 6 h                   | 8 157  | 8 158  | 8 157              | +1, a superset                  |
+| last 24 h of data     | 7 740  | 7 748  | 7 740              | +8, a superset                  |
+| one ride day (09-07)  | 11 818 | 11 820 | **0**              | +2, and every drawn point moves |
+| one ride day (09-09)  | 9 631  | 9 632  | **0**              | +1, and every drawn point moves |
+
+The zero column is the interesting one and it is not a bug: when the stride is 1 every extra row is simply an extra point, but on a ride day the stride is 2, so **one more row flips the thinning phase and the sample lands on the other point of every pair**. Same track, different sample of it. The extra rows are `gps_speed_kmh`-only timestamps at the very start of the data, which the 10-minute seed could not pair with a position and an unbounded carry-forward can.
+
+### ⚠️ The carry-forward has no upper bound, and it never did
+
+Worth writing down because materialising it makes it apply at every zoom level rather than only where a 90-day window had already swallowed it. A point is emitted at _each_ signal's own timestamp with the other axis carried forward from whenever it was last logged — with no staleness limit. Over the archive's 146 193 per-second rows, the age of the older half of each position:
+
+| the carried component is older than | points                           |
+| ----------------------------------- | -------------------------------- |
+| 30 s                                | 6 463                            |
+| 5 min                               | 813                              |
+| 1 h                                 | 80                               |
+| 1 day                               | 17                               |
+| worst                               | **1 201 404 261 ms ≈ 13.9 days** |
+
+The despiker removes 43 of the 146 193, so essentially all of these are drawn today and were drawn before this change too, on the default range. It is the same argument [A charge stop is not a measured position](#a-charge-stop-is-not-a-measured-position) makes about inherited fixes — except that stop reports its `Fix age` in minutes and colours the pin by it, and the track says nothing at all. **Not fixed here**, because a staleness cutoff changes which points the map draws and wants its own derivation; recorded so it is not re-discovered as a surprise.
+
+### The file Grafana reads is left in rollback journal mode
+
+`PRAGMA journal_mode = DELETE`, set by the import step as its last act on the finished database. `grafana/README.md` §"`rides.db` is in WAL mode, and that silently blanks panels" measured the datasource erroring **3 of 85** queries over a WAL file and **0 of 85** over a rollback one, with a variable rate that reached 32 in one round, and named "the decrypt step that produces the file Grafana reads" as where to set it. That step now exists. The same section's warning is satisfied by construction: DELETE is wrong for a file a logger is appending to (53 of 85 there), and this one is static by the time the pragma runs.
+
+### If the table is missing — measured, because guessing at this was wrong twice
+
+A rebuild that skips the materialiser leaves no `route_track` at all, because `scripts/decrypt-log.ts` refuses an existing `--out` and therefore starts from a fresh file.
+
+⚠️ **`--force` is the exception, and it is the bad one.** It appends into the existing file instead, so the table survives — **stale**, describing an archive that has since grown — and `initDb` puts the database back into WAL on the way through. Measured 2026-09-15 on a small archive: before, `route_track` 1 point / 308 readings / `journal_mode=delete`; after `decrypt-log.ts --out <same file> --force`, `route_track` **still 1 point** while `reading` had doubled to 616, and `journal_mode=wal`. So that path has no error badge at all — an out-of-date track drawn as if it were current, plus the panel blanking `grafana/README.md` measures at 3 of 85 queries. `info.route_track_built_at` is the only tell, and nothing on that path reads it. Re-run `--materialise-only` after any `--force`.
+
+Dropped the table from a real 2.5 GB archive and reloaded the dashboard, 2026-09-15:
+
+- **exactly two panels** show a "Panel status" error badge in their header — _Route and charge stops_ and _GPS points mapped_, which are the two that read the table;
+- the datasource returns `SQL logic error: no such table: route_track (1)` with `"status": 500`;
+- the map **still draws**: basemap tiles, charge-stop pins and waypoint stars are all there, and only the track is absent. Distance, Charge stops and Energy charged are unaffected.
+
+⚠️ So it is neither the silent blank `grafana/README.md` warns about under §"`rides.db` is in WAL mode" nor a page that refuses to load. It is a badge on a map that otherwise looks finished — which is exactly the shape that gets missed, so it is worth knowing that the repair is one command and takes four seconds:
+
+```bash
+node --experimental-strip-types scripts/import-ride-log.ts --materialise-only rides.db
+# route_track: 180 563 points in 4 247 ms
+```
+
+`info.route_track_built_at` records when the table was last built, and the import prints it for the database it is about to replace.
 
 ## Reconstructing a track from two independent signals
 
 `gps_lat` and `gps_lon` are **separate log-on-change signals with independent deadbands**. They share a millisecond whenever the decoder completes a fix and both moved — but a heading that only moves one of them logs only that one. Over the archive:
 
-|                            | rows    |
-| -------------------------- | ------- |
-| `gps_lat`                  | 97 868  |
-| `gps_lon`                  | 100 277 |
-| sharing an exact timestamp | 80 774  |
+|                            | 2026-09-07 decrypt | 2026-09-12 archive |
+| -------------------------- | ------------------ | ------------------ |
+| `gps_lat`                  | 97 868             | 191 793            |
+| `gps_lon`                  | 100 277            | 203 694            |
+| sharing an exact timestamp | 80 774             | 157 690            |
 
-So an inner join on equal `ts` silently drops **17.5 % of the track**. Each signal is carried forward onto the other's timestamps instead. SQLite has no `IGNORE NULLS`, so the carry-forward is expressed as "the timestamp of the last non-null", joined back to the row holding it.
+So an inner join on equal `ts` silently drops **17.5 % of the track** — **17.8 %** on the later archive. Both are quoted because the ratio is a property of the two deadbands rather than of the corpus, and it did not drift as the archive doubled. Each signal is carried forward onto the other's timestamps instead. SQLite has no `IGNORE NULLS`, so the carry-forward is expressed as "the timestamp of the last non-null", joined back to the row holding it.
 
-The window reaches 10 minutes below `$__from` to seed that hold, for the reason `grafana/README.md` gives under _"Carry-forward joins need seeding from before `$__from`"_: a window opening mid-ride otherwise starts with a latitude and no longitude and draws nothing.
+⚠️ **The 10-minute seed below `$__from` is gone, along with the window it seeded.** `grafana/README.md` §_"Carry-forward joins need seeding from before `$__from`"_ is why it was there — a window opening mid-ride starts with a latitude and no longitude and draws nothing — and that trap is still live for every other query in this repo. It no longer applies to the track: `scripts/route-track.ts` carries forward across the whole archive once, so there is nothing to seed. What that changed about the drawn points is measured in [Materialised once, not per load](#materialised-once-not-per-load).
 
 ### One point per second, and why it matters more than it sounds
 
@@ -56,6 +151,8 @@ Measured before the fix: setting `$__to` to one of the archive's corrupt longitu
 
 So `raw` reaches 10 minutes past `$__to` as well as below `$__from`, and `budgeted` trims back to the window afterwards. The genuinely last point in the database still has no successor; that is one point at the end of all data rather than one at the end of every view.
 
+⚠️ **Since [Materialised once, not per load](#materialised-once-not-per-load) the build has no window at all**, so this is no longer something a view can get wrong: the despiker runs over the whole archive and the only two untested points are its first and its last. The measurement above is kept because it is why the rule exists — any future query that re-introduces a window inherits the same failure, and this is the record of what it costs.
+
 ## Charge sessions need slack at the window edges too
 
 Same shape of bug, different query. The evidence stream was bounded at the window, so a session straddling `$__from` was **clipped rather than excluded**, and clipping is the worse failure: the session kept rendering, with the window's own `from` as its start time and a third of its energy missing, and nothing on screen said so. Opening the window later still made it vanish outright, because the clipped span fell under the five-minute minimum — which also silently removed the ride split that session was supposed to cause.
@@ -85,7 +182,7 @@ A markers layer has none of these problems: it cannot fabricate a path, and wher
 
 ### Thinning
 
-Every point is an individually styled OpenLayers feature. At the archive's full ~68 000 the layer **stops painting altogether** — tiles load, the canvas stays black, nothing is logged to the console. 12 000 renders comfortably, so the query thins to that budget.
+Every point is an individually styled OpenLayers feature. At the archive's full ~68 000 the layer **stops painting altogether** — tiles load, the canvas stays black, nothing is logged to the console. 12 000 renders comfortably, so the query thins to that budget. (⚠️ That ~68 000 was both the archive's size and the size at which painting stopped, on the 2026-09-07 decrypt. The archive is **146 150** points as of 2026-09-12, so it is now well past that ceiling and the thinning is the only reason the layer paints at all. The ceiling itself has not been re-measured.)
 
 The stride is derived from the window's own row count, which makes it self-correcting: zoom out to 90 days and points land ~6 s apart (sub-pixel at that scale); narrow to one ride and the stride falls back to 1 and every fix is drawn.
 

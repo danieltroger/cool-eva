@@ -411,9 +411,10 @@ const CHECKS: SelfCheck[] = [
       "sentence, and that no slider stop lands in the dead band under the floor. Every threshold is pinned to a " +
       "LITERAL — an assertion phrased in the constant it is checking passes for every value of that constant, which " +
       "is how a stop gate at 110 km/h and a one-hour speed-staleness window were both green here. The last two " +
-      "sections drive the real controller through a recording FanPwm — the only place the running-phase duty change " +
-      "issue #119 reports as unreached is reached — and then a controller that THROWS, since the loop discards each " +
-      "tick's promise and an escaped rejection would end the whole service every two seconds",
+      "sections drive the real controller through a recording FanPwm — reaching the running-phase duty change at " +
+      "the level of what the controller BELIEVES, which check-fan-ordering.ts §4 complements by asserting the " +
+      "duty_cycle a simulated sysfs actually received — and then a controller that THROWS, since the loop discards " +
+      "each tick's promise and an escaped rejection would end the whole service every two seconds",
   },
   {
     script: "scripts/check-fan-fun.ts",
@@ -531,12 +532,36 @@ const CHECKS: SelfCheck[] = [
     script: "scripts/check-fan-ordering.ts",
     covers:
       "the two orderings docs/fan-control.md §3 calls the whole safety property of src/fan/control.ts, driven " +
-      "through startFanControl() with a fake FanPwm that records its call sequence: that a start from rest writes " +
-      "the duty and enables the PWM output BEFORE the IBT-2's enables go HIGH, that a stop and the shutdown path " +
-      "both drop the enables BEFORE the output and the duty, and — the case that produced the check — that an " +
-      "enable-drop which FAILS leaves the PWM driving rather than zeroing it under a live bridge, since enables " +
-      "HIGH at 0 % turns both low sides on and brakes a rotor in a 270 km/h airstream. Nothing here needs a Pi: " +
-      "the fan has no tacho, so every one of these is invisible on the bike",
+      "through startFanControl() over a SIMULATED SYSFS rather than a fake FanPwm — so the real openFanPwm() and " +
+      "the production `openPwm` default are in the path: that a start from rest writes the duty and enables the " +
+      "PWM output BEFORE the IBT-2's enables go HIGH, that a stop and the shutdown path both drop the enables " +
+      "BEFORE the output and the duty, and that an enable-drop which FAILS leaves the PWM driving rather than " +
+      "zeroing it under a live bridge — in both pin orders, since a failure on the SECOND enable leaves the " +
+      "bridge half down and only a failure on the FIRST leaves both HIGH, which is the case where pressing on " +
+      "builds the brake out of the error path. The braked state is evaluated after EVERY write and pin change " +
+      "instead of being inferred from call indices, which compared first occurrences and passed a sequence that " +
+      "entered it and left again (#119). Plus the phase machine past the kick — that the drop-out to the target " +
+      "reaches the duty_cycle REGISTER and not merely controller.state(), and that a post-kick duty change is one " +
+      "duty write with no enable and no pinctrl — that a stop landing inside a kick-start is queued rather than " +
+      "interleaved into a bridge re-raised over a zeroed duty, and that a stop mid-kick disarms the kick timer. " +
+      "Nothing here needs a Pi: the fan has no tacho, so every one of these is invisible on the bike",
+  },
+  {
+    script: "scripts/check-fan-pwm-bringup.ts",
+    covers:
+      "src/fan/pwm.ts's bring-up, which nothing guarded at all until #119 — the real openFanPwm() run against a " +
+      "simulated /sys/class/pwm and `pinctrl` that reject what rpi-6.6.y's __pwm_apply() rejects: that the period " +
+      "is written BEFORE the duty on a freshly exported channel, where period reads 0 and every duty_cycle write " +
+      "against it is EINVAL — nothing unexports, pwm-bcm2835 has no .get_state, so the other order is a fan inert " +
+      "on EVERY boot behind a service that starts clean — and the duty before the period on a channel that has to " +
+      "SHRINK, which is the arm nothing reached while every fixture held the shipped 50 000 ns; that both enables " +
+      "go LOW as the first statement, because a SIGKILL plus Restart=on-failure begins bring-up under a live " +
+      "bridge; that the chip is discovered rather than hardcoded, preferring an SoC .pwm device link and WARNING " +
+      "when it had to guess; that EBUSY on re-export is the routine restart case; and that a channel udev never " +
+      "chowned and a missing pinctrl both fail with the setup step named — the latter with its errno, or the arm " +
+      "naming `raspi-utils` is never taken. §1 mutation-tests the braked-state predicate AND the recorder around " +
+      "it, driving the bridge into the braked state through the double's own surface in the exact sequence the " +
+      "old first-occurrence index assertions passed, since every other section reports against that counter",
   },
   {
     script: "scripts/check-preview-fixtures.ts",
@@ -551,6 +576,19 @@ const CHECKS: SelfCheck[] = [
       "did not: vcu-write.js destructures it, so the binding threw, the service sheet froze on its loading ellipsis, " +
       "and twelve days of screenshots silently lacked the safety-gate line and the running commit — with the annotated " +
       "sheet throwing once per panel while reporting zero failures. It never runs the page; §11.7 says what it misses",
+  },
+  {
+    script: "scripts/check-preview-harness.ts",
+    covers:
+      "that the two preview templates still SHARE one harness rather than carrying two copies of it. " +
+      "After #170 merged them, a name declared by both templates is a copy by definition, and so is a name a " +
+      "template declares that scripts/preview-harness-*.js already declares — so this needs no threshold: it " +
+      "asserts that every page-contract name is declared by both pages, that nothing else is, that no template " +
+      "shadows a harness name, and that nothing is declared twice across the harness parts in one of the two " +
+      "ways that redeclare SILENTLY (a function, or a window.* assignment — const/let/class throw at parse and " +
+      "check-service-preview.ts already catches those). Written for the dead settle(): copied into the second " +
+      "template when 85b8643 created it, never called there, improved in one copy only, and unnoticed for three " +
+      "weeks. It reads source and never runs a page; docs/diagnostics-and-checks.md §11.10",
   },
   {
     script: "scripts/check-service-gate-charging.ts",
@@ -918,6 +956,48 @@ const CHECKS: SelfCheck[] = [
       "row, so no fixture can be one the old query would have got right anyway. And the two tiles " +
       "are asserted to contain the table's body verbatim, because they select COUNT() and SUM() and " +
       "no behavioural assertion can notice the clause going missing from them",
+  },
+  {
+    script: "scripts/check-route-track.ts",
+    covers:
+      "the route map's TRACK, which is no longer rebuilt on every dashboard load: " +
+      "scripts/route-track.ts materialises it into `route_track` at import time and the panel reads " +
+      "that table (5 152 ms \u2192 78 ms for the map, 4 474 ms \u2192 66 ms for the tile that counts " +
+      "it). The rules did not change, so this check runs the SHIPPED build against fixtures for each " +
+      "of them \u2014 a latitude logged alone paired with the longitude carried onto it, two fixes 1 ms " +
+      "apart collapsed to the last of their second, a lone excursion between two AGREEING neighbours " +
+      "rejected while the parked jitter that the 220 m floor saves is kept, a row stamped 2060 never " +
+      "reaching the table, and an out-of-range speed stored as NULL rather than clamped \u2014 and then " +
+      "reads the result back through the dashboard's own SQL, lifted out of route-map.json rather " +
+      "than restated. \u26a0 The assertion the whole change rests on is the one a careless fixture " +
+      "cannot make: a fix inserted into `reading` AFTER the build is not drawn, because every other " +
+      "assertion here would pass just as well if the panel still carried the six-CTE pipeline over " +
+      "the readings. Also that F contains A verbatim so the count cannot drift from the map, that " +
+      "the 12 000-point render budget still binds and still derives its stride from the window, and " +
+      "that `route_track_second` \u2014 a unique index on `ts / 1000`, because the INTEGER PRIMARY KEY on " +
+      "a MILLISECOND column could never fire \u2014 makes the per-second collapse a thing the build " +
+      "fails on rather than a thing the query is trusted to have done",
+  },
+  {
+    script: "scripts/check-import-ride-log.ts",
+    covers:
+      "the orchestration of `scripts/import-ride-log.ts` \u2014 decrypt, re-run the waypoint recovery, " +
+      "materialise the track, and only then replace the live database \u2014 which is the only part of " +
+      "that step that moves gigabytes and was the only part nothing tested. The two child processes " +
+      "are injected, so every branch runs here in milliseconds against real but tiny SQLite files: " +
+      'decrypt exit 2 CARRYING ON, because "N segments could not be decrypted, the rest is intact" is ' +
+      "the normal case on a real dump and treating it as fatal would make the archive unimportable; " +
+      "any other non-zero code from any stage refusing WITHOUT a swap and leaving the staging file on " +
+      "disk; a staging file from an earlier run stopping the next one before it does anything; an " +
+      "import that covers fewer readings or a shorter span than the database it would replace being " +
+      "refused unless --allow-shrink says so; a non-empty `<out>-wal` stopping the swap because " +
+      "something still has that database open; and the `-wal`/`-shm` siblings moving WITH their " +
+      "database, since SQLite never checks that a WAL belongs to the file it finds it beside and a " +
+      "stranded one is silent corruption of the file the import just spent twenty minutes building. " +
+      "Plus the finished file being left in rollback journal mode, which is what the datasource " +
+      "wants (grafana/README.md measured WAL blanking 3 of 85 panel queries), and the one assertion " +
+      "that holds `commitRecovered` to refusing an empty verdict set \u2014 the precondition the " +
+      'step\'s "nothing to commit" no-op depends on, which nothing held it to before',
   },
   {
     script: "scripts/check-waypoint-list.ts",

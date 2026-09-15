@@ -1,6 +1,7 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MINIMUM_SOURCE_FILES_SCANNED, callsSeam, scanForSeamCalls } from "./seam-scan.ts";
 import { MAX_HOLD_MS } from "../src/can/obd-hold.ts";
 import { frameArrival } from "../src/can/frame-arrival.ts";
 import {
@@ -311,23 +312,29 @@ console.log("── §2a a gate-closed abort keeps what it read and says which i
 // ── §2b the clock seam is a bypass: no production caller may pass one ───────
 console.log("── §2b nothing in src/ injects the deadline's clock ──");
 {
-  const entries = await readdir(join(import.meta.dirname, "..", "src"), { recursive: true });
-  const offenders: string[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".ts")) {
-      continue;
-    }
-    const text = await readFile(join(import.meta.dirname, "..", "src", entry), "utf8");
-    // The call site, not the definition: `startFreezeFrameRead({ … now … })`.
-    for (const match of text.matchAll(/startFreezeFrameRead\(\{[^}]*\}/g)) {
-      if (/\bnow\b|\bbudgetMs\b/.test(match[0])) {
-        offenders.push(`src/${entry}: ${match[0].replace(/\s+/g, " ")}`);
-      }
-    }
+  // The seam is `now`/`budgetMs` PASSED to the call, not the call itself — read-runner.ts
+  // legitimately starts reads. scripts/seam-scan.ts holds the scan and the reasons it is
+  // shaped the way it is; the two assertions after the offender count are its positive
+  // control, since a scan expecting zero matches cannot fail on its own.
+  const injected = /\bnow\b|\bbudgetMs\b/;
+  const scan = await scanForSeamCalls(new URL("../src", import.meta.url), startFreezeFrameRead, {
+    argumentTest: injected,
+  });
+  for (const offender of scan.offenders) {
+    console.error(`      src/${offender}`);
   }
   check(
-    offenders.length === 0,
-    `a production call site injects the deadline's clock or budget, which defeats it: ${offenders.join("; ")}`
+    scan.offenders.length === 0,
+    `a production call site injects the deadline's clock or budget, which defeats it: ${scan.offenders.join("; ")}`
+  );
+  check(
+    scan.filesRead >= MINIMUM_SOURCE_FILES_SCANNED,
+    `the walk should have read the source at all, saw ${scan.filesRead} .ts files under src/`
+  );
+  check(
+    callsSeam(`${startFreezeFrameRead.name}({ channel, now })`, startFreezeFrameRead, injected) &&
+      !callsSeam(`${startFreezeFrameRead.name}({ channel })`, startFreezeFrameRead, injected),
+    "the pattern should tell an injecting call from an ordinary one, asked of literals rather than of this file"
   );
   console.log("  the seam exists for this file and for nothing that ships");
 }
