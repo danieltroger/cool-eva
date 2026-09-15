@@ -83,7 +83,10 @@ Those three modules are compiled on the Pi, and the compile is memory-hungry. A 
 ```sh
 ls /etc/dphys-swapfile   # exists → Bookworm, use dphys-swapfile below
 ls /etc/rpi/swap.conf    # exists → Trixie, use rpi-swap below
+df -h /var               # you need the full size FREE — see the Trixie warning
 ```
+
+⚠️ If **both** exist, use the Trixie route: `rpi-swap` replaces `dphys-swapfile` and an in-place OS upgrade can leave the old config file behind with nothing reading it. `dpkg -l rpi-swap` settles it.
 
 **Bookworm (`dphys-swapfile`).** Edit `/etc/dphys-swapfile` and set **both** of these:
 
@@ -101,7 +104,10 @@ sudo dphys-swapfile swapon
 cat /proc/swaps              # confirm
 ```
 
-**Trixie (`rpi-swap`).** A drop-in, then a reboot — `daemon-reload` is not enough:
+**Trixie (`rpi-swap`).** Two preconditions, then a drop-in, then a reboot — `daemon-reload` is not enough:
+
+- ⚠️ **`/var` needs the full 3 GiB free**, which `df -h /var` above tells you. Unlike Bookworm, nothing clamps `FixedSizeMiB` down to fit: `rpi-resize-swap-file` runs `fallocate --posix --length 3072M`, and if that fails the script's `set -e` aborts the service — which the generated swap unit `Requires=`. **You end up with no swap at all**, which is worse than the 512 MB you started with. Pick a size that fits, or clear space first.
+- ⚠️ **`/etc/fstab` must have no swap line for `/var/swap`.** Both `rpi-swap` and systemd's own `fstab-generator` would write a unit called `var-swap.swap` into the same directory, and which one wins is a race. Check with `grep swap /etc/fstab`.
 
 ```sh
 sudo mkdir -p /etc/rpi/swap.conf.d/
@@ -113,11 +119,15 @@ Mechanism=swapfile
 FixedSizeMiB=3072
 EOF
 sudo reboot
+
+# After the reboot — confirm. An EMPTY result means the resize failed:
+swapon --show
+systemctl status rpi-resize-swap-file.service   # read this when it is empty
 ```
 
-`Mechanism=swapfile` is load-bearing: the default is `auto`, which resolves to `zram+file`, where the file is only writeback storage for compressed RAM swap. Unlike Bookworm, `MaxSizeMiB` does **not** clamp `FixedSizeMiB` here, so one setting is enough.
+`Mechanism=swapfile` is load-bearing: the default is `auto`, which resolves to `zram+file`, where the file is only writeback storage for compressed RAM swap.
 
-🚨 **Never use `Mechanism=none` or `Mechanism=zram` to get `rpi-swap` out of the way** — either one generates a unit whose body is `ExecStart=/bin/rm -f /%I` and **deletes your swap file**. The bike's own Pi is in a non-default state that this recipe does not apply to as written; that case, and the two safe ways out of it, are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §2.
+🚨 **Never use `Mechanism=none` or `Mechanism=zram` to get `rpi-swap` out of the way.** `swap.conf(5)` says of `none`: _"Any existing swap file will be removed to free up disk space."_ It means it — either setting generates a unit whose body is `ExecStart=/bin/rm -f /%I`, and **your swap file is deleted**. The bike's own Pi is in a non-default state this recipe does not apply to as written; that case, and the two safe ways out of it, are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §2.
 
 3 GB is space and SD write wear you only need while compiling — turning it back down afterwards is fine.
 
@@ -154,16 +164,24 @@ ls node_modules/socketcan/build/Release/can.node
 
 **Nothing extra is needed to let those compiles run**, and it is worth knowing why. npm has an allowlist for install-time lifecycle scripts, and on this project those scripts _are_ the native builds: **npm 12 and newer refuse to run them** unless they are allowlisted, leaving a tree with no `.node` files and a service that dies on `require`. npm 11.16–11.19 only warn and build anyway; npm 11.15 and older have no policy at all. The repo therefore **ships an `.npmrc`** with the four names, which is correct on all three bands and covers CI's `npm ci` as well as your install. ⚠️ Its one cost: on npm older than 11.16.0 the key does not exist yet, so every npm command in this directory prints a cosmetic `npm warn Unknown project config "allow-scripts"`. Harmless — that band runs the scripts regardless.
 
-⚠️ **Did the modules build?** Read the tense in npm's warning. "N packages **has** install scripts **not yet covered**" — they ran, nothing is wrong. "N package **had** install scripts **blocked**" — they did not.
+⚠️ **You already have an `.npmrc` here?** `git pull` refuses to overwrite an untracked file, **even one whose contents are identical** — so the dashboard's Update button will abort with "would be overwritten by merge" until you `rm .npmrc` (or merge your own lines into the committed one and commit them). This bites anyone who created one by hand before it shipped.
 
-**If you already installed from a checkout without that `.npmrc`** and the modules did not build, the packages are on disk, so the command from #136 works now — but a second `npm install` says `up to date` and runs nothing, so the rebuild is not optional:
+⚠️ **Did the modules build?** npm warns either way and the difference is the phrase, not the tense: "install scripts **not yet covered** by allowScripts" — they **ran**, nothing is wrong. "install scripts **blocked** because they are not covered" — they did **not**.
+
+**If the modules did not build** — an install from a checkout predating the `.npmrc` — the packages are already on disk, so once this checkout has the `.npmrc` one command fixes it. A second `npm install` would say `up to date` and run nothing; `npm rebuild` is what runs the skipped builds:
 
 ```sh
-npm approve-scripts better-sqlite3 socketcan spi-device usocket   # or: --all
 npm rebuild
 ```
 
-⚠️ Prefer `git pull` to pick up the `.npmrc` instead, because `approve-scripts` writes a version-pinned `allowScripts` into `package.json`, which is tracked — so the dashboard's Update button (`git pull --ff-only`) will refuse on any commit that changes a dependency range, and `package.json#allowScripts` then **silently supersedes** the repo's `.npmrc` for good. The version boundaries and the measurements behind them are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §1.
+Only if you cannot get the `.npmrc` in place, fall back to the command from #136 and then rebuild:
+
+```sh
+npm approve-scripts better-sqlite3 socketcan spi-device usocket
+npm rebuild
+```
+
+⚠️ Second choice for a reason: `approve-scripts` writes a **version-pinned** `allowScripts` into `package.json`, which is tracked. That makes the Update button (`git pull --ff-only`) refuse on any commit changing a dependency range, and `package.json#allowScripts` then **silently supersedes** the repo's `.npmrc` for good — pinning that Pi to the versions it had that day. The version boundaries and the measurements are in [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §1.
 
 **WHY rm the lockfile:** `package-lock.json` is committed but generated on macOS, where socketcan (a Linux-only optionalDependency) is skipped. Installing on the Pi against that lockfile prunes the real native build and the service then dies on boot with `ERR_MODULE_NOT_FOUND: socketcan`. `npm install socketcan --force` will not fix it — it insists it's already up to date. The reliable fix is `rm package-lock.json && npm install` on the Pi.
 
@@ -251,7 +269,7 @@ sudo hostnamectl set-hostname cool-eva
 sudo apt-get install -y avahi-daemon
 ```
 
-Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone, Apple's own advice is to turn on Maximize Compatibility.
+Networking note (from README): the intended setup is the Pi joining a phone's hotspot so it's reachable at http://cool-eva.local while riding/charging. The Pi Zero 2 W radio is **2.4 GHz only**, so a 5 GHz-only hotspot is invisible to it — on an iPhone 12 or later, Settings → Personal Hotspot → **Maximize Compatibility** is Apple's own fix (at some cost to hotspot speed and Wi-Fi security, per Apple's footnote).
 
 **Adding a second network (home Wi-Fi, an Airbnb) while sshed in over the first.** Don't use `nmcli device wifi connect` for this: it activates what it creates, which drops the session you are typing into. `nmcli connection add` only creates:
 
@@ -260,6 +278,8 @@ sudo nmcli connection add type wifi ifname wlan0 con-name "<ssid>" ssid "<ssid>"
   wifi-sec.key-mgmt wpa-psk wifi-sec.psk "<pw>" connection.autoconnect no
 sudo nmcli connection modify "<ssid>" connection.autoconnect yes   # once you're off this link
 ```
+
+⚠️ The password is on the command line, so it lands in your shell history and is briefly visible in `ps`. Prefix the command with a space if your shell is set to skip those, or clear it from the history afterwards.
 
 Adding with `autoconnect no` and flipping it afterwards makes "it won't switch under me" a configured fact. `wpa-psk` is WPA2; a WPA3-only network wants `sae`. See [`docs/pi-install-prerequisites.md`](docs/pi-install-prerequisites.md) §3.
 

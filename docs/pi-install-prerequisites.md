@@ -8,14 +8,15 @@ Issue #136 is a note from **another Energica owner, relayed through a WhatsApp g
 
 ⚠️ **Treat the 3 GB and the `approve-scripts` step as one owner's working recipe, not as measurements.** What this repo has verified independently is narrower, and the split matters:
 
-| Claim                                                            | Status                                           |
-| ---------------------------------------------------------------- | ------------------------------------------------ |
-| The four package names are exactly the ones with install scripts | ✅ verified against `package-lock.json`          |
-| `npm approve-scripts` cannot run before `npm install`            | ✅ verified — it exits `ENOMATCH`                |
-| npm ≥ 12 blocks unreviewed install scripts; npm 11.x only warns  | ✅ measured on 11.12.1 / 11.19.0 / 12.0.2        |
-| `CONF_SWAPSIZE=3072` alone yields 2048 MB on Bookworm            | ✅ verified in the shipped script and man page   |
-| That **3 GB specifically** was needed                            | ❌ not verified — unknown Pi, unknown RAM        |
-| That their build was **blocked by npm** rather than OOM-killed   | ❌ not verified, and easy to confuse — see below |
+| Claim | Status |
+| --- | --- |
+| The four package names are exactly the ones with install scripts | ✅ verified against `package-lock.json` |
+| `npm approve-scripts` cannot run before `npm install` | ✅ verified — it exits `ENOMATCH` |
+| npm ≥ 12.0.0 blocks unreviewed install scripts | ✅ measured on 12.0.2 |
+| npm 11.16–11.19 warn and run them anyway | ✅ measured on 11.19.0 (11.12.1 has no policy at all, so it evidences only the third band) |
+| `CONF_SWAPSIZE=3072` alone yields 2048 MB on Bookworm | ✅ verified in the shipped script and man page |
+| That **3 GB specifically** was needed | ❌ not verified — unknown Pi, unknown RAM |
+| That their build was **blocked by npm** rather than OOM-killed | ❌ not verified, and easy to confuse — see below |
 
 That last row is the one to keep in mind. On npm 11.16–11.19 the install prints a loud warning about install scripts **and builds them anyway**. An owner who saw that warning, then hit an unrelated OOM kill, would reasonably report both fixes together. Both steps are worth taking; only one of them may have been the cause.
 
@@ -36,16 +37,18 @@ The boundary is npm **12.0.0**, not 11.16.0, and it is one inverted comparison i
 
 `strict-allow-scripts` is `default: false` in both (`@npmcli/config/lib/definitions/definitions.js`), so npm 11.x never hard-fails on this by default — but `--strict-allow-scripts` turns its warning into an error, which is a second way to arrive at a broken install.
 
-⚠️ **No Node release bundles npm 12.** Every v24, v25 and v26 in `nodejs.org/dist/index.json` carries an 11.x — Node 24.21.0 ships npm 11.19.0. So a Pi that follows `INSTALL.md` §2's NodeSource step gets an npm that only warns. Reaching npm 12 takes a deliberate `npm install -g npm`.
+⚠️ **No Node release bundles npm 12** — checked 2026-09-15, and the whole CI argument below rests on it, so re-check it rather than trusting this line. Every v24, v25 and v26 in `nodejs.org/dist/index.json` carried an 11.x that day; the highest bundled anywhere was 11.19.1, and Node 24.21.0 shipped npm 11.19.0. So a Pi that follows `INSTALL.md` §2's NodeSource step gets an npm that only warns. Reaching npm 12 takes a deliberate `npm install -g npm`.
 
-### Did your native modules actually build? Read the tense.
+### Did your native modules actually build? Read the phrase.
 
-npm prints a warning in both cases and the wording is the whole difference:
+npm warns either way, and the difference is which phrase follows the count:
 
-- `N packages **has** install scripts **not yet covered** by allowScripts` — they **ran**. This is advice. Nothing is broken.
-- `N package **had** install scripts **blocked** because they are not covered by allowScripts` — they did **not** run, and on this repo that means no `.node` files and a service that dies on `require`.
+- `… install scripts not yet covered by allowScripts:` — they **ran**. This is advice. Nothing is broken.
+- `… install scripts blocked because they are not covered by allowScripts:` — they did **not** run, and on this repo that means no `.node` files and a service that dies on `require`.
 
-`npm install-scripts ls` lists what is unreviewed without changing anything.
+⚠️ **Read the phrase, not the tense.** The verb agrees with the count — `reify-output.js` builds it as `count === 1 ? 'package has' : 'packages have'` on npm 11 and `'package had' : 'packages had'` on npm 12 — so on this repo, which has four such packages, both versions say "packages": `4 packages have …` against `4 packages had …`. An earlier draft of this file told the reader to look for "N packages has", a string npm never prints here. `not yet covered` versus `blocked` is the half that does not move.
+
+`npm install-scripts ls` lists what is unreviewed without changing anything — ⚠️ but only from **npm 11.18.0**, and its own output says "has/have" in every version, so the phrase test above does not apply to it.
 
 ### Why the allowlist goes in `.npmrc`, before the install
 
@@ -73,7 +76,7 @@ It is the one arrangement that is correct on every npm, at the cost of one cosme
 | 11.16.0 – 11.19.1 | scripts run, warning | scripts run, no warning |
 | ≥ 12.0.0 | **scripts blocked** | scripts run, no warning |
 
-**Why committed rather than typed on each Pi** (decided 2026-09-15, having first been left out): the cost ages out and the benefit does not. That warning only exists below npm 11.16.0, so it disappears the moment a machine's Node is updated — the bike's Pi runs npm 11.9.0 today and will print it until then. The breakage it prevents is permanent until someone commits the line, and it is not only on the Pi: `.github/workflows/{test,typecheck,prettier,dashboard}.yml` all run `npm ci` on `node-version: 24`, and `test.yml` says in its own comment that this is where the native build happens.
+**Why committed rather than typed on each Pi** (decided 2026-09-15, having first been left out): the cost ages out and the benefit does not. That warning only exists below npm 11.16.0, so it disappears the moment a machine's Node is updated. Until then it prints on **every** machine below that line, contributors included — the bike's Pi runs npm 11.9.0 and the Mac this was written on runs 11.12.1, so both see it on every npm command in the checkout. CI does not: `node-version: 24` gets 11.19.x. The breakage it prevents is permanent until someone commits the line, and it is not only on the Pi: `.github/workflows/{test,typecheck,prettier,dashboard}.yml` all run `npm ci` on `node-version: 24`, and `test.yml` says in its own comment that this is where the native build happens.
 
 ⚠️ **`npm ci` is gated exactly like `npm install`** — it is not a way round the policy. Measured on npm 12.0.2 against a lockfile:
 
@@ -157,18 +160,27 @@ Recorded because it is surprising, and because the obvious ways out of it are de
 The drop-in recipe does not apply here for two reasons, in this order:
 
 1. **Its generated `.swap` unit carries `Requires=rpi-resize-swap-file.service`**, which is masked — so the unit cannot start. This is the proximate cause, and it still bites after the fstab line is removed.
-2. **Both generators emit the same unit file.** `rpi-swap-generator` writes `$(systemd-escape --path --suffix=swap /var/swap)` = `var-swap.swap` into `GEN_NORMAL_DIR="$1"` (l.8, 1.2.1); systemd's own `fstab-generator.c` writes `unit_name_from_path(what, ".swap")` — the same `var-swap.swap` — into the same `arg_dest = ASSERT_PTR(argv[1])` (l.254, l.258, l.1758). One silently overwrites the other. `systemctl cat var-swap.swap` names which generator won; on the bike it says `systemd-fstab-generator`. The `Priority=100` that `create_swap_unit` hardcodes (l.91) against the `pri 10` in `/proc/swaps` says the same thing.
+2. **Following the recipe would make the two generators collide over one unit filename** — which, ⚠️ note, they do **not** today. Under `zram+file` `rpi-swap-generator` calls `create_swap_unit "/dev/zram0" …` (l.272, 1.2.1) and so writes `dev-zram0.swap`; only the `swapfile` branch (l.403) writes `$(systemd-escape --path --suffix=swap /var/swap)` = `var-swap.swap`. That is why the bike shows `dev-zram0.swap` **and** `var-swap.swap` side by side with no contest: the second is systemd's own `fstab-generator`, which builds the same name from `unit_name_from_path(what, ".swap")` into the same `arg_dest = argv[1]`. Set `Mechanism=swapfile` here — which is exactly what §2.5's recipe says — and both would write it.
+
+   ⚠️ Not "one silently overwrites the other", which an earlier draft of this file claimed. systemd opens generated units `O_EXCL` (`fopen_unlocked(p, "wxe", …)` in `generator_open_unit_file_full`) and on collision logs `Failed to create unit file … as it already exists. Duplicate entry in …?`; `rpi-swap-generator` truncates unconditionally (`cat <<EOF > "${unit_path}"`). Generators run in parallel, so it is a race: rpi-swap second and fstab's unit is replaced silently; fstab second and it logs an error and drops the entry. Either way `systemctl cat var-swap.swap` names the winner — on the bike, `systemd-fstab-generator`, corroborated by the `pri 10` in `/proc/swaps` against the `Priority=100` `create_swap_unit` hardcodes (l.91).
+
+   ⚠️ The systemd line numbers are deliberately omitted: they move every release (l.254/258/1758 on `main` today, 244/248/1687 on the 257 that Trixie ships), and unlike the rpi-swap ones there is no single version a reader here can be assumed to have.
 
 Two safe ways out, both reasoned from the package source and **not executed on the bike**:
 
 - **Go supported:** put the drop-in in place **first**, then `systemctl unmask rpi-resize-swap-file.service`, remove the `/var/swap` line from `/etc/fstab`, and reboot. ⚠️ The ordering matters: `rpi-resize-swap-file` resizes `/var/swap` to whatever the config says, and with no `FixedSizeMiB` that is `RamMultiplier` (default 1) × RAM — a few hundred MB on a Zero 2 W. Unmask before the drop-in exists and it shrinks the file rather than growing it (`truncate --size` at l.47, then `swaplabel || mkswap` at l.61-62, 1.2.1).
 - **Keep the fstab file:** point `rpi-swap`'s `File::Path=` at a different path so the two stop contending for `/var/swap`.
 
-🚨 **Not `Mechanism=none`, and not `Mechanism=zram`.** Either generates `rpi-remove-swap-file@.service`, whose entire body is `Conflicts=%i.swap` and `ExecStart=/bin/rm -f /%I`, symlinked into `local-fs.target.wants` (l.56-57, 1.2.1). Telling rpi-swap to stay out of the way deletes the swap file.
+🚨 **Not `Mechanism=none`, and not `Mechanism=zram`.** `swap.conf(5)` states the outcome plainly — of `none`: _"No swap is configured. Any existing swap file will be removed to free up disk space."_, and of the `[File]` options: _"These options are disregarded for mechanisms that don't involve a file (e.g. "zram"), and any existing file will be removed."_ The mechanism is `rpi-remove-swap-file@.service`, whose entire body is `Conflicts=%i.swap` and `ExecStart=/bin/rm -f /%I`, symlinked into `local-fs.target.wants` (l.56-57, 1.2.1). Documented, not discovered — but it reads like a tidy-up setting and it is not, so it is repeated wherever the config is discussed.
 
-### What 3 GB costs
+### What happens on a card without room for it — and the two OSes differ
 
-A swap file is real space on the SD card and real write wear, and it is only needed while the native modules compile. `CONF_MAXDISK_PCT` / `MaxDiskPercent` (both default 50) will quietly clamp it on a small card. Turning it back down after the install is finished is reasonable; leaving it up costs nothing but space.
+⚠️ **Bookworm clamps; Trixie fails.** This asymmetry matches the `CONF_MAXSWAP` one above and has the same cause: an absolute size is handled differently from a computed one.
+
+- **Bookworm** clamps and tells you. `CONF_MAXDISK_PCT` (default 50) is applied to `CONF_SWAPSIZE` whether it was computed or given, and `sbin/dphys-swapfile` prints `restricting to 50% of remaining disk size: …MBytes` when it bites. You get a smaller swap file than you asked for, and a line saying so.
+- **Trixie does not clamp `FixedSizeMiB` at all.** `MaxDiskPercent` and `MaxSizeMiB` both live inside `rpi-desired-swap-size`'s `if [ -z "${CONF_SWAPSIZE}" ] || ! [ … -eq … ]` guard (l.38, 1.2.1), which a valid integer skips entirely. So `rpi-resize-swap-file` runs `fallocate --posix --length 3072M`, that fails for want of space, and `set -e` (l.3) aborts the service. The generated `var-swap.swap` carries `Requires=rpi-resize-swap-file.service`, so **the Pi boots with no swap at all** — worse than before the change, and the OOM kill that §2.5 exists to prevent happens anyway. `df -h /var` before, `swapon --show` after.
+
+Otherwise the cost is ordinary: real space on the SD card and real write wear, needed only while the native modules compile. Turning it back down afterwards is reasonable.
 
 ## 3. Joining a second Wi-Fi network without leaving the one you are on
 
@@ -184,4 +196,6 @@ sudo nmcli connection modify "<ssid>" connection.autoconnect yes   # once you ar
 
 Adding with `connection.autoconnect no` and flipping it afterwards makes "it will not switch under me" a configured fact rather than a hope. Daniel reports (bike, 2026-09-15) that adding with `autoconnect yes` directly did not switch either — ⚠️ that is a field observation, not documented nmcli behaviour: the man page says what `add` creates and nothing about what NetworkManager does with an already-active connection afterwards.
 
-**The Pi Zero 2 W radio is 2.4 GHz only** — raspberrypi.com gives it as _"2.4GHz 802.11 b/g/n wireless LAN"_ — so it cannot see a 5 GHz-only hotspot at all. On an iPhone, Apple's own hotspot troubleshooting note says _"You can also try turning on Maximize Compatibility in Personal Hotspot settings."_ ⚠️ Apple's macOS Internet Sharing documentation has no option by that name; what it does offer is Network Name, Channel, Security (_"WPA3 Personal"_ or _"WPA2/WPA3 Personal"_) and Password. `wifi-sec.key-mgmt wpa-psk` above is WPA2-PSK, so a WPA3-only network needs `sae` instead.
+**The Pi Zero 2 W radio is 2.4 GHz only** — raspberrypi.com gives it as _"2.4GHz 802.11 b/g/n wireless LAN"_ — so it cannot see a 5 GHz-only hotspot at all. That is what Apple's **Maximize Compatibility** toggle is for, and Apple scopes it to exactly the devices that broadcast 5 GHz: _"If you're using an iPhone 12 model or later, iPad Pro 11-inch (3rd generation or later), iPad Pro 12.9-inch (5th generation or later), or iPad mini (6th generation)"_ → _"Tap Personal Hotspot and turn on Maximize Compatibility."_ ⚠️ It is not free, in Apple's own footnote: _"When you turn on Maximize Compatibility, internet performance and Wi-Fi security might be reduced for devices connected to the hotspot."_
+
+`wifi-sec.key-mgmt wpa-psk` above is WPA2-PSK, so a WPA3-only network needs `sae` instead.
